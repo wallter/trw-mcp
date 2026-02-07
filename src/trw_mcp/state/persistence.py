@@ -1,0 +1,312 @@
+"""Atomic YAML/JSONL read/write with advisory file locks.
+
+All state persistence goes through this module. Writes are atomic
+(write to temp file, then rename) to prevent corruption on interrupts.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import tempfile
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Protocol
+
+import structlog
+from pydantic import BaseModel
+from ruamel.yaml import YAML
+
+from trw_mcp.exceptions import StateError
+
+logger = structlog.get_logger()
+
+_yaml = YAML()
+_yaml.default_flow_style = False
+_yaml.preserve_quotes = True
+
+
+class StateReader(Protocol):
+    """Read framework state from persistent storage."""
+
+    def read_yaml(self, path: Path) -> dict[str, object]: ...
+
+    def read_jsonl(self, path: Path) -> list[dict[str, object]]: ...
+
+    def exists(self, path: Path) -> bool: ...
+
+
+class StateWriter(Protocol):
+    """Write framework state to persistent storage."""
+
+    def write_yaml(self, path: Path, data: dict[str, object]) -> None: ...
+
+    def append_jsonl(self, path: Path, record: dict[str, object]) -> None: ...
+
+    def ensure_dir(self, path: Path) -> None: ...
+
+
+class EventLogger(Protocol):
+    """Append structured events to event stream."""
+
+    def log_event(self, events_path: Path, event_type: str, data: dict[str, object]) -> None: ...
+
+
+def _json_serializer(obj: object) -> str:
+    """JSON serializer for objects not serializable by default json code.
+
+    Args:
+        obj: Object to serialize.
+
+    Returns:
+        JSON-compatible string representation.
+
+    Raises:
+        TypeError: If object type is not supported.
+    """
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    msg = f"Object of type {type(obj).__name__} is not JSON serializable"
+    raise TypeError(msg)
+
+
+class FileStateReader:
+    """File-based implementation of StateReader."""
+
+    def read_yaml(self, path: Path) -> dict[str, object]:
+        """Read and parse a YAML file.
+
+        Args:
+            path: Path to the YAML file.
+
+        Returns:
+            Parsed YAML content as a dictionary.
+
+        Raises:
+            StateError: If file cannot be read or parsed.
+        """
+        if not path.exists():
+            raise StateError(f"YAML file not found: {path}", path=str(path))
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
+                try:
+                    data = _yaml.load(fh)
+                finally:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            if data is None:
+                return {}
+            if not isinstance(data, dict):
+                raise StateError(
+                    f"YAML root must be a mapping, got {type(data).__name__}",
+                    path=str(path),
+                )
+            result: dict[str, object] = dict(data)
+            return result
+        except StateError:
+            raise
+        except Exception as exc:
+            raise StateError(
+                f"Failed to read YAML: {exc}",
+                path=str(path),
+            ) from exc
+
+    def read_jsonl(self, path: Path) -> list[dict[str, object]]:
+        """Read and parse a JSONL file (one JSON object per line).
+
+        Args:
+            path: Path to the JSONL file.
+
+        Returns:
+            List of parsed JSON objects.
+
+        Raises:
+            StateError: If file cannot be read or parsed.
+        """
+        if not path.exists():
+            return []
+        try:
+            records: list[dict[str, object]] = []
+            with path.open("r", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
+                try:
+                    for line_num, line in enumerate(fh, start=1):
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        record = json.loads(stripped)
+                        if isinstance(record, dict):
+                            records.append(record)
+                        else:
+                            logger.warning(
+                                "jsonl_non_dict_line",
+                                path=str(path),
+                                line=line_num,
+                            )
+                finally:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            return records
+        except json.JSONDecodeError as exc:
+            raise StateError(
+                f"Failed to parse JSONL: {exc}",
+                path=str(path),
+            ) from exc
+        except StateError:
+            raise
+        except Exception as exc:
+            raise StateError(
+                f"Failed to read JSONL: {exc}",
+                path=str(path),
+            ) from exc
+
+    def exists(self, path: Path) -> bool:
+        """Check if a path exists.
+
+        Args:
+            path: Path to check.
+
+        Returns:
+            True if path exists.
+        """
+        return path.exists()
+
+
+class FileStateWriter:
+    """File-based implementation of StateWriter with atomic writes."""
+
+    def write_yaml(self, path: Path, data: dict[str, object]) -> None:
+        """Atomically write data to a YAML file.
+
+        Writes to a temporary file in the same directory, then renames.
+        This prevents corruption if the process is interrupted.
+
+        Args:
+            path: Target YAML file path.
+            data: Dictionary to serialize as YAML.
+
+        Raises:
+            StateError: If write fails.
+        """
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Write to temp file in same directory (atomic rename requires same filesystem)
+            fd, tmp_path_str = tempfile.mkstemp(
+                dir=str(path.parent),
+                suffix=".yaml.tmp",
+            )
+            tmp_path = Path(tmp_path_str)
+            try:
+                with tmp_path.open("w", encoding="utf-8") as fh:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                    try:
+                        _yaml.dump(data, fh)
+                    finally:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                tmp_path.rename(path)
+            except Exception:
+                tmp_path.unlink(missing_ok=True)
+                raise
+            finally:
+                import os
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            logger.debug("yaml_written", path=str(path))
+        except StateError:
+            raise
+        except Exception as exc:
+            raise StateError(
+                f"Failed to write YAML: {exc}",
+                path=str(path),
+            ) from exc
+
+    def append_jsonl(self, path: Path, record: dict[str, object]) -> None:
+        """Append a JSON record to a JSONL file.
+
+        Args:
+            path: Target JSONL file path.
+            record: Dictionary to serialize as a single JSON line.
+
+        Raises:
+            StateError: If append fails.
+        """
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(record, default=_json_serializer) + "\n"
+            with path.open("a", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                try:
+                    fh.write(line)
+                finally:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            logger.debug("jsonl_appended", path=str(path), event_type=record.get("event"))
+        except Exception as exc:
+            raise StateError(
+                f"Failed to append JSONL: {exc}",
+                path=str(path),
+            ) from exc
+
+    def ensure_dir(self, path: Path) -> None:
+        """Ensure a directory exists, creating parents as needed.
+
+        Args:
+            path: Directory path to create.
+
+        Raises:
+            StateError: If directory creation fails.
+        """
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            raise StateError(
+                f"Failed to create directory: {exc}",
+                path=str(path),
+            ) from exc
+
+
+class FileEventLogger:
+    """File-based implementation of EventLogger."""
+
+    def __init__(self, writer: FileStateWriter | None = None) -> None:
+        """Initialize with an optional writer.
+
+        Args:
+            writer: StateWriter to use. Creates a new one if None.
+        """
+        self._writer = writer or FileStateWriter()
+
+    def log_event(
+        self,
+        events_path: Path,
+        event_type: str,
+        data: dict[str, object],
+    ) -> None:
+        """Log a structured event to events.jsonl.
+
+        Args:
+            events_path: Path to events.jsonl file.
+            event_type: Event type identifier (e.g., "run_init", "phase_enter").
+            data: Additional event data.
+        """
+        record: dict[str, object] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event_type,
+            **data,
+        }
+        self._writer.append_jsonl(events_path, record)
+        logger.info("event_logged", event_type=event_type, path=str(events_path))
+
+
+def model_to_dict(model: BaseModel) -> dict[str, object]:
+    """Convert a Pydantic model to a plain dict suitable for YAML serialization.
+
+    Converts enums to their values and dates to ISO strings.
+
+    Args:
+        model: Pydantic model instance.
+
+    Returns:
+        Plain dictionary with JSON-compatible values.
+    """
+    return json.loads(model.model_dump_json())  # type: ignore[no-any-return]
