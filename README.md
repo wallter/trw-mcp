@@ -2,7 +2,7 @@
 
 TRW Framework MCP Server — orchestration, requirements engineering, and self-learning tools for Claude Code.
 
-Part of the [TRW (The Real Work) Framework](../FRAMEWORK.md) v17.1_TRW.
+Part of the [TRW (The Real Work) Framework](../FRAMEWORK.md) v18.0_TRW.
 
 ## Quick Start
 
@@ -134,7 +134,7 @@ src/trw_mcp/
 # Type checking (strict mode)
 .venv/bin/python -m mypy --strict src/trw_mcp/
 
-# Current: 168 tests, 88% coverage, mypy --strict clean
+# Current: 239 tests, 87% coverage, mypy --strict clean
 ```
 
 ### Optional Dependencies
@@ -167,4 +167,4 @@ Open PRDs in `docs/requirements-aare-f/prds/`:
 
 ## License
 
-MIT
+[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) — see [LICENSE](../LICENSE).

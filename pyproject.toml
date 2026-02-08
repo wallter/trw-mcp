@@ -7,7 +7,7 @@ name = "trw-mcp"
 version = "0.2.0"
 description = "TRW Framework MCP Server — orchestration, requirements engineering, and self-learning tools for Claude Code"
 readme = "README.md"
-license = "MIT"
+license = "CC-BY-NC-SA-4.0"
 requires-python = ">=3.10"
 authors = [
     { name = "TRW Framework", email = "noreply@trw.dev" },
