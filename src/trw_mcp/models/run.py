@@ -155,6 +155,8 @@ class RunState(BaseModel):
     confidence: Confidence = Confidence.MEDIUM
     objective: str = ""
     variables: dict[str, str] = Field(default_factory=dict)
+    prd_scope: list[str] = Field(default_factory=list)
+    run_type: str = "implementation"
 
 
 class Event(BaseModel):
