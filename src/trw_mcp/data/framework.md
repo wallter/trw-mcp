@@ -1,11 +1,11 @@
-v17.2_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
+v18.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
 Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated
 Version date: 2026-02-07 | Model: Opus 4.6
 
 <critical>
 ## EXECUTION MODEL SUMMARY
 
-**v17.2_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 17 MCP tools**
+**v18.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 17 MCP tools**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN (see PARALLELISM).
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
@@ -24,30 +24,6 @@ P3: **External > Internal** — externalize infrastructure to tools, keep prompt
 RFC 2119/8174: MUST, MUST NOT, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED, MAY, OPTIONAL — ALL CAPS only.
 </standards>
 
-<claude_code_patterns>
-**Tool patterns:**
-- Independent tool calls → single message, parallel execution
-- Read every file before modifying it
-- `/clear` between unrelated tasks — reset context
-
-**Output control:**
-- Prefill `{` to force JSON output (API)
-- `<thinking>...</thinking>` then `<answer>...</answer>` for CoT
-- Explicit format in prompt → model follows
-
-**Claude Opus 4.6 behavior:**
-- Plans more carefully, sustains agentic tasks longer
-- Literal instruction following — say what TO do, not what NOT to do
-- Normal language works — excessive CRITICAL/MUST unnecessary
-- Provide WHY for better generalization
-- Adaptive thinking — effort parameter (low/medium/high/max) replaces manual budget_tokens
-- May overspawn subagents — use wave orchestration to control
-</claude_code_patterns>
-
-<abbreviations>
-RR := {RUN_ROOT}  | TD := {TASK_DIR}  | RID := {RUN_ID}  | ORC := Orchestrator
-</abbreviations>
-
 <variables>
 TASK       := task_short_desc
 TASK_DIR   := ./docs/{TASK}
@@ -55,6 +31,7 @@ RUN_ID     := {utc_ts}-{short_id}
 RUN_ROOT   := {TASK_DIR}/runs/{RUN_ID}
 REPO_ROOT  := $(git rev-parse --show-toplevel)
 BRANCH     := feat/{TASK}-{short_id}
+ORC        := Orchestrator
 </variables>
 
 ---
@@ -65,124 +42,12 @@ BRANCH     := feat/{TASK}-{short_id}
 PARALLELISM_MAX: 10          # max concurrent shards
 MIN_SHARDS_TARGET: 3         # minimum parallel (adaptive)
 MIN_SHARDS_FLOOR: 2          # hard floor
-AUTONOMY_LEVEL: auto         # auto | review | stop_on_gate
 CONSENSUS_QUORUM: 0.67       # 2/3 judges agree
 CORRELATION_MIN: 0.7         # inter-judge agreement
-CHECKPOINT_SECS: 600         # 10 min
 TIMEBOX_HOURS: 8
 MAX_CHILD_DEPTH: 2           # max self-decomposition recursion
-SELF_DECOMPOSE_DEFAULT: true
 MAX_RESEARCH_WAVES: 3
-QOL_FIXES_ENABLED: true
-LEARNING_PROMOTION: true
-KNOWLEDGE_SYSTEMS: auto      # auto | off
 ```
-
----
-
-## BOOTSTRAP
-
-<mcp_check>
-ORC MUST detect MCP tool availability at bootstrap and set `MCP_MODE` in `run.yaml`:
-
-1. Call `trw_init(task_name=TASK, objective=...)`.
-2. If tool returns successfully → `MCP_MODE: tool`. Init is complete (dirs, run.yaml, events.jsonl, FRAMEWORK_SNAPSHOT all created).
-3. If tool unavailable or errors → `MCP_MODE: manual`. Run manual fallback (see CLAUDE.md for bootstrap script).
-</mcp_check>
-
-<rules>
-- ORC MUST log `MCP_MODE` at bootstrap — all subsequent sections reference this value
-- ORC MUST restore latest `{TD}/runs/**` or honor `{RID}` and recreate scaffolding
-- All writes MUST stay within `{REPO_ROOT}/**` and `{TD}/**`
-- `{RR}/meta/FRAMEWORK_SNAPSHOT.md` = authoritative reference for run
-- If `docs/documentation/` or `docs/knowledge-catalogue/` exist → note paths in `run.yaml`
-- If AARE-F framework file exists → log location to `run.yaml`, follow for requirements work
-- Worktree strategy: in-repo under `docs/` (portability, single-clone simplicity). Do not change without documenting rationale.
-- Run artifacts (`docs/{TASK}/runs/**`, `.ai/**`) MUST NOT be committed.
-- `docs/documentation/`, `docs/knowledge-catalogue/`, `docs/requirements-aare-f/` SHOULD be committed.
-</rules>
-
----
-
-## MCP TOOLS (trw-mcp)
-
-When `MCP_MODE: tool`, ORC and shards MUST use these tools instead of manual equivalents. When `MCP_MODE: manual`, use inline bash/YAML fallbacks in each section.
-
-RFC 2119 obligations: MUST = required (manual fallback if tool errors); SHOULD = preferred; MAY = optional.
-
-| Tool | Obligation | When |
-|------|------------|------|
-| `trw_init` | MUST | Bootstrap |
-| `trw_status` | SHOULD | Status checks |
-| `trw_phase_check` | MUST | Before phase advance |
-| `trw_wave_validate` | MUST | After each wave |
-| `trw_resume` | MUST | Session resume |
-| `trw_checkpoint` | SHOULD | Every CHECKPOINT_SECS |
-| `trw_event` | SHOULD | Audit trail |
-| `trw_reflect` | SHOULD | After errors/friction |
-| `trw_learn` | MAY | Record discoveries |
-| `trw_learn_update` | MAY | Lifecycle mgmt |
-| `trw_learn_prune` | MAY | Learning hygiene |
-| `trw_recall` | MAY | Before new tasks |
-| `trw_script_save` | MAY | Reusable scripts |
-| `trw_claude_md_sync` | SHOULD | At DELIVER |
-| `trw_prd_create` | SHOULD | Requirements |
-| `trw_prd_validate` | MUST | Pre-IMPLEMENT |
-| `trw_traceability_check` | SHOULD | VALIDATE/DELIVER |
-
-### MCP Resources
-
-| URI | Description |
-|-----|-------------|
-| `trw://config` | Current TRWConfig values |
-| `trw://framework` | Bundled FRAMEWORK.md text |
-| `trw://learnings` | Learning index from .trw/ |
-| `trw://patterns` | Discovered patterns index |
-| `trw://run-state` | Current run state (latest run.yaml) |
-
-<rules>
-- Shards inherit MCP_MODE from ORC — do not re-detect
-- If a MUST tool fails at runtime, log error via `trw_event` (or events.jsonl) and fall back to manual
-</rules>
-
----
-
-## LEGACY MIGRATION
-
-On init, ORC MUST scan `{RR}/meta/` for `.json` (excluding `.jsonl`):
-```
-Glob pattern: {RUN_ROOT}/meta/*.json  (then exclude *.jsonl matches)
-```
-If found: convert → YAML, validate, archive to `artifacts/legacy/`, log. **Priority: FIRST.**
-
----
-
-## FILE STRUCTURE
-
-<meta_files format="yaml">
-run.yaml:              status, phase, confidence
-consensus.yaml:        decisions, thresholds
-locks.yaml:            file/shard locks
-formation_manifest.yaml: active formation
-</meta_files>
-
-<meta_files format="jsonl">
-events.jsonl:          event stream
-validations.jsonl:     validation stream
-checkpoints.jsonl:     checkpoint stream
-</meta_files>
-
-| Dir | Contents |
-|-----|----------|
-| `reports/` | `plan.md`, `final.md` |
-| `artifacts/` | bundles, outputs, `logs/` |
-| `scratch/` | `_orchestrator/`, `shard-{id}/`, `_blackboard/`, `wave-{N}/` |
-| `shards/` | `manifest.yaml`, `wave_manifest.yaml` |
-| `validation/` | `risk-register.yaml` |
-
-<shard_card>
-Shard cards define parallel work units. Fields: `id`, `title`, `wave` (1-based; children inherit parent's wave), `goals`, `planned_outputs`, `output_contract` (file + schema keys + required + optional_keys), `input_refs` (file paths from prior waves), `self_decompose` (default: true), `max_child_depth` (default: 2), `confidence` (high|medium|low).
-</shard_card>
 
 ---
 
@@ -229,8 +94,8 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. Uses PLANNING SHARDS (plan_fragment.yaml). | 15% |
 | IMPLEMENT | Shards/waves complete OR checkpointed, tests written. Uses WAVE ORCHESTRATION (output_contract). | 40% |
 | VALIDATE | Coverage ≥ target, gates pass, no P0 | 10% |
-| REVIEW | Critic reviewed, simplifications applied | 5% |
-| DELIVER | PR created OR archived, final.md, CHANGELOG.md updated | 5% |
+| REVIEW | Critic reviewed, simplifications applied, **reflection completed** (`trw_reflect`) | 5% |
+| DELIVER | PR created OR archived, final.md, **CLAUDE.md synced** (`trw_claude_md_sync`), CHANGELOG.md updated | 5% |
 
 ORC tracks elapsed wall-clock against TIMEBOX_HOURS.
 
@@ -258,7 +123,147 @@ After each RESEARCH wave, ORC evaluates findings and MAY spawn follow-up waves:
 | MAX_RESEARCH_WAVES reached | Advance to PLAN with documented uncertainty | — |
 
 ORC classifies open questions as: `answered_elsewhere` (skip), `needs_investigation` (shard), `deferred` (log).
-Shards MAY flag discoveries that contradict prior assumptions via blackboard entry with key `emergent_axis` (e.g., "database is graph-based, not SQL"). ORC SHOULD spawn a targeted follow-up wave for each emergent axis.
+Shards MAY flag discoveries that contradict prior assumptions via blackboard entry with key `emergent_axis`. ORC SHOULD spawn a targeted follow-up wave for each emergent axis.
+
+---
+
+## FORMATIONS
+
+ORC selects formation per wave using the tree below. Inputs: wave purpose, shard count, prior wave confidence.
+
+```
+Parallelizable without coordination?
+├─ YES → MAP-REDUCE (shards: ceil(subtasks/3))
+└─ NO → Single synthesis from diverse inputs?
+        ├─ YES → PLANNER→EXECUTOR→REFLECTOR (3 shards)
+        └─ NO → Quality critical?
+                ├─ YES → DEBATE+CRITIC+JUDGE (4 shards)
+                └─ NO → PIPELINE (min(3, stages))
+```
+
+```yaml
+# meta/formation_manifest.yaml
+formation:
+  name: research-map-reduce
+  type: map-reduce
+  status: active
+  shards: [shard-001, shard-002, shard-003]
+  fallback: pipeline
+```
+
+Formation scope: within a single wave. Each wave MAY use a different formation. Formations MUST NOT span waves.
+
+---
+
+## GATES
+
+```
+VALIDATE/DELIVER boundary?
+├─ YES → FULL GATE (≥quorum judges, pairwise+rubric)
+└─ NO → PLAN/REVIEW decision?
+        ├─ YES → LIGHT GATE (2 judges, rubric only)
+        └─ NO → Quality contested?
+                ├─ YES → SPAWN CRITIC
+                └─ NO → NO GATE (checkpoint only)
+```
+
+Rubric: correctness 35, tests 20, security 15, performance 10, maintainability 10, completeness 10.
+Pass: `consensus ≥ quorum` AND `correlation ≥ CORRELATION_MIN`.
+Fail: document reasons → revert to prior phase (add tests, refactor, fix) → retry gate. Two consecutive gate failures → escalate to user.
+
+---
+
+## BOOTSTRAP
+
+<mcp_check>
+ORC MUST detect MCP tool availability at bootstrap and set `MCP_MODE` in `run.yaml`:
+
+1. Call `trw_init(task_name=TASK, objective=...)`.
+2. If tool returns successfully → `MCP_MODE: tool`. Init is complete (dirs, run.yaml, events.jsonl, FRAMEWORK_SNAPSHOT all created).
+3. If tool unavailable or errors → `MCP_MODE: manual`. Run manual fallback (see CLAUDE.md for bootstrap script).
+</mcp_check>
+
+<rules>
+- ORC MUST log `MCP_MODE` at bootstrap — all subsequent sections reference this value
+- ORC MUST restore latest `{TASK_DIR}/runs/**` or honor `{RUN_ID}` and recreate scaffolding
+- All writes MUST stay within `{REPO_ROOT}/**` and `{TASK_DIR}/**`
+- `{RUN_ROOT}/meta/FRAMEWORK_SNAPSHOT.md` = authoritative reference for run
+- If `docs/documentation/` or `docs/knowledge-catalogue/` exist → note paths in `run.yaml`
+- If AARE-F framework file exists → log location to `run.yaml`, follow for requirements work
+- Worktree strategy: in-repo under `docs/` (portability, single-clone simplicity)
+- Run artifacts (`docs/{TASK}/runs/**`, `.ai/**`) MUST NOT be committed.
+- `docs/documentation/`, `docs/knowledge-catalogue/`, `docs/requirements-aare-f/` SHOULD be committed.
+</rules>
+
+---
+
+## MCP TOOLS (trw-mcp)
+
+When `MCP_MODE: tool`, ORC and shards MUST use these tools instead of manual equivalents. When `MCP_MODE: manual`, use inline bash/YAML fallbacks in each section.
+
+| Tool | Obligation | When |
+|------|------------|------|
+| `trw_init` | MUST | Bootstrap |
+| `trw_status` | SHOULD | Status checks |
+| `trw_phase_check` | MUST | Before phase advance |
+| `trw_wave_validate` | MUST | After each wave |
+| `trw_resume` | MUST | Session resume |
+| `trw_checkpoint` | SHOULD | Periodic |
+| `trw_event` | SHOULD | Audit trail |
+| `trw_reflect` | MUST | After errors, at REVIEW, at DELIVER |
+| `trw_learn` | SHOULD | Record discoveries during any phase |
+| `trw_learn_update` | MAY | Lifecycle mgmt |
+| `trw_learn_prune` | MAY | Learning hygiene |
+| `trw_recall` | SHOULD | Before new tasks, at PLAN start |
+| `trw_script_save` | MAY | Reusable scripts |
+| `trw_claude_md_sync` | MUST | At DELIVER |
+| `trw_prd_create` | SHOULD | Requirements |
+| `trw_prd_validate` | MUST | Pre-IMPLEMENT |
+| `trw_traceability_check` | SHOULD | VALIDATE/DELIVER |
+
+### MCP Resources
+
+| URI | Description |
+|-----|-------------|
+| `trw://config` | Current TRWConfig values |
+| `trw://framework` | Bundled FRAMEWORK.md text |
+| `trw://learnings` | Learning index from .trw/ |
+| `trw://patterns` | Discovered patterns index |
+| `trw://run-state` | Current run state (latest run.yaml) |
+
+<rules>
+- Shards inherit MCP_MODE from ORC — do not re-detect
+- If a MUST tool fails at runtime, log error via `trw_event` (or events.jsonl) and fall back to manual
+</rules>
+
+---
+
+## FILE STRUCTURE
+
+<meta_files format="yaml">
+run.yaml:              status, phase, confidence
+consensus.yaml:        decisions, thresholds
+locks.yaml:            file/shard locks
+formation_manifest.yaml: active formation
+</meta_files>
+
+<meta_files format="jsonl">
+events.jsonl:          event stream
+validations.jsonl:     validation stream
+checkpoints.jsonl:     checkpoint stream
+</meta_files>
+
+| Dir | Contents |
+|-----|----------|
+| `reports/` | `plan.md`, `final.md` |
+| `artifacts/` | bundles, outputs, `logs/` |
+| `scratch/` | `_orchestrator/`, `shard-{id}/`, `_blackboard/`, `wave-{N}/` |
+| `shards/` | `manifest.yaml`, `wave_manifest.yaml` |
+| `validation/` | `risk-register.yaml` |
+
+<shard_card>
+Shard cards define parallel work units. Fields: `id`, `title`, `wave` (1-based; children inherit parent's wave), `goals`, `planned_outputs`, `output_contract` (file + schema keys + required + optional_keys), `input_refs` (file paths from prior waves), `self_decompose` (default: true), `max_child_depth` (default: 2), `confidence` (high|medium|low).
+</shard_card>
 
 ---
 
@@ -300,7 +305,7 @@ files_examined: ["src/auth/**"]
 - Shards MUST write `findings.yaml` as their LAST action before returning
 - Partial results MUST be written with `status: partial` if shard hits an error or timeout
 - ORC MUST read findings from disk (not rely on Task() return text alone) for resume safety
-- On resume: ORC MUST scan `scratch/shard-*/findings.yaml` and skip shards with `status: complete`
+- On resume: scan `scratch/shard-*/findings.yaml` and skip shards with `status: complete`
 - Findings with `status: partial` MUST be re-run with narrowed scope
 - Planning shards write to `scratch/shard-{id}/plan_fragment.yaml` (same structure, `phase: plan`)
 </rules>
@@ -323,9 +328,20 @@ Waves sequence groups of parallel shards with inter-wave data flow. Each wave co
 | Sequential between waves | Wave N+1 starts only after wave N status = `complete` |
 | Fail-fast | If any shard in a wave fails, ORC MUST pause and replan before advancing |
 | Manifest update | ORC MUST update `wave_manifest.yaml` status after each wave completes |
-| Output persistence | Every shard MUST write its output to disk before returning |
-| Post-wave validation | When `MCP_MODE: tool`, ORC MUST call `trw_wave_validate(wave_number)` after each wave |
+| Post-wave validation | When `MCP_MODE: tool`, call `trw_wave_validate(wave_number)` after each wave |
 | Progress tracking | ORC SHOULD call `trw_status()` for wave progress overview |
+
+### Blackboard (Inter-Shard Coordination)
+
+```yaml
+# scratch/_blackboard/{formation}.yaml
+entries:
+  - ts: "2026-01-25T12:00:01Z"
+    shard: shard-001
+    key: finding_001
+    value: {summary: "...", confidence: high}
+```
+Append-only. Lock via `meta/locks.yaml`. Archive on completion. ORC MAY use per-wave blackboards (`scratch/_blackboard/wave-{N}/`).
 
 ### Replanning Triggers
 
@@ -375,7 +391,7 @@ Wave 1: shard-001 → result.yaml ─┐
 ## SELF-DIRECTING SHARDS
 
 Shards MAY self-decompose into child shards (bounded recursion). Eligibility — ALL must be true:
-1. `self_decompose: true` in shard card (default: `SELF_DECOMPOSE_DEFAULT`)
+1. `self_decompose: true` in shard card
 2. Current depth < `MAX_CHILD_DEPTH`
 3. Task has ≥2 independent subtasks identifiable before execution
 4. Parent shard can define output contracts for each child
@@ -425,6 +441,23 @@ When updating plan: add `## Revision [N]`, document change/why/impact, log to ev
 
 ---
 
+## PARALLELISM
+
+Heuristic: if shards are independent (≤5% file overlap), spawn `clamp(MIN_SHARDS_FLOOR, axes_of_work, PARALLELISM_MAX)`. Default: 3. Trivial tasks: 1.
+
+| Mode | Allowed |
+|------|---------|
+| Parallel blocking shards (multiple Task() in ONE message) | REQUIRED when independent |
+| Background Bash (`&` tracked in events.jsonl) | ALLOWED |
+
+<rules>
+- Every Task() call MUST block (omit `run_in_background` or set `false`). WHY: background agents lose MCP tools, cause token explosion (30-50K+), context staleness, file lock deadlocks.
+- If wave output similarity > CORRELATION_MIN → spawn a dissenting shard in the next wave
+- Self-check before every Task(): "Will I wait for this result before my next action?" YES = correct.
+</rules>
+
+---
+
 ## REQUIREMENTS
 
 <pre_development>
@@ -448,86 +481,6 @@ requirements_traceability:
 ### AARE-F Tools
 
 When `MCP_MODE: tool` and AARE-F framework file exists: `trw_prd_create` at RESEARCH/PLAN, `trw_prd_validate` (MUST pass) pre-IMPLEMENT, `trw_traceability_check` at VALIDATE/DELIVER.
-
----
-
-## FORMATIONS
-
-ORC selects formation per wave using the tree below. Inputs: wave purpose, shard count, prior wave confidence.
-
-```
-Parallelizable without coordination?
-├─ YES → MAP-REDUCE (shards: ceil(subtasks/3))
-└─ NO → Single synthesis from diverse inputs?
-        ├─ YES → PLANNER→EXECUTOR→REFLECTOR (3 shards)
-        └─ NO → Quality critical?
-                ├─ YES → DEBATE+CRITIC+JUDGE (4 shards)
-                └─ NO → PIPELINE (min(3, stages))
-```
-
-```yaml
-# meta/formation_manifest.yaml
-formation:
-  name: research-map-reduce
-  type: map-reduce
-  status: active
-  shards: [shard-001, shard-002, shard-003]
-  fallback: pipeline
-```
-
-Formation scope: within a single wave. Each wave MAY use a different formation. Formations MUST NOT span waves.
-
----
-
-## BLACKBOARD
-
-For inter-shard coordination:
-```yaml
-# scratch/_blackboard/{formation}.yaml
-entries:
-  - ts: "2026-01-25T12:00:01Z"
-    shard: shard-001
-    key: finding_001
-    value: {summary: "...", confidence: high}
-```
-Append-only. Lock via `meta/locks.yaml`. Archive on completion.
-
-Wave isolation: ORC MAY use per-wave blackboards (`scratch/_blackboard/wave-{N}/`). Default: single shared blackboard.
-
----
-
-## PARALLELISM
-
-Heuristic: if shards are independent (≤5% file overlap), spawn `clamp(MIN_SHARDS_FLOOR, axes_of_work, PARALLELISM_MAX)`. Default: 3. Trivial tasks: 1.
-
-| Mode | Allowed |
-|------|---------|
-| Parallel blocking shards (multiple Task() in ONE message) | REQUIRED when independent |
-| Background Bash (`&` tracked in events.jsonl) | ALLOWED |
-
-<rules>
-- Every Task() call MUST block (omit `run_in_background` or set `false`). WHY: background agents lose MCP tools, cause token explosion (30-50K+), context staleness, file lock deadlocks.
-- If wave output similarity > CORRELATION_MIN → spawn a dissenting shard in the next wave
-- Self-check before every Task(): "Will I wait for this result before my next action?" YES = correct.
-</rules>
-
----
-
-## GATES
-
-```
-VALIDATE/DELIVER boundary?
-├─ YES → FULL GATE (≥quorum judges, pairwise+rubric)
-└─ NO → PLAN/REVIEW decision?
-        ├─ YES → LIGHT GATE (2 judges, rubric only)
-        └─ NO → Quality contested?
-                ├─ YES → SPAWN CRITIC
-                └─ NO → NO GATE (checkpoint only)
-```
-
-Rubric: correctness 35, tests 20, security 15, performance 10, maintainability 10, completeness 10.
-Pass: `consensus ≥ quorum` AND `correlation ≥ CORRELATION_MIN`.
-Fail: document reasons → revert to prior phase (add tests, refactor, fix) → retry gate. Two consecutive gate failures → escalate to user.
 
 ---
 
@@ -570,20 +523,12 @@ Prevention: validate inputs before shard launch, set timeouts at Task() creation
 
 ---
 
-## TURN HYGIENE
-
-At turn start, report: status (Green|Amber|Red + reason), phase, wave progress, active shards, next actions.
-At turn end, report: key decisions, artifacts modified, immediate next action.
-Use compact format; include only fields relevant to current phase.
-
----
-
 ## GIT
 
 ```bash
 git status -sb
 git add <specific-paths>           # Use `git add <specific-paths>` (interactive modes unavailable)
-git commit -m "feat(scope): msg" -m "WHY: rationale" -m "RUN_ID: {RID}"
+git commit -m "feat(scope): msg" -m "WHY: rationale" -m "RUN_ID: {RUN_ID}"
 git push -u origin "{BRANCH}"
 gh pr create --fill --head "{BRANCH}"
 ```
@@ -591,6 +536,19 @@ gh pr create --fill --head "{BRANCH}"
 All file paths in commands, logs, and shard cards MUST be absolute paths derived from TASK_DIR or REPO_ROOT.
 Update CHANGELOG.md `[Unreleased]` for user-visible changes at DELIVER.
 When `MCP_MODE: tool`, ORC SHOULD call `trw_event("git_commit", data={branch, message, run_id})` after commits.
+
+---
+
+## TURN HYGIENE
+
+Turn start: status (Green|Amber|Red), phase, wave progress, next actions. Turn end: decisions, artifacts modified, next action. Compact format only.
+
+---
+
+## MODEL
+
+- Primary: **Opus 4.6**; child shards (depth ≥2) or trivial subtasks MAY use Haiku 4.5 / Sonnet 4.5
+- Agents SHOULD act. Chat MUST remain minimal. Artifacts MUST be auditable.
 
 ---
 
@@ -608,38 +566,53 @@ Shards MUST create a TODO when noticing an improvement outside their scope.
 
 ---
 
-## MODEL
-
-- Primary: **Opus 4.6** (or task-specified)
-- Cost-aware: trivial subtasks MAY use Haiku 4.5 / Sonnet 4.5
-- Depth-aware: child shards (depth ≥2) MAY use lighter models (Haiku 4.5 / Sonnet 4.5)
-- Agents SHOULD act. Chat MUST remain minimal. Artifacts MUST be auditable.
-
----
-
 ## SELF-IMPROVEMENT & LEARNING
 
 Learning lifecycle (see MCP TOOLS table for tool obligations):
 ```
-Before task → trw_recall(query)          # check prior knowledge
-During work → trw_learn(summary, detail) # record workarounds, API gotchas, env issues
-After errors → trw_reflect(run_path)     # auto-extract cause, impact, prevention
+Before task → trw_recall(query)          # SHOULD: check prior knowledge
+During work → trw_learn(summary, detail) # SHOULD: record workarounds, API gotchas, env issues
+After errors → trw_reflect(run_path)     # MUST: auto-extract cause, impact, prevention
 On fix → trw_learn_update(id, "resolved")
-At DELIVER → trw_claude_md_sync()        # promote high-impact → CLAUDE.md
+At DELIVER → trw_claude_md_sync()        # MUST: promote high-impact → CLAUDE.md
 ```
 
 When `MCP_MODE: manual`, write learnings directly to CLAUDE.md or sub-CLAUDE.md files.
 
+### Mandatory Reflection Triggers
+
+| Trigger | Action | Target |
+|---------|--------|--------|
+| Workaround >2 retries | `trw_learn` + write to CLAUDE.md or sub-CLAUDE.md | Root or module |
+| Non-obvious API behavior | `trw_learn` + sub-CLAUDE.md | Module dir |
+| Environment-specific issue | `trw_learn` + root CLAUDE.md | Project root |
+| Phase gate failure | `trw_reflect` MUST run before retry | Run |
+| REVIEW phase entry | `trw_reflect` MUST run before `trw_phase_check("review")` | Run |
+| DELIVER phase entry | `trw_claude_md_sync` MUST run before `trw_phase_check("deliver")` | Project |
+
+### Reflection Gate
+
+ORC MUST call `trw_reflect(run_path)` before `trw_phase_check("review")` and before `trw_phase_check("deliver")`.
+`trw_phase_check` verifies reflection events exist in `events.jsonl` — gate warns without them.
+After `trw_claude_md_sync()`, ORC MUST log: `trw_event("claude_md_synced", data={scope, entries_promoted})`.
+
 ### PSR (Prompt Self-Review)
-- At PLAN start: capture objective digest and key assumptions
-- At REVIEW: capture what helped, what hurt, propose framework edits
+
+| Phase | Inputs | Outputs |
+|-------|--------|---------|
+| PLAN start | Objective, prior knowledge | Assumptions → `trw_learn` entries |
+| REVIEW | Run events, outcomes | What helped/hurt → `trw_reflect` + propose framework edits |
+| DELIVER | High-impact learnings | Promote findings → `trw_claude_md_sync` (MUST) |
 
 ### CLAUDE.md Protocol
 
 - Root: max 200 lines. Sub-CLAUDE.md: max 50 lines, max depth 3.
 - Structure: Context, Key Facts, Gotchas, See Also.
 - Append (don't rewrite). Date-stamp entries.
-- Read at: session start, every PLAN phase, after errors, before major refactors.
+
+<mandatory_reads>
+CLAUDE.md MUST be read at: session start, every PLAN phase, after errors, before major refactors.
+</mandatory_reads>
 
 ---
 
@@ -654,7 +627,6 @@ All generated artifacts (reports, shard cards, sub-agent prompts, plans) MUST fo
 | XML tags | prompt sections, rules | Claude-trained parsing |
 | RFC 2119 caps | requirements (MUST/SHOULD/MAY) | Unambiguous obligation |
 | Tables over prose | comparisons, options, lists | Dense + scannable |
-| Abbreviations | repeated terms (define once) | Token reduction |
 | Rules not explanations | constraints, instructions | LLMs don't need "why" |
 </patterns>
 
@@ -704,19 +676,4 @@ On context compact: (1) persist all state to `run.yaml` and critical files, (2) 
 
 ## QOL CHANGES (Opportunistic Cleanup)
 
-When `QOL_FIXES_ENABLED: true`, shards MAY fix minor issues (<10 lines, already-open files, obviously correct, no behavior change, ≤5% effort). Separate commits. Log: `qol_fixes: [{file, change, lines_changed}]`. When in doubt → P2 TODO.
-
----
-
-## KNOWLEDGE SYSTEMS
-
-| System | Path | Purpose | When |
-|--------|------|---------|------|
-| Documentation | `docs/documentation/` | LLM-optimized project reference | Consult during RESEARCH; update at DELIVER |
-| Knowledge Catalogue | `docs/knowledge-catalogue/` | Structured knowledge entries | Consult during RESEARCH; create entries for significant findings |
-
-<rules>
-- `KNOWLEDGE_SYSTEMS: auto` + directories exist → consult and update. Otherwise create `DOCS_INDEX.md` (minimum viable).
-- SHOULD, not MUST. Complements CLAUDE.md (don't duplicate).
-- AARE-F for requirements work — reference it, do not inline.
-</rules>
+Shards MAY fix minor issues (<10 lines, already-open files, obviously correct, no behavior change, ≤5% effort). Separate commits. Log: `qol_fixes: [{file, change, lines_changed}]`. When in doubt → P2 TODO.

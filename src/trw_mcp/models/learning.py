@@ -47,6 +47,11 @@ class LearningEntry(BaseModel):
     updated: date = Field(default_factory=date.today)
     resolved_at: date | None = None
     promoted_to_claude_md: bool = False
+    last_accessed_at: date | None = None
+    access_count: int = Field(ge=0, default=0)
+    q_value: float = Field(ge=0.0, le=1.0, default=0.5)
+    q_observations: int = Field(ge=0, default=0)
+    outcome_history: list[str] = Field(default_factory=list)
 
 
 class LearningIndex(BaseModel):

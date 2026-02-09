@@ -123,6 +123,9 @@ class PRDFrontmatter(BaseModel):
     metrics: PRDMetrics = Field(default_factory=PRDMetrics)
     quality_gates: PRDQualityGates = Field(default_factory=PRDQualityGates)
     dates: PRDDates = Field(default_factory=PRDDates)
+    template_version: str | None = None
+    wave_source: str | None = None
+    slos: list[str] = Field(default_factory=list)
 
 
 class Requirement(BaseModel):

@@ -51,11 +51,13 @@ PHASE_EXIT_CRITERIA: dict[str, list[str]] = {
         "All findings reviewed",
         "Confidence levels assessed",
         "Final report drafted",
+        "Reflection completed (reflection event in events.jsonl)",
     ],
     "deliver": [
         "Final report complete",
         "Artifacts organized",
         "Run state marked complete",
+        "CLAUDE.md synced (claude_md_sync event in events.jsonl)",
     ],
 }
 
@@ -287,6 +289,36 @@ def check_phase_exit(
                 )
             )
 
+        # Check for reflection event in events.jsonl
+        events_path = meta_path / "events.jsonl"
+        if events_path.exists():
+            from trw_mcp.state.persistence import FileStateReader
+
+            reader = FileStateReader()
+            events = reader.read_jsonl(events_path)
+            has_reflection = any(
+                e.get("event") in ("reflection_complete", "trw_reflect_complete")
+                for e in events
+            )
+            if not has_reflection:
+                failures.append(
+                    ValidationFailure(
+                        field="reflection",
+                        rule="reflection_required",
+                        message="Reflection not completed — call trw_reflect() before advancing past REVIEW",
+                        severity="warning",
+                    )
+                )
+        else:
+            failures.append(
+                ValidationFailure(
+                    field="reflection",
+                    rule="reflection_required",
+                    message="No events.jsonl found — reflection status unknown",
+                    severity="warning",
+                )
+            )
+
     elif phase_name == "deliver":
         # Check run.yaml status
         run_yaml = meta_path / "run.yaml"
@@ -307,6 +339,27 @@ def check_phase_exit(
                     )
             except Exception:
                 pass
+
+        # Check for CLAUDE.md sync event
+        events_path = meta_path / "events.jsonl"
+        if events_path.exists():
+            from trw_mcp.state.persistence import FileStateReader as _Reader
+
+            sync_reader = _Reader()
+            events = sync_reader.read_jsonl(events_path)
+            has_sync = any(
+                e.get("event") in ("claude_md_sync", "claude_md_synced")
+                for e in events
+            )
+            if not has_sync:
+                failures.append(
+                    ValidationFailure(
+                        field="claude_md_sync",
+                        rule="sync_required",
+                        message="CLAUDE.md not synced — call trw_claude_md_sync() before DELIVER",
+                        severity="warning",
+                    )
+                )
 
     is_valid = not any(f.severity == "error" for f in failures)
 

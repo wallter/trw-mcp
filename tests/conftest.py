@@ -72,7 +72,7 @@ def sample_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     writer.write_yaml(meta / "run.yaml", {
         "run_id": "20260206T120000Z-abcd1234",
         "task": "test-task",
-        "framework": "v17.1_TRW",
+        "framework": "v18.0_TRW",
         "status": "active",
         "phase": "research",
         "confidence": "medium",

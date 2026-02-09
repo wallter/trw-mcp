@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from fastmcp import FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
 _config = TRWConfig()
@@ -29,8 +27,7 @@ def register_config_resources(server: FastMCP) -> None:
         Returns merged configuration as YAML text. Project-level overrides
         from .trw/config.yaml take precedence over built-in defaults.
         """
-        env_root = os.environ.get("TRW_PROJECT_ROOT")
-        project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+        project_root = resolve_project_root()
         config_path = project_root / _config.trw_dir / "config.yaml"
 
         result = model_to_dict(_config)
@@ -59,8 +56,7 @@ def register_config_resources(server: FastMCP) -> None:
         AARE-F-FRAMEWORK.md, including trw-mcp package version
         and deployment timestamp.
         """
-        env_root = os.environ.get("TRW_PROJECT_ROOT")
-        project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+        project_root = resolve_project_root()
         version_path = (
             project_root / _config.trw_dir / _config.frameworks_dir / "VERSION.yaml"
         )
@@ -85,8 +81,7 @@ def register_config_resources(server: FastMCP) -> None:
         Returns a formatted summary of high-impact learnings, discovered
         patterns, and context (architecture + conventions) from .trw/.
         """
-        env_root = os.environ.get("TRW_PROJECT_ROOT")
-        project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+        project_root = resolve_project_root()
         trw_dir = project_root / _config.trw_dir
 
         lines: list[str] = ["# TRW Learnings Summary\n"]

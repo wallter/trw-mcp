@@ -35,7 +35,7 @@ def register_template_resources(server: FastMCP) -> None:
         """Shard card YAML template — defines parallel work unit structure.
 
         Returns a YAML template for shard cards as defined in
-        FRAMEWORK.md v17.1_TRW section SHARD-CARDS.
+        FRAMEWORK.md v18.0_TRW section SHARD-CARDS.
         """
         return _SHARD_CARD_TEMPLATE
 
@@ -97,7 +97,7 @@ quality_gates:
 ## 12. Traceability Matrix
 """
 
-_SHARD_CARD_TEMPLATE = """# Shard Card Template (FRAMEWORK.md v17.1_TRW)
+_SHARD_CARD_TEMPLATE = """# Shard Card Template (FRAMEWORK.md v18.0_TRW)
 
 id: shard-001
 title: "Brief description"

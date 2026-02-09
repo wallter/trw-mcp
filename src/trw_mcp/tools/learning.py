@@ -8,7 +8,6 @@ gain LLM-augmented behavior (better summaries, relevance classification).
 
 from __future__ import annotations
 
-import os
 import re
 import secrets
 from datetime import date, datetime, timezone
@@ -31,6 +30,8 @@ from trw_mcp.models.learning import (
     Script,
     ScriptIndex,
 )
+from trw_mcp.scoring import compute_utility_score, update_q_value
+from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -51,6 +52,7 @@ _MAX_ERROR_LEARNINGS = 5
 _MAX_REPEATED_OPS = 3
 _CLAUDEMD_LEARNING_CAP = 10
 _CLAUDEMD_PATTERN_CAP = 5
+_BEHAVIORAL_PROTOCOL_CAP = 12
 _LLM_BATCH_CAP = 20
 _LLM_EVENT_CAP = 30
 _SLUG_MAX_LEN = 40
@@ -62,17 +64,6 @@ _TRW_MARKER_END = "<!-- trw:end -->"
 
 # Error event classification keywords
 _ERROR_KEYWORDS = ("error", "fail", "exception", "crash", "timeout")
-
-
-def _resolve_trw_dir() -> Path:
-    """Resolve the .trw directory path from CWD or environment.
-
-    Returns:
-        Absolute path to the .trw directory.
-    """
-    env_root = os.environ.get("TRW_PROJECT_ROOT")
-    root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
-    return root / _config.trw_dir
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -93,7 +84,7 @@ def register_learning_tools(server: FastMCP) -> None:
             run_path: Path to run directory for run-scoped reflection.
             scope: Reflection scope — "session", "run", or "wave".
         """
-        trw_dir = _resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
         _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
         _writer.ensure_dir(trw_dir / _config.reflections_dir)
 
@@ -206,6 +197,17 @@ def register_learning_tools(server: FastMCP) -> None:
         )
         _writer.write_yaml(reflection_path, model_to_dict(reflection))
 
+        # Log reflection event to run's events.jsonl for phase gate tracking
+        if run_path:
+            resolved_run = Path(run_path).resolve()
+            run_events_path = resolved_run / "meta" / "events.jsonl"
+            if run_events_path.parent.exists():
+                _events.log_event(run_events_path, "reflection_complete", {
+                    "reflection_id": reflection_id,
+                    "scope": scope,
+                    "learnings_produced": len(new_learnings),
+                })
+
         # Update analytics
         _update_analytics(trw_dir, len(new_learnings))
 
@@ -243,7 +245,7 @@ def register_learning_tools(server: FastMCP) -> None:
             evidence: Supporting evidence (file paths, error messages, etc.).
             impact: Impact score from 0.0 to 1.0 (higher = more important).
         """
-        trw_dir = _resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
         _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
 
         learning_id = _generate_learning_id()
@@ -293,7 +295,7 @@ def register_learning_tools(server: FastMCP) -> None:
             detail: Updated detailed description.
             tags: Replacement tag list.
         """
-        trw_dir = _resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
         entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
 
         if not entries_dir.exists():
@@ -367,13 +369,14 @@ def register_learning_tools(server: FastMCP) -> None:
             min_impact: Minimum impact score filter (0.0-1.0).
             status: Optional status filter — 'active', 'resolved', or 'obsolete'.
         """
-        trw_dir = _resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
         # Wildcard/empty query: skip token matching, return all (filtered by other params)
         is_wildcard = query.strip() in ("*", "")
         query_tokens = [] if is_wildcard else query.lower().split()
 
-        # Search learnings
+        # Search learnings — track matched file paths for access updates
         matching_learnings: list[dict[str, object]] = []
+        matched_files: list[Path] = []
         entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
         if entries_dir.exists():
             for entry_file in sorted(entries_dir.glob("*.yaml")):
@@ -407,8 +410,29 @@ def register_learning_tools(server: FastMCP) -> None:
                     text = summary + " " + detail + " " + tag_text
                     if all(token in text for token in query_tokens):
                         matching_learnings.append(data)
+                        matched_files.append(entry_file)
                 except (StateError, ValueError, TypeError):
                     continue
+
+        # Update access tracking for matched learnings (PRD-CORE-004 Phase 1a)
+        matched_ids: list[str] = []
+        if matched_files:
+            today_iso = date.today().isoformat()
+            for entry_file in matched_files:
+                try:
+                    data = _reader.read_yaml(entry_file)
+                    prev_count = int(str(data.get("access_count", 0)))
+                    data["access_count"] = prev_count + 1
+                    data["last_accessed_at"] = today_iso
+                    _writer.write_yaml(entry_file, data)
+                    entry_id = str(data.get("id", ""))
+                    if entry_id:
+                        matched_ids.append(entry_id)
+                except (StateError, ValueError, TypeError):
+                    continue
+
+        # Log recall receipt
+        _log_recall_receipt(trw_dir, query, matched_ids)
 
         # Search patterns
         matching_patterns: list[dict[str, object]] = []
@@ -427,6 +451,11 @@ def register_learning_tools(server: FastMCP) -> None:
                 except (StateError, ValueError, TypeError):
                     continue
 
+        # Re-rank learnings by utility score (PRD-CORE-004 Phase 1b)
+        ranked_learnings = _rank_by_utility(
+            matching_learnings, query_tokens, _config.recall_utility_lambda,
+        )
+
         # Read context files
         context: dict[str, object] = {}
         context_dir = trw_dir / _config.context_dir
@@ -440,16 +469,16 @@ def register_learning_tools(server: FastMCP) -> None:
         logger.info(
             "trw_recall_searched",
             query=query,
-            learnings_found=len(matching_learnings),
+            learnings_found=len(ranked_learnings),
             patterns_found=len(matching_patterns),
         )
 
         return {
             "query": query,
-            "learnings": matching_learnings,
+            "learnings": ranked_learnings,
             "patterns": matching_patterns,
             "context": context,
-            "total_matches": len(matching_learnings) + len(matching_patterns),
+            "total_matches": len(ranked_learnings) + len(matching_patterns),
         }
 
     @server.tool()
@@ -467,7 +496,7 @@ def register_learning_tools(server: FastMCP) -> None:
             description: What the script does.
             language: Script language — "bash", "python", etc.
         """
-        trw_dir = _resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
         scripts_dir = trw_dir / _config.scripts_dir
         _writer.ensure_dir(scripts_dir)
 
@@ -547,22 +576,33 @@ def register_learning_tools(server: FastMCP) -> None:
             scope: Sync scope — "root" for project CLAUDE.md, "sub" for module-level.
             target_dir: Target directory for sub-CLAUDE.md generation.
         """
-        trw_dir = _resolve_trw_dir()
-        env_root = os.environ.get("TRW_PROJECT_ROOT")
-        project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+        trw_dir = resolve_trw_dir()
+        project_root = resolve_project_root()
 
         # Collect high-impact learnings
+        # For mature entries (q_observations >= threshold), use q_value
+        # instead of static impact for promotion decision (PRD-CORE-004 1c)
         high_impact: list[dict[str, object]] = []
         entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
         if entries_dir.exists():
             for entry_file in sorted(entries_dir.glob("*.yaml")):
                 try:
                     data = _reader.read_yaml(entry_file)
-                    impact = data.get("impact", 0.0)
                     entry_status = str(data.get("status", "active"))
-                    if (isinstance(impact, (int, float))
-                            and impact >= _config.learning_promotion_impact
-                            and entry_status == "active"):
+                    if entry_status != "active":
+                        continue
+
+                    impact = data.get("impact", 0.0)
+                    q_obs = int(str(data.get("q_observations", 0)))
+                    q_val = data.get("q_value", impact)
+
+                    # Use q_value for mature entries, impact for cold-start
+                    if q_obs >= _config.q_cold_start_threshold:
+                        score = float(str(q_val))
+                    else:
+                        score = float(str(impact)) if isinstance(impact, (int, float)) else 0.0
+
+                    if score >= _config.learning_promotion_impact:
                         high_impact.append(data)
                 except (StateError, ValueError, TypeError):
                     continue
@@ -601,9 +641,12 @@ def register_learning_tools(server: FastMCP) -> None:
         # Load template and build context
         template = _load_claude_md_template(trw_dir)
 
+        behavioral_protocol = _render_behavioral_protocol()
+
         if llm_used and llm_summary is not None:
             # LLM-generated summary replaces all sections
             context: dict[str, str] = {
+                "behavioral_protocol": behavioral_protocol,
                 "architecture_section": "",
                 "conventions_section": "",
                 "categorized_learnings": llm_summary + "\n",
@@ -612,6 +655,7 @@ def register_learning_tools(server: FastMCP) -> None:
             }
         else:
             context = {
+                "behavioral_protocol": behavioral_protocol,
                 "architecture_section": _render_architecture(arch_data),
                 "conventions_section": _render_conventions(conv_data),
                 "categorized_learnings": _render_categorized_learnings(high_impact),
@@ -667,11 +711,19 @@ def register_learning_tools(server: FastMCP) -> None:
         Args:
             dry_run: If True (default), report candidates without applying changes.
         """
-        trw_dir = _resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
         entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
 
+        # Prune recall receipts regardless of entry state
+        receipts_pruned = 0
+        if not dry_run:
+            receipts_pruned = _prune_recall_receipts(trw_dir)
+
         if not entries_dir.exists():
-            return {"candidates": [], "actions": 0, "method": "none"}
+            return {
+                "candidates": [], "actions": 0,
+                "receipts_pruned": receipts_pruned, "method": "none",
+            }
 
         # Collect all entries (active, resolved, obsolete) for heuristic assessment
         all_entries: list[tuple[Path, dict[str, object]]] = []
@@ -683,7 +735,10 @@ def register_learning_tools(server: FastMCP) -> None:
                 continue
 
         if not all_entries:
-            return {"candidates": [], "actions": 0, "method": "none"}
+            return {
+                "candidates": [], "actions": 0,
+                "receipts_pruned": receipts_pruned, "method": "none",
+            }
 
         candidates: list[dict[str, object]] = []
 
@@ -692,9 +747,9 @@ def register_learning_tools(server: FastMCP) -> None:
             candidates = _llm_assess_learnings(all_entries)
             method = "llm"
         else:
-            # Multi-heuristic fallback (age, status, tags)
-            candidates = _age_based_prune_candidates(all_entries)
-            method = "heuristic"
+            # Utility-based pruning with Ebbinghaus decay (PRD-CORE-004)
+            candidates = _utility_based_prune_candidates(all_entries)
+            method = "utility"
 
         # Apply changes if not dry run
         actions = 0
@@ -713,18 +768,186 @@ def register_learning_tools(server: FastMCP) -> None:
             dry_run=dry_run,
             candidates=len(candidates),
             actions=actions,
+            receipts_pruned=receipts_pruned,
             method=method,
         )
 
         return {
             "candidates": candidates,
             "actions": actions,
+            "receipts_pruned": receipts_pruned,
             "dry_run": dry_run,
             "method": method,
         }
 
 
 # --- Private helpers ---
+
+
+def _rank_by_utility(
+    matches: list[dict[str, object]],
+    query_tokens: list[str],
+    lambda_weight: float,
+) -> list[dict[str, object]]:
+    """Re-rank matched learnings by combined relevance + utility score.
+
+    Combined score = (1 - lambda) * relevance + lambda * utility
+
+    Args:
+        matches: List of matched learning entry dicts.
+        query_tokens: Lowercased query tokens for relevance scoring.
+        lambda_weight: Blend factor. 0.0 = pure relevance, 1.0 = pure utility.
+
+    Returns:
+        Sorted list (highest combined score first).
+    """
+    if not matches:
+        return matches
+
+    today = date.today()
+    scored: list[tuple[float, dict[str, object]]] = []
+
+    for entry in matches:
+        # Text relevance score (token overlap with field weighting)
+        summary = str(entry.get("summary", "")).lower()
+        detail = str(entry.get("detail", "")).lower()
+        entry_tags = entry.get("tags", [])
+        tag_text = " ".join(
+            str(t).lower() for t in entry_tags
+        ) if isinstance(entry_tags, list) else ""
+
+        if query_tokens:
+            summary_hits = sum(1 for t in query_tokens if t in summary)
+            tag_hits = sum(1 for t in query_tokens if t in tag_text)
+            detail_hits = sum(1 for t in query_tokens if t in detail)
+            weighted_hits = summary_hits * 3 + tag_hits * 2 + detail_hits * 1
+            max_possible = len(query_tokens) * 3
+            relevance = min(1.0, weighted_hits / max(max_possible, 1))
+        else:
+            relevance = 1.0  # wildcard query
+
+        # Utility score
+        q_value = float(str(entry.get("q_value", entry.get("impact", 0.5))))
+        q_obs = int(str(entry.get("q_observations", 0)))
+        base_impact = float(str(entry.get("impact", 0.5)))
+        recurrence = int(str(entry.get("recurrence", 1)))
+
+        last_accessed_str = str(entry.get("last_accessed_at", ""))
+        created_str = str(entry.get("created", ""))
+        if last_accessed_str and last_accessed_str != "None":
+            try:
+                last_acc = date.fromisoformat(last_accessed_str)
+                days_unused = (today - last_acc).days
+            except ValueError:
+                days_unused = 30
+        elif created_str:
+            try:
+                created_d = date.fromisoformat(created_str)
+                days_unused = (today - created_d).days
+            except ValueError:
+                days_unused = 30
+        else:
+            days_unused = 30
+
+        utility = compute_utility_score(
+            q_value=q_value,
+            days_since_last_access=days_unused,
+            recurrence_count=recurrence,
+            base_impact=base_impact,
+            q_observations=q_obs,
+            half_life_days=_config.learning_decay_half_life_days,
+            use_exponent=_config.learning_decay_use_exponent,
+            cold_start_threshold=_config.q_cold_start_threshold,
+        )
+
+        combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
+
+        scored.append((combined, entry))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [entry for _, entry in scored]
+
+
+def _log_recall_receipt(
+    trw_dir: Path,
+    query: str,
+    matched_ids: list[str],
+) -> None:
+    """Append a recall receipt to .trw/learnings/receipts/recall_log.jsonl.
+
+    Records which learnings were retrieved and when, enabling
+    outcome correlation in Phase 1c.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        query: The recall query string.
+        matched_ids: IDs of matched learning entries.
+    """
+    receipts_dir = trw_dir / _config.learnings_dir / _config.receipts_dir
+    _writer.ensure_dir(receipts_dir)
+    receipt_path = receipts_dir / "recall_log.jsonl"
+    record: dict[str, object] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "query": query,
+        "matched_ids": matched_ids,
+        "match_count": len(matched_ids),
+    }
+    _writer.append_jsonl(receipt_path, record)
+
+
+def _prune_recall_receipts(trw_dir: Path) -> int:
+    """Prune recall receipt log to keep only the most recent entries.
+
+    Args:
+        trw_dir: Path to .trw directory.
+
+    Returns:
+        Number of entries removed.
+    """
+    receipt_path = (
+        trw_dir / _config.learnings_dir / _config.receipts_dir / "recall_log.jsonl"
+    )
+    if not receipt_path.exists():
+        return 0
+
+    records = _reader.read_jsonl(receipt_path)
+    max_entries = _config.recall_receipt_max_entries
+
+    if len(records) <= max_entries:
+        return 0
+
+    removed = len(records) - max_entries
+    # Keep the most recent entries (last N)
+    kept = records[-max_entries:]
+
+    # Rewrite the file with only kept entries
+    import json as _json
+
+    receipt_path.write_text("", encoding="utf-8")
+    for record in kept:
+        line = _json.dumps(record, default=_json_serializer_for_receipts) + "\n"
+        with receipt_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    return removed
+
+
+def _json_serializer_for_receipts(obj: object) -> str:
+    """JSON serializer for receipt objects.
+
+    Args:
+        obj: Object to serialize.
+
+    Returns:
+        JSON-compatible string representation.
+
+    Raises:
+        TypeError: If object type is not supported.
+    """
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    msg = f"Object of type {type(obj).__name__} is not JSON serializable"
+    raise TypeError(msg)
 
 
 def _load_claude_md_template(trw_dir: Path) -> str:
@@ -758,6 +981,9 @@ def _load_claude_md_template(trw_dir: Path) -> str:
         f"{_TRW_AUTO_COMMENT}\n"
         f"{_TRW_MARKER_START}\n"
         "\n"
+        "## TRW Behavioral Protocol (Auto-Generated)\n"
+        "\n"
+        "{{behavioral_protocol}}"
         "## TRW Learnings (Auto-Generated)\n"
         "\n"
         "{{architecture_section}}"
@@ -911,12 +1137,18 @@ def _render_adherence(high_impact: list[dict[str, object]]) -> str:
     Returns:
         Markdown string with adherence directives, or empty string.
     """
-    _adherence_tags = {"compliance", "process", "framework", "self-audit"}
+    _adherence_tags = {"compliance", "process", "framework", "self-audit", "behavioral-mandate"}
     adherence_entries: list[str] = []
     for learning in high_impact:
         tags = learning.get("tags", [])
         tag_set = {str(t) for t in tags} if isinstance(tags, list) else set()
         if tag_set & _adherence_tags:
+            # behavioral-mandate entries promote summary directly
+            if "behavioral-mandate" in tag_set:
+                summary = str(learning.get("summary", ""))
+                if summary and len(summary) > 20:
+                    adherence_entries.append(summary)
+                continue
             detail = str(learning.get("detail", ""))
             for sentence in detail.split(". "):
                 lower = sentence.lower()
@@ -936,6 +1168,31 @@ def _render_adherence(high_impact: list[dict[str, object]]) -> str:
             lines.append(f"- {entry}")
             seen.add(key)
             count += 1
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _render_behavioral_protocol() -> str:
+    """Render behavioral directives from .trw/context/behavioral_protocol.yaml.
+
+    Args: None.
+
+    Returns:
+        Markdown bullet list of directives, or empty string if file missing.
+    """
+    proto_path = resolve_project_root() / _config.trw_dir / _config.context_dir / "behavioral_protocol.yaml"
+    if not proto_path.exists():
+        return ""
+    try:
+        data = _reader.read_yaml(proto_path)
+    except (StateError, ValueError, TypeError):
+        return ""
+    directives = data.get("directives", [])
+    if not directives or not isinstance(directives, list):
+        return ""
+    lines: list[str] = []
+    for directive in directives[:_BEHAVIORAL_PROTOCOL_CAP]:
+        lines.append(f"- {directive}")
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -1301,6 +1558,309 @@ def _age_based_prune_candidates(
             seen_ids.add(entry_id)
 
     return candidates
+
+
+def _utility_based_prune_candidates(
+    entries: list[tuple[Path, dict[str, object]]],
+) -> list[dict[str, object]]:
+    """Identify prune candidates using composite utility scoring.
+
+    Three tiers:
+    1. Status-based cleanup: entries already resolved/obsolete
+    2. Delete candidates: utility < delete threshold (effectively forgotten)
+    3. Obsolete candidates: utility < prune threshold and age > 14 days
+
+    Backward compatible: entries without new fields use sensible defaults.
+
+    Args:
+        entries: List of (file_path, entry_data) tuples.
+
+    Returns:
+        List of candidate dicts with id, summary, utility, and suggested_status.
+    """
+    candidates: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    today = date.today()
+
+    for _path, data in entries:
+        entry_id = str(data.get("id", ""))
+        if entry_id in seen_ids:
+            continue
+
+        created_str = str(data.get("created", ""))
+        try:
+            created = date.fromisoformat(created_str)
+        except ValueError:
+            continue
+
+        age_days = (today - created).days
+        recurrence = int(str(data.get("recurrence", 1)))
+        entry_status = str(data.get("status", "active"))
+
+        # Tier 1: Status-based cleanup (resolved/obsolete stragglers)
+        if entry_status in ("resolved", "obsolete"):
+            candidates.append({
+                "id": entry_id,
+                "summary": data.get("summary", ""),
+                "age_days": age_days,
+                "utility": 0.0,
+                "suggested_status": entry_status,
+                "reason": f"Already marked {entry_status} — cleanup candidate",
+            })
+            seen_ids.add(entry_id)
+            continue
+
+        # Extract scoring fields with backward-compatible defaults
+        q_value = float(str(data.get("q_value", data.get("impact", 0.5))))
+        q_observations = int(str(data.get("q_observations", 0)))
+        base_impact = float(str(data.get("impact", 0.5)))
+
+        last_accessed_str = str(data.get("last_accessed_at", ""))
+        if last_accessed_str and last_accessed_str != "None":
+            try:
+                last_accessed = date.fromisoformat(last_accessed_str)
+                days_since_access = (today - last_accessed).days
+            except ValueError:
+                days_since_access = age_days
+        else:
+            days_since_access = age_days
+
+        utility = compute_utility_score(
+            q_value=q_value,
+            days_since_last_access=days_since_access,
+            recurrence_count=recurrence,
+            base_impact=base_impact,
+            q_observations=q_observations,
+            half_life_days=_config.learning_decay_half_life_days,
+            use_exponent=_config.learning_decay_use_exponent,
+            cold_start_threshold=_config.q_cold_start_threshold,
+        )
+
+        # Tier 2: Delete-level utility (effectively forgotten)
+        if utility < _config.learning_utility_delete_threshold:
+            candidates.append({
+                "id": entry_id,
+                "summary": data.get("summary", ""),
+                "age_days": age_days,
+                "utility": round(utility, 3),
+                "suggested_status": "obsolete",
+                "reason": (
+                    f"Utility {utility:.3f} below delete threshold "
+                    f"({_config.learning_utility_delete_threshold}). "
+                    f"Q={q_value:.2f}, days_unused={days_since_access}, "
+                    f"recurrence={recurrence}"
+                ),
+            })
+            seen_ids.add(entry_id)
+            continue
+
+        # Tier 3: Prune-level utility (fading, older than 14 days)
+        if utility < _config.learning_utility_prune_threshold and age_days > 14:
+            candidates.append({
+                "id": entry_id,
+                "summary": data.get("summary", ""),
+                "age_days": age_days,
+                "utility": round(utility, 3),
+                "suggested_status": "obsolete",
+                "reason": (
+                    f"Utility {utility:.3f} below prune threshold "
+                    f"({_config.learning_utility_prune_threshold}) and "
+                    f"age {age_days}d > 14d. Q={q_value:.2f}, "
+                    f"days_unused={days_since_access}"
+                ),
+            })
+            seen_ids.add(entry_id)
+
+    return candidates
+
+
+# --- Outcome correlation (PRD-CORE-004 Phase 1c) ---
+
+# Reward mapping: event_type -> reward signal
+_REWARD_MAP: dict[str, float] = {
+    "tests_passed": 0.8,
+    "tests_failed": -0.3,
+    "task_complete": 0.5,
+    "phase_gate_passed": 1.0,
+    "phase_gate_failed": -0.5,
+    "wave_validation_passed": 0.7,
+}
+
+
+def _correlate_recalls(
+    trw_dir: Path,
+    window_minutes: int,
+) -> list[tuple[str, float]]:
+    """Find learning IDs from recent recall receipts within the time window.
+
+    Returns (learning_id, recency_discount) tuples. Discount ranges from
+    1.0 (just recalled) to 0.5 (at edge of window).
+
+    Args:
+        trw_dir: Path to .trw directory.
+        window_minutes: How many minutes back to look for recall receipts.
+
+    Returns:
+        List of (learning_id, discount) tuples. May contain duplicates
+        across receipts (caller should deduplicate).
+    """
+    receipt_path = (
+        trw_dir / _config.learnings_dir / _config.receipts_dir / "recall_log.jsonl"
+    )
+    if not receipt_path.exists():
+        return []
+
+    now = datetime.now(timezone.utc)
+    window_secs = window_minutes * 60
+    results: list[tuple[str, float]] = []
+
+    records = _reader.read_jsonl(receipt_path)
+    for record in records:
+        ts_str = str(record.get("ts", ""))
+        if not ts_str:
+            continue
+        try:
+            receipt_ts = datetime.fromisoformat(ts_str)
+        except ValueError:
+            continue
+
+        # Make timezone-aware if needed
+        if receipt_ts.tzinfo is None:
+            receipt_ts = receipt_ts.replace(tzinfo=timezone.utc)
+
+        elapsed_secs = (now - receipt_ts).total_seconds()
+        if elapsed_secs < 0 or elapsed_secs > window_secs:
+            continue
+
+        # Recency discount: 1.0 at t=0, 0.5 at t=window
+        discount = max(0.5, 1.0 - elapsed_secs / max(window_secs, 1))
+
+        matched_ids = record.get("matched_ids", [])
+        if isinstance(matched_ids, list):
+            for lid in matched_ids:
+                if isinstance(lid, str) and lid:
+                    results.append((lid, discount))
+
+    return results
+
+
+def _process_outcome(
+    trw_dir: Path,
+    reward: float,
+    event_label: str,
+) -> list[str]:
+    """Update Q-values for learnings correlated with a recent outcome.
+
+    Time-windowed correlation: only receipts from the last N minutes
+    (configured via learning_outcome_correlation_window_minutes) are
+    considered. Recency discount is applied to the reward.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        reward: Base reward signal (positive = helpful, negative = unhelpful).
+        event_label: Label for outcome_history (e.g., 'tests_passed').
+
+    Returns:
+        List of learning IDs whose Q-values were updated.
+    """
+    correlated = _correlate_recalls(
+        trw_dir, _config.learning_outcome_correlation_window_minutes,
+    )
+    if not correlated:
+        return []
+
+    # Deduplicate — use highest discount per learning
+    best_discount: dict[str, float] = {}
+    for lid, discount in correlated:
+        if lid not in best_discount or discount > best_discount[lid]:
+            best_discount[lid] = discount
+
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    if not entries_dir.exists():
+        return []
+
+    updated_ids: list[str] = []
+    today_iso = date.today().isoformat()
+    history_cap = _config.learning_outcome_history_cap
+
+    for lid, discount in best_discount.items():
+        found = _find_entry_by_id(entries_dir, lid)
+        if found is None:
+            continue
+
+        entry_path, data = found
+        q_old = float(str(data.get("q_value", data.get("impact", 0.5))))
+        q_obs = int(str(data.get("q_observations", 0)))
+        recurrence = int(str(data.get("recurrence", 1)))
+
+        # Apply recency-discounted reward
+        effective_reward = reward * discount
+        recurrence_bonus = _config.q_recurrence_bonus if recurrence > 1 else 0.0
+        q_new = update_q_value(
+            q_old, effective_reward,
+            alpha=_config.q_learning_rate,
+            recurrence_bonus=recurrence_bonus,
+        )
+
+        data["q_value"] = round(q_new, 4)
+        data["q_observations"] = q_obs + 1
+        data["updated"] = today_iso
+
+        # Append to outcome_history (capped)
+        history_entry = f"{today_iso}:{reward:+.1f}:{event_label}"
+        history = data.get("outcome_history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append(history_entry)
+        if len(history) > history_cap:
+            history = history[-history_cap:]
+        data["outcome_history"] = history
+
+        _writer.write_yaml(entry_path, data)
+        updated_ids.append(lid)
+
+    if updated_ids:
+        logger.info(
+            "outcome_correlation_applied",
+            reward=reward,
+            event_label=event_label,
+            updated_count=len(updated_ids),
+        )
+
+    return updated_ids
+
+
+def process_outcome_for_event(
+    event_type: str,
+) -> list[str]:
+    """Public entry point for orchestration tools to trigger outcome correlation.
+
+    Checks if the event type has a known reward mapping, then correlates
+    with recent recalls and updates Q-values. Best-effort: failures
+    are silently caught and logged.
+
+    Args:
+        event_type: The event type string (e.g., 'tests_passed').
+
+    Returns:
+        List of learning IDs updated, or empty list if no correlation.
+    """
+    # Check for direct match first
+    reward = _REWARD_MAP.get(event_type)
+
+    # Check for error keywords if no direct match
+    if reward is None and any(kw in event_type.lower() for kw in _ERROR_KEYWORDS):
+        reward = -0.3
+
+    if reward is None:
+        return []
+
+    try:
+        trw_dir = resolve_trw_dir()
+        return _process_outcome(trw_dir, reward, event_type)
+    except (StateError, OSError) as exc:
+        logger.debug("outcome_correlation_skipped", reason=str(exc))
+        return []
 
 
 def _llm_assess_learnings(  # pragma: no cover

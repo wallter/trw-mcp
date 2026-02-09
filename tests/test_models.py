@@ -59,7 +59,7 @@ class TestTRWConfig:
         assert config.consensus_quorum == 0.67
         assert config.checkpoint_secs == 600
         assert config.timebox_hours == 8
-        assert config.framework_version == "v17.1_TRW"
+        assert config.framework_version == "v18.0_TRW"
         assert config.telemetry is False
 
     def test_learning_defaults(self) -> None:
@@ -130,7 +130,7 @@ class TestRunState:
         state = RunState(run_id="test-123", task="test-task")
         assert state.run_id == "test-123"
         assert state.task == "test-task"
-        assert state.framework == "v17.1_TRW"
+        assert state.framework == "v18.0_TRW"
         assert state.status == RunStatus.ACTIVE
         assert state.phase == Phase.RESEARCH
         assert state.confidence == Confidence.MEDIUM
@@ -139,7 +139,7 @@ class TestRunState:
         state = RunState(
             run_id="20260206T120000Z-abcd1234",
             task="my-task",
-            framework="v17.1_TRW",
+            framework="v18.0_TRW",
             status=RunStatus.COMPLETE,
             phase=Phase.DELIVER,
             confidence=Confidence.HIGH,

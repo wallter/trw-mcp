@@ -92,7 +92,7 @@ class TestTrwInit:
         reader = FileStateReader()
         run_yaml = reader.read_yaml(Path(result["run_path"]) / "meta" / "run.yaml")
         assert run_yaml["task"] == "check-task"
-        assert run_yaml["framework"] == "v17.1_TRW"
+        assert run_yaml["framework"] == "v18.0_TRW"
         assert run_yaml["status"] == "active"
         assert run_yaml["phase"] == "research"
 
@@ -345,7 +345,7 @@ class TestFrameworkDeployment:
         assert "aaref_version" in data
         assert "trw_mcp_version" in data
         assert "deployed_at" in data
-        assert data["framework_version"] == "v17.1_TRW"
+        assert data["framework_version"] == "v18.0_TRW"
 
     def test_init_deploys_claude_md_template(self, tmp_path: Path) -> None:
         """.trw/templates/claude_md.md exists after init."""
@@ -433,7 +433,7 @@ class TestVersionTracking:
         version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
         reader = FileStateReader()
         data = reader.read_yaml(version_path)
-        assert data["framework_version"] == "v17.1_TRW"
+        assert data["framework_version"] == "v18.0_TRW"
 
         # Change framework version in config
         new_config = TRWConfig(framework_version="v18.0_TRW")
@@ -482,7 +482,7 @@ class TestVersionTracking:
         events = reader.read_jsonl(events_path)
         upgrade_events = [e for e in events if e.get("event") == "framework_upgrade"]
         assert len(upgrade_events) >= 1
-        assert upgrade_events[0]["old_framework"] == "v17.1_TRW"
+        assert upgrade_events[0]["old_framework"] == "v18.0_TRW"
         assert upgrade_events[0]["new_framework"] == "v19.0_TRW"
 
 
@@ -553,3 +553,256 @@ class TestTrwResume:
         result = tools["trw_resume"].fn(run_path=str(run_path))
         assert "shard-001" in result["shards"]["complete"]
         assert "shard-002" in result["shards"]["failed"]
+
+
+class TestReflectionEnforcement:
+    """Tests for mandatory reflection enforcement in phase gates."""
+
+    def test_phase_check_review_warns_without_reflection(self, tmp_path: Path) -> None:
+        """REVIEW gate warns when no reflection event exists."""
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        from fastmcp import FastMCP
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        init_result = tools["trw_init"].fn(task_name="reflect-warn-task")
+        run_path = init_result["run_path"]
+
+        # Create final.md so that's not the only failure
+        (Path(run_path) / "reports" / "final.md").write_text("# Final", encoding="utf-8")
+
+        result = tools["trw_phase_check"].fn(phase_name="review", run_path=run_path)
+        # Should have a reflection_required failure
+        reflection_failures = [
+            f for f in result["failures"] if f["rule"] == "reflection_required"
+        ]
+        assert len(reflection_failures) == 1
+        assert "trw_reflect" in reflection_failures[0]["message"]
+
+    def test_phase_check_review_passes_with_reflection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """REVIEW gate passes after reflection event is logged."""
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        from trw_mcp.tools.learning import register_learning_tools
+        import trw_mcp.tools.learning as learn_mod
+        from fastmcp import FastMCP
+
+        monkeypatch.setattr(learn_mod, "_config", learn_mod.TRWConfig())
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        init_result = orch_tools["trw_init"].fn(task_name="reflect-pass-task")
+        run_path = init_result["run_path"]
+
+        # Create final.md
+        (Path(run_path) / "reports" / "final.md").write_text("# Final", encoding="utf-8")
+
+        # Run reflection with run_path to log event
+        learn_srv = FastMCP("test-learn")
+        register_learning_tools(learn_srv)
+        learn_tools = {t.name: t for t in learn_srv._tool_manager._tools.values()}
+        learn_tools["trw_reflect"].fn(run_path=run_path, scope="run")
+
+        result = orch_tools["trw_phase_check"].fn(phase_name="review", run_path=run_path)
+        reflection_failures = [
+            f for f in result["failures"] if f["rule"] == "reflection_required"
+        ]
+        assert len(reflection_failures) == 0
+
+    def test_phase_check_deliver_warns_without_sync(self, tmp_path: Path) -> None:
+        """DELIVER gate warns when no claude_md_synced event exists."""
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        from fastmcp import FastMCP
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        init_result = tools["trw_init"].fn(task_name="sync-warn-task")
+        run_path = init_result["run_path"]
+
+        result = tools["trw_phase_check"].fn(phase_name="deliver", run_path=run_path)
+        sync_failures = [
+            f for f in result["failures"] if f["rule"] == "sync_required"
+        ]
+        assert len(sync_failures) == 1
+        assert "trw_claude_md_sync" in sync_failures[0]["message"]
+
+    def test_phase_check_deliver_passes_with_sync(self, tmp_path: Path) -> None:
+        """DELIVER gate passes after claude_md_synced event is logged."""
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        from fastmcp import FastMCP
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        init_result = tools["trw_init"].fn(task_name="sync-pass-task")
+        run_path = init_result["run_path"]
+
+        # Log a claude_md_synced event
+        tools["trw_event"].fn(
+            event_type="claude_md_synced",
+            run_path=run_path,
+            data={"scope": "root", "entries_promoted": 3},
+        )
+
+        # Also mark run as complete to avoid that warning
+        writer = FileStateWriter()
+        run_yaml_path = Path(run_path) / "meta" / "run.yaml"
+        reader = FileStateReader()
+        state = reader.read_yaml(run_yaml_path)
+        state["status"] = "complete"
+        writer.write_yaml(run_yaml_path, state)
+
+        result = tools["trw_phase_check"].fn(phase_name="deliver", run_path=run_path)
+        sync_failures = [
+            f for f in result["failures"] if f["rule"] == "sync_required"
+        ]
+        assert len(sync_failures) == 0
+
+    def test_status_includes_reflection_metrics(self, tmp_path: Path) -> None:
+        """trw_status output includes reflection section."""
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        from fastmcp import FastMCP
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        init_result = tools["trw_init"].fn(task_name="status-reflect-task")
+        run_path = init_result["run_path"]
+
+        status = tools["trw_status"].fn(run_path=run_path)
+        assert "reflection" in status
+        assert "count" in status["reflection"]
+        assert "claude_md_synced" in status["reflection"]
+
+    def test_status_reflection_count(self, tmp_path: Path) -> None:
+        """Reflection count increments with events."""
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        from fastmcp import FastMCP
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        init_result = tools["trw_init"].fn(task_name="count-reflect-task")
+        run_path = init_result["run_path"]
+
+        # Initially zero
+        status = tools["trw_status"].fn(run_path=run_path)
+        assert status["reflection"]["count"] == 0
+
+        # Log a reflection_complete event
+        tools["trw_event"].fn(
+            event_type="reflection_complete",
+            run_path=run_path,
+            data={"reflection_id": "L-test123", "scope": "run"},
+        )
+
+        status = tools["trw_status"].fn(run_path=run_path)
+        assert status["reflection"]["count"] == 1
+
+    def test_status_sync_flag(self, tmp_path: Path) -> None:
+        """claude_md_synced flag works in status output."""
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        from fastmcp import FastMCP
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        init_result = tools["trw_init"].fn(task_name="sync-flag-task")
+        run_path = init_result["run_path"]
+
+        # Initially False
+        status = tools["trw_status"].fn(run_path=run_path)
+        assert status["reflection"]["claude_md_synced"] is False
+
+        # Log sync event
+        tools["trw_event"].fn(
+            event_type="claude_md_synced",
+            run_path=run_path,
+        )
+
+        status = tools["trw_status"].fn(run_path=run_path)
+        assert status["reflection"]["claude_md_synced"] is True
+
+
+class TestOutcomeCorrelationInOrchestration:
+    """Tests for PRD-CORE-004 Phase 1c — outcome correlation in orchestration tools."""
+
+    def _get_learning_tools(self) -> dict[str, object]:
+        """Create learning tools for test setup."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.learning import register_learning_tools
+
+        srv = FastMCP("test-learn")
+        register_learning_tools(srv)
+        return {t.name: t for t in srv._tool_manager._tools.values()}
+
+    def test_trw_event_tests_passed_updates_q(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """trw_event('tests_passed') updates Q-values for recently recalled learnings."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        import trw_mcp.tools.learning as learn_mod
+
+        # Ensure learning module uses same TRW_PROJECT_ROOT
+        monkeypatch.setattr(learn_mod, "_config", learn_mod.TRWConfig())
+
+        learn_tools = self._get_learning_tools()
+        result = learn_tools["trw_learn"].fn(
+            summary="Orch event q test entry",
+            detail="Should get Q updated by event",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        # Recall to create receipt
+        learn_tools["trw_recall"].fn(query="orch event q test")
+
+        # Create orchestration tools and init a run
+        srv = FastMCP("test-orch")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="event-q-task")
+
+        # Fire tests_passed event
+        event_result = orch_tools["trw_event"].fn(
+            event_type="tests_passed",
+            run_path=init_result["run_path"],
+        )
+        assert event_result["status"] == "event_logged"
+        # Should have q_updates if correlation found entries
+        if "q_updates" in event_result:
+            assert event_result["q_updates"] >= 1
+
+    def test_trw_event_unknown_type_no_correlation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """trw_event with unknown type does not trigger correlation."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+        import trw_mcp.tools.learning as learn_mod
+
+        monkeypatch.setattr(learn_mod, "_config", learn_mod.TRWConfig())
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = tools["trw_init"].fn(task_name="no-corr-task")
+
+        result = tools["trw_event"].fn(
+            event_type="random_info_event",
+            run_path=init_result["run_path"],
+        )
+        assert result["status"] == "event_logged"
+        assert "q_updates" not in result

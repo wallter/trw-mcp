@@ -6,7 +6,6 @@ process as executable MCP tools.
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import date
 from pathlib import Path
@@ -29,7 +28,14 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResult,
 )
+from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
+from trw_mcp.state.prd_utils import (
+    parse_frontmatter as _parse_frontmatter_impl,
+    extract_sections as _extract_sections_impl,
+    detect_ambiguity as _detect_ambiguity_impl,
+    extract_prd_refs,
+)
 from trw_mcp.state.validation import validate_prd_quality
 
 logger = structlog.get_logger()
@@ -91,12 +97,8 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Auto-increment sequence when using default value (1)
         if sequence == 1:
-            env_root = os.environ.get("TRW_PROJECT_ROOT")
-            project_root_for_seq = (
-                Path(env_root).resolve() if env_root else Path.cwd().resolve()
-            )
             prds_dir_for_seq = (
-                project_root_for_seq / "docs" / "requirements-aare-f" / "prds"
+                resolve_project_root() / "docs" / "requirements-aare-f" / "prds"
             )
             sequence = _next_sequence(prds_dir_for_seq, category.upper())
 
@@ -114,6 +116,15 @@ def register_requirements_tools(server: FastMCP) -> None:
             "P0": 0.9, "P1": 0.7, "P2": 0.6, "P3": 0.5,
         }
         base_confidence = _priority_confidence.get(priority, 0.7)
+
+        # Generate PRD body from template (populates version cache)
+        body = _generate_prd_body(
+            prd_id, title, input_text, category,
+            priority=priority, confidence=base_confidence,
+        )
+
+        # Extract SLOs from prefill for frontmatter
+        prefill_slos = _extract_prefill(input_text).get("slos", [])
 
         # Build frontmatter
         frontmatter = PRDFrontmatter(
@@ -142,12 +153,9 @@ def register_requirements_tools(server: FastMCP) -> None:
                 created=date.today(),
                 updated=date.today(),
             ),
-        )
-
-        # Generate PRD body from template
-        body = _generate_prd_body(
-            prd_id, title, input_text, category,
-            priority=priority, confidence=base_confidence,
+            template_version=_CACHED_TEMPLATE_VERSION,
+            wave_source=None,
+            slos=prefill_slos,
         )
 
         # Combine frontmatter + body
@@ -156,8 +164,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Save to project if .trw/ exists
         output_path = ""
-        env_root = os.environ.get("TRW_PROJECT_ROOT")
-        project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+        project_root = resolve_project_root()
         prds_dir = project_root / "docs" / "requirements-aare-f" / "prds"
         if prds_dir.exists() or (project_root / _config.trw_dir).exists():
             _writer.ensure_dir(prds_dir)
@@ -265,8 +272,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             prd_path: Path to specific PRD file, or None to scan all PRDs.
             source_dir: Source directory to check for implementations.
         """
-        env_root = os.environ.get("TRW_PROJECT_ROOT")
-        project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+        project_root = resolve_project_root()
 
         # Collect PRDs
         prd_files: list[Path] = []
@@ -357,74 +363,227 @@ def register_requirements_tools(server: FastMCP) -> None:
 def _parse_frontmatter(content: str) -> dict[str, object]:
     """Parse YAML frontmatter from markdown content.
 
-    Args:
-        content: Markdown content with optional YAML frontmatter between --- delimiters.
-
-    Returns:
-        Parsed YAML frontmatter dictionary, or empty dict if none found.
+    Delegates to :func:`trw_mcp.state.prd_utils.parse_frontmatter`.
     """
-    frontmatter_pattern = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
-    match = frontmatter_pattern.match(content)
-    if not match:
-        return {}
-
-    from ruamel.yaml import YAML
-    yaml = YAML()
-    try:
-        data = yaml.load(match.group(1))
-        if isinstance(data, dict):
-            # Flatten nested 'prd' key if present (AARE-F template nests under 'prd')
-            if "prd" in data and isinstance(data["prd"], dict):
-                prd_data: dict[str, object] = dict(data["prd"])
-                # Merge other top-level keys
-                for key, val in data.items():
-                    if key != "prd":
-                        prd_data[key] = val
-                return prd_data
-            return dict(data)
-    except Exception:
-        pass
-    return {}
+    return _parse_frontmatter_impl(content)
 
 
 def _extract_sections(content: str) -> list[str]:
     """Extract ## section headings from PRD markdown content.
 
-    Args:
-        content: Markdown content.
-
-    Returns:
-        List of section heading names found.
+    Delegates to :func:`trw_mcp.state.prd_utils.extract_sections`.
     """
-    # Match ## N. Section Name pattern
-    heading_pattern = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
-    matches = heading_pattern.findall(content)
-    return matches
+    return _extract_sections_impl(content)
 
 
 def _detect_ambiguity(content: str) -> list[str]:
     """Detect ambiguous terms in PRD content.
 
-    Args:
-        content: PRD markdown content.
+    Delegates to :func:`trw_mcp.state.prd_utils.detect_ambiguity`.
+    """
+    return _detect_ambiguity_impl(content)
+
+
+_CACHED_TEMPLATE_BODY: str | None = None
+_CACHED_TEMPLATE_VERSION: str | None = None
+
+_TEMPLATE_VERSION_RE = re.compile(r"\*Template version:\s*([\d.]+)")
+_FILE_REF_RE = re.compile(r"[\w/]+\.py")
+
+
+def _load_template_body() -> str:
+    """Load PRD template body from data/prd_template.md, cached.
+
+    Strips YAML frontmatter (everything between the first ``---`` pair)
+    and caches both the body and the extracted template version.
 
     Returns:
-        List of ambiguous terms found.
+        Template body as a string (markdown after frontmatter).
     """
-    ambiguous_patterns = [
-        "fast", "quick", "efficient", "user-friendly", "robust",
-        "scalable", "flexible", "easy", "simple", "intuitive",
-        "adequate", "sufficient", "as appropriate", "etc.",
-        "and so on", "various", "multiple", "many",
-    ]
-    found: list[str] = []
-    content_lower = content.lower()
-    for term in ambiguous_patterns:
-        # Match whole words only
-        pattern = rf"\b{re.escape(term)}\b"
-        if re.search(pattern, content_lower):
-            found.append(term)
-    return found
+    global _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION  # noqa: PLW0603
+
+    if _CACHED_TEMPLATE_BODY is not None:
+        return _CACHED_TEMPLATE_BODY
+
+    template_path = Path(__file__).parent.parent / "data" / "prd_template.md"
+
+    if not template_path.exists():
+        logger.warning("prd_template_not_found", path=str(template_path))
+        _CACHED_TEMPLATE_BODY = _FALLBACK_BODY
+        _CACHED_TEMPLATE_VERSION = None
+        return _CACHED_TEMPLATE_BODY
+
+    raw = template_path.read_text(encoding="utf-8")
+
+    # Strip YAML frontmatter (between first --- pair)
+    from trw_mcp.state.prd_utils import _FRONTMATTER_RE
+
+    fm_match = _FRONTMATTER_RE.match(raw)
+    if fm_match:
+        body = raw[fm_match.end():].lstrip("\n")
+    else:
+        body = raw
+
+    # Extract template version from footer
+    ver_match = _TEMPLATE_VERSION_RE.search(body)
+    _CACHED_TEMPLATE_VERSION = ver_match.group(1) if ver_match else None
+
+    _CACHED_TEMPLATE_BODY = body
+    return _CACHED_TEMPLATE_BODY
+
+
+def _substitute_template(
+    body: str,
+    prd_id: str,
+    title: str,
+    category: str,
+    sequence: int,
+    priority: str,
+    confidence: float,
+) -> str:
+    """Replace template variables with actual values.
+
+    Uses explicit ``str.replace()`` for the known variables to avoid
+    false positives on prose ``{...}`` placeholders in the template.
+
+    Args:
+        body: Raw template body.
+        prd_id: Full PRD identifier (e.g. ``PRD-CORE-007``).
+        title: PRD title.
+        category: PRD category (e.g. ``CORE``).
+        sequence: Sequence number.
+        priority: Priority string (e.g. ``P1``).
+        confidence: Base confidence score.
+
+    Returns:
+        Template body with variables substituted.
+    """
+    seq_str = f"{sequence:03d}"
+    result = body
+    result = result.replace("{CATEGORY}", category)
+    result = result.replace("{SEQUENCE}", seq_str)
+    result = result.replace("{CAT}", category)
+    result = result.replace("{SEQ}", seq_str)
+    result = result.replace("{Title}", title)
+
+    # Set dynamic Quick Reference values
+    result = result.replace(
+        "- **Status**: Draft | Review | Approved | Implemented",
+        "- **Status**: Draft",
+    )
+    result = result.replace(
+        "- **Priority**: P0 | P1 | P2 | P3",
+        f"- **Priority**: {priority}",
+    )
+    result = result.replace(
+        "- **Evidence**: Strong | Moderate | Limited | Theoretical",
+        "- **Evidence**: Moderate",
+    )
+    result = result.replace(
+        "- **Implementation Confidence**: 0.8",
+        f"- **Implementation Confidence**: {confidence}",
+    )
+
+    return result
+
+
+def _extract_prefill(input_text: str) -> dict[str, list[str]]:
+    """Extract structured prefill data from input text.
+
+    Best-effort extraction — never raises on failures.
+
+    Args:
+        input_text: User-supplied feature request / requirements text.
+
+    Returns:
+        Dict with keys ``file_refs``, ``prd_deps``, ``goals``, ``slos``.
+    """
+    prefill: dict[str, list[str]] = {
+        "file_refs": [],
+        "prd_deps": [],
+        "goals": [],
+        "slos": [],
+    }
+
+    try:
+        prefill["file_refs"] = sorted(set(_FILE_REF_RE.findall(input_text)))
+    except Exception:
+        pass
+
+    try:
+        prefill["prd_deps"] = extract_prd_refs(input_text)
+    except Exception:
+        pass
+
+    # Extract goal-like sentences
+    _GOAL_KW = re.compile(
+        r"\b(goal|objective|achieve|deliver)\b", re.IGNORECASE,
+    )
+    _SLO_KW = re.compile(
+        r"\b(slo|latency|availability|throughput)\b", re.IGNORECASE,
+    )
+    try:
+        for sentence in re.split(r"[.\n]", input_text):
+            stripped = sentence.strip()
+            if not stripped:
+                continue
+            if _GOAL_KW.search(stripped):
+                prefill["goals"].append(stripped)
+            if _SLO_KW.search(stripped):
+                prefill["slos"].append(stripped)
+    except Exception:
+        pass
+
+    return prefill
+
+
+def _apply_prefill(
+    body: str,
+    prefill: dict[str, list[str]],
+    input_text: str,
+) -> str:
+    """Apply prefill data into the template body.
+
+    Best-effort insertion — no exceptions on failures.
+
+    Args:
+        body: Template body (after variable substitution).
+        prefill: Extracted prefill data from :func:`_extract_prefill`.
+        input_text: Original input text for background section.
+
+    Returns:
+        Template body with prefill content inserted.
+    """
+    # Insert input_text into Background section
+    body = body.replace(
+        "{Brief context explaining why this feature/fix is needed}",
+        input_text,
+    )
+
+    # Insert file refs into Key Files table
+    file_refs = prefill.get("file_refs", [])
+    if file_refs:
+        file_rows = "\n".join(
+            f"| `{f}` | <!-- changes needed --> |" for f in file_refs
+        )
+        body = body.replace(
+            "| `path/to/file.py` | {Description of changes} |",
+            file_rows,
+        )
+
+    # Insert PRD deps into Dependencies table
+    prd_deps = prefill.get("prd_deps", [])
+    if prd_deps:
+        dep_rows = "\n".join(
+            f"| DEP-{i:03d} | {dep} | Pending | Yes |"
+            for i, dep in enumerate(prd_deps, 1)
+        )
+        body = body.replace(
+            "| DEP-001 | {Dependency} | Resolved/Pending | Yes/No |",
+            dep_rows,
+        )
+
+    return body
 
 
 def _generate_prd_body(
@@ -435,10 +594,13 @@ def _generate_prd_body(
     priority: str = "P1",
     confidence: float = 0.7,
 ) -> str:
-    """Generate PRD body content from input text.
+    """Generate PRD body content from template + input text.
+
+    Loads the canonical template from ``data/prd_template.md``, substitutes
+    variables, and prefills content from the input text.
 
     Args:
-        prd_id: PRD identifier.
+        prd_id: PRD identifier (e.g. ``PRD-CORE-007``).
         title: PRD title.
         input_text: Source text for the PRD.
         category: PRD category.
@@ -446,150 +608,39 @@ def _generate_prd_body(
         confidence: Base confidence score derived from priority.
 
     Returns:
-        Markdown body content with 12 sections.
+        Markdown body content with all template sections.
     """
-    return f"""# {prd_id}: {title}
+    body = _load_template_body()
+    seq = int(prd_id.split("-")[-1])
+    body = _substitute_template(body, prd_id, title, category, seq, priority, confidence)
+    prefill = _extract_prefill(input_text)
+    body = _apply_prefill(body, prefill, input_text)
+    return body
+
+
+# Fallback body used when data/prd_template.md is missing
+_FALLBACK_BODY = """# PRD-CATEGORY-SEQ: Title
 
 **Quick Reference**:
 - **Status**: Draft
-- **Priority**: {priority}
+- **Priority**: P1
 - **Evidence**: Moderate
-- **Implementation Confidence**: {confidence}
+- **Implementation Confidence**: 0.7
 
 ---
 
 ## 1. Problem Statement
-
-### Background
-{input_text}
-
-### Problem
-<!-- Specify the core problem being solved -->
-
-### Impact
-<!-- Who is affected and how -->
-
----
-
 ## 2. Goals & Non-Goals
-
-### Goals
-- [ ] <!-- Goal 1 - specific, measurable -->
-
-### Non-Goals
-- <!-- What this PRD explicitly does NOT address -->
-
----
-
 ## 3. User Stories
-
-### US-001: Primary User Story
-**As a** user
-**I want** <!-- capability -->
-**So that** <!-- benefit -->
-
-**Confidence Expectation**: medium
-**Evidence Required**: <!-- What validates this story -->
-**Uncertainty Notes**: <!-- Known unknowns -->
-
-**Acceptance Criteria**:
-- [ ] Given <!-- context -->, When <!-- action -->, Then <!-- outcome --> `[confidence: 0.8]`
-
----
-
 ## 4. Functional Requirements
-
-### {prd_id}-FR01: <!-- Requirement Title -->
-**Priority**: Must Have
-**Description**: <!-- Detailed description -->
-**Acceptance**: <!-- Testable criteria -->
-**Dependencies**: None
-**Confidence**: 0.8
-
----
-
 ## 5. Non-Functional Requirements
-
-### {prd_id}-NFR01: Performance
-- <!-- Response time targets -->
-
-### {prd_id}-NFR02: Reliability
-- <!-- Error handling requirements -->
-
----
-
 ## 6. Technical Approach
-
-### Architecture Impact
-<!-- How this affects existing architecture -->
-
-### Key Files
-| File | Changes |
-|------|---------|
-| <!-- path --> | <!-- description --> |
-
----
-
 ## 7. Test Strategy
-
-### Unit Tests
-- [ ] <!-- Test case -->
-
-### Integration Tests
-- [ ] <!-- Integration test -->
-
----
-
 ## 8. Rollout Plan
-
-### Phase 1: Development
-- <!-- Tasks -->
-
-### Phase 2: Testing
-- <!-- Tasks -->
-
-### Rollback Plan
-<!-- How to revert if issues arise -->
-
----
-
 ## 9. Success Metrics
-
-| Metric | Target | Measurement Method | Confidence |
-|--------|--------|-------------------|------------|
-| <!-- Metric --> | <!-- Target --> | <!-- Method --> | 0.8 |
-
----
-
 ## 10. Dependencies & Risks
-
-### Dependencies
-| ID | Description | Status | Blocking |
-|----|-------------|--------|----------|
-| DEP-001 | <!-- Dependency --> | Pending | No |
-
-### Risks
-| ID | Risk | Probability | Impact | Mitigation | Residual Risk |
-|----|------|-------------|--------|------------|---------------|
-| RISK-001 | <!-- Risk --> | Low | Medium | <!-- Mitigation --> | Low |
-
----
-
 ## 11. Open Questions
-
-- [ ] <!-- Question --> `[blocking: no]`
-
----
-
 ## 12. Traceability Matrix
-
-| Requirement | Source | Implementation | Test | Status |
-|-------------|--------|----------------|------|--------|
-| FR01 | Input text | <!-- impl --> | <!-- test --> | Pending |
-
-### Knowledge Entry Links
-- **Implements**: <!-- KE entries -->
-- **Informs**: <!-- KE entries that informed this PRD -->
 """
 
 

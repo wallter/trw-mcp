@@ -68,7 +68,7 @@ class TestFrameworkVersionsResource:
         fw_dir.mkdir(parents=True)
         writer = FileStateWriter()
         writer.write_yaml(fw_dir / "VERSION.yaml", {
-            "framework_version": "v17.1_TRW",
+            "framework_version": "v18.0_TRW",
             "aaref_version": "v1.1.0",
             "trw_mcp_version": "0.2.0",
             "deployed_at": "2026-02-07T12:00:00+00:00",
@@ -76,7 +76,7 @@ class TestFrameworkVersionsResource:
 
         resources = _get_resources()
         result = resources["trw://framework/versions"].fn()
-        assert "v17.1_TRW" in result
+        assert "v18.0_TRW" in result
         assert "v1.1.0" in result
 
 

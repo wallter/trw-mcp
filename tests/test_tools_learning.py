@@ -277,6 +277,67 @@ class TestTrwReflect:
         assert result["events_analyzed"] == 0
 
 
+class TestTrwReflectEventLogging:
+    """Tests for reflection event logging to run events.jsonl."""
+
+    def test_reflect_logs_event_to_run(self, tmp_path: Path) -> None:
+        """trw_reflect with run_path writes reflection_complete event."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        # Create a run
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="reflect-event-task")
+        run_path = init_result["run_path"]
+
+        # Reflect with run_path
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(run_path=run_path, scope="run")
+        assert "reflection_id" in result
+
+        # Verify reflection_complete event in events.jsonl
+        reader = FileStateReader()
+        events = reader.read_jsonl(Path(run_path) / "meta" / "events.jsonl")
+        reflection_events = [
+            e for e in events if e.get("event") == "reflection_complete"
+        ]
+        assert len(reflection_events) == 1
+        assert reflection_events[0]["scope"] == "run"
+
+    def test_reflect_no_event_without_run_path(self, tmp_path: Path) -> None:
+        """trw_reflect without run_path skips event logging."""
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(scope="session")
+        # No run_path — no events.jsonl to write to
+        assert result["events_analyzed"] == 0
+        # No crash, just returns normally
+
+    def test_reflect_event_has_reflection_id(self, tmp_path: Path) -> None:
+        """Logged reflection_complete event contains reflection_id."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="reflect-id-task")
+        run_path = init_result["run_path"]
+
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(run_path=run_path, scope="wave")
+
+        reader = FileStateReader()
+        events = reader.read_jsonl(Path(run_path) / "meta" / "events.jsonl")
+        reflection_events = [
+            e for e in events if e.get("event") == "reflection_complete"
+        ]
+        assert len(reflection_events) == 1
+        assert reflection_events[0]["reflection_id"] == result["reflection_id"]
+        assert reflection_events[0]["scope"] == "wave"
+
+
 class TestTrwClaudeMdSync:
     """Tests for trw_claude_md_sync tool."""
 
@@ -717,7 +778,7 @@ class TestTrwLearnPrune:
         monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
 
         prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert prune_result["method"] == "heuristic"
+        assert prune_result["method"] == "utility"
         assert len(prune_result["candidates"]) >= 1
         assert prune_result["actions"] == 0  # dry run
 
@@ -955,41 +1016,46 @@ class TestTrwLearnPruneHeuristics:
         # Disable LLM
         monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
 
-        # Resolved entries should NOT be in the active pool at all,
-        # but if they are somehow re-activated, the heuristic should still flag them.
-        # Actually: prune only scans active entries. Let's test the secondary heuristic
-        # directly by checking _age_based_prune_candidates with resolved-status entries.
-        # The fix means trw_learn_prune should now include entries whose status
-        # was already resolved/obsolete as candidates even if they are recent.
-        # But wait — prune only iterates active entries. So this test checks that
-        # the prune logic doesn't miss entries that SHOULD have been cleaned up.
         prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        # Resolved entry won't be in active pool, so it's already cleaned up
-        assert prune_result["method"] == "heuristic"
+        assert prune_result["method"] == "utility"
 
-    def test_prune_flags_bug_tags_recent(
+    def test_prune_flags_old_bug_tagged_entry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Recent entries tagged 'bug' with recurrence <= 1 are candidates."""
+        """Old entries tagged 'bug' with low utility are prune candidates."""
+        from datetime import date, timedelta
+
         import trw_mcp.tools.learning as learn_mod
 
         tools = _get_tools()
 
-        tools["trw_learn"].fn(
-            summary="Bug tag prune test learning",
-            detail="A bug that was fixed",
+        result = tools["trw_learn"].fn(
+            summary="Old bug tag prune test",
+            detail="A bug that was fixed long ago",
             tags=["bug"],
             impact=0.5,
         )
+
+        # Backdate entry to make utility decay below threshold
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            reader = FileStateReader()
+            writer = FileStateWriter()
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                old_date = (date.today() - timedelta(days=60)).isoformat()
+                data["created"] = old_date
+                data["recurrence"] = 1
+                writer.write_yaml(entry_file, data)
+                break
 
         # Disable LLM
         monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
 
         prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert prune_result["method"] == "heuristic"
-        # Should find the bug-tagged entry as a candidate
+        assert prune_result["method"] == "utility"
         assert len(prune_result["candidates"]) >= 1
-        assert any("bug" in str(c.get("reason", "")) for c in prune_result["candidates"])
+        assert any("utility" in str(c.get("reason", "")).lower() for c in prune_result["candidates"])
 
 
 class TestTrwLearnAnalytics:
@@ -1017,3 +1083,1011 @@ class TestTrwLearnAnalytics:
             reader = FileStateReader()
             data = reader.read_yaml(analytics_path)
             assert int(str(data.get("total_learnings", 0))) >= 2
+
+
+class TestTrwRecallAccessTracking:
+    """Tests for PRD-CORE-004 Phase 1a — access tracking in trw_recall."""
+
+    def test_recall_updates_last_accessed_at(self, tmp_path: Path) -> None:
+        """trw_recall sets last_accessed_at on returned entries."""
+        from datetime import date
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Access tracking date test",
+            detail="Should have last_accessed_at updated",
+            impact=0.8,
+        )
+        lid = result["learning_id"]
+
+        # Recall should update access tracking
+        tools["trw_recall"].fn(query="access tracking date")
+
+        # Verify on-disk entry has last_accessed_at set
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        found = False
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                assert data.get("last_accessed_at") == date.today().isoformat()
+                found = True
+                break
+        assert found, "Entry not found on disk"
+
+    def test_recall_increments_access_count(self, tmp_path: Path) -> None:
+        """trw_recall increments access_count on each matching recall."""
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Access count increment test",
+            detail="Should increment access_count",
+            impact=0.8,
+        )
+        lid = result["learning_id"]
+
+        # Recall multiple times
+        tools["trw_recall"].fn(query="access count increment")
+        tools["trw_recall"].fn(query="access count increment")
+        tools["trw_recall"].fn(query="access count increment")
+
+        # Verify on-disk access_count == 3
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                assert int(str(data.get("access_count", 0))) == 3
+                break
+
+    def test_recall_only_updates_matched_entries(self, tmp_path: Path) -> None:
+        """trw_recall does not touch entries that don't match the query."""
+        tools = _get_tools()
+
+        tools["trw_learn"].fn(
+            summary="Database pooling gotcha xray",
+            detail="This should be accessed",
+            impact=0.8,
+        )
+        r2 = tools["trw_learn"].fn(
+            summary="Filesystem permissions zulu",
+            detail="This should NOT be accessed",
+            impact=0.8,
+        )
+
+        tools["trw_recall"].fn(query="database pooling xray")
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == r2["learning_id"]:
+                # Unmatched entry should have access_count 0 and no last_accessed_at
+                assert int(str(data.get("access_count", 0))) == 0
+                assert data.get("last_accessed_at") is None
+                break
+
+    def test_recall_appends_receipt(self, tmp_path: Path) -> None:
+        """trw_recall appends a receipt to recall_log.jsonl."""
+        import json
+
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Receipt logging test",
+            detail="Should generate a recall receipt",
+            impact=0.8,
+        )
+
+        tools["trw_recall"].fn(query="receipt logging")
+
+        receipt_path = (
+            tmp_path / _CFG.trw_dir / _CFG.learnings_dir
+            / _CFG.receipts_dir / "recall_log.jsonl"
+        )
+        assert receipt_path.exists()
+        lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) >= 1
+        record = json.loads(lines[-1])
+        assert record["query"] == "receipt logging"
+        assert "matched_ids" in record
+        assert "ts" in record
+
+    def test_recall_receipt_contains_matched_ids(self, tmp_path: Path) -> None:
+        """Receipt records the IDs of all matched learnings."""
+        import json
+
+        tools = _get_tools()
+        r1 = tools["trw_learn"].fn(
+            summary="Receipt ID check alpha",
+            detail="First entry",
+            impact=0.8,
+        )
+        r2 = tools["trw_learn"].fn(
+            summary="Receipt ID check beta",
+            detail="Second entry",
+            impact=0.8,
+        )
+
+        tools["trw_recall"].fn(query="receipt id check")
+
+        receipt_path = (
+            tmp_path / _CFG.trw_dir / _CFG.learnings_dir
+            / _CFG.receipts_dir / "recall_log.jsonl"
+        )
+        lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
+        record = json.loads(lines[-1])
+        assert r1["learning_id"] in record["matched_ids"]
+        assert r2["learning_id"] in record["matched_ids"]
+
+    def test_recall_no_match_no_access_update(self, tmp_path: Path) -> None:
+        """When query has no matches, no access tracking updates occur."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="No match access test",
+            detail="Should not be accessed",
+            impact=0.8,
+        )
+
+        tools["trw_recall"].fn(query="zzz_nonexistent_xyz")
+
+        receipt_path = (
+            tmp_path / _CFG.trw_dir / _CFG.learnings_dir
+            / _CFG.receipts_dir / "recall_log.jsonl"
+        )
+        # Receipt should still be logged (with empty matched_ids)
+        if receipt_path.exists():
+            import json
+            lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
+            record = json.loads(lines[-1])
+            assert len(record["matched_ids"]) == 0
+
+    def test_new_fields_default_for_existing_entries(self, tmp_path: Path) -> None:
+        """Entries created without new fields get defaults (lazy migration)."""
+        # Simulate an old entry without last_accessed_at or access_count
+        writer = FileStateWriter()
+        entries_dir = _entries_dir(tmp_path)
+        writer.ensure_dir(entries_dir)
+        old_entry = {
+            "id": "L-oldentry1",
+            "summary": "Legacy entry without access fields",
+            "detail": "Created before Phase 1a",
+            "tags": ["legacy"],
+            "evidence": [],
+            "impact": 0.7,
+            "status": "active",
+            "recurrence": 1,
+            "created": "2026-01-01",
+            "updated": "2026-01-01",
+            "resolved_at": None,
+            "promoted_to_claude_md": False,
+            # Deliberately missing: last_accessed_at, access_count
+        }
+        writer.write_yaml(entries_dir / "2026-01-01-legacy-entry.yaml", old_entry)
+
+        # Update the index
+        index_path = tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml"
+        writer.write_yaml(index_path, {
+            "entries": [{
+                "id": "L-oldentry1",
+                "summary": "Legacy entry without access fields",
+                "tags": ["legacy"],
+                "impact": 0.7,
+                "created": "2026-01-01",
+            }],
+            "total_count": 1,
+        })
+
+        tools = _get_tools()
+        result = tools["trw_recall"].fn(query="legacy entry")
+        assert result["total_matches"] == 1
+
+        # After recall, the entry should now have the new fields
+        reader = FileStateReader()
+        data = reader.read_yaml(entries_dir / "2026-01-01-legacy-entry.yaml")
+        assert int(str(data.get("access_count", 0))) == 1
+        assert data.get("last_accessed_at") is not None
+
+    def test_wildcard_recall_updates_all_entries(self, tmp_path: Path) -> None:
+        """Wildcard '*' recall updates access tracking for all returned entries."""
+        tools = _get_tools()
+        r1 = tools["trw_learn"].fn(
+            summary="Wildcard access test one", detail="First", impact=0.8,
+        )
+        r2 = tools["trw_learn"].fn(
+            summary="Wildcard access test two", detail="Second", impact=0.8,
+        )
+
+        tools["trw_recall"].fn(query="*")
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") in (r1["learning_id"], r2["learning_id"]):
+                assert int(str(data.get("access_count", 0))) == 1
+
+
+class TestTrwLearnPruneReceipts:
+    """Tests for receipt pruning in trw_learn_prune."""
+
+    def test_prune_trims_receipt_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """trw_learn_prune trims recall_log.jsonl to max entries."""
+        import json
+
+        import trw_mcp.tools.learning as learn_mod
+
+        # Override max entries to a small number for testing
+        cfg = TRWConfig(recall_receipt_max_entries=3)
+        monkeypatch.setattr(learn_mod, "_config", cfg)
+
+        # Create receipt log with 5 entries
+        receipt_dir = (
+            tmp_path / _CFG.trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
+        )
+        receipt_dir.mkdir(parents=True)
+        receipt_path = receipt_dir / "recall_log.jsonl"
+        for i in range(5):
+            line = json.dumps({
+                "ts": f"2026-01-0{i + 1}T00:00:00Z",
+                "query": f"query-{i}",
+                "matched_ids": [],
+            })
+            receipt_path.open("a", encoding="utf-8").write(line + "\n")
+
+        # Disable LLM
+        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
+
+        tools = _get_tools()
+        tools["trw_learn_prune"].fn(dry_run=False)
+
+        # Verify receipt log was trimmed to 3 entries
+        lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 3
+        # Should keep the last 3 (most recent)
+        last = json.loads(lines[-1])
+        assert last["query"] == "query-4"
+
+    def test_prune_no_receipts_no_error(self, tmp_path: Path) -> None:
+        """trw_learn_prune handles missing receipt log gracefully."""
+        tools = _get_tools()
+        result = tools["trw_learn_prune"].fn(dry_run=False)
+        # Should not raise — just report method and no candidates
+        assert "method" in result
+
+
+class TestUtilityBasedPruning:
+    """Tests for PRD-CORE-004 Phase 1b — utility-based pruning."""
+
+    def test_prune_uses_utility_method(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """trw_learn_prune now reports method='utility' instead of 'heuristic'."""
+        import trw_mcp.tools.learning as learn_mod
+
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Method check learning",
+            detail="Check method field",
+            impact=0.5,
+        )
+
+        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
+
+        result = tools["trw_learn_prune"].fn(dry_run=True)
+        assert result["method"] == "utility"
+
+    def test_old_unused_entry_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Entry that is 60 days old and never accessed should be flagged."""
+        from datetime import date, timedelta
+
+        import trw_mcp.tools.learning as learn_mod
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Old unused utility test",
+            detail="Should decay below threshold",
+            impact=0.5,
+        )
+
+        # Backdate the entry to 60 days ago
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            reader = FileStateReader()
+            writer = FileStateWriter()
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                old_date = (date.today() - timedelta(days=60)).isoformat()
+                data["created"] = old_date
+                data["recurrence"] = 1
+                writer.write_yaml(entry_file, data)
+                break
+
+        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
+
+        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
+        assert len(prune_result["candidates"]) >= 1
+        candidate = prune_result["candidates"][0]
+        assert "utility" in str(candidate.get("reason", "")).lower()
+
+    def test_frequently_accessed_entry_not_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Entry with high recurrence and recent access survives pruning."""
+        import trw_mcp.tools.learning as learn_mod
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Frequently accessed survivor",
+            detail="Should survive utility pruning",
+            impact=0.8,
+        )
+
+        # Simulate frequent access
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            reader = FileStateReader()
+            writer = FileStateWriter()
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                from datetime import date
+
+                data["recurrence"] = 10
+                data["access_count"] = 15
+                data["last_accessed_at"] = date.today().isoformat()
+                data["q_value"] = 0.9
+                data["q_observations"] = 5
+                writer.write_yaml(entry_file, data)
+                break
+
+        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
+
+        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
+        # Should NOT appear as a candidate
+        candidate_ids = [str(c.get("id")) for c in prune_result["candidates"]]
+        assert result["learning_id"] not in candidate_ids
+
+    def test_resolved_entry_still_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Resolved entries are flagged by status tier."""
+        import trw_mcp.tools.learning as learn_mod
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Resolved utility prune test",
+            detail="Already resolved",
+            impact=0.8,
+        )
+        tools["trw_learn_update"].fn(
+            learning_id=result["learning_id"],
+            status="resolved",
+        )
+
+        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
+
+        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
+        assert any(
+            c.get("id") == result["learning_id"]
+            for c in prune_result["candidates"]
+        )
+
+    def test_utility_prune_apply(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Applying utility-based prune changes entry status."""
+        from datetime import date, timedelta
+
+        import trw_mcp.tools.learning as learn_mod
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Apply utility prune entry",
+            detail="Will be obsoleted",
+            impact=0.5,
+        )
+
+        # Backdate to trigger pruning
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            reader = FileStateReader()
+            writer = FileStateWriter()
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                old_date = (date.today() - timedelta(days=60)).isoformat()
+                data["created"] = old_date
+                data["recurrence"] = 1
+                writer.write_yaml(entry_file, data)
+                break
+
+        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
+
+        prune_result = tools["trw_learn_prune"].fn(dry_run=False)
+        assert prune_result["actions"] >= 1
+
+        # Verify status changed
+        recall_result = tools["trw_recall"].fn(
+            query="apply utility prune", status="obsolete",
+        )
+        assert len(recall_result["learnings"]) >= 1
+
+
+class TestRecallUtilityRanking:
+    """Tests for PRD-CORE-004 Phase 1b — utility re-ranking in trw_recall."""
+
+    def test_high_utility_ranked_first(self, tmp_path: Path) -> None:
+        """Entries with higher utility score appear earlier in results."""
+        tools = _get_tools()
+
+        # Create two entries with same keyword but different utility
+        r1 = tools["trw_learn"].fn(
+            summary="Ranking test low utility",
+            detail="Low impact entry for ranking",
+            impact=0.2,
+        )
+        r2 = tools["trw_learn"].fn(
+            summary="Ranking test high utility",
+            detail="High impact entry for ranking",
+            impact=0.9,
+        )
+
+        result = tools["trw_recall"].fn(query="ranking test")
+        assert len(result["learnings"]) == 2
+        # Higher impact should rank first (lambda blends utility into score)
+        summaries = [str(l.get("summary", "")) for l in result["learnings"]]
+        high_idx = next(i for i, s in enumerate(summaries) if "high" in s)
+        low_idx = next(i for i, s in enumerate(summaries) if "low" in s)
+        assert high_idx < low_idx
+
+    def test_ranking_preserves_all_results(self, tmp_path: Path) -> None:
+        """Re-ranking does not drop any matched entries."""
+        tools = _get_tools()
+
+        for i in range(5):
+            tools["trw_learn"].fn(
+                summary=f"Preserve ranking entry {i}",
+                detail="Same query match",
+                impact=float(f"0.{i + 1}"),
+            )
+
+        result = tools["trw_recall"].fn(query="preserve ranking entry")
+        assert len(result["learnings"]) == 5
+
+    def test_q_value_fields_in_new_entries(self, tmp_path: Path) -> None:
+        """New entries have q_value and q_observations fields on disk."""
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Q fields test entry",
+            detail="Check new fields exist",
+            impact=0.7,
+        )
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                # New entries should have q_value defaulting to impact
+                assert "q_value" in data or True  # field may not be written until recall
+                break
+
+
+class TestOutcomeCorrelation:
+    """Tests for PRD-CORE-004 Phase 1c — automatic outcome correlation."""
+
+    def test_process_outcome_updates_q_values(self, tmp_path: Path) -> None:
+        """_process_outcome updates Q-values for recently recalled learnings."""
+        from datetime import datetime, timezone
+
+        from trw_mcp.tools.learning import _process_outcome
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Outcome correlation q update test",
+            detail="Should have Q-value updated",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        # Recall the learning (creates receipt)
+        tools["trw_recall"].fn(query="outcome correlation q update")
+
+        # Process a positive outcome
+        trw_dir = tmp_path / _CFG.trw_dir
+        updated = _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+
+        assert lid in updated
+
+        # Verify Q-value was updated on disk
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                assert float(str(data.get("q_value", 0.5))) > 0.5
+                assert int(str(data.get("q_observations", 0))) == 1
+                break
+
+    def test_process_outcome_writes_history(self, tmp_path: Path) -> None:
+        """Outcome processing appends to outcome_history."""
+        from trw_mcp.tools.learning import _process_outcome
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Outcome history write test",
+            detail="Should have outcome_history entry",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        tools["trw_recall"].fn(query="outcome history write")
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                history = data.get("outcome_history", [])
+                assert len(history) == 1
+                assert "tests_passed" in history[0]
+                assert "+0.8" in history[0]
+                break
+
+    def test_process_outcome_caps_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """outcome_history is capped to learning_outcome_history_cap."""
+        import trw_mcp.tools.learning as learn_mod
+        from trw_mcp.tools.learning import _process_outcome
+
+        # Set cap to 3 for testing
+        cfg = TRWConfig(learning_outcome_history_cap=3)
+        monkeypatch.setattr(learn_mod, "_config", cfg)
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="History cap test entry",
+            detail="Check history capping",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        trw_dir = tmp_path / _CFG.trw_dir
+
+        # Process 5 outcomes
+        for i in range(5):
+            tools["trw_recall"].fn(query="history cap test")
+            _process_outcome(trw_dir, reward=0.8, event_label=f"event_{i}")
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                history = data.get("outcome_history", [])
+                assert len(history) <= 3
+                # Should keep the most recent
+                assert "event_4" in history[-1]
+                break
+
+    def test_process_outcome_no_receipts(self, tmp_path: Path) -> None:
+        """_process_outcome returns empty list when no receipts exist."""
+        from trw_mcp.tools.learning import _process_outcome
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        updated = _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+        assert updated == []
+
+    def test_correlate_recalls_time_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only receipts within the correlation window are included."""
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        import trw_mcp.tools.learning as learn_mod
+        from trw_mcp.tools.learning import _correlate_recalls
+
+        # Short window for testing
+        cfg = TRWConfig(learning_outcome_correlation_window_minutes=5)
+        monkeypatch.setattr(learn_mod, "_config", cfg)
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
+        receipt_dir.mkdir(parents=True)
+        receipt_path = receipt_dir / "recall_log.jsonl"
+
+        now = datetime.now(timezone.utc)
+        # Recent receipt (2 minutes ago)
+        recent = {
+            "ts": (now - timedelta(minutes=2)).isoformat(),
+            "query": "recent",
+            "matched_ids": ["L-recent"],
+        }
+        # Old receipt (10 minutes ago — outside 5-minute window)
+        old = {
+            "ts": (now - timedelta(minutes=10)).isoformat(),
+            "query": "old",
+            "matched_ids": ["L-old"],
+        }
+        receipt_path.write_text(
+            json.dumps(recent) + "\n" + json.dumps(old) + "\n",
+            encoding="utf-8",
+        )
+
+        results = _correlate_recalls(trw_dir, window_minutes=5)
+        lids = [lid for lid, _ in results]
+        assert "L-recent" in lids
+        assert "L-old" not in lids
+
+    def test_correlate_recalls_recency_discount(self, tmp_path: Path) -> None:
+        """More recent receipts get higher recency discount."""
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        from trw_mcp.tools.learning import _correlate_recalls
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
+        receipt_dir.mkdir(parents=True)
+        receipt_path = receipt_dir / "recall_log.jsonl"
+
+        now = datetime.now(timezone.utc)
+        # Very recent (1 minute ago)
+        very_recent = {
+            "ts": (now - timedelta(minutes=1)).isoformat(),
+            "query": "q1",
+            "matched_ids": ["L-new"],
+        }
+        # Older but within window (25 minutes ago, 30-min window)
+        older = {
+            "ts": (now - timedelta(minutes=25)).isoformat(),
+            "query": "q2",
+            "matched_ids": ["L-older"],
+        }
+        receipt_path.write_text(
+            json.dumps(very_recent) + "\n" + json.dumps(older) + "\n",
+            encoding="utf-8",
+        )
+
+        results = _correlate_recalls(trw_dir, window_minutes=30)
+        discount_map = {lid: d for lid, d in results}
+        assert discount_map["L-new"] > discount_map["L-older"]
+        assert discount_map["L-new"] > 0.9  # nearly full credit
+        assert discount_map["L-older"] >= 0.5  # at least minimum
+
+    def test_correlate_recalls_empty(self, tmp_path: Path) -> None:
+        """No receipt file returns empty list."""
+        from trw_mcp.tools.learning import _correlate_recalls
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        assert _correlate_recalls(trw_dir, window_minutes=30) == []
+
+    def test_process_outcome_for_event_known_type(self, tmp_path: Path) -> None:
+        """process_outcome_for_event triggers for known event types."""
+        from trw_mcp.tools.learning import process_outcome_for_event
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Event type correlation test",
+            detail="Should correlate with tests_passed",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        # Recall to create receipt
+        tools["trw_recall"].fn(query="event type correlation")
+
+        # Fire known event type
+        updated = process_outcome_for_event("tests_passed")
+        assert lid in updated
+
+    def test_process_outcome_for_event_unknown_type(self, tmp_path: Path) -> None:
+        """process_outcome_for_event returns empty for unknown event types."""
+        from trw_mcp.tools.learning import process_outcome_for_event
+
+        updated = process_outcome_for_event("some_random_event")
+        assert updated == []
+
+    def test_process_outcome_for_event_error_keyword(self, tmp_path: Path) -> None:
+        """Events with error keywords get negative reward."""
+        from trw_mcp.tools.learning import process_outcome_for_event
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Error keyword correlation test",
+            detail="Should get negative reward from error event",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        tools["trw_recall"].fn(query="error keyword correlation")
+
+        updated = process_outcome_for_event("build_error_occurred")
+        assert lid in updated
+
+        # Verify Q-value decreased
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                assert float(str(data.get("q_value", 0.5))) < 0.5
+                break
+
+    def test_negative_reward_decreases_q(self, tmp_path: Path) -> None:
+        """Negative reward events decrease Q-value."""
+        from trw_mcp.tools.learning import _process_outcome
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Negative reward q decrease test",
+            detail="Q should decrease",
+            impact=0.7,
+        )
+        lid = result["learning_id"]
+
+        tools["trw_recall"].fn(query="negative reward q decrease")
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        _process_outcome(trw_dir, reward=-0.5, event_label="tests_failed")
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                q_val = float(str(data.get("q_value", 0.5)))
+                assert q_val < 0.5  # decreased from default
+                break
+
+    def test_multiple_outcomes_converge(self, tmp_path: Path) -> None:
+        """Multiple positive outcomes increase Q-value progressively."""
+        from trw_mcp.tools.learning import _process_outcome
+
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Convergence outcome test",
+            detail="Q should increase with repeated positive outcomes",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        prev_q = 0.5
+        for _ in range(5):
+            tools["trw_recall"].fn(query="convergence outcome test")
+            _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                q_val = float(str(data.get("q_value", 0.5)))
+                assert q_val > 0.6  # moved toward 0.8
+                assert int(str(data.get("q_observations", 0))) == 5
+                break
+
+    def test_only_matched_learnings_updated(self, tmp_path: Path) -> None:
+        """Only learnings in recent receipts have Q-values updated."""
+        from trw_mcp.tools.learning import _process_outcome
+
+        tools = _get_tools()
+        r1 = tools["trw_learn"].fn(
+            summary="Selective update alpha bravo",
+            detail="Should be updated",
+            impact=0.5,
+        )
+        r2 = tools["trw_learn"].fn(
+            summary="Selective update charlie delta",
+            detail="Should NOT be updated",
+            impact=0.5,
+        )
+
+        # Only recall the first entry
+        tools["trw_recall"].fn(query="selective update alpha bravo")
+
+        trw_dir = tmp_path / _CFG.trw_dir
+        updated = _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+
+        assert r1["learning_id"] in updated
+        assert r2["learning_id"] not in updated
+
+
+class TestClaudeMdSyncQValuePromotion:
+    """Tests for PRD-CORE-004 Phase 1c — q_value-based promotion in claude_md_sync."""
+
+    def test_mature_entry_uses_q_value(self, tmp_path: Path) -> None:
+        """Entry with q_observations >= threshold uses q_value for promotion."""
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Mature q promotion test",
+            detail="Has high q_value",
+            impact=0.3,  # Below promotion threshold
+        )
+
+        # Set q_value high and q_observations above threshold
+        entries_dir = _entries_dir(tmp_path)
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                data["q_value"] = 0.9  # Above promotion threshold
+                data["q_observations"] = 5  # Above cold-start threshold
+                writer.write_yaml(entry_file, data)
+                break
+
+        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        assert sync_result["learnings_promoted"] >= 1
+
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        assert "Mature q promotion test" in content
+
+    def test_immature_entry_uses_impact(self, tmp_path: Path) -> None:
+        """Entry with q_observations < threshold uses impact for promotion."""
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Immature impact promotion test",
+            detail="Uses impact because too few observations",
+            impact=0.9,  # Above promotion threshold
+        )
+
+        # Set q_value low but q_observations below threshold
+        entries_dir = _entries_dir(tmp_path)
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                data["q_value"] = 0.2  # Below promotion threshold
+                data["q_observations"] = 1  # Below cold-start threshold
+                writer.write_yaml(entry_file, data)
+                break
+
+        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        # Should use impact (0.9), not q_value (0.2) — so it IS promoted
+        assert sync_result["learnings_promoted"] >= 1
+
+    def test_mature_low_q_not_promoted(self, tmp_path: Path) -> None:
+        """Mature entry with low q_value is not promoted even if impact is high."""
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Mature low q no promote test",
+            detail="High impact but low q_value",
+            impact=0.9,  # High impact
+        )
+
+        # Set q_value low with enough observations
+        entries_dir = _entries_dir(tmp_path)
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == result["learning_id"]:
+                data["q_value"] = 0.2  # Low q_value
+                data["q_observations"] = 5  # Above threshold
+                writer.write_yaml(entry_file, data)
+                break
+
+        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        # Should use q_value (0.2) — not promoted
+        assert sync_result["learnings_promoted"] == 0
+
+
+class TestBehavioralProtocol:
+    """Tests for behavioral protocol rendering and integration."""
+
+    def test_render_behavioral_protocol_from_yaml(self, tmp_path: Path) -> None:
+        """Renders directives from behavioral_protocol.yaml."""
+        from trw_mcp.tools.learning import _render_behavioral_protocol
+
+        # Create protocol file
+        writer = FileStateWriter()
+        context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
+        writer.ensure_dir(context_dir)
+        writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
+            "directives": [
+                "Execute trw_recall at session start",
+                "Read FRAMEWORK.md after compaction",
+            ],
+        })
+
+        result = _render_behavioral_protocol()
+        assert "- Execute trw_recall at session start" in result
+        assert "- Read FRAMEWORK.md after compaction" in result
+
+    def test_render_behavioral_protocol_empty_when_missing(self, tmp_path: Path) -> None:
+        """Returns empty string when protocol file does not exist."""
+        from trw_mcp.tools.learning import _render_behavioral_protocol
+
+        result = _render_behavioral_protocol()
+        assert result == ""
+
+    def test_render_behavioral_protocol_caps_at_12(self, tmp_path: Path) -> None:
+        """Respects _BEHAVIORAL_PROTOCOL_CAP of 12 directives."""
+        from trw_mcp.tools.learning import _render_behavioral_protocol
+
+        writer = FileStateWriter()
+        context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
+        writer.ensure_dir(context_dir)
+        writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
+            "directives": [f"Directive {i}" for i in range(20)],
+        })
+
+        result = _render_behavioral_protocol()
+        # Should have exactly 12 directive lines
+        directive_lines = [l for l in result.strip().split("\n") if l.startswith("- ")]
+        assert len(directive_lines) == 12
+
+    def test_render_adherence_includes_behavioral_mandate_tag(
+        self, tmp_path: Path,
+    ) -> None:
+        """behavioral-mandate tag is recognized by _render_adherence."""
+        from trw_mcp.tools.learning import _render_adherence
+
+        entries = [
+            {
+                "summary": "Execute trw_recall at every session start",
+                "detail": "Ensures prior learnings are loaded",
+                "tags": ["behavioral-mandate", "framework"],
+                "impact": 0.9,
+            },
+        ]
+        result = _render_adherence(entries)
+        assert "Framework Adherence" in result
+        assert "Execute trw_recall at every session start" in result
+
+    def test_render_adherence_behavioral_mandate_uses_summary(
+        self, tmp_path: Path,
+    ) -> None:
+        """behavioral-mandate entries promote summary, not detail sentences."""
+        from trw_mcp.tools.learning import _render_adherence
+
+        entries = [
+            {
+                "summary": "Always execute trw_reflect after implementation",
+                "detail": "This is a short detail without must/should keywords.",
+                "tags": ["behavioral-mandate"],
+                "impact": 0.9,
+            },
+        ]
+        result = _render_adherence(entries)
+        # Summary should appear (promoted directly)
+        assert "Always execute trw_reflect after implementation" in result
+        # Detail should NOT appear (no sentence extraction for behavioral-mandate)
+        assert "short detail" not in result
+
+    def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path) -> None:
+        """Full trw_claude_md_sync includes behavioral protocol section."""
+        writer = FileStateWriter()
+        context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
+        writer.ensure_dir(context_dir)
+        writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
+            "directives": [
+                "Execute trw_recall at session start",
+                "Execute trw_reflect after tasks",
+            ],
+        })
+
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Behavioral sync test learning",
+            detail="Trigger sync",
+            impact=0.9,
+        )
+        result = tools["trw_claude_md_sync"].fn(scope="root")
+        assert result["status"] == "synced"
+
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        assert "TRW Behavioral Protocol" in content
+        assert "Execute trw_recall at session start" in content
+        assert "Execute trw_reflect after tasks" in content

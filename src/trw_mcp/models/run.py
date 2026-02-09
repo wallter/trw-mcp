@@ -1,7 +1,7 @@
 """Run state models — RunState, ShardCard, WaveManifest, Event.
 
 These models represent the core orchestration state persisted as YAML/JSONL
-in the run directory structure defined by FRAMEWORK.md v17.1_TRW.
+in the run directory structure defined by FRAMEWORK.md v18.0_TRW.
 """
 
 from __future__ import annotations
@@ -149,7 +149,7 @@ class RunState(BaseModel):
 
     run_id: str
     task: str
-    framework: str = "v17.1_TRW"
+    framework: str = "v18.0_TRW"
     status: RunStatus = RunStatus.ACTIVE
     phase: Phase = Phase.RESEARCH
     confidence: Confidence = Confidence.MEDIUM

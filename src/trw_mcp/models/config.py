@@ -37,6 +37,8 @@ class TRWConfig(BaseSettings):
     max_research_waves: int = 3
 
     # Phase time caps (percentage of total timebox)
+    # NOTE: Framework-documented defaults; not enforced by MCP tools.
+    # Used by PhaseTimeCaps for ORC-side time tracking only.
     phase_cap_research: float = 0.25
     phase_cap_plan: float = 0.15
     phase_cap_implement: float = 0.40
@@ -50,13 +52,27 @@ class TRWConfig(BaseSettings):
     learning_promotion_impact: float = 0.7
     learning_prune_age_days: int = 30
     learning_repeated_op_threshold: int = 3
+    recall_receipt_max_entries: int = 1000
     claude_md_max_lines: int = 200
     sub_claude_md_max_lines: int = 50
+
+    # Utility scoring (PRD-CORE-004)
+    learning_decay_half_life_days: float = 14.0
+    learning_decay_use_exponent: float = 0.6
+    q_learning_rate: float = 0.15
+    q_recurrence_bonus: float = 0.02
+    q_cold_start_threshold: int = 3
+    learning_utility_prune_threshold: float = 0.10
+    learning_utility_delete_threshold: float = 0.05
+    recall_utility_lambda: float = 0.3
+    learning_outcome_correlation_window_minutes: int = 30
+    learning_outcome_history_cap: int = 20
 
     # Paths (relative to project root, resolved at runtime)
     trw_dir: str = ".trw"
     learnings_dir: str = "learnings"
     entries_dir: str = "entries"
+    receipts_dir: str = "receipts"
     reflections_dir: str = "reflections"
     scripts_dir: str = "scripts"
     patterns_dir: str = "patterns"
@@ -86,13 +102,15 @@ class TRWConfig(BaseSettings):
     telemetry: bool = False
 
     # Framework version
-    framework_version: str = "v17.1_TRW"
+    framework_version: str = "v18.0_TRW"
 
 
 class PhaseTimeCaps(BaseModel):
     """Phase time cap percentages derived from TRWConfig.
 
     Convenience accessor mapping phase names to their time caps.
+    NOTE: Framework-documented defaults only. Not enforced by MCP tools —
+    ORC tracks wall-clock time against these caps at the prompt level.
     """
 
     model_config = ConfigDict(frozen=True)

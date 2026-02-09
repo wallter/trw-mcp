@@ -91,7 +91,11 @@ mcp = FastMCP(
     instructions=(
         "TRW orchestration + self-learning tools. "
         "Workflow: trw_init → trw_event/checkpoint → trw_reflect → trw_recall → trw_claude_md_sync. "
-        ".trw/ persists knowledge across sessions."
+        ".trw/ persists knowledge across sessions. "
+        "Execute trw_recall('*', min_impact=0.7) at session start to load high-impact learnings. "
+        "Execute trw_reflect after completing tasks. "
+        "Execute trw_claude_md_sync at delivery. "
+        "Read .trw/frameworks/FRAMEWORK.md for phase requirements."
     ),
 )
 

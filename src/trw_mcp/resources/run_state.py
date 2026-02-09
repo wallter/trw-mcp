@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateReader
 
 _config = TRWConfig()
@@ -28,8 +28,7 @@ def register_run_state_resources(server: FastMCP) -> None:
         Returns the contents of the most recently modified run.yaml
         if an active run is found. Empty string if no active run.
         """
-        env_root = os.environ.get("TRW_PROJECT_ROOT")
-        project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+        project_root = resolve_project_root()
         docs_dir = project_root / "docs"
 
         if not docs_dir.exists():

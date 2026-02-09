@@ -1,12 +1,11 @@
 """TRW orchestration tools — init, status, phase check, wave validate, resume, checkpoint, event.
 
-These 7 tools codify FRAMEWORK.md v17.1_TRW execution flow:
+These 7 tools codify FRAMEWORK.md v18.0_TRW execution flow:
 RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 """
 
 from __future__ import annotations
 
-import os
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +26,8 @@ from trw_mcp.models.run import (
     WaveManifest,
     WaveStatus,
 )
+from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.tools.learning import process_outcome_for_event
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -44,27 +45,6 @@ _config = TRWConfig()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 _events = FileEventLogger(_writer)
-
-
-def _resolve_project_root() -> Path:
-    """Resolve the project root from CWD or environment.
-
-    Returns:
-        Absolute path to the project root directory.
-    """
-    env_root = os.environ.get("TRW_PROJECT_ROOT")
-    if env_root:
-        return Path(env_root).resolve()
-    return Path.cwd().resolve()
-
-
-def _resolve_trw_dir() -> Path:
-    """Resolve the .trw directory path.
-
-    Returns:
-        Absolute path to the .trw directory.
-    """
-    return _resolve_project_root() / _config.trw_dir
 
 
 def register_orchestration_tools(server: FastMCP) -> None:
@@ -87,7 +67,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             objective: Optional objective description for the run.
             config_overrides: Optional config values to override defaults.
         """
-        project_root = _resolve_project_root()
+        project_root = resolve_project_root()
         trw_dir = project_root / _config.trw_dir
 
         # Generate run ID
@@ -229,6 +209,14 @@ def register_orchestration_tools(server: FastMCP) -> None:
         events_path = meta_path / "events.jsonl"
         events = _reader.read_jsonl(events_path)
 
+        # Reflection metrics
+        reflection_events = [
+            e for e in events if e.get("event") == "reflection_complete"
+        ]
+        sync_events = [
+            e for e in events if e.get("event") == "claude_md_synced"
+        ]
+
         result: dict[str, object] = {
             "run_id": state_data.get("run_id", "unknown"),
             "task": state_data.get("task", "unknown"),
@@ -237,6 +225,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "confidence": state_data.get("confidence", "unknown"),
             "framework": state_data.get("framework", "unknown"),
             "event_count": len(events),
+            "reflection": {
+                "count": len(reflection_events),
+                "claude_md_synced": len(sync_events) > 0,
+            },
         }
 
         if wave_data:
@@ -278,7 +270,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
             },
         )
 
-        return {
+        # Outcome correlation (PRD-CORE-004 Phase 1c) — best-effort
+        outcome_label = "phase_gate_passed" if result.valid else "phase_gate_failed"
+        q_updated: list[str] = []
+        try:
+            q_updated = process_outcome_for_event(outcome_label)
+        except Exception:  # noqa: BLE001
+            pass
+
+        phase_result: dict[str, object] = {
             "phase": phase_name,
             "valid": result.valid,
             "completeness_score": result.completeness_score,
@@ -292,6 +292,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
                 for f in result.failures
             ],
         }
+        if q_updated:
+            phase_result["q_updates"] = len(q_updated)
+        return phase_result
 
     @server.tool()
     def trw_wave_validate(
@@ -378,7 +381,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
             },
         )
 
-        return {
+        # Outcome correlation (PRD-CORE-004 Phase 1c) — best-effort
+        q_updated: list[str] = []
+        if is_valid:
+            try:
+                q_updated = process_outcome_for_event("wave_validation_passed")
+            except Exception:  # noqa: BLE001
+                pass
+
+        wave_result: dict[str, object] = {
             "wave": wave_number,
             "valid": is_valid,
             "shards_checked": len(shards),
@@ -392,6 +403,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
                 for f in failures
             ],
         }
+        if q_updated:
+            wave_result["q_updates"] = len(q_updated)
+        return wave_result
 
     @server.tool()
     def trw_resume(run_path: str | None = None) -> dict[str, object]:
@@ -524,7 +538,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         event_type: str,
         run_path: str | None = None,
         data: dict[str, str | int | float | bool] | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         """Log a structured event to events.jsonl — append-only audit trail.
 
         Args:
@@ -541,10 +555,20 @@ def register_orchestration_tools(server: FastMCP) -> None:
             event_data,
         )
 
-        return {
+        # Outcome correlation (PRD-CORE-004 Phase 1c) — best-effort
+        q_updated: list[str] = []
+        try:
+            q_updated = process_outcome_for_event(event_type)
+        except Exception:  # noqa: BLE001 — best-effort, never fail the event
+            pass
+
+        result: dict[str, object] = {
             "status": "event_logged",
             "event_type": event_type,
         }
+        if q_updated:
+            result["q_updates"] = len(q_updated)
+        return result
 
 
 def _resolve_run_path(run_path: str | None) -> Path:
@@ -569,7 +593,7 @@ def _resolve_run_path(run_path: str | None) -> Path:
         return resolved
 
     # Auto-detect: look for most recent run in docs/*/runs/
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
     docs_dir = project_root / "docs"
     if not docs_dir.exists():
         raise StateError(
