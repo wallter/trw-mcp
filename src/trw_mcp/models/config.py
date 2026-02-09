@@ -89,6 +89,26 @@ class TRWConfig(BaseSettings):
     traceability_coverage_min: float = 0.90
     consistency_validation_min: float = 0.95
 
+    # Semantic validation — dimension weights (must sum to 100)
+    validation_density_weight: float = 25.0
+    validation_structure_weight: float = 15.0
+    validation_traceability_weight: float = 20.0
+    validation_smell_weight: float = 15.0
+    validation_readability_weight: float = 10.0
+    validation_ears_weight: float = 15.0
+
+    # Semantic validation — tier thresholds
+    validation_skeleton_threshold: float = 30.0
+    validation_draft_threshold: float = 60.0
+    validation_review_threshold: float = 85.0
+
+    # Semantic validation — readability
+    validation_fk_optimal_min: float = 8.0
+    validation_fk_optimal_max: float = 12.0
+
+    # Semantic validation — smell detection
+    validation_smell_false_positive_max: float = 0.15
+
     # LLM augmentation (optional, requires claude-agent-sdk)
     llm_enabled: bool = True
     llm_default_model: str = "haiku"

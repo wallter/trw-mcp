@@ -36,7 +36,7 @@ from trw_mcp.state.prd_utils import (
     detect_ambiguity as _detect_ambiguity_impl,
     extract_prd_refs,
 )
-from trw_mcp.state.validation import validate_prd_quality
+from trw_mcp.state.validation import validate_prd_quality, validate_prd_quality_v2
 
 logger = structlog.get_logger()
 
@@ -234,14 +234,20 @@ def register_requirements_tools(server: FastMCP) -> None:
                     )
                 )
 
+        # Run V2 semantic validation
+        v2_result = validate_prd_quality_v2(content, _config)
+
         logger.info(
             "trw_prd_validated",
             path=str(path),
             valid=result.valid,
+            total_score=v2_result.total_score,
+            quality_tier=v2_result.quality_tier,
             failures=len(result.failures),
         )
 
         return {
+            # V1 fields (backward compatible)
             "path": str(path),
             "valid": result.valid,
             "completeness_score": result.completeness_score,
@@ -258,6 +264,28 @@ def register_requirements_tools(server: FastMCP) -> None:
                     "severity": f.severity,
                 }
                 for f in result.failures
+            ],
+            # V2 fields (PRD-CORE-008)
+            "total_score": v2_result.total_score,
+            "quality_tier": v2_result.quality_tier,
+            "grade": v2_result.grade,
+            "dimensions": [
+                {
+                    "name": d.name,
+                    "score": d.score,
+                    "max_score": d.max_score,
+                }
+                for d in v2_result.dimensions
+            ],
+            "improvement_suggestions": [
+                {
+                    "dimension": s.dimension,
+                    "priority": s.priority,
+                    "message": s.message,
+                    "current_score": s.current_score,
+                    "potential_gain": s.potential_gain,
+                }
+                for s in v2_result.improvement_suggestions[:5]
             ],
         }
 

@@ -12,6 +12,15 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class QualityTier(str, Enum):
+    """PRD quality tier classification (PRD-CORE-008)."""
+
+    SKELETON = "skeleton"
+    DRAFT = "draft"
+    REVIEW = "review"
+    APPROVED = "approved"
+
+
 class PRDStatus(str, Enum):
     """PRD lifecycle status."""
 
@@ -164,6 +173,83 @@ class ValidationResult(BaseModel):
     completeness_score: float = 0.0
     traceability_coverage: float = 0.0
     consistency_score: float = 0.0
+
+
+class SectionScore(BaseModel):
+    """Content density score for a single PRD section (PRD-CORE-008)."""
+
+    model_config = ConfigDict(strict=True)
+
+    section_name: str
+    density: float = Field(ge=0.0, le=1.0, default=0.0)
+    substantive_lines: int = Field(ge=0, default=0)
+    total_lines: int = Field(ge=0, default=0)
+    placeholder_lines: int = Field(ge=0, default=0)
+
+
+class DimensionScore(BaseModel):
+    """Score for a single validation dimension (PRD-CORE-008)."""
+
+    model_config = ConfigDict(strict=True)
+
+    name: str
+    score: float = Field(ge=0.0, default=0.0)
+    max_score: float = Field(gt=0.0, default=1.0)
+    details: dict[str, object] = Field(default_factory=dict)
+
+
+class SmellFinding(BaseModel):
+    """A single requirement smell detected during validation (PRD-CORE-008)."""
+
+    model_config = ConfigDict(strict=True)
+
+    category: str
+    line_number: int = Field(ge=0, default=0)
+    matched_text: str = ""
+    severity: str = "warning"
+    suggestion: str = ""
+
+
+class ImprovementSuggestion(BaseModel):
+    """Actionable suggestion to improve a PRD's quality score (PRD-CORE-008)."""
+
+    model_config = ConfigDict(strict=True)
+
+    dimension: str
+    priority: str = "medium"
+    message: str = ""
+    current_score: float = Field(ge=0.0, default=0.0)
+    potential_gain: float = Field(ge=0.0, default=0.0)
+
+
+class ValidationResultV2(BaseModel):
+    """Extended validation result with 6-dimension scoring (PRD-CORE-008).
+
+    Includes all fields from ValidationResult for backward compatibility,
+    plus multi-dimensional quality scoring, tier classification, and
+    improvement suggestions.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    # V1 fields (backward compatible)
+    valid: bool = True
+    failures: list[ValidationFailure] = Field(default_factory=list)
+    ambiguity_rate: float = 0.0
+    completeness_score: float = 0.0
+    traceability_coverage: float = 0.0
+    consistency_score: float = 0.0
+
+    # V2 fields
+    total_score: float = Field(ge=0.0, le=100.0, default=0.0)
+    quality_tier: QualityTier = QualityTier.SKELETON
+    grade: str = "F"
+    dimensions: list[DimensionScore] = Field(default_factory=list)
+    section_scores: list[SectionScore] = Field(default_factory=list)
+    smell_findings: list[SmellFinding] = Field(default_factory=list)
+    ears_classifications: list[dict[str, object]] = Field(default_factory=list)
+    readability: dict[str, float] = Field(default_factory=dict)
+    improvement_suggestions: list[ImprovementSuggestion] = Field(default_factory=list)
 
 
 class TraceabilityResult(BaseModel):
