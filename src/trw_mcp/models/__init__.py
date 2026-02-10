@@ -1,5 +1,12 @@
-"""TRW Pydantic models — run state, config, learning, requirements."""
+"""TRW Pydantic models — run state, config, learning, requirements, planning, compliance."""
 
+from trw_mcp.models.compliance import (
+    ComplianceDimension,
+    ComplianceMode,
+    ComplianceReport,
+    ComplianceStatus,
+    DimensionResult,
+)
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import (
     ContextArchitecture,
@@ -26,6 +33,14 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResult,
 )
+from trw_mcp.models.planning import (
+    AgentRole,
+    GroomingPlan,
+    PLANNING_AGENT_ROLES,
+    ResearchScope,
+    SectionAnalysis,
+    SectionStatus,
+)
 from trw_mcp.models.run import (
     Event,
     OutputContract,
@@ -37,13 +52,21 @@ from trw_mcp.models.run import (
 )
 
 __all__ = [
+    "AgentRole",
+    "ComplianceDimension",
+    "ComplianceMode",
+    "ComplianceReport",
+    "ComplianceStatus",
     "ContextArchitecture",
     "ContextConventions",
+    "DimensionResult",
     "Event",
+    "GroomingPlan",
     "LearningEntry",
     "LearningIndex",
     "LearningStatus",
     "OutputContract",
+    "PLANNING_AGENT_ROLES",
     "PRDConfidence",
     "PRDDates",
     "PRDEvidence",
@@ -56,7 +79,10 @@ __all__ = [
     "PhaseTimeCaps",
     "Reflection",
     "Requirement",
+    "ResearchScope",
     "RunState",
+    "SectionAnalysis",
+    "SectionStatus",
     "Script",
     "ScriptIndex",
     "ShardCard",

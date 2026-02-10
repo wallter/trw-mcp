@@ -41,7 +41,10 @@ from trw_mcp.state.prd_utils import (
     extract_prd_refs,
     update_frontmatter,
 )
-from trw_mcp.state.validation import validate_prd_quality_v2
+from trw_mcp.state.validation import (
+    _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
+    validate_prd_quality_v2,
+)
 from trw_mcp.tools.findings import get_unlinked_findings
 
 logger = structlog.get_logger()
@@ -49,22 +52,6 @@ logger = structlog.get_logger()
 _config = TRWConfig()
 _reader = FileStateReader()
 _writer = FileStateWriter()
-
-# Section headings expected in an AARE-F compliant PRD
-_EXPECTED_SECTIONS: list[str] = [
-    "Problem Statement",
-    "Goals & Non-Goals",
-    "User Stories",
-    "Functional Requirements",
-    "Non-Functional Requirements",
-    "Technical Approach",
-    "Test Strategy",
-    "Rollout Plan",
-    "Success Metrics",
-    "Dependencies & Risks",
-    "Open Questions",
-    "Traceability Matrix",
-]
 
 
 def register_requirements_tools(server: FastMCP) -> None:
@@ -547,7 +534,6 @@ def register_requirements_tools(server: FastMCP) -> None:
             dry_run: If True, return plan without signaling agent launch.
         """
         from trw_mcp.state.grooming import generate_grooming_plan
-        from trw_mcp.state.persistence import model_to_dict as _model_to_dict
 
         path = Path(prd_path).resolve()
         if not path.exists():
@@ -617,7 +603,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         return {
             "prd_id": plan.prd_id,
             "status": status,
-            "grooming_plan": _model_to_dict(plan),
+            "grooming_plan": model_to_dict(plan),
             "current_quality": current_quality,
             "suggested_agent": "prd-groomer",
         }
