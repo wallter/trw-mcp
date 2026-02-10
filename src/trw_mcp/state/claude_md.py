@@ -6,6 +6,7 @@ from learning tool logic.
 
 from __future__ import annotations
 
+from fnmatch import fnmatch
 from pathlib import Path
 
 from trw_mcp.exceptions import StateError
@@ -21,6 +22,8 @@ _writer = FileStateWriter()
 CLAUDEMD_LEARNING_CAP = 10
 CLAUDEMD_PATTERN_CAP = 5
 BEHAVIORAL_PROTOCOL_CAP = 12
+BOUNDED_ADR_CAP = 5
+BOUNDED_LEARNING_CAP = 8
 
 # CLAUDE.md TRW section markers (must stay consistent — parsing depends on these)
 TRW_AUTO_COMMENT = "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->"
@@ -426,3 +429,84 @@ def collect_context_data(
     except (_StateError, ValueError, TypeError):
         pass
     return arch_data, conv_data
+
+
+def collect_adrs_for_context(
+    trw_dir: Path,
+    context_path: str,
+) -> list[dict[str, object]]:
+    """Collect ADR learning entries whose affected_paths match a bounded context.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        context_path: Bounded context path to match against.
+
+    Returns:
+        List of ADR learning entry dicts.
+    """
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    if not entries_dir.exists():
+        return []
+
+    adrs: list[dict[str, object]] = []
+    for entry_file in sorted(entries_dir.glob("*.yaml")):
+        try:
+            data = _reader.read_yaml(entry_file)
+        except (StateError, ValueError, TypeError):
+            continue
+        if data.get("adr_status") is None:
+            continue
+        affected = data.get("affected_paths", [])
+        if not isinstance(affected, list):
+            continue
+        if any(isinstance(pat, str) and fnmatch(context_path, pat) for pat in affected):
+            adrs.append(data)
+    return adrs
+
+
+def render_bounded_context_claude_md(
+    context_name: str,
+    context_path: str,
+    learnings: list[dict[str, object]],
+    adrs: list[dict[str, object]],
+    max_lines: int = 50,
+) -> str:
+    """Render a sub-CLAUDE.md for a bounded context.
+
+    Args:
+        context_name: Name of the bounded context.
+        context_path: Path of the bounded context.
+        learnings: Relevant learning entries.
+        adrs: ADR entries for this context.
+        max_lines: Maximum lines for the output.
+
+    Returns:
+        Markdown string for the sub-CLAUDE.md content.
+    """
+    lines: list[str] = [
+        f"# {context_name}",
+        "",
+        f"Module path: `{context_path}`",
+        "",
+    ]
+
+    if adrs:
+        lines.append("## Architecture Decisions")
+        for adr in adrs[:BOUNDED_ADR_CAP]:
+            status = adr.get("adr_status", "proposed")
+            summary = str(adr.get("summary", ""))
+            lines.append(f"- [{status}] {summary}")
+        lines.append("")
+
+    if learnings:
+        lines.append("## Key Learnings")
+        for learning in learnings[:BOUNDED_LEARNING_CAP]:
+            summary = str(learning.get("summary", ""))
+            lines.append(f"- {summary}")
+        lines.append("")
+
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines.append("<!-- trw: truncated to line limit -->")
+
+    return "\n".join(lines)

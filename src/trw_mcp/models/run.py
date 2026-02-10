@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +23,41 @@ class Phase(str, Enum):
     VALIDATE = "validate"
     REVIEW = "review"
     DELIVER = "deliver"
+
+
+# Phase ordering for reversion validation (PRD-CORE-013-FR01).
+# Derived from Phase enum to stay in sync automatically.
+PHASE_ORDER: dict[str, int] = {phase.value: i for i, phase in enumerate(Phase)}
+
+
+class ReversionTrigger(str, Enum):
+    """Reversion trigger classification (PRD-CORE-013-FR02).
+
+    Categorizes why a phase reversion was initiated.
+    Uses (str, Enum) for YAML serialization compatibility.
+    """
+
+    REFACTOR_NEEDED = "refactor_needed"
+    ARCHITECTURE_MISMATCH = "architecture_mismatch"
+    NEW_DEPENDENCY = "new_dependency"
+    TEST_STRATEGY_CHANGE = "test_strategy_change"
+    SCOPE_CHANGE = "scope_change"
+    OTHER = "other"
+
+    @staticmethod
+    def classify(trigger_str: str) -> "ReversionTrigger":
+        """Classify a trigger string, defaulting to OTHER for unknown values.
+
+        Args:
+            trigger_str: Trigger string to classify.
+
+        Returns:
+            Matching ReversionTrigger or OTHER if unrecognized.
+        """
+        try:
+            return ReversionTrigger(trigger_str)
+        except ValueError:
+            return ReversionTrigger.OTHER
 
 
 class Confidence(str, Enum):
@@ -135,9 +169,12 @@ class WaveManifest(BaseModel):
 
     Waves are sequential groups of parallel shards. Each wave
     completes before the next begins (inter-wave data dependencies).
+    PRD-CORE-006: version and adaptation_history for dynamic wave adaptation.
     """
 
     waves: list[WaveEntry] = Field(default_factory=list)
+    version: int = Field(ge=1, default=1)
+    adaptation_history: list[dict[str, object]] = Field(default_factory=list)
 
 
 class RunState(BaseModel):
@@ -160,6 +197,16 @@ class RunState(BaseModel):
     prd_scope: list[str] = Field(default_factory=list)
     run_type: str = "implementation"
 
+    # Phase overlay support (PRD-CORE-017)
+    overlay_version: str | None = Field(
+        default=None,
+        description="Overlay version active when this run was created (e.g. 'v18.1').",
+    )
+    assembled_framework_hash: str | None = Field(
+        default=None,
+        description="SHA-256 hash of the assembled core+overlay framework document.",
+    )
+
 
 class Event(BaseModel):
     """Structured event for events.jsonl audit log.
@@ -173,7 +220,3 @@ class Event(BaseModel):
     data: dict[str, str | int | float | bool | list[str] | None] = Field(
         default_factory=dict,
     )
-
-
-# Re-export PhaseTimeCaps from config for convenience
-from trw_mcp.models.config import PhaseTimeCaps as PhaseTimeCaps  # noqa: E402

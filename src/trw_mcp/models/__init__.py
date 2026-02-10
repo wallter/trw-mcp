@@ -1,5 +1,31 @@
-"""TRW Pydantic models — run state, config, learning, requirements, planning, compliance."""
+"""TRW Pydantic models — public re-exports for all model sub-modules."""
 
+# architecture (PRD-QUAL-007)
+from trw_mcp.models.architecture import (
+    ArchitectureConfig,
+    ArchitectureFitnessResult,
+    ArchitectureStyle,
+    BoundedContext,
+    Convention,
+    ConventionSeverity,
+    ConventionViolation,
+    DependencyRule,
+    ImportViolation,
+    TestLayerConfig,
+)
+
+# bdd (PRD-CORE-005)
+from trw_mcp.models.bdd import (
+    ConfidenceLevel as BDDConfidenceLevel,
+    BDDGenerationResult,
+    ExtractedAC,
+    ExtractedFR,
+    GherkinFeature,
+    GherkinScenario,
+    GherkinStep,
+)
+
+# compliance (PRD-CORE-014)
 from trw_mcp.models.compliance import (
     ComplianceDimension,
     ComplianceMode,
@@ -7,7 +33,53 @@ from trw_mcp.models.compliance import (
     ComplianceStatus,
     DimensionResult,
 )
-from trw_mcp.models.config import TRWConfig
+
+# config
+from trw_mcp.models.config import PhaseTimeCaps, TRWConfig
+
+# debt (PRD-CORE-016)
+from trw_mcp.models.debt import (
+    CLASSIFICATION_ACTIONS,
+    DebtCategory,
+    DebtEntry,
+    DebtPriority,
+    DebtRegistry,
+    DebtStatus,
+    RefactorClassification,
+    RefactorImpact,
+    RefactorScope,
+)
+
+# framework (PRD-CORE-017)
+from trw_mcp.models.framework import (
+    FrameworkVersion,
+    OverlayPhase,
+    OverlayRegistry,
+    PhaseOverlay,
+    VocabularyEntry,
+    VocabularyRegistry,
+)
+
+# gate (PRD-QUAL-005)
+from trw_mcp.models.gate import (
+    BudgetAction,
+    CostConfig,
+    EscalationConfig,
+    EvaluationOutcome,
+    EvaluationResult,
+    FallbackAction,
+    FallbackConfig,
+    GateConfig,
+    GatePreset,
+    GateStrategy,
+    GateType,
+    JudgeVote,
+    ModelTier,
+    RubricWeights,
+    TieStrategy,
+)
+
+# learning
 from trw_mcp.models.learning import (
     ContextArchitecture,
     ContextConventions,
@@ -20,6 +92,18 @@ from trw_mcp.models.learning import (
     Script,
     ScriptIndex,
 )
+
+# planning
+from trw_mcp.models.planning import (
+    AgentRole,
+    GroomingPlan,
+    PLANNING_AGENT_ROLES,
+    ResearchScope,
+    SectionAnalysis,
+    SectionStatus,
+)
+
+# requirements
 from trw_mcp.models.requirements import (
     PRDConfidence,
     PRDDates,
@@ -33,40 +117,143 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResult,
 )
-from trw_mcp.models.planning import (
-    AgentRole,
-    GroomingPlan,
-    PLANNING_AGENT_ROLES,
-    ResearchScope,
-    SectionAnalysis,
-    SectionStatus,
-)
+
+# run
 from trw_mcp.models.run import (
     Event,
     OutputContract,
-    PhaseTimeCaps,
+    PHASE_ORDER,
+    ReversionTrigger,
     RunState,
     ShardCard,
     WaveEntry,
     WaveManifest,
 )
 
+# testing (PRD-QUAL-006)
+from trw_mcp.models.testing import (
+    PHASE_TEST_STRATEGIES,
+    TestDependencyMap,
+    TestMapping,
+    TestResolution,
+    TestStrategy,
+    TestType,
+)
+
+# track (PRD-CORE-003)
+from trw_mcp.models.track import (
+    ConflictSeverity,
+    FileConflict,
+    MergeRecommendation,
+    Track,
+    TrackRegistry,
+    TrackStatus,
+)
+
+# velocity (PRD-CORE-015)
+from trw_mcp.models.velocity import (
+    DebtIndicators,
+    LearningSnapshot,
+    OverheadMetrics,
+    TrendResult,
+    VelocityAlert,
+    VelocityHistory,
+    VelocityMetrics,
+    VelocitySnapshot,
+    VelocitySummary,
+)
+
+# wave (PRD-CORE-006)
+from trw_mcp.models.wave import (
+    AdaptationAction,
+    AdaptationProposal,
+    AdaptationRecord,
+    AdaptationSeverity,
+    AdaptationTrigger,
+    AdaptationTriggerType,
+    ProposedChange,
+)
+
 __all__ = [
-    "AgentRole",
+    # architecture (PRD-QUAL-007)
+    "ArchitectureConfig",
+    "ArchitectureFitnessResult",
+    "ArchitectureStyle",
+    "BoundedContext",
+    "Convention",
+    "ConventionSeverity",
+    "ConventionViolation",
+    "DependencyRule",
+    "ImportViolation",
+    "TestLayerConfig",
+    # bdd (PRD-CORE-005)
+    "BDDConfidenceLevel",
+    "BDDGenerationResult",
+    "ExtractedAC",
+    "ExtractedFR",
+    "GherkinFeature",
+    "GherkinScenario",
+    "GherkinStep",
+    # compliance (PRD-CORE-014)
     "ComplianceDimension",
     "ComplianceMode",
     "ComplianceReport",
     "ComplianceStatus",
+    "DimensionResult",
+    # config
+    "TRWConfig",
+    # debt (PRD-CORE-016)
+    "CLASSIFICATION_ACTIONS",
+    "DebtCategory",
+    "DebtEntry",
+    "DebtPriority",
+    "DebtRegistry",
+    "DebtStatus",
+    "RefactorClassification",
+    "RefactorImpact",
+    "RefactorScope",
+    # framework (PRD-CORE-017)
+    "FrameworkVersion",
+    "OverlayPhase",
+    "OverlayRegistry",
+    "PhaseOverlay",
+    "VocabularyEntry",
+    "VocabularyRegistry",
+    # gate (PRD-QUAL-005)
+    "BudgetAction",
+    "CostConfig",
+    "EscalationConfig",
+    "EvaluationOutcome",
+    "EvaluationResult",
+    "FallbackAction",
+    "FallbackConfig",
+    "GateConfig",
+    "GatePreset",
+    "GateStrategy",
+    "GateType",
+    "JudgeVote",
+    "ModelTier",
+    "RubricWeights",
+    "TieStrategy",
+    # learning
     "ContextArchitecture",
     "ContextConventions",
-    "DimensionResult",
-    "Event",
-    "GroomingPlan",
     "LearningEntry",
     "LearningIndex",
     "LearningStatus",
-    "OutputContract",
+    "Pattern",
+    "PatternIndex",
+    "Reflection",
+    "Script",
+    "ScriptIndex",
+    # planning
+    "AgentRole",
+    "GroomingPlan",
     "PLANNING_AGENT_ROLES",
+    "ResearchScope",
+    "SectionAnalysis",
+    "SectionStatus",
+    # requirements
     "PRDConfidence",
     "PRDDates",
     "PRDEvidence",
@@ -74,22 +261,50 @@ __all__ = [
     "PRDMetrics",
     "PRDQualityGates",
     "PRDTraceability",
-    "Pattern",
-    "PatternIndex",
-    "PhaseTimeCaps",
-    "Reflection",
     "Requirement",
-    "ResearchScope",
-    "RunState",
-    "SectionAnalysis",
-    "SectionStatus",
-    "Script",
-    "ScriptIndex",
-    "ShardCard",
-    "TRWConfig",
     "TraceabilityResult",
     "ValidationFailure",
     "ValidationResult",
+    # run
+    "Event",
+    "OutputContract",
+    "PHASE_ORDER",
+    "PhaseTimeCaps",
+    "ReversionTrigger",
+    "RunState",
+    "ShardCard",
     "WaveEntry",
     "WaveManifest",
+    # testing (PRD-QUAL-006)
+    "PHASE_TEST_STRATEGIES",
+    "TestDependencyMap",
+    "TestMapping",
+    "TestResolution",
+    "TestStrategy",
+    "TestType",
+    # track (PRD-CORE-003)
+    "ConflictSeverity",
+    "FileConflict",
+    "MergeRecommendation",
+    "Track",
+    "TrackRegistry",
+    "TrackStatus",
+    # velocity (PRD-CORE-015)
+    "DebtIndicators",
+    "LearningSnapshot",
+    "OverheadMetrics",
+    "TrendResult",
+    "VelocityAlert",
+    "VelocityHistory",
+    "VelocityMetrics",
+    "VelocitySnapshot",
+    "VelocitySummary",
+    # wave (PRD-CORE-006)
+    "AdaptationAction",
+    "AdaptationProposal",
+    "AdaptationRecord",
+    "AdaptationSeverity",
+    "AdaptationTrigger",
+    "AdaptationTriggerType",
+    "ProposedChange",
 ]

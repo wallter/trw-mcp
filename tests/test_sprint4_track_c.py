@@ -355,8 +355,8 @@ class TestSuccessPatternDetection:
         assert counts == sorted(counts, reverse=True)
 
     def test_find_success_patterns_capped(self) -> None:
-        """Patterns are capped at _MAX_SUCCESS_PATTERNS."""
-        from trw_mcp.state.analytics import _MAX_SUCCESS_PATTERNS, find_success_patterns
+        """Patterns are capped at reflect_max_success_patterns config value."""
+        from trw_mcp.state.analytics import find_success_patterns
 
         # Create events with many distinct success types
         events: list[dict[str, object]] = []
@@ -364,7 +364,7 @@ class TestSuccessPatternDetection:
             events.append({"event": f"success_type_{i}_complete"})
 
         patterns = find_success_patterns(events)
-        assert len(patterns) <= _MAX_SUCCESS_PATTERNS
+        assert len(patterns) <= _CFG.reflect_max_success_patterns
 
 
 class TestReflectSuccessPatterns:
@@ -392,7 +392,7 @@ class TestReflectSuccessPatterns:
             scope="run",
         )
         assert "success_patterns" in result
-        assert result["success_patterns"] >= 1
+        assert result["success_patterns"]["count"] >= 1
 
     def test_reflect_success_pattern_format(self, tmp_path: Path) -> None:
         """Success pattern learnings have expected format and tags."""
@@ -509,7 +509,7 @@ class TestReflectSuccessPatterns:
         )
 
         assert result["error_patterns"] >= 2
-        assert result["success_patterns"] >= 1
+        assert result["success_patterns"]["count"] >= 1
         # Both error and success learnings should be created
         assert len(result["new_learnings"]) >= 3
 
@@ -517,7 +517,7 @@ class TestReflectSuccessPatterns:
         """trw_reflect with no events still returns success_patterns=0."""
         tools = _get_learning_tools()
         result = tools["trw_reflect"].fn(scope="session")
-        assert result["success_patterns"] == 0
+        assert result["success_patterns"]["count"] == 0
         assert result["error_patterns"] == 0
         assert result["events_analyzed"] == 0
 

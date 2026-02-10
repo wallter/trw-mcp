@@ -18,6 +18,7 @@ from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.architecture import BoundedContext
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import (
     LearningEntry,
@@ -45,9 +46,11 @@ from trw_mcp.state.analytics import (
     update_analytics,
     update_analytics_sync,
 )
+from trw_mcp.state.architecture import load_architecture_config
 from trw_mcp.state.claude_md import (
     CLAUDEMD_LEARNING_CAP,
     CLAUDEMD_PATTERN_CAP,
+    collect_adrs_for_context,
     collect_context_data,
     collect_patterns,
     collect_promotable_learnings,
@@ -56,6 +59,7 @@ from trw_mcp.state.claude_md import (
     render_adherence,
     render_architecture,
     render_behavioral_protocol,
+    render_bounded_context_claude_md,
     render_categorized_learnings,
     render_conventions,
     render_patterns,
@@ -82,6 +86,14 @@ from trw_mcp.state.receipts import log_recall_receipt, prune_recall_receipts
 
 logger = structlog.get_logger()
 
+
+def _as_str_list(val: object) -> list[str]:
+    """Coerce an object to list[str] for iteration (mypy-safe)."""
+    if isinstance(val, list):
+        return [str(v) for v in val]
+    return []
+
+
 _config = TRWConfig()
 _reader = FileStateReader()
 _writer = FileStateWriter()
@@ -91,6 +103,89 @@ _llm = LLMClient(model=_config.llm_default_model)
 # Named caps for mechanical extraction
 _MAX_ERROR_LEARNINGS = 5
 _MAX_REPEATED_OPS = 3
+
+
+def _detect_current_phase() -> str | None:
+    """Detect the current phase from the most recent active run.
+
+    Scans all task directories under the configured task root for run
+    directories containing a ``meta/run.yaml``. Selects the run whose
+    directory name sorts highest (most recent by naming convention).
+
+    Returns:
+        Phase name string (e.g., "research", "implement") or None.
+    """
+    try:
+        project_root = resolve_trw_dir().parent
+        task_root = project_root / _config.task_root
+
+        if not task_root.exists():
+            return None
+
+        # Find all run.yaml files, keyed by parent directory name
+        latest_name = ""
+        latest_yaml: Path | None = None
+        for task_dir in task_root.iterdir():
+            runs_dir = task_dir / "runs"
+            if not runs_dir.is_dir():
+                continue
+            for run_dir in runs_dir.iterdir():
+                run_yaml = run_dir / "meta" / "run.yaml"
+                if run_yaml.exists() and run_dir.name > latest_name:
+                    latest_name = run_dir.name
+                    latest_yaml = run_yaml
+
+        if latest_yaml is None:
+            return None
+
+        data = _reader.read_yaml(latest_yaml)
+        if str(data.get("status", "")) != "active":
+            return None
+        phase = str(data.get("phase", ""))
+        return phase or None
+    except (StateError, OSError, ValueError, TypeError):
+        return None
+
+
+def _sync_bounded_contexts(
+    contexts: list[BoundedContext],
+    project_root: Path,
+    trw_dir: Path,
+    high_impact: list[dict[str, object]],
+) -> int:
+    """Write sub-CLAUDE.md files for each bounded context.
+
+    Filters high-impact learnings by evidence path overlap, collects
+    ADR entries, and renders a sub-CLAUDE.md into each context directory.
+
+    Args:
+        contexts: Bounded context definitions from architecture config.
+        project_root: Project root directory.
+        trw_dir: Path to the .trw directory.
+        high_impact: High-impact learning entries for filtering.
+
+    Returns:
+        Number of bounded context files written.
+    """
+    count = 0
+    for ctx in contexts:
+        ctx_adrs = collect_adrs_for_context(trw_dir, ctx.path)
+        ctx_learnings = [
+            entry for entry in high_impact
+            if any(
+                ctx.path in str(ev)
+                for ev in _as_str_list(entry.get("evidence", []))
+            )
+        ]
+        ctx_content = render_bounded_context_claude_md(
+            ctx.name, ctx.path, ctx_learnings, ctx_adrs,
+            max_lines=_config.sub_claude_md_max_lines,
+        )
+        ctx_target = project_root / ctx.path / "CLAUDE.md"
+        ctx_target.parent.mkdir(parents=True, exist_ok=True)
+        _writer.write_text(ctx_target, ctx_content)
+        count += 1
+    return count
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -277,10 +372,12 @@ def register_learning_tools(server: FastMCP) -> None:
         _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
 
         learning_id = generate_learning_id()
+        current_phase = _detect_current_phase()
         entry = LearningEntry(
             id=learning_id, summary=summary, detail=detail,
             tags=tags or [], evidence=evidence or [],
             impact=impact, shard_id=shard_id,
+            phase_scope=current_phase,
         )
         entry_path = save_learning_entry(trw_dir, entry)
         update_analytics(trw_dir, 1)
@@ -393,8 +490,10 @@ def register_learning_tools(server: FastMCP) -> None:
         matching_patterns = search_patterns(
             trw_dir / _config.patterns_dir, query_tokens, _reader,
         )
+        current_phase = _detect_current_phase()
         ranked_learnings = rank_by_utility(
             matching_learnings, query_tokens, _config.recall_utility_lambda,
+            current_phase=current_phase,
         )
 
         total_learnings_available = len(ranked_learnings)
@@ -537,6 +636,16 @@ def register_learning_tools(server: FastMCP) -> None:
             }
 
         trw_section = render_template(template, tpl_context)
+
+        # PRD-QUAL-007-FR06: Bounded context sub-CLAUDE.md generation
+        bounded_context_count = 0
+        if scope == "sub" and not target_dir:
+            arch_cfg = load_architecture_config(project_root)
+            if arch_cfg is not None and arch_cfg.bounded_contexts:
+                bounded_context_count = _sync_bounded_contexts(
+                    arch_cfg.bounded_contexts, project_root, trw_dir, high_impact,
+                )
+
         if scope == "sub" and target_dir:
             target = Path(target_dir).resolve() / "CLAUDE.md"
             max_lines = _config.sub_claude_md_max_lines
@@ -552,6 +661,15 @@ def register_learning_tools(server: FastMCP) -> None:
             if isinstance(lid, str) and lid:
                 mark_promoted(trw_dir, lid)
 
+        # PRD-INFRA-001: Sync AGENTS.md with same TRW section
+        agents_md_synced = False
+        agents_md_path: str | None = None
+        if _config.agents_md_enabled and scope == "root":
+            agents_target = project_root / "AGENTS.md"
+            merge_trw_section(agents_target, trw_section, max_lines)
+            agents_md_synced = True
+            agents_md_path = str(agents_target)
+
         logger.info(
             "trw_claude_md_synced", scope=scope, target=str(target),
             learnings_promoted=len(high_impact), patterns_included=len(patterns),
@@ -561,6 +679,9 @@ def register_learning_tools(server: FastMCP) -> None:
             "learnings_promoted": len(high_impact),
             "patterns_included": len(patterns),
             "total_lines": total_lines, "status": "synced", "llm_used": llm_used,
+            "agents_md_synced": agents_md_synced,
+            "agents_md_path": agents_md_path,
+            "bounded_contexts_synced": bounded_context_count,
         }
 
     @server.tool()

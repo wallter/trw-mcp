@@ -60,7 +60,7 @@ class TestTRWConfig:
         assert config.consensus_quorum == 0.67
         assert config.checkpoint_secs == 600
         assert config.timebox_hours == 8
-        assert config.framework_version == "v18.0_TRW"
+        assert config.framework_version == "v18.1_TRW"
         assert config.telemetry is False
 
     def test_learning_defaults(self) -> None:
@@ -99,10 +99,9 @@ class TestTRWConfig:
     def test_orc_defaults_still_exist(self) -> None:
         """PRD-FIX-016-FR03: ORC prompt-level fields still present with correct defaults."""
         config = TRWConfig()
-        assert config.min_shards_target == 3
+        # Fields unique to ORC (min_shards_target, consensus_quorum,
+        # checkpoint_secs already verified in test_defaults)
         assert config.min_shards_floor == 2
-        assert config.consensus_quorum == 0.67
-        assert config.checkpoint_secs == 600
         assert config.max_child_depth == 2
         assert config.max_research_waves == 3
 

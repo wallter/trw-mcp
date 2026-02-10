@@ -17,7 +17,9 @@ from trw_mcp.exceptions import StateError, ValidationError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import (
     Confidence,
+    PHASE_ORDER,
     Phase,
+    ReversionTrigger,
     RunState,
     RunStatus,
     ShardCard,
@@ -26,16 +28,18 @@ from trw_mcp.models.run import (
     WaveManifest,
     WaveStatus,
 )
-from trw_mcp.state._paths import resolve_project_root, resolve_run_path, resolve_trw_dir
 from trw_mcp.scoring import process_outcome_for_event
+from trw_mcp.state._paths import resolve_project_root, resolve_run_path, resolve_trw_dir
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
     FileStateWriter,
     model_to_dict,
 )
+from trw_mcp.state.framework import assemble_framework
 from trw_mcp.state.validation import (
     check_phase_exit,
+    check_phase_input,
     validate_wave_contracts,
 )
 
@@ -177,11 +181,16 @@ def register_orchestration_tools(server: FastMCP) -> None:
             {"task": task_name, "framework": _config.framework_version},
         )
 
-        # Copy framework snapshot if available
-        framework_data = _get_bundled_data("framework.md")
-        if framework_data:
-            snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
-            snapshot_path.write_text(framework_data, encoding="utf-8")
+        # Assemble phase-specific framework snapshot (PRD-CORE-017).
+        # Uses core + research overlay if available, falls back to monolithic.
+        snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
+        try:
+            snapshot_content = assemble_framework(trw_dir, "research")
+        except FileNotFoundError:
+            snapshot_content = _get_bundled_data("framework.md") or ""
+
+        if snapshot_content:
+            snapshot_path.write_text(snapshot_content, encoding="utf-8")
 
         logger.info(
             "trw_init_complete",
@@ -211,10 +220,12 @@ def register_orchestration_tools(server: FastMCP) -> None:
         run_yaml_path = meta_path / "run.yaml"
         state_data = _reader.read_yaml(run_yaml_path)
 
-        # Read wave manifest if exists
+        # Read wave manifest if exists (prefer shards/, fallback meta/)
         wave_data: dict[str, object] = {}
-        wave_manifest_path = meta_path / "wave_manifest.yaml"
-        if _reader.exists(wave_manifest_path):
+        from trw_mcp.tools.wave import resolve_wave_manifest_path
+
+        wave_manifest_path = resolve_wave_manifest_path(resolved_path)
+        if wave_manifest_path is not None:
             wave_data = _reader.read_yaml(wave_manifest_path)
 
         # Count events
@@ -246,12 +257,28 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if wave_data:
             result["waves"] = wave_data.get("waves", [])
 
+            # PRD-CORE-012-FR07: Wave progress with shard status counts
+            wave_progress = _compute_wave_progress(
+                wave_data, resolved_path,
+            )
+            if wave_progress:
+                result["wave_progress"] = wave_progress
+
+        # PRD-CORE-013-FR07: Reversion frequency metrics
+        reversion_metrics = _compute_reversion_metrics(events)
+        result["reversions"] = reversion_metrics
+
         # PRD-FIX-005: Stale framework version warning
         version_warning = _check_framework_version_staleness(
             str(state_data.get("framework", "")),
         )
         if version_warning:
             result["version_warning"] = version_warning
+
+        # PRD-CORE-015-FR05: Velocity summary in status output
+        velocity_summary = _get_velocity_summary()
+        if velocity_summary is not None:
+            result["velocity_summary"] = velocity_summary
 
         logger.info("trw_status_read", run_id=result["run_id"])
         return result
@@ -260,12 +287,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
     def trw_phase_check(
         phase_name: str,
         run_path: str | None = None,
+        direction: str = "exit",
     ) -> dict[str, object]:
         """Validate exit criteria for a framework phase — reports pass/fail per criterion.
 
         Args:
             phase_name: Phase to check (research, plan, implement, validate, review, deliver).
             run_path: Path to the run directory. Auto-detects if not provided.
+            direction: Check direction — "exit" (default) validates exit criteria,
+                "enter" validates input prerequisites for entering the phase.
         """
         try:
             phase = Phase(phase_name.lower())
@@ -276,14 +306,26 @@ def register_orchestration_tools(server: FastMCP) -> None:
                 phase=phase_name,
             ) from exc
 
+        valid_directions = ("exit", "enter")
+        if direction not in valid_directions:
+            raise ValidationError(
+                f"Invalid direction: {direction!r}. Valid: {list(valid_directions)}",
+                phase=phase_name,
+            )
+
         resolved_path = resolve_run_path(run_path)
-        result = check_phase_exit(phase, resolved_path, _config)
+
+        if direction == "enter":
+            result = check_phase_input(phase, resolved_path, _config)
+        else:
+            result = check_phase_exit(phase, resolved_path, _config)
 
         _events.log_event(
             resolved_path / "meta" / "events.jsonl",
             "phase_check",
             {
                 "phase": phase_name,
+                "direction": direction,
                 "valid": result.valid,
                 "failures": len(result.failures),
             },
@@ -299,6 +341,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         phase_result: dict[str, object] = {
             "phase": phase_name,
+            "direction": direction,
             "valid": result.valid,
             "completeness_score": result.completeness_score,
             "failures": [
@@ -313,6 +356,34 @@ def register_orchestration_tools(server: FastMCP) -> None:
         }
         if q_updated:
             phase_result["q_updates"] = len(q_updated)
+
+        # PRD-QUAL-007: Architecture fitness in phase check output
+        if _config.architecture_fitness_enabled:
+            try:
+                from trw_mcp.state.architecture import (
+                    check_architecture_fitness,
+                    load_architecture_config,
+                )
+
+                proj_root = resolve_project_root()
+                arch_cfg = load_architecture_config(proj_root)
+                if arch_cfg is not None:
+                    fitness = check_architecture_fitness(
+                        phase_name, resolved_path, arch_cfg, proj_root,
+                    )
+                    phase_result["architecture_fitness"] = {
+                        "score": fitness.score,
+                        "violations": len(fitness.violations),
+                        "checks_run": fitness.checks_run,
+                    }
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort
+
+        # PRD-CORE-015-FR08: Velocity alert for negative acceleration
+        velocity_alert = _get_velocity_alert()
+        if velocity_alert is not None:
+            phase_result["velocity_alert"] = velocity_alert
+
         return phase_result
 
     @server.tool()
@@ -328,9 +399,11 @@ def register_orchestration_tools(server: FastMCP) -> None:
         """
         resolved_path = resolve_run_path(run_path)
 
-        # Read wave manifest
-        wave_manifest_path = resolved_path / "meta" / "wave_manifest.yaml"
-        if not _reader.exists(wave_manifest_path):
+        # Read wave manifest (prefer shards/, fallback meta/ — PRD-CORE-012 NFR03)
+        from trw_mcp.tools.wave import resolve_wave_manifest_path as _resolve_wm
+
+        wave_manifest_path = _resolve_wm(resolved_path)
+        if wave_manifest_path is None:
             return {
                 "wave": wave_number,
                 "valid": False,
@@ -583,6 +656,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if agent_role:
             event_data["agent_role"] = agent_role
 
+        # PRD-CORE-013-FR01: phase_revert event handling
+        reversion_applied = False
+        if event_type == "phase_revert":
+            reversion_applied = _handle_phase_revert(
+                event_data, resolved_path,
+            )
+
         _events.log_event(
             resolved_path / "meta" / "events.jsonl",
             event_type,
@@ -602,6 +682,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         }
         if q_updated:
             result["q_updates"] = len(q_updated)
+        if event_type == "phase_revert":
+            result["reversion_applied"] = reversion_applied
         return result
 
     @server.tool()
@@ -660,6 +742,234 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "events_path": str(events_path),
             "tool_guidance": tool_guidance,
         }
+
+
+def _handle_phase_revert(
+    event_data: dict[str, object],
+    run_path: Path,
+) -> bool:
+    """Handle phase_revert event: validate and update run.yaml phase.
+
+    PRD-CORE-013-FR01: Validates that to_phase is strictly earlier than
+    from_phase. If valid, updates run.yaml phase. If invalid, logs warning.
+    PRD-CORE-013-FR03: Captures affected PRDs in event data.
+
+    Args:
+        event_data: Event data dict (mutated in place with validation results).
+        run_path: Path to the run directory.
+
+    Returns:
+        True if reversion was applied, False if invalid.
+    """
+    from_phase = str(event_data.get("from_phase", ""))
+    to_phase = str(event_data.get("to_phase", ""))
+    trigger_str = str(event_data.get("trigger", "other"))
+
+    # Classify trigger (FR02)
+    trigger = ReversionTrigger.classify(trigger_str)
+    if trigger_str != trigger.value:
+        event_data["trigger_warning"] = (
+            f"Unknown trigger '{trigger_str}' classified as OTHER"
+        )
+    event_data["trigger_classified"] = trigger.value
+
+    # Validate phase ordering (FR01)
+    from_order = PHASE_ORDER.get(from_phase, -1)
+    to_order = PHASE_ORDER.get(to_phase, -1)
+
+    if from_order < 0 or to_order < 0:
+        event_data["reversion_status"] = "invalid"
+        event_data["reversion_error"] = (
+            f"Invalid phase values: from={from_phase!r}, to={to_phase!r}"
+        )
+        return False
+
+    if to_order >= from_order:
+        event_data["reversion_status"] = "invalid"
+        event_data["reversion_error"] = (
+            f"Cannot revert forward or to same phase: "
+            f"{from_phase} -> {to_phase}"
+        )
+        return False
+
+    # FR03: Capture affected PRDs
+    try:
+        from trw_mcp.state.prd_utils import discover_governing_prds, parse_frontmatter
+
+        prd_ids = discover_governing_prds(run_path, _config)
+        if prd_ids:
+            affected_prds: list[dict[str, str]] = []
+            project_root = resolve_project_root()
+            prds_dir = project_root / _config.prds_relative_path
+            for prd_id in prd_ids:
+                prd_file = prds_dir / f"{prd_id}.md"
+                if prd_file.exists():
+                    content = prd_file.read_text(encoding="utf-8")
+                    fm = parse_frontmatter(content)
+                    affected_prds.append({
+                        "id": prd_id,
+                        "status_at_reversion": str(fm.get("status", "unknown")),
+                    })
+            if affected_prds:
+                event_data["affected_prds"] = affected_prds
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort PRD capture
+
+    # Valid reversion — update run.yaml phase
+    meta_path = run_path / "meta"
+    run_yaml_path = meta_path / "run.yaml"
+    if run_yaml_path.exists():
+        state_data = _reader.read_yaml(run_yaml_path)
+        state_data["phase"] = to_phase
+        _writer.write_yaml(run_yaml_path, state_data)
+
+    event_data["reversion_status"] = "applied"
+    logger.info(
+        "phase_revert_applied",
+        from_phase=from_phase,
+        to_phase=to_phase,
+        trigger=trigger.value,
+    )
+    return True
+
+
+def _compute_wave_progress(
+    wave_data: dict[str, object],
+    run_path: Path,
+) -> dict[str, object] | None:
+    """Compute wave-level and shard-level progress summary.
+
+    PRD-CORE-012-FR07: Enhanced trw_status with wave/shard progress.
+
+    Args:
+        wave_data: Parsed wave_manifest.yaml content.
+        run_path: Path to the run directory (for reading shard manifest).
+
+    Returns:
+        Wave progress dict, or None if no waves found.
+    """
+    waves_raw = wave_data.get("waves", [])
+    if not isinstance(waves_raw, list) or not waves_raw:
+        return None
+
+    # Read shard manifest for status data
+    shard_statuses: dict[str, str] = {}
+    shard_manifest_path = run_path / "shards" / "manifest.yaml"
+    if shard_manifest_path.exists():
+        try:
+            shard_data = _reader.read_yaml(shard_manifest_path)
+            raw_shards = shard_data.get("shards", [])
+            if isinstance(raw_shards, list):
+                for s in raw_shards:
+                    if isinstance(s, dict):
+                        sid = str(s.get("id", ""))
+                        shard_statuses[sid] = str(s.get("status", "pending"))
+        except (StateError, OSError, ValueError, TypeError):
+            pass
+
+    completed_waves = 0
+    active_wave: int | None = None
+    wave_details: list[dict[str, object]] = []
+
+    for w in waves_raw:
+        if not isinstance(w, dict):
+            continue
+        wave_num = w.get("wave", 0)
+        wave_status = str(w.get("status", "pending"))
+        wave_shard_ids = w.get("shards", [])
+        if not isinstance(wave_shard_ids, list):
+            wave_shard_ids = []
+
+        # Count shard statuses for this wave
+        counts: dict[str, int] = {
+            "complete": 0, "active": 0, "pending": 0,
+            "failed": 0, "partial": 0,
+        }
+        for sid in wave_shard_ids:
+            st = shard_statuses.get(str(sid), "pending")
+            if st in counts:
+                counts[st] += 1
+
+        if wave_status in ("complete", "partial"):
+            completed_waves += 1
+        elif wave_status == "active" or counts["active"] > 0:
+            active_wave = wave_num
+
+        wave_details.append({
+            "wave": wave_num,
+            "status": wave_status,
+            "shards": {
+                "total": len(wave_shard_ids),
+                **counts,
+            },
+        })
+
+    return {
+        "total_waves": len(waves_raw),
+        "completed_waves": completed_waves,
+        "active_wave": active_wave,
+        "wave_details": wave_details,
+    }
+
+
+def _compute_reversion_metrics(
+    events: list[dict[str, object]],
+) -> dict[str, object]:
+    """Compute reversion frequency metrics from events.
+
+    PRD-CORE-013-FR07: Scans events for phase_revert and phase_enter
+    events to compute reversion rate and classification.
+
+    Args:
+        events: List of event dicts from events.jsonl.
+
+    Returns:
+        Reversion metrics dict with count, rate, by_trigger, classification, latest.
+    """
+    revert_events = [
+        e for e in events if e.get("event") == "phase_revert"
+    ]
+    phase_enter_events = [
+        e for e in events if e.get("event") == "phase_enter"
+    ]
+
+    revert_count = len(revert_events)
+    total_transitions = revert_count + len(phase_enter_events)
+    rate = revert_count / total_transitions if total_transitions > 0 else 0.0
+
+    # By-trigger aggregation
+    by_trigger: dict[str, int] = {}
+    for evt in revert_events:
+        trigger = str(evt.get("trigger_classified", evt.get("trigger", "other")))
+        by_trigger[trigger] = by_trigger.get(trigger, 0) + 1
+
+    # Classification with configurable thresholds
+    if rate >= _config.reversion_rate_concerning:
+        classification = "concerning"
+    elif rate >= _config.reversion_rate_elevated:
+        classification = "elevated"
+    else:
+        classification = "healthy"
+
+    # Latest reversion
+    latest: dict[str, object] | None = None
+    if revert_events:
+        last = revert_events[-1]
+        latest = {
+            "from_phase": last.get("from_phase", ""),
+            "to_phase": last.get("to_phase", ""),
+            "trigger": last.get("trigger_classified", last.get("trigger", "")),
+            "reason": last.get("reason", ""),
+            "ts": last.get("ts", ""),
+        }
+
+    return {
+        "count": revert_count,
+        "rate": round(rate, 4),
+        "by_trigger": by_trigger,
+        "classification": classification,
+        "latest": latest,
+    }
 
 
 def _get_bundled_data(filename: str) -> str | None:
@@ -762,12 +1072,29 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         aaref_path = frameworks_dir / "AARE-F-FRAMEWORK.md"
         aaref_path.write_text(aaref_data, encoding="utf-8")
 
+    # Deploy overlay files (PRD-CORE-017)
+    core_data = _get_bundled_data("trw-core.md")
+    if core_data:
+        core_path = frameworks_dir / "trw-core.md"
+        core_path.write_text(core_data, encoding="utf-8")
+
+    overlays_dir = frameworks_dir / "overlays"
+    _writer.ensure_dir(overlays_dir)
+    deployed_overlays: list[str] = []
+    for phase in (p.value for p in Phase):
+        overlay_data = _get_bundled_data(f"overlays/trw-{phase}.md")
+        if overlay_data:
+            overlay_path = overlays_dir / f"trw-{phase}.md"
+            overlay_path.write_text(overlay_data, encoding="utf-8")
+            deployed_overlays.append(phase)
+
     # Write VERSION.yaml
     version_data: dict[str, object] = {
         "framework_version": current_fw_version,
         "aaref_version": current_aaref_version,
         "trw_mcp_version": current_pkg_version,
         "deployed_at": datetime.now(timezone.utc).isoformat(),
+        "overlays_deployed": deployed_overlays,
     }
     _writer.write_yaml(version_path, version_data)
 
@@ -827,17 +1154,142 @@ def _check_framework_version_staleness(run_framework: str) -> str | None:
 
         version_data = _reader.read_yaml(version_path)
         current_version = str(version_data.get("framework_version", ""))
-        if not current_version:
+        if not current_version or run_framework == current_version:
             return None
 
-        if run_framework != current_version:
-            return (
-                f"Run uses framework {run_framework} but current is "
-                f"{current_version}. Consider re-bootstrapping or "
-                f"acknowledging the version delta."
-            )
+        return (
+            f"Run uses framework {run_framework} but current is "
+            f"{current_version}. Consider re-bootstrapping or "
+            f"acknowledging the version delta."
+        )
     except (StateError, ValueError, TypeError, OSError):
         return None
+
+
+def _read_velocity_history(min_entries: int) -> list[dict[str, object]] | None:
+    """Read velocity history from .trw/context/velocity.yaml.
+
+    Args:
+        min_entries: Minimum number of history entries required.
+
+    Returns:
+        History list if available and meets minimum, None otherwise.
+    """
+    trw_dir = resolve_trw_dir()
+    velocity_path = trw_dir / _config.context_dir / "velocity.yaml"
+    if not _reader.exists(velocity_path):
+        return None
+
+    data = _reader.read_yaml(velocity_path)
+    history = data.get("history", [])
+    if not isinstance(history, list) or len(history) < min_entries:
+        return None
+    return history
+
+
+def _extract_throughputs(history: list[dict[str, object]]) -> list[float]:
+    """Extract shard_throughput values from velocity history entries.
+
+    Args:
+        history: List of velocity history dicts with nested metrics.
+
+    Returns:
+        List of throughput floats, one per history entry.
+    """
+    throughputs: list[float] = []
+    for entry in history:
+        metrics = entry.get("metrics", {})
+        if isinstance(metrics, dict):
+            throughputs.append(float(str(metrics.get("shard_throughput", 0.0))))
+        else:
+            throughputs.append(0.0)
+    return throughputs
+
+
+def _get_velocity_summary() -> dict[str, object] | None:
+    """Get compact velocity summary for trw_status output.
+
+    PRD-CORE-015-FR05: Returns velocity_summary block when history exists
+    with >= 2 entries. Returns None otherwise.
+
+    Returns:
+        Velocity summary dict or None.
+    """
+    try:
+        history = _read_velocity_history(min_entries=2)
+        if history is None:
+            return None
+
+        throughputs = _extract_throughputs(history)
+        last_throughput = throughputs[-1]
+
+        if len(history) >= 3:
+            from trw_mcp.velocity import linear_fit
+
+            x = [float(i) for i in range(len(throughputs))]
+            try:
+                slope, _, r_squared = linear_fit(x, throughputs)
+                mean_t = sum(throughputs) / len(throughputs)
+                threshold = _config.velocity_stable_threshold * max(mean_t, 0.01)
+                if abs(slope) < threshold:
+                    direction = "stable"
+                elif slope > 0:
+                    direction = "improving"
+                else:
+                    direction = "declining"
+            except ValueError:
+                direction = "insufficient_data"
+                r_squared = None
+        else:
+            direction = "insufficient_data"
+            r_squared = None
+
+        return {
+            "last_run_throughput": round(last_throughput, 4),
+            "trend_direction": direction,
+            "trend_confidence": round(r_squared, 4) if r_squared is not None else None,
+            "runs_in_history": len(history),
+        }
+    except (StateError, OSError, ValueError, TypeError):
+        return None
+
+
+def _get_velocity_alert() -> dict[str, object] | None:
+    """Check for negative velocity acceleration and return alert if detected.
+
+    PRD-CORE-015-FR08: Advisory alert when velocity history >= min_runs
+    and linear trend is negative with R-squared above threshold.
+
+    Returns:
+        Velocity alert dict or None.
+    """
+    try:
+        history = _read_velocity_history(
+            min_entries=_config.velocity_alert_min_runs,
+        )
+        if history is None:
+            return None
+
+        from trw_mcp.velocity import linear_fit
+
+        throughputs = _extract_throughputs(history)
+        x = [float(i) for i in range(len(throughputs))]
+        slope, _, r_squared = linear_fit(x, throughputs)
+
+        if slope < 0 and r_squared > _config.velocity_alert_r_squared_min:
+            return {
+                "type": "negative_acceleration",
+                "trend_slope": round(slope, 4),
+                "trend_r_squared": round(r_squared, 4),
+                "message": (
+                    f"Velocity declining over last {len(history)} runs "
+                    f"(R²={r_squared:.2f}). Consider investigating debt "
+                    f"indicators or learning effectiveness."
+                ),
+                "severity": "warning",
+            }
+    except (StateError, OSError, ValueError, TypeError):
+        pass
 
     return None
 

@@ -32,7 +32,36 @@ _writer = FileStateWriter()
 # Error event classification keywords
 _ERROR_KEYWORDS = ("error", "fail", "exception", "crash", "timeout")
 
+# Default fallback when access/creation date is unparseable
+_DEFAULT_DAYS_UNUSED = 30
+
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
+
+
+def _days_since_access(
+    entry: dict[str, object],
+    today: date,
+    fallback_days: int = _DEFAULT_DAYS_UNUSED,
+) -> int:
+    """Compute days since last access, falling back to creation date.
+
+    Resolution order: last_accessed_at -> created -> fallback_days.
+    """
+    last_accessed_str = str(entry.get("last_accessed_at", ""))
+    if last_accessed_str and last_accessed_str != "None":
+        try:
+            return (today - date.fromisoformat(last_accessed_str)).days
+        except ValueError:
+            pass
+
+    created_str = str(entry.get("created", ""))
+    if created_str:
+        try:
+            return (today - date.fromisoformat(created_str)).days
+        except ValueError:
+            pass
+
+    return fallback_days
 
 
 def update_q_value(
@@ -128,19 +157,46 @@ def compute_utility_score(
 # --- Recall ranking (PRD-FIX-010: moved from tools/learning.py) ---
 
 
+def _compute_phase_bonus(
+    current_phase: str | None,
+    entry: dict[str, object],
+) -> float:
+    """Compute phase-scoped bonus for a learning entry (PRD-CORE-017).
+
+    When current_phase is active, entries with a matching phase_scope
+    receive a positive bonus, global entries (no scope) receive zero,
+    and non-matching entries receive a negative penalty.
+    """
+    if not current_phase:
+        return 0.0
+
+    entry_phase = str(entry.get("phase_scope", "") or "")
+    if not entry_phase:
+        return _config.phase_bonus_global
+    if entry_phase == current_phase:
+        return _config.phase_bonus_matching
+    return _config.phase_bonus_nonmatching
+
+
 def rank_by_utility(
     matches: list[dict[str, object]],
     query_tokens: list[str],
     lambda_weight: float,
+    current_phase: str | None = None,
 ) -> list[dict[str, object]]:
     """Re-rank matched learnings by combined relevance + utility score.
 
-    Combined score = (1 - lambda) * relevance + lambda * utility
+    Combined score = (1 - lambda) * relevance + lambda * utility + phase_bonus
+
+    Phase bonus (PRD-CORE-017): When current_phase is provided, learnings with
+    matching phase_scope get +0.15, global (no scope) get 0.0, non-matching
+    get -0.05. Configurable via TRWConfig.
 
     Args:
         matches: List of matched learning entry dicts.
         query_tokens: Lowercased query tokens for relevance scoring.
         lambda_weight: Blend factor. 0.0 = pure relevance, 1.0 = pure utility.
+        current_phase: Active phase name for phase-scoped scoring. None = no bonus.
 
     Returns:
         Sorted list (highest combined score first).
@@ -156,15 +212,16 @@ def rank_by_utility(
         summary = str(entry.get("summary", "")).lower()
         detail = str(entry.get("detail", "")).lower()
         entry_tags = entry.get("tags", [])
-        tag_text = " ".join(
-            str(t).lower() for t in entry_tags
-        ) if isinstance(entry_tags, list) else ""
+        if isinstance(entry_tags, list):
+            tag_text = " ".join(str(t).lower() for t in entry_tags)
+        else:
+            tag_text = ""
 
         if query_tokens:
             summary_hits = sum(1 for t in query_tokens if t in summary)
             tag_hits = sum(1 for t in query_tokens if t in tag_text)
             detail_hits = sum(1 for t in query_tokens if t in detail)
-            weighted_hits = summary_hits * 3 + tag_hits * 2 + detail_hits * 1
+            weighted_hits = summary_hits * 3 + tag_hits * 2 + detail_hits
             max_possible = len(query_tokens) * 3
             relevance = min(1.0, weighted_hits / max(max_possible, 1))
         else:
@@ -175,23 +232,7 @@ def rank_by_utility(
         q_obs = int(str(entry.get("q_observations", 0)))
         base_impact = float(str(entry.get("impact", 0.5)))
         recurrence = int(str(entry.get("recurrence", 1)))
-
-        last_accessed_str = str(entry.get("last_accessed_at", ""))
-        created_str = str(entry.get("created", ""))
-        if last_accessed_str and last_accessed_str != "None":
-            try:
-                last_acc = date.fromisoformat(last_accessed_str)
-                days_unused = (today - last_acc).days
-            except ValueError:
-                days_unused = 30
-        elif created_str:
-            try:
-                created_d = date.fromisoformat(created_str)
-                days_unused = (today - created_d).days
-            except ValueError:
-                days_unused = 30
-        else:
-            days_unused = 30
+        days_unused = _days_since_access(entry, today)
 
         utility = compute_utility_score(
             q_value=q_value,
@@ -204,7 +245,14 @@ def rank_by_utility(
             cold_start_threshold=_config.q_cold_start_threshold,
         )
 
-        combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
+        # Phase bonus (PRD-CORE-017): match > global > non-match
+        phase_bonus = _compute_phase_bonus(current_phase, entry)
+
+        combined = (
+            (1.0 - lambda_weight) * relevance
+            + lambda_weight * utility
+            + phase_bonus
+        )
 
         scored.append((combined, entry))
 
@@ -269,16 +317,7 @@ def utility_based_prune_candidates(
         q_value = float(str(data.get("q_value", data.get("impact", 0.5))))
         q_observations = int(str(data.get("q_observations", 0)))
         base_impact = float(str(data.get("impact", 0.5)))
-
-        last_accessed_str = str(data.get("last_accessed_at", ""))
-        if last_accessed_str and last_accessed_str != "None":
-            try:
-                last_accessed = date.fromisoformat(last_accessed_str)
-                days_since_access = (today - last_accessed).days
-            except ValueError:
-                days_since_access = age_days
-        else:
-            days_since_access = age_days
+        days_since_access = _days_since_access(data, today, fallback_days=age_days)
 
         utility = compute_utility_score(
             q_value=q_value,

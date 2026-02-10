@@ -13,6 +13,7 @@ from typing import Protocol
 import structlog
 
 from trw_mcp.exceptions import StateError, ValidationError
+from trw_mcp.models.architecture import ConventionViolation
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import (
     DimensionScore,
@@ -36,6 +37,93 @@ from trw_mcp.models.run import (
 )
 
 logger = structlog.get_logger()
+
+# Recognized event names for reflection and CLAUDE.md sync checks.
+_REFLECTION_EVENTS: frozenset[str] = frozenset(
+    {"reflection_complete", "trw_reflect_complete"}
+)
+_SYNC_EVENTS: frozenset[str] = frozenset({"claude_md_sync", "claude_md_synced"})
+
+
+def _read_events(events_path: Path) -> list[dict[str, object]]:
+    """Read events.jsonl via FileStateReader (lazy import to avoid circular deps).
+
+    Args:
+        events_path: Path to events.jsonl file.
+
+    Returns:
+        List of event dicts, or empty list if file does not exist.
+    """
+    if not events_path.exists():
+        return []
+    from trw_mcp.state.persistence import FileStateReader
+
+    return FileStateReader().read_jsonl(events_path)
+
+
+def _events_contain(
+    events: list[dict[str, object]],
+    event_names: frozenset[str],
+) -> bool:
+    """Check whether any event matches one of the given event names.
+
+    Args:
+        events: List of event dicts from events.jsonl.
+        event_names: Set of event type strings to match.
+
+    Returns:
+        True if at least one event matches.
+    """
+    return any(e.get("event") in event_names for e in events)
+
+
+def _is_validate_pass(event: dict[str, object]) -> bool:
+    """Check if an event represents a passing validate phase gate.
+
+    Args:
+        event: Single event dict from events.jsonl.
+
+    Returns:
+        True if the event is a phase_check for validate with valid=True.
+    """
+    if event.get("event") != "phase_check":
+        return False
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return False
+    return data.get("phase") == "validate" and data.get("valid") is True
+
+
+# Phase input criteria — prerequisites to enter a phase (PRD-CORE-017-FR04).
+# Each key maps a phase name to a list of prerequisite descriptions.
+# Checked when direction="enter" is passed to trw_phase_check.
+PHASE_INPUT_CRITERIA: dict[str, list[str]] = {
+    "research": [
+        "Run initialized (run.yaml exists)",
+    ],
+    "plan": [
+        "Research synthesis produced",
+        "Run initialized (run.yaml exists)",
+    ],
+    "implement": [
+        "Plan document exists (plan.md)",
+        "Wave manifest defined (manifest.yaml)",
+        "PRDs at required status",
+    ],
+    "validate": [
+        "Implementation shards completed",
+        "Output contracts available",
+    ],
+    "review": [
+        "Validation phase passed",
+        "Tests pass",
+    ],
+    "deliver": [
+        "Review completed",
+        "Reflection completed",
+    ],
+}
+
 
 # Phase exit criteria descriptions (from FRAMEWORK.md §PHASES)
 PHASE_EXIT_CRITERIA: dict[str, list[str]] = {
@@ -428,6 +516,19 @@ def check_phase_exit(
                 )
             )
 
+        # Advisory: recommend integration + full-suite test strategy (PRD-QUAL-006-FR05)
+        failures.append(
+            ValidationFailure(
+                field="test_strategy",
+                rule="phase_test_advisory",
+                message=(
+                    "VALIDATE phase: run integration tests and full suite "
+                    "(pytest tests/ -v -m 'not e2e' --cov)"
+                ),
+                severity="info",
+            )
+        )
+
     elif phase_name == "review":
         final_report = reports_path / "final.md"
         if not final_report.exists():
@@ -441,17 +542,9 @@ def check_phase_exit(
             )
 
         # Check for reflection event in events.jsonl
-        events_path = meta_path / "events.jsonl"
-        if events_path.exists():
-            from trw_mcp.state.persistence import FileStateReader
-
-            reader = FileStateReader()
-            events = reader.read_jsonl(events_path)
-            has_reflection = any(
-                e.get("event") in ("reflection_complete", "trw_reflect_complete")
-                for e in events
-            )
-            if not has_reflection:
+        events = _read_events(meta_path / "events.jsonl")
+        if events:
+            if not _events_contain(events, _REFLECTION_EVENTS):
                 failures.append(
                     ValidationFailure(
                         field="reflection",
@@ -476,9 +569,8 @@ def check_phase_exit(
         if run_yaml.exists():
             from trw_mcp.state.persistence import FileStateReader
 
-            reader = FileStateReader()
             try:
-                state = reader.read_yaml(run_yaml)
+                state = FileStateReader().read_yaml(run_yaml)
                 if state.get("status") != "complete":
                     failures.append(
                         ValidationFailure(
@@ -491,42 +583,229 @@ def check_phase_exit(
             except Exception:
                 pass
 
-        # Check for CLAUDE.md sync event
-        events_path = meta_path / "events.jsonl"
-        if events_path.exists():
-            from trw_mcp.state.persistence import FileStateReader as _Reader
-
-            sync_reader = _Reader()
-            events = sync_reader.read_jsonl(events_path)
-            has_sync = any(
-                e.get("event") in ("claude_md_sync", "claude_md_synced")
-                for e in events
+        # Advisory: recommend full-suite + coverage at delivery (PRD-QUAL-006-FR05)
+        failures.append(
+            ValidationFailure(
+                field="test_strategy",
+                rule="phase_test_advisory",
+                message=(
+                    "DELIVER phase: run full test suite with coverage "
+                    "(pytest tests/ -v --cov --cov-fail-under=85)"
+                ),
+                severity="info",
             )
-            if not has_sync:
-                failures.append(
-                    ValidationFailure(
-                        field="claude_md_sync",
-                        rule="sync_required",
-                        message="CLAUDE.md not synced — call trw_claude_md_sync() before DELIVER",
-                        severity="warning",
-                    )
+        )
+
+        # Check for CLAUDE.md sync event
+        events = _read_events(meta_path / "events.jsonl")
+        if events and not _events_contain(events, _SYNC_EVENTS):
+            failures.append(
+                ValidationFailure(
+                    field="claude_md_sync",
+                    rule="sync_required",
+                    message="CLAUDE.md not synced — call trw_claude_md_sync() before DELIVER",
+                    severity="warning",
                 )
+            )
 
+    # PRD-QUAL-007: Architecture fitness check (opt-in via config)
+    if config.architecture_fitness_enabled:
+        from trw_mcp.state.architecture import (
+            check_architecture_fitness,
+            load_architecture_config,
+        )
+        from trw_mcp.state._paths import resolve_project_root as _resolve_root
+
+        try:
+            proj_root = _resolve_root()
+            arch_config = load_architecture_config(proj_root)
+            if arch_config is not None:
+                fitness = check_architecture_fitness(
+                    phase_name, run_path, arch_config, proj_root,
+                )
+                for violation in fitness.violations:
+                    if isinstance(violation, ConventionViolation):
+                        sev = str(violation.severity)
+                        msg = violation.message or f"Convention violation in {violation.file}"
+                    else:
+                        sev = "warning"
+                        msg = f"Import violation in {violation.file}"
+                    failures.append(ValidationFailure(
+                        field=f"architecture:{violation.file}",
+                        rule="architecture_fitness",
+                        message=msg,
+                        severity=sev,
+                    ))
+        except Exception:
+            pass  # Best-effort — never block phase gate for architecture errors
+
+    return _build_phase_result(failures, criteria, phase_name, "phase_exit_checked")
+
+
+def _build_phase_result(
+    failures: list[ValidationFailure],
+    criteria: list[str],
+    phase_name: str,
+    log_event: str,
+) -> ValidationResult:
+    """Build a ValidationResult from phase check failures.
+
+    Shared by both exit and input phase checks to avoid duplication.
+
+    Args:
+        failures: Collected validation failures.
+        criteria: Criteria list (used only for completeness denominator).
+        phase_name: Phase name for logging.
+        log_event: Event name for the log entry.
+
+    Returns:
+        ValidationResult with validity, failures, and completeness score.
+    """
     is_valid = not any(f.severity == "error" for f in failures)
-
     result = ValidationResult(
         valid=is_valid,
         failures=failures,
         completeness_score=1.0 - (len(failures) / max(len(criteria), 1)),
     )
-
-    logger.info(
-        "phase_exit_checked",
-        phase=phase_name,
-        valid=is_valid,
-        failures=len(failures),
-    )
+    logger.info(log_event, phase=phase_name, valid=is_valid, failures=len(failures))
     return result
+
+
+def check_phase_input(
+    phase: Phase,
+    run_path: Path,
+    config: TRWConfig,
+) -> ValidationResult:
+    """Check input criteria (prerequisites) for entering a framework phase.
+
+    Validates that the necessary artifacts from the previous phase exist
+    before allowing entry into the next phase. When config.strict_input_criteria
+    is True, missing prerequisites are errors; otherwise they are warnings.
+
+    Args:
+        phase: Phase to validate entry into.
+        run_path: Path to the run directory.
+        config: Framework configuration.
+
+    Returns:
+        ValidationResult with pass/fail and any failures.
+    """
+    failures: list[ValidationFailure] = []
+    phase_name = phase.value
+    criteria = PHASE_INPUT_CRITERIA.get(phase_name, [])
+    severity = "error" if config.strict_input_criteria else "warning"
+
+    meta_path = run_path / "meta"
+
+    # Universal: run.yaml must exist — early return since nothing else can be checked
+    run_yaml = meta_path / "run.yaml"
+    if not run_yaml.exists():
+        failures.append(
+            ValidationFailure(
+                field="run.yaml",
+                rule="run_initialized",
+                message="Run not initialized — run.yaml missing",
+                severity="error",
+            )
+        )
+        return ValidationResult(
+            valid=False,
+            failures=failures,
+            completeness_score=0.0,
+        )
+
+    # research: no per-phase prerequisites beyond run.yaml (handled above)
+
+    if phase_name == "plan":
+        scratch_path = run_path / "scratch"
+        reports_path = run_path / "reports"
+        synthesis_path = scratch_path / "_orchestrator" / "research_synthesis.md"
+        alt_path = reports_path / "research_synthesis.md"
+        if not synthesis_path.exists() and not alt_path.exists():
+            failures.append(
+                ValidationFailure(
+                    field="research_synthesis",
+                    rule="research_complete",
+                    message="Research synthesis not found — complete research phase first",
+                    severity=severity,
+                )
+            )
+
+    elif phase_name == "implement":
+        plan_path = run_path / "reports" / "plan.md"
+        if not plan_path.exists():
+            failures.append(
+                ValidationFailure(
+                    field="plan.md",
+                    rule="plan_exists",
+                    message="Plan document not found — complete plan phase first",
+                    severity=severity,
+                )
+            )
+
+        manifest_path = run_path / "shards" / "manifest.yaml"
+        if not manifest_path.exists():
+            failures.append(
+                ValidationFailure(
+                    field="manifest.yaml",
+                    rule="manifest_exists",
+                    message="Wave manifest not found — define shard cards in plan phase",
+                    severity=severity,
+                )
+            )
+
+        prd_failures = _check_prd_enforcement(
+            run_path, config, PRDStatus.APPROVED, "implement",
+        )
+        failures.extend(prd_failures)
+
+    elif phase_name == "validate":
+        shards_path = run_path / "shards"
+        if not shards_path.exists() or not any(shards_path.iterdir()):
+            failures.append(
+                ValidationFailure(
+                    field="shards",
+                    rule="implementation_complete",
+                    message="No shard outputs found — complete implementation first",
+                    severity=severity,
+                )
+            )
+
+    elif phase_name == "review":
+        events = _read_events(meta_path / "events.jsonl")
+        if events and not any(_is_validate_pass(e) for e in events):
+            failures.append(
+                ValidationFailure(
+                    field="validate_phase",
+                    rule="validate_passed",
+                    message="Validate phase gate not passed — complete validation first",
+                    severity=severity,
+                )
+            )
+
+    elif phase_name == "deliver":
+        events = _read_events(meta_path / "events.jsonl")
+        if events:
+            if not _events_contain(events, _REFLECTION_EVENTS):
+                failures.append(
+                    ValidationFailure(
+                        field="reflection",
+                        rule="reflection_complete",
+                        message="Reflection not completed — call trw_reflect before delivery",
+                        severity=severity,
+                    )
+                )
+        else:
+            failures.append(
+                ValidationFailure(
+                    field="events.jsonl",
+                    rule="events_exist",
+                    message="No events log found — run appears incomplete",
+                    severity=severity,
+                )
+            )
+
+    return _build_phase_result(failures, criteria, phase_name, "phase_input_checked")
 
 
 def validate_prd_quality(

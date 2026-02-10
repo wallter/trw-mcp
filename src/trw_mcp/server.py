@@ -1,7 +1,9 @@
-"""TRW MCP Server — orchestration, requirements, and self-learning tools.
+"""TRW MCP Server -- orchestration, requirements, and self-learning tools.
 
 FastMCP server entry point. Registers all tools, resources, and prompts.
 Run with: ``trw-mcp`` CLI or ``trw-mcp --debug`` for file logging.
+
+PRD-CORE-001: Base MCP tool suite.
 """
 
 from __future__ import annotations
@@ -13,12 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
-
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import TRWConfig
 
-# PRD-CORE-001: Base MCP tool suite — FastMCP server entry point
+_NOISY_LOGGERS = ("fastmcp", "redis", "httpcore", "httpx", "asyncio")
 
 
 def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
@@ -37,16 +38,12 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
     ]
 
     if debug:
-        # Ensure logs directory
-        trw_dir = Path.cwd() / config.trw_dir
-        logs_dir = trw_dir / config.logs_dir
+        logs_dir = Path.cwd() / config.trw_dir / config.logs_dir
         logs_dir.mkdir(parents=True, exist_ok=True)
 
-        # Daily log file
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         log_file = logs_dir / f"trw-mcp-{today}.jsonl"
 
-        # Configure stdlib logging for file output
         file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
 
@@ -70,14 +67,12 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
             logger_factory=structlog.stdlib.LoggerFactory(),
         )
 
-        # Suppress noisy third-party loggers that flood debug logs.
         # FastMCP's Docket worker logs every Redis command (~1.25M lines/day),
         # producing 145 MB of noise vs ~800 lines of actual TRW events.
-        for noisy_logger in ("fastmcp", "redis", "httpcore", "httpx", "asyncio"):
-            logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+        for name in _NOISY_LOGGERS:
+            logging.getLogger(name).setLevel(logging.WARNING)
 
     else:
-        # Production: JSON to stderr, INFO level only
         logging.basicConfig(
             format="%(message)s",
             level=logging.INFO,
@@ -112,27 +107,52 @@ mcp = FastMCP(
 
 def _register_tools() -> None:
     """Register all tools, resources, and prompts on the MCP server."""
-    from trw_mcp.prompts.aaref import register_aaref_prompts
+    # Tools (alphabetical)
+    from trw_mcp.tools.bdd import register_bdd_tools
+    from trw_mcp.tools.compliance import register_compliance_tools
+    from trw_mcp.tools.findings import register_findings_tools
+    from trw_mcp.tools.gate_strategy import register_gate_tools
+    from trw_mcp.tools.learning import register_learning_tools
+    from trw_mcp.tools.orchestration import register_orchestration_tools
+    from trw_mcp.tools.refactoring import register_refactoring_tools
+    from trw_mcp.tools.requirements import register_requirements_tools
+    from trw_mcp.tools.testing import register_testing_tools
+    from trw_mcp.tools.tracks import register_track_tools
+    from trw_mcp.tools.velocity import register_velocity_tools
+    from trw_mcp.tools.wave import register_wave_tools
+
+    # Resources
     from trw_mcp.resources.config import register_config_resources
     from trw_mcp.resources.run_state import register_run_state_resources
     from trw_mcp.resources.templates import register_template_resources
-    from trw_mcp.tools.findings import register_findings_tools
-    from trw_mcp.tools.learning import register_learning_tools
-    from trw_mcp.tools.orchestration import register_orchestration_tools
-    from trw_mcp.tools.requirements import register_requirements_tools
 
-    register_orchestration_tools(mcp)
-    register_learning_tools(mcp)
-    register_requirements_tools(mcp)
+    # Prompts
+    from trw_mcp.prompts.aaref import register_aaref_prompts
+
+    # --- Register tools (alphabetical) ---
+    register_bdd_tools(mcp)
+    register_compliance_tools(mcp)
     register_findings_tools(mcp)
+    register_gate_tools(mcp)
+    register_learning_tools(mcp)
+    register_orchestration_tools(mcp)
+    register_refactoring_tools(mcp)
+    register_requirements_tools(mcp)
+    register_testing_tools(mcp)
+    register_track_tools(mcp)
+    register_velocity_tools(mcp)
+    register_wave_tools(mcp)
+
+    # --- Register resources (alphabetical) ---
     register_config_resources(mcp)
-    register_template_resources(mcp)
     register_run_state_resources(mcp)
+    register_template_resources(mcp)
+
+    # --- Register prompts ---
     register_aaref_prompts(mcp)
 
 
-# Module-level registration ensures tools are available when imported
-# directly (e.g. via `fastmcp run` or test imports).
+# Eager registration so tools are available via `fastmcp run` and test imports.
 _register_tools()
 
 

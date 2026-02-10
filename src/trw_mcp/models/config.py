@@ -6,7 +6,7 @@ and test suites import from this module — no parallel constants.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,12 +36,12 @@ class TRWConfig(BaseSettings):
 
     # ORC prompt-level defaults (FRAMEWORK.md §DEFAULTS).
     # Not consumed by MCP tools — ORC tracks these at the prompt level.
-    min_shards_target: int = 3  # ORC prompt-level only
-    min_shards_floor: int = 2  # ORC prompt-level only
-    consensus_quorum: float = 0.67  # ORC prompt-level only
-    checkpoint_secs: int = 600  # ORC prompt-level only
-    max_child_depth: int = 2  # ORC prompt-level only
-    max_research_waves: int = 3  # ORC prompt-level only
+    min_shards_target: int = 3
+    min_shards_floor: int = 2
+    consensus_quorum: float = 0.67
+    checkpoint_secs: int = 600
+    max_child_depth: int = 2
+    max_research_waves: int = 3
 
     # Phase time caps (percentage of total timebox)
     # NOTE: Framework-documented defaults; not enforced by MCP tools.
@@ -59,8 +59,11 @@ class TRWConfig(BaseSettings):
     learning_prune_age_days: int = 30
     learning_repeated_op_threshold: int = 3
     recall_receipt_max_entries: int = 1000
+
+    # CLAUDE.md / agents.md generation limits
     claude_md_max_lines: int = 200
     sub_claude_md_max_lines: int = 50
+    agents_md_enabled: bool = True
 
     # Utility scoring (PRD-CORE-004)
     learning_decay_half_life_days: float = 14.0
@@ -147,6 +150,23 @@ class TRWConfig(BaseSettings):
     reflect_max_success_patterns: int = 5
     reflect_q_value_threshold: float = 0.6
 
+    # Phase reversion metrics (PRD-CORE-013-FR07)
+    reversion_rate_elevated: float = 0.15
+    reversion_rate_concerning: float = 0.30
+
+    # Technical debt (PRD-CORE-016)
+    debt_registry_filename: str = "debt-registry.yaml"
+    debt_id_prefix: str = "DEBT"
+    debt_initial_decay_score: float = 0.5
+    debt_decay_base_score: float = 0.3
+    debt_decay_daily_rate: float = 0.01
+    debt_decay_assessment_rate: float = 0.05
+    debt_auto_promote_threshold: float = 0.9
+    debt_actionable_threshold: float = 0.7
+    debt_budget_critical_ratio: float = 0.20
+    debt_budget_high_ratio: float = 0.15
+    debt_default_wave_size: int = 5
+
     # Compliance enforcement (PRD-QUAL-003)
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
     compliance_long_session_event_threshold: int = 5
@@ -156,9 +176,50 @@ class TRWConfig(BaseSettings):
     compliance_history_file: str = "history.jsonl"
     compliance_changelog_filename: str = "CHANGELOG.md"
 
+    # Wave adaptation (PRD-CORE-006)
+    adaptation_enabled: bool = True
+    max_total_waves: int = 8
+    max_adaptations_per_run: int = 5
+    max_shards_added_per_adaptation: int = 3
+    adaptation_auto_approve_threshold: int = 5
+
+    # Velocity instrumentation (PRD-CORE-015)
+    velocity_alert_min_runs: int = 5
+    velocity_alert_r_squared_min: float = 0.4
+    framework_overhead_threshold: float = 0.30
+    velocity_history_max_entries: int = 200
+    velocity_stable_threshold: float = 0.05
+    velocity_effective_q_threshold: float = 0.5
+    velocity_sign_test_alpha: float = 0.1
+    velocity_confounder_jump_ratio: float = 1.5
+
+    # Project source paths (PRD-QUAL-006, PRD-CORE-015)
+    source_package_path: str = "trw-mcp/src"
+    source_package_name: str = "trw_mcp"
+    tests_relative_path: str = "trw-mcp/tests"
+    test_map_filename: str = "test-map.yaml"
+
     # LLM augmentation (optional, requires claude-agent-sdk)
     llm_enabled: bool = True
     llm_default_model: str = "haiku"
+
+    # Architecture encoding (PRD-QUAL-007)
+    architecture_style: str = ""
+    architecture_fitness_enabled: bool = False
+
+    # Adaptive gates (PRD-QUAL-005)
+    gate_default_type: str = "FULL"
+    gate_strategy: str = "hybrid"
+    gate_early_stop_confidence: float = 0.85
+    gate_max_rounds: int = 5
+    gate_convergence_epsilon: float = 0.05
+    gate_escalation_enabled: bool = True
+    gate_max_total_judges: int = 13
+    gate_tokens_per_vote: int = 2000
+    gate_debate_context_multiplier: float = 1.5
+    gate_critic_overhead_multiplier: float = 2.0
+    gate_tokens_per_1k_chars: int = 500
+    gate_architecture_score_penalty: float = 0.1
 
     # Debug mode (enables file logging to .trw/logs/)
     debug: bool = False
@@ -168,7 +229,25 @@ class TRWConfig(BaseSettings):
     telemetry: bool = False
 
     # Framework version
-    framework_version: str = "v18.0_TRW"
+    framework_version: str = "v18.1_TRW"
+
+    # Phase overlay system — paths and drift detection (PRD-CORE-017)
+    overlays_dir: str = "overlays"
+    vocabulary_file: str = "vocabulary.yaml"
+    drift_check_on_init: bool = False
+
+    # Phase-scoped recall scoring (PRD-CORE-017)
+    # Bonuses applied to learning entries during recall based on phase scope:
+    #   matching    — entry's phase_scope matches the current phase
+    #   nonmatching — entry's phase_scope differs from the current phase
+    #   global      — entry has no phase_scope (applies to all phases)
+    phase_bonus_matching: float = 0.15
+    phase_bonus_global: float = 0.0
+    phase_bonus_nonmatching: float = -0.05
+
+    # Phase input criteria strictness (PRD-CORE-017, consumed by validation.py)
+    # When True, missing phase prerequisites are errors; when False, warnings.
+    strict_input_criteria: bool = False
 
 
 class PhaseTimeCaps(BaseModel):
@@ -188,27 +267,24 @@ class PhaseTimeCaps(BaseModel):
     review: float = 0.05
     deliver: float = 0.05
 
+    # Maps phase names to field names (handles the validate/validate_phase asymmetry).
+    _PHASE_FIELDS: ClassVar[dict[str, str]] = {
+        "research": "research",
+        "plan": "plan",
+        "implement": "implement",
+        "validate": "validate_phase",
+        "review": "review",
+        "deliver": "deliver",
+    }
+
     def get_cap(self, phase: str) -> float:
-        """Get time cap for a phase name.
+        """Return the time cap fraction for the given phase name.
 
-        Args:
-            phase: Phase name (research, plan, implement, validate, review, deliver).
-
-        Returns:
-            Time cap as a fraction of total timebox.
-
-        Raises:
-            ValueError: If phase name is not recognized.
+        Raises ValueError if the phase name is not recognized.
         """
-        caps: dict[str, float] = {
-            "research": self.research,
-            "plan": self.plan,
-            "implement": self.implement,
-            "validate": self.validate_phase,
-            "review": self.review,
-            "deliver": self.deliver,
-        }
-        if phase not in caps:
-            msg = f"Unknown phase: {phase!r}. Valid: {list(caps.keys())}"
+        field = self._PHASE_FIELDS.get(phase)
+        if field is None:
+            valid = list(self._PHASE_FIELDS.keys())
+            msg = f"Unknown phase: {phase!r}. Valid: {valid}"
             raise ValueError(msg)
-        return caps[phase]
+        return float(getattr(self, field))
