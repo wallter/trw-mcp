@@ -27,6 +27,11 @@ _writer = FileStateWriter()
 # Constants
 _SLUG_MAX_LEN = 40
 _ERROR_KEYWORDS = ("error", "fail", "exception", "crash", "timeout")
+_SUCCESS_KEYWORDS = (
+    "complete", "success", "pass", "done", "finish",
+    "delivered", "approved", "resolved", "merged",
+)
+_MAX_SUCCESS_PATTERNS = 5
 
 
 def find_entry_by_id(
@@ -97,6 +102,65 @@ def find_repeated_operations(
     ]
     repeated.sort(key=lambda x: x[1], reverse=True)
     return repeated
+
+
+def is_success_event(event: dict[str, object]) -> bool:
+    """Check if an event represents a successful outcome.
+
+    Matches events whose type contains success-related keywords such as
+    "complete", "success", "pass", "done", "finish", "approved", etc.
+
+    Args:
+        event: Event dictionary from events.jsonl.
+
+    Returns:
+        True if the event indicates a successful outcome.
+    """
+    event_type = str(event.get("event", "")).lower()
+    return any(kw in event_type for kw in _SUCCESS_KEYWORDS)
+
+
+def find_success_patterns(
+    events: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    """Extract success patterns from events — what worked well.
+
+    Aggregates successful events by type and produces a summary of
+    each distinct success pattern found in the event stream.
+
+    Args:
+        events: List of event dictionaries from events.jsonl.
+
+    Returns:
+        List of dicts with ``event_type``, ``summary``, and ``count`` keys,
+        sorted by count descending and capped at ``_MAX_SUCCESS_PATTERNS``.
+    """
+    success_counts: dict[str, int] = {}
+    success_details: dict[str, str] = {}
+
+    for event in events:
+        if not is_success_event(event):
+            continue
+        event_type = str(event.get("event", "unknown"))
+        success_counts[event_type] = success_counts.get(event_type, 0) + 1
+        # Keep the most recent detail for each type
+        data = event.get("data", event.get("detail", ""))
+        if data and event_type not in success_details:
+            success_details[event_type] = str(data)[:200]
+
+    patterns: list[dict[str, str]] = []
+    for event_type, count in sorted(
+        success_counts.items(), key=lambda x: x[1], reverse=True,
+    ):
+        detail = success_details.get(event_type, "")
+        patterns.append({
+            "event_type": event_type,
+            "summary": f"Success: {event_type} ({count}x)",
+            "detail": detail,
+            "count": str(count),
+        })
+
+    return patterns[:_MAX_SUCCESS_PATTERNS]
 
 
 def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
@@ -257,6 +321,105 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
         entry_file, data = found
         data["promoted_to_claude_md"] = True
         _writer.write_yaml(entry_file, data)
+
+
+def extract_learnings_mechanical(
+    error_events: list[dict[str, object]],
+    repeated_ops: list[tuple[str, int]],
+    trw_dir: Path,
+    *,
+    max_errors: int = 5,
+    max_repeated: int = 3,
+) -> list[dict[str, str]]:
+    """Extract learnings from events using mechanical heuristics (no LLM).
+
+    Processes error patterns and repeated operations into learning entries,
+    saves them to disk, and returns summary dicts.
+
+    Args:
+        error_events: Events classified as errors.
+        repeated_ops: (operation_name, count) tuples sorted by frequency.
+        trw_dir: Path to .trw directory.
+        max_errors: Maximum error patterns to extract.
+        max_repeated: Maximum repeated operations to extract.
+
+    Returns:
+        List of dicts with 'id' and 'summary' keys for each new learning.
+    """
+    new_learnings: list[dict[str, str]] = []
+
+    if error_events:
+        for err in error_events[:max_errors]:
+            learning_id = generate_learning_id()
+            entry = LearningEntry(
+                id=learning_id,
+                summary=f"Error pattern: {err.get('event', 'unknown')}",
+                detail=str(err.get("data", err)),
+                tags=["error", "auto-discovered"],
+                evidence=[str(err.get("ts", ""))],
+                impact=0.6,
+            )
+            save_learning_entry(trw_dir, entry)
+            new_learnings.append({
+                "id": learning_id,
+                "summary": entry.summary,
+            })
+
+    if repeated_ops:
+        for op_name, count in repeated_ops[:max_repeated]:
+            learning_id = generate_learning_id()
+            entry = LearningEntry(
+                id=learning_id,
+                summary=f"Repeated operation: {op_name} ({count}x)",
+                detail=f"Operation '{op_name}' was repeated {count} times — candidate for scripting",
+                tags=["repeated", "optimization"],
+                impact=0.5,
+                recurrence=count,
+            )
+            save_learning_entry(trw_dir, entry)
+            new_learnings.append({
+                "id": learning_id,
+                "summary": entry.summary,
+            })
+
+    return new_learnings
+
+
+def extract_learnings_from_llm(
+    llm_items: list[dict[str, object]],
+    trw_dir: Path,
+) -> list[dict[str, str]]:
+    """Convert LLM-extracted learning dicts into persisted LearningEntry objects.
+
+    Args:
+        llm_items: List of dicts with summary, detail, tags, impact keys.
+        trw_dir: Path to .trw directory.
+
+    Returns:
+        List of dicts with 'id' and 'summary' keys for each new learning.
+    """
+    new_learnings: list[dict[str, str]] = []
+
+    for item in llm_items:
+        learning_id = generate_learning_id()
+        raw_tags = item.get("tags", "")
+        parsed_tags: list[str] = (
+            raw_tags if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
+        )
+        entry = LearningEntry(
+            id=learning_id,
+            summary=str(item.get("summary", "LLM-extracted learning")),
+            detail=str(item.get("detail", "")),
+            tags=parsed_tags,
+            impact=float(str(item.get("impact", 0.6))),
+        )
+        save_learning_entry(trw_dir, entry)
+        new_learnings.append({
+            "id": learning_id,
+            "summary": entry.summary,
+        })
+
+    return new_learnings
 
 
 def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:

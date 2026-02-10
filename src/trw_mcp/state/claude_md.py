@@ -11,10 +11,11 @@ from pathlib import Path
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._paths import resolve_project_root
-from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 _config = TRWConfig()
 _reader = FileStateReader()
+_writer = FileStateWriter()
 
 # Named caps for list truncation (not user-tunable)
 CLAUDEMD_LEARNING_CAP = 10
@@ -310,5 +311,118 @@ def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
         new_content = "\n".join(content_lines)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(new_content, encoding="utf-8")
+    _writer.write_text(target, new_content)
     return len(new_content.split("\n"))
+
+
+def collect_promotable_learnings(
+    trw_dir: Path,
+    config: "TRWConfig",
+    reader: FileStateReader,
+) -> list[dict[str, object]]:
+    """Collect active learnings eligible for CLAUDE.md promotion.
+
+    For mature entries (q_observations >= threshold), q_value is used
+    instead of static impact for the promotion decision (PRD-CORE-004 1c).
+
+    Args:
+        trw_dir: Path to .trw directory.
+        config: TRW configuration instance.
+        reader: File state reader instance.
+
+    Returns:
+        List of high-impact learning entry dicts.
+    """
+    from trw_mcp.exceptions import StateError as _StateError
+
+    high_impact: list[dict[str, object]] = []
+    entries_dir = trw_dir / config.learnings_dir / config.entries_dir
+    if not entries_dir.exists():
+        return high_impact
+
+    for entry_file in sorted(entries_dir.glob("*.yaml")):
+        try:
+            data = reader.read_yaml(entry_file)
+            entry_status = str(data.get("status", "active"))
+            if entry_status != "active":
+                continue
+
+            impact = data.get("impact", 0.0)
+            q_obs = int(str(data.get("q_observations", 0)))
+            q_val = data.get("q_value", impact)
+
+            # Use q_value for mature entries, impact for cold-start
+            if q_obs >= config.q_cold_start_threshold:
+                score = float(str(q_val))
+            else:
+                score = float(str(impact)) if isinstance(impact, (int, float)) else 0.0
+
+            if score >= config.learning_promotion_impact:
+                high_impact.append(data)
+        except (_StateError, ValueError, TypeError):
+            continue
+
+    return high_impact
+
+
+def collect_patterns(
+    trw_dir: Path,
+    config: "TRWConfig",
+    reader: FileStateReader,
+) -> list[dict[str, object]]:
+    """Collect pattern entries for CLAUDE.md sync.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        config: TRW configuration instance.
+        reader: File state reader instance.
+
+    Returns:
+        List of pattern entry dicts.
+    """
+    from trw_mcp.exceptions import StateError as _StateError
+
+    patterns: list[dict[str, object]] = []
+    patterns_dir = trw_dir / config.patterns_dir
+    if not patterns_dir.exists():
+        return patterns
+
+    for pattern_file in sorted(patterns_dir.glob("*.yaml")):
+        if pattern_file.name == "index.yaml":
+            continue
+        try:
+            patterns.append(reader.read_yaml(pattern_file))
+        except (_StateError, ValueError, TypeError):
+            continue
+
+    return patterns
+
+
+def collect_context_data(
+    trw_dir: Path,
+    config: "TRWConfig",
+    reader: FileStateReader,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Collect architecture and conventions context data.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        config: TRW configuration instance.
+        reader: File state reader instance.
+
+    Returns:
+        Tuple of (architecture_data, conventions_data).
+    """
+    from trw_mcp.exceptions import StateError as _StateError
+
+    arch_data: dict[str, object] = {}
+    conv_data: dict[str, object] = {}
+    context_dir = trw_dir / config.context_dir
+    try:
+        if reader.exists(context_dir / "architecture.yaml"):
+            arch_data = reader.read_yaml(context_dir / "architecture.yaml")
+        if reader.exists(context_dir / "conventions.yaml"):
+            conv_data = reader.read_yaml(context_dir / "conventions.yaml")
+    except (_StateError, ValueError, TypeError):
+        pass
+    return arch_data, conv_data

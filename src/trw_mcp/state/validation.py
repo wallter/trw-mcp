@@ -271,13 +271,15 @@ def _check_prd_enforcement(
         )
         return failures
 
-    # Status ordering for comparison
+    # Status ordering for comparison (PRD-FIX-008: includes done/merged)
     _STATUS_ORDER: dict[str, int] = {
         "draft": 0,
         "review": 1,
         "approved": 2,
         "implemented": 3,
-        "deprecated": 4,
+        "done": 4,
+        "merged": 4,
+        "deprecated": 5,
     }
     required_order = _STATUS_ORDER.get(required_status.value, 0)
 

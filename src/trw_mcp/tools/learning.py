@@ -29,8 +29,10 @@ from trw_mcp.state.analytics import (
     apply_status_update,
     find_entry_by_id,
     find_repeated_operations,
+    find_success_patterns,
     generate_learning_id,
     is_error_event,
+    is_success_event,
     mark_promoted,
     resync_learning_index,
     save_learning_entry,
@@ -113,10 +115,12 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Analyze events for patterns
         error_events = [e for e in events if is_error_event(e)]
+        success_events = [e for e in events if is_success_event(e)]
         phase_transitions = [
             e for e in events if e.get("event") == "phase_transition"
         ]
         repeated_ops = find_repeated_operations(events)
+        success_patterns = find_success_patterns(events)
 
         # Extract learnings
         new_learnings: list[dict[str, str]] = []
@@ -183,15 +187,37 @@ def register_learning_tools(server: FastMCP) -> None:
                         "summary": entry.summary,
                     })
 
+            # PRD-QUAL-001: Extract success patterns (what worked well)
+            if success_patterns:
+                for pattern in success_patterns:
+                    learning_id = generate_learning_id()
+                    entry = LearningEntry(
+                        id=learning_id,
+                        summary=str(pattern["summary"]),
+                        detail=str(pattern.get("detail", "")),
+                        tags=["success", "pattern", "auto-discovered"],
+                        impact=0.5,
+                    )
+                    save_learning_entry(trw_dir, entry)
+                    new_learnings.append({
+                        "id": learning_id,
+                        "summary": entry.summary,
+                    })
+
         # Create reflection log
         reflection_id = generate_learning_id()
+        # Build what_worked from phase transitions + success patterns
+        what_worked: list[str] = [str(e.get("event")) for e in phase_transitions]
+        for pattern in success_patterns:
+            what_worked.append(str(pattern["summary"]))
+
         reflection = Reflection(
             id=reflection_id,
             run_id=run_id,
             scope=scope,
             timestamp=datetime.now(timezone.utc),
             events_analyzed=len(events),
-            what_worked=[str(e.get("event")) for e in phase_transitions],
+            what_worked=what_worked,
             what_failed=[str(e.get("event")) for e in error_events[:_MAX_ERROR_LEARNINGS]],
             repeated_patterns=[f"{op} ({c}x)" for op, c in repeated_ops[:_MAX_REPEATED_OPS]],
             new_learnings=[l["id"] for l in new_learnings],
@@ -231,6 +257,7 @@ def register_learning_tools(server: FastMCP) -> None:
             "events_analyzed": len(events),
             "new_learnings": new_learnings,
             "error_patterns": len(error_events),
+            "success_patterns": len(success_patterns),
             "repeated_operations": len(repeated_ops),
             "llm_used": llm_used,
         }
@@ -559,8 +586,8 @@ def register_learning_tools(server: FastMCP) -> None:
         # Check if updating existing script
         is_update = script_path.exists()
 
-        # Write script
-        script_path.write_text(content, encoding="utf-8")
+        # Write script (atomic: temp file + rename via _writer)
+        _writer.write_text(script_path, content)
 
         # Update script index
         index_path = scripts_dir / "index.yaml"

@@ -22,12 +22,18 @@ class QualityTier(str, Enum):
 
 
 class PRDStatus(str, Enum):
-    """PRD lifecycle status."""
+    """PRD lifecycle status.
+
+    Lifecycle: draft -> review -> approved -> implemented -> done
+    Terminal states: deprecated (any state), merged (any state), done
+    """
 
     DRAFT = "draft"
     REVIEW = "review"
     APPROVED = "approved"
     IMPLEMENTED = "implemented"
+    DONE = "done"
+    MERGED = "merged"
     DEPRECATED = "deprecated"
 
 

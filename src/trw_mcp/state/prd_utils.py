@@ -252,13 +252,16 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         ) from exc
 
 
-# PRD status state machine (PRD-CORE-009-FR01)
+# PRD status state machine (PRD-CORE-009-FR01, PRD-FIX-008)
 # Identity transitions (same → same) are always valid and handled in is_valid_transition.
+# Terminal states: done, merged, deprecated — no outgoing transitions.
 VALID_TRANSITIONS: dict[PRDStatus, set[PRDStatus]] = {
-    PRDStatus.DRAFT: {PRDStatus.REVIEW},
-    PRDStatus.REVIEW: {PRDStatus.APPROVED, PRDStatus.DRAFT},
-    PRDStatus.APPROVED: {PRDStatus.IMPLEMENTED, PRDStatus.DEPRECATED},
-    PRDStatus.IMPLEMENTED: {PRDStatus.DEPRECATED},
+    PRDStatus.DRAFT: {PRDStatus.REVIEW, PRDStatus.MERGED},
+    PRDStatus.REVIEW: {PRDStatus.APPROVED, PRDStatus.DRAFT, PRDStatus.MERGED},
+    PRDStatus.APPROVED: {PRDStatus.IMPLEMENTED, PRDStatus.DEPRECATED, PRDStatus.MERGED},
+    PRDStatus.IMPLEMENTED: {PRDStatus.DONE, PRDStatus.DEPRECATED},
+    PRDStatus.DONE: set(),
+    PRDStatus.MERGED: set(),
     PRDStatus.DEPRECATED: set(),
 }
 

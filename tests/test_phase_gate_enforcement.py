@@ -111,21 +111,22 @@ class TestInvalidTransitions:
 class TestValidTransitionsConstant:
     """Test the VALID_TRANSITIONS constant structure."""
 
-    def test_all_5_states_present(self) -> None:
-        assert len(VALID_TRANSITIONS) == 5
+    def test_all_states_present(self) -> None:
+        assert len(VALID_TRANSITIONS) == len(PRDStatus)
         for status in PRDStatus:
             assert status in VALID_TRANSITIONS
 
     def test_deprecated_has_no_outgoing(self) -> None:
         assert VALID_TRANSITIONS[PRDStatus.DEPRECATED] == set()
 
-    def test_draft_has_one_outgoing(self) -> None:
-        assert VALID_TRANSITIONS[PRDStatus.DRAFT] == {PRDStatus.REVIEW}
+    def test_draft_outgoing(self) -> None:
+        assert VALID_TRANSITIONS[PRDStatus.DRAFT] == {PRDStatus.REVIEW, PRDStatus.MERGED}
 
-    def test_review_has_two_outgoing(self) -> None:
+    def test_review_outgoing(self) -> None:
         assert VALID_TRANSITIONS[PRDStatus.REVIEW] == {
             PRDStatus.APPROVED,
             PRDStatus.DRAFT,
+            PRDStatus.MERGED,
         }
 
 
