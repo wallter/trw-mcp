@@ -76,6 +76,9 @@ class TRWConfig(BaseSettings):
     learning_outcome_correlation_window_minutes: int = 30
     learning_outcome_history_cap: int = 20
 
+    # Task directory root (PRD-QUAL-002)
+    task_root: str = "docs"
+
     # Paths (relative to project root, resolved at runtime)
     trw_dir: str = ".trw"
     learnings_dir: str = "learnings"
@@ -125,11 +128,28 @@ class TRWConfig(BaseSettings):
     # PRD directory path (relative to project root)
     prds_relative_path: str = "docs/requirements-aare-f/prds"
 
+    # Grooming (PRD-CORE-011)
+    grooming_max_iterations: int = 5
+    grooming_target_completeness: float = 0.85
+    grooming_research_scope: Literal["full", "codebase", "minimal"] = "full"
+
     # Findings pipeline (PRD-CORE-010)
     finding_dedup_threshold: float = 0.6
     findings_dir: str = "findings"
     findings_entries_dir: str = "entries"
     findings_registry_file: str = "registry.yaml"
+
+    # Success pattern extraction (PRD-QUAL-001)
+    reflect_sequence_lookback: int = 3
+    reflect_max_positive_learnings: int = 5
+    reflect_q_value_threshold: float = 0.6
+
+    # Compliance enforcement (PRD-QUAL-003)
+    compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
+    compliance_long_session_event_threshold: int = 5
+    compliance_long_session_minutes: int = 30
+    compliance_pass_threshold: float = 0.8
+    compliance_warning_threshold: float = 0.5
 
     # LLM augmentation (optional, requires claude-agent-sdk)
     llm_enabled: bool = True

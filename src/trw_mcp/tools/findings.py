@@ -581,6 +581,43 @@ def _matches_filters(
     return True
 
 
+def get_unlinked_findings(
+    severity_filter: tuple[str, ...] = ("critical", "high"),
+) -> list[str]:
+    """Query the global findings registry for unlinked high-severity findings.
+
+    Returns finding IDs where ``severity`` is in ``severity_filter`` and
+    ``target_prd`` is empty/None — i.e., findings that are PRD candidates
+    but have not yet been converted to a PRD.
+
+    Args:
+        severity_filter: Tuple of severity levels to check for unlinked status.
+
+    Returns:
+        List of finding IDs that are unlinked.
+    """
+    registry_path = _get_registry_path()
+    if not registry_path.exists():
+        return []
+
+    unlinked: list[str] = []
+    try:
+        reg_data = _reader.read_yaml(registry_path)
+        reg_entries = reg_data.get("entries", [])
+        if isinstance(reg_entries, list):
+            for ref in reg_entries:
+                if not isinstance(ref, dict):
+                    continue
+                sev = str(ref.get("severity", "")).lower()
+                has_prd = bool(ref.get("target_prd"))
+                if sev in severity_filter and not has_prd:
+                    unlinked.append(str(ref.get("id", "")))
+    except (StateError, ValueError, TypeError) as exc:
+        logger.debug("get_unlinked_findings_failed", error=str(exc))
+
+    return unlinked
+
+
 def _create_prd_from_finding(
     input_text: str,
     category: str,

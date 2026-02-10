@@ -61,6 +61,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         config_overrides: dict[str, str] | None = None,
         prd_scope: list[str] | None = None,
         run_type: str = "implementation",
+        task_root: str | None = None,
     ) -> dict[str, str]:
         """Bootstrap TRW run scaffolding — creates .trw/, run dirs, run.yaml, events.jsonl.
 
@@ -70,6 +71,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             config_overrides: Optional config values to override defaults.
             prd_scope: Optional list of PRD IDs governing this run (e.g. ["PRD-CORE-009"]).
             run_type: Run type — "implementation" (default) or "research". Research runs skip PRD enforcement.
+            task_root: Optional task directory root (default: config field or "docs").
         """
         project_root = resolve_project_root()
         trw_dir = project_root / _config.trw_dir
@@ -124,8 +126,11 @@ def register_orchestration_tools(server: FastMCP) -> None:
         _deploy_frameworks(trw_dir)
         _deploy_templates(trw_dir)
 
+        # Resolve task_root: explicit param > config field > default "docs"
+        resolved_task_root = task_root if task_root is not None else _config.task_root
+
         # Create run directory structure
-        task_dir = project_root / "docs" / task_name
+        task_dir = project_root / resolved_task_root / task_name
         run_root = task_dir / "runs" / run_id
         run_subdirs = [
             "meta",
@@ -155,6 +160,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                 "TASK": task_name,
                 "TASK_DIR": str(task_dir),
                 "RUN_ROOT": str(run_root),
+                "TASK_ROOT": resolved_task_root,
             },
             prd_scope=prd_scope or [],
             run_type=run_type,
@@ -239,6 +245,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         if wave_data:
             result["waves"] = wave_data.get("waves", [])
+
+        # PRD-FIX-005: Stale framework version warning
+        version_warning = _check_framework_version_staleness(
+            str(state_data.get("framework", "")),
+        )
+        if version_warning:
+            result["version_warning"] = version_warning
 
         logger.info("trw_status_read", run_id=result["run_id"])
         return result
@@ -789,5 +802,43 @@ def _deploy_templates(trw_dir: Path) -> None:
     template_data = _get_bundled_template("claude_md.md")
     if template_data:
         template_path.write_text(template_data, encoding="utf-8")
+
+
+def _check_framework_version_staleness(run_framework: str) -> str | None:
+    """Compare run's framework version against the current deployed version.
+
+    Reads ``.trw/frameworks/VERSION.yaml`` and compares against the run's
+    framework field. Returns a warning message if they differ, None otherwise.
+
+    Args:
+        run_framework: Framework version string from run.yaml.
+
+    Returns:
+        Warning message string if versions differ, None if current or unreadable.
+    """
+    if not run_framework:
+        return None
+
+    try:
+        trw_dir = resolve_project_root() / _config.trw_dir
+        version_path = trw_dir / _config.frameworks_dir / "VERSION.yaml"
+        if not _reader.exists(version_path):
+            return None
+
+        version_data = _reader.read_yaml(version_path)
+        current_version = str(version_data.get("framework_version", ""))
+        if not current_version:
+            return None
+
+        if run_framework != current_version:
+            return (
+                f"Run uses framework {run_framework} but current is "
+                f"{current_version}. Consider re-bootstrapping or "
+                f"acknowledging the version delta."
+            )
+    except (StateError, ValueError, TypeError, OSError):
+        return None
+
+    return None
 
 

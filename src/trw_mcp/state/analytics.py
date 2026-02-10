@@ -163,6 +163,143 @@ def find_success_patterns(
     return patterns[:_MAX_SUCCESS_PATTERNS]
 
 
+def detect_tool_sequences(
+    events: list[dict[str, object]],
+    lookback: int = 3,
+    min_occurrences: int = 3,
+) -> list[dict[str, object]]:
+    """Detect recurring event sequences that precede success events.
+
+    For each success anchor event, looks back at the preceding ``lookback``
+    events, extracts the event_type sequence, and counts occurrences.
+    Sequences appearing ``min_occurrences`` or more times are reported.
+
+    Args:
+        events: List of event dictionaries from events.jsonl.
+        lookback: Number of preceding events to include in each sequence.
+        min_occurrences: Minimum occurrences for a sequence to be reported.
+
+    Returns:
+        List of dicts with ``sequence`` (list[str]), ``count`` (int),
+        and ``success_rate`` (str) keys.
+    """
+    if len(events) < 2:
+        return []
+
+    sequence_counts: dict[tuple[str, ...], int] = {}
+    total_anchors = 0
+
+    for i, event in enumerate(events):
+        if not is_success_event(event):
+            continue
+        total_anchors += 1
+        start = max(0, i - lookback)
+        preceding = [
+            str(events[j].get("event", "unknown"))
+            for j in range(start, i)
+        ]
+        current_type = str(event.get("event", "unknown"))
+        seq = tuple(preceding + [current_type])
+        if len(seq) >= 2:
+            sequence_counts[seq] = sequence_counts.get(seq, 0) + 1
+
+    results: list[dict[str, object]] = []
+    for seq, count in sorted(
+        sequence_counts.items(), key=lambda x: x[1], reverse=True,
+    ):
+        if count >= min_occurrences:
+            rate = f"{count}/{total_anchors}" if total_anchors else "0/0"
+            results.append({
+                "sequence": list(seq),
+                "count": count,
+                "success_rate": rate,
+            })
+
+    return results
+
+
+def surface_validated_learnings(
+    trw_dir: Path,
+    q_threshold: float = 0.6,
+    cold_start_threshold: int = 3,
+) -> list[dict[str, object]]:
+    """Surface learnings with high positive Q-values as validated success patterns.
+
+    Scans active learnings for entries with ``q_value >= q_threshold`` and
+    ``q_observations >= cold_start_threshold``.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        q_threshold: Minimum Q-value for inclusion.
+        cold_start_threshold: Minimum observation count for inclusion.
+
+    Returns:
+        List of dicts with ``learning_id``, ``summary``, ``q_value``,
+        ``q_observations``, and ``tags`` keys.
+    """
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    if not entries_dir.exists():
+        return []
+
+    validated: list[dict[str, object]] = []
+    for entry_file in sorted(entries_dir.glob("*.yaml")):
+        try:
+            data = _reader.read_yaml(entry_file)
+            status = str(data.get("status", "active"))
+            if status != "active":
+                continue
+
+            q_value = float(str(data.get("q_value", 0.0)))
+            q_observations = int(str(data.get("q_observations", 0)))
+
+            if q_value >= q_threshold and q_observations >= cold_start_threshold:
+                validated.append({
+                    "learning_id": str(data.get("id", "")),
+                    "summary": str(data.get("summary", "")),
+                    "q_value": q_value,
+                    "q_observations": q_observations,
+                    "tags": data.get("tags", []),
+                })
+        except (StateError, ValueError, TypeError):
+            continue
+
+    validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
+    return validated
+
+
+def has_existing_success_learning(
+    trw_dir: Path,
+    summary_prefix: str,
+) -> bool:
+    """Check if a success learning with the given summary prefix already exists.
+
+    Deduplication check for positive learning generation — prevents
+    creating duplicate success pattern learnings across reflection cycles.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        summary_prefix: First 50 chars of the summary to match against.
+
+    Returns:
+        True if a matching learning already exists.
+    """
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    if not entries_dir.exists():
+        return False
+
+    target = summary_prefix[:50].lower()
+    for entry_file in entries_dir.glob("*.yaml"):
+        try:
+            data = _reader.read_yaml(entry_file)
+            existing_summary = str(data.get("summary", ""))[:50].lower()
+            if existing_summary == target:
+                return True
+        except (StateError, ValueError, TypeError):
+            continue
+
+    return False
+
+
 def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     """Save a learning entry to .trw/learnings/entries/.
 

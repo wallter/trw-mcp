@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -2234,3 +2235,552 @@ class TestBehavioralProtocol:
         assert "TRW Behavioral Protocol" in content
         assert "Execute trw_recall at session start" in content
         assert "Execute trw_reflect after tasks" in content
+
+
+# ---------------------------------------------------------------------------
+# Decomposed module tests (from PRD-FIX-010)
+# ---------------------------------------------------------------------------
+
+
+class TestRecallSearch:
+    """Unit tests for state.recall_search functions."""
+
+    def test_search_entries_finds_matching(self, tmp_project: Path) -> None:
+        """search_entries returns entries matching query tokens."""
+        writer = FileStateWriter()
+        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
+        writer.write_yaml(entries_dir / "test.yaml", {
+            "id": "L-test001",
+            "summary": "JWT authentication gotcha",
+            "detail": "Tokens expire silently",
+            "tags": ["auth", "gotcha"],
+            "impact": 0.8,
+            "status": "active",
+        })
+        reader = FileStateReader()
+        from trw_mcp.state.recall_search import search_entries
+        matches, files = search_entries(entries_dir, ["jwt"], reader)
+        assert len(matches) == 1
+        assert matches[0]["id"] == "L-test001"
+        assert len(files) == 1
+
+    def test_search_entries_respects_min_impact(self, tmp_project: Path) -> None:
+        """search_entries filters by min_impact."""
+        writer = FileStateWriter()
+        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
+        writer.write_yaml(entries_dir / "low.yaml", {
+            "id": "L-low", "summary": "low impact",
+            "detail": "", "tags": [], "impact": 0.2, "status": "active",
+        })
+        writer.write_yaml(entries_dir / "high.yaml", {
+            "id": "L-high", "summary": "high impact",
+            "detail": "", "tags": [], "impact": 0.9, "status": "active",
+        })
+        reader = FileStateReader()
+        from trw_mcp.state.recall_search import search_entries
+        matches, _ = search_entries(entries_dir, [], reader, min_impact=0.5)
+        assert len(matches) == 1
+        assert matches[0]["id"] == "L-high"
+
+    def test_search_patterns_finds_matching(self, tmp_project: Path) -> None:
+        """search_patterns returns patterns matching query."""
+        writer = FileStateWriter()
+        patterns_dir = tmp_project / ".trw" / "patterns"
+        writer.write_yaml(patterns_dir / "p1.yaml", {
+            "name": "research-map-reduce",
+            "description": "3-wave research pattern",
+        })
+        reader = FileStateReader()
+        from trw_mcp.state.recall_search import search_patterns
+        matches = search_patterns(patterns_dir, ["research"], reader)
+        assert len(matches) == 1
+
+    def test_update_access_tracking_increments(self, tmp_project: Path) -> None:
+        """update_access_tracking increments access_count."""
+        writer = FileStateWriter()
+        reader = FileStateReader()
+        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
+        entry_path = entries_dir / "track.yaml"
+        writer.write_yaml(entry_path, {
+            "id": "L-track", "summary": "test",
+            "access_count": 0, "last_accessed_at": None,
+        })
+        from trw_mcp.state.recall_search import update_access_tracking
+        ids = update_access_tracking([entry_path], reader, writer)
+        assert ids == ["L-track"]
+        updated = reader.read_yaml(entry_path)
+        assert updated["access_count"] == 1
+
+
+class TestAnalyticsExtraction:
+    """Unit tests for mechanical learning extraction."""
+
+    def test_extract_learnings_mechanical_errors(self, tmp_project: Path) -> None:
+        """extract_learnings_mechanical creates entries from error events."""
+        from trw_mcp.state.analytics import extract_learnings_mechanical
+        trw_dir = tmp_project / ".trw"
+        errors = [{"event": "tool_error", "data": "disk full", "ts": "2026-01-01"}]
+        result = extract_learnings_mechanical(errors, [], trw_dir)
+        assert len(result) == 1
+        assert "Error pattern" in result[0]["summary"]
+
+    def test_extract_learnings_mechanical_repeated(self, tmp_project: Path) -> None:
+        """extract_learnings_mechanical creates entries from repeated ops."""
+        from trw_mcp.state.analytics import extract_learnings_mechanical
+        trw_dir = tmp_project / ".trw"
+        ops = [("git_push", 5)]
+        result = extract_learnings_mechanical([], ops, trw_dir)
+        assert len(result) == 1
+        assert "Repeated operation" in result[0]["summary"]
+
+    def test_extract_learnings_from_llm_saves_entries(self, tmp_project: Path) -> None:
+        """extract_learnings_from_llm persists entries to disk."""
+        from trw_mcp.state.analytics import extract_learnings_from_llm
+        trw_dir = tmp_project / ".trw"
+        items: list[dict[str, object]] = [
+            {"summary": "LLM insight", "detail": "details", "tags": ["llm"], "impact": "0.7"},
+        ]
+        result = extract_learnings_from_llm(items, trw_dir)
+        assert len(result) == 1
+        assert result[0]["summary"] == "LLM insight"
+        # Verify file was written
+        entries_dir = trw_dir / "learnings" / "entries"
+        assert len(list(entries_dir.glob("*.yaml"))) >= 1
+
+
+class TestClaudeMdCollection:
+    """Unit tests for claude_md collection helpers."""
+
+    def test_collect_promotable_learnings(self, tmp_project: Path) -> None:
+        """collect_promotable_learnings returns high-impact active entries."""
+        from trw_mcp.state.claude_md import collect_promotable_learnings
+        writer = FileStateWriter()
+        reader = FileStateReader()
+        config = TRWConfig()
+        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
+        writer.write_yaml(entries_dir / "high.yaml", {
+            "id": "L-high", "summary": "important",
+            "status": "active", "impact": 0.9,
+            "q_observations": 0, "q_value": 0.5,
+        })
+        writer.write_yaml(entries_dir / "low.yaml", {
+            "id": "L-low", "summary": "trivial",
+            "status": "active", "impact": 0.2,
+            "q_observations": 0, "q_value": 0.1,
+        })
+        result = collect_promotable_learnings(tmp_project / ".trw", config, reader)
+        assert any(d["id"] == "L-high" for d in result)
+        assert not any(d["id"] == "L-low" for d in result)
+
+    def test_collect_patterns(self, tmp_project: Path) -> None:
+        """collect_patterns returns non-index pattern files."""
+        from trw_mcp.state.claude_md import collect_patterns
+        writer = FileStateWriter()
+        reader = FileStateReader()
+        config = TRWConfig()
+        patterns_dir = tmp_project / ".trw" / "patterns"
+        writer.write_yaml(patterns_dir / "p1.yaml", {"name": "test-pattern"})
+        writer.write_yaml(patterns_dir / "index.yaml", {"patterns": []})
+        result = collect_patterns(tmp_project / ".trw", config, reader)
+        assert len(result) == 1
+        assert result[0]["name"] == "test-pattern"
+
+    def test_collect_context_data(self, tmp_project: Path) -> None:
+        """collect_context_data returns arch and conv data."""
+        from trw_mcp.state.claude_md import collect_context_data
+        writer = FileStateWriter()
+        reader = FileStateReader()
+        config = TRWConfig()
+        context_dir = tmp_project / ".trw" / "context"
+        writer.write_yaml(context_dir / "architecture.yaml", {"style": "hexagonal"})
+        writer.write_yaml(context_dir / "conventions.yaml", {"naming": "snake_case"})
+        arch, conv = collect_context_data(tmp_project / ".trw", config, reader)
+        assert arch["style"] == "hexagonal"
+        assert conv["naming"] == "snake_case"
+
+
+class TestToolDelegationIntact:
+    """Verify all 7 tool functions remain registered and callable."""
+
+    def test_all_seven_tools_registered(self) -> None:
+        """All 7 learning tools should be registered on a test server."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.learning import register_learning_tools
+        srv = FastMCP("test-fix-010")
+        register_learning_tools(srv)
+        tool_names = {t.name for t in srv._tool_manager._tools.values()}
+        expected = {
+            "trw_reflect", "trw_learn", "trw_learn_update",
+            "trw_recall", "trw_script_save", "trw_claude_md_sync",
+            "trw_learn_prune",
+        }
+        assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-014: Atomic write tests (from Sprint 4 Track C)
+# ---------------------------------------------------------------------------
+
+
+class TestScriptSaveAtomicWrite:
+    """PRD-CORE-014: trw_script_save uses atomic writes via _writer."""
+
+    def test_script_save_uses_atomic_write(self, tmp_path: Path) -> None:
+        """trw_script_save delegates to _writer.write_text (atomic)."""
+        tools = _get_tools()
+
+        with patch(
+            "trw_mcp.tools.learning._writer.write_text", wraps=FileStateWriter().write_text,
+        ) as mock_write:
+            tools["trw_script_save"].fn(
+                name="atomic-test",
+                content="#!/bin/bash\necho hello",
+                description="Test atomic write",
+            )
+            assert mock_write.call_count >= 1
+            call_args = mock_write.call_args
+            assert call_args is not None
+            written_path = call_args[0][0]
+            assert "atomic-test" in str(written_path)
+
+    def test_script_save_content_correct(self, tmp_path: Path) -> None:
+        """Written script has correct content after atomic write."""
+        tools = _get_tools()
+        content = "#!/usr/bin/env python3\nprint('hello')"
+        tools["trw_script_save"].fn(
+            name="content-check",
+            content=content,
+            description="Verify content",
+            language="python",
+        )
+
+        script_path = tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "content-check.py"
+        assert script_path.exists()
+        assert script_path.read_text(encoding="utf-8") == content
+
+    def test_script_save_no_partial_on_interrupt(self, tmp_path: Path) -> None:
+        """If write fails, no partial file remains."""
+        tools = _get_tools()
+
+        # First, create the script normally
+        tools["trw_script_save"].fn(
+            name="interrupt-test",
+            content="original",
+            description="Original content",
+        )
+        script_path = tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "interrupt-test.sh"
+        assert script_path.read_text(encoding="utf-8") == "original"
+
+        # Simulate interrupted write
+        original_write_text = FileStateWriter.write_text
+
+        def failing_write(self: FileStateWriter, path: Path, content: str) -> None:
+            """Raise after starting the write process."""
+            if "interrupt-test" in str(path):
+                raise OSError("Simulated disk full")
+            original_write_text(self, path, content)
+
+        with patch.object(FileStateWriter, "write_text", failing_write):
+            with pytest.raises(Exception):
+                tools["trw_script_save"].fn(
+                    name="interrupt-test",
+                    content="corrupted",
+                    description="Should not be written",
+                )
+
+        # Original file should be unchanged
+        assert script_path.read_text(encoding="utf-8") == "original"
+
+
+class TestClaudeMdSyncAtomicWrite:
+    """PRD-CORE-014: merge_trw_section uses atomic writes via _writer."""
+
+    def test_claude_md_sync_uses_atomic_write(self, tmp_path: Path) -> None:
+        """trw_claude_md_sync uses _writer.write_text for CLAUDE.md."""
+        tools = _get_tools()
+
+        tools["trw_learn"].fn(
+            summary="Atomic claude md test learning",
+            detail="Triggers sync",
+            impact=0.9,
+        )
+
+        with patch(
+            "trw_mcp.state.claude_md._writer.write_text",
+            wraps=FileStateWriter().write_text,
+        ) as mock_write:
+            result = tools["trw_claude_md_sync"].fn(scope="root")
+            assert result["status"] == "synced"
+            assert mock_write.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-001: Success pattern tests (from Sprint 4 Track C)
+# ---------------------------------------------------------------------------
+
+
+class TestSuccessPatternDetection:
+    """PRD-QUAL-001: Unit tests for success pattern detection in analytics."""
+
+    def test_is_success_event_matches(self) -> None:
+        """is_success_event detects success-related event types."""
+        from trw_mcp.state.analytics import is_success_event
+
+        assert is_success_event({"event": "shard_complete"}) is True
+        assert is_success_event({"event": "phase_gate_passed"}) is True
+        assert is_success_event({"event": "tests_success"}) is True
+        assert is_success_event({"event": "run_done"}) is True
+        assert is_success_event({"event": "task_finished"}) is True
+        assert is_success_event({"event": "prd_approved"}) is True
+        assert is_success_event({"event": "delivery_complete"}) is True
+
+    def test_is_success_event_rejects(self) -> None:
+        """is_success_event rejects non-success event types."""
+        from trw_mcp.state.analytics import is_success_event
+
+        assert is_success_event({"event": "error_occurred"}) is False
+        assert is_success_event({"event": "shard_failed"}) is False
+        assert is_success_event({"event": "phase_enter"}) is False
+        assert is_success_event({"event": "run_init"}) is False
+
+    def test_find_success_patterns_aggregates(self) -> None:
+        """find_success_patterns aggregates success events by type."""
+        from trw_mcp.state.analytics import find_success_patterns
+
+        events: list[dict[str, object]] = [
+            {"event": "shard_complete", "data": {"shard": "S1"}},
+            {"event": "shard_complete", "data": {"shard": "S2"}},
+            {"event": "shard_complete", "data": {"shard": "S3"}},
+            {"event": "phase_gate_passed", "data": {"phase": "validate"}},
+            {"event": "error_occurred", "data": {"msg": "should be ignored"}},
+        ]
+
+        patterns = find_success_patterns(events)
+        assert len(patterns) >= 1
+
+        shard_pattern = next(
+            (p for p in patterns if p["event_type"] == "shard_complete"), None,
+        )
+        assert shard_pattern is not None
+        assert shard_pattern["count"] == "3"
+        assert "3x" in shard_pattern["summary"]
+
+    def test_find_success_patterns_empty(self) -> None:
+        """find_success_patterns returns empty for no success events."""
+        from trw_mcp.state.analytics import find_success_patterns
+
+        events: list[dict[str, object]] = [
+            {"event": "error_occurred"},
+            {"event": "phase_enter"},
+        ]
+        assert find_success_patterns(events) == []
+
+    def test_find_success_patterns_sorted_by_count(self) -> None:
+        """Patterns are sorted by count descending."""
+        from trw_mcp.state.analytics import find_success_patterns
+
+        events: list[dict[str, object]] = [
+            {"event": "shard_complete"},
+            {"event": "shard_complete"},
+            {"event": "shard_complete"},
+            {"event": "phase_gate_passed"},
+        ]
+
+        patterns = find_success_patterns(events)
+        assert len(patterns) >= 2
+        counts = [int(p["count"]) for p in patterns]
+        assert counts == sorted(counts, reverse=True)
+
+    def test_find_success_patterns_capped(self) -> None:
+        """Patterns are capped at _MAX_SUCCESS_PATTERNS."""
+        from trw_mcp.state.analytics import _MAX_SUCCESS_PATTERNS, find_success_patterns
+
+        events: list[dict[str, object]] = []
+        for i in range(10):
+            events.append({"event": f"success_type_{i}_complete"})
+
+        patterns = find_success_patterns(events)
+        assert len(patterns) <= _MAX_SUCCESS_PATTERNS
+
+
+class TestReflectSuccessPatterns:
+    """PRD-QUAL-001: trw_reflect extracts success patterns from events."""
+
+    def test_reflect_extracts_success_patterns(self, tmp_path: Path) -> None:
+        """trw_reflect returns success_patterns count when events contain successes."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="success-reflect-task")
+
+        writer = FileStateWriter()
+        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
+        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "shard_complete", "data": {}})
+        writer.append_jsonl(events_path, {"ts": "2026-01-02", "event": "shard_complete", "data": {}})
+        writer.append_jsonl(events_path, {"ts": "2026-01-03", "event": "phase_gate_passed", "data": {}})
+
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(
+            run_path=init_result["run_path"],
+            scope="run",
+        )
+        assert "success_patterns" in result
+        assert isinstance(result["success_patterns"], dict)
+        assert result["success_patterns"]["count"] >= 1
+
+    def test_reflect_success_pattern_format(self, tmp_path: Path) -> None:
+        """Success pattern learnings have expected format and tags."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="success-format-task")
+
+        writer = FileStateWriter()
+        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
+        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "delivery_complete"})
+
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(
+            run_path=init_result["run_path"],
+            scope="run",
+        )
+
+        assert len(result["new_learnings"]) >= 1
+        success_learnings = [
+            l for l in result["new_learnings"]
+            if "Success" in l.get("summary", "") or "success" in l.get("summary", "").lower()
+        ]
+        assert len(success_learnings) >= 1
+
+    def test_reflect_success_pattern_tags(self, tmp_path: Path) -> None:
+        """Success pattern learnings have 'success' and 'pattern' tags."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="success-tags-task")
+
+        writer = FileStateWriter()
+        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
+        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "shard_complete"})
+
+        tools = _get_tools()
+        tools["trw_reflect"].fn(
+            run_path=init_result["run_path"],
+            scope="run",
+        )
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        success_entries = []
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            tags = data.get("tags", [])
+            if isinstance(tags, list) and "success" in tags:
+                success_entries.append(data)
+
+        assert len(success_entries) >= 1
+        for entry in success_entries:
+            assert "pattern" in entry["tags"]
+            assert "auto-discovered" in entry["tags"]
+
+    def test_reflect_success_pattern_impact_scoring(self, tmp_path: Path) -> None:
+        """Success pattern learnings have impact=0.5 baseline."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="success-impact-task")
+
+        writer = FileStateWriter()
+        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
+        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "task_finished"})
+
+        tools = _get_tools()
+        tools["trw_reflect"].fn(
+            run_path=init_result["run_path"],
+            scope="run",
+        )
+
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if isinstance(data.get("tags"), list) and "success" in data["tags"]:
+                assert float(str(data.get("impact", 0))) == 0.5
+                break
+
+    def test_reflect_mixed_success_and_error(self, tmp_path: Path) -> None:
+        """trw_reflect extracts both error and success patterns from same event stream."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="mixed-patterns-task")
+
+        writer = FileStateWriter()
+        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
+        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "error_occurred"})
+        writer.append_jsonl(events_path, {"ts": "2026-01-02", "event": "shard_complete"})
+        writer.append_jsonl(events_path, {"ts": "2026-01-03", "event": "shard_failed"})
+        writer.append_jsonl(events_path, {"ts": "2026-01-04", "event": "phase_gate_passed"})
+
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(
+            run_path=init_result["run_path"],
+            scope="run",
+        )
+
+        assert result["error_patterns"] >= 2
+        assert result["success_patterns"]["count"] >= 1
+        assert len(result["new_learnings"]) >= 3
+
+    def test_reflect_no_events_graceful(self, tmp_path: Path) -> None:
+        """trw_reflect with no events still returns success_patterns dict with count=0."""
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(scope="session")
+        assert result["success_patterns"]["count"] == 0
+        assert result["error_patterns"] == 0
+        assert result["events_analyzed"] == 0
+
+    def test_reflect_what_worked_includes_success(self, tmp_path: Path) -> None:
+        """Reflection log's what_worked includes success patterns."""
+        from fastmcp import FastMCP
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        srv = FastMCP("test")
+        register_orchestration_tools(srv)
+        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        init_result = orch_tools["trw_init"].fn(task_name="what-worked-task")
+
+        writer = FileStateWriter()
+        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
+        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "shard_complete"})
+        writer.append_jsonl(events_path, {"ts": "2026-01-02", "event": "shard_complete"})
+
+        tools = _get_tools()
+        result = tools["trw_reflect"].fn(
+            run_path=init_result["run_path"],
+            scope="run",
+        )
+
+        reader = FileStateReader()
+        reflections_dir = tmp_path / _CFG.trw_dir / _CFG.reflections_dir
+        reflection_files = list(reflections_dir.glob("*.yaml"))
+        assert len(reflection_files) >= 1
+
+        reflection_data = reader.read_yaml(reflection_files[-1])
+        what_worked = reflection_data.get("what_worked", [])
+        assert any("Success" in str(item) or "success" in str(item).lower() for item in what_worked)

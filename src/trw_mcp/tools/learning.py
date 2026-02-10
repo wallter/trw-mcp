@@ -29,16 +29,19 @@ from trw_mcp.scoring import rank_by_utility, utility_based_prune_candidates
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     apply_status_update,
+    detect_tool_sequences,
     extract_learnings_from_llm,
     extract_learnings_mechanical,
     find_entry_by_id,
     find_repeated_operations,
     find_success_patterns,
     generate_learning_id,
+    has_existing_success_learning,
     is_error_event,
     mark_promoted,
     resync_learning_index,
     save_learning_entry,
+    surface_validated_learnings,
     update_analytics,
     update_analytics_sync,
 )
@@ -128,6 +131,19 @@ def register_learning_tools(server: FastMCP) -> None:
         repeated_ops = find_repeated_operations(events)
         success_patterns = find_success_patterns(events)
 
+        # PRD-QUAL-001 FR02: Tool sequence detection
+        tool_sequences = detect_tool_sequences(
+            events,
+            lookback=_config.reflect_sequence_lookback,
+        )
+
+        # PRD-QUAL-001 FR03: Q-value validated learnings
+        validated_learnings = surface_validated_learnings(
+            trw_dir,
+            q_threshold=_config.reflect_q_value_threshold,
+            cold_start_threshold=_config.q_cold_start_threshold,
+        )
+
         # Extract learnings via LLM or mechanical fallback
         new_learnings: list[dict[str, str]] = []
         llm_used = False
@@ -144,19 +160,28 @@ def register_learning_tools(server: FastMCP) -> None:
                 max_errors=_MAX_ERROR_LEARNINGS,
                 max_repeated=_MAX_REPEATED_OPS,
             )
-            # Also extract success patterns as learnings (PRD-QUAL-001)
-            for sp in success_patterns:
-                sp_id = generate_learning_id()
-                sp_entry = LearningEntry(
-                    id=sp_id,
-                    summary=sp["summary"],
-                    detail=sp.get("detail", ""),
-                    tags=["success", "pattern", "auto-discovered"],
-                    impact=0.5,
-                    recurrence=int(sp.get("count", 1)),
-                )
-                save_learning_entry(trw_dir, sp_entry)
-                new_learnings.append({"id": sp_id, "summary": sp_entry.summary})
+
+        # PRD-QUAL-001 FR04: Generate positive learnings from success patterns
+        positive_count = 0
+        max_positive = _config.reflect_max_positive_learnings
+        for sp in success_patterns:
+            if positive_count >= max_positive:
+                break
+            summary = sp["summary"]
+            if has_existing_success_learning(trw_dir, summary):
+                continue
+            sp_id = generate_learning_id()
+            sp_entry = LearningEntry(
+                id=sp_id,
+                summary=summary,
+                detail=sp.get("detail", ""),
+                tags=["success", "pattern", "auto-discovered"],
+                impact=0.5,
+                recurrence=int(sp.get("count", 1)),
+            )
+            save_learning_entry(trw_dir, sp_entry)
+            new_learnings.append({"id": sp_id, "summary": sp_entry.summary})
+            positive_count += 1
 
         # Create reflection log
         reflection_id = generate_learning_id()
@@ -200,6 +225,7 @@ def register_learning_tools(server: FastMCP) -> None:
             learnings_produced=len(new_learnings),
         )
 
+        # PRD-QUAL-001 FR05: Extended output schema
         return {
             "reflection_id": reflection_id,
             "scope": scope,
@@ -207,7 +233,24 @@ def register_learning_tools(server: FastMCP) -> None:
             "new_learnings": new_learnings,
             "error_patterns": len(error_events),
             "repeated_operations": len(repeated_ops),
-            "success_patterns": len(success_patterns),
+            "success_patterns": {
+                "count": len(success_patterns),
+                "phase_completions": [
+                    {"phase": str(e.get("event")), "events_in_phase": 1}
+                    for e in phase_transitions
+                ],
+                "shard_successes": [
+                    {
+                        "event_type": sp["event_type"],
+                        "count": int(sp.get("count", 1)),
+                        "first_attempt": True,
+                    }
+                    for sp in success_patterns
+                ],
+                "tool_sequences": tool_sequences,
+            },
+            "validated_learnings": validated_learnings,
+            "positive_learnings_created": positive_count,
             "llm_used": llm_used,
         }
 

@@ -1,6 +1,6 @@
-"""TRW AARE-F requirements tools — prd_create, prd_validate, traceability_check, prd_status_update.
+"""TRW AARE-F requirements tools — prd_create, prd_validate, traceability_check, prd_status_update, prd_groom.
 
-These 4 tools codify the AARE-F Framework v1.1.0 requirements engineering
+These 5 tools codify the AARE-F Framework v1.1.0 requirements engineering
 process as executable MCP tools.
 """
 
@@ -42,6 +42,7 @@ from trw_mcp.state.prd_utils import (
     update_frontmatter,
 )
 from trw_mcp.state.validation import validate_prd_quality_v2
+from trw_mcp.tools.findings import get_unlinked_findings
 
 logger = structlog.get_logger()
 
@@ -67,7 +68,7 @@ _EXPECTED_SECTIONS: list[str] = [
 
 
 def register_requirements_tools(server: FastMCP) -> None:
-    """Register all 4 AARE-F requirements tools on the MCP server.
+    """Register all 5 AARE-F requirements tools on the MCP server.
 
     Args:
         server: FastMCP server instance to register tools on.
@@ -373,27 +374,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # FR09: Finding coverage analysis — flag prd_candidate
         # findings that have no target_prd linked yet.
-        unlinked_findings: list[str] = []
-        findings_registry = (
-            project_root
-            / _config.trw_dir
-            / _config.findings_dir
-            / _config.findings_registry_file
-        )
-        if findings_registry.exists():
-            try:
-                reg_data = _reader.read_yaml(findings_registry)
-                reg_entries = reg_data.get("entries", [])
-                if isinstance(reg_entries, list):
-                    for ref in reg_entries:
-                        if not isinstance(ref, dict):
-                            continue
-                        sev = str(ref.get("severity", ""))
-                        has_prd = bool(ref.get("target_prd"))
-                        if sev in ("critical", "high") and not has_prd:
-                            unlinked_findings.append(str(ref.get("id", "")))
-            except (StateError, ValueError, TypeError) as exc:
-                logger.debug("findings_registry_read_failed", error=str(exc))
+        unlinked_findings = get_unlinked_findings()
 
         logger.info(
             "trw_traceability_checked",
@@ -540,6 +521,105 @@ def register_requirements_tools(server: FastMCP) -> None:
             "reason": guard_reason or reason,
             "guard_details": guard_details,
             "updated": current != target,
+        }
+
+    @server.tool()
+    def trw_prd_groom(
+        prd_path: str,
+        research_scope: str = "full",
+        max_iterations: int = 5,
+        target_completeness: float = 0.85,
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        """Analyze a PRD and generate a structured grooming plan.
+
+        Phase 1 (always): Parse PRD, identify placeholder sections, score
+        quality, and generate a grooming plan with research topics.
+
+        Phase 2 (dry_run=False): Returns the plan with status 'plan_ready',
+        indicating the orchestrator should launch the prd-groomer agent.
+
+        Args:
+            prd_path: Absolute path to the PRD markdown file to groom.
+            research_scope: Research depth: 'full', 'codebase', or 'minimal'.
+            max_iterations: Maximum validation-fix iterations (1-10).
+            target_completeness: Minimum completeness score to accept (0.0-1.0).
+            dry_run: If True, return plan without signaling agent launch.
+        """
+        from trw_mcp.state.grooming import generate_grooming_plan
+        from trw_mcp.state.persistence import model_to_dict as _model_to_dict
+
+        path = Path(prd_path).resolve()
+        if not path.exists():
+            raise StateError(f"PRD file not found: {path}", path=str(path))
+
+        # Validate parameters
+        if max_iterations < 1 or max_iterations > 10:
+            raise ValidationError(
+                f"max_iterations must be 1-10, got {max_iterations}",
+                max_iterations=max_iterations,
+            )
+        if target_completeness < 0.0 or target_completeness > 1.0:
+            raise ValidationError(
+                f"target_completeness must be 0.0-1.0, got {target_completeness}",
+                target_completeness=target_completeness,
+            )
+        valid_scopes = ("full", "codebase", "minimal")
+        if research_scope not in valid_scopes:
+            raise ValidationError(
+                f"Invalid research_scope: {research_scope!r}. Valid: {list(valid_scopes)}",
+                research_scope=research_scope,
+            )
+
+        content = path.read_text(encoding="utf-8")
+
+        # Phase 1: Generate grooming plan (pure function)
+        plan = generate_grooming_plan(
+            content=content,
+            prd_path=str(path),
+            config=_config,
+            max_iterations=max_iterations,
+            target_completeness=target_completeness,
+            research_scope=research_scope,
+        )
+
+        # Get current quality via trw_prd_validate internals
+        v2_result = validate_prd_quality_v2(content, _config)
+        ambiguous_terms = _detect_ambiguity(content)
+        sections = _extract_sections(content)
+
+        current_quality: dict[str, object] = {
+            "total_score": v2_result.total_score,
+            "quality_tier": v2_result.quality_tier,
+            "grade": v2_result.grade,
+            "completeness_score": v2_result.completeness_score,
+            "sections_found": sections,
+            "improvement_suggestions": [
+                {
+                    "dimension": s.dimension,
+                    "priority": s.priority,
+                    "message": s.message,
+                }
+                for s in v2_result.improvement_suggestions[:5]
+            ],
+        }
+
+        status = "plan_generated" if dry_run else "plan_ready"
+
+        logger.info(
+            "trw_prd_groom_complete",
+            prd_id=plan.prd_id,
+            status=status,
+            sections_needing_work=len(plan.sections_needing_work),
+            dry_run=dry_run,
+        )
+
+        return {
+            "prd_id": plan.prd_id,
+            "status": status,
+            "grooming_plan": _model_to_dict(plan),
+            "current_quality": current_quality,
+            "suggested_agent": "prd-groomer",
         }
 
 
