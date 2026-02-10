@@ -2592,15 +2592,17 @@ class TestSuccessPatternDetection:
         assert counts == sorted(counts, reverse=True)
 
     def test_find_success_patterns_capped(self) -> None:
-        """Patterns are capped at _MAX_SUCCESS_PATTERNS."""
-        from trw_mcp.state.analytics import _MAX_SUCCESS_PATTERNS, find_success_patterns
+        """Patterns are capped at config.reflect_max_success_patterns."""
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state.analytics import find_success_patterns
 
+        config = TRWConfig()
         events: list[dict[str, object]] = []
         for i in range(10):
             events.append({"event": f"success_type_{i}_complete"})
 
         patterns = find_success_patterns(events)
-        assert len(patterns) <= _MAX_SUCCESS_PATTERNS
+        assert len(patterns) <= config.reflect_max_success_patterns
 
 
 class TestReflectSuccessPatterns:

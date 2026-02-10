@@ -31,7 +31,6 @@ _SUCCESS_KEYWORDS = (
     "complete", "success", "pass", "done", "finish",
     "delivered", "approved", "resolved", "merged",
 )
-_MAX_SUCCESS_PATTERNS = 5
 
 
 def find_entry_by_id(
@@ -160,7 +159,7 @@ def find_success_patterns(
             "count": str(count),
         })
 
-    return patterns[:_MAX_SUCCESS_PATTERNS]
+    return patterns[:_config.reflect_max_success_patterns]
 
 
 def detect_tool_sequences(

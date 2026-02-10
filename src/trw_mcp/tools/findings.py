@@ -31,6 +31,11 @@ _config = TRWConfig()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
+# Severity sort order for query results (lower = higher priority)
+_SEVERITY_ORDER: dict[str, int] = {
+    "critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4,
+}
+
 
 def register_findings_tools(server: FastMCP) -> None:
     """Register all 3 findings pipeline tools on the MCP server.
@@ -271,12 +276,9 @@ def register_findings_tools(server: FastMCP) -> None:
                     )
 
         # Sort: critical first, then by severity order, then by id
-        severity_order = {
-            "critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4,
-        }
         results.sort(
             key=lambda r: (
-                severity_order.get(str(r.get("severity", "medium")), 2),
+                _SEVERITY_ORDER.get(str(r.get("severity", "medium")), 2),
                 str(r.get("id", "")),
             ),
         )

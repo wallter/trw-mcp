@@ -132,6 +132,8 @@ class TRWConfig(BaseSettings):
     grooming_max_iterations: int = 5
     grooming_target_completeness: float = 0.85
     grooming_research_scope: Literal["full", "codebase", "minimal"] = "full"
+    grooming_placeholder_density_threshold: float = 0.10
+    grooming_partial_density_threshold: float = 0.20
 
     # Findings pipeline (PRD-CORE-010)
     finding_dedup_threshold: float = 0.6
@@ -142,14 +144,17 @@ class TRWConfig(BaseSettings):
     # Success pattern extraction (PRD-QUAL-001)
     reflect_sequence_lookback: int = 3
     reflect_max_positive_learnings: int = 5
+    reflect_max_success_patterns: int = 5
     reflect_q_value_threshold: float = 0.6
 
     # Compliance enforcement (PRD-QUAL-003)
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
     compliance_long_session_event_threshold: int = 5
-    compliance_long_session_minutes: int = 30
     compliance_pass_threshold: float = 0.8
     compliance_warning_threshold: float = 0.5
+    compliance_dir: str = "compliance"
+    compliance_history_file: str = "history.jsonl"
+    compliance_changelog_filename: str = "CHANGELOG.md"
 
     # LLM augmentation (optional, requires claude-agent-sdk)
     llm_enabled: bool = True

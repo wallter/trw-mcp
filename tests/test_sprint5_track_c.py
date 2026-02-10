@@ -839,3 +839,158 @@ class TestQual001ConfigFields:
         """Default Q-value threshold is 0.6."""
         config = TRWConfig()
         assert config.reflect_q_value_threshold == 0.6
+
+    def test_reflect_max_success_patterns_default(self) -> None:
+        """Default max success patterns is 5."""
+        config = TRWConfig()
+        assert config.reflect_max_success_patterns == 5
+
+
+# ---------------------------------------------------------------------------
+# Audit: Edge-case tests for robustness
+# ---------------------------------------------------------------------------
+
+
+class TestVersionWarningEdgeCases:
+    """Edge cases for PRD-FIX-005 version staleness check."""
+
+    def test_malformed_version_yaml_graceful(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Malformed VERSION.yaml doesn't crash — returns no warning."""
+        tools = _get_orch_tools(monkeypatch, tmp_path)
+        init_result = _init_run(tools)
+        run_path = init_result["run_path"]
+
+        # Write garbage data to VERSION.yaml
+        version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
+        version_path.write_text("not: valid: yaml: ::::", encoding="utf-8")
+
+        result = tools["trw_status"].fn(run_path=run_path)
+        # Should not crash — graceful degradation
+        assert isinstance(result, dict)
+
+    def test_empty_framework_field_no_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Empty framework field in run.yaml produces no warning."""
+        from trw_mcp.tools.orchestration import _check_framework_version_staleness
+
+        result = _check_framework_version_staleness("")
+        assert result is None
+
+
+class TestDetectToolSequencesSingleEvent:
+    """Edge case: single-element event lists."""
+
+    def test_single_success_event(self) -> None:
+        """A single success event returns empty sequences (need >= 2 events)."""
+        from trw_mcp.state.analytics import detect_tool_sequences
+
+        events = [{"event": "shard_completed_successfully"}]
+        result = detect_tool_sequences(events, lookback=3, min_occurrences=1)
+        assert result == []
+
+
+class TestSurfaceValidatedLearningSorting:
+    """Verify Q-value sorting order in surface_validated_learnings."""
+
+    def test_results_sorted_by_q_value_descending(self, tmp_path: Path) -> None:
+        """Multiple validated learnings are returned highest Q-value first."""
+        from trw_mcp.state.analytics import surface_validated_learnings
+
+        entries_dir = tmp_path / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        writer = FileStateWriter()
+        writer.write_yaml(entries_dir / "a.yaml", {
+            "id": "L-mid", "summary": "Mid Q",
+            "status": "active", "q_value": 0.7, "q_observations": 5, "tags": [],
+        })
+        writer.write_yaml(entries_dir / "b.yaml", {
+            "id": "L-top", "summary": "Top Q",
+            "status": "active", "q_value": 0.95, "q_observations": 10, "tags": [],
+        })
+        writer.write_yaml(entries_dir / "c.yaml", {
+            "id": "L-low", "summary": "Low Q",
+            "status": "active", "q_value": 0.65, "q_observations": 4, "tags": [],
+        })
+
+        result = surface_validated_learnings(
+            tmp_path, q_threshold=0.6, cold_start_threshold=3,
+        )
+        assert len(result) == 3
+        assert result[0]["learning_id"] == "L-top"
+        assert result[1]["learning_id"] == "L-mid"
+        assert result[2]["learning_id"] == "L-low"
+
+
+class TestGetUnlinkedFindingsEdgeCases:
+    """Edge cases for get_unlinked_findings helper."""
+
+    def test_non_dict_entries_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Non-dict entries in registry are silently skipped."""
+        from trw_mcp.tools.findings import get_unlinked_findings
+
+        project = tmp_path / "project"
+        (project / ".trw" / "findings").mkdir(parents=True)
+        monkeypatch.setattr(
+            "trw_mcp.tools.findings.resolve_project_root", lambda: project,
+        )
+
+        writer = FileStateWriter()
+        writer.write_yaml(project / ".trw" / "findings" / "registry.yaml", {
+            "entries": [
+                "not-a-dict",
+                42,
+                {"id": "F-W1-S1-001", "severity": "critical", "target_prd": None},
+            ],
+        })
+
+        result = get_unlinked_findings()
+        assert result == ["F-W1-S1-001"]
+
+    def test_empty_severity_filter_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Empty severity filter returns no findings."""
+        from trw_mcp.tools.findings import get_unlinked_findings
+
+        project = tmp_path / "project"
+        (project / ".trw" / "findings").mkdir(parents=True)
+        monkeypatch.setattr(
+            "trw_mcp.tools.findings.resolve_project_root", lambda: project,
+        )
+
+        writer = FileStateWriter()
+        writer.write_yaml(project / ".trw" / "findings" / "registry.yaml", {
+            "entries": [
+                {"id": "F-W1-S1-001", "severity": "critical", "target_prd": None},
+            ],
+        })
+
+        result = get_unlinked_findings(severity_filter=())
+        assert result == []
+
+
+class TestFindSuccessPatternsConfig:
+    """Verify find_success_patterns respects config cap."""
+
+    def test_max_patterns_from_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """find_success_patterns respects reflect_max_success_patterns."""
+        import trw_mcp.state.analytics as analytics_mod
+
+        monkeypatch.setenv("TRW_REFLECT_MAX_SUCCESS_PATTERNS", "2")
+        monkeypatch.setattr(analytics_mod, "_config", TRWConfig())
+
+        from trw_mcp.state.analytics import find_success_patterns
+
+        # Create 5 different success event types
+        events = []
+        for i in range(5):
+            events.append({"event": f"type_{i}_completed"})
+
+        result = find_success_patterns(events)
+        assert len(result) <= 2
