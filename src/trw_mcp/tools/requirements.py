@@ -465,16 +465,16 @@ def register_requirements_tools(server: FastMCP) -> None:
                 target_status=target_status,
             )
 
-        # Check state machine validity
+        # PRD-FIX-009: State machine is ALWAYS enforced — force only bypasses guards
         transition_valid = is_valid_transition(current, target)
-        if not transition_valid and not force:
+        if not transition_valid:
             return {
                 "prd_id": prd_id,
                 "previous_status": current.value,
                 "new_status": current.value,
                 "transition_valid": False,
                 "guard_passed": False,
-                "force_used": False,
+                "force_used": force,
                 "reason": f"Invalid transition: {current.value} -> {target.value}",
                 "updated": False,
             }
@@ -515,14 +515,12 @@ def register_requirements_tools(server: FastMCP) -> None:
             })
 
         # Log event to latest run's events.jsonl (best-effort)
-        # PRD-FIX-009-FR03: Include force_override when force bypasses state machine
         _log_status_change_event(
             prd_id=prd_id,
             previous_status=current.value,
             new_status=target.value,
             force_used=force,
             reason=reason,
-            force_override=force and not transition_valid,
         )
 
         logger.info(
@@ -537,7 +535,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             "prd_id": prd_id,
             "previous_status": current.value,
             "new_status": target.value,
-            "transition_valid": transition_valid or force,
+            "transition_valid": transition_valid,
             "guard_passed": guard_passed,
             "force_used": force,
             "reason": guard_reason or reason,

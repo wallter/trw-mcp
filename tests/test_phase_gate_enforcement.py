@@ -1188,10 +1188,10 @@ class TestForceParameterValidation:
         assert result["updated"] is False
         assert result["transition_valid"] is False
 
-    def test_force_true_invalid_transition_succeeds(
+    def test_force_does_not_bypass_state_machine(
         self, prd_project: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """PRD-FIX-009-FR01: force=True on invalid transition updates status."""
+        """PRD-FIX-009: force=True does NOT bypass state machine — only guards."""
         from trw_mcp.tools import requirements as req_mod
 
         monkeypatch.setattr(req_mod, "resolve_project_root", lambda: prd_project)
@@ -1203,16 +1203,44 @@ class TestForceParameterValidation:
         register_requirements_tools(srv)
         tools = {t.name: t for t in srv._tool_manager._tools.values()}
 
-        # DRAFT -> APPROVED is invalid per state machine, but force=True allows it
+        # DRAFT -> APPROVED is invalid per state machine — force must NOT override
         result = tools["trw_prd_status_update"].fn(
             prd_id="PRD-TEST-001",
             target_status="approved",
             force=True,
             reason="Bypassing for emergency",
         )
+        assert result["updated"] is False
+        assert result["transition_valid"] is False
+        assert result["force_used"] is True
+
+    def test_force_bypasses_guard_checks(
+        self, prd_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """PRD-FIX-009: force=True with valid transition bypasses guard checks."""
+        from trw_mcp.tools import requirements as req_mod
+
+        monkeypatch.setattr(req_mod, "resolve_project_root", lambda: prd_project)
+        monkeypatch.setattr(req_mod, "_config", TRWConfig())
+
+        from fastmcp import FastMCP
+        from trw_mcp.tools.requirements import register_requirements_tools
+        srv = FastMCP("test-fix009")
+        register_requirements_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+
+        # DRAFT -> REVIEW is valid but has guard (content density).
+        # force=True should bypass guard and succeed.
+        result = tools["trw_prd_status_update"].fn(
+            prd_id="PRD-TEST-001",
+            target_status="review",
+            force=True,
+            reason="Admin override — bypassing content density guard",
+        )
         assert result["updated"] is True
         assert result["force_used"] is True
-        assert result["new_status"] == "approved"
+        assert result["guard_passed"] is True
+        assert result["new_status"] == "review"
 
 
 # ---------------------------------------------------------------------------
