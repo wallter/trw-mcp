@@ -1144,18 +1144,57 @@ def validate_prd_quality_v2(
     # Generate improvement suggestions
     suggestions = generate_improvement_suggestions(dimensions)
 
-    # V1-compatible fields
-    v1_result = validate_prd_quality(frontmatter, sections)
-    is_valid = v1_result.valid
+    # V1-compatible fields (inline, avoids redundant validate_prd_quality call — PRD-FIX-011)
+    required_fields = ["id", "title", "version", "status", "priority"]
+    v1_failures: list[ValidationFailure] = []
+    for field in required_fields:
+        if field not in frontmatter or not frontmatter[field]:
+            v1_failures.append(ValidationFailure(
+                field=f"frontmatter:{field}", rule="required_field",
+                message=f"Required frontmatter field missing: {field}", severity="error",
+            ))
+    expected_section_count = 12
+    if len(sections) < expected_section_count:
+        v1_failures.append(ValidationFailure(
+            field="sections", rule="section_count",
+            message=f"PRD has {len(sections)} sections, expected {expected_section_count}",
+            severity="error",
+        ))
+    confidence = frontmatter.get("confidence", {})
+    if isinstance(confidence, dict):
+        for cf in ("implementation_feasibility", "requirement_clarity", "estimate_confidence"):
+            if cf not in confidence:
+                v1_failures.append(ValidationFailure(
+                    field=f"confidence:{cf}", rule="confidence_present",
+                    message=f"Missing confidence score: {cf}", severity="warning",
+                ))
+    traceability = frontmatter.get("traceability", {})
+    has_traces = False
+    if isinstance(traceability, dict):
+        for key in ("implements", "depends_on", "enables"):
+            val = traceability.get(key, [])
+            if isinstance(val, list) and len(val) > 0:
+                has_traces = True
+                break
+    if not has_traces:
+        v1_failures.append(ValidationFailure(
+            field="traceability", rule="has_traces",
+            message="PRD has no traceability links", severity="warning",
+        ))
+    v1_total_checks = len(required_fields) + 3
+    v1_error_count = sum(1 for f in v1_failures if f.severity == "error")
+    v1_completeness = 1.0 - (v1_error_count / max(v1_total_checks, 1))
+    v1_trace_coverage = 1.0 if has_traces else 0.0
+    is_valid = v1_completeness >= 0.85 and v1_trace_coverage >= 0.9 and v1_error_count == 0
 
     result = ValidationResultV2(
-        # V1 fields
+        # V1 fields (computed inline)
         valid=is_valid,
-        failures=v1_result.failures,
-        ambiguity_rate=v1_result.ambiguity_rate,
-        completeness_score=v1_result.completeness_score,
-        traceability_coverage=v1_result.traceability_coverage,
-        consistency_score=v1_result.consistency_score,
+        failures=v1_failures,
+        ambiguity_rate=0.0,
+        completeness_score=v1_completeness,
+        traceability_coverage=v1_trace_coverage,
+        consistency_score=0.0,
         # V2 fields
         total_score=total_score,
         quality_tier=tier,

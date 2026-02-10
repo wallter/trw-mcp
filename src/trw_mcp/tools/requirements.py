@@ -41,7 +41,7 @@ from trw_mcp.state.prd_utils import (
     extract_prd_refs,
     update_frontmatter,
 )
-from trw_mcp.state.validation import validate_prd_quality, validate_prd_quality_v2
+from trw_mcp.state.validation import validate_prd_quality_v2
 
 logger = structlog.get_logger()
 
@@ -200,6 +200,10 @@ def register_requirements_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Validate a PRD against AARE-F quality gates — reports failures and scores.
 
+        Single V2 execution path (PRD-FIX-011): V2 subsumes V1 checks.
+        Exposes rich diagnostics: smell findings, EARS classifications,
+        readability metrics, and section-level density scores.
+
         Args:
             prd_path: Path to the PRD markdown file to validate.
         """
@@ -209,28 +213,17 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         content = path.read_text(encoding="utf-8")
 
-        # Parse YAML frontmatter
-        frontmatter = _parse_frontmatter(content)
+        # Single V2 validation call — subsumes all V1 checks (PRD-FIX-011)
+        v2_result = validate_prd_quality_v2(content, _config)
 
-        # Extract section headings
-        sections = _extract_sections(content)
-
-        # Run validation
-        gates = PRDQualityGates(
-            ambiguity_rate_max=_config.ambiguity_rate_max,
-            completeness_min=_config.completeness_min,
-            traceability_coverage_min=_config.traceability_coverage_min,
-        )
-        result = validate_prd_quality(frontmatter, sections, gates)
-
-        # Check for ambiguous terms
+        # Check for ambiguous terms and update V2 result
         ambiguous_terms = _detect_ambiguity(content)
         if ambiguous_terms:
             total_words = len(content.split())
             ambiguity_rate = len(ambiguous_terms) / max(total_words, 1)
-            result.ambiguity_rate = ambiguity_rate
+            v2_result.ambiguity_rate = ambiguity_rate
             if ambiguity_rate > _config.ambiguity_rate_max:
-                result.failures.append(
+                v2_result.failures.append(
                     ValidationFailure(
                         field="content",
                         rule="ambiguity_rate",
@@ -239,58 +232,64 @@ def register_requirements_tools(server: FastMCP) -> None:
                     )
                 )
 
-        # Run V2 semantic validation
-        v2_result = validate_prd_quality_v2(content, _config)
+        sections = _extract_sections(content)
 
         logger.info(
             "trw_prd_validated",
             path=str(path),
-            valid=result.valid,
+            valid=v2_result.valid,
             total_score=v2_result.total_score,
             quality_tier=v2_result.quality_tier,
-            failures=len(result.failures),
+            failures=len(v2_result.failures),
         )
 
         return {
-            # V1 fields (backward compatible)
+            # V1 fields (backward compatible, from V2 inline computation)
             "path": str(path),
-            "valid": result.valid,
-            "completeness_score": result.completeness_score,
-            "traceability_coverage": result.traceability_coverage,
-            "ambiguity_rate": result.ambiguity_rate,
+            "valid": v2_result.valid,
+            "completeness_score": v2_result.completeness_score,
+            "traceability_coverage": v2_result.traceability_coverage,
+            "ambiguity_rate": v2_result.ambiguity_rate,
             "sections_found": sections,
             "sections_expected": _EXPECTED_SECTIONS,
             "ambiguous_terms": ambiguous_terms,
             "failures": [
                 {
-                    "field": f.field,
-                    "rule": f.rule,
-                    "message": f.message,
-                    "severity": f.severity,
+                    "field": f.field, "rule": f.rule,
+                    "message": f.message, "severity": f.severity,
                 }
-                for f in result.failures
+                for f in v2_result.failures
             ],
             # V2 fields (PRD-CORE-008)
             "total_score": v2_result.total_score,
             "quality_tier": v2_result.quality_tier,
             "grade": v2_result.grade,
             "dimensions": [
-                {
-                    "name": d.name,
-                    "score": d.score,
-                    "max_score": d.max_score,
-                }
+                {"name": d.name, "score": d.score, "max_score": d.max_score}
                 for d in v2_result.dimensions
             ],
             "improvement_suggestions": [
                 {
-                    "dimension": s.dimension,
-                    "priority": s.priority,
-                    "message": s.message,
-                    "current_score": s.current_score,
+                    "dimension": s.dimension, "priority": s.priority,
+                    "message": s.message, "current_score": s.current_score,
                     "potential_gain": s.potential_gain,
                 }
                 for s in v2_result.improvement_suggestions[:5]
+            ],
+            # Rich diagnostics (PRD-FIX-011: previously discarded)
+            "smell_findings": [
+                {
+                    "category": sf.category, "matched_text": sf.matched_text,
+                    "line_number": sf.line_number, "severity": sf.severity,
+                    "suggestion": sf.suggestion,
+                }
+                for sf in v2_result.smell_findings
+            ],
+            "ears_classifications": v2_result.ears_classifications,
+            "readability": v2_result.readability,
+            "section_scores": [
+                {"section_name": ss.section_name, "density": ss.density, "substantive_lines": ss.substantive_lines}
+                for ss in v2_result.section_scores
             ],
         }
 
