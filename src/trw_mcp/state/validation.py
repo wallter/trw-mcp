@@ -1185,7 +1185,11 @@ def validate_prd_quality_v2(
     v1_error_count = sum(1 for f in v1_failures if f.severity == "error")
     v1_completeness = 1.0 - (v1_error_count / max(v1_total_checks, 1))
     v1_trace_coverage = 1.0 if has_traces else 0.0
-    is_valid = v1_completeness >= 0.85 and v1_trace_coverage >= 0.9 and v1_error_count == 0
+    is_valid = (
+        v1_completeness >= _config.completeness_min
+        and v1_trace_coverage >= _config.traceability_coverage_min
+        and v1_error_count == 0
+    )
 
     result = ValidationResultV2(
         # V1 fields (computed inline)

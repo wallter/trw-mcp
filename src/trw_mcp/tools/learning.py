@@ -17,6 +17,7 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import (
     LearningEntry,
@@ -544,7 +545,7 @@ def register_learning_tools(server: FastMCP) -> None:
             try:
                 data = _reader.read_yaml(entry_file)
                 all_entries.append((entry_file, data))
-            except (Exception,):
+            except (StateError, ValueError, TypeError):
                 continue
 
         if not all_entries:
