@@ -6,9 +6,12 @@ All state persistence goes through this module. Writes are atomic
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
+import os
 import tempfile
+from collections.abc import Generator
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -19,11 +22,21 @@ from ruamel.yaml import YAML
 
 from trw_mcp.exceptions import StateError
 
+# PRD-CORE-001: Base MCP tool suite — atomic file state persistence
+
 logger = structlog.get_logger()
 
-_yaml = YAML()
-_yaml.default_flow_style = False
-_yaml.preserve_quotes = True
+def _new_yaml() -> YAML:
+    """Create a thread-safe YAML instance.
+
+    ruamel.yaml's YAML class maintains internal emitter state that is
+    NOT thread-safe.  Creating a fresh instance per operation prevents
+    concurrent write corruption (PRD-CORE-014 FR03).
+    """
+    yml = YAML()
+    yml.default_flow_style = False
+    yml.preserve_quotes = True
+    return yml
 
 
 class StateReader(Protocol):
@@ -43,6 +56,8 @@ class StateWriter(Protocol):
 
     def append_jsonl(self, path: Path, record: dict[str, object]) -> None: ...
 
+    def write_text(self, path: Path, content: str) -> None: ...
+
     def ensure_dir(self, path: Path) -> None: ...
 
 
@@ -52,7 +67,7 @@ class EventLogger(Protocol):
     def log_event(self, events_path: Path, event_type: str, data: dict[str, object]) -> None: ...
 
 
-def _json_serializer(obj: object) -> str:
+def json_serializer(obj: object) -> str:
     """JSON serializer for objects not serializable by default json code.
 
     Args:
@@ -91,7 +106,7 @@ class FileStateReader:
             with path.open("r", encoding="utf-8") as fh:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
                 try:
-                    data = _yaml.load(fh)
+                    data = _new_yaml().load(fh)
                 finally:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
             if data is None:
@@ -199,7 +214,7 @@ class FileStateWriter:
                 with tmp_path.open("w", encoding="utf-8") as fh:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                     try:
-                        _yaml.dump(data, fh)
+                        _new_yaml().dump(data, fh)
                     finally:
                         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
                 tmp_path.rename(path)
@@ -207,7 +222,6 @@ class FileStateWriter:
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:
-                import os
                 try:
                     os.close(fd)
                 except OSError:
@@ -233,17 +247,59 @@ class FileStateWriter:
         """
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(record, default=_json_serializer) + "\n"
+            line = json.dumps(record, default=json_serializer) + "\n"
             with path.open("a", encoding="utf-8") as fh:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 try:
                     fh.write(line)
+                    fh.flush()
                 finally:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
             logger.debug("jsonl_appended", path=str(path), event_type=record.get("event"))
         except Exception as exc:
             raise StateError(
                 f"Failed to append JSONL: {exc}",
+                path=str(path),
+            ) from exc
+
+    def write_text(self, path: Path, content: str) -> None:
+        """Atomically write text content to a file.
+
+        Uses the same temp-file-then-rename strategy as ``write_yaml``
+        to prevent corruption on interrupted writes.
+
+        Args:
+            path: Target file path.
+            content: Text content to write.
+
+        Raises:
+            StateError: If write fails.
+        """
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path_str = tempfile.mkstemp(
+                dir=str(path.parent),
+                suffix=".tmp",
+            )
+            tmp_path = Path(tmp_path_str)
+            try:
+                with tmp_path.open("w", encoding="utf-8") as fh:
+                    fh.write(content)
+                    fh.flush()
+                tmp_path.rename(path)
+            except BaseException:
+                tmp_path.unlink(missing_ok=True)
+                raise
+            finally:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        except StateError:
+            raise
+        except Exception as exc:
+            raise StateError(
+                f"Failed to write text file: {exc}",
                 path=str(path),
             ) from exc
 
@@ -263,6 +319,31 @@ class FileStateWriter:
                 f"Failed to create directory: {exc}",
                 path=str(path),
             ) from exc
+
+
+@contextlib.contextmanager
+def lock_for_rmw(path: Path) -> Generator[Path, None, None]:
+    """Advisory exclusive lock for read-modify-write cycles.
+
+    Acquires an exclusive lock on ``{path}.lock`` before yielding,
+    releases after the block completes (or on exception).  This prevents
+    concurrent R-M-W races on the same file (e.g., learnings/index.yaml).
+
+    Args:
+        path: The file being protected.  A sibling ``.lock`` file is used.
+
+    Yields:
+        The original *path* (unchanged) for convenience.
+    """
+    lock_path = path.parent / f"{path.name}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fh = lock_path.open("w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        yield path
+    finally:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        lock_fh.close()
 
 
 class FileEventLogger:

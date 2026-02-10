@@ -6,6 +6,8 @@ Never use bare ``except:`` — always catch specific types from this module.
 
 from __future__ import annotations
 
+# PRD-CORE-001: Base MCP tool suite — error hierarchy
+
 
 class TRWError(Exception):
     """Base exception for all TRW MCP server errors.

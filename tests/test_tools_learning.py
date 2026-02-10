@@ -830,9 +830,9 @@ class TestClaudeMdTemplate:
 
     def test_loads_bundled_template(self, tmp_path: Path) -> None:
         """Default template loaded from package data."""
-        from trw_mcp.tools.learning import _load_claude_md_template
+        from trw_mcp.state.claude_md import load_claude_md_template
 
-        template = _load_claude_md_template(tmp_path / _CFG.trw_dir)
+        template = load_claude_md_template(tmp_path / _CFG.trw_dir)
         assert "{{categorized_learnings}}" in template
         assert "{{architecture_section}}" in template
         assert "trw:start" in template
@@ -840,7 +840,7 @@ class TestClaudeMdTemplate:
 
     def test_project_override_takes_precedence(self, tmp_path: Path) -> None:
         """Project-local template in .trw/templates/ overrides bundled."""
-        from trw_mcp.tools.learning import _load_claude_md_template
+        from trw_mcp.state.claude_md import load_claude_md_template
 
         trw_dir = tmp_path / _CFG.trw_dir
         templates_dir = trw_dir / _CFG.templates_dir
@@ -853,28 +853,28 @@ class TestClaudeMdTemplate:
         )
         (templates_dir / "claude_md.md").write_text(custom, encoding="utf-8")
 
-        template = _load_claude_md_template(trw_dir)
+        template = load_claude_md_template(trw_dir)
         assert "Custom Section" in template
         assert "{{categorized_learnings}}" in template
 
     def test_render_replaces_placeholders(self, tmp_path: Path) -> None:
         """{{key}} tokens replaced with content."""
-        from trw_mcp.tools.learning import _render_template
+        from trw_mcp.state.claude_md import render_template
 
         template = "## Title\n\n{{section_a}}{{section_b}}"
         context = {"section_a": "### A\n- item\n\n", "section_b": "### B\n- item\n\n"}
-        result = _render_template(template, context)
+        result = render_template(template, context)
         assert "### A" in result
         assert "### B" in result
         assert "{{section_a}}" not in result
 
     def test_render_empty_sections_collapse(self, tmp_path: Path) -> None:
         """Empty values don't leave runs of blank lines."""
-        from trw_mcp.tools.learning import _render_template
+        from trw_mcp.state.claude_md import render_template
 
         template = "Header\n\n{{a}}{{b}}Footer"
         context = {"a": "", "b": ""}
-        result = _render_template(template, context)
+        result = render_template(template, context)
         # Should not have 3+ consecutive newlines
         assert "\n\n\n" not in result
 
@@ -1315,11 +1315,12 @@ class TestTrwLearnPruneReceipts:
         """trw_learn_prune trims recall_log.jsonl to max entries."""
         import json
 
+        import trw_mcp.state.receipts as receipts_mod
         import trw_mcp.tools.learning as learn_mod
 
-        # Override max entries to a small number for testing
+        # Override max entries — prune_recall_receipts reads from receipts._config
         cfg = TRWConfig(recall_receipt_max_entries=3)
-        monkeypatch.setattr(learn_mod, "_config", cfg)
+        monkeypatch.setattr(receipts_mod, "_config", cfg)
 
         # Create receipt log with 5 entries
         receipt_dir = (
@@ -1574,6 +1575,153 @@ class TestRecallUtilityRanking:
                 break
 
 
+class TestRecallCompactMode:
+    """Tests for PRD-FIX-013 — bounded recall with compact mode."""
+
+    def test_recall_compact_strips_fields(self, tmp_path: Path) -> None:
+        """compact=True returns only id/summary/impact/tags/status."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Compact strip test learning",
+            detail="This detail should be stripped in compact mode",
+            tags=["testing"],
+            impact=0.8,
+            evidence=["evidence.txt"],
+        )
+
+        result = tools["trw_recall"].fn(
+            query="compact strip test", compact=True,
+        )
+        assert len(result["learnings"]) >= 1
+        entry = result["learnings"][0]
+        # Compact fields present
+        assert "id" in entry
+        assert "summary" in entry
+        assert "impact" in entry
+        assert "tags" in entry
+        assert "status" in entry
+        # Verbose fields stripped
+        assert "detail" not in entry
+        assert "evidence" not in entry
+        assert "outcome_history" not in entry
+        assert "q_value" not in entry
+        assert "access_count" not in entry
+
+    def test_recall_compact_preserves_full_by_default(self, tmp_path: Path) -> None:
+        """Non-wildcard queries return full content by default."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Full content preserve test",
+            detail="This detail should be present",
+            tags=["testing"],
+            impact=0.8,
+        )
+
+        result = tools["trw_recall"].fn(query="full content preserve")
+        assert len(result["learnings"]) >= 1
+        entry = result["learnings"][0]
+        assert "detail" in entry
+        assert result["compact"] is False
+
+    def test_recall_wildcard_auto_compact(self, tmp_path: Path) -> None:
+        """Wildcard query auto-enables compact mode."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Wildcard auto compact test entry",
+            detail="This detail should NOT appear in wildcard",
+            impact=0.8,
+        )
+
+        result = tools["trw_recall"].fn(query="*")
+        assert result["compact"] is True
+        for entry in result["learnings"]:
+            assert "detail" not in entry
+
+    def test_recall_wildcard_compact_override(self, tmp_path: Path) -> None:
+        """compact=False overrides auto-compact for wildcard."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Wildcard override compact test",
+            detail="This detail SHOULD appear with compact=False",
+            impact=0.8,
+        )
+
+        result = tools["trw_recall"].fn(query="*", compact=False)
+        assert result["compact"] is False
+        assert len(result["learnings"]) >= 1
+        entry = result["learnings"][0]
+        assert "detail" in entry
+
+    def test_recall_max_results_caps(self, tmp_path: Path) -> None:
+        """max_results caps returned learnings."""
+        tools = _get_tools()
+        for i in range(10):
+            tools["trw_learn"].fn(
+                summary=f"Cap test entry number {i}",
+                detail=f"Detail {i}",
+                impact=0.8,
+            )
+
+        result = tools["trw_recall"].fn(query="cap test entry", max_results=5)
+        assert len(result["learnings"]) == 5
+
+    def test_recall_max_results_zero_unlimited(self, tmp_path: Path) -> None:
+        """max_results=0 returns all matches."""
+        tools = _get_tools()
+        for i in range(10):
+            tools["trw_learn"].fn(
+                summary=f"Unlimited test entry num {i}",
+                detail=f"Detail {i}",
+                impact=0.8,
+            )
+
+        result = tools["trw_recall"].fn(
+            query="unlimited test entry", max_results=0,
+        )
+        assert len(result["learnings"]) == 10
+
+    def test_recall_total_available_shows_full_count(self, tmp_path: Path) -> None:
+        """total_available reflects pre-cap count."""
+        tools = _get_tools()
+        for i in range(10):
+            tools["trw_learn"].fn(
+                summary=f"Total avail test entry {i}",
+                detail=f"Detail {i}",
+                impact=0.8,
+            )
+
+        result = tools["trw_recall"].fn(
+            query="total avail test entry", max_results=3,
+        )
+        assert len(result["learnings"]) == 3
+        assert result["total_available"] == 10
+
+    def test_recall_compact_omits_context_on_wildcard(self, tmp_path: Path) -> None:
+        """Wildcard + compact omits context dict."""
+        tools = _get_tools()
+
+        # Create architecture context file
+        writer = FileStateWriter()
+        ctx_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
+        ctx_dir.mkdir(parents=True, exist_ok=True)
+        writer.write_yaml(ctx_dir / "architecture.yaml", {"language": "python"})
+
+        tools["trw_learn"].fn(
+            summary="Context omit test entry",
+            detail="Test",
+            impact=0.8,
+        )
+
+        # Wildcard → compact auto → context omitted
+        result_wildcard = tools["trw_recall"].fn(query="*")
+        assert result_wildcard["context"] == {}
+
+        # Keyword query → full → context included
+        result_keyword = tools["trw_recall"].fn(query="context omit test")
+        assert result_keyword["context"] != {}
+        assert "architecture" in result_keyword["context"]
+
+
 class TestOutcomeCorrelation:
     """Tests for PRD-CORE-004 Phase 1c — automatic outcome correlation."""
 
@@ -1581,7 +1729,7 @@ class TestOutcomeCorrelation:
         """_process_outcome updates Q-values for recently recalled learnings."""
         from datetime import datetime, timezone
 
-        from trw_mcp.tools.learning import _process_outcome
+        from trw_mcp.scoring import process_outcome
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1596,7 +1744,7 @@ class TestOutcomeCorrelation:
 
         # Process a positive outcome
         trw_dir = tmp_path / _CFG.trw_dir
-        updated = _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+        updated = process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
         assert lid in updated
 
@@ -1612,7 +1760,7 @@ class TestOutcomeCorrelation:
 
     def test_process_outcome_writes_history(self, tmp_path: Path) -> None:
         """Outcome processing appends to outcome_history."""
-        from trw_mcp.tools.learning import _process_outcome
+        from trw_mcp.scoring import process_outcome
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1625,7 +1773,7 @@ class TestOutcomeCorrelation:
         tools["trw_recall"].fn(query="outcome history write")
 
         trw_dir = tmp_path / _CFG.trw_dir
-        _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+        process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
         reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
@@ -1642,12 +1790,12 @@ class TestOutcomeCorrelation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """outcome_history is capped to learning_outcome_history_cap."""
-        import trw_mcp.tools.learning as learn_mod
-        from trw_mcp.tools.learning import _process_outcome
+        import trw_mcp.scoring as scoring_mod
+        from trw_mcp.scoring import process_outcome
 
-        # Set cap to 3 for testing
+        # Set cap to 3 for testing — process_outcome reads from scoring._config
         cfg = TRWConfig(learning_outcome_history_cap=3)
-        monkeypatch.setattr(learn_mod, "_config", cfg)
+        monkeypatch.setattr(scoring_mod, "_config", cfg)
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1662,7 +1810,7 @@ class TestOutcomeCorrelation:
         # Process 5 outcomes
         for i in range(5):
             tools["trw_recall"].fn(query="history cap test")
-            _process_outcome(trw_dir, reward=0.8, event_label=f"event_{i}")
+            process_outcome(trw_dir, reward=0.8, event_label=f"event_{i}")
 
         reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
@@ -1677,10 +1825,10 @@ class TestOutcomeCorrelation:
 
     def test_process_outcome_no_receipts(self, tmp_path: Path) -> None:
         """_process_outcome returns empty list when no receipts exist."""
-        from trw_mcp.tools.learning import _process_outcome
+        from trw_mcp.scoring import process_outcome
 
         trw_dir = tmp_path / _CFG.trw_dir
-        updated = _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+        updated = process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
         assert updated == []
 
     def test_correlate_recalls_time_window(
@@ -1690,12 +1838,7 @@ class TestOutcomeCorrelation:
         import json
         from datetime import datetime, timedelta, timezone
 
-        import trw_mcp.tools.learning as learn_mod
-        from trw_mcp.tools.learning import _correlate_recalls
-
-        # Short window for testing
-        cfg = TRWConfig(learning_outcome_correlation_window_minutes=5)
-        monkeypatch.setattr(learn_mod, "_config", cfg)
+        from trw_mcp.scoring import correlate_recalls
 
         trw_dir = tmp_path / _CFG.trw_dir
         receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
@@ -1720,7 +1863,7 @@ class TestOutcomeCorrelation:
             encoding="utf-8",
         )
 
-        results = _correlate_recalls(trw_dir, window_minutes=5)
+        results = correlate_recalls(trw_dir, window_minutes=5)
         lids = [lid for lid, _ in results]
         assert "L-recent" in lids
         assert "L-old" not in lids
@@ -1730,7 +1873,7 @@ class TestOutcomeCorrelation:
         import json
         from datetime import datetime, timedelta, timezone
 
-        from trw_mcp.tools.learning import _correlate_recalls
+        from trw_mcp.scoring import correlate_recalls
 
         trw_dir = tmp_path / _CFG.trw_dir
         receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
@@ -1755,7 +1898,7 @@ class TestOutcomeCorrelation:
             encoding="utf-8",
         )
 
-        results = _correlate_recalls(trw_dir, window_minutes=30)
+        results = correlate_recalls(trw_dir, window_minutes=30)
         discount_map = {lid: d for lid, d in results}
         assert discount_map["L-new"] > discount_map["L-older"]
         assert discount_map["L-new"] > 0.9  # nearly full credit
@@ -1763,14 +1906,14 @@ class TestOutcomeCorrelation:
 
     def test_correlate_recalls_empty(self, tmp_path: Path) -> None:
         """No receipt file returns empty list."""
-        from trw_mcp.tools.learning import _correlate_recalls
+        from trw_mcp.scoring import correlate_recalls
 
         trw_dir = tmp_path / _CFG.trw_dir
-        assert _correlate_recalls(trw_dir, window_minutes=30) == []
+        assert correlate_recalls(trw_dir, window_minutes=30) == []
 
     def test_process_outcome_for_event_known_type(self, tmp_path: Path) -> None:
         """process_outcome_for_event triggers for known event types."""
-        from trw_mcp.tools.learning import process_outcome_for_event
+        from trw_mcp.scoring import process_outcome_for_event
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1789,14 +1932,14 @@ class TestOutcomeCorrelation:
 
     def test_process_outcome_for_event_unknown_type(self, tmp_path: Path) -> None:
         """process_outcome_for_event returns empty for unknown event types."""
-        from trw_mcp.tools.learning import process_outcome_for_event
+        from trw_mcp.scoring import process_outcome_for_event
 
         updated = process_outcome_for_event("some_random_event")
         assert updated == []
 
     def test_process_outcome_for_event_error_keyword(self, tmp_path: Path) -> None:
         """Events with error keywords get negative reward."""
-        from trw_mcp.tools.learning import process_outcome_for_event
+        from trw_mcp.scoring import process_outcome_for_event
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1822,7 +1965,7 @@ class TestOutcomeCorrelation:
 
     def test_negative_reward_decreases_q(self, tmp_path: Path) -> None:
         """Negative reward events decrease Q-value."""
-        from trw_mcp.tools.learning import _process_outcome
+        from trw_mcp.scoring import process_outcome
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1835,7 +1978,7 @@ class TestOutcomeCorrelation:
         tools["trw_recall"].fn(query="negative reward q decrease")
 
         trw_dir = tmp_path / _CFG.trw_dir
-        _process_outcome(trw_dir, reward=-0.5, event_label="tests_failed")
+        process_outcome(trw_dir, reward=-0.5, event_label="tests_failed")
 
         reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
@@ -1848,7 +1991,7 @@ class TestOutcomeCorrelation:
 
     def test_multiple_outcomes_converge(self, tmp_path: Path) -> None:
         """Multiple positive outcomes increase Q-value progressively."""
-        from trw_mcp.tools.learning import _process_outcome
+        from trw_mcp.scoring import process_outcome
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1862,7 +2005,7 @@ class TestOutcomeCorrelation:
         prev_q = 0.5
         for _ in range(5):
             tools["trw_recall"].fn(query="convergence outcome test")
-            _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+            process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
         reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
@@ -1876,7 +2019,7 @@ class TestOutcomeCorrelation:
 
     def test_only_matched_learnings_updated(self, tmp_path: Path) -> None:
         """Only learnings in recent receipts have Q-values updated."""
-        from trw_mcp.tools.learning import _process_outcome
+        from trw_mcp.scoring import process_outcome
 
         tools = _get_tools()
         r1 = tools["trw_learn"].fn(
@@ -1894,7 +2037,7 @@ class TestOutcomeCorrelation:
         tools["trw_recall"].fn(query="selective update alpha bravo")
 
         trw_dir = tmp_path / _CFG.trw_dir
-        updated = _process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
+        updated = process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
         assert r1["learning_id"] in updated
         assert r2["learning_id"] not in updated
@@ -1987,7 +2130,7 @@ class TestBehavioralProtocol:
 
     def test_render_behavioral_protocol_from_yaml(self, tmp_path: Path) -> None:
         """Renders directives from behavioral_protocol.yaml."""
-        from trw_mcp.tools.learning import _render_behavioral_protocol
+        from trw_mcp.state.claude_md import render_behavioral_protocol
 
         # Create protocol file
         writer = FileStateWriter()
@@ -2000,20 +2143,20 @@ class TestBehavioralProtocol:
             ],
         })
 
-        result = _render_behavioral_protocol()
+        result = render_behavioral_protocol()
         assert "- Execute trw_recall at session start" in result
         assert "- Read FRAMEWORK.md after compaction" in result
 
     def test_render_behavioral_protocol_empty_when_missing(self, tmp_path: Path) -> None:
         """Returns empty string when protocol file does not exist."""
-        from trw_mcp.tools.learning import _render_behavioral_protocol
+        from trw_mcp.state.claude_md import render_behavioral_protocol
 
-        result = _render_behavioral_protocol()
+        result = render_behavioral_protocol()
         assert result == ""
 
     def test_render_behavioral_protocol_caps_at_12(self, tmp_path: Path) -> None:
         """Respects _BEHAVIORAL_PROTOCOL_CAP of 12 directives."""
-        from trw_mcp.tools.learning import _render_behavioral_protocol
+        from trw_mcp.state.claude_md import render_behavioral_protocol
 
         writer = FileStateWriter()
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
@@ -2022,7 +2165,7 @@ class TestBehavioralProtocol:
             "directives": [f"Directive {i}" for i in range(20)],
         })
 
-        result = _render_behavioral_protocol()
+        result = render_behavioral_protocol()
         # Should have exactly 12 directive lines
         directive_lines = [l for l in result.strip().split("\n") if l.startswith("- ")]
         assert len(directive_lines) == 12
@@ -2031,7 +2174,7 @@ class TestBehavioralProtocol:
         self, tmp_path: Path,
     ) -> None:
         """behavioral-mandate tag is recognized by _render_adherence."""
-        from trw_mcp.tools.learning import _render_adherence
+        from trw_mcp.state.claude_md import render_adherence
 
         entries = [
             {
@@ -2041,7 +2184,7 @@ class TestBehavioralProtocol:
                 "impact": 0.9,
             },
         ]
-        result = _render_adherence(entries)
+        result = render_adherence(entries)
         assert "Framework Adherence" in result
         assert "Execute trw_recall at every session start" in result
 
@@ -2049,7 +2192,7 @@ class TestBehavioralProtocol:
         self, tmp_path: Path,
     ) -> None:
         """behavioral-mandate entries promote summary, not detail sentences."""
-        from trw_mcp.tools.learning import _render_adherence
+        from trw_mcp.state.claude_md import render_adherence
 
         entries = [
             {
@@ -2059,7 +2202,7 @@ class TestBehavioralProtocol:
                 "impact": 0.9,
             },
         ]
-        result = _render_adherence(entries)
+        result = render_adherence(entries)
         # Summary should appear (promoted directly)
         assert "Always execute trw_reflect after implementation" in result
         # Detail should NOT appear (no sentence extraction for behavioral-mandate)

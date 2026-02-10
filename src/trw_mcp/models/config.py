@@ -6,6 +6,8 @@ and test suites import from this module — no parallel constants.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,19 +24,24 @@ class TRWConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="TRW_",
         case_sensitive=False,
+        # extra="ignore": unknown env vars (e.g. TRW_CORRELATION_MIN from
+        # older configs) and unknown .trw/config.yaml keys are silently
+        # dropped rather than raising validation errors.
         extra="ignore",
     )
 
     # Orchestration defaults (from FRAMEWORK.md §DEFAULTS)
     parallelism_max: int = 10
-    min_shards_target: int = 3
-    min_shards_floor: int = 2
-    consensus_quorum: float = 0.67
-    correlation_min: float = 0.7
-    checkpoint_secs: int = 600
     timebox_hours: int = 8
-    max_child_depth: int = 2
-    max_research_waves: int = 3
+
+    # ORC prompt-level defaults (FRAMEWORK.md §DEFAULTS).
+    # Not consumed by MCP tools — ORC tracks these at the prompt level.
+    min_shards_target: int = 3  # ORC prompt-level only
+    min_shards_floor: int = 2  # ORC prompt-level only
+    consensus_quorum: float = 0.67  # ORC prompt-level only
+    checkpoint_secs: int = 600  # ORC prompt-level only
+    max_child_depth: int = 2  # ORC prompt-level only
+    max_research_waves: int = 3  # ORC prompt-level only
 
     # Phase time caps (percentage of total timebox)
     # NOTE: Framework-documented defaults; not enforced by MCP tools.
@@ -48,7 +55,6 @@ class TRWConfig(BaseSettings):
 
     # Learning defaults
     learning_max_entries: int = 500
-    learning_prune_threshold: float = 0.3
     learning_promotion_impact: float = 0.7
     learning_prune_age_days: int = 30
     learning_repeated_op_threshold: int = 3
@@ -65,6 +71,8 @@ class TRWConfig(BaseSettings):
     learning_utility_prune_threshold: float = 0.10
     learning_utility_delete_threshold: float = 0.05
     recall_utility_lambda: float = 0.3
+    recall_max_results: int = 25
+    recall_compact_fields: frozenset[str] = frozenset({"id", "summary", "impact", "tags", "status"})
     learning_outcome_correlation_window_minutes: int = 30
     learning_outcome_history_cap: int = 20
 
@@ -77,6 +85,9 @@ class TRWConfig(BaseSettings):
     scripts_dir: str = "scripts"
     patterns_dir: str = "patterns"
     context_dir: str = "context"
+    scratch_dir: str = "scratch"
+    events_file: str = "events.jsonl"
+    checkpoints_file: str = "checkpoints.jsonl"
 
     # Framework deployment
     frameworks_dir: str = "frameworks"
@@ -106,13 +117,23 @@ class TRWConfig(BaseSettings):
     validation_fk_optimal_min: float = 8.0
     validation_fk_optimal_max: float = 12.0
 
-    # Semantic validation — smell detection
-    validation_smell_false_positive_max: float = 0.15
+    # Phase gate PRD enforcement (PRD-CORE-009)
+    phase_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
+    prd_min_content_density: float = 0.30
+    prd_required_status_for_implement: str = "approved"
+
+    # PRD directory path (relative to project root)
+    prds_relative_path: str = "docs/requirements-aare-f/prds"
+
+    # Findings pipeline (PRD-CORE-010)
+    finding_dedup_threshold: float = 0.6
+    findings_dir: str = "findings"
+    findings_entries_dir: str = "entries"
+    findings_registry_file: str = "registry.yaml"
 
     # LLM augmentation (optional, requires claude-agent-sdk)
     llm_enabled: bool = True
     llm_default_model: str = "haiku"
-    llm_max_tokens: int = 500
 
     # Debug mode (enables file logging to .trw/logs/)
     debug: bool = False

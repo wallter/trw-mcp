@@ -1,6 +1,6 @@
-"""TRW AARE-F requirements tools — prd_create, prd_validate, traceability_check.
+"""TRW AARE-F requirements tools — prd_create, prd_validate, traceability_check, prd_status_update.
 
-These 3 tools codify the AARE-F Framework v1.1.0 requirements engineering
+These 4 tools codify the AARE-F Framework v1.1.0 requirements engineering
 process as executable MCP tools.
 """
 
@@ -22,6 +22,7 @@ from trw_mcp.models.requirements import (
     PRDEvidence,
     PRDFrontmatter,
     PRDQualityGates,
+    PRDStatus,
     PRDTraceability,
     Priority,
     TraceabilityResult,
@@ -31,10 +32,14 @@ from trw_mcp.models.requirements import (
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
+    check_transition_guards,
+    is_valid_transition,
+    next_prd_sequence,
     parse_frontmatter as _parse_frontmatter_impl,
     extract_sections as _extract_sections_impl,
     detect_ambiguity as _detect_ambiguity_impl,
     extract_prd_refs,
+    update_frontmatter,
 )
 from trw_mcp.state.validation import validate_prd_quality, validate_prd_quality_v2
 
@@ -62,7 +67,7 @@ _EXPECTED_SECTIONS: list[str] = [
 
 
 def register_requirements_tools(server: FastMCP) -> None:
-    """Register all 3 AARE-F requirements tools on the MCP server.
+    """Register all 4 AARE-F requirements tools on the MCP server.
 
     Args:
         server: FastMCP server instance to register tools on.
@@ -98,9 +103,9 @@ def register_requirements_tools(server: FastMCP) -> None:
         # Auto-increment sequence when using default value (1)
         if sequence == 1:
             prds_dir_for_seq = (
-                resolve_project_root() / "docs" / "requirements-aare-f" / "prds"
+                resolve_project_root() / Path(_config.prds_relative_path)
             )
-            sequence = _next_sequence(prds_dir_for_seq, category.upper())
+            sequence = next_prd_sequence(prds_dir_for_seq, category.upper())
 
         # Generate PRD ID
         prd_id = f"PRD-{category.upper()}-{sequence:03d}"
@@ -165,11 +170,11 @@ def register_requirements_tools(server: FastMCP) -> None:
         # Save to project if .trw/ exists
         output_path = ""
         project_root = resolve_project_root()
-        prds_dir = project_root / "docs" / "requirements-aare-f" / "prds"
+        prds_dir = project_root / Path(_config.prds_relative_path)
         if prds_dir.exists() or (project_root / _config.trw_dir).exists():
             _writer.ensure_dir(prds_dir)
             prd_file = prds_dir / f"{prd_id}.md"
-            prd_file.write_text(prd_content, encoding="utf-8")
+            _writer.write_text(prd_file, prd_content)
             output_path = str(prd_file)
 
         logger.info(
@@ -307,7 +312,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         if prd_path:
             prd_files.append(Path(prd_path).resolve())
         else:
-            prds_dir = project_root / "docs" / "requirements-aare-f" / "prds"
+            prds_dir = project_root / Path(_config.prds_relative_path)
             if prds_dir.exists():
                 prd_files = [
                     f for f in sorted(prds_dir.glob("*.md"))
@@ -367,11 +372,36 @@ def register_requirements_tools(server: FastMCP) -> None:
             coverage=coverage,
         )
 
+        # FR09: Finding coverage analysis — flag prd_candidate
+        # findings that have no target_prd linked yet.
+        unlinked_findings: list[str] = []
+        findings_registry = (
+            project_root
+            / _config.trw_dir
+            / _config.findings_dir
+            / _config.findings_registry_file
+        )
+        if findings_registry.exists():
+            try:
+                reg_data = _reader.read_yaml(findings_registry)
+                reg_entries = reg_data.get("entries", [])
+                if isinstance(reg_entries, list):
+                    for ref in reg_entries:
+                        if not isinstance(ref, dict):
+                            continue
+                        sev = str(ref.get("severity", ""))
+                        has_prd = bool(ref.get("target_prd"))
+                        if sev in ("critical", "high") and not has_prd:
+                            unlinked_findings.append(str(ref.get("id", "")))
+            except (StateError, ValueError, TypeError) as exc:
+                logger.debug("findings_registry_read_failed", error=str(exc))
+
         logger.info(
             "trw_traceability_checked",
             total=total_reqs,
             traced=traced_reqs,
             coverage=f"{coverage:.0%}",
+            unlinked_findings=len(unlinked_findings),
         )
 
         return {
@@ -382,6 +412,137 @@ def register_requirements_tools(server: FastMCP) -> None:
             "coverage_threshold": _config.traceability_coverage_min,
             "passes_gate": coverage >= _config.traceability_coverage_min,
             "prd_files_analyzed": len(prd_files),
+            "unlinked_findings": unlinked_findings,
+            "unlinked_findings_count": len(unlinked_findings),
+        }
+
+    @server.tool()
+    def trw_prd_status_update(
+        prd_id: str,
+        target_status: str,
+        force: bool = False,
+        reason: str = "",
+    ) -> dict[str, object]:
+        """Update a PRD's lifecycle status with state machine validation and guard checks.
+
+        Validates the transition against the PRD status state machine, runs
+        applicable guard checks (content density for DRAFT->REVIEW, quality
+        validation for REVIEW->APPROVED), and updates the PRD frontmatter.
+
+        Args:
+            prd_id: PRD identifier (e.g., "PRD-CORE-009").
+            target_status: Target PRDStatus value (e.g., "review", "approved").
+            force: Admin override that bypasses guard checks (not state machine).
+            reason: Optional justification (required for backward transitions and force).
+        """
+        # Validate target status
+        try:
+            target = PRDStatus(target_status.lower())
+        except ValueError:
+            valid_statuses = [s.value for s in PRDStatus]
+            raise ValidationError(
+                f"Invalid target status: {target_status!r}. Valid: {valid_statuses}",
+                target_status=target_status,
+            )
+
+        # Resolve PRD file path
+        prd_path = _resolve_prd_path(prd_id)
+        content = prd_path.read_text(encoding="utf-8")
+
+        # Parse current status from frontmatter
+        frontmatter = _parse_frontmatter(content)
+        current_status_str = str(frontmatter.get("status", "draft")).lower()
+        try:
+            current = PRDStatus(current_status_str)
+        except ValueError:
+            current = PRDStatus.DRAFT
+
+        # PRD-FIX-009-FR02: Require non-empty reason when force=True
+        if force and not reason.strip():
+            raise ValidationError(
+                "reason is required when force=True",
+                prd_id=prd_id,
+                target_status=target_status,
+            )
+
+        # Check state machine validity
+        transition_valid = is_valid_transition(current, target)
+        if not transition_valid and not force:
+            return {
+                "prd_id": prd_id,
+                "previous_status": current.value,
+                "new_status": current.value,
+                "transition_valid": False,
+                "guard_passed": False,
+                "force_used": False,
+                "reason": f"Invalid transition: {current.value} -> {target.value}",
+                "updated": False,
+            }
+
+        # Run guard checks (skip if force=True or identity transition)
+        guard_passed = True
+        guard_reason = ""
+        guard_details: dict[str, object] = {}
+
+        if current != target:
+            if force:
+                guard_passed = True
+                guard_reason = f"Guard bypassed (force=True). Reason: {reason}"
+            elif transition_valid:
+                guard_result = check_transition_guards(current, target, content, _config)
+                guard_passed = guard_result.allowed
+                guard_reason = guard_result.reason
+                guard_details = guard_result.guard_details
+
+        if not guard_passed:
+            return {
+                "prd_id": prd_id,
+                "previous_status": current.value,
+                "new_status": current.value,
+                "transition_valid": transition_valid,
+                "guard_passed": False,
+                "force_used": False,
+                "reason": guard_reason,
+                "guard_details": guard_details,
+                "updated": False,
+            }
+
+        # Update frontmatter
+        if current != target:
+            update_frontmatter(prd_path, {
+                "status": target.value,
+                "dates": {"updated": str(date.today())},
+            })
+
+        # Log event to latest run's events.jsonl (best-effort)
+        # PRD-FIX-009-FR03: Include force_override when force bypasses state machine
+        _log_status_change_event(
+            prd_id=prd_id,
+            previous_status=current.value,
+            new_status=target.value,
+            force_used=force,
+            reason=reason,
+            force_override=force and not transition_valid,
+        )
+
+        logger.info(
+            "trw_prd_status_updated",
+            prd_id=prd_id,
+            previous_status=current.value,
+            new_status=target.value,
+            force_used=force,
+        )
+
+        return {
+            "prd_id": prd_id,
+            "previous_status": current.value,
+            "new_status": target.value,
+            "transition_valid": transition_valid or force,
+            "guard_passed": guard_passed,
+            "force_used": force,
+            "reason": guard_reason or reason,
+            "guard_details": guard_details,
+            "updated": current != target,
         }
 
 
@@ -535,12 +696,12 @@ def _extract_prefill(input_text: str) -> dict[str, list[str]]:
 
     try:
         prefill["file_refs"] = sorted(set(_FILE_REF_RE.findall(input_text)))
-    except Exception:
+    except (re.error, TypeError):
         pass
 
     try:
         prefill["prd_deps"] = extract_prd_refs(input_text)
-    except Exception:
+    except (re.error, TypeError, ValueError):
         pass
 
     # Extract goal-like sentences
@@ -559,7 +720,7 @@ def _extract_prefill(input_text: str) -> dict[str, list[str]]:
                 prefill["goals"].append(stripped)
             if _SLO_KW.search(stripped):
                 prefill["slos"].append(stripped)
-    except Exception:
+    except (re.error, TypeError):
         pass
 
     return prefill
@@ -672,31 +833,6 @@ _FALLBACK_BODY = """# PRD-CATEGORY-SEQ: Title
 """
 
 
-def _next_sequence(prds_dir: Path, category: str) -> int:
-    """Scan existing PRD files and return max sequence + 1 for the given category.
-
-    Args:
-        prds_dir: Directory containing PRD markdown files.
-        category: PRD category (e.g. 'CORE', 'FIX').
-
-    Returns:
-        Next available sequence number (minimum 1).
-    """
-    max_seq = 0
-    prefix = f"PRD-{category}-"
-    if prds_dir.exists():
-        for prd_file in prds_dir.glob("*.md"):
-            name = prd_file.stem  # e.g. "PRD-CORE-001"
-            if name.startswith(prefix):
-                suffix = name[len(prefix):]
-                try:
-                    seq = int(suffix)
-                    if seq > max_seq:
-                        max_seq = seq
-                except ValueError:
-                    continue
-    return max_seq + 1
-
 
 def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     """Render complete PRD with YAML frontmatter and markdown body.
@@ -718,3 +854,83 @@ def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     yaml_str = stream.getvalue()
 
     return f"---\n{yaml_str}---\n\n{body}\n"
+
+
+def _resolve_prd_path(prd_id: str) -> Path:
+    """Resolve PRD file path from a PRD ID.
+
+    Scans ``docs/requirements-aare-f/prds/`` for a file matching the ID.
+
+    Args:
+        prd_id: PRD identifier (e.g. ``PRD-CORE-009``).
+
+    Returns:
+        Resolved path to the PRD markdown file.
+
+    Raises:
+        StateError: If the PRD file is not found.
+    """
+    project_root = resolve_project_root()
+    prds_dir = project_root / Path(_config.prds_relative_path)
+    prd_file = prds_dir / f"{prd_id}.md"
+    if prd_file.exists():
+        return prd_file
+    raise StateError(f"PRD file not found: {prd_file}", path=str(prd_file))
+
+
+def _log_status_change_event(
+    prd_id: str,
+    previous_status: str,
+    new_status: str,
+    force_used: bool,
+    reason: str,
+    force_override: bool = False,
+) -> None:
+    """Log a prd_status_change event to the latest run's events.jsonl.
+
+    Best-effort — logs debug/warning on failure but never raises.
+
+    Args:
+        prd_id: PRD identifier.
+        previous_status: Status before the transition.
+        new_status: Status after the transition.
+        force_used: Whether the force override was used.
+        reason: Justification for the transition.
+        force_override: Whether force was used on an invalid transition.
+    """
+    # PRD-FIX-014: Use shared run path resolution (docs/*/runs/) instead
+    # of the non-existent .trw/runs/ path.
+    try:
+        from trw_mcp.state._paths import resolve_run_path
+        from trw_mcp.state.persistence import FileEventLogger
+
+        resolved_path = resolve_run_path(None)
+        events_path = resolved_path / "meta" / _config.events_file
+        event_data: dict[str, object] = {
+            "prd_id": prd_id,
+            "previous_status": previous_status,
+            "new_status": new_status,
+            "force_used": force_used,
+            "reason": reason,
+        }
+        if force_override:
+            event_data["force_override"] = True
+        event_logger = FileEventLogger(_writer)
+        event_logger.log_event(
+            events_path,
+            "prd_status_change",
+            event_data,
+        )
+    except StateError:
+        # PRD-FIX-014-FR03: No active run — valid scenario, debug-level only
+        logger.debug(
+            "no_active_run_for_event",
+            prd_id=prd_id,
+        )
+    except Exception as exc:
+        # PRD-FIX-014-FR02: Log warning instead of silently swallowing
+        logger.warning(
+            "status_change_event_failed",
+            prd_id=prd_id,
+            error=str(exc),
+        )

@@ -18,6 +18,8 @@ import structlog
 
 logger = structlog.get_logger()
 
+# PRD-CORE-001: Base MCP tool suite — optional LLM augmentation client
+
 
 class _SDKQueryProtocol(Protocol):
     """Protocol matching the ``claude_agent_sdk.query`` async generator."""

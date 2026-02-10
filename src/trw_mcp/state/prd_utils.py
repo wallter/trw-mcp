@@ -8,13 +8,22 @@ All functions are pure or file-scoped — no MCP tool registration side effects.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
+
+from pydantic import BaseModel, Field
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.requirements import PRDStatus
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger()
 
@@ -80,8 +89,8 @@ def parse_frontmatter(content: str) -> dict[str, object]:
                         prd_data[key] = val
                 return prd_data
             return dict(data)
-    except Exception:
-        pass
+    except (YAMLError, ValueError, TypeError, AttributeError) as exc:
+        logger.debug("frontmatter_parse_failed", error=str(exc))
     return {}
 
 
@@ -228,7 +237,6 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
             tmp_path.unlink(missing_ok=True)
             raise
         finally:
-            import os
             try:
                 os.close(tmp_fd)
             except OSError:
@@ -242,6 +250,165 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         raise StateError(
             f"Failed to update frontmatter: {exc}", path=str(path)
         ) from exc
+
+
+# PRD status state machine (PRD-CORE-009-FR01)
+# Identity transitions (same → same) are always valid and handled in is_valid_transition.
+VALID_TRANSITIONS: dict[PRDStatus, set[PRDStatus]] = {
+    PRDStatus.DRAFT: {PRDStatus.REVIEW},
+    PRDStatus.REVIEW: {PRDStatus.APPROVED, PRDStatus.DRAFT},
+    PRDStatus.APPROVED: {PRDStatus.IMPLEMENTED, PRDStatus.DEPRECATED},
+    PRDStatus.IMPLEMENTED: {PRDStatus.DEPRECATED},
+    PRDStatus.DEPRECATED: set(),
+}
+
+
+def is_valid_transition(current: PRDStatus, target: PRDStatus) -> bool:
+    """Check if a PRD status transition is valid per the state machine.
+
+    Identity transitions (same state → same state) are always valid.
+
+    Args:
+        current: Current PRD status.
+        target: Desired PRD status.
+
+    Returns:
+        True if the transition is allowed.
+    """
+    if current == target:
+        return True
+    return target in VALID_TRANSITIONS.get(current, set())
+
+
+class TransitionResult(BaseModel):
+    """Result of a PRD status transition attempt."""
+
+    allowed: bool
+    reason: str = ""
+    guard_details: dict[str, object] = Field(default_factory=dict)
+
+
+def check_transition_guards(
+    current: PRDStatus,
+    target: PRDStatus,
+    prd_content: str,
+    config: "TRWConfig | None" = None,
+) -> TransitionResult:
+    """Run guard checks for a PRD status transition.
+
+    Guards:
+    - DRAFT → REVIEW: content density must be >= prd_min_content_density
+    - REVIEW → APPROVED: validate_prd_quality_v2 must classify >= REVIEW tier
+
+    Other transitions have no guards and always pass.
+
+    Args:
+        current: Current PRD status.
+        target: Desired PRD status.
+        prd_content: Full PRD markdown content.
+        config: Optional TRWConfig for threshold overrides.
+
+    Returns:
+        TransitionResult indicating whether guards passed.
+    """
+    from trw_mcp.models.config import TRWConfig as _TRWConfig
+
+    _config = config or _TRWConfig()
+
+    # Identity transition — no guard needed
+    if current == target:
+        return TransitionResult(allowed=True, reason="Identity transition (no-op).")
+
+    # Guard: DRAFT → REVIEW — content density check
+    if current == PRDStatus.DRAFT and target == PRDStatus.REVIEW:
+        density = compute_content_density(prd_content)
+        threshold = _config.prd_min_content_density
+        if density < threshold:
+            return TransitionResult(
+                allowed=False,
+                reason=f"Content density {density:.2f} is below threshold {threshold:.2f}.",
+                guard_details={"density": density, "threshold": threshold},
+            )
+        return TransitionResult(
+            allowed=True,
+            reason="Content density check passed.",
+            guard_details={"density": density, "threshold": threshold},
+        )
+
+    # Guard: REVIEW → APPROVED — V2 quality validation
+    if current == PRDStatus.REVIEW and target == PRDStatus.APPROVED:
+        from trw_mcp.state.validation import validate_prd_quality_v2
+
+        result = validate_prd_quality_v2(prd_content, _config)
+        from trw_mcp.models.requirements import QualityTier
+
+        if result.quality_tier in (QualityTier.SKELETON, QualityTier.DRAFT):
+            return TransitionResult(
+                allowed=False,
+                reason=f"Quality tier '{result.quality_tier.value}' (score {result.total_score}) "
+                f"is below REVIEW tier required for approval.",
+                guard_details={
+                    "total_score": result.total_score,
+                    "quality_tier": result.quality_tier.value,
+                    "grade": result.grade,
+                },
+            )
+        return TransitionResult(
+            allowed=True,
+            reason="Quality validation passed.",
+            guard_details={
+                "total_score": result.total_score,
+                "quality_tier": result.quality_tier.value,
+                "grade": result.grade,
+            },
+        )
+
+    # All other transitions have no guards
+    return TransitionResult(allowed=True, reason="No guard for this transition.")
+
+
+def discover_governing_prds(run_path: Path, config: TRWConfig | None = None) -> list[str]:
+    """Identify governing PRDs for a run using three-tier discovery.
+
+    Tier 1 (explicit): Read ``prd_scope`` from ``run.yaml``.
+    Tier 2 (plan scanning): Scan ``reports/plan.md`` for PRD references.
+    Tier 3 (advisory): Return empty list — caller emits advisory warning.
+
+    Args:
+        run_path: Path to the run directory.
+        config: Optional TRWConfig (unused currently, reserved for future).
+
+    Returns:
+        Sorted list of unique PRD IDs governing this run. Empty if none found.
+    """
+    from trw_mcp.state.persistence import FileStateReader
+
+    reader = FileStateReader()
+
+    # Tier 1: Explicit prd_scope from run.yaml
+    run_yaml = run_path / "meta" / "run.yaml"
+    if run_yaml.exists():
+        try:
+            state = reader.read_yaml(run_yaml)
+            prd_scope = state.get("prd_scope", [])
+            if isinstance(prd_scope, list) and prd_scope:
+                return sorted(str(p) for p in prd_scope)
+        except (StateError, ValueError, TypeError) as exc:
+            logger.debug("prd_scope_read_failed", path=str(run_yaml), error=str(exc))
+
+    # Tier 2: Scan plan.md for PRD references
+    plan_path = run_path / "reports" / "plan.md"
+    if plan_path.exists():
+        try:
+            plan_content = plan_path.read_text(encoding="utf-8")
+            refs = extract_prd_refs(plan_content)
+            if refs:
+                return refs
+        except (OSError, ValueError) as exc:
+            logger.debug("plan_scan_failed", path=str(plan_path), error=str(exc))
+
+    # Tier 3: No PRDs found — return empty list
+    return []
 
 
 def _deep_merge(target: object, source: dict[str, object]) -> None:
@@ -262,3 +429,29 @@ def _deep_merge(target: object, source: dict[str, object]) -> None:
             _deep_merge(target[key], value)
         else:
             target[key] = value
+
+
+def next_prd_sequence(prds_dir: Path, category: str) -> int:
+    """Scan existing PRD files and return max sequence + 1 for a category.
+
+    Args:
+        prds_dir: Directory containing PRD markdown files.
+        category: PRD category (e.g., "CORE", "FIX").
+
+    Returns:
+        Next available sequence number (minimum 1).
+    """
+    max_seq = 0
+    prefix = f"PRD-{category}-"
+    if prds_dir.exists():
+        for prd_file in prds_dir.glob("*.md"):
+            name = prd_file.stem
+            if name.startswith(prefix):
+                suffix = name[len(prefix):]
+                try:
+                    seq = int(suffix)
+                    if seq > max_seq:
+                        max_seq = seq
+                except ValueError:
+                    continue
+    return max_seq + 1

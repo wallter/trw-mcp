@@ -18,6 +18,8 @@ from fastmcp import FastMCP
 
 from trw_mcp.models.config import TRWConfig
 
+# PRD-CORE-001: Base MCP tool suite — FastMCP server entry point
+
 
 def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
     """Configure structlog processors and stdlib logging.
@@ -67,6 +69,13 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
             wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
             logger_factory=structlog.stdlib.LoggerFactory(),
         )
+
+        # Suppress noisy third-party loggers that flood debug logs.
+        # FastMCP's Docket worker logs every Redis command (~1.25M lines/day),
+        # producing 145 MB of noise vs ~800 lines of actual TRW events.
+        for noisy_logger in ("fastmcp", "redis", "httpcore", "httpx", "asyncio"):
+            logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
     else:
         # Production: JSON to stderr, INFO level only
         logging.basicConfig(
@@ -95,7 +104,8 @@ mcp = FastMCP(
         "Execute trw_recall('*', min_impact=0.7) at session start to load high-impact learnings. "
         "Execute trw_reflect after completing tasks. "
         "Execute trw_claude_md_sync at delivery. "
-        "Read .trw/frameworks/FRAMEWORK.md for phase requirements."
+        "Read .trw/frameworks/FRAMEWORK.md for phase requirements. "
+        "Sub-agents: call trw_shard_context first to get run paths and tool guidance."
     ),
 )
 
@@ -106,6 +116,7 @@ def _register_tools() -> None:
     from trw_mcp.resources.config import register_config_resources
     from trw_mcp.resources.run_state import register_run_state_resources
     from trw_mcp.resources.templates import register_template_resources
+    from trw_mcp.tools.findings import register_findings_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.requirements import register_requirements_tools
@@ -113,6 +124,7 @@ def _register_tools() -> None:
     register_orchestration_tools(mcp)
     register_learning_tools(mcp)
     register_requirements_tools(mcp)
+    register_findings_tools(mcp)
     register_config_resources(mcp)
     register_template_resources(mcp)
     register_run_state_resources(mcp)
@@ -145,7 +157,6 @@ def main() -> None:
 
     logger = structlog.get_logger()
 
-    _register_tools()
     logger.info(
         "trw_server_initialized",
         tools_registered=True,

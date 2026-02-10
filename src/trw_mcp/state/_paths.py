@@ -1,7 +1,7 @@
-"""Shared path resolution — single source of truth for project root and .trw dir.
+"""Shared path resolution — single source of truth for project root, .trw dir, and run paths.
 
-All modules that need to resolve TRW_PROJECT_ROOT or the .trw directory
-MUST use these functions instead of inline resolution logic.
+All modules that need to resolve TRW_PROJECT_ROOT, the .trw directory,
+or an active run path MUST use these functions instead of inline logic.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 
 _config = TRWConfig()
@@ -37,3 +38,70 @@ def resolve_trw_dir() -> Path:
         Absolute path to the .trw directory (project_root / config.trw_dir).
     """
     return resolve_project_root() / _config.trw_dir
+
+
+def resolve_run_path(run_path: str | None = None) -> Path:
+    """Resolve a run directory from an explicit path or auto-detection.
+
+    Unified implementation (PRD-FIX-007) replacing the duplicated private
+    ``_resolve_run_path`` helpers in orchestration.py and findings.py.
+
+    Resolution order:
+    1. If *run_path* is provided, resolve to absolute and verify existence.
+    2. Otherwise, scan ``docs/*/runs/*/meta/run.yaml`` and select the
+       directory whose ``run.yaml`` has the most recent ``st_mtime``.
+
+    Args:
+        run_path: Explicit run directory path, or ``None`` for auto-detect.
+
+    Returns:
+        Absolute path to the run directory.
+
+    Raises:
+        StateError: If the explicit path does not exist or no run directory
+            can be found during auto-detection.
+    """
+    if run_path:
+        resolved = Path(run_path).resolve()
+        if not resolved.exists():
+            raise StateError(
+                f"Run path does not exist: {resolved}",
+                path=str(resolved),
+            )
+        return resolved
+
+    # Auto-detect: find the most recent run.yaml under docs/*/runs/
+    project_root = resolve_project_root()
+    docs_dir = project_root / "docs"
+    if not docs_dir.exists():
+        raise StateError(
+            "Cannot auto-detect run path: docs/ directory not found",
+            project_root=str(project_root),
+        )
+
+    latest_run: Path | None = None
+    latest_time: float = 0.0
+
+    for task_dir in docs_dir.iterdir():
+        if not task_dir.is_dir():
+            continue
+        runs_dir = task_dir / "runs"
+        if not runs_dir.exists():
+            continue
+        for run_dir in runs_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            run_yaml = run_dir / "meta" / "run.yaml"
+            if run_yaml.exists():
+                mtime = run_yaml.stat().st_mtime
+                if mtime > latest_time:
+                    latest_time = mtime
+                    latest_run = run_dir
+
+    if latest_run is None:
+        raise StateError(
+            "No active runs found in docs/*/runs/",
+            project_root=str(project_root),
+        )
+
+    return latest_run

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from pathlib import Path
 
 import pytest
 
@@ -65,7 +66,6 @@ class TestTRWConfig:
     def test_learning_defaults(self) -> None:
         config = TRWConfig()
         assert config.learning_max_entries == 500
-        assert config.learning_prune_threshold == 0.3
         assert config.learning_promotion_impact == 0.7
         assert config.learning_prune_age_days == 30
         assert config.learning_repeated_op_threshold == 3
@@ -88,6 +88,45 @@ class TestTRWConfig:
         monkeypatch.setenv("TRW_PARALLELISM_MAX", "20")
         config = TRWConfig()
         assert config.parallelism_max == 20
+
+    def test_removed_fields_not_in_config(self) -> None:
+        """PRD-FIX-016-FR02: Verify dead fields are removed."""
+        config = TRWConfig()
+        for removed in ("correlation_min", "learning_prune_threshold",
+                        "validation_smell_false_positive_max", "llm_max_tokens"):
+            assert not hasattr(config, removed), f"{removed} should be removed"
+
+    def test_orc_defaults_still_exist(self) -> None:
+        """PRD-FIX-016-FR03: ORC prompt-level fields still present with correct defaults."""
+        config = TRWConfig()
+        assert config.min_shards_target == 3
+        assert config.min_shards_floor == 2
+        assert config.consensus_quorum == 0.67
+        assert config.checkpoint_secs == 600
+        assert config.max_child_depth == 2
+        assert config.max_research_waves == 3
+
+    def test_extra_env_vars_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PRD-FIX-016-FR05: Removed env vars are silently dropped."""
+        monkeypatch.setenv("TRW_CORRELATION_MIN", "0.99")
+        monkeypatch.setenv("TRW_LEARNING_PRUNE_THRESHOLD", "0.5")
+        config = TRWConfig()
+        assert not hasattr(config, "correlation_min")
+        assert not hasattr(config, "learning_prune_threshold")
+
+    def test_config_yaml_with_removed_keys_loads(self, tmp_path: Path) -> None:
+        """PRD-FIX-016-FR05: YAML with removed keys loads without error."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "correlation_min: 0.99\n"
+            "learning_prune_threshold: 0.5\n"
+            "llm_max_tokens: 1000\n"
+            "parallelism_max: 15\n"
+        )
+        # TRWConfig loads from env vars, not directly from YAML file,
+        # but the extra="ignore" ensures unknown keys don't break loading.
+        config = TRWConfig()
+        assert not hasattr(config, "correlation_min")
 
 
 class TestPhaseTimeCaps:

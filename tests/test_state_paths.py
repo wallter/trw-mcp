@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
+
+from trw_mcp.exceptions import StateError
+from trw_mcp.state._paths import resolve_run_path
 
 
 class TestResolveProjectRoot:
@@ -60,4 +64,128 @@ class TestResolveTrwDir:
         from trw_mcp.state._paths import resolve_trw_dir
 
         result = resolve_trw_dir()
+        assert result.is_absolute()
+
+
+class TestResolveRunPath:
+    """Tests for resolve_run_path() — PRD-FIX-007."""
+
+    def test_explicit_path_returns_given(self, tmp_path: Path) -> None:
+        """FR02a: Explicit run_path resolves when it exists."""
+        run = tmp_path / "myrun"
+        run.mkdir()
+        assert resolve_run_path(str(run)) == run.resolve()
+
+    def test_explicit_nonexistent_raises(self, tmp_path: Path) -> None:
+        """FR02a: Non-existent explicit path raises StateError."""
+        with pytest.raises(StateError, match="does not exist"):
+            resolve_run_path(str(tmp_path / "nonexistent"))
+
+    def test_auto_detect_single_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR02b: Auto-detection with single run directory."""
+        project = tmp_path / "project"
+        run1 = project / "docs" / "task1" / "runs" / "run-001"
+        (run1 / "meta").mkdir(parents=True)
+        (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        assert resolve_run_path() == run1
+
+    def test_auto_detect_most_recent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR02b: Auto-detection selects most recently modified run.yaml."""
+        project = tmp_path / "project"
+        run1 = project / "docs" / "task1" / "runs" / "run-001"
+        (run1 / "meta").mkdir(parents=True)
+        (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
+        time.sleep(0.05)
+        run2 = project / "docs" / "task1" / "runs" / "run-002"
+        (run2 / "meta").mkdir(parents=True)
+        (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        assert resolve_run_path() == run2
+
+    def test_no_docs_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR02c: StateError when docs/ directory not found."""
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        with pytest.raises(StateError, match="docs/ directory not found"):
+            resolve_run_path()
+
+    def test_empty_runs_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR02c: StateError when runs/ exists but contains no run dirs."""
+        project = tmp_path / "project"
+        (project / "docs" / "task1" / "runs").mkdir(parents=True)
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        with pytest.raises(StateError, match="No active runs"):
+            resolve_run_path()
+
+    def test_ignores_dirs_without_run_yaml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR02b: Directories without meta/run.yaml are skipped."""
+        project = tmp_path / "project"
+        # run with meta/ but no run.yaml — should be skipped
+        no_yaml = project / "docs" / "task1" / "runs" / "run-bad"
+        (no_yaml / "meta").mkdir(parents=True)
+        # run with run.yaml — should be found
+        good = project / "docs" / "task1" / "runs" / "run-good"
+        (good / "meta").mkdir(parents=True)
+        (good / "meta" / "run.yaml").write_text("run_id: run-good\n")
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        assert resolve_run_path() == good
+
+    def test_error_includes_project_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR06: Error context includes project_root for debugging."""
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        with pytest.raises(StateError) as exc_info:
+            resolve_run_path()
+        assert "project_root" in exc_info.value.context
+        assert str(project) in str(exc_info.value.context["project_root"])
+
+    def test_auto_detect_across_task_dirs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auto-detection works across multiple task directories."""
+        project = tmp_path / "project"
+        run1 = project / "docs" / "task-a" / "runs" / "run-001"
+        (run1 / "meta").mkdir(parents=True)
+        (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
+        time.sleep(0.05)
+        run2 = project / "docs" / "task-b" / "runs" / "run-002"
+        (run2 / "meta").mkdir(parents=True)
+        (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        assert resolve_run_path() == run2
+
+    def test_explicit_path_returns_absolute(self, tmp_path: Path) -> None:
+        """Explicit path is resolved to absolute."""
+        run = tmp_path / "myrun"
+        run.mkdir()
+        result = resolve_run_path(str(run))
         assert result.is_absolute()

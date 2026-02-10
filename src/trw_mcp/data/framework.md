@@ -5,7 +5,7 @@ Version date: 2026-02-07 | Model: Opus 4.6
 <critical>
 ## EXECUTION MODEL SUMMARY
 
-**v18.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 17 MCP tools**
+**v18.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 18 MCP tools**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN (see PARALLELISM).
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
@@ -210,6 +210,7 @@ When `MCP_MODE: tool`, ORC and shards MUST use these tools instead of manual equ
 | `trw_resume` | MUST | Session resume |
 | `trw_checkpoint` | SHOULD | Periodic |
 | `trw_event` | SHOULD | Audit trail |
+| `trw_shard_context` | MUST (shards) | First call in sub-agent |
 | `trw_reflect` | MUST | After errors, at REVIEW, at DELIVER |
 | `trw_learn` | SHOULD | Record discoveries during any phase |
 | `trw_learn_update` | MAY | Lifecycle mgmt |
@@ -235,6 +236,51 @@ When `MCP_MODE: tool`, ORC and shards MUST use these tools instead of manual equ
 - Shards inherit MCP_MODE from ORC — do not re-detect
 - If a MUST tool fails at runtime, log error via `trw_event` (or events.jsonl) and fall back to manual
 </rules>
+
+---
+
+## SUB-AGENT MCP ACCESS
+
+Sub-agents (shards) inherit MCP tool access from the parent session. All TRW MCP tools are available to shards without re-registration. Shards MUST call `trw_shard_context` as their first MCP action to obtain run paths, shard ID, and tool guidance.
+
+### Shard Context Injection
+
+```
+Shard start → trw_shard_context(run_path, shard_id)
+            → returns: run_path, run_id, shard_id, wave_number,
+                       scratch_path, findings_path, events_path,
+                       tool_guidance
+            → shard uses returned paths for all subsequent tool calls
+```
+
+Shards MUST pass `shard_id` to `trw_event`, `trw_learn`, `trw_checkpoint`, and `trw_recall` for attribution.
+
+### Sub-Agent Tool Obligations
+
+| Tool | Obligation | When |
+|------|------------|------|
+| `trw_shard_context` | MUST | First action in shard |
+| `trw_event(shard_id=...)` | SHOULD | Progress, findings, errors |
+| `trw_learn(shard_id=...)` | SHOULD | Discoveries, gotchas |
+| `trw_checkpoint(shard_id=...)` | SHOULD | Before returning, periodic |
+| `trw_recall` | SHOULD | Before starting research |
+| `trw_finding_register` | SHOULD | When findings match finding schema |
+| `trw_phase_check` | MUST NOT | Only ORC checks phase gates |
+| `trw_init` | MUST NOT | Only ORC bootstraps runs |
+| `trw_claude_md_sync` | MUST NOT | Only ORC syncs at DELIVER |
+
+### Concurrent Safety
+
+Sub-agents MAY run in parallel (multiple Task() calls in one message). Concurrent safety guarantees:
+
+| Operation | Safety Model |
+|-----------|-------------|
+| JSONL append (`events.jsonl`, `checkpoints.jsonl`) | Advisory `LOCK_EX` per write — atomic, no interleaving |
+| YAML write (`run.yaml`, `index.yaml`) | Atomic temp-file-then-rename with `LOCK_EX` |
+| Read-Modify-Write (`index.yaml`) | `lock_for_rmw` advisory lock — serializes concurrent R-M-W cycles |
+| Scratch directory | Per-shard isolation (`scratch/{shard_id}/`) — no contention |
+
+Limitations: Advisory locks are process-scoped (fcntl). Across separate OS processes, lock files provide coordination but not strict mutual exclusion. Within a single MCP server process, all guarantees hold.
 
 ---
 
@@ -631,8 +677,22 @@ All generated artifacts (reports, shard cards, sub-agent prompts, plans) MUST fo
 </patterns>
 
 <sub_agent_prompts>
-Shard prompts use `<context>`, `<task>`, `<output_contract>`, `<constraints>` XML tags.
+Shard prompts use `<context>`, `<task>`, `<output_contract>`, `<constraints>`, `<mcp_tools>` XML tags.
 Inputs as file paths (never inlined). Target: <500 tokens. Output: YAML. Write contract file LAST; if input missing, write `status: failed`.
+
+<mcp_tools>
+First call: `trw_shard_context(run_path, shard_id)` → use returned paths for all tools.
+
+| Shard Type | Tool Sequence |
+|------------|---------------|
+| research | `trw_recall` → `trw_event` (progress) → `trw_learn` (discoveries) → `trw_checkpoint` |
+| planning | `trw_recall` → `trw_event` (decisions) → `trw_checkpoint` |
+| implementation | `trw_event` (progress) → `trw_learn` (gotchas) → `trw_checkpoint` |
+| grooming | `trw_recall` → `trw_event` (refinements) → `trw_learn` (gaps found) |
+| validation | `trw_event` (results) → `trw_learn` (failures) → `trw_checkpoint` |
+
+Pass `shard_id` to every tool call for attribution.
+</mcp_tools>
 </sub_agent_prompts>
 
 <reports>

@@ -1,6 +1,6 @@
-"""TRW orchestration tools — init, status, phase check, wave validate, resume, checkpoint, event.
+"""TRW orchestration tools — init, status, phase check, wave validate, resume, checkpoint, event, shard context.
 
-These 7 tools codify FRAMEWORK.md v18.0_TRW execution flow:
+These 8 tools codify FRAMEWORK.md v18.0_TRW execution flow:
 RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 """
 
@@ -26,8 +26,8 @@ from trw_mcp.models.run import (
     WaveManifest,
     WaveStatus,
 )
-from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
-from trw_mcp.tools.learning import process_outcome_for_event
+from trw_mcp.state._paths import resolve_project_root, resolve_run_path, resolve_trw_dir
+from trw_mcp.scoring import process_outcome_for_event
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -48,7 +48,7 @@ _events = FileEventLogger(_writer)
 
 
 def register_orchestration_tools(server: FastMCP) -> None:
-    """Register all 7 orchestration tools on the MCP server.
+    """Register all 8 orchestration tools on the MCP server.
 
     Args:
         server: FastMCP server instance to register tools on.
@@ -59,6 +59,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         task_name: str,
         objective: str = "",
         config_overrides: dict[str, str] | None = None,
+        prd_scope: list[str] | None = None,
+        run_type: str = "implementation",
     ) -> dict[str, str]:
         """Bootstrap TRW run scaffolding — creates .trw/, run dirs, run.yaml, events.jsonl.
 
@@ -66,6 +68,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
             task_name: Name of the task (used for directory naming).
             objective: Optional objective description for the run.
             config_overrides: Optional config values to override defaults.
+            prd_scope: Optional list of PRD IDs governing this run (e.g. ["PRD-CORE-009"]).
+            run_type: Run type — "implementation" (default) or "research". Research runs skip PRD enforcement.
         """
         project_root = resolve_project_root()
         trw_dir = project_root / _config.trw_dir
@@ -152,6 +156,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
                 "TASK_DIR": str(task_dir),
                 "RUN_ROOT": str(run_root),
             },
+            prd_scope=prd_scope or [],
+            run_type=run_type,
         )
         _writer.write_yaml(
             run_root / "meta" / "run.yaml",
@@ -166,7 +172,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         )
 
         # Copy framework snapshot if available
-        framework_data = _get_bundled_framework()
+        framework_data = _get_bundled_data("framework.md")
         if framework_data:
             snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
             snapshot_path.write_text(framework_data, encoding="utf-8")
@@ -193,7 +199,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
         """
-        resolved_path = _resolve_run_path(run_path)
+        resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
 
         run_yaml_path = meta_path / "run.yaml"
@@ -257,7 +263,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                 phase=phase_name,
             ) from exc
 
-        resolved_path = _resolve_run_path(run_path)
+        resolved_path = resolve_run_path(run_path)
         result = check_phase_exit(phase, resolved_path, _config)
 
         _events.log_event(
@@ -307,7 +313,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             wave_number: Wave number to validate (1-based).
             run_path: Path to the run directory. Auto-detects if not provided.
         """
-        resolved_path = _resolve_run_path(run_path)
+        resolved_path = resolve_run_path(run_path)
 
         # Read wave manifest
         wave_manifest_path = resolved_path / "meta" / "wave_manifest.yaml"
@@ -414,7 +420,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
         """
-        resolved_path = _resolve_run_path(run_path)
+        resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
         scratch_path = resolved_path / "scratch"
 
@@ -499,14 +505,16 @@ def register_orchestration_tools(server: FastMCP) -> None:
     def trw_checkpoint(
         run_path: str | None = None,
         message: str = "",
+        shard_id: str | None = None,
     ) -> dict[str, str]:
         """Create atomic state snapshot — appends to checkpoints.jsonl with timestamp.
 
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
             message: Optional message describing the checkpoint context.
+            shard_id: Optional shard identifier for sub-agent attribution.
         """
-        resolved_path = _resolve_run_path(run_path)
+        resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
 
         # Read current state
@@ -519,15 +527,20 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "message": message,
             "state": state_data,
         }
+        if shard_id:
+            checkpoint["shard_id"] = shard_id
 
         # Append to checkpoints.jsonl
         checkpoints_path = meta_path / "checkpoints.jsonl"
         _writer.append_jsonl(checkpoints_path, checkpoint)
 
+        event_data: dict[str, object] = {"message": message}
+        if shard_id:
+            event_data["shard_id"] = shard_id
         _events.log_event(
             meta_path / "events.jsonl",
             "checkpoint",
-            {"message": message},
+            event_data,
         )
 
         logger.info("trw_checkpoint_created", message=message)
@@ -538,6 +551,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         event_type: str,
         run_path: str | None = None,
         data: dict[str, str | int | float | bool] | None = None,
+        shard_id: str | None = None,
+        agent_role: str | None = None,
     ) -> dict[str, object]:
         """Log a structured event to events.jsonl — append-only audit trail.
 
@@ -545,9 +560,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
             event_type: Event type identifier (e.g., "phase_enter", "shard_complete").
             run_path: Path to the run directory. Auto-detects if not provided.
             data: Additional event data as key-value pairs.
+            shard_id: Optional shard identifier for sub-agent attribution.
+            agent_role: Optional agent role (e.g., "research", "implementation").
         """
-        resolved_path = _resolve_run_path(run_path)
+        resolved_path = resolve_run_path(run_path)
         event_data: dict[str, object] = dict(data) if data else {}
+        if shard_id:
+            event_data["shard_id"] = shard_id
+        if agent_role:
+            event_data["agent_role"] = agent_role
 
         _events.log_event(
             resolved_path / "meta" / "events.jsonl",
@@ -570,75 +591,77 @@ def register_orchestration_tools(server: FastMCP) -> None:
             result["q_updates"] = len(q_updated)
         return result
 
+    @server.tool()
+    def trw_shard_context(
+        run_path: str,
+        shard_id: str,
+    ) -> dict[str, object]:
+        """Return context for a sub-agent shard — paths, IDs, tool guidance.
 
-def _resolve_run_path(run_path: str | None) -> Path:
-    """Resolve a run path from explicit argument or auto-detection.
+        Sub-agents call this first to discover run state, working paths,
+        and which TRW tools to use during their shard execution.
+
+        Args:
+            run_path: Path to the run directory (required for sub-agents).
+            shard_id: Shard identifier (e.g., "S1", "shard-research-01").
+        """
+        resolved_path = resolve_run_path(run_path)
+        meta_path = resolved_path / "meta"
+
+        # Read run state for wave number
+        wave_number: int | None = None
+        run_id = ""
+        if (meta_path / "run.yaml").exists():
+            state_data = _reader.read_yaml(meta_path / "run.yaml")
+            run_id = str(state_data.get("run_id", ""))
+            # Wave number from wave_progress if available
+            wave_progress = state_data.get("wave_progress", {})
+            if isinstance(wave_progress, dict):
+                try:
+                    wave_number = int(str(wave_progress.get("current_wave", 1)))
+                except (ValueError, TypeError):
+                    wave_number = 1
+
+        trw_dir = resolve_project_root() / _config.trw_dir
+        findings_path = resolved_path / _config.findings_dir
+        events_path = meta_path / _config.events_file
+        scratch_path = resolved_path / _config.scratch_dir / shard_id
+
+        resolved_str = str(resolved_path)
+        tool_guidance = (
+            f"1. Use trw_event(shard_id='{shard_id}') to log progress\n"
+            f"2. Use trw_finding_register(run_path='{resolved_str}') for discoveries\n"
+            f"3. Use trw_learn(shard_id='{shard_id}') for learnings\n"
+            f"4. Use trw_checkpoint(shard_id='{shard_id}') for state saves\n"
+            f"5. Write shard outputs to {_config.scratch_dir}/{shard_id}/\n"
+        )
+
+        return {
+            "run_path": str(resolved_path),
+            "run_id": run_id,
+            "shard_id": shard_id,
+            "wave_number": wave_number,
+            "trw_dir": str(trw_dir),
+            "scratch_path": str(scratch_path),
+            "findings_path": str(findings_path),
+            "events_path": str(events_path),
+            "tool_guidance": tool_guidance,
+        }
+
+
+def _get_bundled_data(filename: str) -> str | None:
+    """Load a bundled data file from the package data directory.
 
     Args:
-        run_path: Explicit run path, or None for auto-detection.
+        filename: File to load (e.g., "framework.md", "aaref.md").
 
     Returns:
-        Resolved absolute path to the run directory.
-
-    Raises:
-        StateError: If run path cannot be determined or doesn't exist.
-    """
-    if run_path:
-        resolved = Path(run_path).resolve()
-        if not resolved.exists():
-            raise StateError(
-                f"Run path does not exist: {resolved}",
-                path=str(resolved),
-            )
-        return resolved
-
-    # Auto-detect: look for most recent run in docs/*/runs/
-    project_root = resolve_project_root()
-    docs_dir = project_root / "docs"
-    if not docs_dir.exists():
-        raise StateError(
-            "Cannot auto-detect run path: docs/ directory not found",
-            project_root=str(project_root),
-        )
-
-    latest_run: Path | None = None
-    latest_time: float = 0.0
-
-    for task_dir in docs_dir.iterdir():
-        if not task_dir.is_dir():
-            continue
-        runs_dir = task_dir / "runs"
-        if not runs_dir.exists():
-            continue
-        for run_dir in runs_dir.iterdir():
-            if not run_dir.is_dir():
-                continue
-            run_yaml = run_dir / "meta" / "run.yaml"
-            if run_yaml.exists():
-                mtime = run_yaml.stat().st_mtime
-                if mtime > latest_time:
-                    latest_time = mtime
-                    latest_run = run_dir
-
-    if latest_run is None:
-        raise StateError(
-            "No active runs found in docs/*/runs/",
-            project_root=str(project_root),
-        )
-
-    return latest_run
-
-
-def _get_bundled_aaref() -> str | None:
-    """Load bundled AARE-F-FRAMEWORK.md from package data.
-
-    Returns:
-        AARE-F framework text content, or None if not found.
+        File text content, or None if not found.
     """
     data_dir = Path(__file__).parent.parent / "data"
-    aaref_path = data_dir / "aaref.md"
-    if aaref_path.exists():
-        return aaref_path.read_text(encoding="utf-8")
+    file_path = data_dir / filename
+    if file_path.exists():
+        return file_path.read_text(encoding="utf-8")
     return None
 
 
@@ -716,12 +739,12 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         })
 
     # Deploy framework files
-    framework_data = _get_bundled_framework()
+    framework_data = _get_bundled_data("framework.md")
     if framework_data:
         fw_path = frameworks_dir / "FRAMEWORK.md"
         fw_path.write_text(framework_data, encoding="utf-8")
 
-    aaref_data = _get_bundled_aaref()
+    aaref_data = _get_bundled_data("aaref.md")
     if aaref_data:
         aaref_path = frameworks_dir / "AARE-F-FRAMEWORK.md"
         aaref_path.write_text(aaref_data, encoding="utf-8")
@@ -768,18 +791,3 @@ def _deploy_templates(trw_dir: Path) -> None:
         template_path.write_text(template_data, encoding="utf-8")
 
 
-def _get_bundled_framework() -> str | None:
-    """Load bundled FRAMEWORK.md from package data.
-
-    Returns:
-        Framework text content, or None if not found.
-    """
-    # Path(__file__) = .../trw_mcp/tools/orchestration.py
-    # parent.parent = .../trw_mcp/
-    # data dir = .../trw_mcp/data/
-    data_dir = Path(__file__).parent.parent / "data"
-    framework_path = data_dir / "framework.md"
-    if framework_path.exists():
-        return framework_path.read_text(encoding="utf-8")
-
-    return None

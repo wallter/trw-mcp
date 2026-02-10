@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# PRD-CORE-001: Base MCP tool suite — run state models
+
 
 class Phase(str, Enum):
     """Framework execution phases (FRAMEWORK.md §PHASES)."""

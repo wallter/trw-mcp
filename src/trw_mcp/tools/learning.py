@@ -8,8 +8,6 @@ gain LLM-augmented behavior (better summaries, relevance classification).
 
 from __future__ import annotations
 
-import re
-import secrets
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -17,27 +15,48 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
-from trw_mcp.exceptions import ReflectionError, StateError
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import (
-    Analytics,
     LearningEntry,
-    LearningIndex,
     LearningStatus,
-    Pattern,
-    PatternIndex,
     Reflection,
     Script,
-    ScriptIndex,
 )
-from trw_mcp.scoring import compute_utility_score, update_q_value
+from trw_mcp.scoring import rank_by_utility, utility_based_prune_candidates
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.state.analytics import (
+    apply_status_update,
+    find_entry_by_id,
+    find_repeated_operations,
+    generate_learning_id,
+    is_error_event,
+    mark_promoted,
+    resync_learning_index,
+    save_learning_entry,
+    update_analytics,
+    update_analytics_sync,
+)
+from trw_mcp.state.claude_md import (
+    CLAUDEMD_LEARNING_CAP,
+    CLAUDEMD_PATTERN_CAP,
+    load_claude_md_template,
+    merge_trw_section,
+    render_adherence,
+    render_architecture,
+    render_behavioral_protocol,
+    render_categorized_learnings,
+    render_conventions,
+    render_patterns,
+    render_template,
+)
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
     FileStateWriter,
     model_to_dict,
 )
+from trw_mcp.state.receipts import log_recall_receipt, prune_recall_receipts
 
 logger = structlog.get_logger()
 
@@ -50,20 +69,8 @@ _llm = LLMClient(model=_config.llm_default_model)
 # Named caps for list truncation (not user-tunable)
 _MAX_ERROR_LEARNINGS = 5
 _MAX_REPEATED_OPS = 3
-_CLAUDEMD_LEARNING_CAP = 10
-_CLAUDEMD_PATTERN_CAP = 5
-_BEHAVIORAL_PROTOCOL_CAP = 12
 _LLM_BATCH_CAP = 20
 _LLM_EVENT_CAP = 30
-_SLUG_MAX_LEN = 40
-
-# CLAUDE.md TRW section markers (must stay consistent — parsing depends on these)
-_TRW_AUTO_COMMENT = "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->"
-_TRW_MARKER_START = "<!-- trw:start -->"
-_TRW_MARKER_END = "<!-- trw:end -->"
-
-# Error event classification keywords
-_ERROR_KEYWORDS = ("error", "fail", "exception", "crash", "timeout")
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -105,11 +112,11 @@ def register_learning_tools(server: FastMCP) -> None:
                     run_id = run_id_val
 
         # Analyze events for patterns
-        error_events = [e for e in events if _is_error_event(e)]
+        error_events = [e for e in events if is_error_event(e)]
         phase_transitions = [
             e for e in events if e.get("event") == "phase_transition"
         ]
-        repeated_ops = _find_repeated_operations(events)
+        repeated_ops = find_repeated_operations(events)
 
         # Extract learnings
         new_learnings: list[dict[str, str]] = []
@@ -121,7 +128,7 @@ def register_learning_tools(server: FastMCP) -> None:
             if llm_learning is not None:
                 llm_used = True
                 for item in llm_learning:
-                    learning_id = _generate_learning_id()
+                    learning_id = generate_learning_id()
                     raw_tags = item.get("tags", "")
                     parsed_tags: list[str] = (
                         raw_tags if isinstance(raw_tags, list)
@@ -134,7 +141,7 @@ def register_learning_tools(server: FastMCP) -> None:
                         tags=parsed_tags,
                         impact=float(str(item.get("impact", 0.6))),
                     )
-                    _save_learning_entry(trw_dir, entry)
+                    save_learning_entry(trw_dir, entry)
                     new_learnings.append({
                         "id": learning_id,
                         "summary": entry.summary,
@@ -144,7 +151,7 @@ def register_learning_tools(server: FastMCP) -> None:
         if not llm_used:
             if error_events:
                 for err in error_events[:_MAX_ERROR_LEARNINGS]:
-                    learning_id = _generate_learning_id()
+                    learning_id = generate_learning_id()
                     entry = LearningEntry(
                         id=learning_id,
                         summary=f"Error pattern: {err.get('event', 'unknown')}",
@@ -153,7 +160,7 @@ def register_learning_tools(server: FastMCP) -> None:
                         evidence=[str(err.get("ts", ""))],
                         impact=0.6,
                     )
-                    _save_learning_entry(trw_dir, entry)
+                    save_learning_entry(trw_dir, entry)
                     new_learnings.append({
                         "id": learning_id,
                         "summary": entry.summary,
@@ -161,7 +168,7 @@ def register_learning_tools(server: FastMCP) -> None:
 
             if repeated_ops:
                 for op_name, count in repeated_ops[:_MAX_REPEATED_OPS]:
-                    learning_id = _generate_learning_id()
+                    learning_id = generate_learning_id()
                     entry = LearningEntry(
                         id=learning_id,
                         summary=f"Repeated operation: {op_name} ({count}x)",
@@ -170,14 +177,14 @@ def register_learning_tools(server: FastMCP) -> None:
                         impact=0.5,
                         recurrence=count,
                     )
-                    _save_learning_entry(trw_dir, entry)
+                    save_learning_entry(trw_dir, entry)
                     new_learnings.append({
                         "id": learning_id,
                         "summary": entry.summary,
                     })
 
         # Create reflection log
-        reflection_id = _generate_learning_id()
+        reflection_id = generate_learning_id()
         reflection = Reflection(
             id=reflection_id,
             run_id=run_id,
@@ -209,7 +216,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 })
 
         # Update analytics
-        _update_analytics(trw_dir, len(new_learnings))
+        update_analytics(trw_dir, len(new_learnings))
 
         logger.info(
             "trw_reflect_complete",
@@ -235,6 +242,7 @@ def register_learning_tools(server: FastMCP) -> None:
         tags: list[str] | None = None,
         evidence: list[str] | None = None,
         impact: float = 0.5,
+        shard_id: str | None = None,
     ) -> dict[str, str]:
         """Record a specific learning entry manually to .trw/learnings/.
 
@@ -244,11 +252,12 @@ def register_learning_tools(server: FastMCP) -> None:
             tags: Categorization tags (e.g., ["testing", "gotcha"]).
             evidence: Supporting evidence (file paths, error messages, etc.).
             impact: Impact score from 0.0 to 1.0 (higher = more important).
+            shard_id: Optional shard identifier for sub-agent attribution.
         """
         trw_dir = resolve_trw_dir()
         _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
 
-        learning_id = _generate_learning_id()
+        learning_id = generate_learning_id()
         entry = LearningEntry(
             id=learning_id,
             summary=summary,
@@ -256,12 +265,13 @@ def register_learning_tools(server: FastMCP) -> None:
             tags=tags or [],
             evidence=evidence or [],
             impact=impact,
+            shard_id=shard_id,
         )
 
-        entry_path = _save_learning_entry(trw_dir, entry)
+        entry_path = save_learning_entry(trw_dir, entry)
 
         # Update analytics counter
-        _update_analytics(trw_dir, 1)
+        update_analytics(trw_dir, 1)
 
         logger.info(
             "trw_learn_recorded",
@@ -310,7 +320,7 @@ def register_learning_tools(server: FastMCP) -> None:
             }
 
         # Find entry file by scanning for matching id
-        found = _find_entry_by_id(entries_dir, learning_id)
+        found = find_entry_by_id(entries_dir, learning_id)
         if found is None:
             return {"learning_id": learning_id, "error": "Learning entry not found"}
         target_path, target_data = found
@@ -334,7 +344,7 @@ def register_learning_tools(server: FastMCP) -> None:
         _writer.write_yaml(target_path, target_data)
 
         # Re-sync index
-        _resync_learning_index(trw_dir)
+        resync_learning_index(trw_dir)
 
         logger.info(
             "trw_learn_updated",
@@ -360,19 +370,32 @@ def register_learning_tools(server: FastMCP) -> None:
         tags: list[str] | None = None,
         min_impact: float = 0.0,
         status: str | None = None,
+        shard_id: str | None = None,
+        max_results: int = _config.recall_max_results,
+        compact: bool | None = None,
     ) -> dict[str, object]:
         """Search learnings and patterns relevant to a query from .trw/.
 
         Args:
-            query: Search query (keywords matched against summaries/details). Use "*" to list all.
+            query: Search query (keywords matched against summaries/details).
+                Use "*" to list all (auto-enables compact mode).
             tags: Optional tag filter — only return entries matching these tags.
             min_impact: Minimum impact score filter (0.0-1.0).
             status: Optional status filter — 'active', 'resolved', or 'obsolete'.
+            shard_id: Optional shard identifier for receipt attribution.
+            max_results: Maximum learnings to return (default 25, 0 = unlimited).
+                Applied after filtering and ranking.
+            compact: When True, return only id/summary/impact/tags/status per
+                learning (omits detail, evidence, outcome_history, etc.).
+                When None (default), auto-enables for wildcard queries.
         """
         trw_dir = resolve_trw_dir()
         # Wildcard/empty query: skip token matching, return all (filtered by other params)
         is_wildcard = query.strip() in ("*", "")
         query_tokens = [] if is_wildcard else query.lower().split()
+
+        # PRD-FIX-013 FR03: auto-compact for wildcard when not explicitly set
+        use_compact = compact if compact is not None else is_wildcard
 
         # Search learnings — track matched file paths for access updates
         matching_learnings: list[dict[str, object]] = []
@@ -414,7 +437,8 @@ def register_learning_tools(server: FastMCP) -> None:
                 except (StateError, ValueError, TypeError):
                     continue
 
-        # Update access tracking for matched learnings (PRD-CORE-004 Phase 1a)
+        # Update access tracking for ALL matched learnings (PRD-CORE-004 Phase 1a)
+        # Note: tracking applies to all matches, not just returned results
         matched_ids: list[str] = []
         if matched_files:
             today_iso = date.today().isoformat()
@@ -432,7 +456,7 @@ def register_learning_tools(server: FastMCP) -> None:
                     continue
 
         # Log recall receipt
-        _log_recall_receipt(trw_dir, query, matched_ids)
+        log_recall_receipt(trw_dir, query, matched_ids, shard_id=shard_id)
 
         # Search patterns
         matching_patterns: list[dict[str, object]] = []
@@ -452,25 +476,43 @@ def register_learning_tools(server: FastMCP) -> None:
                     continue
 
         # Re-rank learnings by utility score (PRD-CORE-004 Phase 1b)
-        ranked_learnings = _rank_by_utility(
+        ranked_learnings = rank_by_utility(
             matching_learnings, query_tokens, _config.recall_utility_lambda,
         )
 
-        # Read context files
+        # PRD-FIX-013 FR04: total count before cap
+        total_learnings_available = len(ranked_learnings)
+        total_patterns_available = len(matching_patterns)
+
+        # PRD-FIX-013 FR01: apply max_results cap
+        if max_results > 0:
+            ranked_learnings = ranked_learnings[:max_results]
+
+        # PRD-FIX-013 FR02: compact mode — strip to essential fields
+        if use_compact:
+            compact_fields = _config.recall_compact_fields
+            ranked_learnings = [
+                {k: v for k, v in entry.items() if k in compact_fields}
+                for entry in ranked_learnings
+            ]
+
+        # PRD-FIX-013 FR07: omit context for wildcard+compact
         context: dict[str, object] = {}
-        context_dir = trw_dir / _config.context_dir
-        arch_path = context_dir / "architecture.yaml"
-        conv_path = context_dir / "conventions.yaml"
-        if _reader.exists(arch_path):
-            context["architecture"] = _reader.read_yaml(arch_path)
-        if _reader.exists(conv_path):
-            context["conventions"] = _reader.read_yaml(conv_path)
+        if not (is_wildcard and use_compact):
+            context_dir = trw_dir / _config.context_dir
+            arch_path = context_dir / "architecture.yaml"
+            conv_path = context_dir / "conventions.yaml"
+            if _reader.exists(arch_path):
+                context["architecture"] = _reader.read_yaml(arch_path)
+            if _reader.exists(conv_path):
+                context["conventions"] = _reader.read_yaml(conv_path)
 
         logger.info(
             "trw_recall_searched",
             query=query,
             learnings_found=len(ranked_learnings),
             patterns_found=len(matching_patterns),
+            compact=use_compact,
         )
 
         return {
@@ -479,6 +521,9 @@ def register_learning_tools(server: FastMCP) -> None:
             "patterns": matching_patterns,
             "context": context,
             "total_matches": len(ranked_learnings) + len(matching_patterns),
+            "total_available": total_learnings_available + total_patterns_available,
+            "compact": use_compact,
+            "max_results": max_results,
         }
 
     @server.tool()
@@ -639,13 +684,13 @@ def register_learning_tools(server: FastMCP) -> None:
                 llm_used = True
 
         # Load template and build context
-        template = _load_claude_md_template(trw_dir)
+        template = load_claude_md_template(trw_dir)
 
-        behavioral_protocol = _render_behavioral_protocol()
+        behavioral_protocol = render_behavioral_protocol()
 
         if llm_used and llm_summary is not None:
             # LLM-generated summary replaces all sections
-            context: dict[str, str] = {
+            tpl_context: dict[str, str] = {
                 "behavioral_protocol": behavioral_protocol,
                 "architecture_section": "",
                 "conventions_section": "",
@@ -654,16 +699,16 @@ def register_learning_tools(server: FastMCP) -> None:
                 "adherence_section": "",
             }
         else:
-            context = {
+            tpl_context = {
                 "behavioral_protocol": behavioral_protocol,
-                "architecture_section": _render_architecture(arch_data),
-                "conventions_section": _render_conventions(conv_data),
-                "categorized_learnings": _render_categorized_learnings(high_impact),
-                "patterns_section": _render_patterns(patterns),
-                "adherence_section": _render_adherence(high_impact),
+                "architecture_section": render_architecture(arch_data),
+                "conventions_section": render_conventions(conv_data),
+                "categorized_learnings": render_categorized_learnings(high_impact),
+                "patterns_section": render_patterns(patterns),
+                "adherence_section": render_adherence(high_impact),
             }
 
-        trw_section = _render_template(template, context)
+        trw_section = render_template(template, tpl_context)
 
         # Determine target path
         if scope == "sub" and target_dir:
@@ -673,16 +718,16 @@ def register_learning_tools(server: FastMCP) -> None:
             target = project_root / "CLAUDE.md"
             max_lines = _config.claude_md_max_lines
 
-        total_lines = _merge_trw_section(target, trw_section, max_lines)
+        total_lines = merge_trw_section(target, trw_section, max_lines)
 
         # Update analytics
-        _update_analytics_sync(trw_dir)
+        update_analytics_sync(trw_dir)
 
         # Mark learnings as promoted
         for learning in high_impact:
             lid = learning.get("id", "")
             if isinstance(lid, str) and lid:
-                _mark_promoted(trw_dir, lid)
+                mark_promoted(trw_dir, lid)
 
         logger.info(
             "trw_claude_md_synced",
@@ -717,7 +762,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Prune recall receipts regardless of entry state
         receipts_pruned = 0
         if not dry_run:
-            receipts_pruned = _prune_recall_receipts(trw_dir)
+            receipts_pruned = prune_recall_receipts(trw_dir)
 
         if not entries_dir.exists():
             return {
@@ -748,7 +793,7 @@ def register_learning_tools(server: FastMCP) -> None:
             method = "llm"
         else:
             # Utility-based pruning with Ebbinghaus decay (PRD-CORE-004)
-            candidates = _utility_based_prune_candidates(all_entries)
+            candidates = utility_based_prune_candidates(all_entries)
             method = "utility"
 
         # Apply changes if not dry run
@@ -758,10 +803,10 @@ def register_learning_tools(server: FastMCP) -> None:
                 cid = str(candidate.get("id", ""))
                 new_status = str(candidate.get("suggested_status", ""))
                 if cid and new_status in ("resolved", "obsolete"):
-                    _apply_status_update(trw_dir, cid, new_status)
+                    apply_status_update(trw_dir, cid, new_status)
                     actions += 1
             if actions > 0:
-                _resync_learning_index(trw_dir)
+                resync_learning_index(trw_dir)
 
         logger.info(
             "trw_learn_prune_complete",
@@ -781,1086 +826,7 @@ def register_learning_tools(server: FastMCP) -> None:
         }
 
 
-# --- Private helpers ---
-
-
-def _rank_by_utility(
-    matches: list[dict[str, object]],
-    query_tokens: list[str],
-    lambda_weight: float,
-) -> list[dict[str, object]]:
-    """Re-rank matched learnings by combined relevance + utility score.
-
-    Combined score = (1 - lambda) * relevance + lambda * utility
-
-    Args:
-        matches: List of matched learning entry dicts.
-        query_tokens: Lowercased query tokens for relevance scoring.
-        lambda_weight: Blend factor. 0.0 = pure relevance, 1.0 = pure utility.
-
-    Returns:
-        Sorted list (highest combined score first).
-    """
-    if not matches:
-        return matches
-
-    today = date.today()
-    scored: list[tuple[float, dict[str, object]]] = []
-
-    for entry in matches:
-        # Text relevance score (token overlap with field weighting)
-        summary = str(entry.get("summary", "")).lower()
-        detail = str(entry.get("detail", "")).lower()
-        entry_tags = entry.get("tags", [])
-        tag_text = " ".join(
-            str(t).lower() for t in entry_tags
-        ) if isinstance(entry_tags, list) else ""
-
-        if query_tokens:
-            summary_hits = sum(1 for t in query_tokens if t in summary)
-            tag_hits = sum(1 for t in query_tokens if t in tag_text)
-            detail_hits = sum(1 for t in query_tokens if t in detail)
-            weighted_hits = summary_hits * 3 + tag_hits * 2 + detail_hits * 1
-            max_possible = len(query_tokens) * 3
-            relevance = min(1.0, weighted_hits / max(max_possible, 1))
-        else:
-            relevance = 1.0  # wildcard query
-
-        # Utility score
-        q_value = float(str(entry.get("q_value", entry.get("impact", 0.5))))
-        q_obs = int(str(entry.get("q_observations", 0)))
-        base_impact = float(str(entry.get("impact", 0.5)))
-        recurrence = int(str(entry.get("recurrence", 1)))
-
-        last_accessed_str = str(entry.get("last_accessed_at", ""))
-        created_str = str(entry.get("created", ""))
-        if last_accessed_str and last_accessed_str != "None":
-            try:
-                last_acc = date.fromisoformat(last_accessed_str)
-                days_unused = (today - last_acc).days
-            except ValueError:
-                days_unused = 30
-        elif created_str:
-            try:
-                created_d = date.fromisoformat(created_str)
-                days_unused = (today - created_d).days
-            except ValueError:
-                days_unused = 30
-        else:
-            days_unused = 30
-
-        utility = compute_utility_score(
-            q_value=q_value,
-            days_since_last_access=days_unused,
-            recurrence_count=recurrence,
-            base_impact=base_impact,
-            q_observations=q_obs,
-            half_life_days=_config.learning_decay_half_life_days,
-            use_exponent=_config.learning_decay_use_exponent,
-            cold_start_threshold=_config.q_cold_start_threshold,
-        )
-
-        combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
-
-        scored.append((combined, entry))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [entry for _, entry in scored]
-
-
-def _log_recall_receipt(
-    trw_dir: Path,
-    query: str,
-    matched_ids: list[str],
-) -> None:
-    """Append a recall receipt to .trw/learnings/receipts/recall_log.jsonl.
-
-    Records which learnings were retrieved and when, enabling
-    outcome correlation in Phase 1c.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        query: The recall query string.
-        matched_ids: IDs of matched learning entries.
-    """
-    receipts_dir = trw_dir / _config.learnings_dir / _config.receipts_dir
-    _writer.ensure_dir(receipts_dir)
-    receipt_path = receipts_dir / "recall_log.jsonl"
-    record: dict[str, object] = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "query": query,
-        "matched_ids": matched_ids,
-        "match_count": len(matched_ids),
-    }
-    _writer.append_jsonl(receipt_path, record)
-
-
-def _prune_recall_receipts(trw_dir: Path) -> int:
-    """Prune recall receipt log to keep only the most recent entries.
-
-    Args:
-        trw_dir: Path to .trw directory.
-
-    Returns:
-        Number of entries removed.
-    """
-    receipt_path = (
-        trw_dir / _config.learnings_dir / _config.receipts_dir / "recall_log.jsonl"
-    )
-    if not receipt_path.exists():
-        return 0
-
-    records = _reader.read_jsonl(receipt_path)
-    max_entries = _config.recall_receipt_max_entries
-
-    if len(records) <= max_entries:
-        return 0
-
-    removed = len(records) - max_entries
-    # Keep the most recent entries (last N)
-    kept = records[-max_entries:]
-
-    # Rewrite the file with only kept entries
-    import json as _json
-
-    receipt_path.write_text("", encoding="utf-8")
-    for record in kept:
-        line = _json.dumps(record, default=_json_serializer_for_receipts) + "\n"
-        with receipt_path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
-
-    return removed
-
-
-def _json_serializer_for_receipts(obj: object) -> str:
-    """JSON serializer for receipt objects.
-
-    Args:
-        obj: Object to serialize.
-
-    Returns:
-        JSON-compatible string representation.
-
-    Raises:
-        TypeError: If object type is not supported.
-    """
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    msg = f"Object of type {type(obj).__name__} is not JSON serializable"
-    raise TypeError(msg)
-
-
-def _load_claude_md_template(trw_dir: Path) -> str:
-    """Load CLAUDE.md template: .trw/templates/ > bundled > inline fallback.
-
-    Resolution order:
-    1. Project-local: ``trw_dir / templates_dir / "claude_md.md"``
-    2. Bundled: ``data/templates/claude_md.md`` in package
-    3. Inline fallback (minimal markers only)
-
-    Args:
-        trw_dir: Path to the .trw directory.
-
-    Returns:
-        Template string with ``{{placeholder}}`` tokens.
-    """
-    # 1. Project-local override
-    project_template = trw_dir / _config.templates_dir / "claude_md.md"
-    if project_template.exists():
-        return project_template.read_text(encoding="utf-8")
-
-    # 2. Bundled template
-    data_dir = Path(__file__).parent.parent / "data" / "templates"
-    bundled = data_dir / "claude_md.md"
-    if bundled.exists():
-        return bundled.read_text(encoding="utf-8")
-
-    # 3. Inline fallback
-    return (
-        "\n"
-        f"{_TRW_AUTO_COMMENT}\n"
-        f"{_TRW_MARKER_START}\n"
-        "\n"
-        "## TRW Behavioral Protocol (Auto-Generated)\n"
-        "\n"
-        "{{behavioral_protocol}}"
-        "## TRW Learnings (Auto-Generated)\n"
-        "\n"
-        "{{architecture_section}}"
-        "{{conventions_section}}"
-        "{{categorized_learnings}}"
-        "{{patterns_section}}"
-        "{{adherence_section}}"
-        f"{_TRW_MARKER_END}\n"
-    )
-
-
-def _render_template(template: str, context: dict[str, str]) -> str:
-    """Replace ``{{placeholder}}`` tokens and collapse empty sections.
-
-    Args:
-        template: Template string with ``{{key}}`` placeholders.
-        context: Mapping of placeholder names to rendered content.
-
-    Returns:
-        Rendered markdown string with empty sections collapsed.
-    """
-    result = template
-    for key, value in context.items():
-        result = result.replace("{{" + key + "}}", value)
-    # Collapse runs of 3+ consecutive blank lines to 2
-    while "\n\n\n" in result:
-        result = result.replace("\n\n\n", "\n\n")
-    return result
-
-
-def _render_architecture(arch_data: dict[str, object]) -> str:
-    """Render architecture context to markdown.
-
-    Args:
-        arch_data: Architecture data from context/architecture.yaml.
-
-    Returns:
-        Markdown string or empty string if no data.
-    """
-    if not arch_data:
-        return ""
-    lines: list[str] = ["### Architecture"]
-    for key, val in arch_data.items():
-        if val and key != "notes":
-            lines.append(f"- {key}: {val}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def _render_conventions(conv_data: dict[str, object]) -> str:
-    """Render conventions context to markdown.
-
-    Args:
-        conv_data: Conventions data from context/conventions.yaml.
-
-    Returns:
-        Markdown string or empty string if no data.
-    """
-    if not conv_data:
-        return ""
-    lines: list[str] = ["### Conventions"]
-    for key, val in conv_data.items():
-        if val and key not in ("notes", "test_patterns"):
-            lines.append(f"- {key}: {val}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def _render_categorized_learnings(
-    high_impact: list[dict[str, object]],
-) -> str:
-    """Render high-impact learnings categorized by tag type.
-
-    Args:
-        high_impact: List of high-impact learning entries.
-
-    Returns:
-        Markdown string with categorized learnings, or empty string.
-    """
-    if not high_impact:
-        return ""
-    categories: dict[str, list[str]] = {
-        "Architecture": [],
-        "Known Limitations": [],
-        "Gotchas": [],
-        "Key Learnings": [],
-    }
-    tag_to_category = {
-        "architecture": "Architecture",
-        "framework": "Architecture",
-        "v17": "Architecture",
-        "limitation": "Known Limitations",
-        "improvement": "Known Limitations",
-        "missing-tool": "Known Limitations",
-        "gotcha": "Gotchas",
-        "bug": "Gotchas",
-        "configuration": "Gotchas",
-    }
-    for learning in high_impact[:_CLAUDEMD_LEARNING_CAP]:
-        summary = str(learning.get("summary", ""))
-        tags = learning.get("tags", [])
-        tag_list = tags if isinstance(tags, list) else []
-        placed = False
-        for tag in tag_list:
-            cat = tag_to_category.get(str(tag))
-            if cat:
-                categories[cat].append(summary)
-                placed = True
-                break
-        if not placed:
-            categories["Key Learnings"].append(summary)
-
-    lines: list[str] = []
-    for cat_name, entries in categories.items():
-        if entries:
-            lines.append(f"### {cat_name}")
-            for entry in entries:
-                lines.append(f"- {entry}")
-            lines.append("")
-    if lines:
-        return "\n".join(lines) + "\n"
-    return ""
-
-
-def _render_patterns(patterns: list[dict[str, object]]) -> str:
-    """Render discovered patterns to markdown.
-
-    Args:
-        patterns: List of pattern entries.
-
-    Returns:
-        Markdown string or empty string if no patterns.
-    """
-    if not patterns:
-        return ""
-    lines: list[str] = ["### Discovered Patterns"]
-    for pattern in patterns[:_CLAUDEMD_PATTERN_CAP]:
-        name = pattern.get("name", "")
-        desc = pattern.get("description", "")
-        lines.append(f"- **{name}**: {desc}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def _render_adherence(high_impact: list[dict[str, object]]) -> str:
-    """Render framework adherence directives from compliance learnings.
-
-    Args:
-        high_impact: List of high-impact learning entries.
-
-    Returns:
-        Markdown string with adherence directives, or empty string.
-    """
-    _adherence_tags = {"compliance", "process", "framework", "self-audit", "behavioral-mandate"}
-    adherence_entries: list[str] = []
-    for learning in high_impact:
-        tags = learning.get("tags", [])
-        tag_set = {str(t) for t in tags} if isinstance(tags, list) else set()
-        if tag_set & _adherence_tags:
-            # behavioral-mandate entries promote summary directly
-            if "behavioral-mandate" in tag_set:
-                summary = str(learning.get("summary", ""))
-                if summary and len(summary) > 20:
-                    adherence_entries.append(summary)
-                continue
-            detail = str(learning.get("detail", ""))
-            for sentence in detail.split(". "):
-                lower = sentence.lower()
-                if any(kw in lower for kw in ("must", "should", "call ", "never", "always")):
-                    clean = sentence.strip().rstrip(".")
-                    if clean and len(clean) > 20:
-                        adherence_entries.append(clean)
-
-    if not adherence_entries:
-        return ""
-    lines: list[str] = ["### Framework Adherence"]
-    seen: set[str] = set()
-    count = 0
-    for entry in adherence_entries:
-        key = entry[:60].lower()
-        if key not in seen and count < 8:
-            lines.append(f"- {entry}")
-            seen.add(key)
-            count += 1
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def _render_behavioral_protocol() -> str:
-    """Render behavioral directives from .trw/context/behavioral_protocol.yaml.
-
-    Args: None.
-
-    Returns:
-        Markdown bullet list of directives, or empty string if file missing.
-    """
-    proto_path = resolve_project_root() / _config.trw_dir / _config.context_dir / "behavioral_protocol.yaml"
-    if not proto_path.exists():
-        return ""
-    try:
-        data = _reader.read_yaml(proto_path)
-    except (StateError, ValueError, TypeError):
-        return ""
-    directives = data.get("directives", [])
-    if not directives or not isinstance(directives, list):
-        return ""
-    lines: list[str] = []
-    for directive in directives[:_BEHAVIORAL_PROTOCOL_CAP]:
-        lines.append(f"- {directive}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def _merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
-    """Merge TRW auto-generated section into a CLAUDE.md file.
-
-    Preserves user-written content outside the TRW markers.
-    Replaces existing TRW section if markers are present,
-    otherwise appends.
-
-    Args:
-        target: Path to the CLAUDE.md file.
-        trw_section: The generated TRW section markdown.
-        max_lines: Maximum allowed lines in the output file.
-
-    Returns:
-        Total line count of the written file.
-    """
-    if target.exists():
-        existing = target.read_text(encoding="utf-8")
-        if _TRW_MARKER_START in existing and _TRW_MARKER_END in existing:
-            cut_start = existing.index(_TRW_MARKER_START)
-            auto_idx = existing.rfind(_TRW_AUTO_COMMENT, 0, cut_start)
-            if auto_idx >= 0:
-                cut_start = auto_idx
-            before = existing[:cut_start].rstrip()
-            after_marker = existing.index(_TRW_MARKER_END) + len(_TRW_MARKER_END)
-            after = existing[after_marker:].lstrip("\n")
-            new_content = before + trw_section + "\n" + after
-        else:
-            new_content = existing.rstrip() + "\n" + trw_section + "\n"
-    else:
-        new_content = trw_section.lstrip() + "\n"
-
-    content_lines = new_content.split("\n")
-    if len(content_lines) > max_lines:
-        content_lines = content_lines[:max_lines]
-        content_lines.append("<!-- trw: truncated to line limit -->")
-        new_content = "\n".join(content_lines)
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(new_content, encoding="utf-8")
-    return len(new_content.split("\n"))
-
-
-def _find_entry_by_id(
-    entries_dir: Path,
-    learning_id: str,
-) -> tuple[Path, dict[str, object]] | None:
-    """Find a learning entry file by scanning for a matching ID.
-
-    Args:
-        entries_dir: Path to the entries directory.
-        learning_id: ID to search for.
-
-    Returns:
-        Tuple of (file_path, entry_data) if found, None otherwise.
-    """
-    for entry_file in entries_dir.glob("*.yaml"):
-        try:
-            data = _reader.read_yaml(entry_file)
-            if data.get("id") == learning_id:
-                return entry_file, data
-        except (StateError, ValueError, TypeError):
-            continue
-    return None
-
-
-def _generate_learning_id() -> str:
-    """Generate a unique learning entry ID.
-
-    Returns:
-        String ID in format 'L-{random_hex}'.
-    """
-    return f"L-{secrets.token_hex(4)}"
-
-
-def _is_error_event(event: dict[str, object]) -> bool:
-    """Check if an event represents an error.
-
-    Args:
-        event: Event dictionary from events.jsonl.
-
-    Returns:
-        True if the event indicates an error or failure.
-    """
-    event_type = str(event.get("event", ""))
-    return any(kw in event_type.lower() for kw in _ERROR_KEYWORDS)
-
-
-def _find_repeated_operations(
-    events: list[dict[str, object]],
-) -> list[tuple[str, int]]:
-    """Find operations that were repeated multiple times.
-
-    Args:
-        events: List of event dictionaries.
-
-    Returns:
-        List of (operation_name, count) tuples, sorted by count descending.
-    """
-    counts: dict[str, int] = {}
-    for event in events:
-        event_type = str(event.get("event", ""))
-        if event_type:
-            counts[event_type] = counts.get(event_type, 0) + 1
-
-    repeated = [
-        (op, count) for op, count in counts.items()
-        if count >= _config.learning_repeated_op_threshold
-    ]
-    repeated.sort(key=lambda x: x[1], reverse=True)
-    return repeated
-
-
-def _save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
-    """Save a learning entry to .trw/learnings/entries/.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        entry: Learning entry to save.
-
-    Returns:
-        Path to the saved entry file.
-    """
-    raw = entry.summary[:_SLUG_MAX_LEN].lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
-    filename = f"{entry.created.isoformat()}-{slug}.yaml"
-    entry_path = trw_dir / _config.learnings_dir / _config.entries_dir / filename
-    _writer.write_yaml(entry_path, model_to_dict(entry))
-
-    # Update index
-    _update_learning_index(trw_dir, entry)
-
-    return entry_path
-
-
-def _update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
-    """Update the learning index with a new entry.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        entry: New learning entry to add to index.
-    """
-    index_path = trw_dir / _config.learnings_dir / "index.yaml"
-    index_data: dict[str, object] = {}
-    if _reader.exists(index_path):
-        index_data = _reader.read_yaml(index_path)
-
-    entries_raw = index_data.get("entries", [])
-    entries: list[dict[str, object]] = []
-    if isinstance(entries_raw, list):
-        entries = [e for e in entries_raw if isinstance(e, dict)]
-
-    # Add new entry summary to index
-    entries.append({
-        "id": entry.id,
-        "summary": entry.summary,
-        "tags": entry.tags,
-        "impact": entry.impact,
-        "created": entry.created.isoformat(),
-    })
-
-    # Enforce max entries
-    if len(entries) > _config.learning_max_entries:
-        # Prune lowest impact entries
-        entries.sort(key=lambda e: float(str(e.get("impact", 0.0))))
-        entries = entries[-_config.learning_max_entries :]
-
-    index_data["entries"] = entries
-    index_data["total_count"] = len(entries)
-    _writer.write_yaml(index_path, index_data)
-
-
-def _resync_learning_index(trw_dir: Path) -> None:
-    """Rebuild the learning index from all entry files on disk.
-
-    Called after updates to ensure the index stays consistent.
-
-    Args:
-        trw_dir: Path to .trw directory.
-    """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    index_path = trw_dir / _config.learnings_dir / "index.yaml"
-
-    entries: list[dict[str, object]] = []
-    if entries_dir.exists():
-        for entry_file in sorted(entries_dir.glob("*.yaml")):
-            try:
-                data = _reader.read_yaml(entry_file)
-                entries.append({
-                    "id": data.get("id", ""),
-                    "summary": data.get("summary", ""),
-                    "tags": data.get("tags", []),
-                    "impact": data.get("impact", 0.5),
-                    "status": data.get("status", "active"),
-                    "created": str(data.get("created", "")),
-                })
-            except (StateError, ValueError, TypeError):
-                continue
-
-    index_data: dict[str, object] = {
-        "entries": entries,
-        "total_count": len(entries),
-    }
-    _writer.write_yaml(index_path, index_data)
-
-
-def _update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
-    """Update .trw/context/analytics.yaml with reflection metrics.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        new_learnings_count: Number of new learnings produced.
-    """
-    context_dir = trw_dir / _config.context_dir
-    _writer.ensure_dir(context_dir)
-    analytics_path = context_dir / "analytics.yaml"
-
-    data: dict[str, object] = {}
-    if _reader.exists(analytics_path):
-        data = _reader.read_yaml(analytics_path)
-
-    sessions = int(str(data.get("sessions_tracked", 0))) + 1
-    total_learnings = int(str(data.get("total_learnings", 0))) + new_learnings_count
-
-    data["sessions_tracked"] = sessions
-    data["total_learnings"] = total_learnings
-    data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
-
-    _writer.write_yaml(analytics_path, data)
-
-
-def _update_analytics_sync(trw_dir: Path) -> None:
-    """Increment CLAUDE.md sync counter in analytics.
-
-    Args:
-        trw_dir: Path to .trw directory.
-    """
-    context_dir = trw_dir / _config.context_dir
-    analytics_path = context_dir / "analytics.yaml"
-
-    data: dict[str, object] = {}
-    if _reader.exists(analytics_path):
-        data = _reader.read_yaml(analytics_path)
-
-    data["claude_md_syncs"] = int(str(data.get("claude_md_syncs", 0))) + 1
-    _writer.write_yaml(analytics_path, data)
-
-
-def _mark_promoted(trw_dir: Path, learning_id: str) -> None:
-    """Mark a learning entry as promoted to CLAUDE.md.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        learning_id: ID of the learning entry to mark.
-    """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    if not entries_dir.exists():
-        return
-
-    found = _find_entry_by_id(entries_dir, learning_id)
-    if found is not None:
-        entry_file, data = found
-        data["promoted_to_claude_md"] = True
-        _writer.write_yaml(entry_file, data)
-
-
-def _apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:
-    """Apply a status update to a learning entry on disk.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        learning_id: ID of the learning entry to update.
-        new_status: New status value to set.
-    """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    if not entries_dir.exists():
-        return
-
-    found = _find_entry_by_id(entries_dir, learning_id)
-    if found is not None:
-        entry_file, data = found
-        data["status"] = new_status
-        data["updated"] = date.today().isoformat()
-        if new_status == LearningStatus.RESOLVED.value:
-            data["resolved_at"] = date.today().isoformat()
-        _writer.write_yaml(entry_file, data)
-
-
-def _age_based_prune_candidates(
-    entries: list[tuple[Path, dict[str, object]]],
-) -> list[dict[str, object]]:
-    """Identify stale learnings using multi-heuristic approach.
-
-    Three heuristics (any match = candidate):
-    1. Age-based: older than ``learning_prune_age_days`` with recurrence <= 1
-    2. Status-based: entries already marked resolved/obsolete (cleanup stragglers)
-    3. Tag-based: entries tagged ``bug`` or ``missing-tool`` with recurrence <= 1
-
-    Args:
-        entries: List of (file_path, entry_data) tuples.
-
-    Returns:
-        List of candidate dicts with id, summary, and suggested_status.
-    """
-    candidates: list[dict[str, object]] = []
-    seen_ids: set[str] = set()
-    today = date.today()
-    _bug_tags = {"bug", "missing-tool"}
-
-    for _path, data in entries:
-        entry_id = str(data.get("id", ""))
-        if entry_id in seen_ids:
-            continue
-
-        created_str = str(data.get("created", ""))
-        try:
-            created = date.fromisoformat(created_str)
-        except ValueError:
-            continue
-
-        age_days = (today - created).days
-        recurrence = int(str(data.get("recurrence", 1)))
-        entry_status = str(data.get("status", "active"))
-        entry_tags = data.get("tags", [])
-        tag_set = {str(t) for t in entry_tags} if isinstance(entry_tags, list) else set()
-
-        # Heuristic 1: age-based (original)
-        if age_days > _config.learning_prune_age_days and recurrence <= 1:
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "suggested_status": "obsolete",
-                "reason": f"Older than {_config.learning_prune_age_days} days ({age_days}d) with no recurrence increase",
-            })
-            seen_ids.add(entry_id)
-            continue
-
-        # Heuristic 2: status-based (resolved/obsolete stragglers still in active pool)
-        if entry_status in ("resolved", "obsolete"):
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "suggested_status": entry_status,
-                "reason": f"Already marked {entry_status} — cleanup candidate",
-            })
-            seen_ids.add(entry_id)
-            continue
-
-        # Heuristic 3: bug/missing-tool tags with low recurrence
-        if tag_set & _bug_tags and recurrence <= 1:
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "suggested_status": "resolved",
-                "reason": f"Tagged {tag_set & _bug_tags} with recurrence {recurrence} — likely fixed bug",
-            })
-            seen_ids.add(entry_id)
-
-    return candidates
-
-
-def _utility_based_prune_candidates(
-    entries: list[tuple[Path, dict[str, object]]],
-) -> list[dict[str, object]]:
-    """Identify prune candidates using composite utility scoring.
-
-    Three tiers:
-    1. Status-based cleanup: entries already resolved/obsolete
-    2. Delete candidates: utility < delete threshold (effectively forgotten)
-    3. Obsolete candidates: utility < prune threshold and age > 14 days
-
-    Backward compatible: entries without new fields use sensible defaults.
-
-    Args:
-        entries: List of (file_path, entry_data) tuples.
-
-    Returns:
-        List of candidate dicts with id, summary, utility, and suggested_status.
-    """
-    candidates: list[dict[str, object]] = []
-    seen_ids: set[str] = set()
-    today = date.today()
-
-    for _path, data in entries:
-        entry_id = str(data.get("id", ""))
-        if entry_id in seen_ids:
-            continue
-
-        created_str = str(data.get("created", ""))
-        try:
-            created = date.fromisoformat(created_str)
-        except ValueError:
-            continue
-
-        age_days = (today - created).days
-        recurrence = int(str(data.get("recurrence", 1)))
-        entry_status = str(data.get("status", "active"))
-
-        # Tier 1: Status-based cleanup (resolved/obsolete stragglers)
-        if entry_status in ("resolved", "obsolete"):
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "utility": 0.0,
-                "suggested_status": entry_status,
-                "reason": f"Already marked {entry_status} — cleanup candidate",
-            })
-            seen_ids.add(entry_id)
-            continue
-
-        # Extract scoring fields with backward-compatible defaults
-        q_value = float(str(data.get("q_value", data.get("impact", 0.5))))
-        q_observations = int(str(data.get("q_observations", 0)))
-        base_impact = float(str(data.get("impact", 0.5)))
-
-        last_accessed_str = str(data.get("last_accessed_at", ""))
-        if last_accessed_str and last_accessed_str != "None":
-            try:
-                last_accessed = date.fromisoformat(last_accessed_str)
-                days_since_access = (today - last_accessed).days
-            except ValueError:
-                days_since_access = age_days
-        else:
-            days_since_access = age_days
-
-        utility = compute_utility_score(
-            q_value=q_value,
-            days_since_last_access=days_since_access,
-            recurrence_count=recurrence,
-            base_impact=base_impact,
-            q_observations=q_observations,
-            half_life_days=_config.learning_decay_half_life_days,
-            use_exponent=_config.learning_decay_use_exponent,
-            cold_start_threshold=_config.q_cold_start_threshold,
-        )
-
-        # Tier 2: Delete-level utility (effectively forgotten)
-        if utility < _config.learning_utility_delete_threshold:
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "utility": round(utility, 3),
-                "suggested_status": "obsolete",
-                "reason": (
-                    f"Utility {utility:.3f} below delete threshold "
-                    f"({_config.learning_utility_delete_threshold}). "
-                    f"Q={q_value:.2f}, days_unused={days_since_access}, "
-                    f"recurrence={recurrence}"
-                ),
-            })
-            seen_ids.add(entry_id)
-            continue
-
-        # Tier 3: Prune-level utility (fading, older than 14 days)
-        if utility < _config.learning_utility_prune_threshold and age_days > 14:
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "utility": round(utility, 3),
-                "suggested_status": "obsolete",
-                "reason": (
-                    f"Utility {utility:.3f} below prune threshold "
-                    f"({_config.learning_utility_prune_threshold}) and "
-                    f"age {age_days}d > 14d. Q={q_value:.2f}, "
-                    f"days_unused={days_since_access}"
-                ),
-            })
-            seen_ids.add(entry_id)
-
-    return candidates
-
-
-# --- Outcome correlation (PRD-CORE-004 Phase 1c) ---
-
-# Reward mapping: event_type -> reward signal
-_REWARD_MAP: dict[str, float] = {
-    "tests_passed": 0.8,
-    "tests_failed": -0.3,
-    "task_complete": 0.5,
-    "phase_gate_passed": 1.0,
-    "phase_gate_failed": -0.5,
-    "wave_validation_passed": 0.7,
-}
-
-
-def _correlate_recalls(
-    trw_dir: Path,
-    window_minutes: int,
-) -> list[tuple[str, float]]:
-    """Find learning IDs from recent recall receipts within the time window.
-
-    Returns (learning_id, recency_discount) tuples. Discount ranges from
-    1.0 (just recalled) to 0.5 (at edge of window).
-
-    Args:
-        trw_dir: Path to .trw directory.
-        window_minutes: How many minutes back to look for recall receipts.
-
-    Returns:
-        List of (learning_id, discount) tuples. May contain duplicates
-        across receipts (caller should deduplicate).
-    """
-    receipt_path = (
-        trw_dir / _config.learnings_dir / _config.receipts_dir / "recall_log.jsonl"
-    )
-    if not receipt_path.exists():
-        return []
-
-    now = datetime.now(timezone.utc)
-    window_secs = window_minutes * 60
-    results: list[tuple[str, float]] = []
-
-    records = _reader.read_jsonl(receipt_path)
-    for record in records:
-        ts_str = str(record.get("ts", ""))
-        if not ts_str:
-            continue
-        try:
-            receipt_ts = datetime.fromisoformat(ts_str)
-        except ValueError:
-            continue
-
-        # Make timezone-aware if needed
-        if receipt_ts.tzinfo is None:
-            receipt_ts = receipt_ts.replace(tzinfo=timezone.utc)
-
-        elapsed_secs = (now - receipt_ts).total_seconds()
-        if elapsed_secs < 0 or elapsed_secs > window_secs:
-            continue
-
-        # Recency discount: 1.0 at t=0, 0.5 at t=window
-        discount = max(0.5, 1.0 - elapsed_secs / max(window_secs, 1))
-
-        matched_ids = record.get("matched_ids", [])
-        if isinstance(matched_ids, list):
-            for lid in matched_ids:
-                if isinstance(lid, str) and lid:
-                    results.append((lid, discount))
-
-    return results
-
-
-def _process_outcome(
-    trw_dir: Path,
-    reward: float,
-    event_label: str,
-) -> list[str]:
-    """Update Q-values for learnings correlated with a recent outcome.
-
-    Time-windowed correlation: only receipts from the last N minutes
-    (configured via learning_outcome_correlation_window_minutes) are
-    considered. Recency discount is applied to the reward.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        reward: Base reward signal (positive = helpful, negative = unhelpful).
-        event_label: Label for outcome_history (e.g., 'tests_passed').
-
-    Returns:
-        List of learning IDs whose Q-values were updated.
-    """
-    correlated = _correlate_recalls(
-        trw_dir, _config.learning_outcome_correlation_window_minutes,
-    )
-    if not correlated:
-        return []
-
-    # Deduplicate — use highest discount per learning
-    best_discount: dict[str, float] = {}
-    for lid, discount in correlated:
-        if lid not in best_discount or discount > best_discount[lid]:
-            best_discount[lid] = discount
-
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    if not entries_dir.exists():
-        return []
-
-    updated_ids: list[str] = []
-    today_iso = date.today().isoformat()
-    history_cap = _config.learning_outcome_history_cap
-
-    for lid, discount in best_discount.items():
-        found = _find_entry_by_id(entries_dir, lid)
-        if found is None:
-            continue
-
-        entry_path, data = found
-        q_old = float(str(data.get("q_value", data.get("impact", 0.5))))
-        q_obs = int(str(data.get("q_observations", 0)))
-        recurrence = int(str(data.get("recurrence", 1)))
-
-        # Apply recency-discounted reward
-        effective_reward = reward * discount
-        recurrence_bonus = _config.q_recurrence_bonus if recurrence > 1 else 0.0
-        q_new = update_q_value(
-            q_old, effective_reward,
-            alpha=_config.q_learning_rate,
-            recurrence_bonus=recurrence_bonus,
-        )
-
-        data["q_value"] = round(q_new, 4)
-        data["q_observations"] = q_obs + 1
-        data["updated"] = today_iso
-
-        # Append to outcome_history (capped)
-        history_entry = f"{today_iso}:{reward:+.1f}:{event_label}"
-        history = data.get("outcome_history", [])
-        if not isinstance(history, list):
-            history = []
-        history.append(history_entry)
-        if len(history) > history_cap:
-            history = history[-history_cap:]
-        data["outcome_history"] = history
-
-        _writer.write_yaml(entry_path, data)
-        updated_ids.append(lid)
-
-    if updated_ids:
-        logger.info(
-            "outcome_correlation_applied",
-            reward=reward,
-            event_label=event_label,
-            updated_count=len(updated_ids),
-        )
-
-    return updated_ids
-
-
-def process_outcome_for_event(
-    event_type: str,
-) -> list[str]:
-    """Public entry point for orchestration tools to trigger outcome correlation.
-
-    Checks if the event type has a known reward mapping, then correlates
-    with recent recalls and updates Q-values. Best-effort: failures
-    are silently caught and logged.
-
-    Args:
-        event_type: The event type string (e.g., 'tests_passed').
-
-    Returns:
-        List of learning IDs updated, or empty list if no correlation.
-    """
-    # Check for direct match first
-    reward = _REWARD_MAP.get(event_type)
-
-    # Check for error keywords if no direct match
-    if reward is None and any(kw in event_type.lower() for kw in _ERROR_KEYWORDS):
-        reward = -0.3
-
-    if reward is None:
-        return []
-
-    try:
-        trw_dir = resolve_trw_dir()
-        return _process_outcome(trw_dir, reward, event_type)
-    except (StateError, OSError) as exc:
-        logger.debug("outcome_correlation_skipped", reason=str(exc))
-        return []
+# --- LLM helpers (require claude-agent-sdk) ---
 
 
 def _llm_assess_learnings(  # pragma: no cover
@@ -2014,9 +980,9 @@ def _llm_summarize_learnings(  # pragma: no cover
         return None
 
     items: list[str] = []
-    for entry in learnings[:_CLAUDEMD_LEARNING_CAP]:
+    for entry in learnings[:CLAUDEMD_LEARNING_CAP]:
         items.append(f"- Learning: {entry.get('summary', '')} | Detail: {entry.get('detail', '')}")
-    for pat in patterns[:_CLAUDEMD_PATTERN_CAP]:
+    for pat in patterns[:CLAUDEMD_PATTERN_CAP]:
         items.append(f"- Pattern: {pat.get('name', '')} | {pat.get('description', '')}")
 
     prompt = (

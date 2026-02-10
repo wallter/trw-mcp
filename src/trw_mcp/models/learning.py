@@ -12,6 +12,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# PRD-CORE-001, PRD-CORE-004: Learning entry models with utility scoring
+
 
 class LearningStatus(str, Enum):
     """Status of a learning entry in its lifecycle.
@@ -52,6 +54,7 @@ class LearningEntry(BaseModel):
     q_value: float = Field(ge=0.0, le=1.0, default=0.5)
     q_observations: int = Field(ge=0, default=0)
     outcome_history: list[str] = Field(default_factory=list)
+    shard_id: str | None = None
 
 
 class LearningIndex(BaseModel):
