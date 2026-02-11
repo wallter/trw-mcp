@@ -85,6 +85,14 @@ class TRWConfig(BaseSettings):
     # PRD-CORE-026: access_count utility boost cap
     access_count_utility_boost_cap: float = 0.15
 
+    # Scoring subsystem (Sprint 8: extracted from scoring.py magic numbers)
+    scoring_default_days_unused: int = 30
+    scoring_error_keywords: tuple[str, ...] = (
+        "error", "fail", "exception", "crash", "timeout",
+    )
+    scoring_recency_discount_floor: float = 0.5
+    scoring_error_fallback_reward: float = -0.3
+
     # Task directory root (PRD-QUAL-002)
     task_root: str = "docs"
 
@@ -136,6 +144,7 @@ class TRWConfig(BaseSettings):
 
     # PRD directory path (relative to project root)
     prds_relative_path: str = "docs/requirements-aare-f/prds"
+    index_auto_sync_on_status_change: bool = True
 
     # Grooming (PRD-CORE-011)
     grooming_max_iterations: int = 5

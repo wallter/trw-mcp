@@ -165,6 +165,11 @@ def register_requirements_tools(server: FastMCP) -> None:
             _writer.write_text(prd_file, prd_content)
             output_path = str(prd_file)
 
+        # Auto-sync INDEX.md/ROADMAP.md so catalogue stays current
+        index_synced = False
+        if output_path and _config.index_auto_sync_on_status_change:
+            index_synced = _auto_sync_index()
+
         logger.info(
             "trw_prd_created",
             prd_id=prd_id,
@@ -180,6 +185,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             "output_path": output_path,
             "content": prd_content,
             "sections_generated": len(_EXPECTED_SECTIONS),
+            "index_synced": index_synced,
         }
 
     @server.tool()
@@ -490,6 +496,11 @@ def register_requirements_tools(server: FastMCP) -> None:
             reason=reason,
         )
 
+        # Auto-sync INDEX.md/ROADMAP.md so catalogue stays current
+        index_synced = False
+        if current != target and _config.index_auto_sync_on_status_change:
+            index_synced = _auto_sync_index()
+
         logger.info(
             "trw_prd_status_updated",
             prd_id=prd_id,
@@ -508,6 +519,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             "reason": guard_reason or reason,
             "guard_details": guard_details,
             "updated": current != target,
+            "index_synced": index_synced,
         }
 
     @server.tool()
@@ -977,6 +989,32 @@ def _resolve_prd_path(prd_id: str) -> Path:
     if prd_file.exists():
         return prd_file
     raise StateError(f"PRD file not found: {prd_file}", path=str(prd_file))
+
+
+def _auto_sync_index() -> bool:
+    """Auto-sync INDEX.md and ROADMAP.md after PRD changes.
+
+    Best-effort sync triggered by prd_status_update and prd_create.
+    Never raises -- logs warning on failure.
+
+    Returns:
+        True if sync succeeded, False otherwise.
+    """
+    try:
+        from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
+
+        project_root = resolve_project_root()
+        prds_dir = project_root / _config.prds_relative_path
+        aare_dir = prds_dir.parent
+
+        sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=_writer)
+        sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=_writer)
+
+        logger.debug("auto_index_sync_complete")
+        return True
+    except Exception as exc:
+        logger.warning("auto_index_sync_failed", error=str(exc))
+        return False
 
 
 def _log_status_change_event(

@@ -544,16 +544,16 @@ def extract_learnings_from_llm(
 
     for item in llm_items:
         learning_id = generate_learning_id()
-        raw_tags = item.get("tags", "")
-        parsed_tags: list[str] = (
-            raw_tags if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
-        )
+        raw_tags = item.get("tags")
+        tags = raw_tags if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
         entry = LearningEntry(
             id=learning_id,
             summary=str(item.get("summary", "LLM-extracted learning")),
             detail=str(item.get("detail", "")),
-            tags=parsed_tags,
+            tags=tags,
             impact=float(str(item.get("impact", 0.6))),
+            source_type="agent",
+            source_identity="trw_reflect:llm",
         )
         save_learning_entry(trw_dir, entry)
         new_learnings.append({
@@ -900,6 +900,60 @@ def update_analytics_extended(
     data["high_impact_learnings"] = high_impact
 
     _writer.write_yaml(analytics_path, data)
+
+
+def backfill_source_attribution(
+    trw_dir: Path,
+    *,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Backfill missing source_type/source_identity on learning entries.
+
+    Iterates all .yaml entries in .trw/learnings/entries/, sets
+    source_type='agent' and source_identity='' on entries missing
+    valid source_type.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        dry_run: If True, count affected entries without modifying files.
+
+    Returns:
+        Dict with updated_count, skipped_count, and total_scanned.
+    """
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    if not entries_dir.is_dir():
+        return {"updated_count": 0, "skipped_count": 0, "total_scanned": 0}
+
+    valid_source_types = {"human", "agent"}
+    updated = 0
+    skipped = 0
+    total = 0
+
+    for entry_file in sorted(entries_dir.glob("*.yaml")):
+        if entry_file.name == "index.yaml":
+            continue
+        try:
+            data = _reader.read_yaml(entry_file)
+            total += 1
+            existing = str(data.get("source_type", ""))
+            if existing in valid_source_types:
+                skipped += 1
+                continue
+            if not dry_run:
+                data["source_type"] = "agent"
+                data["source_identity"] = ""
+                data["updated"] = date.today().isoformat()
+                _writer.write_yaml(entry_file, data)
+            updated += 1
+        except (StateError, ValueError, TypeError):
+            continue
+
+    return {
+        "updated_count": updated,
+        "skipped_count": skipped,
+        "total_scanned": total,
+        "dry_run": dry_run,
+    }
 
 
 def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:

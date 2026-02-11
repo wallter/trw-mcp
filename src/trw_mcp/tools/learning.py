@@ -415,6 +415,8 @@ def register_learning_tools(server: FastMCP) -> None:
         summary: str | None = None,
         detail: str | None = None,
         tags: list[str] | None = None,
+        source_type: str | None = None,
+        source_identity: str | None = None,
     ) -> dict[str, str]:
         """Update an existing learning entry in .trw/learnings/.
 
@@ -425,6 +427,8 @@ def register_learning_tools(server: FastMCP) -> None:
             summary: Updated one-line summary.
             detail: Updated detailed description.
             tags: Replacement tag list.
+            source_type: Learning provenance — 'human' or 'agent'.
+            source_identity: Name of source (e.g., 'Tyler', 'claude-opus-4-6').
         """
         trw_dir = resolve_trw_dir()
         entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
@@ -437,6 +441,13 @@ def register_learning_tools(server: FastMCP) -> None:
             return {
                 "learning_id": learning_id,
                 "error": f"Invalid status: {status!r}. Valid: {sorted(valid_statuses)}",
+            }
+
+        valid_source_types = {"human", "agent"}
+        if source_type is not None and source_type not in valid_source_types:
+            return {
+                "learning_id": learning_id,
+                "error": f"Invalid source_type: {source_type!r}. Valid: {sorted(valid_source_types)}",
             }
 
         found = find_entry_by_id(entries_dir, learning_id)
@@ -456,6 +467,10 @@ def register_learning_tools(server: FastMCP) -> None:
             target_data["detail"] = detail
         if tags is not None:
             target_data["tags"] = tags
+        if source_type is not None:
+            target_data["source_type"] = source_type
+        if source_identity is not None:
+            target_data["source_identity"] = source_identity
 
         target_data["updated"] = date.today().isoformat()
         _writer.write_yaml(target_path, target_data)
@@ -468,6 +483,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 k for k, v in [
                     ("status", status), ("impact", impact),
                     ("summary", summary), ("detail", detail), ("tags", tags),
+                    ("source_type", source_type), ("source_identity", source_identity),
                 ] if v is not None
             ],
         )

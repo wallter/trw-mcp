@@ -208,6 +208,81 @@ class RunState(BaseModel):
     )
 
 
+class EventType(str, Enum):
+    """Canonical event type identifiers for the TRW event system.
+
+    All event types used in REWARD_MAP, EVENT_ALIASES, and tool
+    instrumentation must be members of this enum. This provides
+    type safety and eliminates silent failures from typos.
+    """
+
+    # --- Run lifecycle ---
+    RUN_INIT = "run_init"
+    RUN_RESUMED = "run_resumed"
+    SESSION_START = "session_start"
+
+    # --- Phase lifecycle ---
+    PHASE_ENTER = "phase_enter"
+    PHASE_CHECK = "phase_check"
+    PHASE_REVERT = "phase_revert"
+    PHASE_GATE_PASSED = "phase_gate_passed"
+    PHASE_GATE_FAILED = "phase_gate_failed"
+
+    # --- Wave/shard lifecycle ---
+    SHARD_STARTED = "shard_started"
+    SHARD_COMPLETE = "shard_complete"
+    SHARD_COMPLETED = "shard_completed"
+    WAVE_COMPLETE = "wave_complete"
+    WAVE_COMPLETED = "wave_completed"
+    WAVE_VALIDATED = "wave_validated"
+    WAVE_VALIDATION_PASSED = "wave_validation_passed"
+
+    # --- PRD lifecycle ---
+    PRD_CREATED = "prd_created"
+    PRD_APPROVED = "prd_approved"
+    PRD_STATUS_CHANGE = "prd_status_change"
+    PRD_GROOM_COMPLETE = "prd_groom_complete"
+    AUTO_PRD_PROGRESS = "auto_prd_progress"
+
+    # --- Testing/build ---
+    TESTS_PASSED = "tests_passed"
+    TESTS_FAILED = "tests_failed"
+    TEST_RUN = "test_run"
+    BUILD_PASSED = "build_passed"
+    BUILD_FAILED = "build_failed"
+
+    # --- Learning/reflection ---
+    REFLECTION_COMPLETE = "reflection_complete"
+    REFLECTION_COMPLETED = "reflection_completed"
+    CHECKPOINT = "checkpoint"
+    CLAUDE_MD_SYNCED = "claude_md_synced"
+
+    # --- Compliance ---
+    COMPLIANCE_CHECK = "compliance_check"
+    COMPLIANCE_PASSED = "compliance_passed"
+
+    # --- File operations ---
+    FILE_MODIFIED = "file_modified"
+
+    # --- Task lifecycle ---
+    TASK_COMPLETE = "task_complete"
+
+    @staticmethod
+    def resolve(event_str: str) -> "EventType | None":
+        """Resolve an event type string to an EventType member.
+
+        Args:
+            event_str: Event type string to resolve.
+
+        Returns:
+            Matching EventType member, or None if unrecognized.
+        """
+        try:
+            return EventType(event_str)
+        except ValueError:
+            return None
+
+
 class Event(BaseModel):
     """Structured event for events.jsonl audit log.
 

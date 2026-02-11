@@ -20,6 +20,7 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.run import EventType
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -29,37 +30,29 @@ _config = TRWConfig()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
-# Error event classification keywords
-_ERROR_KEYWORDS = ("error", "fail", "exception", "crash", "timeout")
-
-# Default fallback when access/creation date is unparseable
-_DEFAULT_DAYS_UNUSED = 30
-
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
 
 
 def _days_since_access(
     entry: dict[str, object],
     today: date,
-    fallback_days: int = _DEFAULT_DAYS_UNUSED,
+    fallback_days: int | None = None,
 ) -> int:
     """Compute days since last access, falling back to creation date.
 
     Resolution order: last_accessed_at -> created -> fallback_days.
     """
-    last_accessed_str = str(entry.get("last_accessed_at", ""))
-    if last_accessed_str and last_accessed_str != "None":
-        try:
-            return (today - date.fromisoformat(last_accessed_str)).days
-        except ValueError:
-            pass
+    if fallback_days is None:
+        fallback_days = _config.scoring_default_days_unused
 
-    created_str = str(entry.get("created", ""))
-    if created_str:
+    for field in ("last_accessed_at", "created"):
+        raw = str(entry.get(field, ""))
+        if not raw or raw == "None":
+            continue
         try:
-            return (today - date.fromisoformat(created_str)).days
+            return (today - date.fromisoformat(raw)).days
         except ValueError:
-            pass
+            continue
 
     return fallback_days
 
@@ -403,54 +396,56 @@ def utility_based_prune_candidates(
 
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
 
-# Reward mapping: event_type -> reward signal
+# Reward mapping: EventType -> reward signal
 # PRD-CORE-026: Expanded from 6 to 12 entries
+# Sprint 8: Migrated from magic strings to EventType enum
 REWARD_MAP: dict[str, float] = {
-    "tests_passed": 0.8,
-    "tests_failed": -0.3,
-    "task_complete": 0.5,
-    "phase_gate_passed": 1.0,
-    "phase_gate_failed": -0.5,
-    "wave_validation_passed": 0.7,
-    "shard_complete": 0.6,
-    "reflection_complete": 0.4,
-    "compliance_passed": 0.5,
-    "file_modified": 0.2,
-    "prd_approved": 0.7,
-    "wave_complete": 0.8,
+    EventType.TESTS_PASSED: 0.8,
+    EventType.TESTS_FAILED: -0.3,
+    EventType.TASK_COMPLETE: 0.5,
+    EventType.PHASE_GATE_PASSED: 1.0,
+    EventType.PHASE_GATE_FAILED: -0.5,
+    EventType.WAVE_VALIDATION_PASSED: 0.7,
+    EventType.SHARD_COMPLETE: 0.6,
+    EventType.REFLECTION_COMPLETE: 0.4,
+    EventType.COMPLIANCE_PASSED: 0.5,
+    EventType.FILE_MODIFIED: 0.2,
+    EventType.PRD_APPROVED: 0.7,
+    EventType.WAVE_COMPLETE: 0.8,
 }
 
 # PRD-CORE-026: Alias mapping for internal event types that don't match
 # REWARD_MAP keys directly. Maps event_type -> REWARD_MAP key or direct
 # float reward. None values are explicitly ignored (no reward).
+# Sprint 8: Migrated from magic strings to EventType enum
 EVENT_ALIASES: dict[str, str | float | None] = {
     # Wave/shard lifecycle
-    "shard_completed": "shard_complete",
-    "shard_started": None,  # No reward for starting
-    "wave_validated": "wave_validation_passed",
-    "wave_completed": "wave_complete",
+    EventType.SHARD_COMPLETED: EventType.SHARD_COMPLETE,
+    EventType.SHARD_STARTED: None,  # No reward for starting
+    EventType.WAVE_VALIDATED: EventType.WAVE_VALIDATION_PASSED,
+    EventType.WAVE_COMPLETED: EventType.WAVE_COMPLETE,
     # Phase lifecycle
-    "phase_check": None,  # Neutral — result-specific events handle rewards
-    "phase_enter": None,
-    "phase_revert": -0.3,
+    EventType.PHASE_CHECK: None,  # Neutral — result-specific events handle rewards
+    EventType.PHASE_ENTER: None,
+    EventType.PHASE_REVERT: -0.3,
     # Run lifecycle
-    "run_init": None,
-    "run_resumed": None,
-    "session_start": None,
+    EventType.RUN_INIT: None,
+    EventType.RUN_RESUMED: None,
+    EventType.SESSION_START: None,
     # PRD lifecycle
-    "prd_status_change": None,  # Handled by data-aware routing below
-    "prd_created": 0.3,
+    EventType.PRD_STATUS_CHANGE: None,  # Handled by data-aware routing below
+    EventType.PRD_CREATED: 0.3,
     # Testing
-    "test_run": None,  # Data-aware: routed by passed/failed in event_data
+    EventType.TEST_RUN: None,  # Data-aware: routed by passed/failed in event_data
     # Build
-    "build_passed": 0.6,
-    "build_failed": -0.4,
+    EventType.BUILD_PASSED: 0.6,
+    EventType.BUILD_FAILED: -0.4,
     # Checkpoint/reflection
-    "checkpoint": 0.1,
-    "reflection_completed": "reflection_complete",
-    "claude_md_synced": 0.3,
+    EventType.CHECKPOINT: 0.1,
+    EventType.REFLECTION_COMPLETED: EventType.REFLECTION_COMPLETE,
+    EventType.CLAUDE_MD_SYNCED: 0.3,
     # Compliance
-    "compliance_check": None,  # Data-aware routing
+    EventType.COMPLIANCE_CHECK: None,  # Data-aware routing
 }
 
 
@@ -538,16 +533,12 @@ def correlate_recalls(
 
     now = datetime.now(timezone.utc)
 
-    # Determine the cutoff timestamp based on scope
+    # Determine the cutoff timestamp based on scope (session overrides window)
+    cutoff_ts = now - timedelta(minutes=window_minutes)
     if effective_scope == "session":
         session_start = _find_session_start_ts(trw_dir)
         if session_start is not None:
             cutoff_ts = session_start
-        else:
-            # Fallback to window if no session boundary found
-            cutoff_ts = now - timedelta(minutes=window_minutes)
-    else:
-        cutoff_ts = now - timedelta(minutes=window_minutes)
 
     # Total seconds from cutoff to now (for discount calculation)
     total_window_secs = max((now - cutoff_ts).total_seconds(), 1.0)
@@ -574,8 +565,11 @@ def correlate_recalls(
         if elapsed_secs < 0:
             continue
 
-        # Recency discount: 1.0 at t=0, 0.5 at t=window_edge
-        discount = max(0.5, 1.0 - elapsed_secs / total_window_secs)
+        # Recency discount: 1.0 at t=0, floor at t=window_edge
+        discount = max(
+            _config.scoring_recency_discount_floor,
+            1.0 - elapsed_secs / total_window_secs,
+        )
 
         matched_ids = record.get("matched_ids", [])
         if isinstance(matched_ids, list):
@@ -684,8 +678,8 @@ def _resolve_event_reward(
 
     PRD-CORE-026-FR01/FR03: Resolution order:
     1. Direct REWARD_MAP match
-    2. EVENT_ALIASES -> REWARD_MAP key or direct float
-    3. Data-aware routing (e.g., test_run + passed=true -> tests_passed)
+    2. Data-aware routing (e.g., test_run + passed=true -> tests_passed)
+    3. EVENT_ALIASES -> REWARD_MAP key or direct float
     4. Error keyword fallback
 
     Args:
@@ -703,21 +697,21 @@ def _resolve_event_reward(
     # 2. Data-aware routing for composite events (before alias resolution,
     #    since data-aware events have None aliases as default fallback)
     if event_data:
-        if event_type == "test_run":
+        if event_type == EventType.TEST_RUN:
             passed = event_data.get("passed")
             if passed is True or str(passed).lower() == "true":
-                return REWARD_MAP.get("tests_passed"), "tests_passed"
-            return REWARD_MAP.get("tests_failed"), "tests_failed"
-        if event_type == "prd_status_change":
+                return REWARD_MAP.get(EventType.TESTS_PASSED), EventType.TESTS_PASSED
+            return REWARD_MAP.get(EventType.TESTS_FAILED), EventType.TESTS_FAILED
+        if event_type == EventType.PRD_STATUS_CHANGE:
             new_status = str(event_data.get("new_status", "")).lower()
             if new_status == "approved":
-                return REWARD_MAP.get("prd_approved"), "prd_approved"
-        if event_type == "compliance_check":
+                return REWARD_MAP.get(EventType.PRD_APPROVED), EventType.PRD_APPROVED
+        if event_type == EventType.COMPLIANCE_CHECK:
             score = event_data.get("score")
             if score is not None:
                 try:
                     if float(str(score)) >= 0.8:
-                        return REWARD_MAP.get("compliance_passed"), "compliance_passed"
+                        return REWARD_MAP.get(EventType.COMPLIANCE_PASSED), EventType.COMPLIANCE_PASSED
                 except (ValueError, TypeError):
                     pass
 
@@ -734,8 +728,8 @@ def _resolve_event_reward(
             return mapped_reward, alias
 
     # 4. Error keyword fallback
-    if any(kw in event_type.lower() for kw in _ERROR_KEYWORDS):
-        return -0.3, event_type
+    if any(kw in event_type.lower() for kw in _config.scoring_error_keywords):
+        return _config.scoring_error_fallback_reward, event_type
 
     return None, event_type
 

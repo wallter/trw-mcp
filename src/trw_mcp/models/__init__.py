@@ -121,6 +121,7 @@ from trw_mcp.models.requirements import (
 # run
 from trw_mcp.models.run import (
     Event,
+    EventType,
     OutputContract,
     PHASE_ORDER,
     ReversionTrigger,
@@ -267,6 +268,7 @@ __all__ = [
     "ValidationResult",
     # run
     "Event",
+    "EventType",
     "OutputContract",
     "PHASE_ORDER",
     "PhaseTimeCaps",
