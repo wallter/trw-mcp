@@ -19,33 +19,30 @@ class TRWConfig(BaseSettings):
     1. Environment variables (prefixed TRW_)
     2. .trw/config.yaml overrides (loaded at runtime)
     3. Defaults defined here (from FRAMEWORK.md §DEFAULTS)
+
+    Unknown environment variables and config.yaml keys are silently ignored.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="TRW_",
         case_sensitive=False,
-        # extra="ignore": unknown env vars (e.g. TRW_CORRELATION_MIN from
-        # older configs) and unknown .trw/config.yaml keys are silently
-        # dropped rather than raising validation errors.
         extra="ignore",
     )
 
-    # Orchestration defaults (from FRAMEWORK.md §DEFAULTS)
+    # Orchestration: wave/shard execution limits
     parallelism_max: int = 10
     timebox_hours: int = 8
+    max_research_waves: int = 3
 
-    # ORC prompt-level defaults (FRAMEWORK.md §DEFAULTS).
-    # Not consumed by MCP tools — ORC tracks these at the prompt level.
+    # Orchestration: ORC-level consensus thresholds
+    # Not consumed by MCP tools — tracked at prompt level only
     min_shards_target: int = 3
     min_shards_floor: int = 2
     consensus_quorum: float = 0.67
-    checkpoint_secs: int = 600
     max_child_depth: int = 2
-    max_research_waves: int = 3
+    checkpoint_secs: int = 600
 
-    # Phase time caps (percentage of total timebox)
-    # NOTE: Framework-documented defaults; not enforced by MCP tools.
-    # Used by PhaseTimeCaps for ORC-side time tracking only.
+    # Phase time caps (percentage of total timebox, ORC-level tracking)
     phase_cap_research: float = 0.25
     phase_cap_plan: float = 0.15
     phase_cap_implement: float = 0.40
@@ -53,50 +50,49 @@ class TRWConfig(BaseSettings):
     phase_cap_review: float = 0.05
     phase_cap_deliver: float = 0.05
 
-    # Learning defaults
+    # Learning: storage and retrieval
     learning_max_entries: int = 500
     learning_promotion_impact: float = 0.7
     learning_prune_age_days: int = 30
     learning_repeated_op_threshold: int = 3
     recall_receipt_max_entries: int = 1000
+    recall_max_results: int = 25
+    recall_compact_fields: frozenset[str] = frozenset(
+        {"id", "summary", "impact", "tags", "status"}
+    )
 
-    # CLAUDE.md / agents.md generation limits
+    # Learning: utility scoring with Ebbinghaus decay (PRD-CORE-004, PRD-CORE-026)
+    learning_decay_half_life_days: float = 14.0
+    learning_decay_use_exponent: float = 0.6
+    learning_utility_prune_threshold: float = 0.10
+    learning_utility_delete_threshold: float = 0.05
+    q_learning_rate: float = 0.15
+    q_recurrence_bonus: float = 0.02
+    q_cold_start_threshold: int = 3
+    source_human_utility_boost: float = 0.1
+    access_count_utility_boost_cap: float = 0.15
+
+    # Learning: outcome correlation tracking
+    learning_outcome_correlation_window_minutes: int = 240
+    learning_outcome_correlation_scope: str = "session"
+    learning_outcome_history_cap: int = 20
+    recall_utility_lambda: float = 0.3
+
+    # Documentation generation
     claude_md_max_lines: int = 200
     sub_claude_md_max_lines: int = 50
     agents_md_enabled: bool = True
 
-    # Utility scoring (PRD-CORE-004)
-    learning_decay_half_life_days: float = 14.0
-    learning_decay_use_exponent: float = 0.6
-    q_learning_rate: float = 0.15
-    q_recurrence_bonus: float = 0.02
-    q_cold_start_threshold: int = 3
-    learning_utility_prune_threshold: float = 0.10
-    learning_utility_delete_threshold: float = 0.05
-    recall_utility_lambda: float = 0.3
-    recall_max_results: int = 25
-    recall_compact_fields: frozenset[str] = frozenset({"id", "summary", "impact", "tags", "status"})
-    learning_outcome_correlation_window_minutes: int = 240
-    learning_outcome_correlation_scope: str = "session"
-    learning_outcome_history_cap: int = 20
-
-    # PRD-CORE-026: Source attribution utility boost
-    source_human_utility_boost: float = 0.1
-    # PRD-CORE-026: access_count utility boost cap
-    access_count_utility_boost_cap: float = 0.15
-
-    # Scoring subsystem (Sprint 8: extracted from scoring.py magic numbers)
+    # Scoring subsystem (outcome-based utility, Sprint 8 extraction)
     scoring_default_days_unused: int = 30
+    scoring_recency_discount_floor: float = 0.5
+    scoring_error_fallback_reward: float = -0.3
     scoring_error_keywords: tuple[str, ...] = (
         "error", "fail", "exception", "crash", "timeout",
     )
-    scoring_recency_discount_floor: float = 0.5
-    scoring_error_fallback_reward: float = -0.3
 
-    # Task directory root (PRD-QUAL-002)
+    # Directory structure and paths
     task_root: str = "docs"
-
-    # Paths (relative to project root, resolved at runtime)
     trw_dir: str = ".trw"
     learnings_dir: str = "learnings"
     entries_dir: str = "entries"
@@ -108,19 +104,20 @@ class TRWConfig(BaseSettings):
     scratch_dir: str = "scratch"
     events_file: str = "events.jsonl"
     checkpoints_file: str = "checkpoints.jsonl"
-
-    # Framework deployment
     frameworks_dir: str = "frameworks"
     templates_dir: str = "templates"
+
+    # Framework version and AARE-F standard
+    framework_version: str = "v18.1_TRW"
     aaref_version: str = "v1.1.0"
 
-    # AARE-F quality gates
+    # PRD quality gates (AARE-F standard)
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
     traceability_coverage_min: float = 0.90
     consistency_validation_min: float = 0.95
 
-    # Semantic validation — dimension weights (must sum to 100)
+    # Semantic validation: quality dimension weights (must sum to 100)
     validation_density_weight: float = 25.0
     validation_structure_weight: float = 15.0
     validation_traceability_weight: float = 20.0
@@ -128,38 +125,36 @@ class TRWConfig(BaseSettings):
     validation_readability_weight: float = 10.0
     validation_ears_weight: float = 15.0
 
-    # Semantic validation — tier thresholds
+    # Semantic validation: PRD status thresholds
     validation_skeleton_threshold: float = 30.0
     validation_draft_threshold: float = 60.0
     validation_review_threshold: float = 85.0
 
-    # Semantic validation — readability
+    # Semantic validation: readability (Flesch-Kincaid grade level)
     validation_fk_optimal_min: float = 8.0
     validation_fk_optimal_max: float = 12.0
 
-    # Phase gate PRD enforcement (PRD-CORE-009)
+    # Phase gates and PRD enforcement (PRD-CORE-009)
     phase_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     prd_min_content_density: float = 0.30
     prd_required_status_for_implement: str = "approved"
-
-    # PRD directory path (relative to project root)
     prds_relative_path: str = "docs/requirements-aare-f/prds"
     index_auto_sync_on_status_change: bool = True
 
-    # Grooming (PRD-CORE-011)
+    # PRD grooming (PRD-CORE-011)
     grooming_max_iterations: int = 5
     grooming_target_completeness: float = 0.85
     grooming_research_scope: Literal["full", "codebase", "minimal"] = "full"
     grooming_placeholder_density_threshold: float = 0.10
     grooming_partial_density_threshold: float = 0.20
 
-    # Findings pipeline (PRD-CORE-010)
+    # Research findings pipeline (PRD-CORE-010)
     finding_dedup_threshold: float = 0.6
     findings_dir: str = "findings"
     findings_entries_dir: str = "entries"
     findings_registry_file: str = "registry.yaml"
 
-    # Success pattern extraction (PRD-QUAL-001)
+    # Reflection and pattern extraction (PRD-QUAL-001)
     reflect_sequence_lookback: int = 3
     reflect_max_positive_learnings: int = 5
     reflect_max_success_patterns: int = 5
@@ -169,7 +164,7 @@ class TRWConfig(BaseSettings):
     reversion_rate_elevated: float = 0.15
     reversion_rate_concerning: float = 0.30
 
-    # Technical debt (PRD-CORE-016)
+    # Technical debt registry and scoring (PRD-CORE-016)
     debt_registry_filename: str = "debt-registry.yaml"
     debt_id_prefix: str = "DEBT"
     debt_initial_decay_score: float = 0.5
@@ -182,7 +177,7 @@ class TRWConfig(BaseSettings):
     debt_budget_high_ratio: float = 0.15
     debt_default_wave_size: int = 5
 
-    # Compliance enforcement (PRD-QUAL-003)
+    # Compliance auditing (PRD-QUAL-003)
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
     compliance_long_session_event_threshold: int = 5
     compliance_pass_threshold: float = 0.8
@@ -191,14 +186,14 @@ class TRWConfig(BaseSettings):
     compliance_history_file: str = "history.jsonl"
     compliance_changelog_filename: str = "CHANGELOG.md"
 
-    # Wave adaptation (PRD-CORE-006)
+    # Wave adaptation and iteration (PRD-CORE-006)
     adaptation_enabled: bool = True
     max_total_waves: int = 8
     max_adaptations_per_run: int = 5
     max_shards_added_per_adaptation: int = 3
     adaptation_auto_approve_threshold: int = 5
 
-    # Velocity instrumentation (PRD-CORE-015)
+    # Velocity tracking and statistical analysis (PRD-CORE-015)
     velocity_alert_min_runs: int = 5
     velocity_alert_r_squared_min: float = 0.4
     framework_overhead_threshold: float = 0.30
@@ -208,7 +203,7 @@ class TRWConfig(BaseSettings):
     velocity_sign_test_alpha: float = 0.1
     velocity_confounder_jump_ratio: float = 1.5
 
-    # Project source paths (PRD-QUAL-006, PRD-CORE-015)
+    # Project source paths for testing and analysis
     source_package_path: str = "trw-mcp/src"
     source_package_name: str = "trw_mcp"
     tests_relative_path: str = "trw-mcp/tests"
@@ -218,11 +213,12 @@ class TRWConfig(BaseSettings):
     llm_enabled: bool = True
     llm_default_model: str = "haiku"
 
-    # Architecture encoding (PRD-QUAL-007)
+    # Architecture analysis (PRD-QUAL-007)
     architecture_style: str = ""
     architecture_fitness_enabled: bool = False
+    auto_detect_bounded_contexts: bool = True
 
-    # Adaptive gates (PRD-QUAL-005)
+    # Adaptive gates for shard evaluation (PRD-QUAL-005)
     gate_default_type: str = "FULL"
     gate_strategy: str = "hybrid"
     gate_early_stop_confidence: float = 0.85
@@ -236,32 +232,17 @@ class TRWConfig(BaseSettings):
     gate_tokens_per_1k_chars: int = 500
     gate_architecture_score_penalty: float = 0.1
 
-    # Debug mode (enables file logging to .trw/logs/)
-    debug: bool = False
-    logs_dir: str = "logs"
+    # Sprint management and workflow
+    sprint_code_simplifier_wave_size: int = 10
+    sprint_commit_pattern: str = "feat(sprint{num}): Track {track}"
 
-    # Telemetry (off by default)
-    telemetry: bool = False
-
-    # Framework version
-    framework_version: str = "v18.1_TRW"
-
-    # Phase overlay system — paths and drift detection (PRD-CORE-017)
+    # Phase overlays, drift detection, and scoped recall (PRD-CORE-017)
     overlays_dir: str = "overlays"
     vocabulary_file: str = "vocabulary.yaml"
     drift_check_on_init: bool = False
-
-    # Phase-scoped recall scoring (PRD-CORE-017)
-    # Bonuses applied to learning entries during recall based on phase scope:
-    #   matching    — entry's phase_scope matches the current phase
-    #   nonmatching — entry's phase_scope differs from the current phase
-    #   global      — entry has no phase_scope (applies to all phases)
     phase_bonus_matching: float = 0.15
     phase_bonus_global: float = 0.0
     phase_bonus_nonmatching: float = -0.05
-
-    # Phase input criteria strictness (PRD-CORE-017, consumed by validation.py)
-    # When True, missing phase prerequisites are errors; when False, warnings.
     strict_input_criteria: bool = False
 
     # Build verification gate (PRD-CORE-023)
@@ -272,12 +253,17 @@ class TRWConfig(BaseSettings):
     build_check_pytest_args: str = ""
     build_check_mypy_args: str = "--strict"
 
+    # Debug and telemetry
+    debug: bool = False
+    logs_dir: str = "logs"
+    telemetry: bool = False
+
 
 class PhaseTimeCaps(BaseModel):
-    """Phase time cap percentages derived from TRWConfig.
+    """Phase time cap percentages — ORC-level time tracking only.
 
-    Convenience accessor mapping phase names to their time caps.
-    NOTE: Framework-documented defaults only. Not enforced by MCP tools —
+    Convenience accessor for mapping phase names to their target time fractions.
+    NOTE: Framework-documented defaults; not enforced by MCP tools.
     ORC tracks wall-clock time against these caps at the prompt level.
     """
 
@@ -290,7 +276,6 @@ class PhaseTimeCaps(BaseModel):
     review: float = 0.05
     deliver: float = 0.05
 
-    # Maps phase names to field names (handles the validate/validate_phase asymmetry).
     _PHASE_FIELDS: ClassVar[dict[str, str]] = {
         "research": "research",
         "plan": "plan",
@@ -301,9 +286,13 @@ class PhaseTimeCaps(BaseModel):
     }
 
     def get_cap(self, phase: str) -> float:
-        """Return the time cap fraction for the given phase name.
+        """Return the time cap fraction for the given phase.
 
-        Raises ValueError if the phase name is not recognized.
+        Args:
+            phase: Phase name (research, plan, implement, validate, review, deliver).
+
+        Raises:
+            ValueError: If phase is not recognized.
         """
         field = self._PHASE_FIELDS.get(phase)
         if field is None:
