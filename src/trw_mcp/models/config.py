@@ -76,8 +76,14 @@ class TRWConfig(BaseSettings):
     recall_utility_lambda: float = 0.3
     recall_max_results: int = 25
     recall_compact_fields: frozenset[str] = frozenset({"id", "summary", "impact", "tags", "status"})
-    learning_outcome_correlation_window_minutes: int = 30
+    learning_outcome_correlation_window_minutes: int = 240
+    learning_outcome_correlation_scope: str = "session"
     learning_outcome_history_cap: int = 20
+
+    # PRD-CORE-026: Source attribution utility boost
+    source_human_utility_boost: float = 0.1
+    # PRD-CORE-026: access_count utility boost cap
+    access_count_utility_boost_cap: float = 0.15
 
     # Task directory root (PRD-QUAL-002)
     task_root: str = "docs"

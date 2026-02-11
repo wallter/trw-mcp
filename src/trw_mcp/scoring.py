@@ -13,7 +13,7 @@ Research basis:
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
@@ -103,6 +103,10 @@ def compute_utility_score(
     half_life_days: float = 14.0,
     use_exponent: float = 0.6,
     cold_start_threshold: int = 3,
+    access_count: int = 0,
+    source_type: str = "agent",
+    access_count_boost_cap: float = 0.15,
+    source_human_boost: float = 0.1,
 ) -> float:
     """Compute composite utility score combining Q-value with Ebbinghaus decay.
 
@@ -112,7 +116,10 @@ def compute_utility_score(
     Formula:
         retention = recurrence_strength * exp(-effective_decay * days)
         effective_q = blend(impact, q_value, q_observations)
-        utility = effective_q * retention
+        utility = effective_q * retention + access_boost + source_boost
+
+    PRD-CORE-026: Added access_count boost (sub-linear, capped) and
+    source_type boost (+0.1 for human-sourced learnings).
 
     Args:
         q_value: Current Q-value from outcome tracking (0.0-1.0).
@@ -128,6 +135,10 @@ def compute_utility_score(
             Default 0.6 (from CortexGraph). Prevents over-reinforcement.
         cold_start_threshold: Number of Q-observations before fully
             trusting q_value over base_impact. Default 3.
+        access_count: Number of times this learning was recalled.
+        source_type: Learning provenance — 'human' or 'agent'.
+        access_count_boost_cap: Maximum boost from access_count.
+        source_human_boost: Utility boost for human-sourced learnings.
 
     Returns:
         Composite utility score in [0.0, 1.0].
@@ -149,8 +160,17 @@ def compute_utility_score(
     effective_decay = decay_rate / recurrence_strength
     retention = math.exp(-effective_decay * max(days_since_last_access, 0))
 
-    # Composite score
+    # Base composite score
     utility = effective_q * retention
+
+    # PRD-CORE-026-FR05: access_count boost (sub-linear, capped)
+    if access_count > 0:
+        utility += min(access_count_boost_cap, 0.05 * math.log1p(access_count))
+
+    # PRD-CORE-026-FR06: source_type boost for human-sourced learnings
+    if source_type == "human":
+        utility += source_human_boost
+
     return max(0.0, min(1.0, utility))
 
 
@@ -234,6 +254,9 @@ def rank_by_utility(
         recurrence = int(str(entry.get("recurrence", 1)))
         days_unused = _days_since_access(entry, today)
 
+        access_ct = int(str(entry.get("access_count", 0)))
+        src_type = str(entry.get("source_type", "agent"))
+
         utility = compute_utility_score(
             q_value=q_value,
             days_since_last_access=days_unused,
@@ -243,6 +266,10 @@ def rank_by_utility(
             half_life_days=_config.learning_decay_half_life_days,
             use_exponent=_config.learning_decay_use_exponent,
             cold_start_threshold=_config.q_cold_start_threshold,
+            access_count=access_ct,
+            source_type=src_type,
+            access_count_boost_cap=_config.access_count_utility_boost_cap,
+            source_human_boost=_config.source_human_utility_boost,
         )
 
         # Phase bonus (PRD-CORE-017): match > global > non-match
@@ -318,6 +345,8 @@ def utility_based_prune_candidates(
         q_observations = int(str(data.get("q_observations", 0)))
         base_impact = float(str(data.get("impact", 0.5)))
         days_since_access = _days_since_access(data, today, fallback_days=age_days)
+        access_ct = int(str(data.get("access_count", 0)))
+        src_type = str(data.get("source_type", "agent"))
 
         utility = compute_utility_score(
             q_value=q_value,
@@ -328,6 +357,10 @@ def utility_based_prune_candidates(
             half_life_days=_config.learning_decay_half_life_days,
             use_exponent=_config.learning_decay_use_exponent,
             cold_start_threshold=_config.q_cold_start_threshold,
+            access_count=access_ct,
+            source_type=src_type,
+            access_count_boost_cap=_config.access_count_utility_boost_cap,
+            source_human_boost=_config.source_human_utility_boost,
         )
 
         # Tier 2: Delete-level utility (effectively forgotten)
@@ -371,6 +404,7 @@ def utility_based_prune_candidates(
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
 
 # Reward mapping: event_type -> reward signal
+# PRD-CORE-026: Expanded from 6 to 12 entries
 REWARD_MAP: dict[str, float] = {
     "tests_passed": 0.8,
     "tests_failed": -0.3,
@@ -378,26 +412,124 @@ REWARD_MAP: dict[str, float] = {
     "phase_gate_passed": 1.0,
     "phase_gate_failed": -0.5,
     "wave_validation_passed": 0.7,
+    "shard_complete": 0.6,
+    "reflection_complete": 0.4,
+    "compliance_passed": 0.5,
+    "file_modified": 0.2,
+    "prd_approved": 0.7,
+    "wave_complete": 0.8,
 }
+
+# PRD-CORE-026: Alias mapping for internal event types that don't match
+# REWARD_MAP keys directly. Maps event_type -> REWARD_MAP key or direct
+# float reward. None values are explicitly ignored (no reward).
+EVENT_ALIASES: dict[str, str | float | None] = {
+    # Wave/shard lifecycle
+    "shard_completed": "shard_complete",
+    "shard_started": None,  # No reward for starting
+    "wave_validated": "wave_validation_passed",
+    "wave_completed": "wave_complete",
+    # Phase lifecycle
+    "phase_check": None,  # Neutral — result-specific events handle rewards
+    "phase_enter": None,
+    "phase_revert": -0.3,
+    # Run lifecycle
+    "run_init": None,
+    "run_resumed": None,
+    "session_start": None,
+    # PRD lifecycle
+    "prd_status_change": None,  # Handled by data-aware routing below
+    "prd_created": 0.3,
+    # Testing
+    "test_run": None,  # Data-aware: routed by passed/failed in event_data
+    # Build
+    "build_passed": 0.6,
+    "build_failed": -0.4,
+    # Checkpoint/reflection
+    "checkpoint": 0.1,
+    "reflection_completed": "reflection_complete",
+    "claude_md_synced": 0.3,
+    # Compliance
+    "compliance_check": None,  # Data-aware routing
+}
+
+
+def _find_session_start_ts(trw_dir: Path) -> datetime | None:
+    """Find the timestamp of the most recent session-start event.
+
+    Scans all events.jsonl files under docs/*/runs/*/meta/ for the most
+    recent ``run_init`` or ``session_start`` event. Used for session-scoped
+    correlation.
+
+    Args:
+        trw_dir: Path to .trw directory.
+
+    Returns:
+        Timestamp of the most recent session-start event, or None.
+    """
+    project_root = trw_dir.parent
+    task_root = project_root / _config.task_root
+    latest_ts: datetime | None = None
+
+    if not task_root.exists():
+        return None
+
+    for task_dir in task_root.iterdir():
+        runs_dir = task_dir / "runs"
+        if not runs_dir.is_dir():
+            continue
+        for run_dir in sorted(runs_dir.iterdir(), reverse=True):
+            events_path = run_dir / "meta" / "events.jsonl"
+            if not events_path.exists():
+                continue
+            records = _reader.read_jsonl(events_path)
+            for record in reversed(records):
+                event_type = str(record.get("event", ""))
+                if event_type in ("run_init", "session_start"):
+                    ts_str = str(record.get("ts", ""))
+                    if ts_str:
+                        try:
+                            ts = datetime.fromisoformat(ts_str)
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                            if latest_ts is None or ts > latest_ts:
+                                latest_ts = ts
+                        except ValueError:
+                            continue
+            # Only check the most recent run
+            break
+
+    return latest_ts
 
 
 def correlate_recalls(
     trw_dir: Path,
     window_minutes: int,
+    *,
+    scope: str = "",
 ) -> list[tuple[str, float]]:
-    """Find learning IDs from recent recall receipts within the time window.
+    """Find learning IDs from recent recall receipts within the correlation scope.
+
+    PRD-CORE-026-FR04: Session-scoped correlation replaces the fixed 30-min
+    window. When scope="session", correlates with ALL recall receipts since
+    the last run_init/session_start event. Falls back to window-based when
+    no session boundary is found.
 
     Returns (learning_id, recency_discount) tuples. Discount ranges from
     1.0 (just recalled) to 0.5 (at edge of window).
 
     Args:
         trw_dir: Path to .trw directory.
-        window_minutes: How many minutes back to look for recall receipts.
+        window_minutes: How many minutes back to look for recall receipts
+            (used when scope is "window" or as fallback).
+        scope: Correlation scope — "session" or "window". Empty string
+            reads from config.
 
     Returns:
         List of (learning_id, discount) tuples. May contain duplicates
         across receipts (caller should deduplicate).
     """
+    effective_scope = scope or _config.learning_outcome_correlation_scope
     receipt_path = (
         trw_dir / _config.learnings_dir / _config.receipts_dir / "recall_log.jsonl"
     )
@@ -405,7 +537,20 @@ def correlate_recalls(
         return []
 
     now = datetime.now(timezone.utc)
-    window_secs = window_minutes * 60
+
+    # Determine the cutoff timestamp based on scope
+    if effective_scope == "session":
+        session_start = _find_session_start_ts(trw_dir)
+        if session_start is not None:
+            cutoff_ts = session_start
+        else:
+            # Fallback to window if no session boundary found
+            cutoff_ts = now - timedelta(minutes=window_minutes)
+    else:
+        cutoff_ts = now - timedelta(minutes=window_minutes)
+
+    # Total seconds from cutoff to now (for discount calculation)
+    total_window_secs = max((now - cutoff_ts).total_seconds(), 1.0)
     results: list[tuple[str, float]] = []
 
     records = _reader.read_jsonl(receipt_path)
@@ -422,12 +567,15 @@ def correlate_recalls(
         if receipt_ts.tzinfo is None:
             receipt_ts = receipt_ts.replace(tzinfo=timezone.utc)
 
+        # Skip receipts outside the correlation scope
+        if receipt_ts < cutoff_ts:
+            continue
         elapsed_secs = (now - receipt_ts).total_seconds()
-        if elapsed_secs < 0 or elapsed_secs > window_secs:
+        if elapsed_secs < 0:
             continue
 
-        # Recency discount: 1.0 at t=0, 0.5 at t=window
-        discount = max(0.5, 1.0 - elapsed_secs / max(window_secs, 1))
+        # Recency discount: 1.0 at t=0, 0.5 at t=window_edge
+        discount = max(0.5, 1.0 - elapsed_secs / total_window_secs)
 
         matched_ids = record.get("matched_ids", [])
         if isinstance(matched_ids, list):
@@ -460,7 +608,9 @@ def process_outcome(
     from trw_mcp.state.analytics import find_entry_by_id
 
     correlated = correlate_recalls(
-        trw_dir, _config.learning_outcome_correlation_window_minutes,
+        trw_dir,
+        _config.learning_outcome_correlation_window_minutes,
+        scope=_config.learning_outcome_correlation_scope,
     )
     if not correlated:
         return []
@@ -526,34 +676,95 @@ def process_outcome(
     return updated_ids
 
 
+def _resolve_event_reward(
+    event_type: str,
+    event_data: dict[str, object] | None = None,
+) -> tuple[float | None, str]:
+    """Resolve an event type to a reward value and canonical label.
+
+    PRD-CORE-026-FR01/FR03: Resolution order:
+    1. Direct REWARD_MAP match
+    2. EVENT_ALIASES -> REWARD_MAP key or direct float
+    3. Data-aware routing (e.g., test_run + passed=true -> tests_passed)
+    4. Error keyword fallback
+
+    Args:
+        event_type: The event type string (e.g., 'shard_completed').
+        event_data: Optional event data dict for data-aware routing.
+
+    Returns:
+        Tuple of (reward_value_or_None, canonical_label).
+    """
+    # 1. Direct REWARD_MAP match
+    reward = REWARD_MAP.get(event_type)
+    if reward is not None:
+        return reward, event_type
+
+    # 2. Data-aware routing for composite events (before alias resolution,
+    #    since data-aware events have None aliases as default fallback)
+    if event_data:
+        if event_type == "test_run":
+            passed = event_data.get("passed")
+            if passed is True or str(passed).lower() == "true":
+                return REWARD_MAP.get("tests_passed"), "tests_passed"
+            return REWARD_MAP.get("tests_failed"), "tests_failed"
+        if event_type == "prd_status_change":
+            new_status = str(event_data.get("new_status", "")).lower()
+            if new_status == "approved":
+                return REWARD_MAP.get("prd_approved"), "prd_approved"
+        if event_type == "compliance_check":
+            score = event_data.get("score")
+            if score is not None:
+                try:
+                    if float(str(score)) >= 0.8:
+                        return REWARD_MAP.get("compliance_passed"), "compliance_passed"
+                except (ValueError, TypeError):
+                    pass
+
+    # 3. EVENT_ALIASES resolution
+    alias = EVENT_ALIASES.get(event_type)
+    if alias is None and event_type in EVENT_ALIASES:
+        # Explicit None = deliberately no reward
+        return None, event_type
+    if isinstance(alias, (int, float)):
+        return float(alias), event_type
+    if isinstance(alias, str):
+        mapped_reward = REWARD_MAP.get(alias)
+        if mapped_reward is not None:
+            return mapped_reward, alias
+
+    # 4. Error keyword fallback
+    if any(kw in event_type.lower() for kw in _ERROR_KEYWORDS):
+        return -0.3, event_type
+
+    return None, event_type
+
+
 def process_outcome_for_event(
     event_type: str,
+    event_data: dict[str, object] | None = None,
 ) -> list[str]:
     """Public entry point for orchestration tools to trigger outcome correlation.
 
-    Checks if the event type has a known reward mapping, then correlates
-    with recent recalls and updates Q-values. Best-effort: failures
-    are silently caught and logged.
+    PRD-CORE-026-FR03: Resolves aliases before REWARD_MAP lookup, accepts
+    optional event_data for data-aware routing (e.g., test_run with
+    passed=true routes to tests_passed reward).
 
     Args:
         event_type: The event type string (e.g., 'tests_passed').
+        event_data: Optional event data dict for data-aware routing.
 
     Returns:
         List of learning IDs updated, or empty list if no correlation.
     """
-    # Check for direct match first
-    reward = REWARD_MAP.get(event_type)
-
-    # Check for error keywords if no direct match
-    if reward is None and any(kw in event_type.lower() for kw in _ERROR_KEYWORDS):
-        reward = -0.3
+    reward, label = _resolve_event_reward(event_type, event_data)
 
     if reward is None:
         return []
 
     try:
         trw_dir = resolve_trw_dir()
-        return process_outcome(trw_dir, reward, event_type)
+        return process_outcome(trw_dir, reward, label)
     except (StateError, OSError) as exc:
         logger.debug("outcome_correlation_skipped", reason=str(exc))
         return []

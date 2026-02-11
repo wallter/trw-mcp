@@ -669,10 +669,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             event_data,
         )
 
-        # Outcome correlation (PRD-CORE-004 Phase 1c) — best-effort
+        # Outcome correlation (PRD-CORE-004 Phase 1c, PRD-CORE-026-FR03) — best-effort
         q_updated: list[str] = []
         try:
-            q_updated = process_outcome_for_event(event_type)
+            q_updated = process_outcome_for_event(event_type, event_data)
         except Exception:  # noqa: BLE001 — best-effort, never fail the event
             pass
 

@@ -62,6 +62,16 @@ class LearningEntry(BaseModel):
     )
     shard_id: str | None = None
 
+    # PRD-CORE-026: Source attribution for human vs agent learnings
+    source_type: str = Field(
+        default="agent",
+        description="Learning provenance: 'human' or 'agent'.",
+    )
+    source_identity: str = Field(
+        default="",
+        description="Name of the source (e.g., 'Tyler', 'claude-opus-4-6').",
+    )
+
     # PRD-QUAL-007-FR04: ADR (Architecture Decision Record) fields
     adr_status: str | None = Field(
         default=None,

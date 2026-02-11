@@ -494,6 +494,8 @@ def extract_learnings_mechanical(
                 tags=["error", "auto-discovered"],
                 evidence=[str(err.get("ts", ""))],
                 impact=0.6,
+                source_type="agent",
+                source_identity="trw_reflect",
             )
             save_learning_entry(trw_dir, entry)
             new_learnings.append({
@@ -511,6 +513,8 @@ def extract_learnings_mechanical(
                 tags=["repeated", "optimization"],
                 impact=0.5,
                 recurrence=count,
+                source_type="agent",
+                source_identity="trw_reflect",
             )
             save_learning_entry(trw_dir, entry)
             new_learnings.append({

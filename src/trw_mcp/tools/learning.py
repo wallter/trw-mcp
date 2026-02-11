@@ -273,6 +273,8 @@ def register_learning_tools(server: FastMCP) -> None:
                 tags=["success", "pattern", "auto-discovered"],
                 impact=0.5,
                 recurrence=int(sp.get("count", 1)),
+                source_type="agent",
+                source_identity="trw_reflect",
             )
             save_learning_entry(trw_dir, sp_entry)
             new_learnings.append({"id": sp_id, "summary": sp_entry.summary})
@@ -357,6 +359,8 @@ def register_learning_tools(server: FastMCP) -> None:
         evidence: list[str] | None = None,
         impact: float = 0.5,
         shard_id: str | None = None,
+        source_type: str = "agent",
+        source_identity: str = "",
     ) -> dict[str, str]:
         """Record a specific learning entry manually to .trw/learnings/.
 
@@ -367,6 +371,8 @@ def register_learning_tools(server: FastMCP) -> None:
             evidence: Supporting evidence (file paths, error messages, etc.).
             impact: Impact score from 0.0 to 1.0 (higher = more important).
             shard_id: Optional shard identifier for sub-agent attribution.
+            source_type: Learning provenance — "human" or "agent".
+            source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
         """
         trw_dir = resolve_trw_dir()
         _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
@@ -378,6 +384,8 @@ def register_learning_tools(server: FastMCP) -> None:
             tags=tags or [], evidence=evidence or [],
             impact=impact, shard_id=shard_id,
             phase_scope=current_phase,
+            source_type=source_type,
+            source_identity=source_identity,
         )
         entry_path = save_learning_entry(trw_dir, entry)
         update_analytics(trw_dir, 1)
