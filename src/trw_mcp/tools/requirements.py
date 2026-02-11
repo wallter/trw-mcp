@@ -1,6 +1,6 @@
-"""TRW AARE-F requirements tools — prd_create, prd_validate, traceability_check, prd_status_update, prd_groom.
+"""TRW AARE-F requirements tools — prd_create, prd_validate, traceability_check, prd_status_update, index_sync, prd_groom.
 
-These 5 tools codify the AARE-F Framework v1.1.0 requirements engineering
+These 6 tools codify the AARE-F Framework v1.1.0 requirements engineering
 process as executable MCP tools.
 """
 
@@ -55,7 +55,7 @@ _writer = FileStateWriter()
 
 
 def register_requirements_tools(server: FastMCP) -> None:
-    """Register all 5 AARE-F requirements tools on the MCP server.
+    """Register all 6 AARE-F requirements tools on the MCP server.
 
     Args:
         server: FastMCP server instance to register tools on.
@@ -508,6 +508,44 @@ def register_requirements_tools(server: FastMCP) -> None:
             "reason": guard_reason or reason,
             "guard_details": guard_details,
             "updated": current != target,
+        }
+
+    @server.tool()
+    def trw_index_sync(
+        sync_roadmap: bool = True,
+    ) -> dict[str, object]:
+        """Sync INDEX.md and ROADMAP.md PRD catalogues from PRD frontmatter.
+
+        Scans all PRD files, extracts status/priority/title from YAML
+        frontmatter, and updates the catalogue sections using marker-based
+        merge. Content outside markers is preserved.
+
+        Args:
+            sync_roadmap: Whether to also sync ROADMAP.md (default True).
+        """
+        from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
+
+        project_root = resolve_project_root()
+        prds_dir = project_root / Path(_config.prds_relative_path)
+        aare_dir = prds_dir.parent  # docs/requirements-aare-f/
+
+        index_path = aare_dir / "INDEX.md"
+        index_result = sync_index_md(index_path, prds_dir, writer=_writer)
+
+        roadmap_result: dict[str, object] = {}
+        if sync_roadmap:
+            roadmap_path = aare_dir / "ROADMAP.md"
+            roadmap_result = sync_roadmap_md(roadmap_path, prds_dir, writer=_writer)
+
+        logger.info(
+            "trw_index_synced",
+            total_prds=index_result.get("total_prds", 0),
+            sync_roadmap=sync_roadmap,
+        )
+
+        return {
+            "index": index_result,
+            "roadmap": roadmap_result if sync_roadmap else "skipped",
         }
 
     @server.tool()
