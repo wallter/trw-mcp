@@ -109,6 +109,7 @@ def _register_tools() -> None:
     """Register all tools, resources, and prompts on the MCP server."""
     # Tools (alphabetical)
     from trw_mcp.tools.bdd import register_bdd_tools
+    from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.compliance import register_compliance_tools
     from trw_mcp.tools.findings import register_findings_tools
     from trw_mcp.tools.gate_strategy import register_gate_tools
@@ -131,6 +132,7 @@ def _register_tools() -> None:
 
     # --- Register tools (alphabetical) ---
     register_bdd_tools(mcp)
+    register_ceremony_tools(mcp)
     register_compliance_tools(mcp)
     register_findings_tools(mcp)
     register_gate_tools(mcp)
