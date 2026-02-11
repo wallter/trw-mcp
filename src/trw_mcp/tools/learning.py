@@ -30,9 +30,12 @@ from trw_mcp.scoring import rank_by_utility, utility_based_prune_candidates
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     apply_status_update,
+    auto_prune_excess_entries,
+    compute_reflection_quality,
     detect_tool_sequences,
     extract_learnings_from_llm,
     extract_learnings_mechanical,
+    find_duplicate_learnings,
     find_entry_by_id,
     find_repeated_operations,
     find_success_patterns,
@@ -44,6 +47,7 @@ from trw_mcp.state.analytics import (
     save_learning_entry,
     surface_validated_learnings,
     update_analytics,
+    update_analytics_extended,
     update_analytics_sync,
 )
 from trw_mcp.state.architecture import load_architecture_config
@@ -313,13 +317,22 @@ def register_learning_tools(server: FastMCP) -> None:
                     "learnings_produced": len(new_learnings),
                 })
 
-        update_analytics(trw_dir, len(new_learnings))
+        # PRD-QUAL-012-FR02/FR03: Use extended analytics with reflection tracking
+        update_analytics_extended(
+            trw_dir, len(new_learnings),
+            is_reflection=True,
+            is_success=len(error_events) == 0 and len(events) > 0,
+        )
+
+        # PRD-QUAL-012-FR01: Compute reflection quality score
+        reflection_quality = compute_reflection_quality(trw_dir)
 
         logger.info(
             "trw_reflect_complete",
             scope=scope,
             events_analyzed=len(events),
             learnings_produced=len(new_learnings),
+            reflection_quality=reflection_quality.get("score", 0.0),
         )
 
         # PRD-QUAL-001 FR05: Extended output schema
@@ -349,6 +362,7 @@ def register_learning_tools(server: FastMCP) -> None:
             "validated_learnings": validated_learnings,
             "positive_learnings_created": positive_count,
             "llm_used": llm_used,
+            "reflection_quality": reflection_quality,
         }
 
     @server.tool()
@@ -745,11 +759,32 @@ def register_learning_tools(server: FastMCP) -> None:
             if actions > 0:
                 resync_learning_index(trw_dir)
 
+        # PRD-QUAL-012-FR06: Jaccard dedup detection
+        duplicates = find_duplicate_learnings(entries_dir, threshold=0.8)
+        if not dry_run:
+            for older_id, _newer_id, _sim in duplicates:
+                apply_status_update(trw_dir, older_id, "obsolete")
+                actions += 1
+            if duplicates:
+                resync_learning_index(trw_dir)
+
+        # PRD-QUAL-012-FR06: Auto-pruning trigger when active > 100
+        auto_prune_result = auto_prune_excess_entries(
+            trw_dir, max_entries=_config.learning_max_entries,
+            dry_run=dry_run,
+        )
+
         logger.info(
             "trw_learn_prune_complete", dry_run=dry_run, candidates=len(candidates),
             actions=actions, receipts_pruned=receipts_pruned, method=method,
+            duplicates_found=len(duplicates),
         )
         return {
             "candidates": candidates, "actions": actions,
             "receipts_pruned": receipts_pruned, "dry_run": dry_run, "method": method,
+            "duplicates": [
+                {"older_id": o, "newer_id": n, "similarity": s}
+                for o, n, s in duplicates
+            ],
+            "auto_prune": auto_prune_result,
         }

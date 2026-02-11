@@ -2,6 +2,8 @@
 
 Extracted from tools/learning.py (PRD-FIX-010) to separate entry/index
 persistence from learning tool logic.
+
+PRD-QUAL-012: Reflection quality scoring, Jaccard dedup, analytics revival.
 """
 
 from __future__ import annotations
@@ -560,6 +562,344 @@ def extract_learnings_from_llm(
         })
 
     return new_learnings
+
+
+def compute_jaccard_similarity(a: str, b: str) -> float:
+    """Compute Jaccard similarity between two strings using word tokens.
+
+    PRD-QUAL-012-FR06: Used for dedup detection between learning summaries.
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        Jaccard index in [0.0, 1.0]. 1.0 means identical token sets.
+    """
+    tokens_a = set(a.lower().split())
+    tokens_b = set(b.lower().split())
+    if not tokens_a and not tokens_b:
+        return 1.0
+    if not tokens_a or not tokens_b:
+        return 0.0
+    intersection = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(intersection) / len(union)
+
+
+def find_duplicate_learnings(
+    entries_dir: Path,
+    threshold: float = 0.8,
+) -> list[tuple[str, str, float]]:
+    """Find duplicate learning entries by Jaccard similarity on summaries.
+
+    PRD-QUAL-012-FR06: Identifies pairs of active learnings whose summaries
+    overlap above the threshold. The older entry in each pair is the
+    candidate for dedup (pruning).
+
+    Args:
+        entries_dir: Path to entries directory.
+        threshold: Minimum Jaccard similarity to flag as duplicate.
+
+    Returns:
+        List of (older_id, newer_id, similarity) tuples.
+    """
+    if not entries_dir.is_dir():
+        return []
+
+    active_entries: list[dict[str, object]] = []
+    for entry_file in sorted(entries_dir.glob("*.yaml")):
+        if entry_file.name == "index.yaml":
+            continue
+        try:
+            data = _reader.read_yaml(entry_file)
+            if str(data.get("status", "active")) == "active":
+                active_entries.append(data)
+        except (StateError, ValueError, TypeError):
+            continue
+
+    duplicates: list[tuple[str, str, float]] = []
+    for i in range(len(active_entries)):
+        for j in range(i + 1, len(active_entries)):
+            summary_a = str(active_entries[i].get("summary", ""))
+            summary_b = str(active_entries[j].get("summary", ""))
+            sim = compute_jaccard_similarity(summary_a, summary_b)
+            if sim >= threshold:
+                id_a = str(active_entries[i].get("id", ""))
+                id_b = str(active_entries[j].get("id", ""))
+                # Older entry (earlier in sorted order) is the dedup candidate
+                duplicates.append((id_a, id_b, round(sim, 3)))
+    return duplicates
+
+
+def auto_prune_excess_entries(
+    trw_dir: Path,
+    max_entries: int = 100,
+    jaccard_threshold: float = 0.8,
+    *,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Auto-prune when entries exceed max_entries, with Jaccard dedup.
+
+    PRD-QUAL-012-FR06: Triggered when active entry count > max_entries.
+    1. Identifies duplicates via Jaccard similarity
+    2. Marks older duplicates as obsolete
+    3. If still over limit, prunes lowest-utility entries
+
+    Args:
+        trw_dir: Path to .trw directory.
+        max_entries: Trigger threshold for auto-pruning.
+        jaccard_threshold: Minimum similarity for dedup.
+        dry_run: If True, report what would be pruned without acting.
+
+    Returns:
+        Dict with dedup_candidates, utility_candidates, actions_taken.
+    """
+    from trw_mcp.scoring import utility_based_prune_candidates
+
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    if not entries_dir.is_dir():
+        return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0}
+
+    # Count active entries
+    all_entries: list[tuple[Path, dict[str, object]]] = []
+    active_count = 0
+    for entry_file in sorted(entries_dir.glob("*.yaml")):
+        if entry_file.name == "index.yaml":
+            continue
+        try:
+            data = _reader.read_yaml(entry_file)
+            all_entries.append((entry_file, data))
+            if str(data.get("status", "active")) == "active":
+                active_count += 1
+        except (StateError, ValueError, TypeError):
+            continue
+
+    if active_count <= max_entries:
+        return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0,
+                "active_count": active_count, "threshold": max_entries}
+
+    # Step 1: Jaccard dedup
+    duplicates = find_duplicate_learnings(entries_dir, jaccard_threshold)
+    dedup_ids: set[str] = set()
+    for older_id, _newer_id, _sim in duplicates:
+        dedup_ids.add(older_id)
+
+    actions = 0
+    if not dry_run:
+        for dup_id in dedup_ids:
+            apply_status_update(trw_dir, dup_id, "obsolete")
+            actions += 1
+
+    # Step 2: Utility-based pruning for remaining excess
+    utility_candidates = utility_based_prune_candidates(all_entries)
+
+    if not dry_run:
+        for candidate in utility_candidates:
+            cid = str(candidate.get("id", ""))
+            if cid and cid not in dedup_ids:
+                suggested = str(candidate.get("suggested_status", ""))
+                if suggested in ("resolved", "obsolete"):
+                    apply_status_update(trw_dir, cid, suggested)
+                    actions += 1
+
+        if actions > 0:
+            resync_learning_index(trw_dir)
+
+    return {
+        "dedup_candidates": [
+            {"older_id": o, "newer_id": n, "similarity": s}
+            for o, n, s in duplicates
+        ],
+        "utility_candidates": utility_candidates,
+        "actions_taken": actions,
+        "active_count": active_count,
+        "threshold": max_entries,
+    }
+
+
+def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
+    """Compute composite reflection quality score (0.0-1.0).
+
+    PRD-QUAL-012-FR01: Aggregates multiple signals into a quality score:
+    - Reflection count (are reflections happening?)
+    - Learnings per reflection (are reflections productive?)
+    - Learning diversity (tags, sources — not all the same type?)
+    - Access ratio (are learnings actually being used?)
+    - Q-learning activation rate (is the scoring pipeline working?)
+
+    Args:
+        trw_dir: Path to .trw directory.
+
+    Returns:
+        Dict with score (0.0-1.0), components, and diagnostics.
+    """
+    reflections_dir = trw_dir / _config.reflections_dir
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+
+    # Count reflections
+    reflection_count = 0
+    total_learnings_from_reflections = 0
+    if reflections_dir.is_dir():
+        for ref_file in reflections_dir.glob("*.yaml"):
+            try:
+                data = _reader.read_yaml(ref_file)
+                reflection_count += 1
+                new_learnings = data.get("new_learnings", [])
+                if isinstance(new_learnings, list):
+                    total_learnings_from_reflections += len(new_learnings)
+            except (StateError, ValueError, TypeError):
+                continue
+
+    # Scan entries for diversity + access + Q-learning metrics
+    total_entries = 0
+    active_entries = 0
+    accessed_entries = 0
+    q_activated = 0
+    unique_tags: set[str] = set()
+    source_types: set[str] = set()
+
+    if entries_dir.is_dir():
+        for entry_file in entries_dir.glob("*.yaml"):
+            if entry_file.name == "index.yaml":
+                continue
+            try:
+                data = _reader.read_yaml(entry_file)
+                total_entries += 1
+                if str(data.get("status", "active")) == "active":
+                    active_entries += 1
+                if int(str(data.get("access_count", 0))) > 0:
+                    accessed_entries += 1
+                if int(str(data.get("q_observations", 0))) > 0:
+                    q_activated += 1
+                tags = data.get("tags", [])
+                if isinstance(tags, list):
+                    unique_tags.update(str(t) for t in tags)
+                src = str(data.get("source_type", ""))
+                if src:
+                    source_types.add(src)
+            except (StateError, ValueError, TypeError):
+                continue
+
+    # Component scores (each 0.0-1.0)
+    # 1. Reflection frequency: at least 1 reflection = 0.5, 3+ = 1.0
+    reflection_freq = min(1.0, reflection_count / 3.0) if reflection_count > 0 else 0.0
+
+    # 2. Productivity: avg learnings per reflection (0 = 0.0, 2+ = 1.0)
+    avg_learnings = (total_learnings_from_reflections / max(reflection_count, 1)
+                     if reflection_count > 0 else 0.0)
+    productivity = min(1.0, avg_learnings / 2.0)
+
+    # 3. Diversity: tag variety (0 tags = 0.0, 10+ = 1.0)
+    diversity = min(1.0, len(unique_tags) / 10.0) if unique_tags else 0.0
+
+    # 4. Access ratio: proportion of entries that have been accessed
+    access_ratio = (accessed_entries / max(total_entries, 1)
+                    if total_entries > 0 else 0.0)
+
+    # 5. Q-learning activation: proportion of entries with Q observations
+    q_activation_rate = (q_activated / max(total_entries, 1)
+                         if total_entries > 0 else 0.0)
+
+    # Weighted composite (reflection_freq 25%, productivity 25%,
+    # diversity 15%, access 20%, Q-activation 15%)
+    composite = (
+        0.25 * reflection_freq
+        + 0.25 * productivity
+        + 0.15 * diversity
+        + 0.20 * access_ratio
+        + 0.15 * q_activation_rate
+    )
+
+    return {
+        "score": round(composite, 3),
+        "components": {
+            "reflection_frequency": round(reflection_freq, 3),
+            "productivity": round(productivity, 3),
+            "diversity": round(diversity, 3),
+            "access_ratio": round(access_ratio, 3),
+            "q_activation_rate": round(q_activation_rate, 3),
+        },
+        "diagnostics": {
+            "reflection_count": reflection_count,
+            "avg_learnings_per_reflection": round(avg_learnings, 2),
+            "total_entries": total_entries,
+            "active_entries": active_entries,
+            "accessed_entries": accessed_entries,
+            "q_activated_entries": q_activated,
+            "unique_tags": len(unique_tags),
+            "source_types": sorted(source_types),
+        },
+    }
+
+
+def update_analytics_extended(
+    trw_dir: Path,
+    new_learnings_count: int,
+    *,
+    is_reflection: bool = False,
+    is_success: bool = False,
+) -> None:
+    """Update analytics.yaml with extended metrics (PRD-QUAL-012-FR02/FR03).
+
+    Populates previously dead fields: reflections_completed, success_rate,
+    q_learning_activations, high_impact_learnings.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        new_learnings_count: Number of new learnings produced.
+        is_reflection: Whether this call is from a reflection event.
+        is_success: Whether this is a successful outcome.
+    """
+    context_dir = trw_dir / _config.context_dir
+    _writer.ensure_dir(context_dir)
+    analytics_path = context_dir / "analytics.yaml"
+
+    data: dict[str, object] = {}
+    if _reader.exists(analytics_path):
+        data = _reader.read_yaml(analytics_path)
+
+    # Core counters (backward compatible with existing update_analytics)
+    sessions = int(str(data.get("sessions_tracked", 0))) + 1
+    total_learnings = int(str(data.get("total_learnings", 0))) + new_learnings_count
+    data["sessions_tracked"] = sessions
+    data["total_learnings"] = total_learnings
+    data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
+
+    # FR02: Reflection tracking
+    if is_reflection:
+        reflections = int(str(data.get("reflections_completed", 0))) + 1
+        data["reflections_completed"] = reflections
+
+    # FR02: Success rate tracking
+    total_outcomes = int(str(data.get("total_outcomes", 0))) + 1
+    successes = int(str(data.get("successful_outcomes", 0)))
+    if is_success:
+        successes += 1
+    data["total_outcomes"] = total_outcomes
+    data["successful_outcomes"] = successes
+    data["success_rate"] = round(successes / max(total_outcomes, 1), 3)
+
+    # FR03: Q-learning activations (scan entries for q_observations > 0)
+    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    q_activations = 0
+    high_impact = 0
+    if entries_dir.is_dir():
+        for entry_file in entries_dir.glob("*.yaml"):
+            if entry_file.name == "index.yaml":
+                continue
+            try:
+                entry_data = _reader.read_yaml(entry_file)
+                if int(str(entry_data.get("q_observations", 0))) > 0:
+                    q_activations += 1
+                if float(str(entry_data.get("impact", 0.5))) >= 0.7:
+                    high_impact += 1
+            except (StateError, ValueError, TypeError):
+                continue
+    data["q_learning_activations"] = q_activations
+    data["high_impact_learnings"] = high_impact
+
+    _writer.write_yaml(analytics_path, data)
 
 
 def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:

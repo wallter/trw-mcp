@@ -199,18 +199,24 @@ class Analytics(BaseModel):
 
     Auto-updated by trw_reflect to track improvement over time.
     Zero-dependency feedback loop — no network required.
+
+    PRD-QUAL-012-FR02/FR03/FR04: Revived dead fields, added Q-learning
+    and reflection tracking.
     """
 
     model_config = ConfigDict(strict=True)
 
     sessions_tracked: int = 0
     total_learnings: int = 0
-    total_patterns: int = 0
-    scripts_created: int = 0
-    scripts_refined: int = 0
     avg_learnings_per_session: float = 0.0
     high_impact_learnings: int = 0
-    low_impact_pruned: int = 0
     claude_md_syncs: int = 0
-    top_tools_used: list[str] = Field(default_factory=list)
-    common_error_patterns: list[str] = Field(default_factory=list)
+
+    # PRD-QUAL-012-FR02: Previously dead — now populated by update_analytics_extended
+    reflections_completed: int = 0
+    total_outcomes: int = 0
+    successful_outcomes: int = 0
+    success_rate: float = 0.0
+
+    # PRD-QUAL-012-FR03: Q-learning activation tracking
+    q_learning_activations: int = 0

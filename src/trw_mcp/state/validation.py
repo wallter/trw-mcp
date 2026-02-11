@@ -588,6 +588,30 @@ def check_phase_exit(
                 )
             )
 
+        # PRD-QUAL-012-FR05: Advisory reflection quality check
+        try:
+            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw
+
+            trw_d = _resolve_trw()
+            from trw_mcp.state.analytics import compute_reflection_quality
+
+            rq = compute_reflection_quality(trw_d)
+            rq_score = float(str(rq.get("score", 0.0)))
+            if rq_score < 0.3:
+                failures.append(
+                    ValidationFailure(
+                        field="reflection_quality",
+                        rule="reflection_quality_advisory",
+                        message=(
+                            f"Reflection quality score {rq_score:.2f} is below 0.30 — "
+                            "consider improving reflection frequency and learning access"
+                        ),
+                        severity="warning",
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort advisory — never block on quality check failures
+
     elif phase_name == "deliver":
         # Check run.yaml status
         run_yaml = meta_path / "run.yaml"

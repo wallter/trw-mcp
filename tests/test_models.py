@@ -359,4 +359,7 @@ class TestAnalytics:
         analytics = Analytics()
         assert analytics.sessions_tracked == 0
         assert analytics.total_learnings == 0
-        assert analytics.top_tools_used == []
+        # PRD-QUAL-012-FR02/FR03: Revived fields have defaults
+        assert analytics.reflections_completed == 0
+        assert analytics.success_rate == 0.0
+        assert analytics.q_learning_activations == 0
