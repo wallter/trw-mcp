@@ -255,6 +255,14 @@ class TRWConfig(BaseSettings):
     # When True, missing phase prerequisites are errors; when False, warnings.
     strict_input_criteria: bool = False
 
+    # Build verification gate (PRD-CORE-023)
+    build_check_enabled: bool = True
+    build_check_timeout_secs: int = 300
+    build_check_coverage_min: float = 85.0
+    build_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
+    build_check_pytest_args: str = ""
+    build_check_mypy_args: str = "--strict"
+
 
 class PhaseTimeCaps(BaseModel):
     """Phase time cap percentages derived from TRWConfig.
