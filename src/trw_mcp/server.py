@@ -113,6 +113,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.compliance import register_compliance_tools
     from trw_mcp.tools.findings import register_findings_tools
     from trw_mcp.tools.gate_strategy import register_gate_tools
+    from trw_mcp.tools.health import register_health_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.refactoring import register_refactoring_tools
@@ -136,6 +137,7 @@ def _register_tools() -> None:
     register_compliance_tools(mcp)
     register_findings_tools(mcp)
     register_gate_tools(mcp)
+    register_health_tools(mcp)
     register_learning_tools(mcp)
     register_orchestration_tools(mcp)
     register_refactoring_tools(mcp)
