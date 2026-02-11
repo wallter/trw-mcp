@@ -384,6 +384,35 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if velocity_alert is not None:
             phase_result["velocity_alert"] = velocity_alert
 
+        # PRD-CORE-025-FR03: Auto-progress PRD statuses on passing exit check
+        if result.valid and direction == "exit":
+            try:
+                from trw_mcp.state.validation import auto_progress_prds
+
+                proj_root = resolve_project_root()
+                prds_dir = proj_root / Path(_config.prds_relative_path)
+                if prds_dir.is_dir():
+                    progressions = auto_progress_prds(
+                        resolved_path, phase_name, prds_dir, _config,
+                    )
+                    if progressions:
+                        phase_result["auto_progression"] = progressions
+                        # FR04: Log events for each applied progression
+                        for prog in progressions:
+                            if prog.get("applied"):
+                                _events.log_event(
+                                    resolved_path / "meta" / "events.jsonl",
+                                    "auto_prd_progress",
+                                    {
+                                        "prd_id": str(prog["prd_id"]),
+                                        "from_status": str(prog["from_status"]),
+                                        "to_status": str(prog["to_status"]),
+                                        "phase": phase_name,
+                                    },
+                                )
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort — never fail phase check for auto-progression
+
         return phase_result
 
     @server.tool()

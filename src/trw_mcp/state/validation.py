@@ -1,7 +1,8 @@
 """Schema validation and output contract checking.
 
 Validates shard output contracts, phase exit criteria,
-PRD quality gates, and multi-dimensional semantic validation (PRD-CORE-008).
+PRD quality gates, multi-dimensional semantic validation (PRD-CORE-008),
+PRD auto-progression (PRD-CORE-025), and integration validation (PRD-QUAL-011).
 """
 
 from __future__ import annotations
@@ -529,6 +530,30 @@ def check_phase_exit(
             )
         )
 
+        # PRD-QUAL-011-FR03: Integration check at VALIDATE
+        try:
+            from trw_mcp.state._paths import resolve_project_root as _resolve_proj
+            proj = _resolve_proj()
+            src_dir = proj / "trw-mcp" / "src" / "trw_mcp"
+            if src_dir.is_dir():
+                integ = check_integration(src_dir)
+                for mod in integ.get("unregistered", []):
+                    failures.append(ValidationFailure(
+                        field=f"integration:tools/{mod}.py",
+                        rule="tool_registration",
+                        message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
+                        severity="warning",
+                    ))
+                for test_name in integ.get("missing_tests", []):
+                    failures.append(ValidationFailure(
+                        field=f"integration:{test_name}",
+                        rule="test_coverage",
+                        message=f"Missing test file: {test_name}",
+                        severity="warning",
+                    ))
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort — never block for integration check failures
+
     elif phase_name == "review":
         final_report = reports_path / "final.md"
         if not final_report.exists():
@@ -607,6 +632,23 @@ def check_phase_exit(
                     severity="warning",
                 )
             )
+
+        # PRD-QUAL-011-FR03: Integration check at DELIVER
+        try:
+            from trw_mcp.state._paths import resolve_project_root as _resolve_proj
+            proj = _resolve_proj()
+            src_dir = proj / "trw-mcp" / "src" / "trw_mcp"
+            if src_dir.is_dir():
+                integ = check_integration(src_dir)
+                for mod in integ.get("unregistered", []):
+                    failures.append(ValidationFailure(
+                        field=f"integration:tools/{mod}.py",
+                        rule="tool_registration",
+                        message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
+                        severity="warning",
+                    ))
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort
 
     # PRD-QUAL-007: Architecture fitness check (opt-in via config)
     if config.architecture_fitness_enabled:
@@ -1498,3 +1540,249 @@ def validate_prd_quality_v2(
         dimensions_scored=len(dimensions),
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-025: Phase-to-Status Mapping (FR01)
+# ---------------------------------------------------------------------------
+
+PHASE_STATUS_MAPPING: dict[str, PRDStatus] = {
+    "plan": PRDStatus.REVIEW,
+    "implement": PRDStatus.IMPLEMENTED,
+    "validate": PRDStatus.DONE,
+    "deliver": PRDStatus.DONE,
+}
+
+# Terminal statuses that should never be auto-progressed.
+_TERMINAL_STATUSES: frozenset[PRDStatus] = frozenset(
+    {PRDStatus.DONE, PRDStatus.MERGED, PRDStatus.DEPRECATED}
+)
+
+
+def auto_progress_prds(
+    run_path: Path,
+    phase: str,
+    prds_dir: Path,
+    config: TRWConfig,
+    *,
+    dry_run: bool = False,
+) -> list[dict[str, object]]:
+    """Automatically advance PRD statuses when a phase gate passes.
+
+    PRD-CORE-025-FR02: For each PRD in the run's ``prd_scope``, evaluate the
+    state-machine transition implied by the completed phase exit, check
+    transition guards, and (unless *dry_run*) write the new status.
+
+    Args:
+        run_path: Path to the active run directory.
+        phase: Phase that just passed exit (e.g., ``"plan"``).
+        prds_dir: Directory containing PRD markdown files.
+        config: Framework configuration.
+        dry_run: When True, evaluate transitions without writing files.
+
+    Returns:
+        List of dicts with keys ``prd_id``, ``from_status``, ``to_status``,
+        ``applied``, and optionally ``guard_failed``, ``would_apply``, ``reason``.
+    """
+    from trw_mcp.state.prd_utils import (
+        check_transition_guards,
+        discover_governing_prds,
+        is_valid_transition,
+        parse_frontmatter,
+        update_frontmatter,
+    )
+
+    target_status = PHASE_STATUS_MAPPING.get(phase)
+    if target_status is None:
+        return []
+
+    prd_ids = discover_governing_prds(run_path, config)
+    if not prd_ids:
+        return []
+
+    results: list[dict[str, object]] = []
+
+    for prd_id in prd_ids:
+        prd_file = prds_dir / f"{prd_id}.md"
+        if not prd_file.exists():
+            logger.warning("auto_progress_prd_missing", prd_id=prd_id)
+            continue
+
+        try:
+            content = prd_file.read_text(encoding="utf-8")
+            fm = parse_frontmatter(content)
+            current_str = str(fm.get("status", "draft")).lower()
+            try:
+                current_status = PRDStatus(current_str)
+            except ValueError:
+                logger.warning(
+                    "auto_progress_invalid_status",
+                    prd_id=prd_id,
+                    status=current_str,
+                )
+                continue
+
+            # Skip terminal and identity transitions
+            if current_status in _TERMINAL_STATUSES:
+                continue
+            if current_status == target_status:
+                continue
+
+            # Check state machine validity
+            if not is_valid_transition(current_status, target_status):
+                results.append({
+                    "prd_id": prd_id,
+                    "from_status": current_str,
+                    "to_status": target_status.value,
+                    "applied": False,
+                    "reason": "invalid_transition",
+                })
+                continue
+
+            # Check transition guards
+            guard = check_transition_guards(
+                current_status, target_status, content, config,
+            )
+            if not guard.allowed:
+                entry: dict[str, object] = {
+                    "prd_id": prd_id,
+                    "from_status": current_str,
+                    "to_status": target_status.value,
+                    "applied": False,
+                    "guard_failed": True,
+                    "reason": guard.reason,
+                }
+                if dry_run:
+                    entry["would_apply"] = False
+                results.append(entry)
+                continue
+
+            if dry_run:
+                results.append({
+                    "prd_id": prd_id,
+                    "from_status": current_str,
+                    "to_status": target_status.value,
+                    "applied": False,
+                    "would_apply": True,
+                })
+            else:
+                update_frontmatter(prd_file, {"status": target_status.value})
+                results.append({
+                    "prd_id": prd_id,
+                    "from_status": current_str,
+                    "to_status": target_status.value,
+                    "applied": True,
+                })
+
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning(
+                "auto_progress_error", prd_id=prd_id, error=str(exc),
+            )
+            continue
+
+    # FR06: Trigger index sync as best-effort side effect
+    if not dry_run and any(r.get("applied") for r in results):
+        try:
+            from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
+            from trw_mcp.state.persistence import FileStateWriter
+
+            writer = FileStateWriter()
+            aare_dir = prds_dir.parent
+            sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
+            sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort — never fail auto-progression for sync issues
+
+    logger.info(
+        "auto_progress_complete",
+        phase=phase,
+        total=len(results),
+        applied=sum(1 for r in results if r.get("applied")),
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-011: Integration Validation (FR01-FR04)
+# ---------------------------------------------------------------------------
+
+def check_integration(source_dir: Path) -> dict[str, object]:
+    """Detect unregistered tool modules and missing test files.
+
+    PRD-QUAL-011-FR01/FR02: Scan ``tools/*.py`` for ``register_*_tools``
+    definitions, compare against ``server.py`` imports/calls, and check
+    for corresponding test files.
+
+    Args:
+        source_dir: Root source directory (e.g., ``src/trw_mcp``).
+
+    Returns:
+        Dict with keys ``unregistered``, ``missing_tests``, ``conventions``,
+        and ``all_registered`` boolean.
+    """
+    tools_dir = source_dir / "tools"
+    server_path = source_dir / "server.py"
+    tests_dir = source_dir.parent.parent / "tests"
+
+    unregistered: list[str] = []
+    missing_tests: list[str] = []
+    registered_funcs: set[str] = set()
+    tool_modules: dict[str, str] = {}  # module_name → register function name
+
+    # Step 1: Scan tool modules for register_*_tools definitions
+    if tools_dir.is_dir():
+        for tool_file in sorted(tools_dir.glob("*.py")):
+            name = tool_file.stem
+            if name.startswith("_") or name == "__init__":
+                continue
+            try:
+                content = tool_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            match = re.search(r"def (register_\w+_tools)\s*\(", content)
+            if match:
+                tool_modules[name] = match.group(1)
+            # Also check for test file
+            test_candidates = [
+                tests_dir / f"test_tools_{name}.py",
+                tests_dir / f"test_{name}.py",
+            ]
+            if not any(t.exists() for t in test_candidates):
+                missing_tests.append(f"test_tools_{name}.py")
+
+    # Step 2: Parse server.py for imports and registration calls
+    if server_path.is_file():
+        try:
+            server_content = server_path.read_text(encoding="utf-8")
+        except OSError:
+            server_content = ""
+
+        # Find all import statements: from trw_mcp.tools.X import register_X_tools
+        for match in re.finditer(
+            r"from\s+trw_mcp\.tools\.(\w+)\s+import\s+(register_\w+_tools)",
+            server_content,
+        ):
+            registered_funcs.add(match.group(2))
+
+        # Also find call sites: register_X_tools(
+        for match in re.finditer(
+            r"(register_\w+_tools)\s*\(",
+            server_content,
+        ):
+            registered_funcs.add(match.group(1))
+
+    # Step 3: Diff — tool modules with registration functions but not in server.py
+    for module_name, func_name in tool_modules.items():
+        if func_name not in registered_funcs:
+            unregistered.append(module_name)
+
+    return {
+        "unregistered": unregistered,
+        "missing_tests": missing_tests,
+        "all_registered": len(unregistered) == 0,
+        "tool_modules_scanned": len(tool_modules),
+        "conventions": {
+            "tool_pattern": "tools/X.py → register_X_tools(server) → import in server.py",
+            "test_pattern": "tools/X.py → tests/test_tools_X.py",
+        },
+    }
