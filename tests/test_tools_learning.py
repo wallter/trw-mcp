@@ -2430,7 +2430,7 @@ class TestScriptSaveAtomicWrite:
         tools = _get_tools()
 
         with patch(
-            "trw_mcp.tools.learning._writer.write_text", wraps=FileStateWriter().write_text,
+            "trw_mcp.state.scripts._writer.write_text", wraps=FileStateWriter().write_text,
         ) as mock_write:
             tools["trw_script_save"].fn(
                 name="atomic-test",

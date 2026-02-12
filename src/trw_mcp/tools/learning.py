@@ -10,42 +10,25 @@ Decomposed per PRD-FIX-010: tool stubs delegate to focused state modules.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.architecture import BoundedContext
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.learning import (
-    LearningEntry,
-    LearningStatus,
-    Reflection,
-    Script,
-)
-from trw_mcp.scoring import rank_by_utility, utility_based_prune_candidates
+from trw_mcp.models.learning import LearningEntry, LearningStatus
+from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
-    apply_status_update,
-    auto_prune_excess_entries,
     compute_reflection_quality,
-    detect_tool_sequences,
-    extract_learnings_from_llm,
-    extract_learnings_mechanical,
-    find_duplicate_learnings,
     find_entry_by_id,
-    find_repeated_operations,
-    find_success_patterns,
     generate_learning_id,
-    has_existing_success_learning,
-    is_error_event,
     mark_promoted,
     resync_learning_index,
     save_learning_entry,
-    surface_validated_learnings,
     update_analytics,
     update_analytics_extended,
     update_analytics_sync,
@@ -69,30 +52,21 @@ from trw_mcp.state.claude_md import (
     render_patterns,
     render_template,
 )
-from trw_mcp.state.llm_helpers import (
-    llm_assess_learnings,
-    llm_extract_learnings,
-    llm_summarize_learnings,
-)
-from trw_mcp.state.persistence import (
-    FileEventLogger,
-    FileStateReader,
-    FileStateWriter,
-    model_to_dict,
-)
+from trw_mcp.state.llm_helpers import llm_summarize_learnings
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import (
     collect_context,
     search_entries,
     search_patterns,
     update_access_tracking,
 )
-from trw_mcp.state.receipts import log_recall_receipt, prune_recall_receipts
+from trw_mcp.state.receipts import log_recall_receipt
 
 logger = structlog.get_logger()
 
 
 def _as_str_list(val: object) -> list[str]:
-    """Coerce an object to list[str] for iteration (mypy-safe)."""
+    """Convert value to list[str] for safe iteration."""
     if isinstance(val, list):
         return [str(v) for v in val]
     return []
@@ -101,24 +75,11 @@ def _as_str_list(val: object) -> list[str]:
 _config = TRWConfig()
 _reader = FileStateReader()
 _writer = FileStateWriter()
-_events = FileEventLogger(_writer)
 _llm = LLMClient(model=_config.llm_default_model)
-
-# Named caps for mechanical extraction
-_MAX_ERROR_LEARNINGS = 5
-_MAX_REPEATED_OPS = 3
 
 
 def _detect_current_phase() -> str | None:
-    """Detect the current phase from the most recent active run.
-
-    Scans all task directories under the configured task root for run
-    directories containing a ``meta/run.yaml``. Selects the run whose
-    directory name sorts highest (most recent by naming convention).
-
-    Returns:
-        Phase name string (e.g., "research", "implement") or None.
-    """
+    """Detect the current phase from the most recent active run."""
     try:
         project_root = resolve_trw_dir().parent
         task_root = project_root / _config.task_root
@@ -126,7 +87,6 @@ def _detect_current_phase() -> str | None:
         if not task_root.exists():
             return None
 
-        # Find all run.yaml files, keyed by parent directory name
         latest_name = ""
         latest_yaml: Path | None = None
         for task_dir in task_root.iterdir():
@@ -147,7 +107,7 @@ def _detect_current_phase() -> str | None:
             return None
         phase = str(data.get("phase", ""))
         return phase or None
-    except (StateError, OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError):
         return None
 
 
@@ -157,20 +117,7 @@ def _sync_bounded_contexts(
     trw_dir: Path,
     high_impact: list[dict[str, object]],
 ) -> int:
-    """Write sub-CLAUDE.md files for each bounded context.
-
-    Filters high-impact learnings by evidence path overlap, collects
-    ADR entries, and renders a sub-CLAUDE.md into each context directory.
-
-    Args:
-        contexts: Bounded context definitions from architecture config.
-        project_root: Project root directory.
-        trw_dir: Path to the .trw directory.
-        high_impact: High-impact learning entries for filtering.
-
-    Returns:
-        Number of bounded context files written.
-    """
+    """Write sub-CLAUDE.md files for each bounded context."""
     count = 0
     for ctx in contexts:
         ctx_adrs = collect_adrs_for_context(trw_dir, ctx.path)
@@ -206,148 +153,49 @@ def register_learning_tools(server: FastMCP) -> None:
             run_path: Path to run directory for run-scoped reflection.
             scope: Reflection scope — "session", "run", or "wave".
         """
+        from trw_mcp.state.reflection import (
+            collect_reflection_inputs,
+            create_reflection_record,
+            generate_reflection_learnings,
+            persist_reflection,
+        )
+
         trw_dir = resolve_trw_dir()
         _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
         _writer.ensure_dir(trw_dir / _config.reflections_dir)
 
-        events: list[dict[str, object]] = []
-        run_id: str | None = None
+        inputs = collect_reflection_inputs(run_path, trw_dir)
+        new_learnings, llm_used, positive_count = generate_reflection_learnings(inputs, trw_dir)
+        reflection = create_reflection_record(inputs, new_learnings, scope)
+        persist_reflection(trw_dir, reflection, run_path, scope, len(new_learnings))
 
-        if run_path:
-            resolved = Path(run_path).resolve()
-            events_path = resolved / "meta" / "events.jsonl"
-            if _reader.exists(events_path):
-                events = _reader.read_jsonl(events_path)
-            run_yaml = resolved / "meta" / "run.yaml"
-            if _reader.exists(run_yaml):
-                state = _reader.read_yaml(run_yaml)
-                run_id_val = state.get("run_id")
-                if isinstance(run_id_val, str):
-                    run_id = run_id_val
-
-        error_events = [e for e in events if is_error_event(e)]
-        phase_transitions = [e for e in events if e.get("event") == "phase_transition"]
-        repeated_ops = find_repeated_operations(events)
-        success_patterns = find_success_patterns(events)
-
-        # PRD-QUAL-001 FR02: Tool sequence detection
-        tool_sequences = detect_tool_sequences(
-            events,
-            lookback=_config.reflect_sequence_lookback,
-        )
-
-        # PRD-QUAL-001 FR03: Q-value validated learnings
-        validated_learnings = surface_validated_learnings(
-            trw_dir,
-            q_threshold=_config.reflect_q_value_threshold,
-            cold_start_threshold=_config.q_cold_start_threshold,
-        )
-
-        # Extract learnings via LLM or mechanical fallback
-        new_learnings: list[dict[str, str]] = []
-        llm_used = False
-
-        if events and _config.llm_enabled and _llm.available:  # pragma: no cover
-            llm_result = llm_extract_learnings(events, _llm)
-            if llm_result is not None:
-                llm_used = True
-                new_learnings = extract_learnings_from_llm(llm_result, trw_dir)
-
-        if not llm_used:
-            new_learnings = extract_learnings_mechanical(
-                error_events, repeated_ops, trw_dir,
-                max_errors=_MAX_ERROR_LEARNINGS,
-                max_repeated=_MAX_REPEATED_OPS,
-            )
-
-        # PRD-QUAL-001 FR04: Generate positive learnings from success patterns
-        positive_count = 0
-        max_positive = _config.reflect_max_positive_learnings
-        for sp in success_patterns:
-            if positive_count >= max_positive:
-                break
-            summary = sp["summary"]
-            if has_existing_success_learning(trw_dir, summary):
-                continue
-            sp_id = generate_learning_id()
-            sp_entry = LearningEntry(
-                id=sp_id,
-                summary=summary,
-                detail=sp.get("detail", ""),
-                tags=["success", "pattern", "auto-discovered"],
-                impact=0.5,
-                recurrence=int(sp.get("count", 1)),
-                source_type="agent",
-                source_identity="trw_reflect",
-            )
-            save_learning_entry(trw_dir, sp_entry)
-            new_learnings.append({"id": sp_id, "summary": sp_entry.summary})
-            positive_count += 1
-
-        # Create reflection log
-        reflection_id = generate_learning_id()
-        reflection = Reflection(
-            id=reflection_id,
-            run_id=run_id,
-            scope=scope,
-            timestamp=datetime.now(timezone.utc),
-            events_analyzed=len(events),
-            what_worked=(
-                [str(e.get("event")) for e in phase_transitions]
-                + [p["summary"] for p in success_patterns]
-            ),
-            what_failed=[str(e.get("event")) for e in error_events[:_MAX_ERROR_LEARNINGS]],
-            repeated_patterns=[f"{op} ({c}x)" for op, c in repeated_ops[:_MAX_REPEATED_OPS]],
-            new_learnings=[item["id"] for item in new_learnings],
-        )
-
-        reflection_path = (
-            trw_dir / _config.reflections_dir
-            / f"{date.today().isoformat()}-{reflection_id}.yaml"
-        )
-        _writer.write_yaml(reflection_path, model_to_dict(reflection))
-
-        if run_path:
-            resolved_run = Path(run_path).resolve()
-            run_events_path = resolved_run / "meta" / "events.jsonl"
-            if run_events_path.parent.exists():
-                _events.log_event(run_events_path, "reflection_complete", {
-                    "reflection_id": reflection_id,
-                    "scope": scope,
-                    "learnings_produced": len(new_learnings),
-                })
-
-        # PRD-QUAL-012-FR02/FR03: Use extended analytics with reflection tracking
         update_analytics_extended(
             trw_dir, len(new_learnings),
             is_reflection=True,
-            is_success=len(error_events) == 0 and len(events) > 0,
+            is_success=len(inputs.error_events) == 0 and len(inputs.events) > 0,
         )
-
-        # PRD-QUAL-012-FR01: Compute reflection quality score
         reflection_quality = compute_reflection_quality(trw_dir)
 
         logger.info(
             "trw_reflect_complete",
             scope=scope,
-            events_analyzed=len(events),
+            events_analyzed=len(inputs.events),
             learnings_produced=len(new_learnings),
             reflection_quality=reflection_quality.get("score", 0.0),
         )
 
-        # PRD-QUAL-001 FR05: Extended output schema
         return {
-            "reflection_id": reflection_id,
+            "reflection_id": reflection.id,
             "scope": scope,
-            "events_analyzed": len(events),
+            "events_analyzed": len(inputs.events),
             "new_learnings": new_learnings,
-            "error_patterns": len(error_events),
-            "repeated_operations": len(repeated_ops),
+            "error_patterns": len(inputs.error_events),
+            "repeated_operations": len(inputs.repeated_ops),
             "success_patterns": {
-                "count": len(success_patterns),
+                "count": len(inputs.success_patterns),
                 "phase_completions": [
                     {"phase": str(e.get("event")), "events_in_phase": 1}
-                    for e in phase_transitions
+                    for e in inputs.phase_transitions
                 ],
                 "shard_successes": [
                     {
@@ -355,11 +203,11 @@ def register_learning_tools(server: FastMCP) -> None:
                         "count": int(sp.get("count", 1)),
                         "first_attempt": True,
                     }
-                    for sp in success_patterns
+                    for sp in inputs.success_patterns
                 ],
-                "tool_sequences": tool_sequences,
+                "tool_sequences": inputs.tool_sequences,
             },
-            "validated_learnings": validated_learnings,
+            "validated_learnings": inputs.validated_learnings,
             "positive_learnings_created": positive_count,
             "llm_used": llm_used,
             "reflection_quality": reflection_quality,
@@ -580,48 +428,11 @@ def register_learning_tools(server: FastMCP) -> None:
             description: What the script does.
             language: Script language — "bash", "python", etc.
         """
+        from trw_mcp.state.scripts import save_script
+
         trw_dir = resolve_trw_dir()
-        scripts_dir = trw_dir / _config.scripts_dir
-        _writer.ensure_dir(scripts_dir)
+        script_path, action = save_script(trw_dir, name, content, description, language)
 
-        ext_map: dict[str, str] = {"bash": ".sh", "python": ".py", "sh": ".sh", "py": ".py"}
-        extension = ext_map.get(language, f".{language}")
-        filename = f"{name}{extension}"
-        script_path = scripts_dir / filename
-        is_update = script_path.exists()
-
-        _writer.write_text(script_path, content)
-
-        index_path = scripts_dir / "index.yaml"
-        index_data: dict[str, object] = {}
-        if _reader.exists(index_path):
-            index_data = _reader.read_yaml(index_path)
-
-        scripts_list: list[dict[str, object]] = []
-        raw_scripts = index_data.get("scripts", [])
-        if isinstance(raw_scripts, list):
-            scripts_list = [s for s in raw_scripts if isinstance(s, dict)]
-
-        found_script = False
-        for s in scripts_list:
-            if s.get("name") == name:
-                s["description"] = description
-                s["last_refined"] = date.today().isoformat()
-                usage = s.get("usage_count", 0)
-                s["usage_count"] = (int(usage) if isinstance(usage, (int, float)) else 0) + 1
-                found_script = True
-                break
-
-        if not found_script:
-            script_entry = Script(
-                name=name, description=description, filename=filename, language=language,
-            )
-            scripts_list.append(model_to_dict(script_entry))
-
-        index_data["scripts"] = scripts_list
-        _writer.write_yaml(index_path, index_data)
-
-        action = "updated" if is_update else "created"
         logger.info("trw_script_saved", name=name, action=action, path=str(script_path))
         return {"name": name, "path": str(script_path), "status": action}
 
@@ -729,78 +540,18 @@ def register_learning_tools(server: FastMCP) -> None:
         Args:
             dry_run: If True (default), report candidates without applying changes.
         """
+        from trw_mcp.state.pruning import execute_prune
+
         trw_dir = resolve_trw_dir()
-        entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-
-        receipts_pruned = 0
-        if not dry_run:
-            receipts_pruned = prune_recall_receipts(trw_dir)
-
-        if not entries_dir.exists():
-            return {
-                "candidates": [], "actions": 0,
-                "receipts_pruned": receipts_pruned, "method": "none",
-            }
-
-        all_entries: list[tuple[Path, dict[str, object]]] = []
-        for entry_file in sorted(entries_dir.glob("*.yaml")):
-            try:
-                data = _reader.read_yaml(entry_file)
-                all_entries.append((entry_file, data))
-            except (StateError, ValueError, TypeError):
-                continue
-
-        if not all_entries:
-            return {
-                "candidates": [], "actions": 0,
-                "receipts_pruned": receipts_pruned, "method": "none",
-            }
-
-        candidates: list[dict[str, object]] = []
-        if _config.llm_enabled and _llm.available:  # pragma: no cover
-            candidates = llm_assess_learnings(all_entries, _llm)
-            method = "llm"
-        else:
-            candidates = utility_based_prune_candidates(all_entries)
-            method = "utility"
-
-        actions = 0
-        if not dry_run:
-            for candidate in candidates:
-                cid = str(candidate.get("id", ""))
-                new_status = str(candidate.get("suggested_status", ""))
-                if cid and new_status in ("resolved", "obsolete"):
-                    apply_status_update(trw_dir, cid, new_status)
-                    actions += 1
-            if actions > 0:
-                resync_learning_index(trw_dir)
-
-        # PRD-QUAL-012-FR06: Jaccard dedup detection
-        duplicates = find_duplicate_learnings(entries_dir, threshold=0.8)
-        if not dry_run:
-            for older_id, _newer_id, _sim in duplicates:
-                apply_status_update(trw_dir, older_id, "obsolete")
-                actions += 1
-            if duplicates:
-                resync_learning_index(trw_dir)
-
-        # PRD-QUAL-012-FR06: Auto-pruning trigger when active > 100
-        auto_prune_result = auto_prune_excess_entries(
-            trw_dir, max_entries=_config.learning_max_entries,
-            dry_run=dry_run,
-        )
+        result = execute_prune(trw_dir, dry_run=dry_run)
 
         logger.info(
-            "trw_learn_prune_complete", dry_run=dry_run, candidates=len(candidates),
-            actions=actions, receipts_pruned=receipts_pruned, method=method,
-            duplicates_found=len(duplicates),
+            "trw_learn_prune_complete",
+            dry_run=dry_run,
+            candidates=len(result.get("candidates", [])),
+            actions=result.get("actions", 0),
+            receipts_pruned=result.get("receipts_pruned", 0),
+            method=result.get("method", "none"),
+            duplicates_found=len(result.get("duplicates", [])),
         )
-        return {
-            "candidates": candidates, "actions": actions,
-            "receipts_pruned": receipts_pruned, "dry_run": dry_run, "method": method,
-            "duplicates": [
-                {"older_id": o, "newer_id": n, "similarity": s}
-                for o, n, s in duplicates
-            ],
-            "auto_prune": auto_prune_result,
-        }
+        return result

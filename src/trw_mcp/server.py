@@ -19,8 +19,6 @@ from fastmcp import FastMCP
 
 from trw_mcp.models.config import TRWConfig
 
-_NOISY_LOGGERS = ("fastmcp", "redis", "httpcore", "httpx", "asyncio")
-
 
 def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
     """Configure structlog processors and stdlib logging.
@@ -30,12 +28,16 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
             dev-friendly console output on stderr at DEBUG level.
         config: TRW configuration for path resolution.
     """
-    shared_processors: list[structlog.types.Processor] = [
+    log_level = logging.DEBUG if debug else logging.INFO
+
+    base_processors: list[structlog.types.Processor] = [
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.add_log_level,
         structlog.contextvars.merge_contextvars,
         structlog.processors.StackInfoRenderer(),
     ]
+
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
 
     if debug:
         logs_dir = Path.cwd() / config.trw_dir / config.logs_dir
@@ -44,50 +46,28 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         log_file = logs_dir / f"trw-mcp-{today}.jsonl"
 
-        file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
+        handlers.append(logging.FileHandler(str(log_file), encoding="utf-8"))
+        base_processors.append(structlog.processors.format_exc_info)
 
-        stderr_handler = logging.StreamHandler(sys.stderr)
-        stderr_handler.setLevel(logging.DEBUG)
+        # Suppress FastMCP Redis noise (~1.25M lines/day, 145 MB vs ~800 TRW events)
+        for logger_name in ("fastmcp", "redis", "httpcore", "httpx", "asyncio"):
+            logging.getLogger(logger_name).setLevel(logging.WARNING)
 
-        logging.basicConfig(
-            format="%(message)s",
-            level=logging.DEBUG,
-            handlers=[file_handler, stderr_handler],
-            force=True,
-        )
+    logging.basicConfig(
+        format="%(message)s",
+        level=log_level,
+        handlers=handlers,
+        force=True,
+    )
 
-        structlog.configure(
-            processors=[
-                *shared_processors,
-                structlog.processors.format_exc_info,
-                structlog.processors.JSONRenderer(),
-            ],
-            wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
-            logger_factory=structlog.stdlib.LoggerFactory(),
-        )
-
-        # FastMCP's Docket worker logs every Redis command (~1.25M lines/day),
-        # producing 145 MB of noise vs ~800 lines of actual TRW events.
-        for name in _NOISY_LOGGERS:
-            logging.getLogger(name).setLevel(logging.WARNING)
-
-    else:
-        logging.basicConfig(
-            format="%(message)s",
-            level=logging.INFO,
-            handlers=[logging.StreamHandler(sys.stderr)],
-            force=True,
-        )
-
-        structlog.configure(
-            processors=[
-                *shared_processors,
-                structlog.processors.JSONRenderer(),
-            ],
-            wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-            logger_factory=structlog.stdlib.LoggerFactory(),
-        )
+    structlog.configure(
+        processors=[
+            *base_processors,
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(log_level),
+        logger_factory=structlog.stdlib.LoggerFactory(),
+    )
 
 
 mcp = FastMCP(
@@ -107,7 +87,10 @@ mcp = FastMCP(
 
 def _register_tools() -> None:
     """Register all tools, resources, and prompts on the MCP server."""
-    # Tools (alphabetical)
+    from trw_mcp.prompts.aaref import register_aaref_prompts
+    from trw_mcp.resources.config import register_config_resources
+    from trw_mcp.resources.run_state import register_run_state_resources
+    from trw_mcp.resources.templates import register_template_resources
     from trw_mcp.tools.bdd import register_bdd_tools
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
@@ -124,15 +107,6 @@ def _register_tools() -> None:
     from trw_mcp.tools.velocity import register_velocity_tools
     from trw_mcp.tools.wave import register_wave_tools
 
-    # Resources
-    from trw_mcp.resources.config import register_config_resources
-    from trw_mcp.resources.run_state import register_run_state_resources
-    from trw_mcp.resources.templates import register_template_resources
-
-    # Prompts
-    from trw_mcp.prompts.aaref import register_aaref_prompts
-
-    # --- Register tools (alphabetical) ---
     register_bdd_tools(mcp)
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
@@ -149,12 +123,10 @@ def _register_tools() -> None:
     register_velocity_tools(mcp)
     register_wave_tools(mcp)
 
-    # --- Register resources (alphabetical) ---
     register_config_resources(mcp)
     register_run_state_resources(mcp)
     register_template_resources(mcp)
 
-    # --- Register prompts ---
     register_aaref_prompts(mcp)
 
 
@@ -171,7 +143,6 @@ def main() -> None:
     parser.add_argument(
         "--debug",
         action="store_true",
-        default=False,
         help="Enable debug logging to .trw/logs/ and stderr",
     )
     args = parser.parse_args()
@@ -181,9 +152,7 @@ def main() -> None:
 
     _configure_logging(debug=debug, config=config)
 
-    logger = structlog.get_logger()
-
-    logger.info(
+    structlog.get_logger().info(
         "trw_server_initialized",
         tools_registered=True,
         debug_mode=debug,

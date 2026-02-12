@@ -19,6 +19,7 @@ from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
+    lock_for_rmw,
     model_to_dict,
 )
 
@@ -333,8 +334,6 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
         trw_dir: Path to .trw directory.
         entry: New learning entry to add to index.
     """
-    from trw_mcp.state.persistence import lock_for_rmw
-
     index_path = trw_dir / _config.learnings_dir / "index.yaml"
 
     with lock_for_rmw(index_path):
@@ -347,7 +346,6 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
         if isinstance(entries_raw, list):
             entries = [e for e in entries_raw if isinstance(e, dict)]
 
-        # Add new entry summary to index
         entries.append({
             "id": entry.id,
             "summary": entry.summary,
@@ -356,11 +354,9 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
             "created": entry.created.isoformat(),
         })
 
-        # Enforce max entries
         if len(entries) > _config.learning_max_entries:
-            # Prune lowest impact entries
             entries.sort(key=lambda e: float(str(e.get("impact", 0.0))))
-            entries = entries[-_config.learning_max_entries :]
+            entries = entries[-_config.learning_max_entries:]
 
         index_data["entries"] = entries
         index_data["total_count"] = len(entries)

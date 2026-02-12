@@ -780,8 +780,11 @@ class TestPositiveLearningGeneration:
         # Set a low cap
         monkeypatch.setenv("TRW_REFLECT_MAX_POSITIVE_LEARNINGS", "2")
         import trw_mcp.tools.learning as learn_mod
+        import trw_mcp.state.reflection as reflect_mod
 
-        monkeypatch.setattr(learn_mod, "_config", TRWConfig())
+        new_config = TRWConfig()
+        monkeypatch.setattr(learn_mod, "_config", new_config)
+        monkeypatch.setattr(reflect_mod, "_config", new_config)
 
         tools = _get_learning_tools(monkeypatch, tmp_path)
         trw_dir = tmp_path / ".trw"
