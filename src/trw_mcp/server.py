@@ -76,11 +76,11 @@ mcp = FastMCP(
         "TRW orchestration + self-learning tools. "
         "Workflow: trw_init → trw_event/checkpoint → trw_reflect → trw_recall → trw_claude_md_sync. "
         ".trw/ persists knowledge across sessions. "
-        "Execute trw_recall('*', min_impact=0.7) at session start to load high-impact learnings. "
-        "Execute trw_reflect after completing tasks. "
-        "Execute trw_claude_md_sync at delivery. "
-        "Read .trw/frameworks/FRAMEWORK.md for phase requirements. "
-        "Sub-agents: call trw_shard_context first to get run paths and tool guidance."
+        "ALWAYS execute trw_recall('*', min_impact=0.7) at session start — NEVER skip this step. "
+        "ALWAYS execute trw_reflect after completing tasks. "
+        "ALWAYS execute trw_claude_md_sync at delivery. "
+        "ALWAYS read .trw/frameworks/FRAMEWORK.md for phase requirements. "
+        "Sub-agents: ALWAYS call trw_shard_context FIRST to get run paths and tool guidance."
     ),
 )
 
