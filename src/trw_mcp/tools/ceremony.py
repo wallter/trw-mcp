@@ -238,9 +238,17 @@ def register_ceremony_tools(server: FastMCP) -> None:
         else:
             results["index_sync"] = {"status": "skipped"}
 
+        # Step 5: Auto-progress PRD statuses (PRD-CORE-025 via GAP-PROC-001)
+        try:
+            progress_result = _do_auto_progress(resolved_run)
+            results["auto_progress"] = progress_result
+        except Exception as exc:
+            errors.append(f"auto_progress: {exc}")
+            results["auto_progress"] = {"status": "failed", "error": str(exc)}
+
         results["errors"] = errors
         results["success"] = len(errors) == 0
-        results["steps_completed"] = 4 - len(errors)
+        results["steps_completed"] = 5 - len(errors)
 
         logger.info(
             "trw_deliver_complete",
@@ -400,4 +408,31 @@ def _do_index_sync() -> dict[str, object]:
         "status": "success",
         "index": index_result,
         "roadmap": roadmap_result,
+    }
+
+
+def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
+    """Auto-progress PRD statuses for the deliver phase.
+
+    Calls ``auto_progress_prds`` with phase="deliver" for all PRDs
+    in the run's ``prd_scope``. Skipped if no active run.
+    """
+    if run_dir is None:
+        return {"status": "skipped", "reason": "no_active_run"}
+
+    from trw_mcp.state.validation import auto_progress_prds
+
+    project_root = resolve_project_root()
+    prds_dir = project_root / Path(_config.prds_relative_path)
+    if not prds_dir.is_dir():
+        return {"status": "skipped", "reason": "prds_dir_not_found"}
+
+    progressions = auto_progress_prds(run_dir, "deliver", prds_dir, _config)
+    applied = [p for p in progressions if p.get("applied")]
+
+    return {
+        "status": "success",
+        "total_evaluated": len(progressions),
+        "applied": len(applied),
+        "progressions": progressions,
     }

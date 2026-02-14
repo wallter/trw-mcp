@@ -688,20 +688,24 @@ def check_phase_exit(
             src_dir = proj / "trw-mcp" / "src" / "trw_mcp"
             if src_dir.is_dir():
                 integ = check_integration(src_dir)
-                for mod in integ.get("unregistered", []):
-                    failures.append(ValidationFailure(
-                        field=f"integration:tools/{mod}.py",
-                        rule="tool_registration",
-                        message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
-                        severity="warning",
-                    ))
-                for test_name in integ.get("missing_tests", []):
-                    failures.append(ValidationFailure(
-                        field=f"integration:{test_name}",
-                        rule="test_coverage",
-                        message=f"Missing test file: {test_name}",
-                        severity="warning",
-                    ))
+                unreg = integ.get("unregistered", [])
+                if isinstance(unreg, list):
+                    for mod in unreg:
+                        failures.append(ValidationFailure(
+                            field=f"integration:tools/{mod}.py",
+                            rule="tool_registration",
+                            message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
+                            severity="warning",
+                        ))
+                missing = integ.get("missing_tests", [])
+                if isinstance(missing, list):
+                    for test_name in missing:
+                        failures.append(ValidationFailure(
+                            field=f"integration:{test_name}",
+                            rule="test_coverage",
+                            message=f"Missing test file: {test_name}",
+                            severity="warning",
+                        ))
         except Exception:  # noqa: BLE001
             pass  # Best-effort — never block for integration check failures
 
@@ -815,22 +819,25 @@ def check_phase_exit(
                 )
             )
 
-        # PRD-QUAL-011-FR03: Integration check at DELIVER
+        # PRD-QUAL-011-FR03: Integration check at DELIVER — BLOCKING
+        # GAP Self-ref: unregistered tools are errors at DELIVER (not warnings)
         try:
             from trw_mcp.state._paths import resolve_project_root as _resolve_proj
             proj = _resolve_proj()
             src_dir = proj / "trw-mcp" / "src" / "trw_mcp"
             if src_dir.is_dir():
                 integ = check_integration(src_dir)
-                for mod in integ.get("unregistered", []):
-                    failures.append(ValidationFailure(
-                        field=f"integration:tools/{mod}.py",
-                        rule="tool_registration",
-                        message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
-                        severity="warning",
-                    ))
+                unreg = integ.get("unregistered", [])
+                if isinstance(unreg, list):
+                    for mod in unreg:
+                        failures.append(ValidationFailure(
+                            field=f"integration:tools/{mod}.py",
+                            rule="tool_registration",
+                            message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
+                            severity="error",
+                        ))
         except Exception:  # noqa: BLE001
-            pass  # Best-effort
+            pass  # Best-effort — scanner errors never block
 
         # PRD-CORE-023-FR08: Build gate at DELIVER (per enforcement config)
         try:

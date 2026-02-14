@@ -5,6 +5,7 @@ Covers:
 - trw_deliver: reflect + checkpoint + claude_md_sync + index_sync bundling
 - _find_active_run helper
 - _do_checkpoint, _do_reflect, _do_claude_md_sync, _do_index_sync internals
+- _do_auto_progress: PRD auto-progression during delivery (GAP-PROC-001)
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from trw_mcp.tools.ceremony import (
+    _do_auto_progress,
     _do_checkpoint,
     _do_claude_md_sync,
     _do_index_sync,
@@ -200,3 +202,75 @@ class TestDoIndexSync:
         assert result["status"] == "success"
         assert (prds_dir.parent / "INDEX.md").exists()
         assert (prds_dir.parent / "ROADMAP.md").exists()
+
+
+# --- _do_auto_progress ---
+
+
+class TestDoAutoProgress:
+    """PRD auto-progression during delivery ceremony (GAP-PROC-001)."""
+
+    def test_skips_when_no_active_run(self) -> None:
+        result = _do_auto_progress(None)
+        assert result["status"] == "skipped"
+        assert result["reason"] == "no_active_run"
+
+    def test_skips_when_prds_dir_missing(self, tmp_path: Path) -> None:
+        run_dir = tmp_path / "run"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
+            encoding="utf-8",
+        )
+        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+            result = _do_auto_progress(run_dir)
+        assert result["status"] == "skipped"
+        assert result["reason"] == "prds_dir_not_found"
+
+    def test_progresses_implemented_to_done_on_deliver(self, tmp_path: Path) -> None:
+        # Set up PRD
+        prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        prds_dir.mkdir(parents=True)
+        (prds_dir / "PRD-CORE-099.md").write_text(
+            "---\nprd:\n  id: PRD-CORE-099\n  title: Test\n"
+            "  status: implemented\n  priority: P1\n  category: CORE\n---\n"
+            "# PRD-CORE-099\nSome content for density.\n",
+            encoding="utf-8",
+        )
+        # Set up run with prd_scope
+        run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\n"
+            "prd_scope:\n  - PRD-CORE-099\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+            result = _do_auto_progress(run_dir)
+        assert result["status"] == "success"
+        assert result["applied"] >= 1
+        # Verify file was updated
+        content = (prds_dir / "PRD-CORE-099.md").read_text(encoding="utf-8")
+        assert "status: done" in content
+
+    def test_returns_zero_applied_for_terminal_statuses(self, tmp_path: Path) -> None:
+        prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        prds_dir.mkdir(parents=True)
+        (prds_dir / "PRD-CORE-099.md").write_text(
+            "---\nprd:\n  id: PRD-CORE-099\n  title: Test\n"
+            "  status: done\n  priority: P1\n  category: CORE\n---\n",
+            encoding="utf-8",
+        )
+        run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\n"
+            "prd_scope:\n  - PRD-CORE-099\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+            result = _do_auto_progress(run_dir)
+        assert result["status"] == "success"
+        assert result["applied"] == 0

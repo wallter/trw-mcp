@@ -102,6 +102,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.refactoring import register_refactoring_tools
     from trw_mcp.tools.requirements import register_requirements_tools
+    from trw_mcp.tools.sprint import register_sprint_tools
     from trw_mcp.tools.testing import register_testing_tools
     from trw_mcp.tools.tracks import register_track_tools
     from trw_mcp.tools.velocity import register_velocity_tools
@@ -118,6 +119,7 @@ def _register_tools() -> None:
     register_orchestration_tools(mcp)
     register_refactoring_tools(mcp)
     register_requirements_tools(mcp)
+    register_sprint_tools(mcp)
     register_testing_tools(mcp)
     register_track_tools(mcp)
     register_velocity_tools(mcp)
