@@ -293,6 +293,25 @@ def validate_wave_contracts(
             failures = _validator.validate_contract(shard.output_contract, base_path)
             all_failures.extend(failures)
 
+        # Check integration checklist fields
+        _checklist_fields = {
+            "registered_in_server": "Tool not registered in server.py",
+            "documented_in_framework": "Not documented in FRAMEWORK.md",
+            "configured_in_pyproject": "Not configured in pyproject.toml",
+            "updated_in_claude_md": "Not updated in CLAUDE.md",
+        }
+        for field_name, warning_msg in _checklist_fields.items():
+            value = getattr(shard, field_name, None)
+            if value is False:
+                all_failures.append(
+                    ValidationFailure(
+                        field=f"{shard.id}:{field_name}",
+                        rule="integration_checklist",
+                        message=f"Shard {shard.id}: {warning_msg}",
+                        severity="warning",
+                    )
+                )
+
     logger.info(
         "wave_validated",
         wave=wave.wave,
@@ -1553,6 +1572,7 @@ def generate_improvement_suggestions(
 def validate_prd_quality_v2(
     content: str,
     config: TRWConfig | None = None,
+    v1_result: dict[str, object] | None = None,
 ) -> ValidationResultV2:
     """Validate a PRD with full 6-dimension semantic scoring.
 
@@ -1563,6 +1583,9 @@ def validate_prd_quality_v2(
     Args:
         content: Full PRD markdown content.
         config: Optional TRWConfig for threshold/weight overrides.
+        v1_result: Optional pre-computed V1 validation result. When provided,
+            V1 fields are populated from this dict, skipping redundant
+            V1 computation (GAP-FR-007 optimization).
 
     Returns:
         ValidationResultV2 with all dimension scores and metadata.
@@ -1661,52 +1684,71 @@ def validate_prd_quality_v2(
     # Generate improvement suggestions
     suggestions = generate_improvement_suggestions(dimensions)
 
-    # V1-compatible fields (inline, avoids redundant validate_prd_quality call — PRD-FIX-011)
-    required_fields = ["id", "title", "version", "status", "priority"]
-    v1_failures: list[ValidationFailure] = []
-    for field in required_fields:
-        if field not in frontmatter or not frontmatter[field]:
-            v1_failures.append(ValidationFailure(
-                field=f"frontmatter:{field}", rule="required_field",
-                message=f"Required frontmatter field missing: {field}", severity="error",
-            ))
-    expected_section_count = 12
-    if len(sections) < expected_section_count:
-        v1_failures.append(ValidationFailure(
-            field="sections", rule="section_count",
-            message=f"PRD has {len(sections)} sections, expected {expected_section_count}",
-            severity="error",
-        ))
-    confidence = frontmatter.get("confidence", {})
-    if isinstance(confidence, dict):
-        for cf in ("implementation_feasibility", "requirement_clarity", "estimate_confidence"):
-            if cf not in confidence:
+    # V1-compatible fields — use pre-computed result if provided (GAP-FR-007)
+    if v1_result is not None:
+        v1_failures_raw = v1_result.get("failures", [])
+        v1_failures = []
+        if isinstance(v1_failures_raw, list):
+            for f in v1_failures_raw:
+                if isinstance(f, ValidationFailure):
+                    v1_failures.append(f)
+                elif isinstance(f, dict):
+                    v1_failures.append(ValidationFailure(
+                        field=str(f.get("field", "")),
+                        rule=str(f.get("rule", "")),
+                        message=str(f.get("message", "")),
+                        severity=str(f.get("severity", "warning")),
+                    ))
+        is_valid = bool(v1_result.get("valid", False))
+        v1_completeness = float(str(v1_result.get("completeness_score", 0.0)))
+        v1_trace_coverage = float(str(v1_result.get("traceability_coverage", 0.0)))
+    else:
+        # Inline V1 computation (PRD-FIX-011)
+        required_fields = ["id", "title", "version", "status", "priority"]
+        v1_failures = []
+        for field in required_fields:
+            if field not in frontmatter or not frontmatter[field]:
                 v1_failures.append(ValidationFailure(
-                    field=f"confidence:{cf}", rule="confidence_present",
-                    message=f"Missing confidence score: {cf}", severity="warning",
+                    field=f"frontmatter:{field}", rule="required_field",
+                    message=f"Required frontmatter field missing: {field}", severity="error",
                 ))
-    traceability = frontmatter.get("traceability", {})
-    has_traces = False
-    if isinstance(traceability, dict):
-        for key in ("implements", "depends_on", "enables"):
-            val = traceability.get(key, [])
-            if isinstance(val, list) and len(val) > 0:
-                has_traces = True
-                break
-    if not has_traces:
-        v1_failures.append(ValidationFailure(
-            field="traceability", rule="has_traces",
-            message="PRD has no traceability links", severity="warning",
-        ))
-    v1_total_checks = len(required_fields) + 3
-    v1_error_count = sum(1 for f in v1_failures if f.severity == "error")
-    v1_completeness = 1.0 - (v1_error_count / max(v1_total_checks, 1))
-    v1_trace_coverage = 1.0 if has_traces else 0.0
-    is_valid = (
-        v1_completeness >= _config.completeness_min
-        and v1_trace_coverage >= _config.traceability_coverage_min
-        and v1_error_count == 0
-    )
+        expected_section_count = 12
+        if len(sections) < expected_section_count:
+            v1_failures.append(ValidationFailure(
+                field="sections", rule="section_count",
+                message=f"PRD has {len(sections)} sections, expected {expected_section_count}",
+                severity="error",
+            ))
+        confidence = frontmatter.get("confidence", {})
+        if isinstance(confidence, dict):
+            for cf in ("implementation_feasibility", "requirement_clarity", "estimate_confidence"):
+                if cf not in confidence:
+                    v1_failures.append(ValidationFailure(
+                        field=f"confidence:{cf}", rule="confidence_present",
+                        message=f"Missing confidence score: {cf}", severity="warning",
+                    ))
+        traceability = frontmatter.get("traceability", {})
+        has_traces = False
+        if isinstance(traceability, dict):
+            for key in ("implements", "depends_on", "enables"):
+                val = traceability.get(key, [])
+                if isinstance(val, list) and len(val) > 0:
+                    has_traces = True
+                    break
+        if not has_traces:
+            v1_failures.append(ValidationFailure(
+                field="traceability", rule="has_traces",
+                message="PRD has no traceability links", severity="warning",
+            ))
+        v1_total_checks = len(required_fields) + 3
+        v1_error_count = sum(1 for f in v1_failures if f.severity == "error")
+        v1_completeness = 1.0 - (v1_error_count / max(v1_total_checks, 1))
+        v1_trace_coverage = 1.0 if has_traces else 0.0
+        is_valid = (
+            v1_completeness >= _config.completeness_min
+            and v1_trace_coverage >= _config.traceability_coverage_min
+            and v1_error_count == 0
+        )
 
     result = ValidationResultV2(
         # V1 fields (computed inline)

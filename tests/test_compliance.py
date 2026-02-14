@@ -23,10 +23,12 @@ from trw_mcp.tools.compliance import (
     _check_checkpoint_compliance,
     _check_claude_md_sync_compliance,
     _check_event_compliance,
+    _check_framework_docs,
     _check_recall_compliance,
     _check_reflection_compliance,
     _compute_compliance_score,
     _determine_overall_status,
+    _FRAMEWORK_EXPECTED_SECTIONS,
     _is_changelog_exempt,
     _load_run_events,
 )
@@ -743,3 +745,182 @@ class TestConfigFields:
         assert config.compliance_pass_threshold == 0.8
         assert config.compliance_warning_threshold == 0.5
         assert config.compliance_long_session_event_threshold == 5
+
+
+class TestFrameworkDocsCompliance:
+    """Tests for the FRAMEWORK_DOCS compliance dimension (Sprint 13 Track B)."""
+
+    def test_all_sections_present(self, compliance_config: TRWConfig, tmp_path: Path) -> None:
+        """All expected sections in FRAMEWORK.md should produce PASS."""
+        fw = tmp_path / "FRAMEWORK.md"
+        lines = ["# FRAMEWORK\n"]
+        for section in _FRAMEWORK_EXPECTED_SECTIONS:
+            lines.append(f"## {section}\nSome content here.\n")
+        fw.write_text("\n".join(lines))
+
+        result = _check_framework_docs(tmp_path, compliance_config)
+        assert result.status == ComplianceStatus.PASS
+        assert result.dimension == ComplianceDimension.FRAMEWORK_DOCS
+
+    def test_missing_sections(self, compliance_config: TRWConfig, tmp_path: Path) -> None:
+        """Missing sections in FRAMEWORK.md should produce FAIL."""
+        fw = tmp_path / "FRAMEWORK.md"
+        fw.write_text("# FRAMEWORK\n\n## ARCHITECTURE\nSome content.\n")
+
+        result = _check_framework_docs(tmp_path, compliance_config)
+        assert result.status == ComplianceStatus.FAIL
+        assert "Missing" in result.message
+        assert result.remediation != ""
+
+    def test_no_framework_file(self, compliance_config: TRWConfig, tmp_path: Path) -> None:
+        """Missing FRAMEWORK.md should produce WARNING."""
+        result = _check_framework_docs(tmp_path, compliance_config)
+        assert result.status == ComplianceStatus.WARNING
+        assert "not found" in result.message
+
+    def test_case_insensitive_headers(self, compliance_config: TRWConfig, tmp_path: Path) -> None:
+        """Section headers should match case-insensitively."""
+        fw = tmp_path / "FRAMEWORK.md"
+        lines = ["# Framework\n"]
+        for section in _FRAMEWORK_EXPECTED_SECTIONS:
+            # Use mixed case — the checker uppercases
+            lines.append(f"## {section.title()}\nContent.\n")
+        fw.write_text("\n".join(lines))
+
+        result = _check_framework_docs(tmp_path, compliance_config)
+        assert result.status == ComplianceStatus.PASS
+
+    def test_dimension_count_is_7(
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+        full_events: list[dict[str, object]],
+    ) -> None:
+        """Compliance check should now report 7 dimensions (was 6)."""
+        run_dir = tmp_path / "docs" / "test" / "runs" / "run-001"
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True)
+        writer.write_yaml(meta / "run.yaml", {"run_id": "run-001"})
+        for evt in full_events:
+            writer.append_jsonl(meta / "events.jsonl", evt)
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(exist_ok=True)
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n\n## [Unreleased]\n\n- Added\n")
+        # Create FRAMEWORK.md with all sections
+        fw = tmp_path / "FRAMEWORK.md"
+        lines = ["# FRAMEWORK\n"]
+        for section in _FRAMEWORK_EXPECTED_SECTIONS:
+            lines.append(f"## {section}\nContent.\n")
+        fw.write_text("\n".join(lines))
+
+        with patch(
+            "trw_mcp.tools.compliance.resolve_run_path",
+            return_value=run_dir,
+        ), patch(
+            "trw_mcp.tools.compliance.resolve_project_root",
+            return_value=tmp_path,
+        ), patch(
+            "trw_mcp.tools.compliance.resolve_trw_dir",
+            return_value=trw_dir,
+        ):
+            from trw_mcp.tools.compliance import register_compliance_tools
+            from fastmcp import FastMCP
+
+            server = FastMCP("test")
+            register_compliance_tools(server)
+
+            check_fn = server._tool_manager._tools["trw_compliance_check"].fn  # type: ignore[attr-defined]
+            result = check_fn(run_path=str(run_dir), mode="gate")
+
+            assert len(result["dimensions"]) == 7
+
+
+class TestShardCardIntegrationChecklist:
+    """Tests for ShardCard integration checklist fields (Sprint 13 Track B)."""
+
+    def test_shard_card_default_none(self) -> None:
+        """Integration checklist fields default to None."""
+        from trw_mcp.models.run import ShardCard
+
+        shard = ShardCard(id="S1", title="Test", wave=1)
+        assert shard.registered_in_server is None
+        assert shard.documented_in_framework is None
+        assert shard.configured_in_pyproject is None
+        assert shard.updated_in_claude_md is None
+
+    def test_shard_card_accepts_bool_values(self) -> None:
+        """Integration checklist fields accept True/False values."""
+        from trw_mcp.models.run import ShardCard
+
+        shard = ShardCard(
+            id="S1", title="Test", wave=1,
+            registered_in_server=True,
+            documented_in_framework=False,
+            configured_in_pyproject=True,
+            updated_in_claude_md=False,
+        )
+        assert shard.registered_in_server is True
+        assert shard.documented_in_framework is False
+
+    def test_wave_validation_warns_on_false_checklist(self) -> None:
+        """validate_wave_contracts should warn when checklist fields are False."""
+        from trw_mcp.models.run import ShardCard, ShardStatus, WaveEntry, WaveStatus
+        from trw_mcp.state.validation import validate_wave_contracts
+
+        wave = WaveEntry(wave=1, shards=["S1"], status=WaveStatus.PENDING)
+        shard = ShardCard(
+            id="S1", title="Test", wave=1,
+            status=ShardStatus.COMPLETE,
+            registered_in_server=False,
+            documented_in_framework=True,
+        )
+        failures = validate_wave_contracts(wave, [shard], Path("/tmp"))
+        checklist_failures = [f for f in failures if f.rule == "integration_checklist"]
+        assert len(checklist_failures) == 1
+        assert "registered_in_server" in checklist_failures[0].field
+
+    def test_wave_validation_ignores_none_checklist(self) -> None:
+        """validate_wave_contracts should not warn when checklist fields are None."""
+        from trw_mcp.models.run import ShardCard, ShardStatus, WaveEntry, WaveStatus
+        from trw_mcp.state.validation import validate_wave_contracts
+
+        wave = WaveEntry(wave=1, shards=["S1"], status=WaveStatus.PENDING)
+        shard = ShardCard(
+            id="S1", title="Test", wave=1,
+            status=ShardStatus.COMPLETE,
+        )
+        failures = validate_wave_contracts(wave, [shard], Path("/tmp"))
+        checklist_failures = [f for f in failures if f.rule == "integration_checklist"]
+        assert len(checklist_failures) == 0
+
+
+class TestV1ResultParameter:
+    """Tests for validate_prd_quality_v2 v1_result parameter (GAP-FR-007)."""
+
+    def test_v1_result_skips_inline_computation(self) -> None:
+        """When v1_result is provided, V1 fields come from it."""
+        from trw_mcp.state.validation import validate_prd_quality_v2
+
+        # Minimal PRD content
+        content = "---\nprd:\n  id: PRD-TEST-001\n  title: Test\n  version: '1.0'\n  status: draft\n  priority: P1\n---\n# Test\n"
+        v1 = {
+            "valid": True,
+            "failures": [],
+            "completeness_score": 0.95,
+            "traceability_coverage": 1.0,
+        }
+        result = validate_prd_quality_v2(content, v1_result=v1)
+        assert result.valid is True
+        assert result.completeness_score == 0.95
+        assert result.traceability_coverage == 1.0
+
+    def test_v1_result_none_uses_inline(self) -> None:
+        """When v1_result is None, V1 is computed inline (default behavior)."""
+        from trw_mcp.state.validation import validate_prd_quality_v2
+
+        content = "---\nprd:\n  id: PRD-TEST-001\n  title: Test\n  version: '1.0'\n  status: draft\n  priority: P1\n---\n# Test\n"
+        result = validate_prd_quality_v2(content, v1_result=None)
+        # Should still compute — completeness won't be 0.95
+        assert isinstance(result.completeness_score, float)

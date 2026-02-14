@@ -152,6 +152,12 @@ class ShardCard(BaseModel):
     confidence: Confidence = Confidence.MEDIUM
     status: ShardStatus = ShardStatus.PENDING
 
+    # Integration checklist fields (Sprint 13 Track B)
+    registered_in_server: bool | None = None
+    documented_in_framework: bool | None = None
+    configured_in_pyproject: bool | None = None
+    updated_in_claude_md: bool | None = None
+
 
 class WaveEntry(BaseModel):
     """Single wave in a wave manifest."""

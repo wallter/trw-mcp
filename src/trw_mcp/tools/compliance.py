@@ -111,6 +111,7 @@ def register_compliance_tools(server: FastMCP) -> None:
             _check_checkpoint_compliance(events, _config),
             _check_changelog_compliance(events, _config, project_root),
             _check_claude_md_sync_compliance(events, _config),
+            _check_framework_docs(project_root, _config),
         ]
 
         # Compute score
@@ -459,6 +460,78 @@ def _check_claude_md_sync_compliance(
         status=ComplianceStatus.PENDING,
         message="No CLAUDE.md sync detected (expected at delivery)",
         remediation="Execute trw_claude_md_sync at session delivery",
+    )
+
+
+# Expected FRAMEWORK.md section headers for the FRAMEWORK_DOCS dimension.
+# These correspond to the Sprint 12 Track A additions plus core sections.
+_FRAMEWORK_EXPECTED_SECTIONS: list[str] = [
+    "ARCHITECTURE",
+    "PHASE REVERSION",
+    "REFACTORING WORKFLOW",
+    "TESTING STRATEGY",
+]
+
+
+def _check_framework_docs(
+    project_root: Path,
+    config: TRWConfig,
+) -> DimensionResult:
+    """Check that FRAMEWORK.md contains expected section headers.
+
+    Validates that key sections exist in FRAMEWORK.md to prevent
+    documentation gaps from recurring (Sprint 12 self-referential fix).
+
+    Args:
+        project_root: Path to project root directory.
+        config: TRW configuration.
+
+    Returns:
+        DimensionResult for the framework_docs dimension.
+    """
+    framework_path = project_root / "FRAMEWORK.md"
+    if not framework_path.exists():
+        return DimensionResult(
+            dimension=ComplianceDimension.FRAMEWORK_DOCS,
+            status=ComplianceStatus.WARNING,
+            message="FRAMEWORK.md not found in project root",
+            remediation="Create FRAMEWORK.md with required sections",
+        )
+
+    try:
+        content = framework_path.read_text(encoding="utf-8")
+    except OSError:
+        return DimensionResult(
+            dimension=ComplianceDimension.FRAMEWORK_DOCS,
+            status=ComplianceStatus.ERROR,
+            message="Failed to read FRAMEWORK.md",
+        )
+
+    # Extract section headers (## SECTION_NAME)
+    found_headers: set[str] = set()
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            header = stripped[3:].strip().upper()
+            found_headers.add(header)
+
+    missing: list[str] = []
+    for expected in _FRAMEWORK_EXPECTED_SECTIONS:
+        if expected not in found_headers:
+            missing.append(expected)
+
+    if not missing:
+        return DimensionResult(
+            dimension=ComplianceDimension.FRAMEWORK_DOCS,
+            status=ComplianceStatus.PASS,
+            message=f"All {len(_FRAMEWORK_EXPECTED_SECTIONS)} expected sections found in FRAMEWORK.md",
+        )
+
+    return DimensionResult(
+        dimension=ComplianceDimension.FRAMEWORK_DOCS,
+        status=ComplianceStatus.FAIL,
+        message=f"Missing FRAMEWORK.md sections: {', '.join(missing)}",
+        remediation=f"Add sections to FRAMEWORK.md: {', '.join(missing)}",
     )
 
 

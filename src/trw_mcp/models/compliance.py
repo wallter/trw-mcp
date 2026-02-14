@@ -22,6 +22,7 @@ class ComplianceDimension(str, Enum):
     CHECKPOINT = "checkpoint"
     CHANGELOG = "changelog"
     CLAUDE_MD_SYNC = "claude_md_sync"
+    FRAMEWORK_DOCS = "framework_docs"
 
 
 class ComplianceStatus(str, Enum):
