@@ -206,7 +206,10 @@ class TestDoClaudeMdSync:
         assert "### Example Flows" in content
         assert "`trw_session_start`" in content
         assert "`trw_deliver`" in content
+        # Imperative opener present
+        assert "BEFORE ANY WORK" in content
         # No unreplaced placeholders
+        assert "{{imperative_opener}}" not in content
         assert "{{ceremony_phases}}" not in content
         assert "{{ceremony_table}}" not in content
         assert "{{ceremony_flows}}" not in content

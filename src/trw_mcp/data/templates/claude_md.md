@@ -2,6 +2,7 @@
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 <!-- trw:start -->
 
+{{imperative_opener}}
 ## TRW Behavioral Protocol (Auto-Generated)
 
 {{behavioral_protocol}}

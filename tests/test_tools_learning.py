@@ -982,13 +982,28 @@ class TestCeremonyRendering:
         assert "trw_shard_start" in result
         assert "trw_compliance_check" in result
 
+    def test_render_imperative_opener(self) -> None:
+        """Imperative opener contains high-salience trigger instructions."""
+        from trw_mcp.state.claude_md import render_imperative_opener
+
+        result = render_imperative_opener()
+        assert "CRITICAL" in result
+        assert "BEFORE ANY WORK" in result
+        assert "trw_session_start()" in result
+        assert "trw_recall" in result
+        assert "FRAMEWORK.md" in result
+        assert "NEVER skip" in result
+        assert "AFTER COMPLETING WORK" in result
+        assert "trw_deliver()" in result
+
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
-        """Bundled template contains all 3 ceremony placeholder tokens."""
+        """Bundled template contains all ceremony placeholder tokens."""
         from trw_mcp.state.claude_md import load_claude_md_template
 
         # Use a non-existent trw_dir so it falls through to bundled template
         from pathlib import Path
         template = load_claude_md_template(Path("/nonexistent/.trw"))
+        assert "{{imperative_opener}}" in template
         assert "{{ceremony_phases}}" in template
         assert "{{ceremony_table}}" in template
         assert "{{ceremony_flows}}" in template
@@ -1021,7 +1036,11 @@ class TestCeremonyRendering:
         assert "### Example Flows" in content
         assert "**Quick Task**" in content
         assert "**Full Run**" in content
+        # Imperative opener at top of auto-generated section
+        assert "BEFORE ANY WORK" in content
+        assert "trw_session_start()" in content
         # No unreplaced placeholders
+        assert "{{imperative_opener}}" not in content
         assert "{{ceremony_phases}}" not in content
         assert "{{ceremony_table}}" not in content
         assert "{{ceremony_flows}}" not in content

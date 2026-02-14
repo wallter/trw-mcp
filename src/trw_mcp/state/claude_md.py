@@ -57,25 +57,25 @@ PHASE_DESCRIPTIONS: list[tuple[str, str]] = [
 
 # 19 lifecycle-critical tools in execution order
 CEREMONY_TOOLS: list[CeremonyTool] = [
-    CeremonyTool("Start", "trw_session_start", "Every session/compaction", "Recall learnings + check run status", "trw_session_start()"),
-    CeremonyTool("Start", "trw_recall", "Quick tasks (no run)", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
-    CeremonyTool("Start", "trw_status", "Resuming a run", "Show run phase/wave/shard state", "trw_status()"),
-    CeremonyTool("RESEARCH", "trw_init", "New task", "Bootstrap run directory + events", "trw_init(task_name='...')"),
-    CeremonyTool("PLAN", "trw_wave_plan", "Plan finalized", "Create wave manifest with shards", "trw_wave_plan(waves=[...])"),
-    CeremonyTool("IMPLEMENT", "trw_shard_start", "Begin each shard", "Set up shard working directory", "trw_shard_start(shard_id='S1')"),
+    CeremonyTool("Start", "trw_session_start", "ALWAYS at session start", "Recall learnings + check run status", "trw_session_start()"),
+    CeremonyTool("Start", "trw_recall", "ALWAYS for quick tasks (no run)", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
+    CeremonyTool("Start", "trw_status", "ALWAYS when resuming a run", "Show run phase/wave/shard state", "trw_status()"),
+    CeremonyTool("RESEARCH", "trw_init", "ALWAYS for new tasks", "Bootstrap run directory + events", "trw_init(task_name='...')"),
+    CeremonyTool("PLAN", "trw_wave_plan", "ALWAYS after plan finalized", "Create wave manifest with shards", "trw_wave_plan(waves=[...])"),
+    CeremonyTool("IMPLEMENT", "trw_shard_start", "ALWAYS before each shard", "Set up shard working directory", "trw_shard_start(shard_id='S1')"),
     CeremonyTool("IMPLEMENT", "trw_event", "During work", "Log event to audit trail", "trw_event('shard_progress')"),
-    CeremonyTool("IMPLEMENT", "trw_checkpoint", "Milestones / every 10min", "Atomic state snapshot", "trw_checkpoint(message='...')"),
-    CeremonyTool("IMPLEMENT", "trw_shard_complete", "Shard finished", "Validate output contracts", "trw_shard_complete(shard_id='S1')"),
-    CeremonyTool("IMPLEMENT", "trw_wave_complete", "All shards done", "Cross-shard validation", "trw_wave_complete(wave_number=1)"),
-    CeremonyTool("IMPLEMENT", "trw_wave_adapt", "After wave completes", "Adapt remaining waves", "trw_wave_adapt(wave_number=1)"),
-    CeremonyTool("Any", "trw_learn", "Errors / discoveries", "Record learning entry", "trw_learn(summary='...', impact=0.8)"),
-    CeremonyTool("VALIDATE", "trw_test_target", "Before full suite", "Recommend targeted tests", "trw_test_target()"),
-    CeremonyTool("VALIDATE", "trw_build_check", "Before phase exit", "Run pytest + mypy", "trw_build_check(scope='full')"),
-    CeremonyTool("VALIDATE", "trw_phase_check", "Phase boundaries", "Check exit criteria", "trw_phase_check('implement')"),
-    CeremonyTool("REVIEW", "trw_reflect", "Review/completion", "Extract learnings from events", "trw_reflect(scope='session')"),
-    CeremonyTool("REVIEW", "trw_compliance_check", "Before delivery", "Audit session compliance", "trw_compliance_check()"),
-    CeremonyTool("DELIVER", "trw_deliver", "Task completion", "reflect+sync+checkpoint+index", "trw_deliver()"),
-    CeremonyTool("DELIVER", "trw_health", "Diagnostics", "Flywheel health report", "trw_health()"),
+    CeremonyTool("IMPLEMENT", "trw_checkpoint", "Every milestone / ~10min", "Atomic state snapshot", "trw_checkpoint(message='...')"),
+    CeremonyTool("IMPLEMENT", "trw_shard_complete", "ALWAYS after each shard", "Validate output contracts", "trw_shard_complete(shard_id='S1')"),
+    CeremonyTool("IMPLEMENT", "trw_wave_complete", "ALWAYS after all shards", "Cross-shard validation", "trw_wave_complete(wave_number=1)"),
+    CeremonyTool("IMPLEMENT", "trw_wave_adapt", "ALWAYS after wave completes", "Adapt remaining waves", "trw_wave_adapt(wave_number=1)"),
+    CeremonyTool("Any", "trw_learn", "ALWAYS on errors/discoveries", "Record learning entry", "trw_learn(summary='...', impact=0.8)"),
+    CeremonyTool("VALIDATE", "trw_test_target", "ALWAYS before full suite", "Recommend targeted tests", "trw_test_target()"),
+    CeremonyTool("VALIDATE", "trw_build_check", "ALWAYS before phase exit", "Run pytest + mypy", "trw_build_check(scope='full')"),
+    CeremonyTool("VALIDATE", "trw_phase_check", "ALWAYS at phase boundaries", "Check exit criteria", "trw_phase_check('implement')"),
+    CeremonyTool("REVIEW", "trw_reflect", "ALWAYS at review/completion", "Extract learnings from events", "trw_reflect(scope='session')"),
+    CeremonyTool("REVIEW", "trw_compliance_check", "ALWAYS before delivery", "Audit session compliance", "trw_compliance_check()"),
+    CeremonyTool("DELIVER", "trw_deliver", "ALWAYS at task completion", "reflect+sync+checkpoint+index", "trw_deliver()"),
+    CeremonyTool("DELIVER", "trw_health", "For diagnostics", "Flywheel health report", "trw_health()"),
 ]
 
 
@@ -116,6 +116,7 @@ def load_claude_md_template(trw_dir: Path) -> str:
         f"{TRW_AUTO_COMMENT}\n"
         f"{TRW_MARKER_START}\n"
         "\n"
+        "{{imperative_opener}}"
         "## TRW Behavioral Protocol (Auto-Generated)\n"
         "\n"
         "{{behavioral_protocol}}"
@@ -310,6 +311,27 @@ def render_adherence(high_impact: list[dict[str, object]]) -> str:
             count += 1
     lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def render_imperative_opener() -> str:
+    """Render the high-salience imperative opener for the TRW auto-generated section.
+
+    This MUST appear at the very top of the auto-generated block so agents
+    see it before anything else. It provides the minimum viable ceremony
+    trigger that drives tool adoption.
+
+    Returns:
+        Markdown string with imperative instructions.
+    """
+    return (
+        "CRITICAL — YOU MUST EXECUTE THESE TOOLS:\n"
+        "- **BEFORE ANY WORK**: ALWAYS call `trw_session_start()` "
+        "(or `trw_recall('*', min_impact=0.7)` for quick tasks) "
+        "and read `.trw/frameworks/FRAMEWORK.md`. NEVER skip this step.\n"
+        "- **AFTER COMPLETING WORK**: ALWAYS call `trw_deliver()` "
+        "(or `trw_reflect` + `trw_claude_md_sync` for quick tasks). NEVER skip this step.\n"
+        "\n"
+    )
 
 
 def render_behavioral_protocol() -> str:
@@ -736,6 +758,7 @@ def execute_claude_md_sync(
             llm_used = True
 
     template = load_claude_md_template(trw_dir)
+    imperative_opener = render_imperative_opener()
     behavioral_protocol = render_behavioral_protocol()
     ceremony_phases = render_phase_descriptions()
     ceremony_table = render_ceremony_table()
@@ -743,6 +766,7 @@ def execute_claude_md_sync(
 
     if llm_used and llm_summary is not None:
         tpl_context: dict[str, str] = {
+            "imperative_opener": imperative_opener,
             "behavioral_protocol": behavioral_protocol,
             "ceremony_phases": ceremony_phases,
             "ceremony_table": ceremony_table,
@@ -755,6 +779,7 @@ def execute_claude_md_sync(
         }
     else:
         tpl_context = {
+            "imperative_opener": imperative_opener,
             "behavioral_protocol": behavioral_protocol,
             "ceremony_phases": ceremony_phases,
             "ceremony_table": ceremony_table,

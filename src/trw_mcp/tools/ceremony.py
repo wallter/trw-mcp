@@ -39,6 +39,7 @@ from trw_mcp.state.claude_md import (
     render_ceremony_flows,
     render_ceremony_table,
     render_conventions,
+    render_imperative_opener,
     render_patterns,
     render_phase_descriptions,
     render_template,
@@ -382,6 +383,7 @@ def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
     behavioral_protocol = render_behavioral_protocol()
 
     tpl_context: dict[str, str] = {
+        "imperative_opener": render_imperative_opener(),
         "behavioral_protocol": behavioral_protocol,
         "ceremony_phases": render_phase_descriptions(),
         "ceremony_table": render_ceremony_table(),
