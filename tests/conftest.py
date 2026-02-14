@@ -9,6 +9,52 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, FileEventLogger
 
+# --- Marker auto-assignment ---
+
+_UNIT_FILES: frozenset[str] = frozenset({
+    "test_models.py",
+    "test_scoring.py",
+    "test_smell_detection.py",
+    "test_readability.py",
+    "test_ears_classifier.py",
+    "test_gate_models.py",
+    "test_reliability_math.py",
+    "test_gate_strategy.py",
+    "test_gate_scaling.py",
+    "test_framework_models.py",
+    "test_phase_scoped_recall.py",
+    "test_event_aliases.py",
+    "test_architecture.py",
+    "test_velocity.py",
+})
+
+_E2E_FILES: frozenset[str] = frozenset({
+    "test_sprint8_signal_path.py",
+    "test_sprint9_flywheel.py",
+    "test_tools_sprint.py",
+})
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item],
+) -> None:
+    """Auto-assign unit/integration/e2e markers to tests without explicit markers."""
+    for item in items:
+        has_tier = any(
+            m.name in ("unit", "integration", "e2e")
+            for m in item.iter_markers()
+        )
+        if has_tier:
+            continue
+
+        filename = Path(item.fspath).name
+        if filename in _UNIT_FILES:
+            item.add_marker(pytest.mark.unit)
+        elif filename in _E2E_FILES:
+            item.add_marker(pytest.mark.e2e)
+        else:
+            item.add_marker(pytest.mark.integration)
+
 
 @pytest.fixture
 def tmp_project(tmp_path: Path) -> Path:

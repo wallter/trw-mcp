@@ -40,6 +40,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-benchmark>=4.0.0",
     "mypy>=1.11.0",
     "types-pyyaml>=6.0.0",
 ]
@@ -83,6 +84,11 @@ warn_required_dynamic_aliases = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "--strict-markers -v"
+markers = [
+    "unit: Fast tests with no filesystem I/O or multi-tool interaction",
+    "integration: Tests that write files or call multiple tools together",
+    "e2e: End-to-end workflow tests covering full phase sequences",
+]
 
 [tool.coverage.run]
 source = ["trw_mcp"]
