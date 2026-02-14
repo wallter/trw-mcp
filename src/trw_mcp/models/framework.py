@@ -1,13 +1,12 @@
-"""Framework models — versioning, phase overlays, vocabulary.
+"""Framework models — versioning and vocabulary.
 
-PRD-CORE-017: Phase-specific framework splitting. These models support
-the overlay system, hierarchical versioning, and drift detection.
+FrameworkVersion supports semantic version parsing/rendering/compatibility.
+VocabularyEntry/VocabularyRegistry support shared term definitions.
 """
 
 from __future__ import annotations
 
 import re
-from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -56,59 +55,6 @@ class FrameworkVersion(BaseModel):
     def is_compatible_with(self, other: "FrameworkVersion") -> bool:
         """Check compatibility (same major version)."""
         return self.major == other.major
-
-
-class OverlayPhase(str, Enum):
-    """Phases that have dedicated overlays.
-
-    Mirrors run.Phase values — kept separate to avoid circular imports
-    between framework and run model modules.
-    """
-
-    RESEARCH = "research"
-    PLAN = "plan"
-    IMPLEMENT = "implement"
-    VALIDATE = "validate"
-    REVIEW = "review"
-    DELIVER = "deliver"
-
-
-class PhaseOverlay(BaseModel):
-    """Metadata for a single phase overlay file.
-
-    Each overlay augments the shared core with phase-specific content.
-    """
-
-    model_config = ConfigDict(strict=True, use_enum_values=True)
-
-    phase: OverlayPhase
-    version: str = "v18.1"
-    filename: str = ""
-    content_hash: str = ""
-    line_count: int = Field(ge=0, default=0)
-    token_estimate: int = Field(ge=0, default=0)
-    sections: list[str] = Field(default_factory=list)
-
-
-class OverlayRegistry(BaseModel):
-    """VERSION.yaml schema — tracks overlay versions and hashes.
-
-    Deployed alongside overlay files for drift detection.
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    core_version: str = "v18.1"
-    core_hash: str = ""
-    overlays: list[PhaseOverlay] = Field(default_factory=list)
-    generated_at: str = ""
-
-    def get_overlay(self, phase: str) -> PhaseOverlay | None:
-        """Return overlay metadata for a phase, or None if not found."""
-        return next(
-            (o for o in self.overlays if o.phase == phase),
-            None,
-        )
 
 
 class VocabularyEntry(BaseModel):

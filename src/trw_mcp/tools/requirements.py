@@ -37,7 +37,6 @@ from trw_mcp.state.prd_utils import (
     next_prd_sequence,
     parse_frontmatter as _parse_frontmatter_impl,
     extract_sections as _extract_sections_impl,
-    detect_ambiguity as _detect_ambiguity_impl,
     extract_prd_refs,
     update_frontmatter,
 )
@@ -210,22 +209,6 @@ def register_requirements_tools(server: FastMCP) -> None:
         # Single V2 validation call — subsumes all V1 checks (PRD-FIX-011)
         v2_result = validate_prd_quality_v2(content, _config)
 
-        # Check for ambiguous terms and update V2 result
-        ambiguous_terms = _detect_ambiguity(content)
-        if ambiguous_terms:
-            total_words = len(content.split())
-            ambiguity_rate = len(ambiguous_terms) / max(total_words, 1)
-            v2_result.ambiguity_rate = ambiguity_rate
-            if ambiguity_rate > _config.ambiguity_rate_max:
-                v2_result.failures.append(
-                    ValidationFailure(
-                        field="content",
-                        rule="ambiguity_rate",
-                        message=f"Ambiguity rate {ambiguity_rate:.2%} exceeds {_config.ambiguity_rate_max:.0%} threshold",
-                        severity="warning",
-                    )
-                )
-
         sections = _extract_sections(content)
 
         logger.info(
@@ -246,7 +229,6 @@ def register_requirements_tools(server: FastMCP) -> None:
             "ambiguity_rate": v2_result.ambiguity_rate,
             "sections_found": sections,
             "sections_expected": _EXPECTED_SECTIONS,
-            "ambiguous_terms": ambiguous_terms,
             "failures": [
                 {
                     "field": f.field, "rule": f.rule,
@@ -621,7 +603,6 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Get current quality via trw_prd_validate internals
         v2_result = validate_prd_quality_v2(content, _config)
-        ambiguous_terms = _detect_ambiguity(content)
         sections = _extract_sections(content)
 
         current_quality: dict[str, object] = {
@@ -676,14 +657,6 @@ def _extract_sections(content: str) -> list[str]:
     Delegates to :func:`trw_mcp.state.prd_utils.extract_sections`.
     """
     return _extract_sections_impl(content)
-
-
-def _detect_ambiguity(content: str) -> list[str]:
-    """Detect ambiguous terms in PRD content.
-
-    Delegates to :func:`trw_mcp.state.prd_utils.detect_ambiguity`.
-    """
-    return _detect_ambiguity_impl(content)
 
 
 _CACHED_TEMPLATE_BODY: str | None = None

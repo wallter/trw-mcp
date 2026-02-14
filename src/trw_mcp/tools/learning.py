@@ -11,48 +11,25 @@ Decomposed per PRD-FIX-010: tool stubs delegate to focused state modules.
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 
 import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
-from trw_mcp.models.architecture import BoundedContext
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.scoring import rank_by_utility
-from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.state._paths import detect_current_phase, resolve_trw_dir
 from trw_mcp.state.analytics import (
     compute_reflection_quality,
     find_entry_by_id,
     generate_learning_id,
-    mark_promoted,
     resync_learning_index,
     save_learning_entry,
     update_analytics,
     update_analytics_extended,
-    update_analytics_sync,
 )
-from trw_mcp.state.architecture import load_architecture_config
-from trw_mcp.state.claude_md import (
-    CLAUDEMD_LEARNING_CAP,
-    CLAUDEMD_PATTERN_CAP,
-    collect_adrs_for_context,
-    collect_context_data,
-    collect_patterns,
-    collect_promotable_learnings,
-    load_claude_md_template,
-    merge_trw_section,
-    render_adherence,
-    render_architecture,
-    render_behavioral_protocol,
-    render_bounded_context_claude_md,
-    render_categorized_learnings,
-    render_conventions,
-    render_patterns,
-    render_template,
-)
-from trw_mcp.state.llm_helpers import llm_summarize_learnings
+from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import (
     collect_context,
@@ -65,78 +42,10 @@ from trw_mcp.state.receipts import log_recall_receipt
 logger = structlog.get_logger()
 
 
-def _as_str_list(val: object) -> list[str]:
-    """Convert value to list[str] for safe iteration."""
-    if isinstance(val, list):
-        return [str(v) for v in val]
-    return []
-
-
 _config = TRWConfig()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 _llm = LLMClient(model=_config.llm_default_model)
-
-
-def _detect_current_phase() -> str | None:
-    """Detect the current phase from the most recent active run."""
-    try:
-        project_root = resolve_trw_dir().parent
-        task_root = project_root / _config.task_root
-
-        if not task_root.exists():
-            return None
-
-        latest_name = ""
-        latest_yaml: Path | None = None
-        for task_dir in task_root.iterdir():
-            runs_dir = task_dir / "runs"
-            if not runs_dir.is_dir():
-                continue
-            for run_dir in runs_dir.iterdir():
-                run_yaml = run_dir / "meta" / "run.yaml"
-                if run_yaml.exists() and run_dir.name > latest_name:
-                    latest_name = run_dir.name
-                    latest_yaml = run_yaml
-
-        if latest_yaml is None:
-            return None
-
-        data = _reader.read_yaml(latest_yaml)
-        if str(data.get("status", "")) != "active":
-            return None
-        phase = str(data.get("phase", ""))
-        return phase or None
-    except (OSError, ValueError, TypeError):
-        return None
-
-
-def _sync_bounded_contexts(
-    contexts: list[BoundedContext],
-    project_root: Path,
-    trw_dir: Path,
-    high_impact: list[dict[str, object]],
-) -> int:
-    """Write sub-CLAUDE.md files for each bounded context."""
-    count = 0
-    for ctx in contexts:
-        ctx_adrs = collect_adrs_for_context(trw_dir, ctx.path)
-        ctx_learnings = [
-            entry for entry in high_impact
-            if any(
-                ctx.path in str(ev)
-                for ev in _as_str_list(entry.get("evidence", []))
-            )
-        ]
-        ctx_content = render_bounded_context_claude_md(
-            ctx.name, ctx.path, ctx_learnings, ctx_adrs,
-            max_lines=_config.sub_claude_md_max_lines,
-        )
-        ctx_target = project_root / ctx.path / "CLAUDE.md"
-        ctx_target.parent.mkdir(parents=True, exist_ok=True)
-        _writer.write_text(ctx_target, ctx_content)
-        count += 1
-    return count
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -240,7 +149,7 @@ def register_learning_tools(server: FastMCP) -> None:
         _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
 
         learning_id = generate_learning_id()
-        current_phase = _detect_current_phase()
+        current_phase = detect_current_phase()
         entry = LearningEntry(
             id=learning_id, summary=summary, detail=detail,
             tags=tags or [], evidence=evidence or [],
@@ -376,7 +285,7 @@ def register_learning_tools(server: FastMCP) -> None:
         matching_patterns = search_patterns(
             trw_dir / _config.patterns_dir, query_tokens, _reader,
         )
-        current_phase = _detect_current_phase()
+        current_phase = detect_current_phase()
         ranked_learnings = rank_by_utility(
             matching_learnings, query_tokens, _config.recall_utility_lambda,
             current_phase=current_phase,
@@ -446,92 +355,7 @@ def register_learning_tools(server: FastMCP) -> None:
             scope: Sync scope — "root" for project CLAUDE.md, "sub" for module-level.
             target_dir: Target directory for sub-CLAUDE.md generation.
         """
-        trw_dir = resolve_trw_dir()
-        project_root = resolve_project_root()
-
-        high_impact = collect_promotable_learnings(trw_dir, _config, _reader)
-        patterns = collect_patterns(trw_dir, _config, _reader)
-        arch_data, conv_data = collect_context_data(trw_dir, _config, _reader)
-
-        llm_used = False
-        llm_summary: str | None = None
-        if (high_impact or patterns) and _config.llm_enabled and _llm.available:  # pragma: no cover
-            llm_summary = llm_summarize_learnings(
-                high_impact, patterns, _llm, CLAUDEMD_LEARNING_CAP, CLAUDEMD_PATTERN_CAP,
-            )
-            if llm_summary is not None:
-                llm_used = True
-
-        template = load_claude_md_template(trw_dir)
-        behavioral_protocol = render_behavioral_protocol()
-
-        if llm_used and llm_summary is not None:
-            tpl_context: dict[str, str] = {
-                "behavioral_protocol": behavioral_protocol,
-                "architecture_section": "",
-                "conventions_section": "",
-                "categorized_learnings": llm_summary + "\n",
-                "patterns_section": "",
-                "adherence_section": "",
-            }
-        else:
-            tpl_context = {
-                "behavioral_protocol": behavioral_protocol,
-                "architecture_section": render_architecture(arch_data),
-                "conventions_section": render_conventions(conv_data),
-                "categorized_learnings": render_categorized_learnings(high_impact),
-                "patterns_section": render_patterns(patterns),
-                "adherence_section": render_adherence(high_impact),
-            }
-
-        trw_section = render_template(template, tpl_context)
-
-        # PRD-QUAL-007-FR06: Bounded context sub-CLAUDE.md generation
-        bounded_context_count = 0
-        if scope == "sub" and not target_dir:
-            arch_cfg = load_architecture_config(project_root)
-            if arch_cfg is not None and arch_cfg.bounded_contexts:
-                bounded_context_count = _sync_bounded_contexts(
-                    arch_cfg.bounded_contexts, project_root, trw_dir, high_impact,
-                )
-
-        if scope == "sub" and target_dir:
-            target = Path(target_dir).resolve() / "CLAUDE.md"
-            max_lines = _config.sub_claude_md_max_lines
-        else:
-            target = project_root / "CLAUDE.md"
-            max_lines = _config.claude_md_max_lines
-
-        total_lines = merge_trw_section(target, trw_section, max_lines)
-        update_analytics_sync(trw_dir)
-
-        for learning in high_impact:
-            lid = learning.get("id", "")
-            if isinstance(lid, str) and lid:
-                mark_promoted(trw_dir, lid)
-
-        # PRD-INFRA-001: Sync AGENTS.md with same TRW section
-        agents_md_synced = False
-        agents_md_path: str | None = None
-        if _config.agents_md_enabled and scope == "root":
-            agents_target = project_root / "AGENTS.md"
-            merge_trw_section(agents_target, trw_section, max_lines)
-            agents_md_synced = True
-            agents_md_path = str(agents_target)
-
-        logger.info(
-            "trw_claude_md_synced", scope=scope, target=str(target),
-            learnings_promoted=len(high_impact), patterns_included=len(patterns),
-        )
-        return {
-            "path": str(target), "scope": scope,
-            "learnings_promoted": len(high_impact),
-            "patterns_included": len(patterns),
-            "total_lines": total_lines, "status": "synced", "llm_used": llm_used,
-            "agents_md_synced": agents_md_synced,
-            "agents_md_path": agents_md_path,
-            "bounded_contexts_synced": bounded_context_count,
-        }
+        return execute_claude_md_sync(scope, target_dir, _config, _reader, _writer, _llm)
 
     @server.tool()
     def trw_learn_prune(dry_run: bool = True) -> dict[str, object]:
@@ -545,13 +369,15 @@ def register_learning_tools(server: FastMCP) -> None:
         trw_dir = resolve_trw_dir()
         result = execute_prune(trw_dir, dry_run=dry_run)
 
+        candidates = result.get("candidates", [])
+        duplicates = result.get("duplicates", [])
         logger.info(
             "trw_learn_prune_complete",
             dry_run=dry_run,
-            candidates=len(result.get("candidates", [])),
+            candidates=len(candidates) if isinstance(candidates, list) else 0,
             actions=result.get("actions", 0),
             receipts_pruned=result.get("receipts_pruned", 0),
             method=result.get("method", "none"),
-            duplicates_found=len(result.get("duplicates", [])),
+            duplicates_found=len(duplicates) if isinstance(duplicates, list) else 0,
         )
         return result

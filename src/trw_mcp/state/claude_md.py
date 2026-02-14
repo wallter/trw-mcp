@@ -1,18 +1,27 @@
 """CLAUDE.md rendering and sync — template loading, section generation, marker-based merge.
 
 Extracted from tools/learning.py (PRD-FIX-010) to separate CLAUDE.md concerns
-from learning tool logic.
+from learning tool logic. Sprint 12 Track C: added execute_claude_md_sync()
+and sync_bounded_contexts() to further reduce tools/learning.py.
 """
 
 from __future__ import annotations
 
+import structlog
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state._paths import resolve_project_root
+from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+if TYPE_CHECKING:
+    from trw_mcp.clients.llm import LLMClient
+    from trw_mcp.models.architecture import BoundedContext
+
+logger = structlog.get_logger()
 
 _config = TRWConfig()
 _reader = FileStateReader()
@@ -510,3 +519,169 @@ def render_bounded_context_claude_md(
         lines.append("<!-- trw: truncated to line limit -->")
 
     return "\n".join(lines)
+
+
+def _as_str_list(val: object) -> list[str]:
+    """Convert value to list[str] for safe iteration."""
+    if isinstance(val, list):
+        return [str(v) for v in val]
+    return []
+
+
+def sync_bounded_contexts(
+    contexts: list["BoundedContext"],
+    project_root: Path,
+    trw_dir: Path,
+    high_impact: list[dict[str, object]],
+    config: TRWConfig,
+    writer: FileStateWriter,
+) -> int:
+    """Write sub-CLAUDE.md files for each bounded context.
+
+    Args:
+        contexts: List of bounded context definitions.
+        project_root: Path to project root.
+        trw_dir: Path to .trw directory.
+        high_impact: High-impact learning entries.
+        config: TRW configuration.
+        writer: File state writer instance.
+
+    Returns:
+        Number of sub-CLAUDE.md files written.
+    """
+    count = 0
+    for ctx in contexts:
+        ctx_adrs = collect_adrs_for_context(trw_dir, ctx.path)
+        ctx_learnings = [
+            entry for entry in high_impact
+            if any(
+                ctx.path in str(ev)
+                for ev in _as_str_list(entry.get("evidence", []))
+            )
+        ]
+        ctx_content = render_bounded_context_claude_md(
+            ctx.name, ctx.path, ctx_learnings, ctx_adrs,
+            max_lines=config.sub_claude_md_max_lines,
+        )
+        ctx_target = project_root / ctx.path / "CLAUDE.md"
+        ctx_target.parent.mkdir(parents=True, exist_ok=True)
+        writer.write_text(ctx_target, ctx_content)
+        count += 1
+    return count
+
+
+def execute_claude_md_sync(
+    scope: str,
+    target_dir: str | None,
+    config: TRWConfig,
+    reader: FileStateReader,
+    writer: FileStateWriter,
+    llm: "LLMClient",
+) -> dict[str, object]:
+    """Execute the CLAUDE.md sync operation.
+
+    Core logic extracted from the ``trw_claude_md_sync`` tool to keep
+    ``tools/learning.py`` under 400 lines (Sprint 12 GAP-FR-001).
+
+    Args:
+        scope: Sync scope -- "root" or "sub".
+        target_dir: Target directory for sub-CLAUDE.md generation.
+        config: TRW configuration.
+        reader: File state reader.
+        writer: File state writer.
+        llm: LLM client instance.
+
+    Returns:
+        Result dictionary with sync metadata.
+    """
+    from trw_mcp.state.analytics import mark_promoted, update_analytics_sync
+    from trw_mcp.state.architecture import load_architecture_config
+    from trw_mcp.state.llm_helpers import llm_summarize_learnings
+
+    trw_dir = resolve_trw_dir()
+    project_root = resolve_project_root()
+
+    high_impact = collect_promotable_learnings(trw_dir, config, reader)
+    patterns = collect_patterns(trw_dir, config, reader)
+    arch_data, conv_data = collect_context_data(trw_dir, config, reader)
+
+    llm_used = False
+    llm_summary: str | None = None
+    if (high_impact or patterns) and config.llm_enabled and llm.available:  # pragma: no cover
+        llm_summary = llm_summarize_learnings(
+            high_impact, patterns, llm, CLAUDEMD_LEARNING_CAP, CLAUDEMD_PATTERN_CAP,
+        )
+        if llm_summary is not None:
+            llm_used = True
+
+    template = load_claude_md_template(trw_dir)
+    behavioral_protocol = render_behavioral_protocol()
+
+    if llm_used and llm_summary is not None:
+        tpl_context: dict[str, str] = {
+            "behavioral_protocol": behavioral_protocol,
+            "architecture_section": "",
+            "conventions_section": "",
+            "categorized_learnings": llm_summary + "\n",
+            "patterns_section": "",
+            "adherence_section": "",
+        }
+    else:
+        tpl_context = {
+            "behavioral_protocol": behavioral_protocol,
+            "architecture_section": render_architecture(arch_data),
+            "conventions_section": render_conventions(conv_data),
+            "categorized_learnings": render_categorized_learnings(high_impact),
+            "patterns_section": render_patterns(patterns),
+            "adherence_section": render_adherence(high_impact),
+        }
+
+    trw_section = render_template(template, tpl_context)
+
+    # PRD-QUAL-007-FR06: Bounded context sub-CLAUDE.md generation
+    bounded_context_count = 0
+    if scope == "sub" and not target_dir:
+        arch_cfg = load_architecture_config(project_root)
+        if arch_cfg is not None and arch_cfg.bounded_contexts:
+            bounded_context_count = sync_bounded_contexts(
+                arch_cfg.bounded_contexts, project_root, trw_dir,
+                high_impact, config, writer,
+            )
+
+    if scope == "sub" and target_dir:
+        target = Path(target_dir).resolve() / "CLAUDE.md"
+        max_lines = config.sub_claude_md_max_lines
+    else:
+        target = project_root / "CLAUDE.md"
+        max_lines = config.claude_md_max_lines
+
+    total_lines = merge_trw_section(target, trw_section, max_lines)
+    update_analytics_sync(trw_dir)
+
+    for learning in high_impact:
+        lid = learning.get("id", "")
+        if isinstance(lid, str) and lid:
+            mark_promoted(trw_dir, lid)
+
+    # PRD-INFRA-001: Sync AGENTS.md with same TRW section
+    agents_md_synced = False
+    agents_md_path: str | None = None
+    if config.agents_md_enabled and scope == "root":
+        agents_target = project_root / "AGENTS.md"
+        merge_trw_section(agents_target, trw_section, max_lines)
+        agents_md_synced = True
+        agents_md_path = str(agents_target)
+
+    logger.info(
+        "trw_claude_md_synced", scope=scope, target=str(target),
+        learnings_promoted=len(high_impact), patterns_included=len(patterns),
+    )
+    return {
+        "path": str(target), "scope": scope,
+        "learnings_promoted": len(high_impact),
+        "patterns_included": len(patterns),
+        "total_lines": total_lines, "status": "synced", "llm_used": llm_used,
+        "agents_md_synced": agents_md_synced,
+        "agents_md_path": agents_md_path,
+        "bounded_contexts_synced": bounded_context_count,
+    }

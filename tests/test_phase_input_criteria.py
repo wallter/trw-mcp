@@ -51,7 +51,7 @@ def run_dir(tmp_path: Path) -> Path:
     meta.mkdir(parents=True)
     (meta / "run.yaml").write_text(
         "run_id: test-001\ntask: test\nstatus: active\nphase: research\n"
-        "framework: v18.1_TRW\nrun_type: implementation\n"
+        "framework: v18.0_TRW\nrun_type: implementation\n"
     )
     (tmp_path / "reports").mkdir()
     (tmp_path / "scratch" / "_orchestrator").mkdir(parents=True)

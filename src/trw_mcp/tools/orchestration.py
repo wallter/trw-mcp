@@ -36,7 +36,6 @@ from trw_mcp.state.persistence import (
     FileStateWriter,
     model_to_dict,
 )
-from trw_mcp.state.framework import assemble_framework
 from trw_mcp.state.validation import (
     check_phase_exit,
     check_phase_input,
@@ -184,14 +183,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
             {"task": task_name, "framework": _config.framework_version},
         )
 
-        # Assemble phase-specific framework snapshot (PRD-CORE-017).
-        # Uses core + research overlay if available, falls back to monolithic.
+        # Write framework snapshot from bundled monolithic FRAMEWORK.md.
         snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
-        try:
-            snapshot_content = assemble_framework(trw_dir, "research")
-        except FileNotFoundError:
-            snapshot_content = _get_bundled_data("framework.md") or ""
-
+        snapshot_content = _get_bundled_data("framework.md") or ""
         if snapshot_content:
             snapshot_path.write_text(snapshot_content, encoding="utf-8")
 
@@ -1115,29 +1109,12 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         aaref_path = frameworks_dir / "AARE-F-FRAMEWORK.md"
         aaref_path.write_text(aaref_data, encoding="utf-8")
 
-    # Deploy overlay files (PRD-CORE-017)
-    core_data = _get_bundled_data("trw-core.md")
-    if core_data:
-        core_path = frameworks_dir / "trw-core.md"
-        core_path.write_text(core_data, encoding="utf-8")
-
-    overlays_dir = frameworks_dir / "overlays"
-    _writer.ensure_dir(overlays_dir)
-    deployed_overlays: list[str] = []
-    for phase in (p.value for p in Phase):
-        overlay_data = _get_bundled_data(f"overlays/trw-{phase}.md")
-        if overlay_data:
-            overlay_path = overlays_dir / f"trw-{phase}.md"
-            overlay_path.write_text(overlay_data, encoding="utf-8")
-            deployed_overlays.append(phase)
-
     # Write VERSION.yaml
     version_data: dict[str, object] = {
         "framework_version": current_fw_version,
         "aaref_version": current_aaref_version,
         "trw_mcp_version": current_pkg_version,
         "deployed_at": datetime.now(timezone.utc).isoformat(),
-        "overlays_deployed": deployed_overlays,
     }
     _writer.write_yaml(version_path, version_data)
 

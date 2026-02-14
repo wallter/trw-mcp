@@ -1,7 +1,7 @@
-"""Tests for framework models (PRD-CORE-017 Step 2.1).
+"""Tests for framework models (PRD-CORE-017).
 
-Validates FrameworkVersion parsing/rendering/compatibility, PhaseOverlay,
-OverlayRegistry, VocabularyRegistry, and backward-compatible field additions
+Validates FrameworkVersion parsing/rendering/compatibility,
+VocabularyRegistry, and backward-compatible field additions
 to RunState, LearningEntry, and TRWConfig.
 """
 
@@ -12,9 +12,6 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.framework import (
     FrameworkVersion,
-    OverlayPhase,
-    OverlayRegistry,
-    PhaseOverlay,
     VocabularyEntry,
     VocabularyRegistry,
 )
@@ -80,56 +77,6 @@ class TestFrameworkVersion:
         assert not v1.is_compatible_with(v2)
 
 
-class TestPhaseOverlay:
-    """PhaseOverlay model defaults and explicit construction."""
-
-    def test_defaults(self) -> None:
-        overlay = PhaseOverlay(phase=OverlayPhase.RESEARCH)
-        assert overlay.phase == "research"
-        assert overlay.version == "v18.1"
-        assert overlay.filename == ""
-        assert overlay.content_hash == ""
-        assert overlay.line_count == 0
-        assert overlay.token_estimate == 0
-        assert overlay.sections == []
-
-    def test_explicit_values(self) -> None:
-        overlay = PhaseOverlay(
-            phase=OverlayPhase.IMPLEMENT,
-            version="v18.1.1",
-            filename="trw-implement.md",
-            content_hash="abc123",
-            line_count=180,
-            token_estimate=4500,
-            sections=["WAVE ORCHESTRATION", "OUTPUT CONTRACTS"],
-        )
-        assert overlay.phase == "implement"
-        assert overlay.line_count == 180
-        assert len(overlay.sections) == 2
-
-
-class TestOverlayRegistry:
-    """OverlayRegistry lookup and construction."""
-
-    def test_empty_registry(self) -> None:
-        reg = OverlayRegistry()
-        assert reg.core_version == "v18.1"
-        assert reg.overlays == []
-        assert reg.get_overlay("research") is None
-
-    def test_get_overlay_found(self) -> None:
-        overlay = PhaseOverlay(phase=OverlayPhase.PLAN, filename="trw-plan.md")
-        reg = OverlayRegistry(overlays=[overlay])
-        result = reg.get_overlay("plan")
-        assert result is not None
-        assert result.filename == "trw-plan.md"
-
-    def test_get_overlay_not_found(self) -> None:
-        overlay = PhaseOverlay(phase=OverlayPhase.RESEARCH)
-        reg = OverlayRegistry(overlays=[overlay])
-        assert reg.get_overlay("deliver") is None
-
-
 class TestVocabularyRegistry:
     """VocabularyRegistry term lookup by name and alias."""
 
@@ -157,20 +104,10 @@ class TestVocabularyRegistry:
 class TestBackwardCompatibility:
     """New optional fields on existing models default correctly."""
 
-    def test_runstate_overlay_fields_default_none(self) -> None:
+    def test_runstate_defaults(self) -> None:
         state = RunState(run_id="test-001", task="test")
-        assert state.overlay_version is None
-        assert state.assembled_framework_hash is None
-
-    def test_runstate_overlay_fields_accept_values(self) -> None:
-        state = RunState(
-            run_id="test-002",
-            task="test",
-            overlay_version="v18.1",
-            assembled_framework_hash="sha256:abc",
-        )
-        assert state.overlay_version == "v18.1"
-        assert state.assembled_framework_hash == "sha256:abc"
+        assert state.run_type == "implementation"
+        assert state.framework == "v18.0_TRW"
 
     def test_learning_entry_phase_scope_default_none(self) -> None:
         entry = LearningEntry(id="L-test", summary="test", detail="test detail")
@@ -185,16 +122,9 @@ class TestBackwardCompatibility:
         )
         assert entry.phase_scope == "implement"
 
-    def test_config_overlay_defaults(self) -> None:
+    def test_config_phase_bonus_defaults(self) -> None:
         cfg = TRWConfig()
-        assert cfg.overlays_dir == "overlays"
-        assert cfg.vocabulary_file == "vocabulary.yaml"
         assert cfg.phase_bonus_matching == 0.15
         assert cfg.phase_bonus_global == 0.0
         assert cfg.phase_bonus_nonmatching == -0.05
         assert cfg.strict_input_criteria is False
-        assert cfg.drift_check_on_init is False
-
-    def test_config_framework_version(self) -> None:
-        cfg = TRWConfig()
-        assert cfg.framework_version == "v18.1_TRW"

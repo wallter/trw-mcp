@@ -32,24 +32,6 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _SECTION_HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
 _PRD_REF_RE = re.compile(r"PRD-[A-Z]+-\d{3}")
 
-_AMBIGUOUS_TERMS: list[str] = [
-    "fast", "quick", "efficient", "user-friendly", "robust",
-    "scalable", "flexible", "easy", "simple", "intuitive",
-    "adequate", "sufficient", "as appropriate", "etc.",
-    "and so on", "various", "multiple", "many",
-]
-
-# Pre-compile ambiguity patterns for performance
-# Terms ending in '.' need special handling: \b doesn't match after '.'
-_AMBIGUITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = []
-for _term in _AMBIGUOUS_TERMS:
-    if _term.endswith("."):
-        # Match the term followed by a space, end-of-string, or another punctuation
-        _pat = re.compile(rf"\b{re.escape(_term)}(?=\s|$|[,;:!?\)])", re.IGNORECASE)
-    else:
-        _pat = re.compile(rf"\b{re.escape(_term)}\b", re.IGNORECASE)
-    _AMBIGUITY_PATTERNS.append((_term, _pat))
-
 # Patterns for non-substantive lines in content density calculation
 _NON_SUBSTANTIVE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^\s*$"),                          # blank lines
@@ -107,26 +89,6 @@ def extract_sections(content: str) -> list[str]:
         List of section heading names found (without the ``## N.`` prefix).
     """
     return _SECTION_HEADING_RE.findall(content)
-
-
-def detect_ambiguity(content: str) -> list[str]:
-    """Detect ambiguous terms in PRD content using word-boundary matching.
-
-    Scans for 18 known ambiguous terms (e.g. "fast", "scalable", "etc.")
-    using case-insensitive whole-word matching to avoid false positives
-    like "breakfast" matching "fast".
-
-    Args:
-        content: PRD markdown content.
-
-    Returns:
-        List of ambiguous terms found in the content.
-    """
-    found: list[str] = []
-    for term, pattern in _AMBIGUITY_PATTERNS:
-        if pattern.search(content):
-            found.append(term)
-    return found
 
 
 def compute_content_density(content: str) -> float:

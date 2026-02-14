@@ -53,9 +53,6 @@ from trw_mcp.models.debt import (
 # framework (PRD-CORE-017)
 from trw_mcp.models.framework import (
     FrameworkVersion,
-    OverlayPhase,
-    OverlayRegistry,
-    PhaseOverlay,
     VocabularyEntry,
     VocabularyRegistry,
 )
@@ -215,9 +212,6 @@ __all__ = [
     "RefactorScope",
     # framework (PRD-CORE-017)
     "FrameworkVersion",
-    "OverlayPhase",
-    "OverlayRegistry",
-    "PhaseOverlay",
     "VocabularyEntry",
     "VocabularyRegistry",
     # gate (PRD-QUAL-005)

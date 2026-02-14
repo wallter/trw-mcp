@@ -313,6 +313,99 @@ Shard cards define parallel work units. Fields: `id`, `title`, `wave` (1-based; 
 
 ---
 
+## ARCHITECTURE
+
+<architecture>
+
+### Module Boundaries
+
+TRW-MCP follows a layered architecture. Dependency direction flows downward only.
+
+```
+tools/ → state/ → models/
+  ↓        ↓        ↓
+server.py  scoring.py  exceptions.py
+```
+
+| Layer | Responsibility | May Import | May NOT Import |
+|-------|---------------|------------|----------------|
+| `tools/` | MCP tool functions, user-facing API | `state/`, `models/`, `exceptions` | — |
+| `state/` | Business logic, persistence, validation | `models/`, `exceptions` | `tools/` |
+| `models/` | Pydantic v2 data models, enums | `exceptions` | `tools/`, `state/` |
+| `server.py` | FastMCP entry point, tool registration | `tools/` | `state/`, `models/` (direct) |
+
+### Tool Modules
+
+| Module | Tools | Purpose |
+|--------|-------|---------|
+| `tools/orchestration.py` | 8 | Run lifecycle: init, status, phase_check, wave_validate, resume, checkpoint, event, shard_context |
+| `tools/learning.py` | 7 | Self-learning: reflect, learn, learn_update, recall, prune, script_save, claude_md_sync |
+| `tools/requirements.py` | 4 | PRD management: prd_create, prd_validate, traceability_check, prd_status_update |
+| `tools/findings.py` | 3 | Finding lifecycle: finding_register, finding_to_prd, finding_query |
+| `tools/refactoring.py` | 3 | Debt management: refactor_classify, debt_register, debt_gate |
+| `tools/ceremony.py` | 2 | Delivery: deliver, session_start |
+| `tools/compliance.py` | 1 | Behavioral audit: compliance_check |
+| `tools/build.py` | 1 | Build verification: build_check |
+| `tools/testing.py` | 1 | Test targeting: test_target |
+| `tools/bdd.py` | 1 | BDD scenario generation: bdd_generate |
+| `tools/sprint.py` | 2 | Sprint management: tracks, velocity |
+
+### Fitness Functions
+
+Architecture fitness is opt-in via `architecture_fitness_enabled: true` in config. When enabled, `trw_phase_check` runs fitness checks at phase boundaries.
+
+| Check | Phases | What It Validates |
+|-------|--------|-------------------|
+| Import direction | implement, validate | Layers only import downward per `dependency_rules` |
+| Convention compliance | All (gated per convention) | Conventions like `no_star_imports` |
+
+Configuration via `.trw/config.yaml`:
+
+```yaml
+architecture_fitness_enabled: true
+architecture:
+  dependency_rules:
+    - layer: "models"
+      may_import: []
+      may_not_import: ["state", "tools"]
+    - layer: "state"
+      may_import: ["models"]
+      may_not_import: ["tools"]
+  conventions:
+    - name: "no_star_imports"
+      gate: "implement"
+      check_method: "no_star_imports"
+      severity: "error"
+```
+
+Fitness score: `max(0.0, 1.0 - violations × penalty)`. Violations are advisory (never block phase gates).
+
+### Integration Checks
+
+`check_integration()` at VALIDATE/DELIVER verifies:
+- Every `tools/*.py` module has a `register_*_tools()` function
+- Every register function is imported and called in `server.py`
+- Every tool module has a corresponding test file
+
+### Compliance Auditing
+
+`trw_compliance_check(mode, strictness)` audits behavioral compliance against FRAMEWORK.md requirements:
+
+| Dimension | What It Checks |
+|-----------|---------------|
+| RECALL | `trw_recall()` invoked at session start |
+| EVENTS | Structured events logged during run |
+| REFLECTION | `trw_reflect()` invoked at REVIEW/DELIVER |
+| CHECKPOINT | Periodic checkpoints for long sessions |
+| CHANGELOG | `CHANGELOG.md` updated for implementation runs |
+| CLAUDE_MD_SYNC | `trw_claude_md_sync()` invoked at DELIVER |
+
+Modes: `advisory` (warnings only) or `gate` (blocking). Returns compliance score 0.0–1.0.
+
+</architecture>
+
+---
+
 ## EXPLORATION & PLANNING SHARDS
 
 RESEARCH and PLAN phases MUST use parallel blocking shards and persist all findings incrementally. This ensures break/resume safety and maximizes throughput during the most uncertainty-heavy phases.
@@ -487,6 +580,130 @@ When updating plan: add `## Revision [N]`, document change/why/impact, log to ev
 
 ---
 
+## PHASE REVERSION
+
+<phase_reversion>
+
+Agents SHOULD revert to earlier phases when implementation reveals structural gaps. Reverting early prevents workarounds that compound technical debt.
+
+### ReversionTrigger Classification
+
+| Trigger | Value | When to Use |
+|---------|-------|-------------|
+| `REFACTOR_NEEDED` | `refactor_needed` | Structural refactor required before proceeding |
+| `ARCHITECTURE_MISMATCH` | `architecture_mismatch` | Planned architecture conflicts with discovered requirements |
+| `NEW_DEPENDENCY` | `new_dependency` | Undiscovered dependency must be addressed first |
+| `TEST_STRATEGY_CHANGE` | `test_strategy_change` | Test approach needs revision |
+| `SCOPE_CHANGE` | `scope_change` | Requirements expanded beyond original plan |
+| `OTHER` | `other` | Catch-all for uncategorized triggers |
+
+### When to Revert vs Push Through
+
+| Transition | Revert When | Push Through When |
+|------------|-------------|-------------------|
+| IMPLEMENT → PLAN | Module boundaries need redesign; approach conflicts with plan | Local workaround not affecting other modules |
+| IMPLEMENT → RESEARCH | Technical approach based on incorrect assumptions | Rare — indicates significant planning gap |
+| VALIDATE → IMPLEMENT | Test failures reveal design flaw (not just a bug) | Implementation bugs fixable in-phase |
+| VALIDATE → PLAN | Test strategy itself is wrong | Test execution failures, not strategy flaws |
+| REVIEW → IMPLEMENT | Review requires structural changes beyond a patch | Minor fixes or cosmetic improvements |
+
+### How to Revert
+
+Log a `phase_revert` event. The handler validates ordering (target MUST be earlier than source), classifies the trigger, captures affected PRDs, and atomically updates `run.yaml` phase.
+
+```
+trw_event(
+  event_type="phase_revert",
+  data={
+    "from_phase": "implement",
+    "to_phase": "plan",
+    "trigger": "refactor_needed",
+    "reason": "Shared utility X needs extraction before module Y"
+  }
+)
+```
+
+### Reversion Health Metrics
+
+`trw_status()` includes reversion metrics from `events.jsonl`:
+
+| Classification | Rate | Meaning |
+|----------------|------|---------|
+| `healthy` | <15% | Normal discovery-driven adjustments |
+| `elevated` | 15–30% | Planning may need more research depth |
+| `concerning` | ≥30% | Significant planning gaps — increase RESEARCH waves |
+
+Thresholds configurable via `reversion_rate_elevated` and `reversion_rate_concerning` in config.
+
+</phase_reversion>
+
+---
+
+## REFACTORING WORKFLOW
+
+<refactoring>
+
+When shards discover structural impediments during implementation, classify them immediately using the 2x2 matrix.
+
+### Classification Matrix
+
+ORC or shard MUST call `trw_refactor_classify(description, blocks_output_contract, changes_interface)` within 1 turn of discovery.
+
+|  | Local (no interface change) | Architectural (changes shared interface) |
+|---|---|---|
+| **Blocking** (shard cannot complete) | Inline refactor. Separate commit. QOL log. | Create prerequisite PRD. Phase revert to PLAN. Execute as new wave. |
+| **Deferrable** (shard can complete) | P2 TODO or QOL fix if <10 lines. Debt registry entry. | Create P2-P3 PRD. Add to roadmap backlog. Debt registry entry. |
+
+Decision questions:
+- **Blocking vs Deferrable**: Can the current shard complete its output contract WITHOUT this refactor?
+- **Local vs Architectural**: Does this refactor change an interface that other modules depend on?
+
+### Tool Chain
+
+```
+Discovery → trw_refactor_classify() → classification + prescribed action
+         → trw_debt_register()      → DEBT-{NNN} in .trw/debt-registry.yaml
+         → trw_debt_gate()          → budget recommendation at phase boundaries
+```
+
+### Blocking-Architectural Workflow
+
+For the most disruptive quadrant (`blocking-architectural`):
+
+1. **CHECKPOINT**: `trw_checkpoint("pre-refactor")`
+2. **CLASSIFY**: `trw_refactor_classify(...)` — confirm `blocking-architectural`
+3. **EXTRACT PRD**: `trw_prd_create(...)` with prerequisite dependency on current feature PRD
+4. **REVERT**: `trw_event("phase_revert", data={trigger: "refactor_needed", ...})`
+5. **PLAN**: Plan refactor as new wave(s) with rollback criteria
+6. **IMPLEMENT**: Execute behavior-preserving refactor with tests
+7. **VALIDATE**: Full test suite via `trw_build_check`
+8. **RESUME**: Return to feature implementation on the now-refactored codebase
+
+For `blocking-local`: collapse to checkpoint → inline refactor → separate commit → resume.
+
+### Debt Budget at Phase Gates
+
+`trw_debt_gate(phase)` recommends shard allocation:
+
+| Phase | Behavior | Gate Impact |
+|-------|----------|-------------|
+| PLAN | Reports critical/high debt affecting planned files | Warning if critical items exist |
+| VALIDATE | Reports potential new debt introduced during IMPLEMENT | Advisory only |
+
+Budget heuristic: critical debt → allocate up to 20% of wave capacity for refactoring shards. High debt → at least 15%.
+
+### Debt Lifecycle
+
+```
+discovered → assessed → scheduled → in_progress → resolved
+```
+
+Decay scoring: debt that persists across sessions grows more urgent (`decay_score` increases over time). Auto-promotes to `critical` when `decay_score >= 0.9`.
+
+</refactoring>
+
+---
+
 ## PARALLELISM
 
 Heuristic: if shards are independent (≤5% file overlap), spawn `clamp(MIN_SHARDS_FLOOR, axes_of_work, PARALLELISM_MAX)`. Default: 3. Trivial tasks: 1.
@@ -538,6 +755,49 @@ When `MCP_MODE: tool` and AARE-F framework file exists: `trw_prd_create` at RESE
 - Coverage: global ≥85%, diff ≥90%
 - Structured logging: JSONL with `ts`, `level`, `component`, `op`, `outcome`. Redact secrets and PII before logging.
 </rules>
+
+---
+
+## TESTING STRATEGY
+
+<testing_strategy>
+
+Testing scope varies by phase. Use `trw_test_target` for targeted tests during IMPLEMENT and `trw_build_check` for full verification at VALIDATE/DELIVER.
+
+### Phase-Specific Testing
+
+| Phase | What to Run | Tool | Coverage | mypy |
+|-------|-------------|------|----------|------|
+| RESEARCH | None | — | No | No |
+| PLAN | None | — | No | No |
+| IMPLEMENT | Targeted unit tests on changed files | `trw_test_target(changed_files, phase="implement")` | No | No |
+| VALIDATE | Unit + integration, full suite | `trw_build_check(scope="full")` | Yes (≥85%) | Yes (--strict) |
+| REVIEW | Tests should already pass from VALIDATE | — | No | No |
+| DELIVER | Full suite with coverage gates | `trw_build_check(scope="full")` | Yes (≥85%) | Yes (--strict) |
+
+### Targeted Testing (`trw_test_target`)
+
+Analyzes changed source files and returns a targeted test subset:
+- Maps source files to test files via dependency map (`.trw/test-map.yaml`)
+- Resolves transitive dependencies using BFS on the import graph
+- Generates parallel-safe pytest command (isolated via `run_id`)
+- Returns phase-appropriate strategy recommendation
+
+First use requires `generate_map=True` to build the dependency map. Subsequent calls reuse the cached map.
+
+### Build Verification (`trw_build_check`)
+
+Runs pytest and/or mypy, caches results to `.trw/context/build-status.yaml`. Phase gates read the cache — they never spawn subprocesses directly.
+
+| Scope | Runs | Use When |
+|-------|------|----------|
+| `full` | pytest + mypy | VALIDATE/DELIVER phase gates |
+| `pytest` | pytest only | Quick test verification |
+| `mypy` | mypy only | Type checking only |
+
+Cached results older than 30 minutes are flagged as stale. Enforcement levels: `strict` (errors block), `lenient` (warnings only, default), `off` (skipped).
+
+</testing_strategy>
 
 ---
 

@@ -203,16 +203,6 @@ class RunState(BaseModel):
     prd_scope: list[str] = Field(default_factory=list)
     run_type: str = "implementation"
 
-    # Phase overlay support (PRD-CORE-017)
-    overlay_version: str | None = Field(
-        default=None,
-        description="Overlay version active when this run was created (e.g. 'v18.1').",
-    )
-    assembled_framework_hash: str | None = Field(
-        default=None,
-        description="SHA-256 hash of the assembled core+overlay framework document.",
-    )
-
 
 class EventType(str, Enum):
     """Canonical event type identifiers for the TRW event system.

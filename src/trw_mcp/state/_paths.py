@@ -11,8 +11,10 @@ from pathlib import Path
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state.persistence import FileStateReader
 
 _config = TRWConfig()
+_reader = FileStateReader()
 
 
 def resolve_project_root() -> Path:
@@ -105,3 +107,44 @@ def resolve_run_path(run_path: str | None = None) -> Path:
         )
 
     return latest_run
+
+
+def detect_current_phase() -> str | None:
+    """Detect the current phase from the most recent active run.
+
+    Scans ``docs/*/runs/`` for the latest ``run.yaml`` with ``status: active``
+    and returns its ``phase`` field.
+
+    Returns:
+        Current phase string (e.g. ``"implement"``), or ``None`` if no active run.
+    """
+    try:
+        trw_dir = resolve_trw_dir()
+        project_root = trw_dir.parent
+        task_root = project_root / _config.task_root
+
+        if not task_root.exists():
+            return None
+
+        latest_name = ""
+        latest_yaml: Path | None = None
+        for task_dir in task_root.iterdir():
+            runs_dir = task_dir / "runs"
+            if not runs_dir.is_dir():
+                continue
+            for run_dir in runs_dir.iterdir():
+                run_yaml = run_dir / "meta" / "run.yaml"
+                if run_yaml.exists() and run_dir.name > latest_name:
+                    latest_name = run_dir.name
+                    latest_yaml = run_yaml
+
+        if latest_yaml is None:
+            return None
+
+        data = _reader.read_yaml(latest_yaml)
+        if str(data.get("status", "")) != "active":
+            return None
+        phase = str(data.get("phase", ""))
+        return phase or None
+    except (OSError, ValueError, TypeError):
+        return None

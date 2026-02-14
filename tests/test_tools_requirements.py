@@ -258,8 +258,10 @@ It should be scalable and flexible and easy to use.
 
         tools = _get_tools()
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-        assert len(result["ambiguous_terms"]) > 0
-        assert "fast" in result["ambiguous_terms"]
+        # Ambiguity is now detected via V2 smell findings, not a separate field
+        assert len(result["smell_findings"]) > 0
+        vague_texts = [sf["matched_text"] for sf in result["smell_findings"]]
+        assert any("fast" in t.lower() for t in vague_texts)
 
     def test_file_not_found(self, tmp_path: Path) -> None:
         from trw_mcp.exceptions import StateError

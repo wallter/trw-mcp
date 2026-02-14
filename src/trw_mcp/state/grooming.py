@@ -18,7 +18,7 @@ from trw_mcp.models.planning import (
     SectionStatus,
 )
 from trw_mcp.state.validation import (
-    _EXPECTED_SECTION_NAMES as _VALIDATION_SECTION_NAMES,
+    _EXPECTED_SECTION_NAMES,
     _is_substantive_line,
     _parse_section_content,
     validate_prd_quality_v2,
@@ -98,9 +98,6 @@ _SECTION_QUERY_ESTIMATES: dict[str, int] = {
     "Open Questions": 1,
     "Traceability Matrix": 2,
 }
-
-# Re-export from validation to avoid duplication
-_EXPECTED_SECTION_NAMES: list[str] = _VALIDATION_SECTION_NAMES
 
 
 def _extract_prd_id(content: str) -> str:

@@ -1,9 +1,8 @@
 """Tests for trw_mcp.state.prd_utils — PRD-FIX-006.
 
-Tests cover all 6 public functions:
+Tests cover 5 public functions:
   - parse_frontmatter
   - extract_sections
-  - detect_ambiguity
   - compute_content_density
   - extract_prd_refs
   - update_frontmatter
@@ -17,7 +16,6 @@ import pytest
 
 from trw_mcp.state.prd_utils import (
     compute_content_density,
-    detect_ambiguity,
     extract_prd_refs,
     extract_sections,
     parse_frontmatter,
@@ -104,45 +102,6 @@ class TestExtractSections:
         content = "### 1. Sub Heading\n\n## 1. Problem Statement\n"
         result = extract_sections(content)
         assert result == ["Problem Statement"]
-
-
-# ---------- detect_ambiguity ----------
-
-
-class TestDetectAmbiguity:
-    """Tests for detect_ambiguity()."""
-
-    def test_finds_scalable_and_fast(self) -> None:
-        content = "The system should be scalable and fast."
-        result = detect_ambiguity(content)
-        assert "scalable" in result
-        assert "fast" in result
-
-    def test_clean_content_returns_empty(self) -> None:
-        content = "The system processes 100 requests per second with p99 latency under 200ms."
-        result = detect_ambiguity(content)
-        assert result == []
-
-    def test_word_boundary_no_breakfast_match(self) -> None:
-        content = "We had breakfast before the meeting."
-        result = detect_ambiguity(content)
-        assert "fast" not in result
-
-    def test_case_insensitive(self) -> None:
-        content = "The API must be SCALABLE and ROBUST."
-        result = detect_ambiguity(content)
-        assert "scalable" in result
-        assert "robust" in result
-
-    def test_etc_detected(self) -> None:
-        content = "Support JSON, XML, etc."
-        result = detect_ambiguity(content)
-        assert "etc." in result
-
-    def test_multi_word_term(self) -> None:
-        content = "Use the library as appropriate."
-        result = detect_ambiguity(content)
-        assert "as appropriate" in result
 
 
 # ---------- compute_content_density ----------

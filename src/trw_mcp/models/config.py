@@ -108,7 +108,7 @@ class TRWConfig(BaseSettings):
     templates_dir: str = "templates"
 
     # Framework version and AARE-F standard
-    framework_version: str = "v18.1_TRW"
+    framework_version: str = "v18.0_TRW"
     aaref_version: str = "v1.1.0"
 
     # PRD quality gates (AARE-F standard)
@@ -238,10 +238,7 @@ class TRWConfig(BaseSettings):
     sprint_code_simplifier_wave_size: int = 10
     sprint_commit_pattern: str = "feat(sprint{num}): Track {track}"
 
-    # Phase overlays, drift detection, and scoped recall (PRD-CORE-017)
-    overlays_dir: str = "overlays"
-    vocabulary_file: str = "vocabulary.yaml"
-    drift_check_on_init: bool = False
+    # Phase-scoped recall bonuses (PRD-CORE-017 FR04, retained)
     phase_bonus_matching: float = 0.15
     phase_bonus_global: float = 0.0
     phase_bonus_nonmatching: float = -0.05

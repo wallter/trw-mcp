@@ -23,6 +23,16 @@ _config = TRWConfig()
 _reader = FileStateReader()
 
 
+def _obj_int(v: object) -> int:
+    """Narrow an object value to int (for dict[str, object] access)."""
+    return v if isinstance(v, int) else int(str(v))
+
+
+def _obj_float(v: object) -> float:
+    """Narrow an object value to float (for dict[str, object] access)."""
+    return v if isinstance(v, (int, float)) else float(str(v))
+
+
 def _scan_learnings(entries_dir: Path) -> dict[str, object]:
     """Scan all learning entries and compute aggregate metrics.
 
@@ -60,16 +70,16 @@ def _scan_learnings(entries_dir: Path) -> dict[str, object]:
         status = str(data.get("status", "active"))
         if status == "active":
             active += 1
-        impact = float(data.get("impact", 0.5))
+        impact = _obj_float(data.get("impact", 0.5))
         if impact >= 0.7:
             high_impact += 1
 
-        q_obs = int(data.get("q_observations", 0))
+        q_obs = _obj_int(data.get("q_observations", 0))
         if q_obs > 0:
             q_active += 1
             q_obs_sum += q_obs
 
-        ac = int(data.get("access_count", 0))
+        ac = _obj_int(data.get("access_count", 0))
         access_sum += ac
         if ac == 0:
             never_accessed += 1
@@ -207,23 +217,29 @@ def compute_health(trw_dir: Path, run_dir: Path | None = None) -> HealthReport:
     event_metrics = _scan_events(run_dir)
     receipts_count = _count_recall_receipts(trw_dir)
 
+    # Narrow event_type_distribution from object to dict[str, int]
+    raw_dist = event_metrics["event_type_distribution"]
+    type_dist: dict[str, int] = (
+        raw_dist if isinstance(raw_dist, dict) else {}
+    )
+
     report = HealthReport(
-        q_activations=int(learning_metrics["q_activations"]),
-        q_avg_observations=float(learning_metrics["q_avg_observations"]),
-        events_total=int(event_metrics["events_total"]),
-        event_type_distribution=dict(event_metrics["event_type_distribution"]),
+        q_activations=_obj_int(learning_metrics["q_activations"]),
+        q_avg_observations=_obj_float(learning_metrics["q_avg_observations"]),
+        events_total=_obj_int(event_metrics["events_total"]),
+        event_type_distribution=type_dist,
         recall_receipts_count=receipts_count,
-        access_total=int(learning_metrics["access_total"]),
-        access_mean=float(learning_metrics["access_mean"]),
-        entries_never_accessed=int(learning_metrics["entries_never_accessed"]),
-        source_human=int(learning_metrics["source_human"]),
-        source_agent=int(learning_metrics["source_agent"]),
-        source_unset=int(learning_metrics["source_unset"]),
-        total_learnings=int(learning_metrics["total"]),
-        active_learnings=int(learning_metrics["active"]),
-        high_impact_learnings=int(learning_metrics["high_impact"]),
-        reflections_found=int(event_metrics["reflections_found"]),
-        claude_md_syncs_found=int(event_metrics["claude_md_syncs_found"]),
+        access_total=_obj_int(learning_metrics["access_total"]),
+        access_mean=_obj_float(learning_metrics["access_mean"]),
+        entries_never_accessed=_obj_int(learning_metrics["entries_never_accessed"]),
+        source_human=_obj_int(learning_metrics["source_human"]),
+        source_agent=_obj_int(learning_metrics["source_agent"]),
+        source_unset=_obj_int(learning_metrics["source_unset"]),
+        total_learnings=_obj_int(learning_metrics["total"]),
+        active_learnings=_obj_int(learning_metrics["active"]),
+        high_impact_learnings=_obj_int(learning_metrics["high_impact"]),
+        reflections_found=_obj_int(event_metrics["reflections_found"]),
+        claude_md_syncs_found=_obj_int(event_metrics["claude_md_syncs_found"]),
     )
 
     recommendation, issues = _assess(report)
@@ -255,6 +271,7 @@ def register_health_tools(server: FastMCP) -> None:
         """
         trw_dir = resolve_trw_dir()
 
+        active_run: Path | None
         if run_path:
             active_run = Path(run_path).resolve()
         else:

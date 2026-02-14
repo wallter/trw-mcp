@@ -323,7 +323,6 @@ class TestBackwardCompatibleOutput:
         assert "ambiguity_rate" in result
         assert "sections_found" in result
         assert "sections_expected" in result
-        assert "ambiguous_terms" in result
         assert "failures" in result
 
         # V2 keys
@@ -360,26 +359,19 @@ class TestBackwardCompatibleOutput:
 # ---------------------------------------------------------------------------
 
 class TestAmbiguityDetection:
-    """Ambiguity detection uses trw_prd_validate as single source."""
+    """Ambiguity detection uses V2 smell detection as single source."""
 
-    def test_ambiguity_detected_in_result(self, tmp_path: Path) -> None:
-        """Ambiguous terms should be detected and included in output."""
+    def test_ambiguity_detected_via_smells(self, tmp_path: Path) -> None:
+        """Ambiguous/vague terms should be detected via V2 smell findings."""
         prd_path = tmp_path / "ambiguous.md"
         prd_path.write_text(_AMBIGUOUS_PRD, encoding="utf-8")
 
         tools = _get_tools()
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-        assert len(result["ambiguous_terms"]) > 0
-        assert "fast" in result["ambiguous_terms"]
-
-    def test_ambiguity_rate_populates(self, tmp_path: Path) -> None:
-        """Ambiguity rate should be computed and populated."""
-        prd_path = tmp_path / "ambiguous.md"
-        prd_path.write_text(_AMBIGUOUS_PRD, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-        assert result["ambiguity_rate"] > 0.0
+        # V2 smell detection catches vague terms like "fast"
+        assert len(result["smell_findings"]) > 0
+        vague_texts = [sf["matched_text"] for sf in result["smell_findings"]]
+        assert any("fast" in t.lower() for t in vague_texts)
 
     def test_clean_prd_low_ambiguity(self, tmp_path: Path) -> None:
         """A well-written PRD should have ambiguity rate below threshold."""
