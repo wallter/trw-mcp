@@ -5,6 +5,11 @@
 ## TRW Behavioral Protocol (Auto-Generated)
 
 {{behavioral_protocol}}
+## TRW Ceremony Tools (Auto-Generated)
+
+{{ceremony_phases}}
+{{ceremony_table}}
+{{ceremony_flows}}
 ## TRW Learnings (Auto-Generated)
 
 {{architecture_section}}

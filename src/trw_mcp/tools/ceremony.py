@@ -36,8 +36,11 @@ from trw_mcp.state.claude_md import (
     render_architecture,
     render_behavioral_protocol,
     render_categorized_learnings,
+    render_ceremony_flows,
+    render_ceremony_table,
     render_conventions,
     render_patterns,
+    render_phase_descriptions,
     render_template,
 )
 from trw_mcp.state.persistence import (
@@ -380,6 +383,9 @@ def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
 
     tpl_context: dict[str, str] = {
         "behavioral_protocol": behavioral_protocol,
+        "ceremony_phases": render_phase_descriptions(),
+        "ceremony_table": render_ceremony_table(),
+        "ceremony_flows": render_ceremony_flows(),
         "architecture_section": render_architecture(arch_data),
         "conventions_section": render_conventions(conv_data),
         "categorized_learnings": render_categorized_learnings(high_impact),

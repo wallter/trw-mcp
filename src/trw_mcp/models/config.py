@@ -79,7 +79,7 @@ class TRWConfig(BaseSettings):
     recall_utility_lambda: float = 0.3
 
     # Documentation generation
-    claude_md_max_lines: int = 200
+    claude_md_max_lines: int = 300
     sub_claude_md_max_lines: int = 50
     agents_md_enabled: bool = True
 

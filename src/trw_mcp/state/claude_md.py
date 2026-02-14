@@ -10,7 +10,7 @@ from __future__ import annotations
 import structlog
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
@@ -33,6 +33,51 @@ CLAUDEMD_PATTERN_CAP = 5
 BEHAVIORAL_PROTOCOL_CAP = 12
 BOUNDED_ADR_CAP = 5
 BOUNDED_LEARNING_CAP = 8
+
+
+class CeremonyTool(NamedTuple):
+    """A lifecycle-critical MCP tool with usage guidance."""
+
+    phase: str
+    tool: str
+    when: str
+    what: str
+    example: str
+
+
+# Phase descriptions for the 6-phase execution model
+PHASE_DESCRIPTIONS: list[tuple[str, str]] = [
+    ("RESEARCH", "Discover context, audit codebase, register findings"),
+    ("PLAN", "Design wave/shard manifest, identify dependencies"),
+    ("IMPLEMENT", "Execute shards with events and checkpoints"),
+    ("VALIDATE", "Run targeted tests, build checks, phase gates"),
+    ("REVIEW", "Reflect on learnings, audit compliance"),
+    ("DELIVER", "Sync artifacts, checkpoint, close run"),
+]
+
+# 19 lifecycle-critical tools in execution order
+CEREMONY_TOOLS: list[CeremonyTool] = [
+    CeremonyTool("Start", "trw_session_start", "Every session/compaction", "Recall learnings + check run status", "trw_session_start()"),
+    CeremonyTool("Start", "trw_recall", "Quick tasks (no run)", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
+    CeremonyTool("Start", "trw_status", "Resuming a run", "Show run phase/wave/shard state", "trw_status()"),
+    CeremonyTool("RESEARCH", "trw_init", "New task", "Bootstrap run directory + events", "trw_init(task_name='...')"),
+    CeremonyTool("PLAN", "trw_wave_plan", "Plan finalized", "Create wave manifest with shards", "trw_wave_plan(waves=[...])"),
+    CeremonyTool("IMPLEMENT", "trw_shard_start", "Begin each shard", "Set up shard working directory", "trw_shard_start(shard_id='S1')"),
+    CeremonyTool("IMPLEMENT", "trw_event", "During work", "Log event to audit trail", "trw_event('shard_progress')"),
+    CeremonyTool("IMPLEMENT", "trw_checkpoint", "Milestones / every 10min", "Atomic state snapshot", "trw_checkpoint(message='...')"),
+    CeremonyTool("IMPLEMENT", "trw_shard_complete", "Shard finished", "Validate output contracts", "trw_shard_complete(shard_id='S1')"),
+    CeremonyTool("IMPLEMENT", "trw_wave_complete", "All shards done", "Cross-shard validation", "trw_wave_complete(wave_number=1)"),
+    CeremonyTool("IMPLEMENT", "trw_wave_adapt", "After wave completes", "Adapt remaining waves", "trw_wave_adapt(wave_number=1)"),
+    CeremonyTool("Any", "trw_learn", "Errors / discoveries", "Record learning entry", "trw_learn(summary='...', impact=0.8)"),
+    CeremonyTool("VALIDATE", "trw_test_target", "Before full suite", "Recommend targeted tests", "trw_test_target()"),
+    CeremonyTool("VALIDATE", "trw_build_check", "Before phase exit", "Run pytest + mypy", "trw_build_check(scope='full')"),
+    CeremonyTool("VALIDATE", "trw_phase_check", "Phase boundaries", "Check exit criteria", "trw_phase_check('implement')"),
+    CeremonyTool("REVIEW", "trw_reflect", "Review/completion", "Extract learnings from events", "trw_reflect(scope='session')"),
+    CeremonyTool("REVIEW", "trw_compliance_check", "Before delivery", "Audit session compliance", "trw_compliance_check()"),
+    CeremonyTool("DELIVER", "trw_deliver", "Task completion", "reflect+sync+checkpoint+index", "trw_deliver()"),
+    CeremonyTool("DELIVER", "trw_health", "Diagnostics", "Flywheel health report", "trw_health()"),
+]
+
 
 # CLAUDE.md TRW section markers (must stay consistent — parsing depends on these)
 TRW_AUTO_COMMENT = "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->"
@@ -74,6 +119,11 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "## TRW Behavioral Protocol (Auto-Generated)\n"
         "\n"
         "{{behavioral_protocol}}"
+        "## TRW Ceremony Tools (Auto-Generated)\n"
+        "\n"
+        "{{ceremony_phases}}"
+        "{{ceremony_table}}"
+        "{{ceremony_flows}}"
         "## TRW Learnings (Auto-Generated)\n"
         "\n"
         "{{architecture_section}}"
@@ -283,6 +333,77 @@ def render_behavioral_protocol() -> str:
         lines.append(f"- {directive}")
     lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def render_phase_descriptions() -> str:
+    """Render phase arrow diagram and description list.
+
+    Returns:
+        Markdown string with phase flow and descriptions.
+    """
+    phase_names = [p[0] for p in PHASE_DESCRIPTIONS]
+    lines: list[str] = [
+        "### Execution Phases",
+        "",
+        "```",
+        " → ".join(phase_names),
+        "```",
+        "",
+    ]
+    for name, purpose in PHASE_DESCRIPTIONS:
+        lines.append(f"- **{name}**: {purpose}")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def render_ceremony_table() -> str:
+    """Render ceremony tools as a markdown table.
+
+    Returns:
+        Markdown table with Phase, Tool, When, What, Example columns.
+    """
+    lines: list[str] = [
+        "### Tool Lifecycle",
+        "",
+        "| Phase | Tool | When to Use | What It Does | Example |",
+        "|-------|------|-------------|--------------|---------|",
+    ]
+    for ct in CEREMONY_TOOLS:
+        lines.append(
+            f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |"
+        )
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def render_ceremony_flows() -> str:
+    """Render quick task and full run example flows.
+
+    Returns:
+        Markdown string with two flow diagrams.
+    """
+    return (
+        "### Example Flows\n"
+        "\n"
+        "**Quick Task** (no run needed):\n"
+        "```\n"
+        "trw_session_start -> work -> trw_learn (if discovery) -> trw_reflect\n"
+        "```\n"
+        "\n"
+        "**Full Run**:\n"
+        "```\n"
+        "trw_session_start -> trw_init(task_name, prd_scope)\n"
+        "  -> trw_wave_plan(waves=[...])\n"
+        "  Per wave:\n"
+        "    -> trw_shard_start -> trw_event + trw_checkpoint -> trw_shard_complete\n"
+        "    -> trw_wave_complete -> trw_wave_adapt\n"
+        "  After all waves:\n"
+        "    -> trw_test_target -> trw_build_check(scope='full')\n"
+        "    -> trw_phase_check('validate') -> trw_reflect(scope='run')\n"
+        "    -> trw_compliance_check -> trw_deliver()\n"
+        "```\n"
+        "\n"
+    )
 
 
 def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
@@ -616,10 +737,16 @@ def execute_claude_md_sync(
 
     template = load_claude_md_template(trw_dir)
     behavioral_protocol = render_behavioral_protocol()
+    ceremony_phases = render_phase_descriptions()
+    ceremony_table = render_ceremony_table()
+    ceremony_flows = render_ceremony_flows()
 
     if llm_used and llm_summary is not None:
         tpl_context: dict[str, str] = {
             "behavioral_protocol": behavioral_protocol,
+            "ceremony_phases": ceremony_phases,
+            "ceremony_table": ceremony_table,
+            "ceremony_flows": ceremony_flows,
             "architecture_section": "",
             "conventions_section": "",
             "categorized_learnings": llm_summary + "\n",
@@ -629,6 +756,9 @@ def execute_claude_md_sync(
     else:
         tpl_context = {
             "behavioral_protocol": behavioral_protocol,
+            "ceremony_phases": ceremony_phases,
+            "ceremony_table": ceremony_table,
+            "ceremony_flows": ceremony_flows,
             "architecture_section": render_architecture(arch_data),
             "conventions_section": render_conventions(conv_data),
             "categorized_learnings": render_categorized_learnings(high_impact),

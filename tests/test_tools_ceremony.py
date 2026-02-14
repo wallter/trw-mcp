@@ -187,6 +187,30 @@ class TestDoClaudeMdSync:
         assert result["status"] == "success"
         assert "learnings_promoted" in result
 
+    def test_deliver_includes_ceremony_sections(self, trw_project: Path) -> None:
+        """trw_deliver path produces CLAUDE.md with ceremony content."""
+        trw_dir = trw_project / ".trw"
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=trw_project),
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=trw_project),
+        ):
+            result = _do_claude_md_sync(trw_dir)
+        assert result["status"] == "success"
+
+        claude_md = trw_project / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        # Ceremony sections present
+        assert "### Execution Phases" in content
+        assert "### Tool Lifecycle" in content
+        assert "### Example Flows" in content
+        assert "`trw_session_start`" in content
+        assert "`trw_deliver`" in content
+        # No unreplaced placeholders
+        assert "{{ceremony_phases}}" not in content
+        assert "{{ceremony_table}}" not in content
+        assert "{{ceremony_flows}}" not in content
+
 
 # --- _do_index_sync ---
 

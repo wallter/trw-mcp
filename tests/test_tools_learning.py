@@ -941,6 +941,92 @@ class TestClaudeMdTemplate:
         assert "Custom template learning" in content
 
 
+class TestCeremonyRendering:
+    """Tests for ceremony tool guidance rendering (auto-generated in CLAUDE.md)."""
+
+    def test_render_phase_descriptions(self) -> None:
+        """All 6 phases present with arrow diagram."""
+        from trw_mcp.state.claude_md import render_phase_descriptions
+
+        result = render_phase_descriptions()
+        assert "### Execution Phases" in result
+        # Arrow sequence
+        assert "RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER" in result
+        # All 6 descriptions
+        for name in ("RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"):
+            assert f"**{name}**" in result
+
+    def test_render_ceremony_table(self) -> None:
+        """Table headers and all 19 tools listed."""
+        from trw_mcp.state.claude_md import CEREMONY_TOOLS, render_ceremony_table
+
+        result = render_ceremony_table()
+        assert "### Tool Lifecycle" in result
+        assert "| Phase | Tool | When to Use | What It Does | Example |" in result
+        assert "|-------|------|-------------|--------------|---------|" in result
+        # All 19 tools present
+        for ct in CEREMONY_TOOLS:
+            assert f"`{ct.tool}`" in result
+        assert result.count("|") >= 19 * 6  # 6 pipes per row, 19 rows minimum
+
+    def test_render_ceremony_flows(self) -> None:
+        """Both quick and full flows present with key tool names."""
+        from trw_mcp.state.claude_md import render_ceremony_flows
+
+        result = render_ceremony_flows()
+        assert "**Quick Task**" in result
+        assert "**Full Run**" in result
+        assert "trw_session_start" in result
+        assert "trw_deliver()" in result
+        assert "trw_wave_plan" in result
+        assert "trw_shard_start" in result
+        assert "trw_compliance_check" in result
+
+    def test_bundled_template_has_ceremony_placeholders(self) -> None:
+        """Bundled template contains all 3 ceremony placeholder tokens."""
+        from trw_mcp.state.claude_md import load_claude_md_template
+
+        # Use a non-existent trw_dir so it falls through to bundled template
+        from pathlib import Path
+        template = load_claude_md_template(Path("/nonexistent/.trw"))
+        assert "{{ceremony_phases}}" in template
+        assert "{{ceremony_table}}" in template
+        assert "{{ceremony_flows}}" in template
+
+    def test_sync_includes_ceremony_sections(self, tmp_path: Path) -> None:
+        """Full sync produces CLAUDE.md with ceremony table content."""
+        tools = _get_tools()
+
+        tools["trw_learn"].fn(
+            summary="Ceremony sync test",
+            detail="Verify ceremony sections in output",
+            impact=0.9,
+        )
+
+        result = tools["trw_claude_md_sync"].fn(scope="root")
+        assert result["status"] == "synced"
+
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        # Ceremony section header
+        assert "## TRW Ceremony Tools (Auto-Generated)" in content
+        # Phase descriptions
+        assert "### Execution Phases" in content
+        assert "RESEARCH → PLAN → IMPLEMENT" in content
+        # Tool table
+        assert "### Tool Lifecycle" in content
+        assert "`trw_session_start`" in content
+        assert "`trw_deliver`" in content
+        # Flows
+        assert "### Example Flows" in content
+        assert "**Quick Task**" in content
+        assert "**Full Run**" in content
+        # No unreplaced placeholders
+        assert "{{ceremony_phases}}" not in content
+        assert "{{ceremony_table}}" not in content
+        assert "{{ceremony_flows}}" not in content
+
+
 class TestTrwReflectLLM:
     """Tests for LLM-augmented trw_reflect."""
 
