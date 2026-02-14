@@ -176,6 +176,8 @@ class TRWConfig(BaseSettings):
     debt_budget_critical_ratio: float = 0.20
     debt_budget_high_ratio: float = 0.15
     debt_default_wave_size: int = 5
+    debt_md_auto_generate: bool = True
+    debt_md_relative_path: str = "docs/requirements-aare-f/TECHNICAL-DEBT.md"
 
     # Compliance auditing (PRD-QUAL-003)
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"

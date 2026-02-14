@@ -66,6 +66,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         prd_scope: list[str] | None = None,
         run_type: str = "implementation",
         task_root: str | None = None,
+        wave_manifest: list[dict[str, object]] | None = None,
     ) -> dict[str, str]:
         """Bootstrap TRW run scaffolding — creates .trw/, run dirs, run.yaml, events.jsonl.
 
@@ -76,6 +77,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
             prd_scope: Optional list of PRD IDs governing this run (e.g. ["PRD-CORE-009"]).
             run_type: Run type — "implementation" (default) or "research". Research runs skip PRD enforcement.
             task_root: Optional task directory root (default: config field or "docs").
+            wave_manifest: Optional wave plan definitions. When provided, delegates to
+                trw_wave_plan after run scaffolding for one-step initialization.
         """
         project_root = resolve_project_root()
         trw_dir = project_root / _config.trw_dir
@@ -199,13 +202,24 @@ def register_orchestration_tools(server: FastMCP) -> None:
             run_path=str(run_root),
         )
 
-        return {
+        result: dict[str, str] = {
             "run_id": run_id,
             "run_path": str(run_root),
             "trw_dir": str(trw_dir),
             "status": "initialized",
             "phase": "research",
         }
+
+        # GAP-FR-005: Optional wave_manifest delegation to create_wave_plan
+        if wave_manifest is not None:
+            from trw_mcp.tools.wave import create_wave_plan
+
+            wave_result = create_wave_plan(wave_manifest, run_root)
+            result["wave_plan_status"] = str(wave_result.get("status", ""))
+            result["wave_count"] = str(wave_result.get("wave_count", 0))
+            result["shard_count"] = str(wave_result.get("shard_count", 0))
+
+        return result
 
     @server.tool()
     def trw_status(run_path: str | None = None) -> dict[str, object]:

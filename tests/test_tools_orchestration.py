@@ -533,6 +533,55 @@ class TestReflectionEnforcement:
         assert status["reflection"]["claude_md_synced"] is True
 
 
+class TestTrwInitWaveManifest:
+    """Tests for trw_init with wave_manifest parameter (GAP-FR-005)."""
+
+    def test_init_with_wave_manifest_creates_waves(
+        self, orch_tools: dict[str, Any],
+    ) -> None:
+        """wave_manifest parameter delegates to create_wave_plan."""
+        wave_manifest = [
+            {
+                "wave": 1,
+                "shards": [
+                    {"id": "S1", "title": "Research shard", "goals": ["research"]},
+                ],
+            },
+            {
+                "wave": 2,
+                "shards": [
+                    {"id": "S2", "title": "Implement shard", "goals": ["implement"]},
+                ],
+                "depends_on": [1],
+            },
+        ]
+
+        result = orch_tools["trw_init"].fn(
+            task_name="wave-init-task",
+            wave_manifest=wave_manifest,
+        )
+
+        assert result["status"] == "initialized"
+        assert result["wave_plan_status"] == "wave_plan_created"
+        assert result["wave_count"] == "2"
+        assert result["shard_count"] == "2"
+
+        # Verify wave manifest was created
+        run_path = Path(result["run_path"])
+        assert (run_path / "shards" / "wave_manifest.yaml").exists()
+        assert (run_path / "shards" / "manifest.yaml").exists()
+
+    def test_init_without_wave_manifest_no_wave_keys(
+        self, orch_tools: dict[str, Any],
+    ) -> None:
+        """Without wave_manifest, result has no wave fields."""
+        result = orch_tools["trw_init"].fn(task_name="no-wave-task")
+
+        assert result["status"] == "initialized"
+        assert "wave_plan_status" not in result
+        assert "wave_count" not in result
+
+
 class TestOutcomeCorrelationInOrchestration:
     """Tests for PRD-CORE-004 Phase 1c — outcome correlation in orchestration tools."""
 

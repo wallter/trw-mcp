@@ -246,9 +246,21 @@ def register_ceremony_tools(server: FastMCP) -> None:
             errors.append(f"auto_progress: {exc}")
             results["auto_progress"] = {"status": "failed", "error": str(exc)}
 
+        # Step 6: Debt markdown auto-generation (GAP-PROC-004)
+        if _config.debt_md_auto_generate:
+            try:
+                debt_result = _do_debt_md_sync(trw_dir)
+                results["debt_md_sync"] = debt_result
+            except Exception as exc:
+                errors.append(f"debt_md_sync: {exc}")
+                results["debt_md_sync"] = {"status": "failed", "error": str(exc)}
+        else:
+            results["debt_md_sync"] = {"status": "skipped", "reason": "disabled"}
+
+        total_steps = 6
         results["errors"] = errors
         results["success"] = len(errors) == 0
-        results["steps_completed"] = 5 - len(errors)
+        results["steps_completed"] = total_steps - len(errors)
 
         logger.info(
             "trw_deliver_complete",
@@ -435,4 +447,147 @@ def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
         "total_evaluated": len(progressions),
         "applied": len(applied),
         "progressions": progressions,
+    }
+
+
+def _generate_debt_markdown(
+    entries: list[dict[str, object]],
+) -> str:
+    """Generate TECHNICAL-DEBT.md content from debt registry entries.
+
+    Groups entries by status (active vs resolved), then by priority.
+    Produces a markdown document with summary table and detail sections.
+
+    Args:
+        entries: List of debt entry dicts from the registry.
+
+    Returns:
+        Markdown string for TECHNICAL-DEBT.md.
+    """
+    active = [e for e in entries if e.get("status") != "resolved"]
+    resolved = [e for e in entries if e.get("status") == "resolved"]
+
+    # Count by priority
+    priority_order = ["critical", "high", "medium", "low"]
+    active_counts: dict[str, int] = {p: 0 for p in priority_order}
+    for e in active:
+        p = str(e.get("priority", "medium"))
+        if p in active_counts:
+            active_counts[p] += 1
+
+    today = date.today().isoformat()
+
+    lines: list[str] = [
+        "# Technical Debt Registry",
+        "",
+        f"**Auto-generated from `.trw/debt-registry.yaml` on {today}**",
+        "",
+        "---",
+        "",
+        "## Summary",
+        "",
+        "| Priority | Active | Items |",
+        "|----------|--------|-------|",
+    ]
+
+    for p in priority_order:
+        count = active_counts[p]
+        ids = ", ".join(
+            str(e.get("id", ""))
+            for e in active
+            if str(e.get("priority", "")) == p
+        )
+        lines.append(f"| {p.capitalize()} | {count} | {ids} |")
+
+    lines.append(f"| **Total active** | **{len(active)}** | |")
+    lines.append(f"| **Total resolved** | **{len(resolved)}** | |")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # Active debt section
+    if active:
+        lines.append("## Active Debt")
+        lines.append("")
+        for p in priority_order:
+            p_entries = [e for e in active if str(e.get("priority", "")) == p]
+            if not p_entries:
+                continue
+            lines.append(f"### {p.capitalize()} Priority")
+            lines.append("")
+            for e in p_entries:
+                eid = str(e.get("id", ""))
+                title = str(e.get("title", ""))
+                desc = str(e.get("description", ""))
+                files = e.get("affected_files", [])
+                effort = str(e.get("estimated_effort", ""))
+                lines.append(f"#### {eid}: {title}")
+                lines.append(f"- **Status**: {str(e.get('status', '')).upper()}")
+                if isinstance(files, list) and files:
+                    lines.append(f"- **Location**: {', '.join(str(f) for f in files)}")
+                if desc:
+                    lines.append(f"- **Description**: {desc}")
+                if effort:
+                    lines.append(f"- **Effort**: {effort}")
+                lines.append("")
+
+    # Resolved debt section
+    if resolved:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Resolved Debt")
+        lines.append("")
+        for e in resolved:
+            eid = str(e.get("id", ""))
+            title = str(e.get("title", ""))
+            prd = str(e.get("resolved_by_prd", "")) or "N/A"
+            resolved_at = str(e.get("resolved_at", "")) or "N/A"
+            lines.append(f"- ~~{eid}~~: {title} (resolved by {prd}, {resolved_at})")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def _do_debt_md_sync(trw_dir: Path) -> dict[str, object]:
+    """Generate TECHNICAL-DEBT.md from .trw/debt-registry.yaml.
+
+    GAP-PROC-004: Reads debt registry, generates markdown, writes to
+    docs/requirements-aare-f/TECHNICAL-DEBT.md.
+
+    Args:
+        trw_dir: Path to the .trw directory.
+
+    Returns:
+        Result dict with status, path, and entry counts.
+    """
+    from trw_mcp.models.debt import DebtRegistry
+    from trw_mcp.state.persistence import model_to_dict as _model_to_dict
+
+    registry_path = trw_dir / _config.debt_registry_filename
+    if not _reader.exists(registry_path):
+        return {"status": "skipped", "reason": "no_debt_registry"}
+
+    data = _reader.read_yaml(registry_path)
+    registry = DebtRegistry.model_validate(data)
+
+    entry_dicts = [_model_to_dict(e) for e in registry.entries]
+    markdown = _generate_debt_markdown(entry_dicts)
+
+    project_root = resolve_project_root()
+    target_path = project_root / _config.debt_md_relative_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(markdown, encoding="utf-8")
+
+    active_count = sum(
+        1 for e in registry.entries if e.status != "resolved"
+    )
+    resolved_count = sum(
+        1 for e in registry.entries if e.status == "resolved"
+    )
+
+    return {
+        "status": "success",
+        "path": str(target_path),
+        "active_entries": active_count,
+        "resolved_entries": resolved_count,
     }

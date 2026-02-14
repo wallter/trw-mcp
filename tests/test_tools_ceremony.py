@@ -6,6 +6,9 @@ Covers:
 - _find_active_run helper
 - _do_checkpoint, _do_reflect, _do_claude_md_sync, _do_index_sync internals
 - _do_auto_progress: PRD auto-progression during delivery (GAP-PROC-001)
+- _do_debt_md_sync: Debt markdown auto-generation (GAP-PROC-004)
+- _generate_debt_markdown: Markdown rendering from registry entries
+- Integration tests for partial failure resilience (Sprint 13, GAP-TEST-003)
 """
 
 from __future__ import annotations
@@ -21,9 +24,11 @@ from trw_mcp.tools.ceremony import (
     _do_auto_progress,
     _do_checkpoint,
     _do_claude_md_sync,
+    _do_debt_md_sync,
     _do_index_sync,
     _do_reflect,
     _find_active_run,
+    _generate_debt_markdown,
     _get_run_status,
 )
 
@@ -274,3 +279,446 @@ class TestDoAutoProgress:
             result = _do_auto_progress(run_dir)
         assert result["status"] == "success"
         assert result["applied"] == 0
+
+
+# --- _generate_debt_markdown ---
+
+
+class TestGenerateDebtMarkdown:
+    """Markdown rendering from debt registry entries (GAP-PROC-004)."""
+
+    def test_renders_active_entries(self) -> None:
+        entries: list[dict[str, object]] = [
+            {
+                "id": "DEBT-001",
+                "title": "Test debt item",
+                "description": "Something needs fixing",
+                "priority": "medium",
+                "status": "discovered",
+                "affected_files": ["tools/foo.py"],
+                "estimated_effort": "1 hour",
+            },
+        ]
+        md = _generate_debt_markdown(entries)
+        assert "# Technical Debt Registry" in md
+        assert "DEBT-001" in md
+        assert "Test debt item" in md
+        assert "Medium" in md
+        assert "tools/foo.py" in md
+        assert "**Total active** | **1**" in md
+
+    def test_renders_resolved_entries(self) -> None:
+        entries: list[dict[str, object]] = [
+            {
+                "id": "DEBT-002",
+                "title": "Resolved item",
+                "priority": "high",
+                "status": "resolved",
+                "resolved_by_prd": "PRD-FIX-001",
+                "resolved_at": "2026-02-13",
+            },
+        ]
+        md = _generate_debt_markdown(entries)
+        assert "## Resolved Debt" in md
+        assert "~~DEBT-002~~" in md
+        assert "PRD-FIX-001" in md
+        assert "**Total active** | **0**" in md
+        assert "**Total resolved** | **1**" in md
+
+    def test_renders_mixed_entries_grouped_by_priority(self) -> None:
+        entries: list[dict[str, object]] = [
+            {"id": "DEBT-A", "title": "Critical", "priority": "critical", "status": "discovered"},
+            {"id": "DEBT-B", "title": "Low item", "priority": "low", "status": "discovered"},
+            {"id": "DEBT-C", "title": "Done", "priority": "high", "status": "resolved"},
+        ]
+        md = _generate_debt_markdown(entries)
+        assert "### Critical Priority" in md
+        assert "### Low Priority" in md
+        assert "~~DEBT-C~~" in md
+
+    def test_empty_registry_renders_header(self) -> None:
+        md = _generate_debt_markdown([])
+        assert "# Technical Debt Registry" in md
+        assert "**Total active** | **0**" in md
+
+
+# --- _do_debt_md_sync ---
+
+
+class TestDoDebtMdSync:
+    """Debt markdown auto-generation during delivery (GAP-PROC-004)."""
+
+    def test_generates_debt_markdown_from_registry(self, tmp_path: Path) -> None:
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        registry_yaml = (
+            "version: '1.0'\n"
+            "entries:\n"
+            "- id: DEBT-010\n"
+            "  title: Non-Atomic Writes\n"
+            "  description: Two writes are non-atomic\n"
+            "  priority: medium\n"
+            "  status: discovered\n"
+            "  classification: deferrable-local\n"
+            "  category: code_quality\n"
+            "  affected_files:\n"
+            "  - tools/requirements.py\n"
+            "  decay_score: 0.5\n"
+            "  assessment_count: 1\n"
+        )
+        (trw_dir / "debt-registry.yaml").write_text(registry_yaml, encoding="utf-8")
+
+        # Create target directory
+        debt_dir = tmp_path / "docs" / "requirements-aare-f"
+        debt_dir.mkdir(parents=True)
+
+        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+            result = _do_debt_md_sync(trw_dir)
+
+        assert result["status"] == "success"
+        assert result["active_entries"] == 1
+        assert result["resolved_entries"] == 0
+
+        target_path = debt_dir / "TECHNICAL-DEBT.md"
+        assert target_path.exists()
+        content = target_path.read_text(encoding="utf-8")
+        assert "DEBT-010" in content
+        assert "Non-Atomic Writes" in content
+
+    def test_skips_when_no_registry(self, tmp_path: Path) -> None:
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+
+        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+            result = _do_debt_md_sync(trw_dir)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "no_debt_registry"
+
+
+# --- Integration tests: partial failure resilience (GAP-TEST-003) ---
+
+
+def _make_ceremony_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> dict[str, object]:
+    """Create a FastMCP server with ceremony tools and patched project root."""
+    from fastmcp import FastMCP
+    from trw_mcp.tools.ceremony import register_ceremony_tools
+    import trw_mcp.tools.ceremony as ceremony_mod
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(ceremony_mod, "_config", ceremony_mod.TRWConfig())
+
+    srv = FastMCP("test")
+    register_ceremony_tools(srv)
+    return {t.name: t for t in srv._tool_manager._tools.values()}
+
+
+@pytest.mark.integration
+class TestSessionStartPartialFailure:
+    """trw_session_start resilience when sub-operations fail."""
+
+    def test_returns_result_when_recall_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If recall raises, status step still runs and result is returned."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch(
+                "trw_mcp.tools.ceremony.resolve_trw_dir",
+                side_effect=Exception("recall boom"),
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._find_active_run",
+                return_value=None,
+            ),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert result["success"] is False
+        assert len(result["errors"]) >= 1
+        assert "recall" in result["errors"][0]
+        # Run status should still be present
+        assert "run" in result
+
+    def test_returns_result_when_status_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If status check raises, recall still runs and result is returned."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch(
+                "trw_mcp.tools.ceremony._find_active_run",
+                side_effect=Exception("status boom"),
+            ),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert result["success"] is False
+        assert any("status" in e for e in result["errors"])
+        # Learnings should still be populated (even if empty)
+        assert "learnings" in result
+
+    def test_success_when_all_steps_work(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Both recall and status succeed."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert result["success"] is True
+        assert result["errors"] == []
+        assert "timestamp" in result
+
+
+@pytest.mark.integration
+class TestDeliverPartialFailure:
+    """trw_deliver resilience when sub-operations fail."""
+
+    def test_reflect_failure_does_not_block_checkpoint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If reflect raises, checkpoint still runs."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "reflections").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                side_effect=Exception("reflect boom"),
+            ),
+            patch("trw_mcp.tools.ceremony._find_active_run", return_value=run_dir),
+            patch(
+                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                return_value={"status": "success", "learnings_promoted": 0,
+                              "path": "", "total_lines": 0},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_index_sync",
+                return_value={"status": "success", "index": {}, "roadmap": {}},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_debt_md_sync",
+                return_value={"status": "success", "items_rendered": 0},
+            ),
+            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
+        ):
+            result = tools["trw_deliver"].fn()
+
+        assert result["success"] is False
+        assert result["reflect"]["status"] == "failed"
+        # Checkpoint should have run
+        assert result["checkpoint"]["status"] == "success"
+
+    def test_checkpoint_failure_does_not_block_sync(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If checkpoint raises, claude_md_sync still runs."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "reflections").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                return_value={"status": "success", "events_analyzed": 0,
+                              "learnings_produced": 0},
+            ),
+            patch("trw_mcp.tools.ceremony._find_active_run", return_value=run_dir),
+            patch(
+                "trw_mcp.tools.ceremony._do_checkpoint",
+                side_effect=Exception("checkpoint boom"),
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                return_value={"status": "success", "learnings_promoted": 0,
+                              "path": "", "total_lines": 0},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_index_sync",
+                return_value={"status": "success", "index": {}, "roadmap": {}},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_debt_md_sync",
+                return_value={"status": "success", "items_rendered": 0},
+            ),
+            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
+        ):
+            result = tools["trw_deliver"].fn()
+
+        assert result["success"] is False
+        assert result["checkpoint"]["status"] == "failed"
+        assert result["claude_md_sync"]["status"] == "success"
+
+    def test_index_sync_failure_does_not_block_auto_progress(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If index_sync raises, auto_progress still runs."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "reflections").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                return_value={"status": "success", "events_analyzed": 0,
+                              "learnings_produced": 0},
+            ),
+            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+            patch(
+                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                return_value={"status": "success", "learnings_promoted": 0,
+                              "path": "", "total_lines": 0},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_index_sync",
+                side_effect=Exception("index_sync boom"),
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_debt_md_sync",
+                return_value={"status": "success", "items_rendered": 0},
+            ),
+        ):
+            result = tools["trw_deliver"].fn()
+
+        assert result["success"] is False
+        assert result["index_sync"]["status"] == "failed"
+        # auto_progress should still have run (skipped because no run)
+        assert result["auto_progress"]["status"] == "skipped"
+
+    def test_skip_reflect_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """skip_reflect=True skips the reflect step entirely."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+            patch(
+                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                return_value={"status": "success", "learnings_promoted": 0,
+                              "path": "", "total_lines": 0},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_index_sync",
+                return_value={"status": "success", "index": {}, "roadmap": {}},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_debt_md_sync",
+                return_value={"status": "success", "items_rendered": 0},
+            ),
+        ):
+            result = tools["trw_deliver"].fn(skip_reflect=True)
+
+        assert result["reflect"]["status"] == "skipped"
+        assert result["success"] is True
+
+    def test_skip_index_sync_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """skip_index_sync=True skips index sync step."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                return_value={"status": "success", "events_analyzed": 0,
+                              "learnings_produced": 0},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                return_value={"status": "success", "learnings_promoted": 0,
+                              "path": "", "total_lines": 0},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_debt_md_sync",
+                return_value={"status": "success", "items_rendered": 0},
+            ),
+        ):
+            result = tools["trw_deliver"].fn(skip_index_sync=True)
+
+        assert result["index_sync"]["status"] == "skipped"
+        assert result["success"] is True
+
+    def test_event_logging_during_delivery(
+        self, tmp_path: Path,
+    ) -> None:
+        """Verify events are logged to events.jsonl during delivery sub-steps."""
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "reflections").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+
+        # Run reflect + checkpoint directly
+        _do_reflect(trw_dir, run_dir)
+        _do_checkpoint(run_dir, "test-delivery")
+
+        events_path = run_dir / "meta" / "events.jsonl"
+        lines = [
+            l for l in events_path.read_text(encoding="utf-8").strip().split("\n") if l
+        ]
+        assert len(lines) >= 2
+        event_types = [json.loads(l)["event"] for l in lines]
+        assert "reflection_complete" in event_types
+        assert "checkpoint" in event_types
