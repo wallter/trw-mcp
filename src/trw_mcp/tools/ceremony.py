@@ -6,7 +6,7 @@ to 2, with partial-failure resilience on each sub-operation.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -48,7 +48,6 @@ from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
     FileStateWriter,
-    model_to_dict,
 )
 from trw_mcp.state.recall_search import (
     search_entries,

@@ -48,6 +48,88 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _find_executable(name: str, project_root: Path) -> str | None:
+    """Locate a tool on PATH or in the project venv.
+
+    Args:
+        name: Executable name (e.g. "pytest", "mypy").
+        project_root: Project root directory.
+
+    Returns:
+        Resolved path string, or None if not found.
+    """
+    path = shutil.which(name)
+    if path is not None:
+        return path
+    venv_path = project_root / "trw-mcp" / ".venv" / "bin" / name
+    if venv_path.exists():
+        return str(venv_path)
+    return None
+
+
+def _run_subprocess(
+    cmd: list[str],
+    cwd: Path,
+    timeout_secs: int,
+) -> subprocess.CompletedProcess[str] | str:
+    """Run a subprocess, returning the result or an error message string.
+
+    Args:
+        cmd: Command and arguments.
+        cwd: Working directory.
+        timeout_secs: Maximum seconds before timeout.
+
+    Returns:
+        CompletedProcess on success, or an error message string on failure.
+    """
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_secs,
+            cwd=str(cwd),
+        )
+    except subprocess.TimeoutExpired:
+        return f"{cmd[0]} timed out after {timeout_secs}s"
+    except FileNotFoundError:
+        return f"{cmd[0]} executable not found"
+
+
+def _pytest_error(message: str) -> dict[str, object]:
+    """Build a failed pytest result dict with the given error message."""
+    return {
+        "tests_passed": False,
+        "coverage_pct": 0.0,
+        "test_count": 0,
+        "failure_count": 0,
+        "failures": [message],
+    }
+
+
+def _extract_failures(
+    output: str,
+    markers: tuple[str, ...],
+) -> list[str]:
+    """Extract failure lines from subprocess output.
+
+    Args:
+        output: Combined stdout+stderr text (ANSI-stripped).
+        markers: Substrings that identify failure lines (matched with ``in``).
+
+    Returns:
+        Up to _MAX_FAILURES matching lines, each truncated to 200 chars.
+    """
+    failures: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if any(m in stripped for m in markers):
+            failures.append(stripped[:200])
+            if len(failures) >= _MAX_FAILURES:
+                break
+    return failures
+
+
 def _run_pytest(
     project_root: Path,
     timeout_secs: int,
@@ -63,20 +145,9 @@ def _run_pytest(
     Returns:
         Dict with tests_passed, coverage_pct, test_count, failure_count, failures.
     """
-    pytest_path = shutil.which("pytest")
+    pytest_path = _find_executable("pytest", project_root)
     if pytest_path is None:
-        # Try project venv
-        venv_pytest = project_root / "trw-mcp" / ".venv" / "bin" / "pytest"
-        if venv_pytest.exists():
-            pytest_path = str(venv_pytest)
-        else:
-            return {
-                "tests_passed": False,
-                "coverage_pct": 0.0,
-                "test_count": 0,
-                "failure_count": 0,
-                "failures": ["pytest not found — install with: pip install pytest"],
-            }
+        return _pytest_error("pytest not found — install with: pip install pytest")
 
     cmd = [
         pytest_path,
@@ -87,37 +158,14 @@ def _run_pytest(
         "--tb=line",
         f"--maxfail={_MAX_FAILURES}",
     ]
-
     if extra_args:
         cmd.extend(extra_args.split())
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_secs,
-            cwd=str(project_root / "trw-mcp"),
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "tests_passed": False,
-            "coverage_pct": 0.0,
-            "test_count": 0,
-            "failure_count": 0,
-            "failures": [f"pytest timed out after {timeout_secs}s"],
-        }
-    except FileNotFoundError:
-        return {
-            "tests_passed": False,
-            "coverage_pct": 0.0,
-            "test_count": 0,
-            "failure_count": 0,
-            "failures": ["pytest executable not found"],
-        }
+    result = _run_subprocess(cmd, project_root / "trw-mcp", timeout_secs)
+    if isinstance(result, str):
+        return _pytest_error(result)
 
     output = _strip_ansi(result.stdout + "\n" + result.stderr)
-    tests_passed = result.returncode == 0
 
     # Parse coverage
     coverage_pct = 0.0
@@ -136,21 +184,12 @@ def _run_pytest(
         test_count = passed + failed + errors
         failure_count = failed + errors
 
-    # Extract failure lines
-    failures: list[str] = []
-    for line in output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("FAILED ") or stripped.startswith("ERROR "):
-            failures.append(stripped[:200])
-            if len(failures) >= _MAX_FAILURES:
-                break
-
     return {
-        "tests_passed": tests_passed,
+        "tests_passed": result.returncode == 0,
         "coverage_pct": coverage_pct,
         "test_count": test_count,
         "failure_count": failure_count,
-        "failures": failures,
+        "failures": _extract_failures(output, ("FAILED ", "ERROR ")),
     }
 
 
@@ -169,54 +208,42 @@ def _run_mypy(
     Returns:
         Dict with mypy_clean and failures list.
     """
-    mypy_path = shutil.which("mypy")
+    mypy_path = _find_executable("mypy", project_root)
     if mypy_path is None:
-        venv_mypy = project_root / "trw-mcp" / ".venv" / "bin" / "mypy"
-        if venv_mypy.exists():
-            mypy_path = str(venv_mypy)
-        else:
-            return {
-                "mypy_clean": False,
-                "failures": ["mypy not found — install with: pip install mypy"],
-            }
+        return {
+            "mypy_clean": False,
+            "failures": ["mypy not found — install with: pip install mypy"],
+        }
 
     cmd = [mypy_path]
     if extra_args:
         cmd.extend(extra_args.split())
     cmd.append("src/trw_mcp/")
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_secs,
-            cwd=str(project_root / "trw-mcp"),
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "mypy_clean": False,
-            "failures": [f"mypy timed out after {timeout_secs}s"],
-        }
-    except FileNotFoundError:
-        return {
-            "mypy_clean": False,
-            "failures": ["mypy executable not found"],
-        }
+    result = _run_subprocess(cmd, project_root / "trw-mcp", timeout_secs)
+    if isinstance(result, str):
+        return {"mypy_clean": False, "failures": [result]}
 
     output = _strip_ansi(result.stdout + "\n" + result.stderr)
     mypy_clean = result.returncode == 0
 
     failures: list[str] = []
     if not mypy_clean:
-        for line in output.splitlines():
-            stripped = line.strip()
-            if ": error:" in stripped:
-                failures.append(stripped[:200])
-                if len(failures) >= _MAX_FAILURES:
-                    break
+        failures = _extract_failures(output, (": error:",))
 
     return {"mypy_clean": mypy_clean, "failures": failures}
+
+
+def _collect_failures(result: dict[str, object]) -> list[str]:
+    """Safely extract the failures list from a subprocess result dict.
+
+    Handles the dict[str, object] return type by checking isinstance
+    before extending, as required by mypy --strict.
+    """
+    raw = result.get("failures", [])
+    if isinstance(raw, list):
+        return [str(f) for f in raw]
+    return []
 
 
 def run_build_check(
@@ -252,16 +279,12 @@ def run_build_check(
         coverage_pct = float(str(pytest_result["coverage_pct"]))
         test_count = int(str(pytest_result["test_count"]))
         failure_count = int(str(pytest_result["failure_count"]))
-        pytest_failures = pytest_result.get("failures", [])
-        if isinstance(pytest_failures, list):
-            all_failures.extend(str(f) for f in pytest_failures)
+        all_failures.extend(_collect_failures(pytest_result))
 
     if scope in ("full", "mypy"):
         mypy_result = _run_mypy(project_root, timeout_secs, mypy_args)
         mypy_clean = bool(mypy_result["mypy_clean"])
-        mypy_failures = mypy_result.get("failures", [])
-        if isinstance(mypy_failures, list):
-            all_failures.extend(str(f) for f in mypy_failures)
+        all_failures.extend(_collect_failures(mypy_result))
 
     duration = time.monotonic() - start
 

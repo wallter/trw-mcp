@@ -7,7 +7,7 @@ preserve user-authored content outside the markers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
@@ -115,6 +115,47 @@ def _group_by_status(
     return groups
 
 
+def _render_4col_table(heading: str, group: list[PRDEntry]) -> list[str]:
+    """Render a 4-column (PRD/Title/Priority/Category) table section.
+
+    Returns empty list if group is empty.
+    """
+    if not group:
+        return []
+    lines = [
+        heading,
+        "",
+        "| PRD | Title | Priority | Category |",
+        "|-----|-------|----------|----------|",
+    ]
+    for e in group:
+        lines.append(f"| {e.id} | {e.title} | {e.priority} | {e.category} |")
+    lines.append("")
+    return lines
+
+
+def _render_5col_table(heading: str, group: list[PRDEntry]) -> list[str]:
+    """Render a 5-column (PRD/Title/Priority/Status/Category) table section.
+
+    Returns empty list if group is empty.
+    """
+    if not group:
+        return []
+    lines = [
+        heading,
+        "",
+        "| PRD | Title | Priority | Status | Category |",
+        "|-----|-------|----------|--------|----------|",
+    ]
+    for e in group:
+        lines.append(
+            f"| {e.id} | {e.title} | {e.priority} "
+            f"| {e.status.title()} | {e.category} |",
+        )
+    lines.append("")
+    return lines
+
+
 def render_index_catalogue(entries: list[PRDEntry]) -> str:
     """Render the PRD catalogue section for INDEX.md.
 
@@ -125,20 +166,16 @@ def render_index_catalogue(entries: list[PRDEntry]) -> str:
         Markdown string with start/end markers for merge.
     """
     groups = _group_by_status(entries)
-    done_count = len(groups["done"])
-    merged_count = len(groups["merged"])
-    review_count = len(groups["review"])
-    draft_count = len(groups["draft"])
-    deprecated_count = len(groups["deprecated"])
+    counts = {key: len(items) for key, items in groups.items()}
 
-    summary_parts: list[str] = [f"{done_count} done"]
-    if merged_count:
-        summary_parts.append(f"{merged_count} merged")
-    if deprecated_count:
-        summary_parts.append(f"{deprecated_count} deprecated")
-    if review_count:
-        summary_parts.append(f"{review_count} review/groomed")
-    summary_parts.append(f"{draft_count} draft")
+    summary_parts: list[str] = [f"{counts['done']} done"]
+    if counts["merged"]:
+        summary_parts.append(f"{counts['merged']} merged")
+    if counts["deprecated"]:
+        summary_parts.append(f"{counts['deprecated']} deprecated")
+    if counts["review"]:
+        summary_parts.append(f"{counts['review']} review/groomed")
+    summary_parts.append(f"{counts['draft']} draft")
 
     lines: list[str] = [
         INDEX_CATALOGUE_START,
@@ -148,53 +185,11 @@ def render_index_catalogue(entries: list[PRDEntry]) -> str:
         "",
     ]
 
-    if groups["done"]:
-        lines.append(f"### Done ({done_count})")
-        lines.append("")
-        lines.append("| PRD | Title | Priority | Category |")
-        lines.append("|-----|-------|----------|----------|")
-        for e in groups["done"]:
-            lines.append(f"| {e.id} | {e.title} | {e.priority} | {e.category} |")
-        lines.append("")
-
-    if groups["merged"]:
-        lines.append(f"### Merged ({merged_count})")
-        lines.append("")
-        lines.append("| PRD | Title | Priority | Category |")
-        lines.append("|-----|-------|----------|----------|")
-        for e in groups["merged"]:
-            lines.append(f"| {e.id} | {e.title} | {e.priority} | {e.category} |")
-        lines.append("")
-
-    if groups["review"]:
-        lines.append(f"### Review / Groomed ({review_count})")
-        lines.append("")
-        lines.append("| PRD | Title | Priority | Status | Category |")
-        lines.append("|-----|-------|----------|--------|----------|")
-        for e in groups["review"]:
-            lines.append(
-                f"| {e.id} | {e.title} | {e.priority} "
-                f"| {e.status.title()} | {e.category} |",
-            )
-        lines.append("")
-
-    if groups["deprecated"]:
-        lines.append(f"### Deprecated ({deprecated_count})")
-        lines.append("")
-        lines.append("| PRD | Title | Priority | Category |")
-        lines.append("|-----|-------|----------|----------|")
-        for e in groups["deprecated"]:
-            lines.append(f"| {e.id} | {e.title} | {e.priority} | {e.category} |")
-        lines.append("")
-
-    if groups["draft"]:
-        lines.append(f"### Draft ({draft_count})")
-        lines.append("")
-        lines.append("| PRD | Title | Priority | Category |")
-        lines.append("|-----|-------|----------|----------|")
-        for e in groups["draft"]:
-            lines.append(f"| {e.id} | {e.title} | {e.priority} | {e.category} |")
-        lines.append("")
+    lines.extend(_render_4col_table(f"### Done ({counts['done']})", groups["done"]))
+    lines.extend(_render_4col_table(f"### Merged ({counts['merged']})", groups["merged"]))
+    lines.extend(_render_5col_table(f"### Review / Groomed ({counts['review']})", groups["review"]))
+    lines.extend(_render_4col_table(f"### Deprecated ({counts['deprecated']})", groups["deprecated"]))
+    lines.extend(_render_4col_table(f"### Draft ({counts['draft']})", groups["draft"]))
 
     lines.append(INDEX_CATALOGUE_END)
     return "\n".join(lines)
@@ -264,6 +259,26 @@ def _merge_section(
     return content.rstrip() + "\n\n" + new_section + "\n"
 
 
+def _write_catalogue(
+    target_path: Path,
+    catalogue: str,
+    start_marker: str,
+    end_marker: str,
+    writer: FileStateWriter,
+) -> None:
+    """Merge catalogue into target file between markers, or create the file.
+
+    Content outside markers is preserved. If the file does not exist,
+    it is created with the catalogue as its sole content.
+    """
+    if target_path.exists():
+        content = target_path.read_text(encoding="utf-8")
+        updated = _merge_section(content, catalogue, start_marker, end_marker)
+    else:
+        updated = catalogue + "\n"
+    writer.write_text(target_path, updated)
+
+
 def sync_index_md(
     index_path: Path,
     prds_dir: Path,
@@ -286,18 +301,13 @@ def sync_index_md(
     """
     writer = writer or FileStateWriter()
     entries = scan_prd_frontmatters(prds_dir)
-    catalogue = render_index_catalogue(entries)
-
-    if index_path.exists():
-        content = index_path.read_text(encoding="utf-8")
-        updated = _merge_section(
-            content, catalogue,
-            INDEX_CATALOGUE_START, INDEX_CATALOGUE_END,
-        )
-    else:
-        updated = catalogue + "\n"
-
-    writer.write_text(index_path, updated)
+    _write_catalogue(
+        index_path,
+        render_index_catalogue(entries),
+        INDEX_CATALOGUE_START,
+        INDEX_CATALOGUE_END,
+        writer,
+    )
 
     groups = _group_by_status(entries)
     return {
@@ -333,18 +343,13 @@ def sync_roadmap_md(
     """
     writer = writer or FileStateWriter()
     entries = scan_prd_frontmatters(prds_dir)
-    catalogue = render_roadmap_catalogue(entries)
-
-    if roadmap_path.exists():
-        content = roadmap_path.read_text(encoding="utf-8")
-        updated = _merge_section(
-            content, catalogue,
-            ROADMAP_CATALOGUE_START, ROADMAP_CATALOGUE_END,
-        )
-    else:
-        updated = catalogue + "\n"
-
-    writer.write_text(roadmap_path, updated)
+    _write_catalogue(
+        roadmap_path,
+        render_roadmap_catalogue(entries),
+        ROADMAP_CATALOGUE_START,
+        ROADMAP_CATALOGUE_END,
+        writer,
+    )
 
     return {
         "roadmap_path": str(roadmap_path),

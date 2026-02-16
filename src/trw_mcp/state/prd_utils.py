@@ -10,14 +10,15 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
+from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
+from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
-
-from pydantic import BaseModel, Field
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.requirements import PRDStatus
@@ -105,19 +106,14 @@ def compute_content_density(content: str) -> float:
         Float between 0.0 and 1.0. Returns 0.0 for empty content.
     """
     lines = content.split("\n")
-    if not lines:
-        return 0.0
-
     total = len(lines)
     if total == 0:
         return 0.0
 
-    substantive = 0
-    for line in lines:
-        is_non_substantive = any(p.match(line) for p in _NON_SUBSTANTIVE_PATTERNS)
-        if not is_non_substantive:
-            substantive += 1
-
+    substantive = sum(
+        1 for line in lines
+        if not any(p.match(line) for p in _NON_SUBSTANTIVE_PATTERNS)
+    )
     return substantive / total
 
 
@@ -177,7 +173,6 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         _deep_merge(target, updates)
 
         # Serialize updated frontmatter
-        from io import StringIO
         stream = StringIO()
         yaml.dump(data, stream)
         new_fm = stream.getvalue()
@@ -187,22 +182,17 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         new_content = f"---\n{new_fm}---{body}"
 
         # Atomic write: write to temp, then rename
-        import tempfile
         tmp_fd, tmp_path_str = tempfile.mkstemp(
             dir=str(path.parent), suffix=".md.tmp"
         )
-        tmp_path = Path(tmp_path_str)
         try:
+            os.close(tmp_fd)
+            tmp_path = Path(tmp_path_str)
             tmp_path.write_text(new_content, encoding="utf-8")
             tmp_path.rename(path)
         except Exception:
-            tmp_path.unlink(missing_ok=True)
+            Path(tmp_path_str).unlink(missing_ok=True)
             raise
-        finally:
-            try:
-                os.close(tmp_fd)
-            except OSError:
-                pass
 
         logger.info("frontmatter_updated", path=str(path), fields=list(updates.keys()))
 
@@ -285,7 +275,12 @@ def check_transition_guards(
         return TransitionResult(allowed=True, reason="Identity transition (no-op).")
 
     # PRD-QUAL-013: Apply risk-scaled config from frontmatter
-    from trw_mcp.state.validation import derive_risk_level, get_risk_scaled_config
+    from trw_mcp.models.requirements import QualityTier
+    from trw_mcp.state.validation import (
+        derive_risk_level,
+        get_risk_scaled_config,
+        validate_prd_quality_v2,
+    )
 
     fm = parse_frontmatter(prd_content)
     fm_priority = str(fm.get("priority", "P2"))
@@ -311,11 +306,7 @@ def check_transition_guards(
 
     # Guard: REVIEW → APPROVED — V2 quality validation
     if current == PRDStatus.REVIEW and target == PRDStatus.APPROVED:
-        from trw_mcp.state.validation import validate_prd_quality_v2
-
         result = validate_prd_quality_v2(prd_content, _config)
-        from trw_mcp.models.requirements import QualityTier
-
         if result.quality_tier in (QualityTier.SKELETON, QualityTier.DRAFT):
             return TransitionResult(
                 allowed=False,
@@ -417,17 +408,16 @@ def next_prd_sequence(prds_dir: Path, category: str) -> int:
     Returns:
         Next available sequence number (minimum 1).
     """
-    max_seq = 0
+    if not prds_dir.exists():
+        return 1
+
     prefix = f"PRD-{category}-"
-    if prds_dir.exists():
-        for prd_file in prds_dir.glob("*.md"):
-            name = prd_file.stem
-            if name.startswith(prefix):
-                suffix = name[len(prefix):]
-                try:
-                    seq = int(suffix)
-                    if seq > max_seq:
-                        max_seq = seq
-                except ValueError:
-                    continue
-    return max_seq + 1
+    sequences: list[int] = []
+    for prd_file in prds_dir.glob("*.md"):
+        name = prd_file.stem
+        if name.startswith(prefix):
+            try:
+                sequences.append(int(name[len(prefix):]))
+            except ValueError:
+                continue
+    return max(sequences, default=0) + 1

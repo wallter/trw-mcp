@@ -1,7 +1,7 @@
 """Run state models — RunState, ShardCard, WaveManifest, Event.
 
 These models represent the core orchestration state persisted as YAML/JSONL
-in the run directory structure defined by FRAMEWORK.md v18.0_TRW.
+in the run directory structure defined by FRAMEWORK.md.
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ class ReversionTrigger(str, Enum):
     """Reversion trigger classification (PRD-CORE-013-FR02).
 
     Categorizes why a phase reversion was initiated.
-    Uses (str, Enum) for YAML serialization compatibility.
     """
 
     REFACTOR_NEEDED = "refactor_needed"
@@ -115,8 +114,8 @@ class WaveStatus(str, Enum):
     PENDING = "pending"
     ACTIVE = "active"
     COMPLETE = "complete"
-    FAILED = "failed"
     PARTIAL = "partial"
+    FAILED = "failed"
 
 
 class OutputContract(BaseModel):
@@ -229,9 +228,9 @@ class EventType(str, Enum):
 
     # --- Wave/shard lifecycle ---
     SHARD_STARTED = "shard_started"
-    SHARD_COMPLETE = "shard_complete"
+    SHARD_COMPLETE = "shard_complete"  # backward-compat alias
     SHARD_COMPLETED = "shard_completed"
-    WAVE_COMPLETE = "wave_complete"
+    WAVE_COMPLETE = "wave_complete"  # backward-compat alias
     WAVE_COMPLETED = "wave_completed"
     WAVE_VALIDATED = "wave_validated"
     WAVE_VALIDATION_PASSED = "wave_validation_passed"
@@ -251,7 +250,7 @@ class EventType(str, Enum):
     BUILD_FAILED = "build_failed"
 
     # --- Learning/reflection ---
-    REFLECTION_COMPLETE = "reflection_complete"
+    REFLECTION_COMPLETE = "reflection_complete"  # backward-compat alias
     REFLECTION_COMPLETED = "reflection_completed"
     CHECKPOINT = "checkpoint"
     CLAUDE_MD_SYNCED = "claude_md_synced"
@@ -295,6 +294,4 @@ class Event(BaseModel):
 
     ts: datetime
     event: str
-    data: dict[str, str | int | float | bool | list[str] | None] = Field(
-        default_factory=dict,
-    )
+    data: dict[str, str | int | float | bool | list[str] | None] = Field(default_factory=dict)

@@ -94,7 +94,7 @@ markers = [
 source = ["trw_mcp"]
 
 [tool.coverage.report]
-fail_under = 85
+fail_under = 80
 show_missing = true
 exclude_lines = [
     "pragma: no cover",

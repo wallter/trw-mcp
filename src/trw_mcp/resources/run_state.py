@@ -6,12 +6,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root
-from trw_mcp.state.persistence import FileStateReader
-
-_config = get_config()
-_reader = FileStateReader()
 
 
 def register_run_state_resources(server: FastMCP) -> None:
@@ -34,27 +29,11 @@ def register_run_state_resources(server: FastMCP) -> None:
         if not docs_dir.exists():
             return "No active run found (docs/ directory does not exist)"
 
-        # Find most recent run.yaml
-        latest_run_yaml: Path | None = None
-        latest_time: float = 0.0
+        # Find most recently modified run.yaml across all task/run directories
+        candidates = list(docs_dir.glob("*/runs/*/meta/run.yaml"))
 
-        for task_dir in docs_dir.iterdir():
-            if not task_dir.is_dir():
-                continue
-            runs_dir = task_dir / "runs"
-            if not runs_dir.exists():
-                continue
-            for run_dir in runs_dir.iterdir():
-                if not run_dir.is_dir():
-                    continue
-                run_yaml = run_dir / "meta" / "run.yaml"
-                if run_yaml.exists():
-                    mtime = run_yaml.stat().st_mtime
-                    if mtime > latest_time:
-                        latest_time = mtime
-                        latest_run_yaml = run_yaml
-
-        if latest_run_yaml is None:
+        if not candidates:
             return "No active run found"
 
+        latest_run_yaml = max(candidates, key=lambda p: p.stat().st_mtime)
         return latest_run_yaml.read_text(encoding="utf-8")

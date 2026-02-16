@@ -9,7 +9,9 @@ and risk-based validation scaling (PRD-QUAL-013).
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -35,13 +37,23 @@ from trw_mcp.models.run import (
     ShardCard,
     ShardStatus,
     WaveEntry,
-    WaveStatus,
 )
 
 logger = structlog.get_logger()
 
 # Build status staleness threshold (PRD-CORE-023-FR10)
 _BUILD_STALENESS_SECS = 1800  # 30 minutes
+
+# Integration checklist fields checked per shard (PRD-QUAL-011)
+_INTEGRATION_CHECKLIST: dict[str, str] = {
+    "registered_in_server": "Tool not registered in server.py",
+    "documented_in_framework": "Not documented in FRAMEWORK.md",
+    "configured_in_pyproject": "Not configured in pyproject.toml",
+    "updated_in_claude_md": "Not updated in CLAUDE.md",
+}
+
+# Section heading pattern: ## N. Title
+_HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -383,13 +395,7 @@ def validate_wave_contracts(
             all_failures.extend(failures)
 
         # Check integration checklist fields
-        _checklist_fields = {
-            "registered_in_server": "Tool not registered in server.py",
-            "documented_in_framework": "Not documented in FRAMEWORK.md",
-            "configured_in_pyproject": "Not configured in pyproject.toml",
-            "updated_in_claude_md": "Not updated in CLAUDE.md",
-        }
-        for field_name, warning_msg in _checklist_fields.items():
+        for field_name, warning_msg in _INTEGRATION_CHECKLIST.items():
             value = getattr(shard, field_name, None)
             if value is False:
                 all_failures.append(
@@ -589,9 +595,6 @@ def _check_build_status(
     failures: list[ValidationFailure] = []
 
     # FR10: Staleness detection
-    import time
-    from datetime import datetime, timezone
-
     is_stale = False
     ts_str = data.get("timestamp", "")
     if ts_str:
@@ -618,12 +621,12 @@ def _check_build_status(
             pass  # Can't parse timestamp — treat as fresh
 
     # Determine severity: IMPLEMENT always warning; VALIDATE/DELIVER per config
-    if phase_name == "implement" or is_stale:
-        severity = "warning"
-    elif config.build_gate_enforcement == "strict":
-        severity = "error"
-    else:
-        severity = "warning"
+    is_strict_gate = (
+        phase_name != "implement"
+        and not is_stale
+        and config.build_gate_enforcement == "strict"
+    )
+    severity = "error" if is_strict_gate else "warning"
 
     # Check test results
     if not data.get("tests_passed", False):
@@ -671,6 +674,64 @@ def _check_build_status(
             )
 
     return failures
+
+
+def _best_effort_build_check(
+    config: TRWConfig,
+    phase_name: str,
+    failures: list[ValidationFailure],
+) -> None:
+    """Append build-status failures (best-effort, never raises).
+
+    Args:
+        config: Framework configuration.
+        phase_name: Current phase name.
+        failures: Mutable list to append failures into.
+    """
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        failures.extend(_check_build_status(resolve_trw_dir(), config, phase_name))
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort
+
+
+def _best_effort_integration_check(
+    failures: list[ValidationFailure],
+    *,
+    severity: str = "warning",
+) -> None:
+    """Append integration-check failures (best-effort, never raises).
+
+    Args:
+        failures: Mutable list to append failures into.
+        severity: Severity for unregistered-tool findings.
+    """
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+        src_dir = resolve_project_root() / "trw-mcp" / "src" / "trw_mcp"
+        if not src_dir.is_dir():
+            return
+        integ = check_integration(src_dir)
+        unreg = integ.get("unregistered", [])
+        if isinstance(unreg, list):
+            for mod in unreg:
+                failures.append(ValidationFailure(
+                    field=f"integration:tools/{mod}.py",
+                    rule="tool_registration",
+                    message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
+                    severity=severity,
+                ))
+        missing = integ.get("missing_tests", [])
+        if isinstance(missing, list):
+            for test_name in missing:
+                failures.append(ValidationFailure(
+                    field=f"integration:{test_name}",
+                    rule="test_coverage",
+                    message=f"Missing test file: {test_name}",
+                    severity="warning",
+                ))
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort — scanner errors never block
 
 
 def check_phase_exit(
@@ -757,11 +818,7 @@ def check_phase_exit(
         failures.extend(prd_failures)
 
         # PRD-CORE-023-FR06: Build gate at IMPLEMENT (advisory only)
-        try:
-            from trw_mcp.state._paths import resolve_trw_dir as _trw
-            failures.extend(_check_build_status(_trw(), config, "implement"))
-        except Exception:  # noqa: BLE001
-            pass  # Best-effort
+        _best_effort_build_check(config, "implement", failures)
 
     elif phase_name == "validate":
         # Advisory: recommend integration + full-suite test strategy (PRD-QUAL-006-FR05)
@@ -778,39 +835,10 @@ def check_phase_exit(
         )
 
         # PRD-QUAL-011-FR03: Integration check at VALIDATE
-        try:
-            from trw_mcp.state._paths import resolve_project_root as _resolve_proj
-            proj = _resolve_proj()
-            src_dir = proj / "trw-mcp" / "src" / "trw_mcp"
-            if src_dir.is_dir():
-                integ = check_integration(src_dir)
-                unreg = integ.get("unregistered", [])
-                if isinstance(unreg, list):
-                    for mod in unreg:
-                        failures.append(ValidationFailure(
-                            field=f"integration:tools/{mod}.py",
-                            rule="tool_registration",
-                            message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
-                            severity="warning",
-                        ))
-                missing = integ.get("missing_tests", [])
-                if isinstance(missing, list):
-                    for test_name in missing:
-                        failures.append(ValidationFailure(
-                            field=f"integration:{test_name}",
-                            rule="test_coverage",
-                            message=f"Missing test file: {test_name}",
-                            severity="warning",
-                        ))
-        except Exception:  # noqa: BLE001
-            pass  # Best-effort — never block for integration check failures
+        _best_effort_integration_check(failures, severity="warning")
 
         # PRD-CORE-023-FR07: Build gate at VALIDATE (per enforcement config)
-        try:
-            from trw_mcp.state._paths import resolve_trw_dir as _trw
-            failures.extend(_check_build_status(_trw(), config, "validate"))
-        except Exception:  # noqa: BLE001
-            pass  # Best-effort
+        _best_effort_build_check(config, "validate", failures)
 
     elif phase_name == "review":
         final_report = reports_path / "final.md"
@@ -917,30 +945,10 @@ def check_phase_exit(
 
         # PRD-QUAL-011-FR03: Integration check at DELIVER — BLOCKING
         # GAP Self-ref: unregistered tools are errors at DELIVER (not warnings)
-        try:
-            from trw_mcp.state._paths import resolve_project_root as _resolve_proj
-            proj = _resolve_proj()
-            src_dir = proj / "trw-mcp" / "src" / "trw_mcp"
-            if src_dir.is_dir():
-                integ = check_integration(src_dir)
-                unreg = integ.get("unregistered", [])
-                if isinstance(unreg, list):
-                    for mod in unreg:
-                        failures.append(ValidationFailure(
-                            field=f"integration:tools/{mod}.py",
-                            rule="tool_registration",
-                            message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
-                            severity="error",
-                        ))
-        except Exception:  # noqa: BLE001
-            pass  # Best-effort — scanner errors never block
+        _best_effort_integration_check(failures, severity="error")
 
         # PRD-CORE-023-FR08: Build gate at DELIVER (per enforcement config)
-        try:
-            from trw_mcp.state._paths import resolve_trw_dir as _trw
-            failures.extend(_check_build_status(_trw(), config, "deliver"))
-        except Exception:  # noqa: BLE001
-            pass  # Best-effort
+        _best_effort_build_check(config, "deliver", failures)
 
     return _build_phase_result(failures, criteria, phase_name, "phase_exit_checked")
 
@@ -1235,9 +1243,6 @@ _PLACEHOLDER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Section heading pattern (## N. Title)
-_SECTION_SPLIT_RE = re.compile(r"^##\s+\d+\.\s+", re.MULTILINE)
-
 # Section headings expected in an AARE-F compliant PRD
 _EXPECTED_SECTION_NAMES: list[str] = [
     "Problem Statement",
@@ -1278,8 +1283,7 @@ def _parse_section_content(content: str) -> list[tuple[str, str]]:
     body = content[fm_match.end():] if fm_match else content
 
     sections: list[tuple[str, str]] = []
-    heading_re = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
-    matches = list(heading_re.finditer(body))
+    matches = list(_HEADING_RE.finditer(body))
 
     for i, m in enumerate(matches):
         name = m.group(1).strip()
@@ -1615,6 +1619,33 @@ def generate_improvement_suggestions(
     return suggestions[:max_suggestions]
 
 
+def _coerce_v1_failures(raw: object) -> list[ValidationFailure]:
+    """Coerce a V1 failures list from a dict into typed ValidationFailure objects.
+
+    Handles both pre-typed ValidationFailure instances and raw dicts.
+
+    Args:
+        raw: Failures value from a v1_result dict (may be list or other).
+
+    Returns:
+        List of ValidationFailure instances.
+    """
+    if not isinstance(raw, list):
+        return []
+    result: list[ValidationFailure] = []
+    for item in raw:
+        if isinstance(item, ValidationFailure):
+            result.append(item)
+        elif isinstance(item, dict):
+            result.append(ValidationFailure(
+                field=str(item.get("field", "")),
+                rule=str(item.get("rule", "")),
+                message=str(item.get("message", "")),
+                severity=str(item.get("severity", "warning")),
+            ))
+    return result
+
+
 def validate_prd_quality_v2(
     content: str,
     config: TRWConfig | None = None,
@@ -1690,20 +1721,12 @@ def validate_prd_quality_v2(
         )
     dimensions.append(trace_dim)
 
-    # 4. Smell Score — modules removed in strip-down; 0-weight placeholder
-    smell_dim = DimensionScore(name="smell_score", score=0.0, max_score=0.0)
+    # 4-6. Placeholder dimensions (modules removed in strip-down; 0-weight)
     smell_findings: list[SmellFinding] = []
-    dimensions.append(smell_dim)
-
-    # 5. Readability — modules removed in strip-down; 0-weight placeholder
-    readability_dim = DimensionScore(name="readability", score=0.0, max_score=0.0)
     readability_metrics: dict[str, float] = {}
-    dimensions.append(readability_dim)
-
-    # 6. EARS Coverage — modules removed in strip-down; 0-weight placeholder
-    ears_dim = DimensionScore(name="ears_coverage", score=0.0, max_score=0.0)
     ears_classifications: list[dict[str, object]] = []
-    dimensions.append(ears_dim)
+    for placeholder_name in ("smell_score", "readability", "ears_coverage"):
+        dimensions.append(DimensionScore(name=placeholder_name, score=0.0, max_score=0.0))
 
     # Compute total score (normalized to 0-100 against active dimensions)
     max_possible = sum(d.max_score for d in dimensions)
@@ -1729,69 +1752,21 @@ def validate_prd_quality_v2(
 
     # V1-compatible fields — use pre-computed result if provided (GAP-FR-007)
     if v1_result is not None:
-        v1_failures_raw = v1_result.get("failures", [])
-        v1_failures = []
-        if isinstance(v1_failures_raw, list):
-            for f in v1_failures_raw:
-                if isinstance(f, ValidationFailure):
-                    v1_failures.append(f)
-                elif isinstance(f, dict):
-                    v1_failures.append(ValidationFailure(
-                        field=str(f.get("field", "")),
-                        rule=str(f.get("rule", "")),
-                        message=str(f.get("message", "")),
-                        severity=str(f.get("severity", "warning")),
-                    ))
+        v1_failures = _coerce_v1_failures(v1_result.get("failures", []))
         is_valid = bool(v1_result.get("valid", False))
         v1_completeness = float(str(v1_result.get("completeness_score", 0.0)))
         v1_trace_coverage = float(str(v1_result.get("traceability_coverage", 0.0)))
     else:
-        # Inline V1 computation (PRD-FIX-011)
-        required_fields = ["id", "title", "version", "status", "priority"]
-        v1_failures = []
-        for field in required_fields:
-            if field not in frontmatter or not frontmatter[field]:
-                v1_failures.append(ValidationFailure(
-                    field=f"frontmatter:{field}", rule="required_field",
-                    message=f"Required frontmatter field missing: {field}", severity="error",
-                ))
-        expected_section_count = 12
-        if len(sections) < expected_section_count:
-            v1_failures.append(ValidationFailure(
-                field="sections", rule="section_count",
-                message=f"PRD has {len(sections)} sections, expected {expected_section_count}",
-                severity="error",
-            ))
-        confidence = frontmatter.get("confidence", {})
-        if isinstance(confidence, dict):
-            for cf in ("implementation_feasibility", "requirement_clarity", "estimate_confidence"):
-                if cf not in confidence:
-                    v1_failures.append(ValidationFailure(
-                        field=f"confidence:{cf}", rule="confidence_present",
-                        message=f"Missing confidence score: {cf}", severity="warning",
-                    ))
-        traceability = frontmatter.get("traceability", {})
-        has_traces = False
-        if isinstance(traceability, dict):
-            for key in ("implements", "depends_on", "enables"):
-                val = traceability.get(key, [])
-                if isinstance(val, list) and len(val) > 0:
-                    has_traces = True
-                    break
-        if not has_traces:
-            v1_failures.append(ValidationFailure(
-                field="traceability", rule="has_traces",
-                message="PRD has no traceability links", severity="warning",
-            ))
-        v1_total_checks = len(required_fields) + 3
-        v1_error_count = sum(1 for f in v1_failures if f.severity == "error")
-        v1_completeness = 1.0 - (v1_error_count / max(v1_total_checks, 1))
-        v1_trace_coverage = 1.0 if has_traces else 0.0
-        is_valid = (
-            v1_completeness >= _config.completeness_min
-            and v1_trace_coverage >= _config.traceability_coverage_min
-            and v1_error_count == 0
+        # Delegate to V1 with risk-scaled gates (PRD-FIX-011)
+        v1_gates = PRDQualityGates(
+            completeness_min=_config.completeness_min,
+            traceability_coverage_min=_config.traceability_coverage_min,
         )
+        v1 = validate_prd_quality(frontmatter, sections, v1_gates)
+        v1_failures = v1.failures
+        is_valid = v1.valid
+        v1_completeness = v1.completeness_score
+        v1_trace_coverage = v1.traceability_coverage
 
     result = ValidationResultV2(
         # V1 fields (computed inline)

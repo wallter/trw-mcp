@@ -17,10 +17,24 @@ logger = structlog.get_logger()
 
 _DATA_DIR = Path(__file__).parent / "data"
 
+# Directories to scaffold inside the target repo.
+_TRW_DIRS = [
+    ".trw/frameworks",
+    ".trw/context",
+    ".trw/templates",
+    ".trw/learnings/entries",
+    ".trw/scripts",
+    ".claude/hooks",
+]
 
-def _get_data_path(filename: str) -> Path:
-    """Get path to a bundled data file."""
-    return _DATA_DIR / filename
+# Mapping of bundled data files to their destination paths (relative to target).
+_DATA_FILE_MAP: list[tuple[str, str]] = [
+    ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
+    ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
+    ("templates/claude_md.md", ".trw/templates/claude_md.md"),
+    ("gitignore.txt", ".trw/.gitignore"),
+    ("settings.json", ".claude/settings.json"),
+]
 
 
 def init_project(
@@ -46,39 +60,18 @@ def init_project(
         )
         return result
 
-    # 1. Create .trw/ structure
-    _ensure_dir(target_dir / ".trw" / "frameworks", result)
-    _ensure_dir(target_dir / ".trw" / "context", result)
-    _ensure_dir(target_dir / ".trw" / "templates", result)
-    _ensure_dir(target_dir / ".trw" / "learnings" / "entries", result)
-    _ensure_dir(target_dir / ".trw" / "scripts", result)
+    # 1. Create directory structure
+    for rel_dir in _TRW_DIRS:
+        _ensure_dir(target_dir / rel_dir, result)
 
-    # 2. Copy framework files
-    _copy_data_file(
-        "framework.md",
-        target_dir / ".trw" / "frameworks" / "FRAMEWORK.md",
-        force,
-        result,
-    )
-    _copy_data_file(
-        "behavioral_protocol.yaml",
-        target_dir / ".trw" / "context" / "behavioral_protocol.yaml",
-        force,
-        result,
-    )
-    _copy_data_file(
-        "templates/claude_md.md",
-        target_dir / ".trw" / "templates" / "claude_md.md",
-        force,
-        result,
-    )
+    # 2. Copy bundled data files
+    for data_name, dest_rel in _DATA_FILE_MAP:
+        _copy_file(_DATA_DIR / data_name, target_dir / dest_rel, force, result)
 
-    # 3. Create .trw/config.yaml with defaults
+    # 3. Write generated config and seed files
     _write_if_missing(
         target_dir / ".trw" / "config.yaml", _default_config(), force, result
     )
-
-    # 4. Create .trw/learnings/index.yaml
     _write_if_missing(
         target_dir / ".trw" / "learnings" / "index.yaml",
         "entries: []\n",
@@ -86,35 +79,20 @@ def init_project(
         result,
     )
 
-    # 4b. Create .trw/.gitignore from bundled template
-    _copy_file(
-        _get_data_path("gitignore.txt"),
-        target_dir / ".trw" / ".gitignore",
-        force,
-        result,
-    )
-
-    # 5. Copy .claude/ hooks and settings
-    _ensure_dir(target_dir / ".claude" / "hooks", result)
-    _copy_data_file(
-        "settings.json",
-        target_dir / ".claude" / "settings.json",
-        force,
-        result,
-    )
-
-    # Copy all hook scripts
-    hooks_source = _get_data_path("hooks")
+    # 4. Copy hook scripts
+    hooks_source = _DATA_DIR / "hooks"
     if hooks_source.is_dir():
         for hook_file in sorted(hooks_source.iterdir()):
             if hook_file.suffix == ".sh":
-                dest = target_dir / ".claude" / "hooks" / hook_file.name
-                _copy_file(hook_file, dest, force, result)
+                _copy_file(
+                    hook_file,
+                    target_dir / ".claude" / "hooks" / hook_file.name,
+                    force,
+                    result,
+                )
 
-    # 6. Generate .mcp.json
+    # 5. Generate root-level files
     _write_if_missing(target_dir / ".mcp.json", _generate_mcp_json(), force, result)
-
-    # 7. Generate minimal CLAUDE.md
     _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result)
 
     logger.info(
@@ -137,18 +115,7 @@ def _ensure_dir(path: Path, result: dict[str, list[str]]) -> None:
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
         result["created"].append(str(path) + "/")
-    # Already existing dirs are silently fine — not worth reporting as "skipped".
-
-
-def _copy_data_file(
-    data_name: str,
-    dest: Path,
-    force: bool,
-    result: dict[str, list[str]],
-) -> None:
-    """Copy a bundled data file to *dest*."""
-    src = _get_data_path(data_name)
-    _copy_file(src, dest, force, result)
+    # Already existing dirs are silently fine -- not worth reporting as "skipped".
 
 
 def _copy_file(
@@ -203,12 +170,7 @@ def _default_config() -> str:
 
 def _generate_mcp_json() -> str:
     """Generate ``.mcp.json`` pointing to installed trw-mcp."""
-    trw_binary = shutil.which("trw-mcp")
-    if trw_binary:
-        cmd = trw_binary
-    else:
-        cmd = f"{sys.executable} -m trw_mcp.server"
-
+    cmd = shutil.which("trw-mcp") or f"{sys.executable} -m trw_mcp.server"
     config = {"mcpServers": {"trw": {"command": cmd, "args": ["--debug"]}}}
     return json.dumps(config, indent=2) + "\n"
 

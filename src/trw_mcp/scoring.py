@@ -30,6 +30,31 @@ _config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
+# --- Field extraction helpers ---
+
+
+def _float_field(entry: dict[str, object], key: str, default: float) -> float:
+    """Extract a float from an entry dict, coercing through str for safety."""
+    return float(str(entry.get(key, default)))
+
+
+def _int_field(entry: dict[str, object], key: str, default: int) -> int:
+    """Extract an int from an entry dict, coercing through str for safety."""
+    return int(str(entry.get(key, default)))
+
+
+def _clamp01(value: float) -> float:
+    """Clamp a value to the [0.0, 1.0] range."""
+    return max(0.0, min(1.0, value))
+
+
+def _ensure_utc(ts: datetime) -> datetime:
+    """Return a timezone-aware datetime, assuming UTC if naive."""
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
 
 
@@ -83,7 +108,7 @@ def update_q_value(
         Updated Q-value, clamped to [0.0, 1.0].
     """
     q_new = q_old + alpha * (reward - q_old) + recurrence_bonus
-    return max(0.0, min(1.0, q_new))
+    return _clamp01(q_new)
 
 
 def compute_utility_score(
@@ -164,7 +189,43 @@ def compute_utility_score(
     if source_type == "human":
         utility += source_human_boost
 
-    return max(0.0, min(1.0, utility))
+    return _clamp01(utility)
+
+
+def _entry_utility(entry: dict[str, object], today: date, **kwargs: object) -> float:
+    """Compute utility score for a learning entry using config defaults.
+
+    Extracts scoring fields from the entry dict and delegates to
+    compute_utility_score with TRWConfig parameters. Additional kwargs
+    are forwarded (e.g., fallback_days for _days_since_access).
+    """
+    q_value = _float_field(entry, "q_value", _float_field(entry, "impact", 0.5))
+    base_impact = _float_field(entry, "impact", 0.5)
+    q_observations = _int_field(entry, "q_observations", 0)
+    recurrence = _int_field(entry, "recurrence", 1)
+    access_count = _int_field(entry, "access_count", 0)
+    source_type = str(entry.get("source_type", "agent"))
+
+    fallback_days = kwargs.get("fallback_days")
+    if isinstance(fallback_days, int):
+        days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
+    else:
+        days_unused = _days_since_access(entry, today)
+
+    return compute_utility_score(
+        q_value=q_value,
+        days_since_last_access=days_unused,
+        recurrence_count=recurrence,
+        base_impact=base_impact,
+        q_observations=q_observations,
+        half_life_days=_config.learning_decay_half_life_days,
+        use_exponent=_config.learning_decay_use_exponent,
+        cold_start_threshold=_config.q_cold_start_threshold,
+        access_count=access_count,
+        source_type=source_type,
+        access_count_boost_cap=_config.access_count_utility_boost_cap,
+        source_human_boost=_config.source_human_utility_boost,
+    )
 
 
 # --- Recall ranking (PRD-FIX-010: moved from tools/learning.py) ---
@@ -213,30 +274,7 @@ def rank_by_utility(
         else:
             relevance = 1.0  # wildcard query
 
-        # Utility score
-        q_value = float(str(entry.get("q_value", entry.get("impact", 0.5))))
-        q_obs = int(str(entry.get("q_observations", 0)))
-        base_impact = float(str(entry.get("impact", 0.5)))
-        recurrence = int(str(entry.get("recurrence", 1)))
-        days_unused = _days_since_access(entry, today)
-
-        access_ct = int(str(entry.get("access_count", 0)))
-        src_type = str(entry.get("source_type", "agent"))
-
-        utility = compute_utility_score(
-            q_value=q_value,
-            days_since_last_access=days_unused,
-            recurrence_count=recurrence,
-            base_impact=base_impact,
-            q_observations=q_obs,
-            half_life_days=_config.learning_decay_half_life_days,
-            use_exponent=_config.learning_decay_use_exponent,
-            cold_start_threshold=_config.q_cold_start_threshold,
-            access_count=access_ct,
-            source_type=src_type,
-            access_count_boost_cap=_config.access_count_utility_boost_cap,
-            source_human_boost=_config.source_human_utility_boost,
-        )
+        utility = _entry_utility(entry, today)
 
         combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
 
@@ -283,7 +321,7 @@ def utility_based_prune_candidates(
             continue
 
         age_days = (today - created).days
-        recurrence = int(str(data.get("recurrence", 1)))
+        recurrence = _int_field(data, "recurrence", 1)
         entry_status = str(data.get("status", "active"))
 
         # Tier 1: Status-based cleanup (resolved/obsolete stragglers)
@@ -299,28 +337,7 @@ def utility_based_prune_candidates(
             seen_ids.add(entry_id)
             continue
 
-        # Extract scoring fields with backward-compatible defaults
-        q_value = float(str(data.get("q_value", data.get("impact", 0.5))))
-        q_observations = int(str(data.get("q_observations", 0)))
-        base_impact = float(str(data.get("impact", 0.5)))
-        days_since_access = _days_since_access(data, today, fallback_days=age_days)
-        access_ct = int(str(data.get("access_count", 0)))
-        src_type = str(data.get("source_type", "agent"))
-
-        utility = compute_utility_score(
-            q_value=q_value,
-            days_since_last_access=days_since_access,
-            recurrence_count=recurrence,
-            base_impact=base_impact,
-            q_observations=q_observations,
-            half_life_days=_config.learning_decay_half_life_days,
-            use_exponent=_config.learning_decay_use_exponent,
-            cold_start_threshold=_config.q_cold_start_threshold,
-            access_count=access_ct,
-            source_type=src_type,
-            access_count_boost_cap=_config.access_count_utility_boost_cap,
-            source_human_boost=_config.source_human_utility_boost,
-        )
+        utility = _entry_utility(data, today, fallback_days=age_days)
 
         # Tier 2: Delete-level utility (effectively forgotten)
         if utility < _config.learning_utility_delete_threshold:
@@ -333,8 +350,7 @@ def utility_based_prune_candidates(
                 "reason": (
                     f"Utility {utility:.3f} below delete threshold "
                     f"({_config.learning_utility_delete_threshold}). "
-                    f"Q={q_value:.2f}, days_unused={days_since_access}, "
-                    f"recurrence={recurrence}"
+                    f"recurrence={recurrence}, age={age_days}d"
                 ),
             })
             seen_ids.add(entry_id)
@@ -351,8 +367,7 @@ def utility_based_prune_candidates(
                 "reason": (
                     f"Utility {utility:.3f} below prune threshold "
                     f"({_config.learning_utility_prune_threshold}) and "
-                    f"age {age_days}d > 14d. Q={q_value:.2f}, "
-                    f"days_unused={days_since_access}"
+                    f"age {age_days}d > 14d"
                 ),
             })
             seen_ids.add(entry_id)
@@ -450,9 +465,7 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
                     ts_str = str(record.get("ts", ""))
                     if ts_str:
                         try:
-                            ts = datetime.fromisoformat(ts_str)
-                            if ts.tzinfo is None:
-                                ts = ts.replace(tzinfo=timezone.utc)
+                            ts = _ensure_utc(datetime.fromisoformat(ts_str))
                             if latest_ts is None or ts > latest_ts:
                                 latest_ts = ts
                         except ValueError:
@@ -516,13 +529,9 @@ def correlate_recalls(
         if not ts_str:
             continue
         try:
-            receipt_ts = datetime.fromisoformat(ts_str)
+            receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str))
         except ValueError:
             continue
-
-        # Make timezone-aware if needed
-        if receipt_ts.tzinfo is None:
-            receipt_ts = receipt_ts.replace(tzinfo=timezone.utc)
 
         # Skip receipts outside the correlation scope
         if receipt_ts < cutoff_ts:
@@ -595,9 +604,9 @@ def process_outcome(
             continue
 
         entry_path, data = found
-        q_old = float(str(data.get("q_value", data.get("impact", 0.5))))
-        q_obs = int(str(data.get("q_observations", 0)))
-        recurrence = int(str(data.get("recurrence", 1)))
+        q_old = _float_field(data, "q_value", _float_field(data, "impact", 0.5))
+        q_obs = _int_field(data, "q_observations", 0)
+        recurrence = _int_field(data, "recurrence", 1)
 
         # Apply recency-discounted reward
         effective_reward = reward * discount

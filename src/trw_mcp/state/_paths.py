@@ -1,4 +1,4 @@
-"""Shared path resolution — single source of truth for project root, .trw dir, and run paths.
+"""Shared path resolution -- single source of truth for project root, .trw dir, and run paths.
 
 All modules that need to resolve TRW_PROJECT_ROOT, the .trw directory,
 or an active run path MUST use these functions instead of inline logic.
@@ -42,6 +42,32 @@ def resolve_trw_dir() -> Path:
     return resolve_project_root() / _config.trw_dir
 
 
+def _find_latest_run_dir(base_dir: Path) -> Path | None:
+    """Scan ``base_dir/*/runs/*/meta/run.yaml`` and return the run dir with the newest mtime.
+
+    Returns:
+        The run directory whose ``run.yaml`` was most recently modified,
+        or ``None`` if no valid run directories exist.
+    """
+    latest_run: Path | None = None
+    latest_mtime: float = 0.0
+
+    for task_dir in base_dir.iterdir():
+        runs_dir = task_dir / "runs"
+        if not runs_dir.is_dir():
+            continue
+        for run_dir in runs_dir.iterdir():
+            run_yaml = run_dir / "meta" / "run.yaml"
+            if not run_yaml.exists():
+                continue
+            mtime = run_yaml.stat().st_mtime
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+                latest_run = run_dir
+
+    return latest_run
+
+
 def resolve_run_path(run_path: str | None = None) -> Path:
     """Resolve a run directory from an explicit path or auto-detection.
 
@@ -72,7 +98,6 @@ def resolve_run_path(run_path: str | None = None) -> Path:
             )
         return resolved
 
-    # Auto-detect: find the most recent run.yaml under docs/*/runs/
     project_root = resolve_project_root()
     docs_dir = project_root / "docs"
     if not docs_dir.exists():
@@ -81,25 +106,7 @@ def resolve_run_path(run_path: str | None = None) -> Path:
             project_root=str(project_root),
         )
 
-    latest_run: Path | None = None
-    latest_time: float = 0.0
-
-    for task_dir in docs_dir.iterdir():
-        if not task_dir.is_dir():
-            continue
-        runs_dir = task_dir / "runs"
-        if not runs_dir.exists():
-            continue
-        for run_dir in runs_dir.iterdir():
-            if not run_dir.is_dir():
-                continue
-            run_yaml = run_dir / "meta" / "run.yaml"
-            if run_yaml.exists():
-                mtime = run_yaml.stat().st_mtime
-                if mtime > latest_time:
-                    latest_time = mtime
-                    latest_run = run_dir
-
+    latest_run = _find_latest_run_dir(docs_dir)
     if latest_run is None:
         raise StateError(
             "No active runs found in docs/*/runs/",
@@ -112,17 +119,15 @@ def resolve_run_path(run_path: str | None = None) -> Path:
 def detect_current_phase() -> str | None:
     """Detect the current phase from the most recent active run.
 
-    Scans ``docs/*/runs/`` for the latest ``run.yaml`` with ``status: active``
-    and returns its ``phase`` field.
+    Scans ``{task_root}/*/runs/`` for the latest ``run.yaml`` with
+    ``status: active`` and returns its ``phase`` field.  Selects the
+    run directory by lexicographic name (newest naming convention wins).
 
     Returns:
         Current phase string (e.g. ``"implement"``), or ``None`` if no active run.
     """
     try:
-        trw_dir = resolve_trw_dir()
-        project_root = trw_dir.parent
-        task_root = project_root / _config.task_root
-
+        task_root = resolve_project_root() / _config.task_root
         if not task_root.exists():
             return None
 

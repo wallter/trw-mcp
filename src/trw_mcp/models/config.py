@@ -180,6 +180,7 @@ class TRWConfig(BaseSettings):
     debt_budget_critical_ratio: float = 0.20
     debt_budget_high_ratio: float = 0.15
     debt_default_wave_size: int = 5
+
     # Compliance auditing (PRD-QUAL-003)
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
     compliance_long_session_event_threshold: int = 5
@@ -240,6 +241,8 @@ class TRWConfig(BaseSettings):
     simplifier_verification_timeout_secs: int = 120
     simplifier_backup_dir: str = ".trw/simplifier-backups"
 
+    # Phase input criteria strictness (PRD-CORE-009)
+    # When True, phase_check(direction="enter") reports errors instead of warnings
     strict_input_criteria: bool = False
 
     # Build verification gate (PRD-CORE-023)
@@ -253,8 +256,8 @@ class TRWConfig(BaseSettings):
     # Debug and telemetry
     debug: bool = False
     logs_dir: str = "logs"
-    telemetry: bool = False
-    telemetry_enabled: bool = True
+    telemetry: bool = False  # consumed by trw_session_start status output
+    telemetry_enabled: bool = True  # reserved for future per-tool telemetry toggle
     telemetry_file: str = "tool-telemetry.jsonl"
 
 

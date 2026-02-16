@@ -11,8 +11,6 @@ connection, so parallel sessions are tracked independently.
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,
@@ -48,25 +46,12 @@ CEREMONY_WARNING = (
 
 
 def mark_session_active(session_id: str) -> None:
-    """Mark a session as having completed ceremony.
-
-    Called by the middleware when a ceremony tool is invoked.
-
-    Args:
-        session_id: FastMCP session identifier.
-    """
+    """Mark a session as having completed ceremony."""
     _session_state[session_id] = True
 
 
 def is_session_active(session_id: str) -> bool:
-    """Check whether a session has completed ceremony.
-
-    Args:
-        session_id: FastMCP session identifier.
-
-    Returns:
-        True if ceremony has been run for this session.
-    """
+    """Return True if ceremony has been run for this session."""
     return _session_state.get(session_id, False)
 
 

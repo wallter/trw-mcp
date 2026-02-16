@@ -1,6 +1,6 @@
-"""Requirements models — PRD, Requirement, Traceability.
+"""Requirements models -- PRD, Requirement, Traceability.
 
-These models represent AARE-F compliant requirements engineering artifacts.
+AARE-F compliant requirements engineering artifacts.
 PRDs follow the 12-section template from AARE-F-FRAMEWORK.md v1.1.0.
 """
 
@@ -10,6 +10,10 @@ from datetime import date
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
 
 
 class QualityTier(str, Enum):
@@ -70,6 +74,11 @@ class EvidenceLevel(str, Enum):
     MODERATE = "moderate"
     LIMITED = "limited"
     THEORETICAL = "theoretical"
+
+
+# ---------------------------------------------------------------------------
+# PRD component models
+# ---------------------------------------------------------------------------
 
 
 class PRDConfidence(BaseModel):
@@ -133,6 +142,11 @@ class PRDDates(BaseModel):
     target_completion: date | None = None
 
 
+# ---------------------------------------------------------------------------
+# PRD frontmatter (aggregate model)
+# ---------------------------------------------------------------------------
+
+
 class PRDFrontmatter(BaseModel):
     """YAML frontmatter for an AARE-F compliant PRD.
 
@@ -142,12 +156,19 @@ class PRDFrontmatter(BaseModel):
 
     model_config = ConfigDict(strict=True, use_enum_values=True)
 
+    # Identity
     id: str
     title: str
     version: str = "1.0"
+
+    # Classification
     status: PRDStatus = PRDStatus.DRAFT
     priority: Priority = Priority.P1
     category: str = ""
+    risk_level: RiskLevel | None = None
+    complexity: ComplexityFactor | None = None
+
+    # AARE-F nested metadata
     aaref_components: list[str] = Field(default_factory=list)
     evidence: PRDEvidence = Field(default_factory=PRDEvidence)
     confidence: PRDConfidence = Field(default_factory=PRDConfidence)
@@ -155,11 +176,16 @@ class PRDFrontmatter(BaseModel):
     metrics: PRDMetrics = Field(default_factory=PRDMetrics)
     quality_gates: PRDQualityGates = Field(default_factory=PRDQualityGates)
     dates: PRDDates = Field(default_factory=PRDDates)
-    risk_level: RiskLevel | None = None
-    complexity: ComplexityFactor | None = None
+
+    # Optional provenance
     template_version: str | None = None
     wave_source: str | None = None
     slos: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Requirement model
+# ---------------------------------------------------------------------------
 
 
 class Requirement(BaseModel):
@@ -174,6 +200,11 @@ class Requirement(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     traces_to: list[str] = Field(default_factory=list)
     traced_from: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Validation models
+# ---------------------------------------------------------------------------
 
 
 class ValidationFailure(BaseModel):
@@ -224,7 +255,7 @@ class DimensionScore(BaseModel):
 
 
 class SmellFinding(BaseModel):
-    """A single requirement smell detected during validation (PRD-CORE-008)."""
+    """Requirement smell detected during validation (PRD-CORE-008)."""
 
     model_config = ConfigDict(strict=True)
 
@@ -236,7 +267,7 @@ class SmellFinding(BaseModel):
 
 
 class ImprovementSuggestion(BaseModel):
-    """Actionable suggestion to improve a PRD's quality score (PRD-CORE-008)."""
+    """Actionable suggestion to improve a PRD quality score (PRD-CORE-008)."""
 
     model_config = ConfigDict(strict=True)
 
@@ -248,11 +279,11 @@ class ImprovementSuggestion(BaseModel):
 
 
 class ValidationResultV2(BaseModel):
-    """Extended validation result with 6-dimension scoring (PRD-CORE-008).
+    """Extended validation result with multi-dimension scoring (PRD-CORE-008).
 
     Includes all fields from ValidationResult for backward compatibility,
-    plus multi-dimensional quality scoring, tier classification, and
-    improvement suggestions.
+    plus multi-dimensional quality scoring, tier classification,
+    improvement suggestions, and risk scaling metadata (PRD-QUAL-013).
     """
 
     model_config = ConfigDict(strict=True)
@@ -265,7 +296,7 @@ class ValidationResultV2(BaseModel):
     traceability_coverage: float = 0.0
     consistency_score: float = 0.0
 
-    # V2 fields
+    # V2 scoring
     total_score: float = Field(ge=0.0, le=100.0, default=0.0)
     quality_tier: QualityTier = QualityTier.SKELETON
     grade: str = "F"
@@ -276,9 +307,14 @@ class ValidationResultV2(BaseModel):
     readability: dict[str, float] = Field(default_factory=dict)
     improvement_suggestions: list[ImprovementSuggestion] = Field(default_factory=list)
 
-    # Risk scaling fields (PRD-QUAL-013)
+    # Risk scaling (PRD-QUAL-013)
     effective_risk_level: str = ""
     risk_scaled: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Traceability
+# ---------------------------------------------------------------------------
 
 
 class TraceabilityResult(BaseModel):

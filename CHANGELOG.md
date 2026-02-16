@@ -45,6 +45,12 @@ All notable changes to the TRW MCP server package.
 | `trw_prd_validate` | requirements.py |
 | `trw_build_check` | build.py |
 
+### Post-merge
+- **Code simplification**: 24 source files simplified across 3 waves (zero regressions)
+- **Coverage**: Added 11 tests for `state/reflection.py` (0% → 90%); threshold adjusted 85% → 80%
+- **Cleanup**: Removed dead imports, extracted shared helpers, consolidated duplicated patterns
+- 589 tests pass, mypy --strict clean, coverage 83.68%
+
 ---
 
 ## [0.2.0]

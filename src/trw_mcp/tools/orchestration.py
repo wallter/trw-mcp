@@ -1,6 +1,6 @@
 """TRW orchestration tools — init, status, checkpoint.
 
-These 3 tools codify FRAMEWORK.md execution flow:
+These 3 tools codify the FRAMEWORK.md execution flow:
 RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 """
 
@@ -69,10 +69,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
         project_root = resolve_project_root()
         trw_dir = project_root / _config.trw_dir
 
-        # Generate run ID
+        # Generate run ID: timestamp + random suffix for uniqueness
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        random_hex = secrets.token_hex(4)
-        run_id = f"{timestamp}-{random_hex}"
+        run_id = f"{timestamp}-{secrets.token_hex(4)}"
 
         # Create .trw/ structure if it doesn't exist
         trw_subdirs = [
@@ -103,7 +102,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # Write .trw/.gitignore from bundled template (DRY with bootstrap.py)
         gitignore_path = trw_dir / ".gitignore"
         if not _reader.exists(gitignore_path):
-            gitignore_content = _get_bundled_data("gitignore.txt")
+            gitignore_content = _get_bundled_file("gitignore.txt")
             if gitignore_content:
                 gitignore_path.parent.mkdir(parents=True, exist_ok=True)
                 gitignore_path.write_text(gitignore_content, encoding="utf-8")
@@ -168,10 +167,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             {"task": task_name, "framework": _config.framework_version},
         )
 
-        # Write framework snapshot from bundled monolithic FRAMEWORK.md.
-        snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
-        snapshot_content = _get_bundled_data("framework.md") or ""
+        # Write framework snapshot from bundled FRAMEWORK.md
+        snapshot_content = _get_bundled_file("framework.md")
         if snapshot_content:
+            snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
             snapshot_path.write_text(snapshot_content, encoding="utf-8")
 
         logger.info(
@@ -216,13 +215,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
         events_path = meta_path / "events.jsonl"
         events = _reader.read_jsonl(events_path)
 
-        # Reflection metrics
-        reflection_events = [
-            e for e in events if e.get("event") == "reflection_complete"
-        ]
-        sync_events = [
-            e for e in events if e.get("event") == "claude_md_synced"
-        ]
+        # Reflection metrics (count only, no need to collect full lists)
+        reflection_count = sum(
+            1 for e in events if e.get("event") == "reflection_complete"
+        )
+        has_synced = any(
+            e.get("event") == "claude_md_synced" for e in events
+        )
 
         result: dict[str, object] = {
             "run_id": state_data.get("run_id", "unknown"),
@@ -233,8 +232,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "framework": state_data.get("framework", "unknown"),
             "event_count": len(events),
             "reflection": {
-                "count": len(reflection_events),
-                "claude_md_synced": len(sync_events) > 0,
+                "count": reflection_count,
+                "claude_md_synced": has_synced,
             },
         }
 
@@ -444,35 +443,22 @@ def _compute_reversion_metrics(
     }
 
 
-def _get_bundled_data(filename: str) -> str | None:
-    """Load a bundled data file from the package data directory.
+def _get_bundled_file(filename: str, subdir: str = "") -> str | None:
+    """Load a bundled file from the package data directory.
 
     Args:
-        filename: File to load (e.g., "framework.md", "aaref.md").
+        filename: File to load (e.g., "framework.md", "claude_md.md").
+        subdir: Optional subdirectory under data/ (e.g., "templates").
 
     Returns:
         File text content, or None if not found.
     """
     data_dir = Path(__file__).parent.parent / "data"
+    if subdir:
+        data_dir = data_dir / subdir
     file_path = data_dir / filename
     if file_path.exists():
         return file_path.read_text(encoding="utf-8")
-    return None
-
-
-def _get_bundled_template(name: str) -> str | None:
-    """Load bundled template from data/templates/.
-
-    Args:
-        name: Template filename (e.g. "claude_md.md").
-
-    Returns:
-        Template text content, or None if not found.
-    """
-    data_dir = Path(__file__).parent.parent / "data" / "templates"
-    template_path = data_dir / name
-    if template_path.exists():
-        return template_path.read_text(encoding="utf-8")
     return None
 
 
@@ -509,40 +495,38 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     current_aaref_version = _config.aaref_version
     current_pkg_version = _get_package_version()
 
+    current_versions = (current_fw_version, current_aaref_version, current_pkg_version)
+
     # Check existing VERSION.yaml for skip logic
     if _reader.exists(version_path):
         existing = _reader.read_yaml(version_path)
-        existing_fw = str(existing.get("framework_version", ""))
-        existing_aaref = str(existing.get("aaref_version", ""))
-        existing_pkg = str(existing.get("trw_mcp_version", ""))
-        if (
-            existing_fw == current_fw_version
-            and existing_aaref == current_aaref_version
-            and existing_pkg == current_pkg_version
-        ):
+        existing_versions = (
+            str(existing.get("framework_version", "")),
+            str(existing.get("aaref_version", "")),
+            str(existing.get("trw_mcp_version", "")),
+        )
+        if existing_versions == current_versions:
             return {"status": "up_to_date", "framework_version": current_fw_version}
 
         # Version mismatch — log upgrade event
-        events_path = trw_dir / "upgrade_events.jsonl"
-        _events.log_event(events_path, "framework_upgrade", {
-            "old_framework": existing_fw,
+        _events.log_event(trw_dir / "upgrade_events.jsonl", "framework_upgrade", {
+            "old_framework": existing_versions[0],
             "new_framework": current_fw_version,
-            "old_aaref": existing_aaref,
+            "old_aaref": existing_versions[1],
             "new_aaref": current_aaref_version,
-            "old_pkg": existing_pkg,
+            "old_pkg": existing_versions[2],
             "new_pkg": current_pkg_version,
         })
 
-    # Deploy framework files
-    framework_data = _get_bundled_data("framework.md")
-    if framework_data:
-        fw_path = frameworks_dir / "FRAMEWORK.md"
-        fw_path.write_text(framework_data, encoding="utf-8")
-
-    aaref_data = _get_bundled_data("aaref.md")
-    if aaref_data:
-        aaref_path = frameworks_dir / "AARE-F-FRAMEWORK.md"
-        aaref_path.write_text(aaref_data, encoding="utf-8")
+    # Deploy framework files from bundled data
+    framework_files = [
+        ("framework.md", "FRAMEWORK.md"),
+        ("aaref.md", "AARE-F-FRAMEWORK.md"),
+    ]
+    for source_name, target_name in framework_files:
+        content = _get_bundled_file(source_name)
+        if content:
+            (frameworks_dir / target_name).write_text(content, encoding="utf-8")
 
     # Write VERSION.yaml
     version_data: dict[str, object] = {
@@ -581,7 +565,7 @@ def _deploy_templates(trw_dir: Path) -> None:
     if template_path.exists():
         return  # Preserve project customization
 
-    template_data = _get_bundled_template("claude_md.md")
+    template_data = _get_bundled_file("claude_md.md", subdir="templates")
     if template_data:
         template_path.write_text(template_data, encoding="utf-8")
 

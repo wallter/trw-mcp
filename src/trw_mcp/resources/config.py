@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from io import StringIO
+from typing import Any
+
 from fastmcp import FastMCP
+from ruamel.yaml import YAML
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
@@ -11,6 +15,19 @@ from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
 _config = get_config()
 _reader = FileStateReader()
+
+
+def _dump_yaml(data: dict[str, Any]) -> str:
+    """Serialize a dict to YAML text.
+
+    Creates a fresh YAML instance per call for thread safety
+    (PRD-CORE-014 FR03).
+    """
+    yaml = YAML()
+    yaml.default_flow_style = False
+    stream = StringIO()
+    yaml.dump(data, stream)
+    return stream.getvalue()
 
 
 def register_config_resources(server: FastMCP) -> None:
@@ -35,18 +52,9 @@ def register_config_resources(server: FastMCP) -> None:
         # Merge project overrides
         if _reader.exists(config_path):
             overrides = _reader.read_yaml(config_path)
-            for key, value in overrides.items():
-                if isinstance(key, str):
-                    result[key] = value
+            result.update(overrides)
 
-        from io import StringIO
-        from ruamel.yaml import YAML
-
-        yaml = YAML()
-        yaml.default_flow_style = False
-        stream = StringIO()
-        yaml.dump(result, stream)
-        return stream.getvalue()
+        return _dump_yaml(result)
 
     @server.resource("trw://framework/versions")
     def get_framework_versions() -> str:
@@ -64,15 +72,8 @@ def register_config_resources(server: FastMCP) -> None:
         if not _reader.exists(version_path):
             return "# No frameworks deployed yet\n# Run trw_init to deploy.\n"
 
-        from io import StringIO
-        from ruamel.yaml import YAML
-
         data = _reader.read_yaml(version_path)
-        yaml = YAML()
-        yaml.default_flow_style = False
-        stream = StringIO()
-        yaml.dump(dict(data), stream)
-        return stream.getvalue()
+        return _dump_yaml(dict(data))
 
     @server.resource("trw://learnings/summary")
     def get_learnings_summary() -> str:

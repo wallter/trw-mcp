@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import NamedTuple
 
 from trw_mcp.clients.llm import LLMClient
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.learning import LearningEntry, Reflection
 from trw_mcp.state.analytics import (
@@ -82,9 +81,8 @@ def collect_reflection_inputs(
         run_yaml = resolved / "meta" / "run.yaml"
         if _reader.exists(run_yaml):
             state = _reader.read_yaml(run_yaml)
-            run_id_val = state.get("run_id")
-            if isinstance(run_id_val, str):
-                run_id = run_id_val
+            raw_id = state.get("run_id")
+            run_id = raw_id if isinstance(raw_id, str) else None
 
     error_events = [e for e in events if is_error_event(e)]
     phase_transitions = [e for e in events if e.get("event") == "phase_transition"]
@@ -235,9 +233,9 @@ def _build_what_worked(
     success_patterns: list[dict[str, str]],
 ) -> list[str]:
     """Build what_worked list from phase transitions and success patterns."""
-    transitions = [str(e.get("event")) for e in phase_transitions]
-    patterns = [p["summary"] for p in success_patterns]
-    return transitions + patterns
+    return [str(e.get("event")) for e in phase_transitions] + [
+        p["summary"] for p in success_patterns
+    ]
 
 
 def _build_what_failed(error_events: list[dict[str, object]]) -> list[str]:

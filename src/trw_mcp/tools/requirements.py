@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from io import StringIO
 from pathlib import Path
 
 import structlog
 from fastmcp import FastMCP
+from ruamel.yaml import YAML
 
 from trw_mcp.exceptions import StateError, ValidationError
 from trw_mcp.models.config import get_config
@@ -27,12 +29,12 @@ from trw_mcp.models.requirements import (
     RiskLevel,
 )
 from trw_mcp.state._paths import resolve_project_root
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
+from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
-    next_prd_sequence,
-    parse_frontmatter as _parse_frontmatter_impl,
-    extract_sections as _extract_sections_impl,
+    _FRONTMATTER_RE,
     extract_prd_refs,
+    extract_sections as _extract_sections,
+    next_prd_sequence,
 )
 from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
@@ -42,8 +44,12 @@ from trw_mcp.state.validation import (
 logger = structlog.get_logger()
 
 _config = get_config()
-_reader = FileStateReader()
 _writer = FileStateWriter()
+
+# Priority → base confidence score mapping
+_PRIORITY_CONFIDENCE: dict[str, float] = {
+    "P0": 0.9, "P1": 0.7, "P2": 0.6, "P3": 0.5,
+}
 
 
 def register_requirements_tools(server: FastMCP) -> None:
@@ -84,9 +90,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Auto-increment sequence when using default value (1)
         if sequence == 1:
-            prds_dir_for_seq = (
-                resolve_project_root() / Path(_config.prds_relative_path)
-            )
+            prds_dir_for_seq = resolve_project_root() / _config.prds_relative_path
             sequence = next_prd_sequence(prds_dir_for_seq, category.upper())
 
         # Generate PRD ID
@@ -98,11 +102,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             first_line = input_text.strip().split("\n")[0]
             title = first_line[:60].rstrip(".")
 
-        # Map priority → base confidence score
-        _priority_confidence: dict[str, float] = {
-            "P0": 0.9, "P1": 0.7, "P2": 0.6, "P3": 0.5,
-        }
-        base_confidence = _priority_confidence.get(priority, 0.7)
+        base_confidence = _PRIORITY_CONFIDENCE.get(priority, 0.7)
 
         # Generate PRD body from template (populates version cache)
         body = _generate_prd_body(
@@ -165,7 +165,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         # Save to project if .trw/ exists
         output_path = ""
         project_root = resolve_project_root()
-        prds_dir = project_root / Path(_config.prds_relative_path)
+        prds_dir = project_root / _config.prds_relative_path
         if prds_dir.exists() or (project_root / _config.trw_dir).exists():
             _writer.ensure_dir(prds_dir)
             prd_file = prds_dir / f"{prd_id}.md"
@@ -281,31 +281,15 @@ def register_requirements_tools(server: FastMCP) -> None:
         }
 
 
-
 # --- Private helpers ---
-
-
-def _parse_frontmatter(content: str) -> dict[str, object]:
-    """Parse YAML frontmatter from markdown content.
-
-    Delegates to :func:`trw_mcp.state.prd_utils.parse_frontmatter`.
-    """
-    return _parse_frontmatter_impl(content)
-
-
-def _extract_sections(content: str) -> list[str]:
-    """Extract ## section headings from PRD markdown content.
-
-    Delegates to :func:`trw_mcp.state.prd_utils.extract_sections`.
-    """
-    return _extract_sections_impl(content)
-
 
 _CACHED_TEMPLATE_BODY: str | None = None
 _CACHED_TEMPLATE_VERSION: str | None = None
 
 _TEMPLATE_VERSION_RE = re.compile(r"\*Template version:\s*([\d.]+)")
 _FILE_REF_RE = re.compile(r"[\w/]+\.py")
+_GOAL_KW_RE = re.compile(r"\b(goal|objective|achieve|deliver)\b", re.IGNORECASE)
+_SLO_KW_RE = re.compile(r"\b(slo|latency|availability|throughput)\b", re.IGNORECASE)
 
 
 def _load_template_body() -> str:
@@ -333,8 +317,6 @@ def _load_template_body() -> str:
     raw = template_path.read_text(encoding="utf-8")
 
     # Strip YAML frontmatter (between first --- pair)
-    from trw_mcp.state.prd_utils import _FRONTMATTER_RE
-
     fm_match = _FRONTMATTER_RE.match(raw)
     if fm_match:
         body = raw[fm_match.end():].lstrip("\n")
@@ -432,21 +414,15 @@ def _extract_prefill(input_text: str) -> dict[str, list[str]]:
     except (re.error, TypeError, ValueError):
         pass
 
-    # Extract goal-like sentences
-    _GOAL_KW = re.compile(
-        r"\b(goal|objective|achieve|deliver)\b", re.IGNORECASE,
-    )
-    _SLO_KW = re.compile(
-        r"\b(slo|latency|availability|throughput)\b", re.IGNORECASE,
-    )
+    # Extract goal-like and SLO sentences
     try:
         for sentence in re.split(r"[.\n]", input_text):
             stripped = sentence.strip()
             if not stripped:
                 continue
-            if _GOAL_KW.search(stripped):
+            if _GOAL_KW_RE.search(stripped):
                 prefill["goals"].append(stripped)
-            if _SLO_KW.search(stripped):
+            if _SLO_KW_RE.search(stripped):
                 prefill["slos"].append(stripped)
     except (re.error, TypeError):
         pass
@@ -561,7 +537,6 @@ _FALLBACK_BODY = """# PRD-CATEGORY-SEQ: Title
 """
 
 
-
 def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     """Render complete PRD with YAML frontmatter and markdown body.
 
@@ -572,9 +547,6 @@ def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     Returns:
         Complete PRD document as a string.
     """
-    from io import StringIO
-    from ruamel.yaml import YAML
-
     yaml = YAML()
     yaml.default_flow_style = False
     stream = StringIO()
@@ -608,5 +580,3 @@ def _auto_sync_index() -> bool:
     except Exception as exc:
         logger.warning("auto_index_sync_failed", error=str(exc))
         return False
-
-

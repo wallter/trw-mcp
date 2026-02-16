@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import re
 import secrets
+from collections import Counter
 from datetime import date
 from pathlib import Path
+from typing import Iterator
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
@@ -35,6 +37,87 @@ _SUCCESS_KEYWORDS = (
     "delivered", "approved", "resolved", "merged",
 )
 
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _entries_path(trw_dir: Path) -> Path:
+    """Return the canonical entries directory path for a .trw directory."""
+    return trw_dir / _config.learnings_dir / _config.entries_dir
+
+
+def _iter_entry_files(
+    entries_dir: Path,
+    *,
+    sorted_order: bool = False,
+) -> Iterator[tuple[Path, dict[str, object]]]:
+    """Yield (file_path, data) for each valid YAML entry, skipping index.yaml.
+
+    Silently skips files that fail to parse or have unexpected types.
+    """
+    files = sorted(entries_dir.glob("*.yaml")) if sorted_order else entries_dir.glob("*.yaml")
+    for entry_file in files:
+        if entry_file.name == "index.yaml":
+            continue
+        try:
+            data = _reader.read_yaml(entry_file)
+            yield entry_file, data
+        except (StateError, ValueError, TypeError):
+            continue
+
+
+def _safe_int(data: dict[str, object], key: str, default: int = 0) -> int:
+    """Safely extract an integer from a dict with heterogeneous values."""
+    return int(str(data.get(key, default)))
+
+
+def _safe_float(data: dict[str, object], key: str, default: float = 0.0) -> float:
+    """Safely extract a float from a dict with heterogeneous values."""
+    return float(str(data.get(key, default)))
+
+
+# ---------------------------------------------------------------------------
+# Event classification
+# ---------------------------------------------------------------------------
+
+def _get_event_type(event: dict[str, object]) -> str:
+    """Extract the event type string from an event dict."""
+    return str(event.get("event", ""))
+
+
+def is_error_event(event: dict[str, object]) -> bool:
+    """Check if an event represents an error.
+
+    Args:
+        event: Event dictionary from events.jsonl.
+
+    Returns:
+        True if the event indicates an error or failure.
+    """
+    event_type = _get_event_type(event).lower()
+    return any(kw in event_type for kw in _ERROR_KEYWORDS)
+
+
+def is_success_event(event: dict[str, object]) -> bool:
+    """Check if an event represents a successful outcome.
+
+    Matches events whose type contains success-related keywords such as
+    "complete", "success", "pass", "done", "finish", "approved", etc.
+
+    Args:
+        event: Event dictionary from events.jsonl.
+
+    Returns:
+        True if the event indicates a successful outcome.
+    """
+    event_type = _get_event_type(event).lower()
+    return any(kw in event_type for kw in _SUCCESS_KEYWORDS)
+
+
+# ---------------------------------------------------------------------------
+# Entry lookup
+# ---------------------------------------------------------------------------
 
 def find_entry_by_id(
     entries_dir: Path,
@@ -68,18 +151,9 @@ def generate_learning_id() -> str:
     return f"L-{secrets.token_hex(4)}"
 
 
-def is_error_event(event: dict[str, object]) -> bool:
-    """Check if an event represents an error.
-
-    Args:
-        event: Event dictionary from events.jsonl.
-
-    Returns:
-        True if the event indicates an error or failure.
-    """
-    event_type = str(event.get("event", ""))
-    return any(kw in event_type.lower() for kw in _ERROR_KEYWORDS)
-
+# ---------------------------------------------------------------------------
+# Event analysis
+# ---------------------------------------------------------------------------
 
 def find_repeated_operations(
     events: list[dict[str, object]],
@@ -92,34 +166,17 @@ def find_repeated_operations(
     Returns:
         List of (operation_name, count) tuples, sorted by count descending.
     """
-    counts: dict[str, int] = {}
-    for event in events:
-        event_type = str(event.get("event", ""))
-        if event_type:
-            counts[event_type] = counts.get(event_type, 0) + 1
-
-    repeated = [
-        (op, count) for op, count in counts.items()
-        if count >= _config.learning_repeated_op_threshold
-    ]
-    repeated.sort(key=lambda x: x[1], reverse=True)
-    return repeated
-
-
-def is_success_event(event: dict[str, object]) -> bool:
-    """Check if an event represents a successful outcome.
-
-    Matches events whose type contains success-related keywords such as
-    "complete", "success", "pass", "done", "finish", "approved", etc.
-
-    Args:
-        event: Event dictionary from events.jsonl.
-
-    Returns:
-        True if the event indicates a successful outcome.
-    """
-    event_type = str(event.get("event", "")).lower()
-    return any(kw in event_type for kw in _SUCCESS_KEYWORDS)
+    counts = Counter(
+        _get_event_type(event)
+        for event in events
+        if _get_event_type(event)
+    )
+    threshold = _config.learning_repeated_op_threshold
+    return sorted(
+        ((op, count) for op, count in counts.items() if count >= threshold),
+        key=lambda x: x[1],
+        reverse=True,
+    )
 
 
 def find_success_patterns(
@@ -143,9 +200,9 @@ def find_success_patterns(
     for event in events:
         if not is_success_event(event):
             continue
-        event_type = str(event.get("event", "unknown"))
+        event_type = _get_event_type(event) or "unknown"
         success_counts[event_type] = success_counts.get(event_type, 0) + 1
-        # Keep the most recent detail for each type
+        # Keep the first detail encountered for each type
         data = event.get("data", event.get("detail", ""))
         if data and event_type not in success_details:
             success_details[event_type] = str(data)[:200]
@@ -154,11 +211,10 @@ def find_success_patterns(
     for event_type, count in sorted(
         success_counts.items(), key=lambda x: x[1], reverse=True,
     ):
-        detail = success_details.get(event_type, "")
         patterns.append({
             "event_type": event_type,
             "summary": f"Success: {event_type} ({count}x)",
-            "detail": detail,
+            "detail": success_details.get(event_type, ""),
             "count": str(count),
         })
 
@@ -220,6 +276,10 @@ def detect_tool_sequences(
     return results
 
 
+# ---------------------------------------------------------------------------
+# Learning queries
+# ---------------------------------------------------------------------------
+
 def surface_validated_learnings(
     trw_dir: Path,
     q_threshold: float = 0.6,
@@ -239,31 +299,26 @@ def surface_validated_learnings(
         List of dicts with ``learning_id``, ``summary``, ``q_value``,
         ``q_observations``, and ``tags`` keys.
     """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    entries_dir = _entries_path(trw_dir)
     if not entries_dir.exists():
         return []
 
     validated: list[dict[str, object]] = []
-    for entry_file in sorted(entries_dir.glob("*.yaml")):
-        try:
-            data = _reader.read_yaml(entry_file)
-            status = str(data.get("status", "active"))
-            if status != "active":
-                continue
-
-            q_value = float(str(data.get("q_value", 0.0)))
-            q_observations = int(str(data.get("q_observations", 0)))
-
-            if q_value >= q_threshold and q_observations >= cold_start_threshold:
-                validated.append({
-                    "learning_id": str(data.get("id", "")),
-                    "summary": str(data.get("summary", "")),
-                    "q_value": q_value,
-                    "q_observations": q_observations,
-                    "tags": data.get("tags", []),
-                })
-        except (StateError, ValueError, TypeError):
+    for _path, data in _iter_entry_files(entries_dir, sorted_order=True):
+        if str(data.get("status", "active")) != "active":
             continue
+
+        q_value = _safe_float(data, "q_value")
+        q_observations = _safe_int(data, "q_observations")
+
+        if q_value >= q_threshold and q_observations >= cold_start_threshold:
+            validated.append({
+                "learning_id": str(data.get("id", "")),
+                "summary": str(data.get("summary", "")),
+                "q_value": q_value,
+                "q_observations": q_observations,
+                "tags": data.get("tags", []),
+            })
 
     validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
     return validated
@@ -285,7 +340,7 @@ def has_existing_success_learning(
     Returns:
         True if a matching learning already exists.
     """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    entries_dir = _entries_path(trw_dir)
     if not entries_dir.exists():
         return False
 
@@ -302,6 +357,10 @@ def has_existing_success_learning(
     return False
 
 
+# ---------------------------------------------------------------------------
+# Entry persistence
+# ---------------------------------------------------------------------------
+
 def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     """Save a learning entry to .trw/learnings/entries/.
 
@@ -315,12 +374,10 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     raw = entry.summary[:_SLUG_MAX_LEN].lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     filename = f"{entry.created.isoformat()}-{slug}.yaml"
-    entry_path = trw_dir / _config.learnings_dir / _config.entries_dir / filename
+    entry_path = _entries_path(trw_dir) / filename
     _writer.write_yaml(entry_path, model_to_dict(entry))
 
-    # Update index
     update_learning_index(trw_dir, entry)
-
     return entry_path
 
 
@@ -371,30 +428,45 @@ def resync_learning_index(trw_dir: Path) -> None:
     Args:
         trw_dir: Path to .trw directory.
     """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    entries_dir = _entries_path(trw_dir)
     index_path = trw_dir / _config.learnings_dir / "index.yaml"
 
     entries: list[dict[str, object]] = []
     if entries_dir.exists():
-        for entry_file in sorted(entries_dir.glob("*.yaml")):
-            try:
-                data = _reader.read_yaml(entry_file)
-                entries.append({
-                    "id": data.get("id", ""),
-                    "summary": data.get("summary", ""),
-                    "tags": data.get("tags", []),
-                    "impact": data.get("impact", 0.5),
-                    "status": data.get("status", "active"),
-                    "created": str(data.get("created", "")),
-                })
-            except (StateError, ValueError, TypeError):
-                continue
+        for _path, data in _iter_entry_files(entries_dir, sorted_order=True):
+            entries.append({
+                "id": data.get("id", ""),
+                "summary": data.get("summary", ""),
+                "tags": data.get("tags", []),
+                "impact": data.get("impact", 0.5),
+                "status": data.get("status", "active"),
+                "created": str(data.get("created", "")),
+            })
 
     index_data: dict[str, object] = {
         "entries": entries,
         "total_count": len(entries),
     }
     _writer.write_yaml(index_path, index_data)
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+def _read_analytics(trw_dir: Path) -> tuple[Path, dict[str, object]]:
+    """Read analytics.yaml, returning the path and data dict.
+
+    Creates the context directory if it does not exist.
+    """
+    context_dir = trw_dir / _config.context_dir
+    _writer.ensure_dir(context_dir)
+    analytics_path = context_dir / "analytics.yaml"
+
+    data: dict[str, object] = {}
+    if _reader.exists(analytics_path):
+        data = _reader.read_yaml(analytics_path)
+    return analytics_path, data
 
 
 def update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
@@ -404,16 +476,10 @@ def update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
         trw_dir: Path to .trw directory.
         new_learnings_count: Number of new learnings produced.
     """
-    context_dir = trw_dir / _config.context_dir
-    _writer.ensure_dir(context_dir)
-    analytics_path = context_dir / "analytics.yaml"
+    analytics_path, data = _read_analytics(trw_dir)
 
-    data: dict[str, object] = {}
-    if _reader.exists(analytics_path):
-        data = _reader.read_yaml(analytics_path)
-
-    sessions = int(str(data.get("sessions_tracked", 0))) + 1
-    total_learnings = int(str(data.get("total_learnings", 0))) + new_learnings_count
+    sessions = _safe_int(data, "sessions_tracked") + 1
+    total_learnings = _safe_int(data, "total_learnings") + new_learnings_count
 
     data["sessions_tracked"] = sessions
     data["total_learnings"] = total_learnings
@@ -428,16 +494,70 @@ def update_analytics_sync(trw_dir: Path) -> None:
     Args:
         trw_dir: Path to .trw directory.
     """
-    context_dir = trw_dir / _config.context_dir
-    analytics_path = context_dir / "analytics.yaml"
-
-    data: dict[str, object] = {}
-    if _reader.exists(analytics_path):
-        data = _reader.read_yaml(analytics_path)
-
-    data["claude_md_syncs"] = int(str(data.get("claude_md_syncs", 0))) + 1
+    analytics_path, data = _read_analytics(trw_dir)
+    data["claude_md_syncs"] = _safe_int(data, "claude_md_syncs") + 1
     _writer.write_yaml(analytics_path, data)
 
+
+def update_analytics_extended(
+    trw_dir: Path,
+    new_learnings_count: int,
+    *,
+    is_reflection: bool = False,
+    is_success: bool = False,
+) -> None:
+    """Update analytics.yaml with extended metrics (PRD-QUAL-012-FR02/FR03).
+
+    Populates previously dead fields: reflections_completed, success_rate,
+    q_learning_activations, high_impact_learnings.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        new_learnings_count: Number of new learnings produced.
+        is_reflection: Whether this call is from a reflection event.
+        is_success: Whether this is a successful outcome.
+    """
+    analytics_path, data = _read_analytics(trw_dir)
+
+    # Core counters (backward compatible with existing update_analytics)
+    sessions = _safe_int(data, "sessions_tracked") + 1
+    total_learnings = _safe_int(data, "total_learnings") + new_learnings_count
+    data["sessions_tracked"] = sessions
+    data["total_learnings"] = total_learnings
+    data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
+
+    # FR02: Reflection tracking
+    if is_reflection:
+        data["reflections_completed"] = _safe_int(data, "reflections_completed") + 1
+
+    # FR02: Success rate tracking
+    total_outcomes = _safe_int(data, "total_outcomes") + 1
+    successes = _safe_int(data, "successful_outcomes")
+    if is_success:
+        successes += 1
+    data["total_outcomes"] = total_outcomes
+    data["successful_outcomes"] = successes
+    data["success_rate"] = round(successes / max(total_outcomes, 1), 3)
+
+    # FR03: Q-learning activations (scan entries for q_observations > 0)
+    entries_dir = _entries_path(trw_dir)
+    q_activations = 0
+    high_impact = 0
+    if entries_dir.is_dir():
+        for _path, entry_data in _iter_entry_files(entries_dir):
+            if _safe_int(entry_data, "q_observations") > 0:
+                q_activations += 1
+            if _safe_float(entry_data, "impact", 0.5) >= 0.7:
+                high_impact += 1
+    data["q_learning_activations"] = q_activations
+    data["high_impact_learnings"] = high_impact
+
+    _writer.write_yaml(analytics_path, data)
+
+
+# ---------------------------------------------------------------------------
+# Entry status management
+# ---------------------------------------------------------------------------
 
 def mark_promoted(trw_dir: Path, learning_id: str) -> None:
     """Mark a learning entry as promoted to CLAUDE.md.
@@ -446,7 +566,7 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
         trw_dir: Path to .trw directory.
         learning_id: ID of the learning entry to mark.
     """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    entries_dir = _entries_path(trw_dir)
     if not entries_dir.exists():
         return
 
@@ -455,6 +575,42 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
         entry_file, data = found
         data["promoted_to_claude_md"] = True
         _writer.write_yaml(entry_file, data)
+
+
+def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:
+    """Apply a status update to a learning entry on disk.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        learning_id: ID of the learning entry to update.
+        new_status: New status value to set.
+    """
+    entries_dir = _entries_path(trw_dir)
+    if not entries_dir.exists():
+        return
+
+    found = find_entry_by_id(entries_dir, learning_id)
+    if found is not None:
+        entry_file, data = found
+        data["status"] = new_status
+        data["updated"] = date.today().isoformat()
+        if new_status == LearningStatus.RESOLVED.value:
+            data["resolved_at"] = date.today().isoformat()
+        _writer.write_yaml(entry_file, data)
+
+
+# ---------------------------------------------------------------------------
+# Learning extraction (mechanical + LLM)
+# ---------------------------------------------------------------------------
+
+def _save_and_record(
+    trw_dir: Path,
+    entry: LearningEntry,
+    results: list[dict[str, str]],
+) -> None:
+    """Save a learning entry and append its id/summary to results."""
+    save_learning_entry(trw_dir, entry)
+    results.append({"id": entry.id, "summary": entry.summary})
 
 
 def extract_learnings_mechanical(
@@ -482,43 +638,31 @@ def extract_learnings_mechanical(
     """
     new_learnings: list[dict[str, str]] = []
 
-    if error_events:
-        for err in error_events[:max_errors]:
-            learning_id = generate_learning_id()
-            entry = LearningEntry(
-                id=learning_id,
-                summary=f"Error pattern: {err.get('event', 'unknown')}",
-                detail=str(err.get("data", err)),
-                tags=["error", "auto-discovered"],
-                evidence=[str(err.get("ts", ""))],
-                impact=0.6,
-                source_type="agent",
-                source_identity="trw_reflect",
-            )
-            save_learning_entry(trw_dir, entry)
-            new_learnings.append({
-                "id": learning_id,
-                "summary": entry.summary,
-            })
+    for err in error_events[:max_errors]:
+        entry = LearningEntry(
+            id=generate_learning_id(),
+            summary=f"Error pattern: {err.get('event', 'unknown')}",
+            detail=str(err.get("data", err)),
+            tags=["error", "auto-discovered"],
+            evidence=[str(err.get("ts", ""))],
+            impact=0.6,
+            source_type="agent",
+            source_identity="trw_reflect",
+        )
+        _save_and_record(trw_dir, entry, new_learnings)
 
-    if repeated_ops:
-        for op_name, count in repeated_ops[:max_repeated]:
-            learning_id = generate_learning_id()
-            entry = LearningEntry(
-                id=learning_id,
-                summary=f"Repeated operation: {op_name} ({count}x)",
-                detail=f"Operation '{op_name}' was repeated {count} times — candidate for scripting",
-                tags=["repeated", "optimization"],
-                impact=0.5,
-                recurrence=count,
-                source_type="agent",
-                source_identity="trw_reflect",
-            )
-            save_learning_entry(trw_dir, entry)
-            new_learnings.append({
-                "id": learning_id,
-                "summary": entry.summary,
-            })
+    for op_name, count in repeated_ops[:max_repeated]:
+        entry = LearningEntry(
+            id=generate_learning_id(),
+            summary=f"Repeated operation: {op_name} ({count}x)",
+            detail=f"Operation '{op_name}' was repeated {count} times — candidate for scripting",
+            tags=["repeated", "optimization"],
+            impact=0.5,
+            recurrence=count,
+            source_type="agent",
+            source_identity="trw_reflect",
+        )
+        _save_and_record(trw_dir, entry, new_learnings)
 
     return new_learnings
 
@@ -539,26 +683,25 @@ def extract_learnings_from_llm(
     new_learnings: list[dict[str, str]] = []
 
     for item in llm_items:
-        learning_id = generate_learning_id()
         raw_tags = item.get("tags")
         tags = raw_tags if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
         entry = LearningEntry(
-            id=learning_id,
+            id=generate_learning_id(),
             summary=str(item.get("summary", "LLM-extracted learning")),
             detail=str(item.get("detail", "")),
             tags=tags,
-            impact=float(str(item.get("impact", 0.6))),
+            impact=_safe_float(item, "impact", 0.6),
             source_type="agent",
             source_identity="trw_reflect:llm",
         )
-        save_learning_entry(trw_dir, entry)
-        new_learnings.append({
-            "id": learning_id,
-            "summary": entry.summary,
-        })
+        _save_and_record(trw_dir, entry, new_learnings)
 
     return new_learnings
 
+
+# ---------------------------------------------------------------------------
+# Dedup and pruning
+# ---------------------------------------------------------------------------
 
 def compute_jaccard_similarity(a: str, b: str) -> float:
     """Compute Jaccard similarity between two strings using word tokens.
@@ -578,9 +721,7 @@ def compute_jaccard_similarity(a: str, b: str) -> float:
         return 1.0
     if not tokens_a or not tokens_b:
         return 0.0
-    intersection = tokens_a & tokens_b
-    union = tokens_a | tokens_b
-    return len(intersection) / len(union)
+    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
 
 
 def find_duplicate_learnings(
@@ -604,26 +745,19 @@ def find_duplicate_learnings(
         return []
 
     active_entries: list[dict[str, object]] = []
-    for entry_file in sorted(entries_dir.glob("*.yaml")):
-        if entry_file.name == "index.yaml":
-            continue
-        try:
-            data = _reader.read_yaml(entry_file)
-            if str(data.get("status", "active")) == "active":
-                active_entries.append(data)
-        except (StateError, ValueError, TypeError):
-            continue
+    for _path, data in _iter_entry_files(entries_dir, sorted_order=True):
+        if str(data.get("status", "active")) == "active":
+            active_entries.append(data)
 
     duplicates: list[tuple[str, str, float]] = []
-    for i in range(len(active_entries)):
-        for j in range(i + 1, len(active_entries)):
-            summary_a = str(active_entries[i].get("summary", ""))
-            summary_b = str(active_entries[j].get("summary", ""))
+    for i, entry_a in enumerate(active_entries):
+        summary_a = str(entry_a.get("summary", ""))
+        for entry_b in active_entries[i + 1:]:
+            summary_b = str(entry_b.get("summary", ""))
             sim = compute_jaccard_similarity(summary_a, summary_b)
             if sim >= threshold:
-                id_a = str(active_entries[i].get("id", ""))
-                id_b = str(active_entries[j].get("id", ""))
-                # Older entry (earlier in sorted order) is the dedup candidate
+                id_a = str(entry_a.get("id", ""))
+                id_b = str(entry_b.get("id", ""))
                 duplicates.append((id_a, id_b, round(sim, 3)))
     return duplicates
 
@@ -653,23 +787,16 @@ def auto_prune_excess_entries(
     """
     from trw_mcp.scoring import utility_based_prune_candidates
 
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    entries_dir = _entries_path(trw_dir)
     if not entries_dir.is_dir():
         return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0}
 
-    # Count active entries
     all_entries: list[tuple[Path, dict[str, object]]] = []
     active_count = 0
-    for entry_file in sorted(entries_dir.glob("*.yaml")):
-        if entry_file.name == "index.yaml":
-            continue
-        try:
-            data = _reader.read_yaml(entry_file)
-            all_entries.append((entry_file, data))
-            if str(data.get("status", "active")) == "active":
-                active_count += 1
-        except (StateError, ValueError, TypeError):
-            continue
+    for entry_file, data in _iter_entry_files(entries_dir, sorted_order=True):
+        all_entries.append((entry_file, data))
+        if str(data.get("status", "active")) == "active":
+            active_count += 1
 
     if active_count <= max_entries:
         return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0,
@@ -677,9 +804,7 @@ def auto_prune_excess_entries(
 
     # Step 1: Jaccard dedup
     duplicates = find_duplicate_learnings(entries_dir, jaccard_threshold)
-    dedup_ids: set[str] = set()
-    for older_id, _newer_id, _sim in duplicates:
-        dedup_ids.add(older_id)
+    dedup_ids = {older_id for older_id, _newer_id, _sim in duplicates}
 
     actions = 0
     if not dry_run:
@@ -714,6 +839,10 @@ def auto_prune_excess_entries(
     }
 
 
+# ---------------------------------------------------------------------------
+# Reflection quality
+# ---------------------------------------------------------------------------
+
 def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     """Compute composite reflection quality score (0.0-1.0).
 
@@ -731,7 +860,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
         Dict with score (0.0-1.0), components, and diagnostics.
     """
     reflections_dir = trw_dir / _config.reflections_dir
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    entries_dir = _entries_path(trw_dir)
 
     # Count reflections
     reflection_count = 0
@@ -756,26 +885,20 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     source_types: set[str] = set()
 
     if entries_dir.is_dir():
-        for entry_file in entries_dir.glob("*.yaml"):
-            if entry_file.name == "index.yaml":
-                continue
-            try:
-                data = _reader.read_yaml(entry_file)
-                total_entries += 1
-                if str(data.get("status", "active")) == "active":
-                    active_entries += 1
-                if int(str(data.get("access_count", 0))) > 0:
-                    accessed_entries += 1
-                if int(str(data.get("q_observations", 0))) > 0:
-                    q_activated += 1
-                tags = data.get("tags", [])
-                if isinstance(tags, list):
-                    unique_tags.update(str(t) for t in tags)
-                src = str(data.get("source_type", ""))
-                if src:
-                    source_types.add(src)
-            except (StateError, ValueError, TypeError):
-                continue
+        for _path, data in _iter_entry_files(entries_dir):
+            total_entries += 1
+            if str(data.get("status", "active")) == "active":
+                active_entries += 1
+            if _safe_int(data, "access_count") > 0:
+                accessed_entries += 1
+            if _safe_int(data, "q_observations") > 0:
+                q_activated += 1
+            tags = data.get("tags", [])
+            if isinstance(tags, list):
+                unique_tags.update(str(t) for t in tags)
+            src = str(data.get("source_type", ""))
+            if src:
+                source_types.add(src)
 
     # Component scores (each 0.0-1.0)
     # 1. Reflection frequency: at least 1 reflection = 0.5, 3+ = 1.0
@@ -829,74 +952,9 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     }
 
 
-def update_analytics_extended(
-    trw_dir: Path,
-    new_learnings_count: int,
-    *,
-    is_reflection: bool = False,
-    is_success: bool = False,
-) -> None:
-    """Update analytics.yaml with extended metrics (PRD-QUAL-012-FR02/FR03).
-
-    Populates previously dead fields: reflections_completed, success_rate,
-    q_learning_activations, high_impact_learnings.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        new_learnings_count: Number of new learnings produced.
-        is_reflection: Whether this call is from a reflection event.
-        is_success: Whether this is a successful outcome.
-    """
-    context_dir = trw_dir / _config.context_dir
-    _writer.ensure_dir(context_dir)
-    analytics_path = context_dir / "analytics.yaml"
-
-    data: dict[str, object] = {}
-    if _reader.exists(analytics_path):
-        data = _reader.read_yaml(analytics_path)
-
-    # Core counters (backward compatible with existing update_analytics)
-    sessions = int(str(data.get("sessions_tracked", 0))) + 1
-    total_learnings = int(str(data.get("total_learnings", 0))) + new_learnings_count
-    data["sessions_tracked"] = sessions
-    data["total_learnings"] = total_learnings
-    data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
-
-    # FR02: Reflection tracking
-    if is_reflection:
-        reflections = int(str(data.get("reflections_completed", 0))) + 1
-        data["reflections_completed"] = reflections
-
-    # FR02: Success rate tracking
-    total_outcomes = int(str(data.get("total_outcomes", 0))) + 1
-    successes = int(str(data.get("successful_outcomes", 0)))
-    if is_success:
-        successes += 1
-    data["total_outcomes"] = total_outcomes
-    data["successful_outcomes"] = successes
-    data["success_rate"] = round(successes / max(total_outcomes, 1), 3)
-
-    # FR03: Q-learning activations (scan entries for q_observations > 0)
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    q_activations = 0
-    high_impact = 0
-    if entries_dir.is_dir():
-        for entry_file in entries_dir.glob("*.yaml"):
-            if entry_file.name == "index.yaml":
-                continue
-            try:
-                entry_data = _reader.read_yaml(entry_file)
-                if int(str(entry_data.get("q_observations", 0))) > 0:
-                    q_activations += 1
-                if float(str(entry_data.get("impact", 0.5))) >= 0.7:
-                    high_impact += 1
-            except (StateError, ValueError, TypeError):
-                continue
-    data["q_learning_activations"] = q_activations
-    data["high_impact_learnings"] = high_impact
-
-    _writer.write_yaml(analytics_path, data)
-
+# ---------------------------------------------------------------------------
+# Source attribution backfill
+# ---------------------------------------------------------------------------
 
 def backfill_source_attribution(
     trw_dir: Path,
@@ -916,7 +974,7 @@ def backfill_source_attribution(
     Returns:
         Dict with updated_count, skipped_count, and total_scanned.
     """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+    entries_dir = _entries_path(trw_dir)
     if not entries_dir.is_dir():
         return {"updated_count": 0, "skipped_count": 0, "total_scanned": 0}
 
@@ -925,24 +983,18 @@ def backfill_source_attribution(
     skipped = 0
     total = 0
 
-    for entry_file in sorted(entries_dir.glob("*.yaml")):
-        if entry_file.name == "index.yaml":
+    for entry_file, data in _iter_entry_files(entries_dir, sorted_order=True):
+        total += 1
+        existing = str(data.get("source_type", ""))
+        if existing in valid_source_types:
+            skipped += 1
             continue
-        try:
-            data = _reader.read_yaml(entry_file)
-            total += 1
-            existing = str(data.get("source_type", ""))
-            if existing in valid_source_types:
-                skipped += 1
-                continue
-            if not dry_run:
-                data["source_type"] = "agent"
-                data["source_identity"] = ""
-                data["updated"] = date.today().isoformat()
-                _writer.write_yaml(entry_file, data)
-            updated += 1
-        except (StateError, ValueError, TypeError):
-            continue
+        if not dry_run:
+            data["source_type"] = "agent"
+            data["source_identity"] = ""
+            data["updated"] = date.today().isoformat()
+            _writer.write_yaml(entry_file, data)
+        updated += 1
 
     return {
         "updated_count": updated,
@@ -950,25 +1002,3 @@ def backfill_source_attribution(
         "total_scanned": total,
         "dry_run": dry_run,
     }
-
-
-def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:
-    """Apply a status update to a learning entry on disk.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        learning_id: ID of the learning entry to update.
-        new_status: New status value to set.
-    """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    if not entries_dir.exists():
-        return
-
-    found = find_entry_by_id(entries_dir, learning_id)
-    if found is not None:
-        entry_file, data = found
-        data["status"] = new_status
-        data["updated"] = date.today().isoformat()
-        if new_status == LearningStatus.RESOLVED.value:
-            data["resolved_at"] = date.today().isoformat()
-        _writer.write_yaml(entry_file, data)

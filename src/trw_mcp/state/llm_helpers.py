@@ -7,6 +7,7 @@ they require the ``claude-agent-sdk`` package (core dependency).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from trw_mcp.clients.llm import LLMClient
@@ -14,6 +15,25 @@ from trw_mcp.clients.llm import LLMClient
 # Named caps for list truncation (not user-tunable)
 LLM_BATCH_CAP = 20
 LLM_EVENT_CAP = 30
+
+
+def _parse_json_lines(text: str) -> list[dict[str, object]]:
+    """Parse newline-delimited JSON objects from LLM response text.
+
+    Skips blank lines and lines that do not start with ``{``.
+    Silently drops lines that fail to parse.
+    """
+    results: list[dict[str, object]] = []
+    for line in text.strip().split("\n"):
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            parsed: dict[str, object] = json.loads(line)
+            results.append(parsed)
+        except (ValueError, KeyError):
+            continue
+    return results
 
 
 def llm_assess_learnings(
@@ -33,11 +53,6 @@ def llm_assess_learnings(
     Returns:
         List of candidate dicts with id, summary, suggested_status, and reason.
     """
-    import json as _json
-
-    candidates: list[dict[str, object]] = []
-
-    # Build batch prompt for efficiency
     summaries: list[str] = []
     for _path, data in entries[:batch_cap]:
         lid = str(data.get("id", ""))
@@ -49,7 +64,7 @@ def llm_assess_learnings(
         )
 
     if not summaries:
-        return candidates
+        return []
 
     prompt = (
         "Review these learning entries and assess whether each is still relevant.\n"
@@ -65,32 +80,26 @@ def llm_assess_learnings(
     )
 
     if response is None:
-        return candidates
+        return []
 
-    # Parse response — each line should be a JSON object
-    for line in response.strip().split("\n"):
-        line = line.strip()
-        if not line or not line.startswith("{"):
+    # Build id->summary lookup for matching parsed results to entries
+    summary_by_id: dict[object, str] = {
+        d.get("id"): str(d.get("summary", ""))
+        for _, d in entries
+    }
+
+    candidates: list[dict[str, object]] = []
+    for parsed in _parse_json_lines(response):
+        status_raw = str(parsed.get("status", "ACTIVE")).upper()
+        if status_raw not in ("RESOLVED", "OBSOLETE"):
             continue
-        try:
-            parsed = _json.loads(line)
-            status_raw = str(parsed.get("status", "ACTIVE")).upper()
-            if status_raw in ("RESOLVED", "OBSOLETE"):
-                candidates.append({
-                    "id": parsed.get("id", ""),
-                    "summary": next(
-                        (
-                            str(d.get("summary", ""))
-                            for _, d in entries
-                            if d.get("id") == parsed.get("id")
-                        ),
-                        "",
-                    ),
-                    "suggested_status": status_raw.lower(),
-                    "reason": parsed.get("reason", "LLM assessment"),
-                })
-        except (ValueError, KeyError):
-            continue
+        entry_id = parsed.get("id", "")
+        candidates.append({
+            "id": entry_id,
+            "summary": summary_by_id.get(entry_id, ""),
+            "suggested_status": status_raw.lower(),
+            "reason": parsed.get("reason", "LLM assessment"),
+        })
 
     return candidates
 
@@ -113,14 +122,10 @@ def llm_extract_learnings(
     Returns:
         List of learning dicts with summary, detail, tags, impact, or None.
     """
-    import json as _json
-
-    # Build a condensed event summary for the prompt
-    event_summaries: list[str] = []
-    for evt in events[:event_cap]:
-        event_summaries.append(
-            f"- {evt.get('event', 'unknown')}: {str(evt.get('data', ''))[:100]}"
-        )
+    event_summaries: list[str] = [
+        f"- {evt.get('event', 'unknown')}: {str(evt.get('data', ''))[:100]}"
+        for evt in events[:event_cap]
+    ]
 
     if not event_summaries:
         return None
@@ -142,21 +147,16 @@ def llm_extract_learnings(
         return None
 
     learnings: list[dict[str, object]] = []
-    for line in response.strip().split("\n"):
-        line = line.strip()
-        if not line or not line.startswith("{"):
+    for parsed in _parse_json_lines(response):
+        if "summary" not in parsed:
             continue
-        try:
-            parsed = _json.loads(line)
-            if "summary" in parsed:
-                learnings.append({
-                    "summary": str(parsed["summary"]),
-                    "detail": str(parsed.get("detail", "")),
-                    "tags": parsed.get("tags", ["auto-discovered", "llm"]),
-                    "impact": str(parsed.get("impact", "0.6")),
-                })
-        except (ValueError, KeyError):
-            continue
+        learnings.append({
+            "summary": str(parsed["summary"]),
+            "detail": str(parsed.get("detail", "")),
+            "tags": parsed.get("tags", ["auto-discovered", "llm"]),
+            # Stored as str for YAML serialization consistency
+            "impact": str(parsed.get("impact", "0.6")),
+        })
 
     return learnings if learnings else None
 
@@ -185,11 +185,14 @@ def llm_summarize_learnings(
     if not learnings and not patterns:
         return None
 
-    items: list[str] = []
-    for entry in learnings[:learning_cap]:
-        items.append(f"- Learning: {entry.get('summary', '')} | Detail: {entry.get('detail', '')}")
-    for pat in patterns[:pattern_cap]:
-        items.append(f"- Pattern: {pat.get('name', '')} | {pat.get('description', '')}")
+    items: list[str] = [
+        f"- Learning: {entry.get('summary', '')} | Detail: {entry.get('detail', '')}"
+        for entry in learnings[:learning_cap]
+    ]
+    items.extend(
+        f"- Pattern: {pat.get('name', '')} | {pat.get('description', '')}"
+        for pat in patterns[:pattern_cap]
+    )
 
     prompt = (
         "Summarize these learnings and patterns into a concise CLAUDE.md section.\n"

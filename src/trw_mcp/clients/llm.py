@@ -20,6 +20,8 @@ logger = structlog.get_logger()
 
 # PRD-CORE-001: Base MCP tool suite — optional LLM augmentation client
 
+_ASK_TIMEOUT_SECS = 120
+
 
 class _SDKQueryProtocol(Protocol):
     """Protocol matching the ``claude_agent_sdk.query`` async generator."""
@@ -153,21 +155,17 @@ class LLMClient:
         if not self._available:
             return None
 
+        coro = self.ask(prompt, system=system, model=model, max_turns=max_turns)
+
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
-            loop = None
+            # No event loop running — safe to use asyncio.run directly.
+            return asyncio.run(coro)  # pragma: no cover
 
-        if loop is not None and loop.is_running():  # pragma: no cover
-            # We're inside an already-running loop (e.g. FastMCP).
-            import concurrent.futures
+        # Already inside a running loop (e.g. FastMCP) — offload to a thread.
+        import concurrent.futures  # pragma: no cover
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, self.ask(
-                    prompt, system=system, model=model, max_turns=max_turns,
-                ))
-                return future.result(timeout=120)
-        else:  # pragma: no cover
-            return asyncio.run(self.ask(
-                prompt, system=system, model=model, max_turns=max_turns,
-            ))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:  # pragma: no cover
+            future = pool.submit(asyncio.run, coro)
+            return future.result(timeout=_ASK_TIMEOUT_SECS)

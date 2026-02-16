@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import structlog
-
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
+
+import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
@@ -139,6 +139,35 @@ def render_template(template: str, context: dict[str, str]) -> str:
     return result
 
 
+def _render_context_section(
+    heading: str,
+    data: dict[str, object],
+    skip_keys: frozenset[str],
+) -> str:
+    """Render a context data dict as a markdown section with bullet items.
+
+    Args:
+        heading: Section heading (e.g. "Architecture", "Conventions").
+        data: Key-value data from a context YAML file.
+        skip_keys: Keys to exclude from the output.
+
+    Returns:
+        Markdown string or empty string if no data.
+    """
+    if not data:
+        return ""
+    lines: list[str] = [f"### {heading}"]
+    for key, val in data.items():
+        if val and key not in skip_keys:
+            lines.append(f"- {key}: {val}")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+_ARCH_SKIP_KEYS = frozenset({"notes"})
+_CONV_SKIP_KEYS = frozenset({"notes", "test_patterns"})
+
+
 def render_architecture(arch_data: dict[str, object]) -> str:
     """Render architecture context to markdown.
 
@@ -148,14 +177,7 @@ def render_architecture(arch_data: dict[str, object]) -> str:
     Returns:
         Markdown string or empty string if no data.
     """
-    if not arch_data:
-        return ""
-    lines: list[str] = ["### Architecture"]
-    for key, val in arch_data.items():
-        if val and key != "notes":
-            lines.append(f"- {key}: {val}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
+    return _render_context_section("Architecture", arch_data, _ARCH_SKIP_KEYS)
 
 
 def render_conventions(conv_data: dict[str, object]) -> str:
@@ -167,14 +189,7 @@ def render_conventions(conv_data: dict[str, object]) -> str:
     Returns:
         Markdown string or empty string if no data.
     """
-    if not conv_data:
-        return ""
-    lines: list[str] = ["### Conventions"]
-    for key, val in conv_data.items():
-        if val and key not in ("notes", "test_patterns"):
-            lines.append(f"- {key}: {val}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
+    return _render_context_section("Conventions", conv_data, _CONV_SKIP_KEYS)
 
 
 def render_categorized_learnings(
@@ -253,6 +268,14 @@ def render_patterns(patterns: list[dict[str, object]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+_ADHERENCE_TAGS = frozenset({
+    "compliance", "process", "framework", "self-audit", "behavioral-mandate",
+})
+_ADHERENCE_KEYWORDS = ("must", "should", "call ", "never", "always")
+_ADHERENCE_MAX_ENTRIES = 8
+_ADHERENCE_MIN_LENGTH = 20
+
+
 def render_adherence(high_impact: list[dict[str, object]]) -> str:
     """Render framework adherence directives from compliance learnings.
 
@@ -262,37 +285,41 @@ def render_adherence(high_impact: list[dict[str, object]]) -> str:
     Returns:
         Markdown string with adherence directives, or empty string.
     """
-    _adherence_tags = {"compliance", "process", "framework", "self-audit", "behavioral-mandate"}
     adherence_entries: list[str] = []
     for learning in high_impact:
         tags = learning.get("tags", [])
         tag_set = {str(t) for t in tags} if isinstance(tags, list) else set()
-        if tag_set & _adherence_tags:
-            # behavioral-mandate entries promote summary directly
-            if "behavioral-mandate" in tag_set:
-                summary = str(learning.get("summary", ""))
-                if summary and len(summary) > 20:
-                    adherence_entries.append(summary)
-                continue
-            detail = str(learning.get("detail", ""))
-            for sentence in detail.split(". "):
-                lower = sentence.lower()
-                if any(kw in lower for kw in ("must", "should", "call ", "never", "always")):
-                    clean = sentence.strip().rstrip(".")
-                    if clean and len(clean) > 20:
-                        adherence_entries.append(clean)
+        if not (tag_set & _ADHERENCE_TAGS):
+            continue
+
+        # behavioral-mandate entries promote summary directly
+        if "behavioral-mandate" in tag_set:
+            summary = str(learning.get("summary", ""))
+            if len(summary) > _ADHERENCE_MIN_LENGTH:
+                adherence_entries.append(summary)
+            continue
+
+        detail = str(learning.get("detail", ""))
+        for sentence in detail.split(". "):
+            lower = sentence.lower()
+            if any(kw in lower for kw in _ADHERENCE_KEYWORDS):
+                clean = sentence.strip().rstrip(".")
+                if len(clean) > _ADHERENCE_MIN_LENGTH:
+                    adherence_entries.append(clean)
 
     if not adherence_entries:
         return ""
+
+    # Deduplicate by prefix, capped at max entries
     lines: list[str] = ["### Framework Adherence"]
     seen: set[str] = set()
-    count = 0
     for entry in adherence_entries:
+        if len(seen) >= _ADHERENCE_MAX_ENTRIES:
+            break
         key = entry[:60].lower()
-        if key not in seen and count < 8:
+        if key not in seen:
             lines.append(f"- {entry}")
             seen.add(key)
-            count += 1
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -333,9 +360,7 @@ def render_behavioral_protocol() -> str:
     directives = data.get("directives", [])
     if not directives or not isinstance(directives, list):
         return ""
-    lines: list[str] = []
-    for directive in directives[:BEHAVIORAL_PROTOCOL_CAP]:
-        lines.append(f"- {directive}")
+    lines = [f"- {d}" for d in directives[:BEHAVIORAL_PROTOCOL_CAP]]
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -466,8 +491,6 @@ def collect_promotable_learnings(
     Returns:
         List of high-impact learning entry dicts.
     """
-    from trw_mcp.exceptions import StateError as _StateError
-
     high_impact: list[dict[str, object]] = []
     entries_dir = trw_dir / config.learnings_dir / config.entries_dir
     if not entries_dir.exists():
@@ -476,8 +499,7 @@ def collect_promotable_learnings(
     for entry_file in sorted(entries_dir.glob("*.yaml")):
         try:
             data = reader.read_yaml(entry_file)
-            entry_status = str(data.get("status", "active"))
-            if entry_status != "active":
+            if str(data.get("status", "active")) != "active":
                 continue
 
             impact = data.get("impact", 0.0)
@@ -492,7 +514,7 @@ def collect_promotable_learnings(
 
             if score >= config.learning_promotion_impact:
                 high_impact.append(data)
-        except (_StateError, ValueError, TypeError):
+        except (StateError, ValueError, TypeError):
             continue
 
     return high_impact
@@ -513,8 +535,6 @@ def collect_patterns(
     Returns:
         List of pattern entry dicts.
     """
-    from trw_mcp.exceptions import StateError as _StateError
-
     patterns: list[dict[str, object]] = []
     patterns_dir = trw_dir / config.patterns_dir
     if not patterns_dir.exists():
@@ -525,7 +545,7 @@ def collect_patterns(
             continue
         try:
             patterns.append(reader.read_yaml(pattern_file))
-        except (_StateError, ValueError, TypeError):
+        except (StateError, ValueError, TypeError):
             continue
 
     return patterns
@@ -546,8 +566,6 @@ def collect_context_data(
     Returns:
         Tuple of (architecture_data, conventions_data).
     """
-    from trw_mcp.exceptions import StateError as _StateError
-
     arch_data: dict[str, object] = {}
     conv_data: dict[str, object] = {}
     context_dir = trw_dir / config.context_dir
@@ -556,7 +574,7 @@ def collect_context_data(
             arch_data = reader.read_yaml(context_dir / "architecture.yaml")
         if reader.exists(context_dir / "conventions.yaml"):
             conv_data = reader.read_yaml(context_dir / "conventions.yaml")
-    except (_StateError, ValueError, TypeError):
+    except (StateError, ValueError, TypeError):
         pass
     return arch_data, conv_data
 
@@ -605,42 +623,35 @@ def execute_claude_md_sync(
             llm_used = True
 
     template = load_claude_md_template(trw_dir)
-    imperative_opener = render_imperative_opener()
-    behavioral_protocol = render_behavioral_protocol()
-    ceremony_phases = render_phase_descriptions()
-    ceremony_table = render_ceremony_table()
-    ceremony_flows = render_ceremony_flows()
 
+    # Shared ceremony sections (identical regardless of LLM path)
+    tpl_context: dict[str, str] = {
+        "imperative_opener": render_imperative_opener(),
+        "behavioral_protocol": render_behavioral_protocol(),
+        "ceremony_phases": render_phase_descriptions(),
+        "ceremony_table": render_ceremony_table(),
+        "ceremony_flows": render_ceremony_flows(),
+    }
+
+    # Content sections: LLM summary replaces manual rendering when available
     if llm_used and llm_summary is not None:
-        tpl_context: dict[str, str] = {
-            "imperative_opener": imperative_opener,
-            "behavioral_protocol": behavioral_protocol,
-            "ceremony_phases": ceremony_phases,
-            "ceremony_table": ceremony_table,
-            "ceremony_flows": ceremony_flows,
+        tpl_context.update({
             "architecture_section": "",
             "conventions_section": "",
             "categorized_learnings": llm_summary + "\n",
             "patterns_section": "",
             "adherence_section": "",
-        }
+        })
     else:
-        tpl_context = {
-            "imperative_opener": imperative_opener,
-            "behavioral_protocol": behavioral_protocol,
-            "ceremony_phases": ceremony_phases,
-            "ceremony_table": ceremony_table,
-            "ceremony_flows": ceremony_flows,
+        tpl_context.update({
             "architecture_section": render_architecture(arch_data),
             "conventions_section": render_conventions(conv_data),
             "categorized_learnings": render_categorized_learnings(high_impact),
             "patterns_section": render_patterns(patterns),
             "adherence_section": render_adherence(high_impact),
-        }
+        })
 
     trw_section = render_template(template, tpl_context)
-
-    bounded_context_count = 0
 
     if scope == "sub" and target_dir:
         target = Path(target_dir).resolve() / "CLAUDE.md"
@@ -671,11 +682,14 @@ def execute_claude_md_sync(
         learnings_promoted=len(high_impact), patterns_included=len(patterns),
     )
     return {
-        "path": str(target), "scope": scope,
+        "path": str(target),
+        "scope": scope,
+        "status": "synced",
         "learnings_promoted": len(high_impact),
         "patterns_included": len(patterns),
-        "total_lines": total_lines, "status": "synced", "llm_used": llm_used,
+        "total_lines": total_lines,
+        "llm_used": llm_used,
         "agents_md_synced": agents_md_synced,
         "agents_md_path": agents_md_path,
-        "bounded_contexts_synced": bounded_context_count,
+        "bounded_contexts_synced": 0,
     }
