@@ -99,12 +99,15 @@ def _group_by_status(
         "merged": [],
         "review": [],
         "draft": [],
+        "deprecated": [],
     }
     for entry in entries:
         if entry.status in _DONE_STATUSES:
             groups["done"].append(entry)
         elif entry.status == "merged":
             groups["merged"].append(entry)
+        elif entry.status == "deprecated":
+            groups["deprecated"].append(entry)
         elif entry.status in _REVIEW_STATUSES:
             groups["review"].append(entry)
         else:
@@ -126,13 +129,22 @@ def render_index_catalogue(entries: list[PRDEntry]) -> str:
     merged_count = len(groups["merged"])
     review_count = len(groups["review"])
     draft_count = len(groups["draft"])
+    deprecated_count = len(groups["deprecated"])
+
+    summary_parts: list[str] = [f"{done_count} done"]
+    if merged_count:
+        summary_parts.append(f"{merged_count} merged")
+    if deprecated_count:
+        summary_parts.append(f"{deprecated_count} deprecated")
+    if review_count:
+        summary_parts.append(f"{review_count} review/groomed")
+    summary_parts.append(f"{draft_count} draft")
 
     lines: list[str] = [
         INDEX_CATALOGUE_START,
         "",
         f"## PRD Catalogue ({len(entries)} total: "
-        f"{done_count} done, {merged_count} merged, "
-        f"{review_count} review/groomed, {draft_count} draft)",
+        f"{', '.join(summary_parts)})",
         "",
     ]
 
@@ -164,6 +176,15 @@ def render_index_catalogue(entries: list[PRDEntry]) -> str:
                 f"| {e.id} | {e.title} | {e.priority} "
                 f"| {e.status.title()} | {e.category} |",
             )
+        lines.append("")
+
+    if groups["deprecated"]:
+        lines.append(f"### Deprecated ({deprecated_count})")
+        lines.append("")
+        lines.append("| PRD | Title | Priority | Category |")
+        lines.append("|-----|-------|----------|----------|")
+        for e in groups["deprecated"]:
+            lines.append(f"| {e.id} | {e.title} | {e.priority} | {e.category} |")
         lines.append("")
 
     if groups["draft"]:
@@ -285,6 +306,7 @@ def sync_index_md(
         "done": len(groups["done"]),
         "merged": len(groups["merged"]),
         "review": len(groups["review"]),
+        "deprecated": len(groups["deprecated"]),
         "draft": len(groups["draft"]),
     }
 

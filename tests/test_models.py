@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.models.config import TRWConfig, PhaseTimeCaps
+from trw_mcp.models.config import TRWConfig, PhaseTimeCaps, get_config, _reset_config
 from trw_mcp.models.run import (
     Confidence,
     Event,
@@ -128,6 +128,39 @@ class TestTRWConfig:
         assert not hasattr(config, "correlation_min")
 
 
+class TestGetConfig:
+    """Tests for get_config() singleton factory."""
+
+    def test_returns_singleton(self) -> None:
+        _reset_config()
+        c1 = get_config()
+        c2 = get_config()
+        assert c1 is c2
+
+    def test_reset_clears(self) -> None:
+        _reset_config()
+        c1 = get_config()
+        _reset_config()
+        c2 = get_config()
+        assert c1 is not c2
+
+    def test_reset_with_custom(self) -> None:
+        custom = TRWConfig(debug=True)
+        _reset_config(custom)
+        assert get_config() is custom
+        assert get_config().debug is True
+        _reset_config()
+
+    def test_reset_none_clears_singleton(self) -> None:
+        _reset_config(TRWConfig())
+        assert get_config() is not None
+        _reset_config(None)
+        # Next call creates a fresh instance
+        c = get_config()
+        assert isinstance(c, TRWConfig)
+        _reset_config()
+
+
 class TestPhaseTimeCaps:
     """Tests for PhaseTimeCaps."""
 
@@ -135,11 +168,15 @@ class TestPhaseTimeCaps:
         caps = PhaseTimeCaps()
         assert caps.research == 0.25
         assert caps.plan == 0.15
-        assert caps.implement == 0.40
+        assert caps.implement == 0.35
+        assert caps.validate_phase == 0.10
+        assert caps.review == 0.10
+        assert caps.deliver == 0.05
 
     def test_get_cap_valid(self) -> None:
         caps = PhaseTimeCaps()
         assert caps.get_cap("research") == 0.25
+        assert caps.get_cap("implement") == 0.35
         assert caps.get_cap("deliver") == 0.05
 
     def test_get_cap_invalid(self) -> None:

@@ -43,11 +43,12 @@ class TRWConfig(BaseSettings):
     checkpoint_secs: int = 600
 
     # Phase time caps (percentage of total timebox, ORC-level tracking)
+    # 6-phase model: RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
     phase_cap_research: float = 0.25
     phase_cap_plan: float = 0.15
-    phase_cap_implement: float = 0.40
+    phase_cap_implement: float = 0.35
     phase_cap_validate: float = 0.10
-    phase_cap_review: float = 0.05
+    phase_cap_review: float = 0.10
     phase_cap_deliver: float = 0.05
 
     # Learning: storage and retrieval
@@ -134,6 +135,9 @@ class TRWConfig(BaseSettings):
     validation_fk_optimal_min: float = 8.0
     validation_fk_optimal_max: float = 12.0
 
+    # Risk-based validation scaling (PRD-QUAL-013)
+    risk_scaling_enabled: bool = True
+
     # Phase gates and PRD enforcement (PRD-CORE-009)
     phase_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     prd_min_content_density: float = 0.30
@@ -176,9 +180,6 @@ class TRWConfig(BaseSettings):
     debt_budget_critical_ratio: float = 0.20
     debt_budget_high_ratio: float = 0.15
     debt_default_wave_size: int = 5
-    debt_md_auto_generate: bool = True
-    debt_md_relative_path: str = "docs/requirements-aare-f/TECHNICAL-DEBT.md"
-
     # Compliance auditing (PRD-QUAL-003)
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
     compliance_long_session_event_threshold: int = 5
@@ -211,14 +212,9 @@ class TRWConfig(BaseSettings):
     tests_relative_path: str = "trw-mcp/tests"
     test_map_filename: str = "test-map.yaml"
 
-    # LLM augmentation (optional, requires claude-agent-sdk)
+    # LLM augmentation (claude-agent-sdk — core dependency)
     llm_enabled: bool = True
     llm_default_model: str = "haiku"
-
-    # Architecture analysis (PRD-QUAL-007)
-    architecture_style: str = ""
-    architecture_fitness_enabled: bool = False
-    auto_detect_bounded_contexts: bool = True
 
     # Adaptive gates for shard evaluation (PRD-QUAL-005)
     gate_default_type: str = "FULL"
@@ -238,10 +234,12 @@ class TRWConfig(BaseSettings):
     sprint_code_simplifier_wave_size: int = 10
     sprint_commit_pattern: str = "feat(sprint{num}): Track {track}"
 
-    # Phase-scoped recall bonuses (PRD-CORE-017 FR04, retained)
-    phase_bonus_matching: float = 0.15
-    phase_bonus_global: float = 0.0
-    phase_bonus_nonmatching: float = -0.05
+    # Code simplifier (PRD-QUAL-010)
+    auto_simplify_enabled: bool = False
+    simplifier_wave_size: int = 10
+    simplifier_verification_timeout_secs: int = 120
+    simplifier_backup_dir: str = ".trw/simplifier-backups"
+
     strict_input_criteria: bool = False
 
     # Build verification gate (PRD-CORE-023)
@@ -256,6 +254,36 @@ class TRWConfig(BaseSettings):
     debug: bool = False
     logs_dir: str = "logs"
     telemetry: bool = False
+    telemetry_enabled: bool = True
+    telemetry_file: str = "tool-telemetry.jsonl"
+
+
+# --- Singleton factory ---------------------------------------------------
+
+_singleton: TRWConfig | None = None
+
+
+def get_config() -> TRWConfig:
+    """Return the shared TRWConfig singleton.
+
+    First call creates the instance; subsequent calls return the same object.
+    Use ``_reset_config()`` in tests to clear cached state.
+    """
+    global _singleton  # noqa: PLW0603
+    if _singleton is None:
+        _singleton = TRWConfig()
+    return _singleton
+
+
+def _reset_config(config: TRWConfig | None = None) -> None:
+    """Reset the config singleton (test helper only).
+
+    Args:
+        config: Optional replacement config. If *None*, the next
+            ``get_config()`` call creates a fresh default instance.
+    """
+    global _singleton  # noqa: PLW0603
+    _singleton = config
 
 
 class PhaseTimeCaps(BaseModel):
@@ -264,15 +292,16 @@ class PhaseTimeCaps(BaseModel):
     Convenience accessor for mapping phase names to their target time fractions.
     NOTE: Framework-documented defaults; not enforced by MCP tools.
     ORC tracks wall-clock time against these caps at the prompt level.
+    6-phase model: RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER.
     """
 
     model_config = ConfigDict(frozen=True)
 
     research: float = 0.25
     plan: float = 0.15
-    implement: float = 0.40
+    implement: float = 0.35
     validate_phase: float = 0.10
-    review: float = 0.05
+    review: float = 0.10
     deliver: float = 0.05
 
     _PHASE_FIELDS: ClassVar[dict[str, str]] = {

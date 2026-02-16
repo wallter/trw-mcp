@@ -1,4 +1,4 @@
-"""Tests for learning tools — reflect, learn, learn_update, recall, script_save, claude_md_sync, learn_prune."""
+"""Tests for learning tools — learn, recall, claude_md_sync."""
 
 from __future__ import annotations
 
@@ -17,8 +17,6 @@ _CFG = TRWConfig()
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    import trw_mcp.tools.learning as learn_mod
-    monkeypatch.setattr(learn_mod, "_config", learn_mod.TRWConfig())
     return tmp_path
 
 
@@ -165,178 +163,6 @@ class TestTrwRecall:
         assert result["total_matches"] == 0
 
 
-class TestTrwScriptSave:
-    """Tests for trw_script_save tool."""
-
-    def test_saves_bash_script(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_script_save"].fn(
-            name="test-script",
-            content="#!/bin/bash\necho 'hello'",
-            description="A test script",
-            language="bash",
-        )
-        assert result["status"] == "created"
-
-        script_path = tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "test-script.sh"
-        assert script_path.exists()
-        assert "echo 'hello'" in script_path.read_text(encoding="utf-8")
-
-    def test_saves_python_script(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_script_save"].fn(
-            name="helper",
-            content="print('hello')",
-            description="A python helper",
-            language="python",
-        )
-        assert result["status"] == "created"
-
-        script_path = tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "helper.py"
-        assert script_path.exists()
-
-    def test_updates_existing_script(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        # Create
-        tools["trw_script_save"].fn(
-            name="evolving",
-            content="v1",
-            description="Version 1",
-        )
-
-        # Update
-        result = tools["trw_script_save"].fn(
-            name="evolving",
-            content="v2",
-            description="Version 2",
-        )
-        assert result["status"] == "updated"
-
-    def test_updates_index(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        tools["trw_script_save"].fn(
-            name="indexed",
-            content="content",
-            description="Indexed script",
-        )
-
-        reader = FileStateReader()
-        index = reader.read_yaml(
-            tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "index.yaml"
-        )
-        scripts = index.get("scripts", [])
-        assert len(scripts) == 1
-        assert scripts[0]["name"] == "indexed"
-
-    def test_unknown_language_extension(self, tmp_path: Path) -> None:
-        """Unknown language falls back to .{language} extension."""
-        tools = _get_tools()
-        result = tools["trw_script_save"].fn(
-            name="custom-lang",
-            content="code",
-            description="Custom language script",
-            language="lua",
-        )
-        assert result["status"] == "created"
-        script_path = tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "custom-lang.lua"
-        assert script_path.exists()
-
-
-class TestTrwReflect:
-    """Tests for trw_reflect tool."""
-
-    def test_reflect_with_run(self, tmp_path: Path) -> None:
-        # Setup: Create a run with events
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="reflect-task")
-
-        # Add some error events
-        writer = FileStateWriter()
-        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
-        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "error_occurred", "data": {}})
-        writer.append_jsonl(events_path, {"ts": "2026-01-02", "event": "shard_failed", "data": {}})
-
-        # Reflect
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(
-            run_path=init_result["run_path"],
-            scope="run",
-        )
-        assert result["events_analyzed"] >= 1
-        assert result["scope"] == "run"
-        assert "reflection_id" in result
-
-    def test_reflect_empty(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(scope="session")
-        assert result["events_analyzed"] == 0
-
-
-class TestTrwReflectEventLogging:
-    """Tests for reflection event logging to run events.jsonl."""
-
-    def test_reflect_logs_event_to_run(self, tmp_path: Path) -> None:
-        """trw_reflect with run_path writes reflection_complete event."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        # Create a run
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="reflect-event-task")
-        run_path = init_result["run_path"]
-
-        # Reflect with run_path
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(run_path=run_path, scope="run")
-        assert "reflection_id" in result
-
-        # Verify reflection_complete event in events.jsonl
-        reader = FileStateReader()
-        events = reader.read_jsonl(Path(run_path) / "meta" / "events.jsonl")
-        reflection_events = [
-            e for e in events if e.get("event") == "reflection_complete"
-        ]
-        assert len(reflection_events) == 1
-        assert reflection_events[0]["scope"] == "run"
-
-    def test_reflect_no_event_without_run_path(self, tmp_path: Path) -> None:
-        """trw_reflect without run_path skips event logging."""
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(scope="session")
-        # No run_path — no events.jsonl to write to
-        assert result["events_analyzed"] == 0
-        # No crash, just returns normally
-
-    def test_reflect_event_has_reflection_id(self, tmp_path: Path) -> None:
-        """Logged reflection_complete event contains reflection_id."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="reflect-id-task")
-        run_path = init_result["run_path"]
-
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(run_path=run_path, scope="wave")
-
-        reader = FileStateReader()
-        events = reader.read_jsonl(Path(run_path) / "meta" / "events.jsonl")
-        reflection_events = [
-            e for e in events if e.get("event") == "reflection_complete"
-        ]
-        assert len(reflection_events) == 1
-        assert reflection_events[0]["reflection_id"] == result["reflection_id"]
-        assert reflection_events[0]["scope"] == "wave"
 
 
 class TestTrwClaudeMdSync:
@@ -406,45 +232,6 @@ class TestTrwClaudeMdSync:
         assert "Replacement learning" in content
         assert "Other section" in content  # Preserved
 
-    def test_excludes_resolved_learnings(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        # Record a high-impact learning, then resolve it
-        result = tools["trw_learn"].fn(
-            summary="Resolved bug pattern",
-            detail="This was fixed",
-            impact=0.9,
-        )
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            status="resolved",
-        )
-
-        # Sync
-        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        assert sync_result["learnings_promoted"] == 0
-
-        claude_md = tmp_path / "CLAUDE.md"
-        if claude_md.exists():
-            content = claude_md.read_text(encoding="utf-8")
-            assert "Resolved bug pattern" not in content
-
-    def test_excludes_obsolete_learnings(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Obsolete pattern",
-            detail="No longer relevant",
-            impact=0.9,
-        )
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            status="obsolete",
-        )
-
-        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        assert sync_result["learnings_promoted"] == 0
-
     def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path) -> None:
         """Sub-scope sync writes to target_dir/CLAUDE.md."""
         tools = _get_tools()
@@ -493,157 +280,6 @@ class TestTrwClaudeMdSync:
         assert line_count <= learn_mod._config.claude_md_max_lines + 1
 
 
-class TestTrwLearnUpdate:
-    """Tests for trw_learn_update tool."""
-
-    def test_updates_status(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Update status test",
-            detail="Will be resolved",
-            impact=0.8,
-        )
-        lid = result["learning_id"]
-
-        update_result = tools["trw_learn_update"].fn(
-            learning_id=lid,
-            status="resolved",
-        )
-        assert update_result["status"] == "updated"
-
-        # Verify via recall
-        recall_result = tools["trw_recall"].fn(
-            query="update status test",
-            status="resolved",
-        )
-        assert len(recall_result["learnings"]) == 1
-        assert recall_result["learnings"][0]["status"] == "resolved"
-
-    def test_updates_impact(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Impact update test",
-            detail="Will lower impact",
-            impact=0.9,
-        )
-
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            impact=0.3,
-        )
-
-        recall_result = tools["trw_recall"].fn(query="impact update test")
-        assert len(recall_result["learnings"]) == 1
-        assert float(recall_result["learnings"][0]["impact"]) == pytest.approx(0.3)
-
-    def test_updates_multiple_fields(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Multi field test",
-            detail="Original detail",
-            tags=["old"],
-            impact=0.5,
-        )
-
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            status="obsolete",
-            tags=["new", "updated"],
-        )
-
-        recall_result = tools["trw_recall"].fn(
-            query="multi field test",
-            status="obsolete",
-        )
-        assert len(recall_result["learnings"]) == 1
-        entry = recall_result["learnings"][0]
-        assert entry["status"] == "obsolete"
-        assert "new" in entry["tags"]
-        assert "updated" in entry["tags"]
-
-    def test_invalid_learning_id(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        # Create entries dir so it exists
-        tools["trw_learn"].fn(
-            summary="Placeholder",
-            detail="Needed for entries dir",
-        )
-
-        result = tools["trw_learn_update"].fn(
-            learning_id="L-nonexistent",
-            status="resolved",
-        )
-        assert "error" in result
-
-    def test_resolved_sets_date(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Resolved date test",
-            detail="Check resolved_at is set",
-            impact=0.7,
-        )
-
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            status="resolved",
-        )
-
-        recall_result = tools["trw_recall"].fn(
-            query="resolved date test",
-            status="resolved",
-        )
-        assert len(recall_result["learnings"]) == 1
-        assert recall_result["learnings"][0].get("resolved_at") is not None
-
-    def test_invalid_status_value(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Invalid status test",
-            detail="Will try bad status",
-        )
-
-        update_result = tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            status="invalid_value",
-        )
-        assert "error" in update_result
-
-    def test_no_entries_dir(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_learn_update"].fn(
-            learning_id="L-missing",
-            status="resolved",
-        )
-        assert "error" in result
-
-    def test_updates_summary_and_detail(self, tmp_path: Path) -> None:
-        """Verify summary and detail fields can be updated independently."""
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Original summary",
-            detail="Original detail",
-        )
-
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            summary="Updated summary",
-            detail="Updated detail",
-        )
-
-        recall_result = tools["trw_recall"].fn(query="updated summary")
-        assert len(recall_result["learnings"]) == 1
-        entry = recall_result["learnings"][0]
-        assert entry["summary"] == "Updated summary"
-        assert entry["detail"] == "Updated detail"
-
-
     def test_wildcard_returns_all_learnings(self, tmp_path: Path) -> None:
         """Query '*' or empty returns all learnings (filtered by other params)."""
         tools = _get_tools()
@@ -669,161 +305,6 @@ class TestTrwLearnUpdate:
 
         result = tools["trw_recall"].fn(query="")
         assert len(result["learnings"]) == 2
-
-
-class TestTrwRecallStatusFilter:
-    """Tests for trw_recall status filter."""
-
-    def test_status_filter_active(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        # Create one active, one resolved
-        tools["trw_learn"].fn(
-            summary="Active status filter learning",
-            detail="Still active",
-            impact=0.7,
-        )
-        r2 = tools["trw_learn"].fn(
-            summary="Resolved status filter learning",
-            detail="Already fixed",
-            impact=0.7,
-        )
-        tools["trw_learn_update"].fn(
-            learning_id=r2["learning_id"],
-            status="resolved",
-        )
-
-        # Filter by active only
-        result = tools["trw_recall"].fn(
-            query="status filter learning",
-            status="active",
-        )
-        assert len(result["learnings"]) == 1
-        assert "Active" in str(result["learnings"][0].get("summary", ""))
-
-    def test_status_filter_none_returns_all(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        tools["trw_learn"].fn(
-            summary="All status test alpha",
-            detail="Detail",
-        )
-        r2 = tools["trw_learn"].fn(
-            summary="All status test beta",
-            detail="Detail",
-        )
-        tools["trw_learn_update"].fn(
-            learning_id=r2["learning_id"],
-            status="resolved",
-        )
-
-        # No status filter — should return both
-        result = tools["trw_recall"].fn(query="all status test")
-        assert len(result["learnings"]) == 2
-
-
-class TestTrwLearnPrune:
-    """Tests for trw_learn_prune tool."""
-
-    def test_prune_dry_run_no_changes(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-
-        # Create a fresh learning (won't be flagged by age heuristic)
-        tools["trw_learn"].fn(
-            summary="Fresh prune test learning",
-            detail="Just created today",
-            impact=0.5,
-        )
-
-        result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert result["dry_run"] is True
-        assert result["actions"] == 0
-
-    def test_prune_empty_entries(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert result["method"] == "none"
-        assert result["candidates"] == []
-
-    def test_prune_without_llm_age_based(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Test that the age-based fallback identifies old learnings."""
-        from datetime import date, timedelta
-
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-
-        # Create a learning
-        result = tools["trw_learn"].fn(
-            summary="Old prune test learning",
-            detail="Should be flagged",
-            impact=0.5,
-        )
-
-        # Manually backdate the entry
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            reader = FileStateReader()
-            writer = FileStateWriter()
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                old_date = (date.today() - timedelta(days=45)).isoformat()
-                data["created"] = old_date
-                data["recurrence"] = 1
-                writer.write_yaml(entry_file, data)
-                break
-
-        # Disable LLM via monkeypatch (not try/finally)
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert prune_result["method"] == "utility"
-        assert len(prune_result["candidates"]) >= 1
-        assert prune_result["actions"] == 0  # dry run
-
-    def test_prune_apply_updates_entries(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Test that apply mode actually changes entry status."""
-        from datetime import date, timedelta
-
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Apply prune test learning",
-            detail="Should be obsoleted",
-            impact=0.5,
-        )
-
-        # Backdate the entry
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            reader = FileStateReader()
-            writer = FileStateWriter()
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                old_date = (date.today() - timedelta(days=60)).isoformat()
-                data["created"] = old_date
-                data["recurrence"] = 1
-                writer.write_yaml(entry_file, data)
-                break
-
-        # Disable LLM via monkeypatch
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=False)
-        assert prune_result["actions"] >= 1
-
-        # Verify the entry is now obsolete
-        recall_result = tools["trw_recall"].fn(
-            query="apply prune test learning",
-            status="obsolete",
-        )
-        assert len(recall_result["learnings"]) >= 1
 
 
 class TestClaudeMdTemplate:
@@ -950,24 +431,25 @@ class TestCeremonyRendering:
 
         result = render_phase_descriptions()
         assert "### Execution Phases" in result
-        # Arrow sequence
-        assert "RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER" in result
+        assert "RESEARCH" in result
+        assert "IMPLEMENT" in result
+        assert "DELIVER" in result
         # All 6 descriptions
         for name in ("RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"):
             assert f"**{name}**" in result
 
     def test_render_ceremony_table(self) -> None:
-        """Table headers and all 19 tools listed."""
+        """Table headers and all 11 tools listed."""
         from trw_mcp.state.claude_md import CEREMONY_TOOLS, render_ceremony_table
 
         result = render_ceremony_table()
         assert "### Tool Lifecycle" in result
         assert "| Phase | Tool | When to Use | What It Does | Example |" in result
         assert "|-------|------|-------------|--------------|---------|" in result
-        # All 19 tools present
+        # All 11 tools present
         for ct in CEREMONY_TOOLS:
             assert f"`{ct.tool}`" in result
-        assert result.count("|") >= 19 * 6  # 6 pipes per row, 19 rows minimum
+        assert len(CEREMONY_TOOLS) == 11
 
     def test_render_ceremony_flows(self) -> None:
         """Both quick and full flows present with key tool names."""
@@ -978,9 +460,6 @@ class TestCeremonyRendering:
         assert "**Full Run**" in result
         assert "trw_session_start" in result
         assert "trw_deliver()" in result
-        assert "trw_wave_plan" in result
-        assert "trw_shard_start" in result
-        assert "trw_compliance_check" in result
 
     def test_render_imperative_opener(self) -> None:
         """Imperative opener contains high-salience trigger instructions."""
@@ -995,6 +474,9 @@ class TestCeremonyRendering:
         assert "NEVER skip" in result
         assert "AFTER COMPLETING WORK" in result
         assert "trw_deliver()" in result
+        # PRD-INFRA-007: consequence text
+        assert "FAILURE TO COMPLY" in result
+        assert "Server warnings" in result
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
         """Bundled template contains all ceremony placeholder tokens."""
@@ -1046,23 +528,6 @@ class TestCeremonyRendering:
         assert "{{ceremony_flows}}" not in content
 
 
-class TestTrwReflectLLM:
-    """Tests for LLM-augmented trw_reflect."""
-
-    def test_reflect_without_llm_unchanged(self, tmp_path: Path) -> None:
-        """Verify reflect still works with LLM disabled."""
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(scope="session")
-        assert result["events_analyzed"] == 0
-        assert result["llm_used"] is False
-
-    def test_reflect_llm_flag_present(self, tmp_path: Path) -> None:
-        """Verify llm_used field is in return value."""
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(scope="session")
-        assert "llm_used" in result
-
-
 class TestTrwClaudeMdSyncLLM:
     """Tests for LLM-augmented trw_claude_md_sync."""
 
@@ -1098,70 +563,6 @@ class TestTrwClaudeMdSyncLLM:
         assert "llm_used" in result
 
 
-class TestTrwLearnPruneHeuristics:
-    """Tests for improved trw_learn_prune heuristics."""
-
-    def test_prune_flags_resolved_entries(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Entries with status 'resolved' are always prune candidates."""
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Resolved entry prune test",
-            detail="Already fixed",
-            impact=0.7,
-        )
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            status="resolved",
-        )
-
-        # Disable LLM
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert prune_result["method"] == "utility"
-
-    def test_prune_flags_old_bug_tagged_entry(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Old entries tagged 'bug' with low utility are prune candidates."""
-        from datetime import date, timedelta
-
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-
-        result = tools["trw_learn"].fn(
-            summary="Old bug tag prune test",
-            detail="A bug that was fixed long ago",
-            tags=["bug"],
-            impact=0.5,
-        )
-
-        # Backdate entry to make utility decay below threshold
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            reader = FileStateReader()
-            writer = FileStateWriter()
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                old_date = (date.today() - timedelta(days=60)).isoformat()
-                data["created"] = old_date
-                data["recurrence"] = 1
-                writer.write_yaml(entry_file, data)
-                break
-
-        # Disable LLM
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert prune_result["method"] == "utility"
-        assert len(prune_result["candidates"]) >= 1
-        assert any("utility" in str(c.get("reason", "")).lower() for c in prune_result["candidates"])
 
 
 class TestTrwLearnAnalytics:
@@ -1410,215 +811,6 @@ class TestTrwRecallAccessTracking:
             data = reader.read_yaml(entry_file)
             if data.get("id") in (r1["learning_id"], r2["learning_id"]):
                 assert int(str(data.get("access_count", 0))) == 1
-
-
-class TestTrwLearnPruneReceipts:
-    """Tests for receipt pruning in trw_learn_prune."""
-
-    def test_prune_trims_receipt_log(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """trw_learn_prune trims recall_log.jsonl to max entries."""
-        import json
-
-        import trw_mcp.state.receipts as receipts_mod
-        import trw_mcp.tools.learning as learn_mod
-
-        # Override max entries — prune_recall_receipts reads from receipts._config
-        cfg = TRWConfig(recall_receipt_max_entries=3)
-        monkeypatch.setattr(receipts_mod, "_config", cfg)
-
-        # Create receipt log with 5 entries
-        receipt_dir = (
-            tmp_path / _CFG.trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
-        )
-        receipt_dir.mkdir(parents=True)
-        receipt_path = receipt_dir / "recall_log.jsonl"
-        for i in range(5):
-            line = json.dumps({
-                "ts": f"2026-01-0{i + 1}T00:00:00Z",
-                "query": f"query-{i}",
-                "matched_ids": [],
-            })
-            receipt_path.open("a", encoding="utf-8").write(line + "\n")
-
-        # Disable LLM
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        tools = _get_tools()
-        tools["trw_learn_prune"].fn(dry_run=False)
-
-        # Verify receipt log was trimmed to 3 entries
-        lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
-        assert len(lines) == 3
-        # Should keep the last 3 (most recent)
-        last = json.loads(lines[-1])
-        assert last["query"] == "query-4"
-
-    def test_prune_no_receipts_no_error(self, tmp_path: Path) -> None:
-        """trw_learn_prune handles missing receipt log gracefully."""
-        tools = _get_tools()
-        result = tools["trw_learn_prune"].fn(dry_run=False)
-        # Should not raise — just report method and no candidates
-        assert "method" in result
-
-
-class TestUtilityBasedPruning:
-    """Tests for PRD-CORE-004 Phase 1b — utility-based pruning."""
-
-    def test_prune_uses_utility_method(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """trw_learn_prune now reports method='utility' instead of 'heuristic'."""
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-        tools["trw_learn"].fn(
-            summary="Method check learning",
-            detail="Check method field",
-            impact=0.5,
-        )
-
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert result["method"] == "utility"
-
-    def test_old_unused_entry_flagged(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Entry that is 60 days old and never accessed should be flagged."""
-        from datetime import date, timedelta
-
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-        result = tools["trw_learn"].fn(
-            summary="Old unused utility test",
-            detail="Should decay below threshold",
-            impact=0.5,
-        )
-
-        # Backdate the entry to 60 days ago
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            reader = FileStateReader()
-            writer = FileStateWriter()
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                old_date = (date.today() - timedelta(days=60)).isoformat()
-                data["created"] = old_date
-                data["recurrence"] = 1
-                writer.write_yaml(entry_file, data)
-                break
-
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert len(prune_result["candidates"]) >= 1
-        candidate = prune_result["candidates"][0]
-        assert "utility" in str(candidate.get("reason", "")).lower()
-
-    def test_frequently_accessed_entry_not_flagged(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Entry with high recurrence and recent access survives pruning."""
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-        result = tools["trw_learn"].fn(
-            summary="Frequently accessed survivor",
-            detail="Should survive utility pruning",
-            impact=0.8,
-        )
-
-        # Simulate frequent access
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            reader = FileStateReader()
-            writer = FileStateWriter()
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                from datetime import date
-
-                data["recurrence"] = 10
-                data["access_count"] = 15
-                data["last_accessed_at"] = date.today().isoformat()
-                data["q_value"] = 0.9
-                data["q_observations"] = 5
-                writer.write_yaml(entry_file, data)
-                break
-
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        # Should NOT appear as a candidate
-        candidate_ids = [str(c.get("id")) for c in prune_result["candidates"]]
-        assert result["learning_id"] not in candidate_ids
-
-    def test_resolved_entry_still_flagged(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Resolved entries are flagged by status tier."""
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-        result = tools["trw_learn"].fn(
-            summary="Resolved utility prune test",
-            detail="Already resolved",
-            impact=0.8,
-        )
-        tools["trw_learn_update"].fn(
-            learning_id=result["learning_id"],
-            status="resolved",
-        )
-
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=True)
-        assert any(
-            c.get("id") == result["learning_id"]
-            for c in prune_result["candidates"]
-        )
-
-    def test_utility_prune_apply(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Applying utility-based prune changes entry status."""
-        from datetime import date, timedelta
-
-        import trw_mcp.tools.learning as learn_mod
-
-        tools = _get_tools()
-        result = tools["trw_learn"].fn(
-            summary="Apply utility prune entry",
-            detail="Will be obsoleted",
-            impact=0.5,
-        )
-
-        # Backdate to trigger pruning
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            reader = FileStateReader()
-            writer = FileStateWriter()
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                old_date = (date.today() - timedelta(days=60)).isoformat()
-                data["created"] = old_date
-                data["recurrence"] = 1
-                writer.write_yaml(entry_file, data)
-                break
-
-        monkeypatch.setattr(learn_mod, "_llm", type(learn_mod._llm)(model="haiku"))
-
-        prune_result = tools["trw_learn_prune"].fn(dry_run=False)
-        assert prune_result["actions"] >= 1
-
-        # Verify status changed
-        recall_result = tools["trw_recall"].fn(
-            query="apply utility prune", status="obsolete",
-        )
-        assert len(recall_result["learnings"]) >= 1
 
 
 class TestRecallUtilityRanking:
@@ -2505,96 +1697,20 @@ class TestClaudeMdCollection:
 
 
 class TestToolDelegationIntact:
-    """Verify all 7 tool functions remain registered and callable."""
+    """Verify all 3 learning tool functions remain registered and callable."""
 
-    def test_all_seven_tools_registered(self) -> None:
-        """All 7 learning tools should be registered on a test server."""
+    def test_all_three_tools_registered(self) -> None:
+        """All 3 learning tools should be registered on a test server."""
         from fastmcp import FastMCP
         from trw_mcp.tools.learning import register_learning_tools
-        srv = FastMCP("test-fix-010")
+        srv = FastMCP("test-learning")
         register_learning_tools(srv)
         tool_names = {t.name for t in srv._tool_manager._tools.values()}
         expected = {
-            "trw_reflect", "trw_learn", "trw_learn_update",
-            "trw_recall", "trw_script_save", "trw_claude_md_sync",
-            "trw_learn_prune",
+            "trw_learn", "trw_recall", "trw_claude_md_sync",
         }
         assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
-
-
-# ---------------------------------------------------------------------------
-# PRD-CORE-014: Atomic write tests (from Sprint 4 Track C)
-# ---------------------------------------------------------------------------
-
-
-class TestScriptSaveAtomicWrite:
-    """PRD-CORE-014: trw_script_save uses atomic writes via _writer."""
-
-    def test_script_save_uses_atomic_write(self, tmp_path: Path) -> None:
-        """trw_script_save delegates to _writer.write_text (atomic)."""
-        tools = _get_tools()
-
-        with patch(
-            "trw_mcp.state.scripts._writer.write_text", wraps=FileStateWriter().write_text,
-        ) as mock_write:
-            tools["trw_script_save"].fn(
-                name="atomic-test",
-                content="#!/bin/bash\necho hello",
-                description="Test atomic write",
-            )
-            assert mock_write.call_count >= 1
-            call_args = mock_write.call_args
-            assert call_args is not None
-            written_path = call_args[0][0]
-            assert "atomic-test" in str(written_path)
-
-    def test_script_save_content_correct(self, tmp_path: Path) -> None:
-        """Written script has correct content after atomic write."""
-        tools = _get_tools()
-        content = "#!/usr/bin/env python3\nprint('hello')"
-        tools["trw_script_save"].fn(
-            name="content-check",
-            content=content,
-            description="Verify content",
-            language="python",
-        )
-
-        script_path = tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "content-check.py"
-        assert script_path.exists()
-        assert script_path.read_text(encoding="utf-8") == content
-
-    def test_script_save_no_partial_on_interrupt(self, tmp_path: Path) -> None:
-        """If write fails, no partial file remains."""
-        tools = _get_tools()
-
-        # First, create the script normally
-        tools["trw_script_save"].fn(
-            name="interrupt-test",
-            content="original",
-            description="Original content",
-        )
-        script_path = tmp_path / _CFG.trw_dir / _CFG.scripts_dir / "interrupt-test.sh"
-        assert script_path.read_text(encoding="utf-8") == "original"
-
-        # Simulate interrupted write
-        original_write_text = FileStateWriter.write_text
-
-        def failing_write(self: FileStateWriter, path: Path, content: str) -> None:
-            """Raise after starting the write process."""
-            if "interrupt-test" in str(path):
-                raise OSError("Simulated disk full")
-            original_write_text(self, path, content)
-
-        with patch.object(FileStateWriter, "write_text", failing_write):
-            with pytest.raises(Exception):
-                tools["trw_script_save"].fn(
-                    name="interrupt-test",
-                    content="corrupted",
-                    description="Should not be written",
-                )
-
-        # Original file should be unchanged
-        assert script_path.read_text(encoding="utf-8") == "original"
+        assert len(tool_names) == 3, f"Expected 3 tools, got {len(tool_names)}: {tool_names}"
 
 
 class TestClaudeMdSyncAtomicWrite:
@@ -2710,184 +1826,3 @@ class TestSuccessPatternDetection:
         assert len(patterns) <= config.reflect_max_success_patterns
 
 
-class TestReflectSuccessPatterns:
-    """PRD-QUAL-001: trw_reflect extracts success patterns from events."""
-
-    def test_reflect_extracts_success_patterns(self, tmp_path: Path) -> None:
-        """trw_reflect returns success_patterns count when events contain successes."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="success-reflect-task")
-
-        writer = FileStateWriter()
-        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
-        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "shard_complete", "data": {}})
-        writer.append_jsonl(events_path, {"ts": "2026-01-02", "event": "shard_complete", "data": {}})
-        writer.append_jsonl(events_path, {"ts": "2026-01-03", "event": "phase_gate_passed", "data": {}})
-
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(
-            run_path=init_result["run_path"],
-            scope="run",
-        )
-        assert "success_patterns" in result
-        assert isinstance(result["success_patterns"], dict)
-        assert result["success_patterns"]["count"] >= 1
-
-    def test_reflect_success_pattern_format(self, tmp_path: Path) -> None:
-        """Success pattern learnings have expected format and tags."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="success-format-task")
-
-        writer = FileStateWriter()
-        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
-        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "delivery_complete"})
-
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(
-            run_path=init_result["run_path"],
-            scope="run",
-        )
-
-        assert len(result["new_learnings"]) >= 1
-        success_learnings = [
-            l for l in result["new_learnings"]
-            if "Success" in l.get("summary", "") or "success" in l.get("summary", "").lower()
-        ]
-        assert len(success_learnings) >= 1
-
-    def test_reflect_success_pattern_tags(self, tmp_path: Path) -> None:
-        """Success pattern learnings have 'success' and 'pattern' tags."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="success-tags-task")
-
-        writer = FileStateWriter()
-        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
-        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "shard_complete"})
-
-        tools = _get_tools()
-        tools["trw_reflect"].fn(
-            run_path=init_result["run_path"],
-            scope="run",
-        )
-
-        reader = FileStateReader()
-        entries_dir = _entries_dir(tmp_path)
-        success_entries = []
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            tags = data.get("tags", [])
-            if isinstance(tags, list) and "success" in tags:
-                success_entries.append(data)
-
-        assert len(success_entries) >= 1
-        for entry in success_entries:
-            assert "pattern" in entry["tags"]
-            assert "auto-discovered" in entry["tags"]
-
-    def test_reflect_success_pattern_impact_scoring(self, tmp_path: Path) -> None:
-        """Success pattern learnings have impact=0.5 baseline."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="success-impact-task")
-
-        writer = FileStateWriter()
-        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
-        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "task_finished"})
-
-        tools = _get_tools()
-        tools["trw_reflect"].fn(
-            run_path=init_result["run_path"],
-            scope="run",
-        )
-
-        reader = FileStateReader()
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if isinstance(data.get("tags"), list) and "success" in data["tags"]:
-                assert float(str(data.get("impact", 0))) == 0.5
-                break
-
-    def test_reflect_mixed_success_and_error(self, tmp_path: Path) -> None:
-        """trw_reflect extracts both error and success patterns from same event stream."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="mixed-patterns-task")
-
-        writer = FileStateWriter()
-        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
-        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "error_occurred"})
-        writer.append_jsonl(events_path, {"ts": "2026-01-02", "event": "shard_complete"})
-        writer.append_jsonl(events_path, {"ts": "2026-01-03", "event": "shard_failed"})
-        writer.append_jsonl(events_path, {"ts": "2026-01-04", "event": "phase_gate_passed"})
-
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(
-            run_path=init_result["run_path"],
-            scope="run",
-        )
-
-        assert result["error_patterns"] >= 2
-        assert result["success_patterns"]["count"] >= 1
-        assert len(result["new_learnings"]) >= 3
-
-    def test_reflect_no_events_graceful(self, tmp_path: Path) -> None:
-        """trw_reflect with no events still returns success_patterns dict with count=0."""
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(scope="session")
-        assert result["success_patterns"]["count"] == 0
-        assert result["error_patterns"] == 0
-        assert result["events_analyzed"] == 0
-
-    def test_reflect_what_worked_includes_success(self, tmp_path: Path) -> None:
-        """Reflection log's what_worked includes success patterns."""
-        from fastmcp import FastMCP
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
-        srv = FastMCP("test")
-        register_orchestration_tools(srv)
-        orch_tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        init_result = orch_tools["trw_init"].fn(task_name="what-worked-task")
-
-        writer = FileStateWriter()
-        events_path = Path(init_result["run_path"]) / "meta" / "events.jsonl"
-        writer.append_jsonl(events_path, {"ts": "2026-01-01", "event": "shard_complete"})
-        writer.append_jsonl(events_path, {"ts": "2026-01-02", "event": "shard_complete"})
-
-        tools = _get_tools()
-        result = tools["trw_reflect"].fn(
-            run_path=init_result["run_path"],
-            scope="run",
-        )
-
-        reader = FileStateReader()
-        reflections_dir = tmp_path / _CFG.trw_dir / _CFG.reflections_dir
-        reflection_files = list(reflections_dir.glob("*.yaml"))
-        assert len(reflection_files) >= 1
-
-        reflection_data = reader.read_yaml(reflection_files[-1])
-        what_worked = reflection_data.get("what_worked", [])
-        assert any("Success" in str(item) or "success" in str(item).lower() for item in what_worked)

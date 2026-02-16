@@ -5,11 +5,11 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
-_config = TRWConfig()
+_config = get_config()
 _reader = FileStateReader()
 
 

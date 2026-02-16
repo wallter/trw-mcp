@@ -1,6 +1,6 @@
-"""TRW AARE-F requirements tools — prd_create, prd_validate, traceability_check, prd_status_update, index_sync, prd_groom.
+"""TRW AARE-F requirements tools — prd_create, prd_validate.
 
-These 6 tools codify the AARE-F Framework v1.1.0 requirements engineering
+These 2 tools codify the AARE-F Framework v1.1.0 requirements engineering
 process as executable MCP tools.
 """
 
@@ -14,7 +14,7 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.exceptions import StateError, ValidationError
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import get_config
 from trw_mcp.models.requirements import (
     EvidenceLevel,
     PRDConfidence,
@@ -22,39 +22,32 @@ from trw_mcp.models.requirements import (
     PRDEvidence,
     PRDFrontmatter,
     PRDQualityGates,
-    PRDStatus,
     PRDTraceability,
     Priority,
-    TraceabilityResult,
-    ValidationFailure,
-    ValidationResult,
+    RiskLevel,
 )
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
-    check_transition_guards,
-    is_valid_transition,
     next_prd_sequence,
     parse_frontmatter as _parse_frontmatter_impl,
     extract_sections as _extract_sections_impl,
     extract_prd_refs,
-    update_frontmatter,
 )
 from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
     validate_prd_quality_v2,
 )
-from trw_mcp.tools.findings import get_unlinked_findings
 
 logger = structlog.get_logger()
 
-_config = TRWConfig()
+_config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
 
 def register_requirements_tools(server: FastMCP) -> None:
-    """Register all 6 AARE-F requirements tools on the MCP server.
+    """Register AARE-F requirements tools on the MCP server.
 
     Args:
         server: FastMCP server instance to register tools on.
@@ -67,6 +60,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         priority: str = "P1",
         title: str = "",
         sequence: int = 1,
+        risk_level: str = "",
     ) -> dict[str, object]:
         """Generate an AARE-F compliant PRD from a feature request or requirements text.
 
@@ -76,6 +70,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             priority: Priority level (P0, P1, P2, P3).
             title: PRD title. Auto-generated from input if not provided.
             sequence: Sequence number for PRD ID. Auto-increments from existing PRDs when default (1).
+            risk_level: Optional risk level (critical, high, medium, low). Derived from priority if not set.
         """
         # Validate priority
         try:
@@ -118,6 +113,18 @@ def register_requirements_tools(server: FastMCP) -> None:
         # Extract SLOs from prefill for frontmatter
         prefill_slos = _extract_prefill(input_text).get("slos", [])
 
+        # PRD-QUAL-013: Validate and set risk_level if provided
+        prd_risk: RiskLevel | None = None
+        if risk_level:
+            try:
+                prd_risk = RiskLevel(risk_level.lower())
+            except ValueError:
+                valid_risks = [r.value for r in RiskLevel]
+                raise ValidationError(
+                    f"Invalid risk_level: {risk_level!r}. Valid: {valid_risks}",
+                    risk_level=risk_level,
+                )
+
         # Build frontmatter
         frontmatter = PRDFrontmatter(
             id=prd_id,
@@ -125,6 +132,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             version="1.0",
             priority=prd_priority,
             category=category.upper(),
+            risk_level=prd_risk,
             confidence=PRDConfidence(
                 implementation_feasibility=base_confidence,
                 requirement_clarity=base_confidence,
@@ -267,377 +275,11 @@ def register_requirements_tools(server: FastMCP) -> None:
                 {"section_name": ss.section_name, "density": ss.density, "substantive_lines": ss.substantive_lines}
                 for ss in v2_result.section_scores
             ],
+            # Risk scaling metadata (PRD-QUAL-013)
+            "effective_risk_level": v2_result.effective_risk_level,
+            "risk_scaled": v2_result.risk_scaled,
         }
 
-    @server.tool()
-    def trw_traceability_check(
-        prd_path: str | None = None,
-        source_dir: str | None = None,
-    ) -> dict[str, object]:
-        """Verify requirement traceability coverage across PRDs and source code.
-
-        Args:
-            prd_path: Path to specific PRD file, or None to scan all PRDs.
-            source_dir: Source directory to check for implementations.
-        """
-        project_root = resolve_project_root()
-
-        # Collect PRDs
-        prd_files: list[Path] = []
-        if prd_path:
-            prd_files.append(Path(prd_path).resolve())
-        else:
-            prds_dir = project_root / Path(_config.prds_relative_path)
-            if prds_dir.exists():
-                prd_files = [
-                    f for f in sorted(prds_dir.glob("*.md"))
-                    if f.name != "TEMPLATE.md"
-                ]
-
-        if not prd_files:
-            return {
-                "total_requirements": 0,
-                "traced_requirements": 0,
-                "coverage": 0.0,
-                "message": "No PRD files found to analyze",
-            }
-
-        # Extract requirements and their traces
-        total_reqs = 0
-        traced_reqs = 0
-        untraced: list[str] = []
-
-        for prd_file in prd_files:
-            if not prd_file.exists():
-                continue
-            content = prd_file.read_text(encoding="utf-8")
-            frontmatter = _parse_frontmatter(content)
-
-            # Count requirements from frontmatter traceability
-            trace_data = frontmatter.get("traceability", {})
-            if isinstance(trace_data, dict):
-                implements = trace_data.get("implements", [])
-                if isinstance(implements, list) and implements:
-                    traced_reqs += 1
-                    total_reqs += 1
-                else:
-                    total_reqs += 1
-                    prd_id = str(frontmatter.get("id", prd_file.stem))
-                    untraced.append(prd_id)
-
-            # Count FR requirements in body
-            fr_pattern = r"###\s+\S+-FR\d+"
-            fr_matches = re.findall(fr_pattern, content)
-            total_reqs += len(fr_matches)
-
-            # Check traceability matrix section
-            if "Traceability Matrix" in content:
-                # Count rows with implementation links
-                matrix_section = content.split("Traceability Matrix")[-1]
-                impl_refs = re.findall(r"`\w+\.py[:\w]*`", matrix_section)
-                traced_reqs += min(len(impl_refs), len(fr_matches))
-
-        total_reqs = max(total_reqs, 1)
-        coverage = traced_reqs / total_reqs
-
-        result = TraceabilityResult(
-            total_requirements=total_reqs,
-            traced_requirements=traced_reqs,
-            untraced_requirements=untraced,
-            coverage=coverage,
-        )
-
-        # FR09: Finding coverage analysis — flag prd_candidate
-        # findings that have no target_prd linked yet.
-        unlinked_findings = get_unlinked_findings()
-
-        logger.info(
-            "trw_traceability_checked",
-            total=total_reqs,
-            traced=traced_reqs,
-            coverage=f"{coverage:.0%}",
-            unlinked_findings=len(unlinked_findings),
-        )
-
-        return {
-            "total_requirements": result.total_requirements,
-            "traced_requirements": result.traced_requirements,
-            "untraced_requirements": result.untraced_requirements,
-            "coverage": result.coverage,
-            "coverage_threshold": _config.traceability_coverage_min,
-            "passes_gate": coverage >= _config.traceability_coverage_min,
-            "prd_files_analyzed": len(prd_files),
-            "unlinked_findings": unlinked_findings,
-            "unlinked_findings_count": len(unlinked_findings),
-        }
-
-    @server.tool()
-    def trw_prd_status_update(
-        prd_id: str,
-        target_status: str,
-        force: bool = False,
-        reason: str = "",
-    ) -> dict[str, object]:
-        """Update a PRD's lifecycle status with state machine validation and guard checks.
-
-        Validates the transition against the PRD status state machine, runs
-        applicable guard checks (content density for DRAFT->REVIEW, quality
-        validation for REVIEW->APPROVED), and updates the PRD frontmatter.
-
-        Args:
-            prd_id: PRD identifier (e.g., "PRD-CORE-009").
-            target_status: Target PRDStatus value (e.g., "review", "approved").
-            force: Admin override that bypasses guard checks (not state machine).
-            reason: Optional justification (required for backward transitions and force).
-        """
-        # Validate target status
-        try:
-            target = PRDStatus(target_status.lower())
-        except ValueError:
-            valid_statuses = [s.value for s in PRDStatus]
-            raise ValidationError(
-                f"Invalid target status: {target_status!r}. Valid: {valid_statuses}",
-                target_status=target_status,
-            )
-
-        # Resolve PRD file path
-        prd_path = _resolve_prd_path(prd_id)
-        content = prd_path.read_text(encoding="utf-8")
-
-        # Parse current status from frontmatter
-        frontmatter = _parse_frontmatter(content)
-        current_status_str = str(frontmatter.get("status", "draft")).lower()
-        try:
-            current = PRDStatus(current_status_str)
-        except ValueError:
-            current = PRDStatus.DRAFT
-
-        # PRD-FIX-009-FR02: Require non-empty reason when force=True
-        if force and not reason.strip():
-            raise ValidationError(
-                "reason is required when force=True",
-                prd_id=prd_id,
-                target_status=target_status,
-            )
-
-        # PRD-FIX-009: State machine is ALWAYS enforced — force only bypasses guards
-        transition_valid = is_valid_transition(current, target)
-        if not transition_valid:
-            return {
-                "prd_id": prd_id,
-                "previous_status": current.value,
-                "new_status": current.value,
-                "transition_valid": False,
-                "guard_passed": False,
-                "force_used": force,
-                "reason": f"Invalid transition: {current.value} -> {target.value}",
-                "updated": False,
-            }
-
-        # Run guard checks (skip if force=True or identity transition)
-        guard_passed = True
-        guard_reason = ""
-        guard_details: dict[str, object] = {}
-
-        if current != target:
-            if force:
-                guard_passed = True
-                guard_reason = f"Guard bypassed (force=True). Reason: {reason}"
-            elif transition_valid:
-                guard_result = check_transition_guards(current, target, content, _config)
-                guard_passed = guard_result.allowed
-                guard_reason = guard_result.reason
-                guard_details = guard_result.guard_details
-
-        if not guard_passed:
-            return {
-                "prd_id": prd_id,
-                "previous_status": current.value,
-                "new_status": current.value,
-                "transition_valid": transition_valid,
-                "guard_passed": False,
-                "force_used": False,
-                "reason": guard_reason,
-                "guard_details": guard_details,
-                "updated": False,
-            }
-
-        # Update frontmatter
-        if current != target:
-            update_frontmatter(prd_path, {
-                "status": target.value,
-                "dates": {"updated": str(date.today())},
-            })
-
-        # Log event to latest run's events.jsonl (best-effort)
-        _log_status_change_event(
-            prd_id=prd_id,
-            previous_status=current.value,
-            new_status=target.value,
-            force_used=force,
-            reason=reason,
-        )
-
-        # Auto-sync INDEX.md/ROADMAP.md so catalogue stays current
-        index_synced = False
-        if current != target and _config.index_auto_sync_on_status_change:
-            index_synced = _auto_sync_index()
-
-        logger.info(
-            "trw_prd_status_updated",
-            prd_id=prd_id,
-            previous_status=current.value,
-            new_status=target.value,
-            force_used=force,
-        )
-
-        return {
-            "prd_id": prd_id,
-            "previous_status": current.value,
-            "new_status": target.value,
-            "transition_valid": transition_valid,
-            "guard_passed": guard_passed,
-            "force_used": force,
-            "reason": guard_reason or reason,
-            "guard_details": guard_details,
-            "updated": current != target,
-            "index_synced": index_synced,
-        }
-
-    @server.tool()
-    def trw_index_sync(
-        sync_roadmap: bool = True,
-    ) -> dict[str, object]:
-        """Sync INDEX.md and ROADMAP.md PRD catalogues from PRD frontmatter.
-
-        Scans all PRD files, extracts status/priority/title from YAML
-        frontmatter, and updates the catalogue sections using marker-based
-        merge. Content outside markers is preserved.
-
-        Args:
-            sync_roadmap: Whether to also sync ROADMAP.md (default True).
-        """
-        from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
-
-        project_root = resolve_project_root()
-        prds_dir = project_root / Path(_config.prds_relative_path)
-        aare_dir = prds_dir.parent  # docs/requirements-aare-f/
-
-        index_path = aare_dir / "INDEX.md"
-        index_result = sync_index_md(index_path, prds_dir, writer=_writer)
-
-        roadmap_result: dict[str, object] = {}
-        if sync_roadmap:
-            roadmap_path = aare_dir / "ROADMAP.md"
-            roadmap_result = sync_roadmap_md(roadmap_path, prds_dir, writer=_writer)
-
-        logger.info(
-            "trw_index_synced",
-            total_prds=index_result.get("total_prds", 0),
-            sync_roadmap=sync_roadmap,
-        )
-
-        return {
-            "index": index_result,
-            "roadmap": roadmap_result if sync_roadmap else "skipped",
-        }
-
-    @server.tool()
-    def trw_prd_groom(
-        prd_path: str,
-        research_scope: str = "full",
-        max_iterations: int = 5,
-        target_completeness: float = 0.85,
-        dry_run: bool = False,
-    ) -> dict[str, object]:
-        """Analyze a PRD and generate a structured grooming plan.
-
-        Phase 1 (always): Parse PRD, identify placeholder sections, score
-        quality, and generate a grooming plan with research topics.
-
-        Phase 2 (dry_run=False): Returns the plan with status 'plan_ready',
-        indicating the orchestrator should launch the prd-groomer agent.
-
-        Args:
-            prd_path: Absolute path to the PRD markdown file to groom.
-            research_scope: Research depth: 'full', 'codebase', or 'minimal'.
-            max_iterations: Maximum validation-fix iterations (1-10).
-            target_completeness: Minimum completeness score to accept (0.0-1.0).
-            dry_run: If True, return plan without signaling agent launch.
-        """
-        from trw_mcp.state.grooming import generate_grooming_plan
-
-        path = Path(prd_path).resolve()
-        if not path.exists():
-            raise StateError(f"PRD file not found: {path}", path=str(path))
-
-        # Validate parameters
-        if max_iterations < 1 or max_iterations > 10:
-            raise ValidationError(
-                f"max_iterations must be 1-10, got {max_iterations}",
-                max_iterations=max_iterations,
-            )
-        if target_completeness < 0.0 or target_completeness > 1.0:
-            raise ValidationError(
-                f"target_completeness must be 0.0-1.0, got {target_completeness}",
-                target_completeness=target_completeness,
-            )
-        valid_scopes = ("full", "codebase", "minimal")
-        if research_scope not in valid_scopes:
-            raise ValidationError(
-                f"Invalid research_scope: {research_scope!r}. Valid: {list(valid_scopes)}",
-                research_scope=research_scope,
-            )
-
-        content = path.read_text(encoding="utf-8")
-
-        # Phase 1: Generate grooming plan (pure function)
-        plan = generate_grooming_plan(
-            content=content,
-            prd_path=str(path),
-            config=_config,
-            max_iterations=max_iterations,
-            target_completeness=target_completeness,
-            research_scope=research_scope,
-        )
-
-        # Get current quality via trw_prd_validate internals
-        v2_result = validate_prd_quality_v2(content, _config)
-        sections = _extract_sections(content)
-
-        current_quality: dict[str, object] = {
-            "total_score": v2_result.total_score,
-            "quality_tier": v2_result.quality_tier,
-            "grade": v2_result.grade,
-            "completeness_score": v2_result.completeness_score,
-            "sections_found": sections,
-            "improvement_suggestions": [
-                {
-                    "dimension": s.dimension,
-                    "priority": s.priority,
-                    "message": s.message,
-                }
-                for s in v2_result.improvement_suggestions[:5]
-            ],
-        }
-
-        status = "plan_generated" if dry_run else "plan_ready"
-
-        logger.info(
-            "trw_prd_groom_complete",
-            prd_id=plan.prd_id,
-            status=status,
-            sections_needing_work=len(plan.sections_needing_work),
-            dry_run=dry_run,
-        )
-
-        return {
-            "prd_id": plan.prd_id,
-            "status": status,
-            "grooming_plan": model_to_dict(plan),
-            "current_quality": current_quality,
-            "suggested_agent": "prd-groomer",
-        }
 
 
 # --- Private helpers ---
@@ -942,28 +584,6 @@ def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     return f"---\n{yaml_str}---\n\n{body}\n"
 
 
-def _resolve_prd_path(prd_id: str) -> Path:
-    """Resolve PRD file path from a PRD ID.
-
-    Scans ``docs/requirements-aare-f/prds/`` for a file matching the ID.
-
-    Args:
-        prd_id: PRD identifier (e.g. ``PRD-CORE-009``).
-
-    Returns:
-        Resolved path to the PRD markdown file.
-
-    Raises:
-        StateError: If the PRD file is not found.
-    """
-    project_root = resolve_project_root()
-    prds_dir = project_root / Path(_config.prds_relative_path)
-    prd_file = prds_dir / f"{prd_id}.md"
-    if prd_file.exists():
-        return prd_file
-    raise StateError(f"PRD file not found: {prd_file}", path=str(prd_file))
-
-
 def _auto_sync_index() -> bool:
     """Auto-sync INDEX.md and ROADMAP.md after PRD changes.
 
@@ -990,59 +610,3 @@ def _auto_sync_index() -> bool:
         return False
 
 
-def _log_status_change_event(
-    prd_id: str,
-    previous_status: str,
-    new_status: str,
-    force_used: bool,
-    reason: str,
-    force_override: bool = False,
-) -> None:
-    """Log a prd_status_change event to the latest run's events.jsonl.
-
-    Best-effort — logs debug/warning on failure but never raises.
-
-    Args:
-        prd_id: PRD identifier.
-        previous_status: Status before the transition.
-        new_status: Status after the transition.
-        force_used: Whether the force override was used.
-        reason: Justification for the transition.
-        force_override: Whether force was used on an invalid transition.
-    """
-    # PRD-FIX-014: Use shared run path resolution (docs/*/runs/) instead
-    # of the non-existent .trw/runs/ path.
-    try:
-        from trw_mcp.state._paths import resolve_run_path
-        from trw_mcp.state.persistence import FileEventLogger
-
-        resolved_path = resolve_run_path(None)
-        events_path = resolved_path / "meta" / _config.events_file
-        event_data: dict[str, object] = {
-            "prd_id": prd_id,
-            "previous_status": previous_status,
-            "new_status": new_status,
-            "force_used": force_used,
-            "reason": reason,
-        }
-        if force_override:
-            event_data["force_override"] = True
-        event_logger = FileEventLogger(_writer)
-        event_logger.log_event(
-            events_path,
-            "prd_status_change",
-            event_data,
-        )
-    except StateError:
-        # PRD-FIX-014-FR03: No active run — valid scenario, debug-level only
-        logger.debug(
-            "no_active_run_for_event",
-            prd_id=prd_id,
-        )
-    except Exception as exc:
-        # PRD-FIX-014-FR02: Log warning instead of silently swallowing
-        logger.warning(
-            "status_change_event_failed",
-            prd_id=prd_id,
-            error=str(exc),
-        )

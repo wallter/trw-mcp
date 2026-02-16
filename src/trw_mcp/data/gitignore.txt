@@ -1,0 +1,8 @@
+# TRW runtime artifacts — not tracked in version control.
+# Tracked: config.yaml, frameworks/, learnings/, scripts/, templates/
+context/
+reflections/
+logs/
+*.jsonl
+*.lock
+knowledge.db

@@ -90,6 +90,7 @@ class TestPhaseStatusMapping:
     """PRD-CORE-025-FR01: Phase-to-status mapping."""
 
     def test_mapping_has_four_entries(self) -> None:
+        """4 entries: plan, implement, validate, deliver."""
         assert len(PHASE_STATUS_MAPPING) == 4
 
     def test_plan_maps_to_review(self) -> None:

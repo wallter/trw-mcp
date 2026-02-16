@@ -46,6 +46,23 @@ class Priority(str, Enum):
     P3 = "P3"
 
 
+class RiskLevel(str, Enum):
+    """Risk classification for AARE-F C3 Risk-Based Rigor."""
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ComplexityFactor(str, Enum):
+    """Complexity classification for AARE-F C3 effort estimation."""
+
+    SIMPLE = "simple"
+    MODERATE = "moderate"
+    COMPLEX = "complex"
+
+
 class EvidenceLevel(str, Enum):
     """Evidence strength classification (AARE-F C6)."""
 
@@ -123,7 +140,7 @@ class PRDFrontmatter(BaseModel):
     The 12 content sections are stored as markdown body text.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, use_enum_values=True)
 
     id: str
     title: str
@@ -138,6 +155,8 @@ class PRDFrontmatter(BaseModel):
     metrics: PRDMetrics = Field(default_factory=PRDMetrics)
     quality_gates: PRDQualityGates = Field(default_factory=PRDQualityGates)
     dates: PRDDates = Field(default_factory=PRDDates)
+    risk_level: RiskLevel | None = None
+    complexity: ComplexityFactor | None = None
     template_version: str | None = None
     wave_source: str | None = None
     slos: list[str] = Field(default_factory=list)
@@ -200,7 +219,7 @@ class DimensionScore(BaseModel):
 
     name: str
     score: float = Field(ge=0.0, default=0.0)
-    max_score: float = Field(gt=0.0, default=1.0)
+    max_score: float = Field(ge=0.0, default=1.0)
     details: dict[str, object] = Field(default_factory=dict)
 
 
@@ -256,6 +275,10 @@ class ValidationResultV2(BaseModel):
     ears_classifications: list[dict[str, object]] = Field(default_factory=list)
     readability: dict[str, float] = Field(default_factory=dict)
     improvement_suggestions: list[ImprovementSuggestion] = Field(default_factory=list)
+
+    # Risk scaling fields (PRD-QUAL-013)
+    effective_risk_level: str = ""
+    risk_scaled: bool = False
 
 
 class TraceabilityResult(BaseModel):

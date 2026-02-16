@@ -2,7 +2,7 @@
 
 Extracted from tools/learning.py (PRD-FIX-010) to separate LLM integration
 from tool orchestration logic.  All helpers are ``pragma: no cover`` since
-they require the optional ``claude-agent-sdk`` package.
+they require the ``claude-agent-sdk`` package (core dependency).
 """
 
 from __future__ import annotations

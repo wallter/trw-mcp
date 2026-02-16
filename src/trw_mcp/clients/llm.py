@@ -63,7 +63,7 @@ class LLMClient:
             self._query_fn = sdk_query
             self._available = True
         except ImportError:
-            logger.debug("claude_agent_sdk not installed — LLM features disabled")
+            logger.warning("claude_agent_sdk import failed — LLM features disabled")
 
     @property
     def available(self) -> bool:

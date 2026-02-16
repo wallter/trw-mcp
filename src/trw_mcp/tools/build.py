@@ -18,13 +18,13 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.models.build import BuildStatus
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 
 logger = structlog.get_logger()
 
-_config = TRWConfig()
+_config = get_config()
 _writer = FileStateWriter()
 
 # Strip ANSI escape codes from subprocess output (PRD-CORE-023 RISK-009)

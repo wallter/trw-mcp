@@ -10,10 +10,10 @@ import os
 from pathlib import Path
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader
 
-_config = TRWConfig()
+_config = get_config()
 _reader = FileStateReader()
 
 

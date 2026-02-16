@@ -143,7 +143,6 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     import trw_mcp.tools.requirements as req_mod
-    monkeypatch.setattr(req_mod, "_config", req_mod.TRWConfig())
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
     (tmp_path / ".trw").mkdir()
@@ -361,17 +360,15 @@ class TestBackwardCompatibleOutput:
 class TestAmbiguityDetection:
     """Ambiguity detection uses V2 smell detection as single source."""
 
-    def test_ambiguity_detected_via_smells(self, tmp_path: Path) -> None:
-        """Ambiguous/vague terms should be detected via V2 smell findings."""
+    def test_ambiguity_not_detected_without_smell_modules(self, tmp_path: Path) -> None:
+        """With smell modules removed, smell_findings is always empty."""
         prd_path = tmp_path / "ambiguous.md"
         prd_path.write_text(_AMBIGUOUS_PRD, encoding="utf-8")
 
         tools = _get_tools()
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-        # V2 smell detection catches vague terms like "fast"
-        assert len(result["smell_findings"]) > 0
-        vague_texts = [sf["matched_text"] for sf in result["smell_findings"]]
-        assert any("fast" in t.lower() for t in vague_texts)
+        # Smell detection modules were removed in strip-down
+        assert result["smell_findings"] == []
 
     def test_clean_prd_low_ambiguity(self, tmp_path: Path) -> None:
         """A well-written PRD should have ambiguity rate below threshold."""

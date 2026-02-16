@@ -276,13 +276,22 @@ def check_transition_guards(
     Returns:
         TransitionResult indicating whether guards passed.
     """
-    from trw_mcp.models.config import TRWConfig as _TRWConfig
+    from trw_mcp.models.config import get_config as _get_config
 
-    _config = config or _TRWConfig()
+    _config = config or _get_config()
 
     # Identity transition — no guard needed
     if current == target:
         return TransitionResult(allowed=True, reason="Identity transition (no-op).")
+
+    # PRD-QUAL-013: Apply risk-scaled config from frontmatter
+    from trw_mcp.state.validation import derive_risk_level, get_risk_scaled_config
+
+    fm = parse_frontmatter(prd_content)
+    fm_priority = str(fm.get("priority", "P2"))
+    fm_risk = fm.get("risk_level")
+    effective_risk = derive_risk_level(fm_priority, str(fm_risk) if fm_risk else None)
+    _config = get_risk_scaled_config(_config, effective_risk)
 
     # Guard: DRAFT → REVIEW — content density check
     if current == PRDStatus.DRAFT and target == PRDStatus.REVIEW:
@@ -292,12 +301,12 @@ def check_transition_guards(
             return TransitionResult(
                 allowed=False,
                 reason=f"Content density {density:.2f} is below threshold {threshold:.2f}.",
-                guard_details={"density": density, "threshold": threshold},
+                guard_details={"density": density, "threshold": threshold, "risk_level": effective_risk},
             )
         return TransitionResult(
             allowed=True,
             reason="Content density check passed.",
-            guard_details={"density": density, "threshold": threshold},
+            guard_details={"density": density, "threshold": threshold, "risk_level": effective_risk},
         )
 
     # Guard: REVIEW → APPROVED — V2 quality validation
@@ -316,6 +325,7 @@ def check_transition_guards(
                     "total_score": result.total_score,
                     "quality_tier": result.quality_tier.value,
                     "grade": result.grade,
+                    "risk_level": effective_risk,
                 },
             )
         return TransitionResult(
@@ -325,6 +335,7 @@ def check_transition_guards(
                 "total_score": result.total_score,
                 "quality_tier": result.quality_tier.value,
                 "grade": result.grade,
+                "risk_level": effective_risk,
             },
         )
 

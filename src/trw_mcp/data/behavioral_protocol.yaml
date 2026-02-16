@@ -1,0 +1,14 @@
+# Behavioral directives — single source of truth for all injection channels.
+# Read by: CLAUDE.md template, SessionStart hook, MCP instructions.
+# NOTE: Server-side enforcement (PRD-INFRA-007) prepends warnings to every
+# tool response until ceremony is executed. These directives are mandatory.
+directives:
+  - "ALWAYS execute `trw_session_start()` FIRST — server enforces this with warnings on every response if skipped"
+  - "ALWAYS read `.trw/frameworks/FRAMEWORK.md` at session start — phase requirements are NOT optional"
+  - "ALWAYS execute `trw_status()` when resuming a run — without this, you WILL overwrite in-progress work"
+  - "ALWAYS execute `trw_init` to bootstrap run directory for new tasks — shards cannot execute without scaffolding"
+  - "ALWAYS execute `trw_event` and `trw_checkpoint` during implementation — without these, progress is lost on failure"
+  - "After errors or >2 retries: ALWAYS execute `trw_learn` to record the discovery — unrecorded mistakes WILL recur"
+  - "ALWAYS execute `trw_reflect` then `trw_phase_check` at review/completion — skipping invalidates the delivery gate"
+  - "ALWAYS execute `trw_claude_md_sync` at delivery to persist learnings — without this, next session starts blind"
+  - "Quick tasks (no run): ALWAYS use `trw_recall` at start, `trw_learn` for discoveries"

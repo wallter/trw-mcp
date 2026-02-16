@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader
 
 
 @pytest.fixture(autouse=True)
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    # Reset configs for all tool modules
-    import trw_mcp.tools.orchestration as orch_mod
-    import trw_mcp.tools.learning as learn_mod
-    import trw_mcp.tools.requirements as req_mod
-    monkeypatch.setattr(orch_mod, "_config", orch_mod.TRWConfig())
-    monkeypatch.setattr(learn_mod, "_config", learn_mod.TRWConfig())
-    monkeypatch.setattr(req_mod, "_config", req_mod.TRWConfig())
     return tmp_path
 
 
@@ -39,7 +31,7 @@ def _get_all_tools() -> dict[str, object]:
 
 
 class TestFullWorkflow:
-    """End-to-end: init -> work -> reflect -> recall -> sync CLAUDE.md."""
+    """End-to-end: init -> work -> learn -> recall -> sync CLAUDE.md."""
 
     def test_init_learn_recall_sync(self, tmp_path: Path) -> None:
         tools = _get_all_tools()
@@ -57,19 +49,7 @@ class TestFullWorkflow:
         assert status["phase"] == "research"
         assert status["status"] == "active"
 
-        # Step 3: Log some events
-        tools["trw_event"].fn(
-            event_type="phase_enter",
-            run_path=run_path,
-            data={"phase": "research"},
-        )
-        tools["trw_event"].fn(
-            event_type="shard_complete",
-            run_path=run_path,
-            data={"shard": "shard-001"},
-        )
-
-        # Step 4: Record learnings
+        # Step 3: Record learnings
         tools["trw_learn"].fn(
             summary="Integration test convention",
             detail="Always use tmp_path fixtures for file operations",
@@ -83,18 +63,11 @@ class TestFullWorkflow:
             impact=0.75,
         )
 
-        # Step 5: Reflect on the run
-        reflect_result = tools["trw_reflect"].fn(
-            run_path=run_path,
-            scope="run",
-        )
-        assert reflect_result["events_analyzed"] >= 2
-
-        # Step 6: Recall learnings
+        # Step 4: Recall learnings
         recall_result = tools["trw_recall"].fn(query="testing")
         assert recall_result["total_matches"] >= 1
 
-        # Step 7: Sync to CLAUDE.md
+        # Step 5: Sync to CLAUDE.md
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         assert sync_result["status"] == "synced"
         assert sync_result["learnings_promoted"] >= 1
@@ -106,11 +79,11 @@ class TestFullWorkflow:
         assert "trw:start" in content
         assert "Integration test convention" in content
 
-    def test_init_checkpoint_resume(self, tmp_path: Path) -> None:
+    def test_init_checkpoint(self, tmp_path: Path) -> None:
         tools = _get_all_tools()
 
         # Init
-        init_result = tools["trw_init"].fn(task_name="cp-resume-test")
+        init_result = tools["trw_init"].fn(task_name="cp-test")
         run_path = init_result["run_path"]
 
         # Checkpoint
@@ -120,19 +93,9 @@ class TestFullWorkflow:
         )
         assert cp_result["status"] == "checkpoint_created"
 
-        # Create shard work
-        writer = FileStateWriter()
-        shard_dir = Path(run_path) / "scratch" / "shard-001"
-        shard_dir.mkdir(parents=True)
-        writer.write_yaml(shard_dir / "findings.yaml", {
-            "shard_id": "shard-001",
-            "status": "complete",
-            "summary": "Found stuff",
-        })
-
-        # Resume
-        resume_result = tools["trw_resume"].fn(run_path=run_path)
-        assert "shard-001" in resume_result["shards"]["complete"]
+        # Verify checkpoint file exists
+        cp_path = Path(run_path) / "meta" / "checkpoints.jsonl"
+        assert cp_path.exists()
 
     def test_prd_create_then_validate(self, tmp_path: Path) -> None:
         tools = _get_all_tools()
@@ -156,29 +119,6 @@ class TestFullWorkflow:
             )
             # The auto-generated PRD should have basic structure
             assert len(validate_result["sections_found"]) == 12
-
-    def test_script_save_and_recall(self, tmp_path: Path) -> None:
-        tools = _get_all_tools()
-
-        # Save a script
-        tools["trw_script_save"].fn(
-            name="run-tests",
-            content="#!/bin/bash\npytest tests/ -v --cov",
-            description="Run test suite with coverage",
-            language="bash",
-        )
-
-        # Record a learning about the script
-        tools["trw_learn"].fn(
-            summary="Test runner script available",
-            detail="Use .trw/scripts/run-tests.sh for running tests",
-            tags=["testing", "scripts"],
-            impact=0.7,
-        )
-
-        # Recall should find both
-        result = tools["trw_recall"].fn(query="test")
-        assert result["total_matches"] >= 1
 
 
 class TestMultiSessionSimulation:
@@ -212,26 +152,3 @@ class TestMultiSessionSimulation:
         if reader.exists(analytics_path):
             analytics = reader.read_yaml(analytics_path)
             assert int(analytics.get("total_learnings", 0)) >= 2
-
-    def test_reflect_builds_on_prior(self, tmp_path: Path) -> None:
-        tools = _get_all_tools()
-
-        # Init with events
-        init_result = tools["trw_init"].fn(task_name="reflect-multi")
-        run_path = init_result["run_path"]
-
-        # Add repeated events (should trigger repeated-operation detection)
-        writer = FileStateWriter()
-        events_path = Path(run_path) / "meta" / "events.jsonl"
-        for i in range(5):
-            writer.append_jsonl(events_path, {
-                "ts": f"2026-01-0{i + 1}",
-                "event": "retry_operation",
-                "attempt": i,
-            })
-
-        # Reflect should detect the repeated pattern
-        result = tools["trw_reflect"].fn(run_path=run_path, scope="run")
-        assert result["events_analyzed"] >= 5
-        # The repeated "retry_operation" should be detected
-        assert result["repeated_operations"] >= 1 or result["error_patterns"] >= 0

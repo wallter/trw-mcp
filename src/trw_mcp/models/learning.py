@@ -54,12 +54,6 @@ class LearningEntry(BaseModel):
     q_value: float = Field(ge=0.0, le=1.0, default=0.5)
     q_observations: int = Field(ge=0, default=0)
     outcome_history: list[str] = Field(default_factory=list)
-    phase_scope: str | None = Field(
-        default=None,
-        description="Phase name for scoped recall scoring (PRD-CORE-017). "
-        "Auto-populated from the active run phase by trw_learn. "
-        "None means global (applies to all phases).",
-    )
     shard_id: str | None = None
 
     # PRD-CORE-026: Source attribution for human vs agent learnings
@@ -71,14 +65,6 @@ class LearningEntry(BaseModel):
         default="",
         description="Name of the source (e.g., 'Tyler', 'claude-opus-4-6').",
     )
-
-    # PRD-QUAL-007-FR04: ADR (Architecture Decision Record) fields
-    adr_status: str | None = Field(
-        default=None,
-        description="ADR lifecycle status: proposed, accepted, deprecated, superseded.",
-    )
-    affected_paths: list[str] = Field(default_factory=list)
-    verification_criteria: list[str] = Field(default_factory=list)
 
 
 class LearningIndex(BaseModel):

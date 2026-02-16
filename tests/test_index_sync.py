@@ -148,10 +148,17 @@ class TestGroupByStatus:
     def test_groups_draft(self) -> None:
         entries = [
             PRDEntry(id="D", title="", priority="P1", status="draft", category="CORE"),
+        ]
+        groups = _group_by_status(entries)
+        assert len(groups["draft"]) == 1
+
+    def test_groups_deprecated(self) -> None:
+        entries = [
             PRDEntry(id="E", title="", priority="P3", status="deprecated", category="FIX"),
         ]
         groups = _group_by_status(entries)
-        assert len(groups["draft"]) == 2
+        assert len(groups["deprecated"]) == 1
+        assert len(groups["draft"]) == 0
 
 
 # --- render_index_catalogue ---

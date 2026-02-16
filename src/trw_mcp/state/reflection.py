@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import get_config
 from trw_mcp.models.learning import LearningEntry, Reflection
 from trw_mcp.state.analytics import (
     detect_tool_sequences,
@@ -34,7 +34,7 @@ from trw_mcp.state.persistence import (
     model_to_dict,
 )
 
-_config = TRWConfig()
+_config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 _events = FileEventLogger(_writer)

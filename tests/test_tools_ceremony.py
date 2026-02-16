@@ -6,8 +6,6 @@ Covers:
 - _find_active_run helper
 - _do_checkpoint, _do_reflect, _do_claude_md_sync, _do_index_sync internals
 - _do_auto_progress: PRD auto-progression during delivery (GAP-PROC-001)
-- _do_debt_md_sync: Debt markdown auto-generation (GAP-PROC-004)
-- _generate_debt_markdown: Markdown rendering from registry entries
 - Integration tests for partial failure resilience (Sprint 13, GAP-TEST-003)
 """
 
@@ -24,11 +22,9 @@ from trw_mcp.tools.ceremony import (
     _do_auto_progress,
     _do_checkpoint,
     _do_claude_md_sync,
-    _do_debt_md_sync,
     _do_index_sync,
     _do_reflect,
     _find_active_run,
-    _generate_debt_markdown,
     _get_run_status,
 )
 
@@ -308,121 +304,6 @@ class TestDoAutoProgress:
         assert result["applied"] == 0
 
 
-# --- _generate_debt_markdown ---
-
-
-class TestGenerateDebtMarkdown:
-    """Markdown rendering from debt registry entries (GAP-PROC-004)."""
-
-    def test_renders_active_entries(self) -> None:
-        entries: list[dict[str, object]] = [
-            {
-                "id": "DEBT-001",
-                "title": "Test debt item",
-                "description": "Something needs fixing",
-                "priority": "medium",
-                "status": "discovered",
-                "affected_files": ["tools/foo.py"],
-                "estimated_effort": "1 hour",
-            },
-        ]
-        md = _generate_debt_markdown(entries)
-        assert "# Technical Debt Registry" in md
-        assert "DEBT-001" in md
-        assert "Test debt item" in md
-        assert "Medium" in md
-        assert "tools/foo.py" in md
-        assert "**Total active** | **1**" in md
-
-    def test_renders_resolved_entries(self) -> None:
-        entries: list[dict[str, object]] = [
-            {
-                "id": "DEBT-002",
-                "title": "Resolved item",
-                "priority": "high",
-                "status": "resolved",
-                "resolved_by_prd": "PRD-FIX-001",
-                "resolved_at": "2026-02-13",
-            },
-        ]
-        md = _generate_debt_markdown(entries)
-        assert "## Resolved Debt" in md
-        assert "~~DEBT-002~~" in md
-        assert "PRD-FIX-001" in md
-        assert "**Total active** | **0**" in md
-        assert "**Total resolved** | **1**" in md
-
-    def test_renders_mixed_entries_grouped_by_priority(self) -> None:
-        entries: list[dict[str, object]] = [
-            {"id": "DEBT-A", "title": "Critical", "priority": "critical", "status": "discovered"},
-            {"id": "DEBT-B", "title": "Low item", "priority": "low", "status": "discovered"},
-            {"id": "DEBT-C", "title": "Done", "priority": "high", "status": "resolved"},
-        ]
-        md = _generate_debt_markdown(entries)
-        assert "### Critical Priority" in md
-        assert "### Low Priority" in md
-        assert "~~DEBT-C~~" in md
-
-    def test_empty_registry_renders_header(self) -> None:
-        md = _generate_debt_markdown([])
-        assert "# Technical Debt Registry" in md
-        assert "**Total active** | **0**" in md
-
-
-# --- _do_debt_md_sync ---
-
-
-class TestDoDebtMdSync:
-    """Debt markdown auto-generation during delivery (GAP-PROC-004)."""
-
-    def test_generates_debt_markdown_from_registry(self, tmp_path: Path) -> None:
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        registry_yaml = (
-            "version: '1.0'\n"
-            "entries:\n"
-            "- id: DEBT-010\n"
-            "  title: Non-Atomic Writes\n"
-            "  description: Two writes are non-atomic\n"
-            "  priority: medium\n"
-            "  status: discovered\n"
-            "  classification: deferrable-local\n"
-            "  category: code_quality\n"
-            "  affected_files:\n"
-            "  - tools/requirements.py\n"
-            "  decay_score: 0.5\n"
-            "  assessment_count: 1\n"
-        )
-        (trw_dir / "debt-registry.yaml").write_text(registry_yaml, encoding="utf-8")
-
-        # Create target directory
-        debt_dir = tmp_path / "docs" / "requirements-aare-f"
-        debt_dir.mkdir(parents=True)
-
-        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
-            result = _do_debt_md_sync(trw_dir)
-
-        assert result["status"] == "success"
-        assert result["active_entries"] == 1
-        assert result["resolved_entries"] == 0
-
-        target_path = debt_dir / "TECHNICAL-DEBT.md"
-        assert target_path.exists()
-        content = target_path.read_text(encoding="utf-8")
-        assert "DEBT-010" in content
-        assert "Non-Atomic Writes" in content
-
-    def test_skips_when_no_registry(self, tmp_path: Path) -> None:
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-
-        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
-            result = _do_debt_md_sync(trw_dir)
-
-        assert result["status"] == "skipped"
-        assert result["reason"] == "no_debt_registry"
-
-
 # --- Integration tests: partial failure resilience (GAP-TEST-003) ---
 
 
@@ -435,7 +316,6 @@ def _make_ceremony_server(
     import trw_mcp.tools.ceremony as ceremony_mod
 
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setattr(ceremony_mod, "_config", ceremony_mod.TRWConfig())
 
     srv = FastMCP("test")
     register_ceremony_tools(srv)
@@ -554,10 +434,6 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools.ceremony._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
-            patch(
-                "trw_mcp.tools.ceremony._do_debt_md_sync",
-                return_value={"status": "success", "items_rendered": 0},
-            ),
             patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
         ):
             result = tools["trw_deliver"].fn()
@@ -606,10 +482,6 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools.ceremony._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
-            patch(
-                "trw_mcp.tools.ceremony._do_debt_md_sync",
-                return_value={"status": "success", "items_rendered": 0},
-            ),
             patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
         ):
             result = tools["trw_deliver"].fn()
@@ -645,10 +517,6 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools.ceremony._do_index_sync",
                 side_effect=Exception("index_sync boom"),
             ),
-            patch(
-                "trw_mcp.tools.ceremony._do_debt_md_sync",
-                return_value={"status": "success", "items_rendered": 0},
-            ),
         ):
             result = tools["trw_deliver"].fn()
 
@@ -678,10 +546,6 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools.ceremony._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
-            patch(
-                "trw_mcp.tools.ceremony._do_debt_md_sync",
-                return_value={"status": "success", "items_rendered": 0},
-            ),
         ):
             result = tools["trw_deliver"].fn(skip_reflect=True)
 
@@ -709,10 +573,6 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools.ceremony._do_claude_md_sync",
                 return_value={"status": "success", "learnings_promoted": 0,
                               "path": "", "total_lines": 0},
-            ),
-            patch(
-                "trw_mcp.tools.ceremony._do_debt_md_sync",
-                return_value={"status": "success", "items_rendered": 0},
             ),
         ):
             result = tools["trw_deliver"].fn(skip_index_sync=True)

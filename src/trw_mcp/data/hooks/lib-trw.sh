@@ -1,0 +1,144 @@
+#!/bin/sh
+# Shared TRW hook utilities — sourced by other hooks.
+# PRD-INFRA-002: Fail-open pattern, POSIX shell only.
+#
+# Usage: . "$(dirname "$0")/lib-trw.sh"
+
+# find_active_run: Locate the most recently created run directory.
+# Prints the path to the run directory, or empty string if none found.
+# Returns 0 if found, 1 if not.
+find_active_run() {
+  _task_root="${1:-docs}"
+  _project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  _latest=""
+  _latest_name=""
+
+  # Scan for run.yaml files, pick the latest by run directory name.
+  # Run dirs are named like 20260211T061443Z-58062ed4 (UTC timestamp + hash),
+  # so lexicographic sort on the basename finds the newest.
+  # NOTE: We must NOT compare full paths — task directory names pollute the sort.
+  for _task_dir in "$_project_root/$_task_root"/*/; do
+    [ -d "$_task_dir/runs" ] || continue
+    for _run_dir in "$_task_dir/runs"/*/; do
+      [ -f "$_run_dir/meta/run.yaml" ] || continue
+      _run_name="${_run_dir%/}"        # strip trailing slash
+      _run_name="${_run_name##*/}"     # basename
+      if [ -z "$_latest" ] || expr "$_run_name" '>' "$_latest_name" >/dev/null; then
+        _latest="$_run_dir"
+        _latest_name="$_run_name"
+      fi
+    done
+  done
+
+  if [ -n "$_latest" ]; then
+    printf '%s' "$_latest"
+    return 0
+  fi
+  return 1
+}
+
+# append_event: Append a JSON event line to events.jsonl.
+# Args: $1=events_path, $2=event_type, $3=extra_json_fields (optional)
+# Requires: date, printf. Uses jq if available, falls back to printf.
+append_event() {
+  _events_path="$1"
+  _event_type="$2"
+  _extra="${3:-}"
+  _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
+
+  if command -v jq >/dev/null 2>&1 && [ -n "$_extra" ]; then
+    printf '{"ts":"%s","event":"%s",%s}\n' "$_ts" "$_event_type" "$_extra" >> "$_events_path"
+  else
+    printf '{"ts":"%s","event":"%s"}\n' "$_ts" "$_event_type" >> "$_events_path"
+  fi
+}
+
+# has_event: Check if events.jsonl contains an event of a given type.
+# Args: $1=events_path, $2=event_type
+# Returns 0 if found, 1 if not.
+has_event() {
+  _path="$1"
+  _type="$2"
+  [ -f "$_path" ] || return 1
+  grep -q "\"event\":[[:space:]]*\"$_type\"" "$_path" 2>/dev/null
+}
+
+# init_hook_timer: Capture start time for duration measurement.
+# Call near the top of each hook script.
+init_hook_timer() {
+  _hook_start_epoch=$(date +%s 2>/dev/null) || _hook_start_epoch=0
+}
+
+# log_hook_execution: Append structured execution log line.
+# Args: $1=event (e.g. "SessionStart"), $2=matcher, $3=exit_code
+# Writes to .trw/context/hook-executions.log with rotation at 1000 lines.
+log_hook_execution() {
+  _le_event="${1:-unknown}"
+  _le_matcher="${2:-}"
+  _le_exit="${3:-0}"
+  _le_ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _le_ts="unknown"
+  _le_end=$(date +%s 2>/dev/null) || _le_end=0
+  _le_duration=$((_le_end - ${_hook_start_epoch:-0})) 2>/dev/null || _le_duration=0
+
+  _le_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  _le_log="$_le_root/.trw/context/hook-executions.log"
+  _le_dir="$(dirname "$_le_log")"
+  [ -d "$_le_dir" ] || mkdir -p "$_le_dir" 2>/dev/null || return 0
+
+  printf '%s event=%s matcher=%s exit=%s duration=%ss\n' \
+    "$_le_ts" "$_le_event" "$_le_matcher" "$_le_exit" "$_le_duration" \
+    >> "$_le_log" 2>/dev/null || return 0
+
+  # Rotate: cap at 1000 lines
+  if [ -f "$_le_log" ]; then
+    _le_lines=$(wc -l < "$_le_log" 2>/dev/null | tr -d ' ') || _le_lines=0
+    if [ "$_le_lines" -gt 1000 ] 2>/dev/null; then
+      _le_tmp="${_le_log}.tmp"
+      if tail -500 "$_le_log" > "$_le_tmp" 2>/dev/null; then
+        mv "$_le_tmp" "$_le_log" 2>/dev/null || rm -f "$_le_tmp" 2>/dev/null
+      else
+        rm -f "$_le_tmp" 2>/dev/null
+      fi
+    fi
+  fi
+}
+
+# check_ceremony_status: Check if TRW ceremony steps are complete.
+# PRD-INFRA-004-FR03: Scans events.jsonl for required ceremony events.
+# Prints formatted checklist of missing steps, or empty if all complete.
+# Returns 0 if checked (output may be empty or contain missing steps).
+# Returns 1 if no active run or event count < 3 (caller should skip).
+check_ceremony_status() {
+  _cs_run_dir=$(find_active_run "docs") || return 1
+  [ -n "$_cs_run_dir" ] || return 1
+
+  _cs_events="${_cs_run_dir}meta/events.jsonl"
+  [ -f "$_cs_events" ] || return 1
+
+  _cs_count=$(wc -l < "$_cs_events" 2>/dev/null | tr -d ' ') || _cs_count=0
+  [ "$_cs_count" -ge 3 ] 2>/dev/null || return 1
+
+  # FR02: trw_deliver_complete short-circuits — all ceremony done
+  if has_event "$_cs_events" "trw_deliver_complete"; then
+    return 0
+  fi
+
+  # Check individual ceremony events
+  _cs_missing=""
+  if ! has_event "$_cs_events" "reflection_complete" && ! has_event "$_cs_events" "trw_reflect_complete"; then
+    _cs_missing="${_cs_missing}, trw_reflect"
+  fi
+  if ! has_event "$_cs_events" "checkpoint"; then
+    _cs_missing="${_cs_missing}, trw_checkpoint"
+  fi
+  if ! has_event "$_cs_events" "claude_md_synced"; then
+    _cs_missing="${_cs_missing}, trw_claude_md_sync"
+  fi
+
+  if [ -n "$_cs_missing" ]; then
+    # Strip leading ", "
+    _cs_missing="${_cs_missing#, }"
+    printf 'TRW BLOCK: Missing ceremony: %s. Run trw_deliver() to complete all. (%s events logged)' "$_cs_missing" "$_cs_count"
+  fi
+  return 0
+}

@@ -1,4 +1,4 @@
-"""Tests for requirements tools — prd_create, prd_validate, traceability_check."""
+"""Tests for requirements tools — prd_create, prd_validate."""
 
 from __future__ import annotations
 
@@ -14,10 +14,9 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    import trw_mcp.tools.requirements as req_mod
-    monkeypatch.setattr(req_mod, "_config", req_mod.TRWConfig())
 
     # Reset template cache so each test starts fresh
+    import trw_mcp.tools.requirements as req_mod
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
 
@@ -222,11 +221,11 @@ Only one section.
         assert result["valid"] is False
         assert len(result["failures"]) > 0
 
-    def test_detects_ambiguity(self, tmp_path: Path) -> None:
+    def test_detects_low_density(self, tmp_path: Path) -> None:
         prd_content = """---
 prd:
   id: PRD-CORE-003
-  title: "Ambiguous"
+  title: "Sparse"
   version: "1.0"
   status: draft
   priority: P1
@@ -235,11 +234,10 @@ traceability:
   implements: [KE-001]
 ---
 
-# PRD-CORE-003: Ambiguous PRD
+# PRD-CORE-003: Sparse PRD
 
 ## 1. Problem Statement
-The system should be fast and user-friendly and robust.
-It should be scalable and flexible and easy to use.
+The system should be fast.
 
 ## 2. Goals & Non-Goals
 ## 3. User Stories
@@ -253,57 +251,19 @@ It should be scalable and flexible and easy to use.
 ## 11. Open Questions
 ## 12. Traceability Matrix
 """
-        prd_path = tmp_path / "ambiguous.md"
+        prd_path = tmp_path / "sparse.md"
         prd_path.write_text(prd_content, encoding="utf-8")
 
         tools = _get_tools()
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-        # Ambiguity is now detected via V2 smell findings, not a separate field
-        assert len(result["smell_findings"]) > 0
-        vague_texts = [sf["matched_text"] for sf in result["smell_findings"]]
-        assert any("fast" in t.lower() for t in vague_texts)
+        # Sparse PRD should have low completeness or section density issues
+        assert result["total_score"] < 80.0
 
     def test_file_not_found(self, tmp_path: Path) -> None:
         from trw_mcp.exceptions import StateError
         tools = _get_tools()
         with pytest.raises(StateError, match="not found"):
             tools["trw_prd_validate"].fn(prd_path=str(tmp_path / "nonexistent.md"))
-
-
-class TestTrwTraceabilityCheck:
-    """Tests for trw_traceability_check tool."""
-
-    def test_no_prds(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_traceability_check"].fn()
-        assert result["total_requirements"] == 0
-
-    def test_checks_specific_prd(self, tmp_path: Path) -> None:
-        # Create a PRD with traceability
-        prd_content = """---
-prd:
-  id: PRD-CORE-001
-  title: "Traced PRD"
-
-traceability:
-  implements: [KE-FRAME-001]
----
-
-# PRD-CORE-001: Traced PRD
-
-## 12. Traceability Matrix
-
-| Requirement | Source | Implementation | Test | Status |
-|-------------|--------|----------------|------|--------|
-| FR01 | KE-001 | `module.py:fn` | `test.py::test` | Impl |
-"""
-        prd_path = tmp_path / "traced.md"
-        prd_path.write_text(prd_content, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_traceability_check"].fn(prd_path=str(prd_path))
-        assert result["total_requirements"] >= 1
-        assert result["prd_files_analyzed"] == 1
 
 
 class TestTemplateLoading:

@@ -1,29 +1,23 @@
-"""CLAUDE.md rendering and sync — template loading, section generation, marker-based merge.
-
-Extracted from tools/learning.py (PRD-FIX-010) to separate CLAUDE.md concerns
-from learning tool logic. Sprint 12 Track C: added execute_claude_md_sync()
-and sync_bounded_contexts() to further reduce tools/learning.py.
-"""
+"""CLAUDE.md rendering and sync — template loading, section generation, marker-based merge."""
 
 from __future__ import annotations
 
 import structlog
-from fnmatch import fnmatch
+
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 if TYPE_CHECKING:
     from trw_mcp.clients.llm import LLMClient
-    from trw_mcp.models.architecture import BoundedContext
 
 logger = structlog.get_logger()
 
-_config = TRWConfig()
+_config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
@@ -31,8 +25,6 @@ _writer = FileStateWriter()
 CLAUDEMD_LEARNING_CAP = 10
 CLAUDEMD_PATTERN_CAP = 5
 BEHAVIORAL_PROTOCOL_CAP = 12
-BOUNDED_ADR_CAP = 5
-BOUNDED_LEARNING_CAP = 8
 
 
 class CeremonyTool(NamedTuple):
@@ -48,34 +40,26 @@ class CeremonyTool(NamedTuple):
 # Phase descriptions for the 6-phase execution model
 PHASE_DESCRIPTIONS: list[tuple[str, str]] = [
     ("RESEARCH", "Discover context, audit codebase, register findings"),
-    ("PLAN", "Design wave/shard manifest, identify dependencies"),
-    ("IMPLEMENT", "Execute shards with events and checkpoints"),
-    ("VALIDATE", "Run targeted tests, build checks, phase gates"),
-    ("REVIEW", "Reflect on learnings, audit compliance"),
+    ("PLAN", "Design implementation approach, identify dependencies"),
+    ("IMPLEMENT", "Execute work with periodic checkpoints"),
+    ("VALIDATE", "Run tests, build checks, verify correctness"),
+    ("REVIEW", "Reflect on learnings, check compliance"),
     ("DELIVER", "Sync artifacts, checkpoint, close run"),
 ]
 
-# 19 lifecycle-critical tools in execution order
+# 11 lifecycle-critical tools in execution order
 CEREMONY_TOOLS: list[CeremonyTool] = [
     CeremonyTool("Start", "trw_session_start", "ALWAYS at session start", "Recall learnings + check run status", "trw_session_start()"),
     CeremonyTool("Start", "trw_recall", "ALWAYS for quick tasks (no run)", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
-    CeremonyTool("Start", "trw_status", "ALWAYS when resuming a run", "Show run phase/wave/shard state", "trw_status()"),
+    CeremonyTool("Start", "trw_status", "ALWAYS when resuming a run", "Show run state and phase", "trw_status()"),
     CeremonyTool("RESEARCH", "trw_init", "ALWAYS for new tasks", "Bootstrap run directory + events", "trw_init(task_name='...')"),
-    CeremonyTool("PLAN", "trw_wave_plan", "ALWAYS after plan finalized", "Create wave manifest with shards", "trw_wave_plan(waves=[...])"),
-    CeremonyTool("IMPLEMENT", "trw_shard_start", "ALWAYS before each shard", "Set up shard working directory", "trw_shard_start(shard_id='S1')"),
-    CeremonyTool("IMPLEMENT", "trw_event", "During work", "Log event to audit trail", "trw_event('shard_progress')"),
-    CeremonyTool("IMPLEMENT", "trw_checkpoint", "Every milestone / ~10min", "Atomic state snapshot", "trw_checkpoint(message='...')"),
-    CeremonyTool("IMPLEMENT", "trw_shard_complete", "ALWAYS after each shard", "Validate output contracts", "trw_shard_complete(shard_id='S1')"),
-    CeremonyTool("IMPLEMENT", "trw_wave_complete", "ALWAYS after all shards", "Cross-shard validation", "trw_wave_complete(wave_number=1)"),
-    CeremonyTool("IMPLEMENT", "trw_wave_adapt", "ALWAYS after wave completes", "Adapt remaining waves", "trw_wave_adapt(wave_number=1)"),
     CeremonyTool("Any", "trw_learn", "ALWAYS on errors/discoveries", "Record learning entry", "trw_learn(summary='...', impact=0.8)"),
-    CeremonyTool("VALIDATE", "trw_test_target", "ALWAYS before full suite", "Recommend targeted tests", "trw_test_target()"),
-    CeremonyTool("VALIDATE", "trw_build_check", "ALWAYS before phase exit", "Run pytest + mypy", "trw_build_check(scope='full')"),
-    CeremonyTool("VALIDATE", "trw_phase_check", "ALWAYS at phase boundaries", "Check exit criteria", "trw_phase_check('implement')"),
-    CeremonyTool("REVIEW", "trw_reflect", "ALWAYS at review/completion", "Extract learnings from events", "trw_reflect(scope='session')"),
-    CeremonyTool("REVIEW", "trw_compliance_check", "ALWAYS before delivery", "Audit session compliance", "trw_compliance_check()"),
+    CeremonyTool("Any", "trw_checkpoint", "Every milestone / ~10min", "Atomic state snapshot", "trw_checkpoint(message='...')"),
+    CeremonyTool("PLAN", "trw_prd_create", "When defining requirements", "Generate AARE-F PRD", "trw_prd_create(input_text='...')"),
+    CeremonyTool("PLAN", "trw_prd_validate", "Before implementation", "PRD quality gate", "trw_prd_validate(prd_path='...')"),
+    CeremonyTool("VALIDATE", "trw_build_check", "ALWAYS before delivery", "Run pytest + mypy", "trw_build_check(scope='full')"),
+    CeremonyTool("DELIVER", "trw_claude_md_sync", "ALWAYS at delivery", "Promote learnings to CLAUDE.md", "trw_claude_md_sync()"),
     CeremonyTool("DELIVER", "trw_deliver", "ALWAYS at task completion", "reflect+sync+checkpoint+index", "trw_deliver()"),
-    CeremonyTool("DELIVER", "trw_health", "For diagnostics", "Flywheel health report", "trw_health()"),
 ]
 
 
@@ -331,6 +315,13 @@ def render_imperative_opener() -> str:
         "- **AFTER COMPLETING WORK**: ALWAYS call `trw_deliver()` "
         "(or `trw_reflect` + `trw_claude_md_sync` for quick tasks). NEVER skip this step.\n"
         "\n"
+        "FAILURE TO COMPLY causes:\n"
+        "  1. Repeated mistakes — learnings from prior sessions are NOT loaded\n"
+        "  2. Lost progress — active run state is NOT recovered\n"
+        "  3. Protocol violations — phase requirements are NOT enforced\n"
+        "  4. Compliance failure — trw_compliance_check WILL report violations\n"
+        "  5. Server warnings — every tool response WILL include a blocking warning\n"
+        "\n"
     )
 
 
@@ -409,20 +400,15 @@ def render_ceremony_flows() -> str:
         "\n"
         "**Quick Task** (no run needed):\n"
         "```\n"
-        "trw_session_start -> work -> trw_learn (if discovery) -> trw_reflect\n"
+        "trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()\n"
         "```\n"
         "\n"
         "**Full Run**:\n"
         "```\n"
         "trw_session_start -> trw_init(task_name, prd_scope)\n"
-        "  -> trw_wave_plan(waves=[...])\n"
-        "  Per wave:\n"
-        "    -> trw_shard_start -> trw_event + trw_checkpoint -> trw_shard_complete\n"
-        "    -> trw_wave_complete -> trw_wave_adapt\n"
-        "  After all waves:\n"
-        "    -> trw_test_target -> trw_build_check(scope='full')\n"
-        "    -> trw_phase_check('validate') -> trw_reflect(scope='run')\n"
-        "    -> trw_compliance_check -> trw_deliver()\n"
+        "  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)\n"
+        "  -> trw_build_check(scope='full')\n"
+        "  -> trw_deliver()\n"
         "```\n"
         "\n"
     )
@@ -583,136 +569,6 @@ def collect_context_data(
     return arch_data, conv_data
 
 
-def collect_adrs_for_context(
-    trw_dir: Path,
-    context_path: str,
-) -> list[dict[str, object]]:
-    """Collect ADR learning entries whose affected_paths match a bounded context.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        context_path: Bounded context path to match against.
-
-    Returns:
-        List of ADR learning entry dicts.
-    """
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    if not entries_dir.exists():
-        return []
-
-    adrs: list[dict[str, object]] = []
-    for entry_file in sorted(entries_dir.glob("*.yaml")):
-        try:
-            data = _reader.read_yaml(entry_file)
-        except (StateError, ValueError, TypeError):
-            continue
-        if data.get("adr_status") is None:
-            continue
-        affected = data.get("affected_paths", [])
-        if not isinstance(affected, list):
-            continue
-        if any(isinstance(pat, str) and fnmatch(context_path, pat) for pat in affected):
-            adrs.append(data)
-    return adrs
-
-
-def render_bounded_context_claude_md(
-    context_name: str,
-    context_path: str,
-    learnings: list[dict[str, object]],
-    adrs: list[dict[str, object]],
-    max_lines: int = 50,
-) -> str:
-    """Render a sub-CLAUDE.md for a bounded context.
-
-    Args:
-        context_name: Name of the bounded context.
-        context_path: Path of the bounded context.
-        learnings: Relevant learning entries.
-        adrs: ADR entries for this context.
-        max_lines: Maximum lines for the output.
-
-    Returns:
-        Markdown string for the sub-CLAUDE.md content.
-    """
-    lines: list[str] = [
-        f"# {context_name}",
-        "",
-        f"Module path: `{context_path}`",
-        "",
-    ]
-
-    if adrs:
-        lines.append("## Architecture Decisions")
-        for adr in adrs[:BOUNDED_ADR_CAP]:
-            status = adr.get("adr_status", "proposed")
-            summary = str(adr.get("summary", ""))
-            lines.append(f"- [{status}] {summary}")
-        lines.append("")
-
-    if learnings:
-        lines.append("## Key Learnings")
-        for learning in learnings[:BOUNDED_LEARNING_CAP]:
-            summary = str(learning.get("summary", ""))
-            lines.append(f"- {summary}")
-        lines.append("")
-
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        lines.append("<!-- trw: truncated to line limit -->")
-
-    return "\n".join(lines)
-
-
-def _as_str_list(val: object) -> list[str]:
-    """Convert value to list[str] for safe iteration."""
-    if isinstance(val, list):
-        return [str(v) for v in val]
-    return []
-
-
-def sync_bounded_contexts(
-    contexts: list["BoundedContext"],
-    project_root: Path,
-    trw_dir: Path,
-    high_impact: list[dict[str, object]],
-    config: TRWConfig,
-    writer: FileStateWriter,
-) -> int:
-    """Write sub-CLAUDE.md files for each bounded context.
-
-    Args:
-        contexts: List of bounded context definitions.
-        project_root: Path to project root.
-        trw_dir: Path to .trw directory.
-        high_impact: High-impact learning entries.
-        config: TRW configuration.
-        writer: File state writer instance.
-
-    Returns:
-        Number of sub-CLAUDE.md files written.
-    """
-    count = 0
-    for ctx in contexts:
-        ctx_adrs = collect_adrs_for_context(trw_dir, ctx.path)
-        ctx_learnings = [
-            entry for entry in high_impact
-            if any(
-                ctx.path in str(ev)
-                for ev in _as_str_list(entry.get("evidence", []))
-            )
-        ]
-        ctx_content = render_bounded_context_claude_md(
-            ctx.name, ctx.path, ctx_learnings, ctx_adrs,
-            max_lines=config.sub_claude_md_max_lines,
-        )
-        ctx_target = project_root / ctx.path / "CLAUDE.md"
-        ctx_target.parent.mkdir(parents=True, exist_ok=True)
-        writer.write_text(ctx_target, ctx_content)
-        count += 1
-    return count
-
-
 def execute_claude_md_sync(
     scope: str,
     target_dir: str | None,
@@ -738,7 +594,6 @@ def execute_claude_md_sync(
         Result dictionary with sync metadata.
     """
     from trw_mcp.state.analytics import mark_promoted, update_analytics_sync
-    from trw_mcp.state.architecture import load_architecture_config
     from trw_mcp.state.llm_helpers import llm_summarize_learnings
 
     trw_dir = resolve_trw_dir()
@@ -793,15 +648,7 @@ def execute_claude_md_sync(
 
     trw_section = render_template(template, tpl_context)
 
-    # PRD-QUAL-007-FR06: Bounded context sub-CLAUDE.md generation
     bounded_context_count = 0
-    if scope == "sub" and not target_dir:
-        arch_cfg = load_architecture_config(project_root)
-        if arch_cfg is not None and arch_cfg.bounded_contexts:
-            bounded_context_count = sync_bounded_contexts(
-                arch_cfg.bounded_contexts, project_root, trw_dir,
-                high_impact, config, writer,
-            )
 
     if scope == "sub" and target_dir:
         target = Path(target_dir).resolve() / "CLAUDE.md"

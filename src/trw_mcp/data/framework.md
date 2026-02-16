@@ -1,11 +1,11 @@
-v18.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
+v20.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
 Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated
-Version date: 2026-02-07 | Model: Opus 4.6
+Version date: 2026-02-14 | Model: Opus 4.6
 
 <critical>
 ## EXECUTION MODEL SUMMARY
 
-**v18.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 18 MCP tools**
+**v20.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 18 MCP tools**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN (see PARALLELISM).
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
@@ -85,15 +85,16 @@ Treat persistence failures as P0 blockers.
 ## PHASES
 
 ```
-RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
+RESEARCH → PLAN → IMPLEMENT → AUDIT → VALIDATE → REVIEW → DELIVER
 ```
 
 | Phase | Exit Criteria | Cap (% of TIMEBOX_HOURS) |
 |-------|---------------|-----|
 | RESEARCH | plan.md draft, ≥3 evidence paths, formation selected. Uses EXPLORATION SHARDS (findings.yaml). | 25% |
 | PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. Uses PLANNING SHARDS (plan_fragment.yaml). | 15% |
-| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. Uses WAVE ORCHESTRATION (output_contract). | 40% |
-| VALIDATE | Coverage ≥ target, gates pass, no P0 | 10% |
+| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. Uses WAVE ORCHESTRATION (output_contract). | 30% |
+| AUDIT | Audit report produced, zero P0 findings, tests pass, coverage non-decreasing. Auto-pass for non-quality_pass runs. | 15% |
+| VALIDATE | Coverage ≥ target, gates pass, no P0 | 5% |
 | REVIEW | Critic reviewed, simplifications applied, **reflection completed** (`trw_reflect`) | 5% |
 | DELIVER | PR created OR archived, final.md, **CLAUDE.md synced** (`trw_claude_md_sync`), CHANGELOG.md updated | 5% |
 
@@ -124,6 +125,8 @@ After each RESEARCH wave, ORC evaluates findings and MAY spawn follow-up waves:
 
 ORC classifies open questions as: `answered_elsewhere` (skip), `needs_investigation` (shard), `deferred` (log).
 Shards MAY flag discoveries that contradict prior assumptions via blackboard entry with key `emergent_axis`. ORC SHOULD spawn a targeted follow-up wave for each emergent axis.
+
+**Proven pattern**: 3-wave research (discovery → deep-dive → synthesis) consistently produces actionable plans. Wave 1: broad parallel exploration across axes. Wave 2: targeted deep-dives on Wave 1 findings. Wave 3: synthesis shard that reads ALL prior outputs — this shard is the bottleneck and MUST NOT be parallelized.
 
 ---
 
@@ -255,6 +258,8 @@ Shard start → trw_shard_context(run_path, shard_id)
 
 Shards MUST pass `shard_id` to `trw_event`, `trw_learn`, `trw_checkpoint`, and `trw_recall` for attribution.
 
+Shards MUST use structured file-creation tools (Write tool, file I/O APIs) rather than shell heredocs for output files. Shell heredocs silently truncate outputs beyond ~500 lines, causing data loss without error signals.
+
 ### Sub-Agent Tool Obligations
 
 | Tool | Obligation | When |
@@ -281,6 +286,8 @@ Sub-agents MAY run in parallel (multiple Task() calls in one message). Concurren
 | Scratch directory | Per-shard isolation (`scratch/{shard_id}/`) — no contention |
 
 Limitations: Advisory locks are process-scoped (fcntl). Across separate OS processes, lock files provide coordination but not strict mutual exclusion. Within a single MCP server process, all guarantees hold.
+
+**Concurrent edit rule**: Shards MUST re-read files immediately before editing — other shards may have modified them since last read. Never assume a file's content is still what you read earlier in the session.
 
 ---
 
@@ -314,6 +321,8 @@ Shard cards define parallel work units. Fields: `id`, `title`, `wave` (1-based; 
 ---
 
 ## ARCHITECTURE
+
+<!-- PRD-QUAL-007: Architecture Fitness Functions -->
 
 <architecture>
 
@@ -582,6 +591,8 @@ When updating plan: add `## Revision [N]`, document change/why/impact, log to ev
 
 ## PHASE REVERSION
 
+<!-- PRD-CORE-013: Phase Reversion & Refactor-First Workflow -->
+
 <phase_reversion>
 
 Agents SHOULD revert to earlier phases when implementation reveals structural gaps. Reverting early prevents workarounds that compound technical debt.
@@ -641,6 +652,8 @@ Thresholds configurable via `reversion_rate_elevated` and `reversion_rate_concer
 
 ## REFACTORING WORKFLOW
 
+<!-- PRD-CORE-016: Mid-Implementation Refactoring Protocol -->
+
 <refactoring>
 
 When shards discover structural impediments during implementation, classify them immediately using the 2x2 matrix.
@@ -692,6 +705,8 @@ For `blocking-local`: collapse to checkpoint → inline refactor → separate co
 
 Budget heuristic: critical debt → allocate up to 20% of wave capacity for refactoring shards. High debt → at least 15%.
 
+**Velocity insight**: Technical debt interacts with velocity in a CUBIC relationship — unaddressed debt compounds nonlinearly. A proactive 15-20% refactoring budget prevents the Phase 3 "debt drag" where velocity degrades rapidly.
+
 ### Debt Lifecycle
 
 ```
@@ -717,6 +732,7 @@ Heuristic: if shards are independent (≤5% file overlap), spawn `clamp(MIN_SHAR
 - Every Task() call MUST block (omit `run_in_background` or set `false`). WHY: background agents lose MCP tools, cause token explosion (30-50K+), context staleness, file lock deadlocks.
 - If wave output similarity > CORRELATION_MIN → spawn a dissenting shard in the next wave
 - Self-check before every Task(): "Will I wait for this result before my next action?" YES = correct.
+- Before launching N parallel shards, ORC SHOULD test ONE shard first to validate prompt quality and tool access. This prevents N simultaneous failures from a bad prompt or misconfigured agent type.
 </rules>
 
 ---
@@ -728,6 +744,7 @@ Before IMPLEMENT, verify:
 1. Source identified (PRD, issue, request)
 2. Acceptance criteria in `plan.md`
 3. Each REQ has: ID, criterion, verification method
+4. Architecture audit completed — refactor prerequisites MUST be identified and addressed BEFORE feature work (refactor-first workflow)
 </pre_development>
 
 <post_development>
@@ -745,6 +762,8 @@ requirements_traceability:
 
 When `MCP_MODE: tool` and AARE-F framework file exists: `trw_prd_create` at RESEARCH/PLAN, `trw_prd_validate` (MUST pass) pre-IMPLEMENT, `trw_traceability_check` at VALIDATE/DELIVER.
 
+**PRD quality pattern**: Research shard findings are the critical input for PRD grooming — without them, agents produce generic content. When grooming PRDs, provide the template AND a gold-standard example PRD for maximum compliance. PRD ID conflicts occur when auto-assigning — always verify next available sequence against existing PRDs.
+
 ---
 
 ## TDD & CODE QUALITY
@@ -759,6 +778,8 @@ When `MCP_MODE: tool` and AARE-F framework file exists: `trw_prd_create` at RESE
 ---
 
 ## TESTING STRATEGY
+
+<!-- PRD-QUAL-006: Targeted Testing & Phase-Appropriate Strategy -->
 
 <testing_strategy>
 
@@ -874,7 +895,13 @@ Shards MUST create a TODO when noticing an improvement outside their scope.
 
 ## SELF-IMPROVEMENT & LEARNING
 
-Learning lifecycle (see MCP TOOLS table for tool obligations):
+### Ceremony Flywheel
+
+The self-improvement loop is a cascade: `recall → work → reflect → learn → sync`. Session-start ceremony (`trw_recall` or `trw_session_start`) is the trigger — skipping it causes ALL downstream ceremonies to be skipped. ORC MUST treat session-start ceremony as the highest-priority first action in every session.
+
+### Learning Lifecycle
+
+(See MCP TOOLS table for tool obligations)
 ```
 Before task → trw_recall(query)          # SHOULD: check prior knowledge
 During work → trw_learn(summary, detail) # SHOULD: record workarounds, API gotchas, env issues
@@ -940,6 +967,8 @@ All generated artifacts (reports, shard cards, sub-agent prompts, plans) MUST fo
 Shard prompts use `<context>`, `<task>`, `<output_contract>`, `<constraints>`, `<mcp_tools>` XML tags.
 Inputs as file paths (never inlined). Target: <500 tokens. Output: YAML. Write contract file LAST; if input missing, write `status: failed`.
 
+**Prompt quality rule**: Shard prompt quality directly determines output quality. MUST include: specific file paths with line numbers, explicit tool sequences, concrete success criteria. Generic instructions produce generic results.
+
 <mcp_tools>
 First call: `trw_shard_context(run_path, shard_id)` → use returned paths for all tools.
 
@@ -976,7 +1005,7 @@ Log: `{"event":"framework_review","trigger":"...","violations":0}`
 
 ### Context Compaction Protocol
 
-On context compact: (1) persist all state to `run.yaml` and critical files, (2) commit green state, (3) reload FRAMEWORK.md + CLAUDE.md, (4) resume from `wave_manifest.yaml`.
+On context compact: (1) persist all state to `run.yaml` and critical files, (2) commit green state, (3) reload FRAMEWORK.md + CLAUDE.md, (4) MUST execute full session-start ceremony (recall, status check, FRAMEWORK.md read) — compaction destroys ceremony habits, (5) resume from `wave_manifest.yaml`.
 
 ### Mid-Stream User Input
 

@@ -9,14 +9,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
     json_serializer,
 )
 
-_config = TRWConfig()
+_config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
@@ -78,13 +78,13 @@ def prune_recall_receipts(trw_dir: Path) -> int:
     # Keep the most recent entries (last N)
     kept = records[-max_entries:]
 
-    # Rewrite the file with only kept entries
+    # Rewrite the file atomically (DEBT-028)
     import json as _json
 
-    receipt_path.write_text("", encoding="utf-8")
-    for record in kept:
-        line = _json.dumps(record, default=json_serializer) + "\n"
-        with receipt_path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
+    content = "".join(
+        _json.dumps(record, default=json_serializer) + "\n"
+        for record in kept
+    )
+    _writer.write_text(receipt_path, content)
 
     return removed

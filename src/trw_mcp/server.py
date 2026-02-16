@@ -17,7 +17,8 @@ from pathlib import Path
 import structlog
 from fastmcp import FastMCP
 
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.middleware.ceremony import CeremonyMiddleware
+from trw_mcp.models.config import TRWConfig  # used in main()
 
 
 def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
@@ -73,15 +74,12 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
 mcp = FastMCP(
     "trw",
     instructions=(
-        "TRW orchestration + self-learning tools. "
-        "Workflow: trw_init → trw_event/checkpoint → trw_reflect → trw_recall → trw_claude_md_sync. "
-        ".trw/ persists knowledge across sessions. "
-        "ALWAYS execute trw_recall('*', min_impact=0.7) at session start — NEVER skip this step. "
-        "ALWAYS execute trw_reflect after completing tasks. "
-        "ALWAYS execute trw_claude_md_sync at delivery. "
-        "ALWAYS read .trw/frameworks/FRAMEWORK.md for phase requirements. "
-        "Sub-agents: ALWAYS call trw_shard_context FIRST to get run paths and tool guidance."
+        "TRW engineering memory + build verification. "
+        "MANDATORY FIRST CALL: trw_session_start(). "
+        "Workflow: trw_session_start → work → trw_learn (discoveries) → trw_deliver. "
+        ".trw/ persists knowledge across sessions."
     ),
+    middleware=[CeremonyMiddleware()],
 )
 
 
@@ -91,39 +89,17 @@ def _register_tools() -> None:
     from trw_mcp.resources.config import register_config_resources
     from trw_mcp.resources.run_state import register_run_state_resources
     from trw_mcp.resources.templates import register_template_resources
-    from trw_mcp.tools.bdd import register_bdd_tools
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
-    from trw_mcp.tools.compliance import register_compliance_tools
-    from trw_mcp.tools.findings import register_findings_tools
-    from trw_mcp.tools.gate_strategy import register_gate_tools
-    from trw_mcp.tools.health import register_health_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
-    from trw_mcp.tools.refactoring import register_refactoring_tools
     from trw_mcp.tools.requirements import register_requirements_tools
-    from trw_mcp.tools.sprint import register_sprint_tools
-    from trw_mcp.tools.testing import register_testing_tools
-    from trw_mcp.tools.tracks import register_track_tools
-    from trw_mcp.tools.velocity import register_velocity_tools
-    from trw_mcp.tools.wave import register_wave_tools
 
-    register_bdd_tools(mcp)
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
-    register_compliance_tools(mcp)
-    register_findings_tools(mcp)
-    register_gate_tools(mcp)
-    register_health_tools(mcp)
     register_learning_tools(mcp)
     register_orchestration_tools(mcp)
-    register_refactoring_tools(mcp)
     register_requirements_tools(mcp)
-    register_sprint_tools(mcp)
-    register_testing_tools(mcp)
-    register_track_tools(mcp)
-    register_velocity_tools(mcp)
-    register_wave_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)
@@ -134,6 +110,31 @@ def _register_tools() -> None:
 
 # Eager registration so tools are available via `fastmcp run` and test imports.
 _register_tools()
+
+
+def _run_init_project(args: argparse.Namespace) -> None:
+    """Handle the ``init-project`` subcommand."""
+    from trw_mcp.bootstrap import init_project
+
+    target = Path(args.target_dir).resolve()
+    result = init_project(target, force=args.force)
+
+    for f in result["created"]:
+        print(f"  Created: {f}")
+    for f in result["skipped"]:
+        print(f"  Skipped (exists): {f}")
+    for e in result["errors"]:
+        print(f"  ERROR: {e}")
+
+    if not result["errors"]:
+        print(f"\nTRW framework initialized in {target}")
+        print("Next steps:")
+        print("  1. Edit CLAUDE.md with your project details")
+        print("  2. Run `trw-mcp` to start the MCP server")
+        print("  3. In Claude Code, run /mcp to connect")
+        print("  4. Call trw_session_start() to begin")
+
+    sys.exit(1 if result["errors"] else 0)
 
 
 def main() -> None:
@@ -147,8 +148,33 @@ def main() -> None:
         action="store_true",
         help="Enable debug logging to .trw/logs/ and stderr",
     )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("serve", help="Run MCP server (default)")
+
+    init_parser = subparsers.add_parser(
+        "init-project", help="Bootstrap TRW in a project directory"
+    )
+    init_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Target project directory (default: current directory)",
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing files",
+    )
+
     args = parser.parse_args()
 
+    if args.command == "init-project":
+        _run_init_project(args)
+        return
+
+    # Default: run MCP server (no subcommand or "serve")
     config = TRWConfig()
     debug = args.debug or config.debug
 

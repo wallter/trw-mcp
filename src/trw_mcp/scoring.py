@@ -19,14 +19,14 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import get_config
 from trw_mcp.models.run import EventType
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
 
-_config = TRWConfig()
+_config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
@@ -170,46 +170,19 @@ def compute_utility_score(
 # --- Recall ranking (PRD-FIX-010: moved from tools/learning.py) ---
 
 
-def _compute_phase_bonus(
-    current_phase: str | None,
-    entry: dict[str, object],
-) -> float:
-    """Compute phase-scoped bonus for a learning entry (PRD-CORE-017).
-
-    When current_phase is active, entries with a matching phase_scope
-    receive a positive bonus, global entries (no scope) receive zero,
-    and non-matching entries receive a negative penalty.
-    """
-    if not current_phase:
-        return 0.0
-
-    entry_phase = str(entry.get("phase_scope", "") or "")
-    if not entry_phase:
-        return _config.phase_bonus_global
-    if entry_phase == current_phase:
-        return _config.phase_bonus_matching
-    return _config.phase_bonus_nonmatching
-
-
 def rank_by_utility(
     matches: list[dict[str, object]],
     query_tokens: list[str],
     lambda_weight: float,
-    current_phase: str | None = None,
 ) -> list[dict[str, object]]:
     """Re-rank matched learnings by combined relevance + utility score.
 
-    Combined score = (1 - lambda) * relevance + lambda * utility + phase_bonus
-
-    Phase bonus (PRD-CORE-017): When current_phase is provided, learnings with
-    matching phase_scope get +0.15, global (no scope) get 0.0, non-matching
-    get -0.05. Configurable via TRWConfig.
+    Combined score = (1 - lambda) * relevance + lambda * utility
 
     Args:
         matches: List of matched learning entry dicts.
         query_tokens: Lowercased query tokens for relevance scoring.
         lambda_weight: Blend factor. 0.0 = pure relevance, 1.0 = pure utility.
-        current_phase: Active phase name for phase-scoped scoring. None = no bonus.
 
     Returns:
         Sorted list (highest combined score first).
@@ -265,14 +238,7 @@ def rank_by_utility(
             source_human_boost=_config.source_human_utility_boost,
         )
 
-        # Phase bonus (PRD-CORE-017): match > global > non-match
-        phase_bonus = _compute_phase_bonus(current_phase, entry)
-
-        combined = (
-            (1.0 - lambda_weight) * relevance
-            + lambda_weight * utility
-            + phase_bonus
-        )
+        combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
 
         scored.append((combined, entry))
 

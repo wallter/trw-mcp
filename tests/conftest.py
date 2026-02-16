@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, FileEventLogger
 
 # --- Marker auto-assignment ---
@@ -54,6 +54,14 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.e2e)
         else:
             item.add_marker(pytest.mark.integration)
+
+
+@pytest.fixture(autouse=True)
+def _reset_config_singleton() -> None:  # type: ignore[misc]
+    """Reset TRWConfig singleton for test isolation."""
+    _reset_config()
+    yield
+    _reset_config()
 
 
 @pytest.fixture

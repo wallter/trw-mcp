@@ -1,0 +1,334 @@
+"""Tests for CeremonyMiddleware — server-side ceremony enforcement.
+
+PRD-INFRA-007: Validates per-session state tracking, warning prepending,
+exempt tools, graceful fallback, and multi-session isolation.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+from mcp.types import TextContent
+
+from trw_mcp.middleware.ceremony import (
+    CEREMONY_TOOLS,
+    CEREMONY_WARNING,
+    CeremonyMiddleware,
+    is_session_active,
+    mark_session_active,
+    reset_state,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_state() -> None:
+    """Reset module-level session state before each test."""
+    reset_state()
+
+
+# --- Helper dataclasses to simulate FastMCP middleware types ---
+
+
+@dataclass
+class FakeRequestContext:
+    """Minimal request context stub."""
+
+    session_id: str = "test-session-1"
+
+
+@dataclass
+class FakeContext:
+    """Minimal FastMCP Context stub with session_id."""
+
+    request_context: FakeRequestContext | None = None
+
+    @property
+    def session_id(self) -> str:
+        if self.request_context is None:
+            raise RuntimeError("No request context")
+        return self.request_context.session_id
+
+
+@dataclass
+class FakeMessage:
+    """Minimal CallToolRequestParams stub."""
+
+    name: str
+    arguments: dict[str, Any] | None = None
+
+
+@dataclass
+class FakeMiddlewareContext:
+    """Minimal MiddlewareContext stub."""
+
+    message: FakeMessage
+    fastmcp_context: FakeContext | None = None
+    timestamp: datetime = datetime.now(timezone.utc)
+
+
+@dataclass
+class FakeToolResult:
+    """Minimal ToolResult stub with mutable content list."""
+
+    content: list[Any]
+
+
+# --- Unit tests for state functions ---
+
+
+class TestSessionState:
+    """Tests for module-level session state management."""
+
+    def test_new_session_is_not_active(self) -> None:
+        assert not is_session_active("new-session")
+
+    def test_mark_session_active(self) -> None:
+        mark_session_active("sess-1")
+        assert is_session_active("sess-1")
+
+    def test_different_sessions_independent(self) -> None:
+        mark_session_active("sess-1")
+        assert is_session_active("sess-1")
+        assert not is_session_active("sess-2")
+
+    def test_reset_clears_all(self) -> None:
+        mark_session_active("sess-1")
+        mark_session_active("sess-2")
+        reset_state()
+        assert not is_session_active("sess-1")
+        assert not is_session_active("sess-2")
+
+    def test_mark_idempotent(self) -> None:
+        mark_session_active("sess-1")
+        mark_session_active("sess-1")
+        assert is_session_active("sess-1")
+
+
+# --- Tests for exempt tools constant ---
+
+
+class TestCeremonyTools:
+    """Tests for the CEREMONY_TOOLS constant."""
+
+    def test_contains_session_start(self) -> None:
+        assert "trw_session_start" in CEREMONY_TOOLS
+
+    def test_contains_init(self) -> None:
+        assert "trw_init" in CEREMONY_TOOLS
+
+    def test_contains_recall(self) -> None:
+        assert "trw_recall" in CEREMONY_TOOLS
+
+    def test_is_frozenset(self) -> None:
+        assert isinstance(CEREMONY_TOOLS, frozenset)
+
+
+# --- Tests for CeremonyMiddleware ---
+
+
+class TestCeremonyMiddleware:
+    """Tests for the CeremonyMiddleware on_call_tool behavior."""
+
+    @pytest.fixture
+    def middleware(self) -> CeremonyMiddleware:
+        return CeremonyMiddleware()
+
+    @pytest.mark.asyncio
+    async def test_no_context_passes_through(self, middleware: CeremonyMiddleware) -> None:
+        """When fastmcp_context is None (unit tests), middleware does nothing."""
+        result = FakeToolResult(content=[TextContent(type="text", text="ok")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=None,
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert len(out.content) == 1
+        assert out.content[0].text == "ok"
+
+    @pytest.mark.asyncio
+    async def test_no_request_context_passes_through(self, middleware: CeremonyMiddleware) -> None:
+        """When request_context is None, middleware does nothing."""
+        result = FakeToolResult(content=[TextContent(type="text", text="ok")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        fake_ctx = FakeContext(request_context=None)
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=fake_ctx,
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert len(out.content) == 1
+
+    @pytest.mark.asyncio
+    async def test_ceremony_tool_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
+        """Calling a ceremony tool marks the session as active."""
+        result = FakeToolResult(content=[TextContent(type="text", text="started")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        req_ctx = FakeRequestContext(session_id="sess-abc")
+        fake_ctx = FakeContext(request_context=req_ctx)
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=fake_ctx,
+        )
+        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert is_session_active("sess-abc")
+
+    @pytest.mark.asyncio
+    async def test_ceremony_tool_no_warning(self, middleware: CeremonyMiddleware) -> None:
+        """Ceremony tools themselves should never get a warning prepended."""
+        result = FakeToolResult(content=[TextContent(type="text", text="started")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        req_ctx = FakeRequestContext(session_id="sess-abc")
+        fake_ctx = FakeContext(request_context=req_ctx)
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=fake_ctx,
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert len(out.content) == 1
+        assert out.content[0].text == "started"
+
+    @pytest.mark.asyncio
+    async def test_non_ceremony_tool_without_ceremony_gets_warning(
+        self, middleware: CeremonyMiddleware,
+    ) -> None:
+        """Non-exempt tool called before ceremony gets warning prepended."""
+        result = FakeToolResult(content=[TextContent(type="text", text="status result")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        req_ctx = FakeRequestContext(session_id="sess-no-ceremony")
+        fake_ctx = FakeContext(request_context=req_ctx)
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=fake_ctx,
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert len(out.content) == 2
+        assert out.content[0].text == CEREMONY_WARNING
+        assert out.content[1].text == "status result"
+
+    @pytest.mark.asyncio
+    async def test_non_ceremony_tool_after_ceremony_no_warning(
+        self, middleware: CeremonyMiddleware,
+    ) -> None:
+        """Non-exempt tool called AFTER ceremony has no warning."""
+        start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        status_result = FakeToolResult(content=[TextContent(type="text", text="status")])
+
+        call_count = 0
+
+        async def call_next(_ctx: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return start_result
+            return status_result
+
+        req_ctx = FakeRequestContext(session_id="sess-active")
+        fake_ctx = FakeContext(request_context=req_ctx)
+
+        # First: ceremony tool
+        ctx1 = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=fake_ctx,
+        )
+        await middleware.on_call_tool(ctx1, call_next)  # type: ignore[arg-type]
+
+        # Second: non-ceremony tool — should have NO warning
+        ctx2 = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=fake_ctx,
+        )
+        out = await middleware.on_call_tool(ctx2, call_next)  # type: ignore[arg-type]
+        assert len(out.content) == 1
+        assert out.content[0].text == "status"
+
+    @pytest.mark.asyncio
+    async def test_multiple_sessions_independent(self, middleware: CeremonyMiddleware) -> None:
+        """Two parallel sessions are tracked independently."""
+        result = FakeToolResult(content=[TextContent(type="text", text="ok")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return FakeToolResult(content=[TextContent(type="text", text="ok")])
+
+        # Session 1: run ceremony
+        req_ctx1 = FakeRequestContext(session_id="sess-1")
+        ctx1 = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=FakeContext(request_context=req_ctx1),
+        )
+        await middleware.on_call_tool(ctx1, call_next)  # type: ignore[arg-type]
+
+        # Session 2: no ceremony — should get warning
+        req_ctx2 = FakeRequestContext(session_id="sess-2")
+        ctx2 = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=FakeContext(request_context=req_ctx2),
+        )
+        out = await middleware.on_call_tool(ctx2, call_next)  # type: ignore[arg-type]
+        assert len(out.content) == 2  # warning + result
+
+    @pytest.mark.asyncio
+    async def test_trw_init_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
+        """trw_init is also a ceremony tool that marks the session."""
+        result = FakeToolResult(content=[TextContent(type="text", text="init")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        req_ctx = FakeRequestContext(session_id="sess-init")
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_init"),
+            fastmcp_context=FakeContext(request_context=req_ctx),
+        )
+        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert is_session_active("sess-init")
+
+    @pytest.mark.asyncio
+    async def test_trw_recall_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
+        """trw_recall is also a ceremony tool that marks the session."""
+        result = FakeToolResult(content=[TextContent(type="text", text="recall")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        req_ctx = FakeRequestContext(session_id="sess-recall")
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_recall"),
+            fastmcp_context=FakeContext(request_context=req_ctx),
+        )
+        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert is_session_active("sess-recall")
+
+
+class TestCeremonyWarningText:
+    """Tests for the warning text content."""
+
+    def test_warning_contains_action_required(self) -> None:
+        assert "ACTION REQUIRED" in CEREMONY_WARNING
+
+    def test_warning_mentions_session_start(self) -> None:
+        assert "trw_session_start()" in CEREMONY_WARNING
+
+    def test_warning_mentions_consequences(self) -> None:
+        assert "learnings are NOT loaded" in CEREMONY_WARNING
+        assert "run state is NOT recovered" in CEREMONY_WARNING
+        assert "FRAMEWORK.md" in CEREMONY_WARNING

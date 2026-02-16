@@ -2,20 +2,21 @@
 
 Validates shard output contracts, phase exit criteria,
 PRD quality gates, multi-dimensional semantic validation (PRD-CORE-008),
-PRD auto-progression (PRD-CORE-025), and integration validation (PRD-QUAL-011).
+PRD auto-progression (PRD-CORE-025), integration validation (PRD-QUAL-011),
+and risk-based validation scaling (PRD-QUAL-013).
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 import structlog
 
 from trw_mcp.exceptions import StateError, ValidationError
-from trw_mcp.models.architecture import ConventionViolation
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.requirements import (
     DimensionScore,
     ImprovementSuggestion,
@@ -41,6 +42,94 @@ logger = structlog.get_logger()
 
 # Build status staleness threshold (PRD-CORE-023-FR10)
 _BUILD_STALENESS_SECS = 1800  # 30 minutes
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-013: Risk-Based Validation Scaling
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RiskProfile:
+    """Risk-scaled thresholds and dimension weights for PRD validation.
+
+    Each risk level gets a distinct profile that adjusts quality tier
+    thresholds, content density minimums, and dimension weight distribution.
+    """
+
+    approved_threshold: float
+    review_threshold: float
+    draft_threshold: float
+    min_content_density: float
+    weights: tuple[float, ...]  # (density, structure, trace, smell, read, ears)
+
+
+RISK_PROFILES: dict[str, RiskProfile] = {
+    "critical": RiskProfile(92.0, 75.0, 45.0, 0.50, (20, 15, 25, 20, 5, 15)),
+    "high":     RiskProfile(88.0, 70.0, 35.0, 0.40, (22, 15, 23, 18, 7, 15)),
+    "medium":   RiskProfile(85.0, 60.0, 30.0, 0.30, (25, 15, 20, 15, 10, 15)),
+    "low":      RiskProfile(75.0, 50.0, 20.0, 0.20, (30, 15, 15, 10, 15, 15)),
+}
+
+_PRIORITY_TO_RISK: dict[str, str] = {
+    "P0": "critical",
+    "P1": "high",
+    "P2": "medium",
+    "P3": "low",
+}
+
+
+def derive_risk_level(priority: str, explicit_risk: str | None = None) -> str:
+    """Derive risk level from priority or explicit override.
+
+    Args:
+        priority: PRD priority (P0, P1, P2, P3).
+        explicit_risk: Explicit risk level override. Takes precedence.
+
+    Returns:
+        Risk level string: critical, high, medium, or low.
+    """
+    if explicit_risk and explicit_risk in RISK_PROFILES:
+        return explicit_risk
+    return _PRIORITY_TO_RISK.get(priority, "medium")
+
+
+def get_risk_scaled_config(config: TRWConfig, risk_level: str) -> TRWConfig:
+    """Return a config copy with risk-scaled thresholds and weights.
+
+    Uses ``model_copy(update=...)`` — never mutates the original config.
+    Returns the original config unchanged if risk scaling is disabled
+    or if risk_level is "medium" (baseline).
+
+    Args:
+        config: Original TRWConfig.
+        risk_level: Risk level to scale to.
+
+    Returns:
+        TRWConfig with adjusted thresholds/weights, or original if no scaling needed.
+    """
+    if not config.risk_scaling_enabled or risk_level == "medium":
+        return config
+
+    profile = RISK_PROFILES.get(risk_level)
+    if profile is None:
+        return config
+
+    weights = profile.weights
+    return config.model_copy(update={
+        # Tier thresholds (names in config are offset by one tier — historical)
+        "validation_review_threshold": profile.approved_threshold,
+        "validation_draft_threshold": profile.review_threshold,
+        "validation_skeleton_threshold": profile.draft_threshold,
+        # Content density minimum
+        "prd_min_content_density": profile.min_content_density,
+        # Dimension weights
+        "validation_density_weight": weights[0],
+        "validation_structure_weight": weights[1],
+        "validation_traceability_weight": weights[2],
+        "validation_smell_weight": weights[3],
+        "validation_readability_weight": weights[4],
+        "validation_ears_weight": weights[5],
+    })
 
 # Recognized event names for reflection and CLAUDE.md sync checks.
 _REFLECTION_EVENTS: frozenset[str] = frozenset(
@@ -675,18 +764,6 @@ def check_phase_exit(
             pass  # Best-effort
 
     elif phase_name == "validate":
-        validation_path = run_path / "validation"
-        risk_register = validation_path / "risk-register.yaml"
-        if not risk_register.exists():
-            failures.append(
-                ValidationFailure(
-                    field="risk-register.yaml",
-                    rule="risk_register_exists",
-                    message="Risk register not found in validation/",
-                    severity="warning",
-                )
-            )
-
         # Advisory: recommend integration + full-suite test strategy (PRD-QUAL-006-FR05)
         failures.append(
             ValidationFailure(
@@ -864,37 +941,6 @@ def check_phase_exit(
             failures.extend(_check_build_status(_trw(), config, "deliver"))
         except Exception:  # noqa: BLE001
             pass  # Best-effort
-
-    # PRD-QUAL-007: Architecture fitness check (opt-in via config)
-    if config.architecture_fitness_enabled:
-        from trw_mcp.state.architecture import (
-            check_architecture_fitness,
-            load_architecture_config,
-        )
-        from trw_mcp.state._paths import resolve_project_root as _resolve_root
-
-        try:
-            proj_root = _resolve_root()
-            arch_config = load_architecture_config(proj_root)
-            if arch_config is not None:
-                fitness = check_architecture_fitness(
-                    phase_name, run_path, arch_config, proj_root,
-                )
-                for violation in fitness.violations:
-                    if isinstance(violation, ConventionViolation):
-                        sev = str(violation.severity)
-                        msg = violation.message or f"Convention violation in {violation.file}"
-                    else:
-                        sev = "warning"
-                        msg = f"Import violation in {violation.file}"
-                    failures.append(ValidationFailure(
-                        field=f"architecture:{violation.file}",
-                        rule="architecture_fitness",
-                        message=msg,
-                        severity=sev,
-                    ))
-        except Exception:
-            pass  # Best-effort — never block phase gate for architecture errors
 
     return _build_phase_result(failures, criteria, phase_name, "phase_exit_checked")
 
@@ -1327,7 +1373,7 @@ def score_content_density(
     Returns:
         DimensionScore for content density.
     """
-    _config = config or TRWConfig()
+    _config = config or get_config()
     max_score = _config.validation_density_weight
 
     sections = _parse_section_content(content)
@@ -1382,7 +1428,7 @@ def score_structural_completeness(
     Returns:
         DimensionScore for structural completeness.
     """
-    _config = config or TRWConfig()
+    _config = config or get_config()
     max_score = _config.validation_structure_weight
 
     # Section coverage: how many of the 12 expected sections are present
@@ -1441,7 +1487,7 @@ def score_traceability_v2(
     Returns:
         DimensionScore for traceability.
     """
-    _config = config or TRWConfig()
+    _config = config or get_config()
     max_score = _config.validation_traceability_weight
 
     # Check traceability fields in frontmatter
@@ -1499,7 +1545,7 @@ def classify_quality_tier(
     Returns:
         QualityTier enum member.
     """
-    _config = config or TRWConfig()
+    _config = config or get_config()
     if total_score >= _config.validation_review_threshold:
         return QualityTier.APPROVED
     if total_score >= _config.validation_draft_threshold:
@@ -1573,6 +1619,7 @@ def validate_prd_quality_v2(
     content: str,
     config: TRWConfig | None = None,
     v1_result: dict[str, object] | None = None,
+    risk_level: str | None = None,
 ) -> ValidationResultV2:
     """Validate a PRD with full 6-dimension semantic scoring.
 
@@ -1580,23 +1627,37 @@ def validate_prd_quality_v2(
     classifies quality tier, and generates improvement suggestions.
     Also populates V1-compatible fields for backward compatibility.
 
+    When risk_level is provided (or derived from frontmatter priority),
+    thresholds and dimension weights are adjusted per RISK_PROFILES
+    (PRD-QUAL-013).
+
     Args:
         content: Full PRD markdown content.
         config: Optional TRWConfig for threshold/weight overrides.
         v1_result: Optional pre-computed V1 validation result. When provided,
             V1 fields are populated from this dict, skipping redundant
             V1 computation (GAP-FR-007 optimization).
+        risk_level: Optional explicit risk level override. If None,
+            derived from frontmatter priority field.
 
     Returns:
         ValidationResultV2 with all dimension scores and metadata.
     """
-    _config = config or TRWConfig()
+    _config = config or get_config()
 
     # Parse frontmatter and sections using shared utils
     from trw_mcp.state.prd_utils import parse_frontmatter, extract_sections
 
     frontmatter = parse_frontmatter(content)
     sections = extract_sections(content)
+
+    # PRD-QUAL-013: Derive risk level and apply scaling
+    fm_priority = str(frontmatter.get("priority", "P2"))
+    fm_risk = frontmatter.get("risk_level")
+    explicit_risk = risk_level or (str(fm_risk) if fm_risk else None)
+    effective_risk = derive_risk_level(fm_priority, explicit_risk)
+    _config = get_risk_scaled_config(_config, effective_risk)
+    is_risk_scaled = effective_risk != "medium" and _config.risk_scaling_enabled
 
     # Score 3 active dimensions (Phase 2a)
     dimensions: list[DimensionScore] = []
@@ -1629,47 +1690,29 @@ def validate_prd_quality_v2(
         )
     dimensions.append(trace_dim)
 
-    # 4. Smell Score (15 pts) — Phase 2b
-    from trw_mcp.state.smell_detection import score_smells
-
-    try:
-        smell_dim, smell_findings = score_smells(content, _config)
-    except Exception:
-        smell_dim = DimensionScore(
-            name="smell_score", score=0.0, max_score=_config.validation_smell_weight
-        )
-        smell_findings = []
+    # 4. Smell Score — modules removed in strip-down; 0-weight placeholder
+    smell_dim = DimensionScore(name="smell_score", score=0.0, max_score=0.0)
+    smell_findings: list[SmellFinding] = []
     dimensions.append(smell_dim)
 
-    # 5. Readability (10 pts) — Phase 2b
-    from trw_mcp.state.readability import score_readability
-
-    try:
-        readability_dim, readability_metrics = score_readability(content, _config)
-    except Exception:
-        readability_dim = DimensionScore(
-            name="readability",
-            score=_config.validation_readability_weight * 0.5,
-            max_score=_config.validation_readability_weight,
-        )
-        readability_metrics = {}
+    # 5. Readability — modules removed in strip-down; 0-weight placeholder
+    readability_dim = DimensionScore(name="readability", score=0.0, max_score=0.0)
+    readability_metrics: dict[str, float] = {}
     dimensions.append(readability_dim)
 
-    # 6. EARS Coverage (15 pts) — Phase 2c
-    from trw_mcp.state.ears_classifier import score_ears_coverage
-
-    try:
-        ears_dim, ears_classifications = score_ears_coverage(content, _config)
-    except Exception:
-        ears_dim = DimensionScore(
-            name="ears_coverage", score=0.0, max_score=_config.validation_ears_weight
-        )
-        ears_classifications = []
+    # 6. EARS Coverage — modules removed in strip-down; 0-weight placeholder
+    ears_dim = DimensionScore(name="ears_coverage", score=0.0, max_score=0.0)
+    ears_classifications: list[dict[str, object]] = []
     dimensions.append(ears_dim)
 
-    # Compute total score
-    total_score = sum(d.score for d in dimensions)
-    total_score = round(min(total_score, 100.0), 2)
+    # Compute total score (normalized to 0-100 against active dimensions)
+    max_possible = sum(d.max_score for d in dimensions)
+    if max_possible > 0:
+        total_score = round(
+            min(sum(d.score for d in dimensions) / max_possible * 100.0, 100.0), 2,
+        )
+    else:
+        total_score = 0.0
 
     # Classify tier and grade
     tier = classify_quality_tier(total_score, _config)
@@ -1768,6 +1811,9 @@ def validate_prd_quality_v2(
         ears_classifications=ears_classifications,
         readability=readability_metrics,
         improvement_suggestions=suggestions,
+        # Risk scaling fields (PRD-QUAL-013)
+        effective_risk_level=effective_risk,
+        risk_scaled=is_risk_scaled,
     )
 
     logger.info(
@@ -1776,6 +1822,8 @@ def validate_prd_quality_v2(
         quality_tier=tier.value,
         grade=grade,
         dimensions_scored=len(dimensions),
+        effective_risk_level=effective_risk,
+        risk_scaled=is_risk_scaled,
     )
     return result
 

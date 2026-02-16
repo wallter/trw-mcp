@@ -15,7 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Phase(str, Enum):
-    """Framework execution phases (FRAMEWORK.md §PHASES)."""
+    """Framework execution phases (FRAMEWORK.md §PHASES).
+
+    6-phase model: RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER.
+    """
 
     RESEARCH = "research"
     PLAN = "plan"
@@ -256,6 +259,10 @@ class EventType(str, Enum):
     # --- Compliance ---
     COMPLIANCE_CHECK = "compliance_check"
     COMPLIANCE_PASSED = "compliance_passed"
+
+    # --- Code simplifier (PRD-QUAL-010) ---
+    SIMPLIFICATION_COMPLETE = "simplification_complete"
+    SIMPLIFICATION_ROLLBACK = "simplification_rollback"
 
     # --- File operations ---
     FILE_MODIFIED = "file_modified"
