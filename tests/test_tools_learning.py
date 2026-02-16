@@ -470,13 +470,9 @@ class TestCeremonyRendering:
         assert "BEFORE ANY WORK" in result
         assert "trw_session_start()" in result
         assert "trw_recall" in result
-        assert "FRAMEWORK.md" in result
         assert "NEVER skip" in result
         assert "AFTER COMPLETING WORK" in result
         assert "trw_deliver()" in result
-        # PRD-INFRA-007: consequence text
-        assert "FAILURE TO COMPLY" in result
-        assert "Server warnings" in result
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
         """Bundled template contains all ceremony placeholder tokens."""

@@ -11,9 +11,6 @@ Part of the [TRW (The Real Work) Framework](../FRAMEWORK.md) v18.0_TRW.
 cd trw-mcp
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-
-# Optional: LLM-augmented features (requires Claude Agent SDK)
-pip install -e ".[ai]"
 ```
 
 ### Configure in Claude Code
@@ -92,7 +89,7 @@ All settings are configurable via environment variables (prefix `TRW_`) or `.trw
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TRW_DEBUG` | `false` | Enable debug logging |
-| `TRW_LLM_ENABLED` | `true` | Allow LLM calls when SDK available |
+| `TRW_LLM_ENABLED` | `true` | Allow LLM calls (claude-agent-sdk) |
 | `TRW_LLM_DEFAULT_MODEL` | `haiku` | Default model for LLM features |
 | `TRW_PARALLELISM_MAX` | `10` | Max concurrent shards |
 | `TRW_TIMEBOX_HOURS` | `8` | Default task timebox |
@@ -142,8 +139,9 @@ src/trw_mcp/
 | Extra | Package | Purpose |
 |-------|---------|---------|
 | `[dev]` | pytest, mypy, etc. | Testing and type checking |
-| `[ai]` | `claude-agent-sdk` | LLM-augmented tool features |
 | `[otel]` | OpenTelemetry | Distributed tracing (future) |
+
+**Note**: `claude-agent-sdk` is a core dependency (included by default). The `[ai]` extra is deprecated and empty.
 
 ## Recommended Workflow
 

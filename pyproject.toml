@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.2.0"
-description = "TRW Framework MCP Server — orchestration, requirements engineering, and self-learning tools for Claude Code"
+version = "0.3.0"
+description = "Engineering memory layer for AI coding agents — session lifecycle, knowledge persistence, and build verification"
 readme = "README.md"
 license = "CC-BY-NC-SA-4.0"
 requires-python = ">=3.10"
@@ -29,6 +29,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "ruamel.yaml>=0.18.0",
     "structlog>=24.0.0",
+    "claude-agent-sdk>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -44,9 +45,8 @@ dev = [
     "mypy>=1.11.0",
     "types-pyyaml>=6.0.0",
 ]
-ai = [
-    "claude-agent-sdk>=0.1.0",
-]
+# ai extra deprecated — claude-agent-sdk is now a core dependency
+ai = []
 
 [project.scripts]
 trw-mcp = "trw_mcp.server:main"

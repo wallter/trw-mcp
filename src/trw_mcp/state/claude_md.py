@@ -310,17 +310,9 @@ def render_imperative_opener() -> str:
     return (
         "CRITICAL — YOU MUST EXECUTE THESE TOOLS:\n"
         "- **BEFORE ANY WORK**: ALWAYS call `trw_session_start()` "
-        "(or `trw_recall('*', min_impact=0.7)` for quick tasks) "
-        "and read `.trw/frameworks/FRAMEWORK.md`. NEVER skip this step.\n"
+        "(or `trw_recall('*', min_impact=0.7)` for quick tasks). NEVER skip this step.\n"
         "- **AFTER COMPLETING WORK**: ALWAYS call `trw_deliver()` "
-        "(or `trw_reflect` + `trw_claude_md_sync` for quick tasks). NEVER skip this step.\n"
-        "\n"
-        "FAILURE TO COMPLY causes:\n"
-        "  1. Repeated mistakes — learnings from prior sessions are NOT loaded\n"
-        "  2. Lost progress — active run state is NOT recovered\n"
-        "  3. Protocol violations — phase requirements are NOT enforced\n"
-        "  4. Compliance failure — trw_compliance_check WILL report violations\n"
-        "  5. Server warnings — every tool response WILL include a blocking warning\n"
+        "(or `trw_claude_md_sync` for quick tasks). NEVER skip this step.\n"
         "\n"
     )
 

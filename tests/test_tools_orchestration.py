@@ -16,7 +16,7 @@ from trw_mcp.tools.orchestration import register_orchestration_tools
 
 # Single source of truth for the expected framework version in test assertions.
 # Must match the default in TRWConfig.framework_version.
-FRAMEWORK_VERSION = "v18.0_TRW"
+FRAMEWORK_VERSION = "v21.0_TRW"
 
 
 @pytest.fixture(autouse=True)

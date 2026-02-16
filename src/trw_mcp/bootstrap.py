@@ -217,9 +217,8 @@ def _minimal_claude_md() -> str:
     """Generate minimal ``CLAUDE.md`` with behavioral protocol header."""
     return (
         "# CLAUDE.md\n\n"
-        'Before starting work: execute `trw_recall("*", min_impact=0.7)` '
-        "and read `.trw/frameworks/FRAMEWORK.md`.\n"
-        "After completing work: execute `trw_reflect` and `trw_claude_md_sync`.\n\n"
+        "Before starting work: execute `trw_session_start()`.\n"
+        "After completing work: execute `trw_deliver()`.\n\n"
         "## What This Is\n\n"
         "{Describe your project here}\n\n"
         "## Build & Test Commands\n\n"

@@ -31,7 +31,7 @@ _emit_protocol() {
     echo "TRW BEHAVIORAL PROTOCOL:"
     grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
   else
-    echo "TRW BEHAVIORAL PROTOCOL: Execute trw_recall with min_impact=0.7 to load learnings. Read .trw/frameworks/FRAMEWORK.md. Use trw_event/trw_checkpoint during work. Execute trw_reflect + trw_claude_md_sync at completion."
+    echo "TRW BEHAVIORAL PROTOCOL: Execute trw_session_start() to load learnings. Use trw_checkpoint during work. Execute trw_deliver() at completion."
   fi
 }
 

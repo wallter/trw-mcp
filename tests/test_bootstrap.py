@@ -96,7 +96,7 @@ class TestIdempotency:
         # File should be re-created
         content = claude_md.read_text(encoding="utf-8")
         assert content != "modified content"
-        assert "trw_recall" in content
+        assert "trw_session_start" in content
 
 
 # ── Validation Tests ─────────────────────────────────────────────────────
@@ -135,18 +135,16 @@ class TestContent:
         init_project(fake_git_repo)
         content = (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8")
 
-        assert "trw_recall" in content
-        assert "FRAMEWORK.md" in content
-        assert "trw_reflect" in content
-        assert "trw_claude_md_sync" in content
+        assert "trw_session_start" in content
+        assert "trw_deliver" in content
 
-    def test_framework_md_is_v20(self, fake_git_repo: Path) -> None:
+    def test_framework_md_is_v21(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
         content = (
             (fake_git_repo / ".trw" / "frameworks" / "FRAMEWORK.md")
             .read_text(encoding="utf-8")
         )
-        assert "v20.0_TRW" in content
+        assert "v21.0_TRW" in content
 
     def test_config_yaml_has_defaults(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)

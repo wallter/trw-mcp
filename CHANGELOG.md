@@ -22,6 +22,13 @@ All notable changes to the TRW MCP server package.
 - 4 dead fields from `LearningEntry`: `phase_scope`, `adr_status`, `affected_paths`, `verification_criteria`
 - 10 dead fields from `TRWConfig`: phase_bonus_*, architecture_*, quality_pass_*, debt_md_*
 - `_compute_phase_bonus()` and `current_phase` parameter from `scoring.py`
+- `FAILURE TO COMPLY` consequence block from CLAUDE.md auto-generated section
+
+### Added
+- **FRAMEWORK.md v21.0** — rewritten from 1,028 to 617 lines, behavioral style with descriptive 11-tool MCP section
+- Updated `framework_version` config default: `v18.0_TRW` → `v21.0_TRW`
+- Simplified bootstrap CLAUDE.md template: `trw_session_start` + `trw_deliver` workflow
+- Updated behavioral_protocol.yaml: removed references to deleted tools (trw_event, trw_reflect, trw_phase_check)
 
 ### Kept (11 tools)
 | Tool | Module |
