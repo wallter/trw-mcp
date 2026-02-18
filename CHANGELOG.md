@@ -2,6 +2,46 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.3.2] — 2026-02-18
+
+### Changed
+- **FRAMEWORK.md v23.0_TRW** — XML tag migration: unique section-specific names, co-located sections, bundled copy synced
+- `framework_version` config default: `v22.0_TRW` → `v23.0_TRW` (config.py, test assertions updated)
+
+### Added
+- **Linter configuration** in `pyproject.toml`: `[tool.pyright]` (standard mode, src-only), `[tool.ruff]` (E/F/W rules, line-length 120)
+- **3 new skills** — `/commit`, `/security-check`, `/review-pr` (Sprint 19, PRD-QUAL-015)
+- **MCP tool declarations fixed** in 9 existing skills — `mcp__trw__trw_*` naming convention
+
+### Fixed
+- 56 ruff lint errors across src/ and tests/ (unused imports, ambiguous variables, unused assignments)
+- conftest.py generator fixture return type (`None` → `Iterator[None]`)
+- 9 test helper return types (`dict[str, object]` → `dict[str, Any]`)
+- 9 import ordering fixes (docstrings before imports)
+- Removed unused `Path` import in `run_state.py`, unused `failures` variable in `validation.py`
+
+### Stats
+- 641 tests, 84.85% coverage, mypy --strict clean, ruff clean, pyright 0 errors
+
+---
+
+## [0.3.1] — 2026-02-17
+
+### Changed
+- **Anthropic SDK migration** (PRD-CORE-028) — replaced `claude-agent-sdk` with `anthropic` SDK:
+  - `LLMClient` uses `anthropic.Anthropic` / `anthropic.AsyncAnthropic`
+  - Model aliases: `"haiku"` → `claude-haiku-4-5-20251001`, `"sonnet"` → `claude-sonnet-4-6`, `"opus"` → `claude-opus-4-6`
+  - `anthropic>=0.40.0` in `[ai]` optional extra; `claude-agent-sdk` removed
+- All `pragma: no cover` removed from `llm_helpers.py` — now at 100% coverage
+
+### Added
+- 33 new tests for `state/llm_helpers.py` (parse, assess, extract, summarize)
+
+### Stats
+- 637 tests, 84.79% coverage, mypy --strict clean
+
+---
+
 ## [0.3.0] — 2026-02-16
 
 ### Changed
