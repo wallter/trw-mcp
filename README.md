@@ -2,166 +2,202 @@
 
 TRW Framework MCP Server — orchestration, requirements engineering, and self-learning tools for Claude Code.
 
-Part of the [TRW (The Real Work) Framework](../FRAMEWORK.md) v18.0_TRW.
+Part of the [TRW (The Real Work) Framework](../FRAMEWORK.md) v22.0_TRW.
 
 ## Quick Start
 
 ```bash
-# Install (from source with dev tools)
+# Install from source
 cd trw-mcp
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-```
 
-### Configure in Claude Code
+# Deploy TRW to a project
+trw-mcp init-project /path/to/your/repo
 
-Add to your project's `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "trw": {
-      "command": "/path/to/trw-mcp/.venv/bin/trw-mcp",
-      "args": ["--debug"]
-    }
-  }
-}
-```
-
-Or use the Claude CLI:
-
-```bash
+# Or add the MCP server to Claude Code manually
 claude mcp add trw -- /path/to/trw-mcp/.venv/bin/trw-mcp --debug
 ```
 
-## Tools (17)
+### Deploy to a Project
 
-### Orchestration (7)
-
-| Tool | Purpose |
-|------|---------|
-| `trw_init` | Bootstrap `.trw/`, run directories, `run.yaml`, `events.jsonl` |
-| `trw_status` | Return current run state — phase, wave progress, confidence |
-| `trw_phase_check` | Validate exit criteria before advancing phases |
-| `trw_wave_validate` | Post-wave output contract validation |
-| `trw_resume` | Classify shard state on session reconnect |
-| `trw_checkpoint` | Create atomic state snapshot for interrupt-safe recovery |
-| `trw_event` | Log structured event to `events.jsonl` audit trail |
-
-### Self-Learning (7)
-
-| Tool | Purpose |
-|------|---------|
-| `trw_reflect` | Extract learnings from events (LLM-augmented when available) |
-| `trw_learn` | Record a discovery to `.trw/learnings/` |
-| `trw_learn_update` | Update learning status, impact, tags (lifecycle management) |
-| `trw_learn_prune` | Review and retire stale learnings (LLM-augmented) |
-| `trw_recall` | Search accumulated knowledge before starting tasks |
-| `trw_script_save` | Save reusable scripts to `.trw/scripts/` |
-| `trw_claude_md_sync` | Promote active high-impact learnings to CLAUDE.md |
-
-### AARE-F Requirements (3)
-
-| Tool | Purpose |
-|------|---------|
-| `trw_prd_create` | Generate AARE-F compliant PRD from requirements text |
-| `trw_prd_validate` | Validate PRD against quality gates |
-| `trw_traceability_check` | Verify requirement-to-implementation-to-test coverage |
-
-## Debug Mode
-
-Enable file logging and DEBUG-level output:
+`trw-mcp init-project` bootstraps the full TRW framework in any git repository:
 
 ```bash
-# Via CLI flag
-trw-mcp --debug
-
-# Via environment variable
-TRW_DEBUG=true trw-mcp
+trw-mcp init-project .              # current directory
+trw-mcp init-project /path/to/repo  # specific project
+trw-mcp init-project . --force      # overwrite existing files
 ```
 
-Debug mode writes daily log files to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl` and enables DEBUG-level structured JSON logging on stderr.
+This creates:
+- `.trw/` — learning memory, run state, configuration
+- `.mcp.json` — MCP server connection for Claude Code
+- `CLAUDE.md` — project instructions with TRW behavioral protocol
+- `.claude/skills/` — 10 workflow automation skills
+- `.claude/agents/` — 5 specialized sub-agents
+
+## Tools (11)
+
+| Category | Tool | Purpose |
+|----------|------|---------|
+| **Ceremony** | `trw_session_start` | Recall high-impact learnings + check run status (MUST call first) |
+| | `trw_deliver` | Batched delivery: reflect, checkpoint, CLAUDE.md sync, index sync |
+| **Learning** | `trw_recall` | Search accumulated knowledge by keyword or tag |
+| | `trw_learn` | Record a discovery, gotcha, or pattern to `.trw/learnings/` |
+| | `trw_claude_md_sync` | Promote high-impact learnings to CLAUDE.md |
+| **Orchestration** | `trw_init` | Bootstrap `.trw/`, run directories, `run.yaml`, `events.jsonl` |
+| | `trw_status` | Return current run state — phase, wave progress, confidence |
+| | `trw_checkpoint` | Create atomic state snapshot for interrupt-safe recovery |
+| **Requirements** | `trw_prd_create` | Generate an AARE-F compliant PRD from requirements text |
+| | `trw_prd_validate` | Validate PRD against quality gates (density, structure, traceability) |
+| **Build** | `trw_build_check` | Run pytest + mypy, cache results for phase gate verification |
+
+## Skills (10)
+
+Skills are user-invocable workflows in `.claude/skills/` — zero tokens until triggered.
+
+| Skill | Phase | Description |
+|-------|-------|-------------|
+| `/sprint-init` | PLAN | Initialize a sprint: select PRDs, create sprint doc, bootstrap run |
+| `/sprint-finish` | DELIVER | Complete a sprint: validate, build gate, archive, deliver |
+| `/prd-new` | PLAN | Create an AARE-F PRD from a feature description |
+| `/prd-groom` | PLAN | Groom a PRD to sprint-ready quality (>= 0.85 completeness) |
+| `/prd-review` | PLAN | Read-only quality review with READY/NEEDS WORK/BLOCK verdict |
+| `/deliver` | DELIVER | Pre-flight build check + full delivery ceremony |
+| `/memory-audit` | ANY | Read-only learning health report: staleness, duplicates, recommendations |
+| `/memory-optimize` | REVIEW | Prune stale learnings, consolidate duplicates (interactive) |
+| `/framework-check` | ANY | Check ceremony compliance, phase gate status, run health |
+| `/test-strategy` | IMPLEMENT | Audit test coverage gaps, suggest targeted test improvements |
+
+## Agents (5)
+
+Specialized sub-agents in `.claude/agents/` spawned via `Task()`.
+
+| Agent | Model | Purpose |
+|-------|-------|---------|
+| `code-simplifier` | Sonnet | Simplify code for clarity and maintainability while preserving functionality |
+| `prd-groomer` | Sonnet | Research and draft PRD sections to reach sprint-ready quality |
+| `requirement-reviewer` | Sonnet | Assess PRD quality with per-dimension scores and verdict |
+| `requirement-writer` | Sonnet | Draft EARS-compliant requirements with confidence scores |
+| `traceability-checker` | Haiku | Verify bidirectional traceability between PRDs, code, and tests |
 
 ## Configuration
 
-All settings are configurable via environment variables (prefix `TRW_`) or `.trw/config.yaml`:
+Settings are configurable via environment variables (prefix `TRW_`) or `.trw/config.yaml`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRW_DEBUG` | `false` | Enable debug logging |
-| `TRW_LLM_ENABLED` | `true` | Allow LLM calls (claude-agent-sdk) |
-| `TRW_LLM_DEFAULT_MODEL` | `haiku` | Default model for LLM features |
-| `TRW_PARALLELISM_MAX` | `10` | Max concurrent shards |
-| `TRW_TIMEBOX_HOURS` | `8` | Default task timebox |
-| `TRW_LEARNING_MAX_ENTRIES` | `500` | Max learning entries before pruning |
-| `TRW_LEARNING_PROMOTION_IMPACT` | `0.7` | Min impact for CLAUDE.md promotion |
+| `TRW_DEBUG` | `false` | Enable debug logging to `.trw/logs/` and stderr |
+| `TRW_LLM_ENABLED` | `true` | Allow LLM calls via claude-agent-sdk |
+| `TRW_LLM_DEFAULT_MODEL` | `haiku` | Default model for LLM-augmented features |
+| `TRW_LEARNING_PROMOTION_IMPACT` | `0.7` | Minimum impact score for CLAUDE.md promotion |
 
 See `src/trw_mcp/models/config.py` for the full configuration reference.
+
+### Debug Mode
+
+```bash
+trw-mcp --debug                 # CLI flag
+TRW_DEBUG=true trw-mcp          # environment variable
+```
+
+Debug mode writes daily log files to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl` and enables DEBUG-level structured JSON logging on stderr.
 
 ## Architecture
 
 ```
 src/trw_mcp/
-  server.py              # FastMCP entry point, CLI, logging setup
+  server.py                # FastMCP entry point, CLI, tool registration
+  bootstrap.py             # init-project: deploy TRW to target repos
+  scoring.py               # Utility scoring (Q-learning + Ebbinghaus decay)
+  exceptions.py            # Custom exception hierarchy
   models/
-    config.py            # TRWConfig (pydantic-settings, env vars)
-    run.py               # RunState, ShardCard, WaveManifest, etc.
-    learning.py          # LearningEntry, LearningStatus, Pattern, etc.
-    requirements.py      # PRDFrontmatter, ValidationResult, etc.
+    config.py              # TRWConfig (pydantic-settings, env vars)
+    run.py                 # RunState, ShardCard, WaveManifest
+    learning.py            # LearningEntry, LearningStatus, Pattern
+    requirements.py        # PRDFrontmatter, ValidationResult, DimensionScore
+    build.py               # BuildStatus, BuildResult
   tools/
-    orchestration.py     # 7 orchestration tools
-    learning.py          # 7 self-learning tools
-    requirements.py      # 3 AARE-F requirements tools
-  clients/
-    llm.py               # LLMClient — Claude Agent SDK abstraction
+    ceremony.py            # trw_session_start, trw_deliver
+    learning.py            # trw_recall, trw_learn, trw_claude_md_sync
+    orchestration.py       # trw_init, trw_status, trw_checkpoint
+    requirements.py        # trw_prd_create, trw_prd_validate
+    build.py               # trw_build_check
   state/
-    persistence.py       # FileStateReader/Writer (YAML/JSONL)
-    validation.py        # Phase checks, contract validation
-  resources/             # MCP resources (config, learnings, run state)
-  prompts/               # MCP prompts (AARE-F templates)
-  exceptions.py          # Custom exception hierarchy
+    persistence.py         # FileStateReader/Writer (atomic YAML/JSONL)
+    validation.py          # PRD quality gate validation
+    claude_md.py           # CLAUDE.md generation and sync
+    recall_search.py       # Learning search and ranking
+    reflection.py          # Post-run reflection extraction
+    analytics.py           # Learning analytics and metrics
+    prd_utils.py           # PRD parsing and status management
+    index_sync.py          # INDEX.md/ROADMAP.md synchronization
+    llm_helpers.py         # LLM call abstractions
+    receipts.py            # Recall receipt tracking
+    _paths.py              # Path resolution utilities
+  clients/
+    llm.py                 # LLMClient (Claude Agent SDK abstraction)
+  middleware/
+    ceremony.py            # CeremonyMiddleware (session-start enforcement)
+  resources/               # MCP resources (config, learnings, run state)
+  prompts/                 # MCP prompts (AARE-F templates)
+  data/                    # Bundled skills, agents, hooks for init-project
 ```
 
 ## Development
 
 ```bash
-# Run tests with coverage
+# 589+ tests, 83%+ coverage, mypy --strict clean
 .venv/bin/python -m pytest tests/ -v --cov=trw_mcp --cov-report=term-missing
 
 # Type checking (strict mode)
 .venv/bin/python -m mypy --strict src/trw_mcp/
 
-# Current: 239 tests, 87% coverage, mypy --strict clean
+# Targeted testing during development
+.venv/bin/python -m pytest tests/test_tools_learning.py -k "test_recall" -v
 ```
 
 ### Optional Dependencies
 
-| Extra | Package | Purpose |
-|-------|---------|---------|
-| `[dev]` | pytest, mypy, etc. | Testing and type checking |
+| Extra | Packages | Purpose |
+|-------|----------|---------|
+| `[dev]` | pytest, mypy, coverage, etc. | Testing and type checking |
+| `[ai]` | anthropic, claude-agent-sdk | LLM-augmented features (reflect, groom, prune) |
 | `[otel]` | OpenTelemetry | Distributed tracing (future) |
 
-**Note**: `claude-agent-sdk` is a core dependency (included by default). The `[ai]` extra is deprecated and empty.
+**Note**: LLM features require `pip install -e ".[ai]"`. Without it, LLM-augmented tools gracefully degrade to non-LLM fallbacks.
 
 ## Recommended Workflow
 
+### Full Run (sprints, features)
+
 ```
-1. trw_init(task, objective)     # Bootstrap project
-2. trw_recall(query)             # Check prior knowledge
-3. trw_event() / trw_checkpoint()  # Audit trail during work
-4. trw_reflect()                 # Extract learnings after sessions
-5. trw_learn() / trw_learn_update()  # Record and manage discoveries
-6. trw_learn_prune()             # Retire stale learnings
-7. trw_claude_md_sync()          # Promote to CLAUDE.md at delivery
+trw_session_start()                    # 1. Recall learnings + check run state
+  → trw_init(task_name, prd_scope)     # 2. Bootstrap run directory
+  → work + trw_checkpoint(message)     # 3. Implement with periodic snapshots
+  → trw_learn(summary, detail)         # 4. Record discoveries along the way
+  → trw_build_check(scope="full")      # 5. Verify tests + types pass
+  → trw_deliver()                      # 6. Reflect, sync CLAUDE.md, close run
 ```
 
-## Known Issues
+### Quick Task (no run directory)
 
-See `.trw/learnings/` for accumulated project knowledge, or use `trw_recall(query)`.
+```
+trw_session_start()                    # 1. Recall learnings
+  → work                               # 2. Do the task
+  → trw_learn(summary, detail)         # 3. Record any discoveries
+  → trw_deliver()                      # 4. Sync learnings to CLAUDE.md
+```
 
-Open PRDs in `docs/requirements-aare-f/prds/`:
-- **PRD-FIX-002**: `trw_learn_prune` age heuristic ineffective for new projects
-- **PRD-FIX-005**: `trw_status` stale version warning
+## MCP Resources
+
+| URI | Description |
+|-----|-------------|
+| `trw://config` | Current TRWConfig values |
+| `trw://framework` | Bundled FRAMEWORK.md text |
+| `trw://learnings` | Learning index from `.trw/` |
+| `trw://patterns` | Discovered patterns index |
+| `trw://run-state` | Current run state (latest `run.yaml`) |
 
 ## License
 
