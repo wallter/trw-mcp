@@ -2,7 +2,7 @@
 
 These 3 self-learning tools manage the .trw/ self-learning layer that makes
 Claude Code progressively more effective in a specific repository over time.
-The ``claude-agent-sdk`` package (core dependency) provides LLM-augmented
+The ``anthropic`` SDK (optional [ai] dependency) provides LLM-augmented
 behavior for several tools (better summaries, relevance classification).
 """
 

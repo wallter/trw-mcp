@@ -213,7 +213,7 @@ class TRWConfig(BaseSettings):
     tests_relative_path: str = "trw-mcp/tests"
     test_map_filename: str = "test-map.yaml"
 
-    # LLM augmentation (claude-agent-sdk — core dependency)
+    # LLM augmentation (anthropic SDK — optional [ai] dependency)
     llm_enabled: bool = True
     llm_default_model: str = "haiku"
 

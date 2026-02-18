@@ -1,4 +1,4 @@
-"""LLM client abstraction over Claude Agent SDK.
+"""LLM client abstraction over Anthropic SDK.
 
 Provides a thin wrapper that gracefully degrades when the SDK is
 not installed. Tools check ``LLMClient.available`` before calling
@@ -11,8 +11,7 @@ override per-request.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from typing import Protocol
+from typing import Any
 
 import structlog
 
@@ -22,21 +21,20 @@ logger = structlog.get_logger()
 
 _ASK_TIMEOUT_SECS = 120
 
+_MODEL_MAP: dict[str, str] = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-6",
+}
 
-class _SDKQueryProtocol(Protocol):
-    """Protocol matching the ``claude_agent_sdk.query`` async generator."""
 
-    def __call__(
-        self,
-        *,
-        prompt: str,
-        options: object,
-        model: str,
-    ) -> AsyncIterator[object]: ...
+def _resolve_model(alias: str) -> str:
+    """Resolve a short model alias to a full model ID."""
+    return _MODEL_MAP.get(alias, alias)
 
 
 class LLMClient:
-    """Abstraction over Claude Agent SDK for internal LLM calls.
+    """Abstraction over Anthropic SDK for internal LLM calls.
 
     Gracefully degrades: ``ask()`` returns ``None`` when the SDK
     is unavailable.  Uses Haiku by default for cost efficiency.
@@ -57,19 +55,21 @@ class LLMClient:
         self._max_turns = max_turns
         self._system_prompt = system_prompt
         self._available = False
-        self._query_fn: _SDKQueryProtocol | None = None
+        self._client: Any = None
+        self._async_client: Any = None
 
         try:
-            from claude_agent_sdk import query as sdk_query  # type: ignore[import-not-found]
+            import anthropic  # type: ignore[import-not-found]
 
-            self._query_fn = sdk_query
+            self._client = anthropic.Anthropic()
+            self._async_client = anthropic.AsyncAnthropic()
             self._available = True
         except ImportError:
             logger.warning("LLM features disabled — install with: pip install trw-mcp[ai]")
 
     @property
     def available(self) -> bool:
-        """Whether the Claude Agent SDK is installed and usable."""
+        """Whether the Anthropic SDK is installed and usable."""
         return self._available
 
     async def ask(
@@ -88,38 +88,30 @@ class LLMClient:
             prompt: The user prompt to send.
             system: Override system prompt for this call.
             model: Override model for this call.
-            max_turns: Override max turns for this call.
+            max_turns: Override max turns for this call (unused — reserved for future use).
 
         Returns:
             The assistant's text response, or ``None`` on failure/unavailability.
         """
-        if not self._available or self._query_fn is None:
+        if not self._available or self._async_client is None:
             return None
 
-        try:  # pragma: no cover — requires claude-agent-sdk
-            from claude_agent_sdk import (
-                AssistantMessage,
-                ClaudeAgentOptions,
-                TextBlock,
-            )
+        try:
+            kwargs: dict[str, Any] = {
+                "model": _resolve_model(model or self._model),
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": prompt}],
+            }
 
-            opts = ClaudeAgentOptions(
-                system_prompt=system or self._system_prompt,
-                max_turns=max_turns or self._max_turns,
-            )
+            effective_system = system or self._system_prompt
+            if effective_system:
+                kwargs["system"] = effective_system
 
-            text_parts: list[str] = []
-            async for message in self._query_fn(
-                prompt=prompt,
-                options=opts,
-                model=model or self._model,
-            ):
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            text_parts.append(block.text)
+            response = await self._async_client.messages.create(**kwargs)
 
-            return "\n".join(text_parts).strip() or None
+            if response.content:
+                return str(response.content[0].text) if hasattr(response.content[0], "text") else None
+            return None
 
         except Exception:
             logger.warning(
@@ -159,12 +151,10 @@ class LLMClient:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            # No event loop running — safe to use asyncio.run directly.
-            return asyncio.run(coro)  # pragma: no cover
+            return asyncio.run(coro)
 
-        # Already inside a running loop (e.g. FastMCP) — offload to a thread.
-        import concurrent.futures  # pragma: no cover
+        import concurrent.futures
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:  # pragma: no cover
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=_ASK_TIMEOUT_SECS)

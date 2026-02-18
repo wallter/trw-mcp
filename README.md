@@ -88,7 +88,7 @@ Settings are configurable via environment variables (prefix `TRW_`) or `.trw/con
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TRW_DEBUG` | `false` | Enable debug logging to `.trw/logs/` and stderr |
-| `TRW_LLM_ENABLED` | `true` | Allow LLM calls via claude-agent-sdk |
+| `TRW_LLM_ENABLED` | `true` | Allow LLM calls via anthropic SDK |
 | `TRW_LLM_DEFAULT_MODEL` | `haiku` | Default model for LLM-augmented features |
 | `TRW_LEARNING_PROMOTION_IMPACT` | `0.7` | Minimum impact score for CLAUDE.md promotion |
 
@@ -162,7 +162,7 @@ src/trw_mcp/
 | Extra | Packages | Purpose |
 |-------|----------|---------|
 | `[dev]` | pytest, mypy, coverage, etc. | Testing and type checking |
-| `[ai]` | anthropic, claude-agent-sdk | LLM-augmented features (reflect, groom, prune) |
+| `[ai]` | anthropic | LLM-augmented features (reflect, groom, prune) |
 | `[otel]` | OpenTelemetry | Distributed tracing (future) |
 
 **Note**: LLM features require `pip install -e ".[ai]"`. Without it, LLM-augmented tools gracefully degrade to non-LLM fallbacks.

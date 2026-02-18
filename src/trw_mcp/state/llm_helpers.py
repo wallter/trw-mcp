@@ -1,8 +1,8 @@
 """LLM helper functions for the TRW self-learning layer.
 
 Extracted from tools/learning.py (PRD-FIX-010) to separate LLM integration
-from tool orchestration logic.  All helpers are ``pragma: no cover`` since
-they require the ``claude-agent-sdk`` package (core dependency).
+from tool orchestration logic.  Uses the ``anthropic`` SDK (optional [ai]
+dependency).
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def llm_assess_learnings(
     entries: list[tuple[Path, dict[str, object]]],
     llm: LLMClient,
     batch_cap: int = LLM_BATCH_CAP,
-) -> list[dict[str, object]]:  # pragma: no cover
+) -> list[dict[str, object]]:
     """Use LLM to assess whether active learnings are still relevant.
 
     Asks Haiku to classify each learning as ACTIVE, RESOLVED, or OBSOLETE.
@@ -104,7 +104,7 @@ def llm_extract_learnings(
     events: list[dict[str, object]],
     llm: LLMClient,
     event_cap: int = LLM_EVENT_CAP,
-) -> list[dict[str, object]] | None:  # pragma: no cover
+) -> list[dict[str, object]] | None:
     """Use LLM to extract structured learnings from events.
 
     Returns None if LLM is unavailable or call fails, signaling
@@ -163,7 +163,7 @@ def llm_summarize_learnings(
     llm: LLMClient,
     learning_cap: int,
     pattern_cap: int,
-) -> str | None:  # pragma: no cover
+) -> str | None:
     """Use LLM to generate a concise categorized summary for CLAUDE.md.
 
     Returns None if LLM unavailable, signaling fallback to bullet-point listing.
@@ -184,11 +184,10 @@ def llm_summarize_learnings(
     items: list[str] = [
         f"- Learning: {entry.get('summary', '')} | Detail: {entry.get('detail', '')}"
         for entry in learnings[:learning_cap]
-    ]
-    items.extend(
+    ] + [
         f"- Pattern: {pat.get('name', '')} | {pat.get('description', '')}"
         for pat in patterns[:pattern_cap]
-    )
+    ]
 
     prompt = (
         "Summarize these learnings and patterns into a concise CLAUDE.md section.\n"
