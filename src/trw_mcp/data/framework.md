@@ -1,22 +1,24 @@
-v22.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
+v23.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
 Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven
-Version date: 2026-02-17 | Model: Opus 4.6
+Version date: 2026-02-18 | Model: Opus 4.6
 
-<critical>
+<trw-framework>
+
+<execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v22.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 11 MCP tools | 10 skills | 4 agents**
+**v23.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 11 MCP tools | 10 skills | 4 agents**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN (see PARALLELISM).
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
 Principles: Behavioral > Structural. Prevention > Detection. External > Internal.
-</critical>
+</execution-summary>
 
-<design_principles>
+<design-principles>
 P1: **Behavioral > Structural** — instruct what to DO, not what to BE
 P2: **Prevention > Detection** — make bad patterns structurally impossible
 P3: **External > Internal** — externalize infrastructure to tools, keep prompt behavioral
-</design_principles>
+</design-principles>
 
 ---
 
@@ -65,7 +67,7 @@ Shard-to-run rollup: run confidence = lowest shard confidence in active wave.
 
 ## PERSISTENCE
 
-<critical_files>
+<critical-files>
 | File | Update When | Failure |
 |------|-------------|---------|
 | `reports/plan.md` | Plan changes | Block IMPLEMENT |
@@ -73,12 +75,12 @@ Shard-to-run rollup: run confidence = lowest shard confidence in active wave.
 | `meta/run.yaml` | Phase/status | Invalid state |
 | `meta/events.jsonl` | Significant event | Lost audit |
 | `shards/wave_manifest.yaml` | Wave status changes | Lost wave state |
-</critical_files>
+</critical-files>
 
-<rules>
+<persistence-rules>
 Write every state change to disk immediately, verify the write succeeded, then proceed.
 Treat persistence failures as P0 blockers.
-</rules>
+</persistence-rules>
 
 ---
 
@@ -99,15 +101,15 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 
 ORC tracks elapsed wall-clock against TIMEBOX_HOURS.
 
-<phase_transitions>
+<phase-transitions>
 Before advancing to the next phase, ORC MUST verify exit criteria manually from the table above.
-</phase_transitions>
+</phase-transitions>
 
-<rules>
+<phase-rules>
 ORC MUST NOT advance until exit criteria met OR cap exceeded with rationale.
 Refine plan until stable — fixing a plan is cheaper than rewriting code.
 Two consecutive iterations with <5% findings delta -> re-plan or advance to DELIVER.
-</rules>
+</phase-rules>
 
 ### Dynamic Research (Research Reactor)
 
@@ -123,6 +125,63 @@ After each RESEARCH wave, ORC evaluates findings and MAY spawn follow-up waves:
 ORC classifies open questions as: `answered_elsewhere` (skip), `needs_investigation` (shard), `deferred` (log).
 
 **Proven pattern**: 3-wave research (discovery -> deep-dive -> synthesis) consistently produces actionable plans. Wave 1: broad parallel exploration. Wave 2: targeted deep-dives on Wave 1 findings. Wave 3: synthesis shard that reads ALL prior outputs — MUST NOT be parallelized.
+
+---
+
+## GATES
+
+```
+VALIDATE/DELIVER boundary?
++-- YES -> FULL GATE (>=quorum judges, pairwise+rubric)
++-- NO -> PLAN/REVIEW decision?
+        +-- YES -> LIGHT GATE (2 judges, rubric only)
+        +-- NO -> Quality contested?
+                +-- YES -> SPAWN CRITIC
+                +-- NO -> NO GATE (checkpoint only)
+```
+
+Rubric: correctness 35, tests 20, security 15, performance 10, maintainability 10, completeness 10.
+Pass: `consensus >= quorum` AND `correlation >= CORRELATION_MIN`.
+Fail: document reasons -> revert to prior phase -> retry gate. Two consecutive failures -> escalate to user.
+
+---
+
+## PHASE REVERSION
+
+Agents SHOULD revert to earlier phases when implementation reveals structural gaps. Reverting early prevents workarounds that compound technical debt.
+
+### When to Revert vs Push Through
+
+| Transition | Revert When | Push Through When |
+|------------|-------------|-------------------|
+| IMPLEMENT -> PLAN | Module boundaries need redesign; approach conflicts with plan | Local workaround not affecting other modules |
+| IMPLEMENT -> RESEARCH | Technical approach based on incorrect assumptions | Rare — indicates significant planning gap |
+| VALIDATE -> IMPLEMENT | Test failures reveal design flaw (not just a bug) | Implementation bugs fixable in-phase |
+| VALIDATE -> PLAN | Test strategy itself is wrong | Test execution failures, not strategy flaws |
+| REVIEW -> IMPLEMENT | Review requires structural changes beyond a patch | Minor fixes or cosmetic improvements |
+
+### Refactoring During Implementation
+
+When shards discover structural impediments, classify immediately:
+
+|  | Local (no interface change) | Architectural (changes shared interface) |
+|---|---|---|
+| **Blocking** (shard cannot complete) | Inline refactor. Separate commit. | Create prerequisite PRD. Phase revert to PLAN. |
+| **Deferrable** (shard can complete) | P2 TODO or QOL fix if <10 lines. | Create P2-P3 PRD. Add to roadmap backlog. |
+
+---
+
+## ADAPTIVE PLANNING
+
+`reports/plan.md` is NOT frozen. Update when new info invalidates assumptions, scope changes >20%, approach fails, or user feedback.
+
+| Trigger | Action |
+|---------|--------|
+| Blocker | STOP -> update plan -> may revert to PLAN |
+| Scope +20% | Pause -> update -> confirm with user |
+| Failure | Document -> plan alternative |
+
+When updating plan: add `## Revision [N]`, document change/why/impact, log to events.jsonl.
 
 ---
 
@@ -276,25 +335,25 @@ Skills are also triggered by:
 2. **Agents with `skills:` field** — preloaded skill content at spawn time
 3. **FRAMEWORK.md phase instructions** — agent reads phase table and invokes listed skills
 
-<rules>
+<skill-rules>
 - ORC MUST invoke the skill listed in the Phase table when entering that phase
 - If a skill fails, ORC MAY fall back to raw MCP tool equivalents
 - Skills encapsulate best-practice tool sequences — manual equivalents skip validation steps
-</rules>
+</skill-rules>
 
 ---
 
 ## BOOTSTRAP
 
-<mcp_check>
+<mcp-check>
 ORC MUST detect MCP tool availability at bootstrap and set `MCP_MODE` in `run.yaml`:
 
 1. Call `trw_init(task_name=TASK, objective=...)`.
 2. If tool returns successfully -> `MCP_MODE: tool`. Init is complete (dirs, run.yaml, events.jsonl, FRAMEWORK_SNAPSHOT all created).
 3. If tool unavailable or errors -> `MCP_MODE: manual`. Run manual fallback (see CLAUDE.md for bootstrap script).
-</mcp_check>
+</mcp-check>
 
-<rules>
+<bootstrap-rules>
 - ORC MUST log `MCP_MODE` at bootstrap — all subsequent sections reference this value
 - ORC MUST restore latest `{TASK_DIR}/runs/**` or honor `{RUN_ID}` and recreate scaffolding
 - All writes MUST stay within `{REPO_ROOT}/**` and `{TASK_DIR}/**`
@@ -302,7 +361,7 @@ ORC MUST detect MCP tool availability at bootstrap and set `MCP_MODE` in `run.ya
 - Worktree strategy: in-repo under `docs/` (portability, single-clone simplicity)
 - Run artifacts (`docs/{TASK}/runs/**`, `.ai/**`) MUST NOT be committed
 - `docs/documentation/`, `docs/knowledge-catalogue/`, `docs/requirements-aare-f/` SHOULD be committed
-</rules>
+</bootstrap-rules>
 
 ---
 
@@ -321,24 +380,6 @@ Parallelizable without coordination?
 ```
 
 Formation scope: within a single wave. Each wave MAY use a different formation. Formations MUST NOT span waves.
-
----
-
-## GATES
-
-```
-VALIDATE/DELIVER boundary?
-+-- YES -> FULL GATE (>=quorum judges, pairwise+rubric)
-+-- NO -> PLAN/REVIEW decision?
-        +-- YES -> LIGHT GATE (2 judges, rubric only)
-        +-- NO -> Quality contested?
-                +-- YES -> SPAWN CRITIC
-                +-- NO -> NO GATE (checkpoint only)
-```
-
-Rubric: correctness 35, tests 20, security 15, performance 10, maintainability 10, completeness 10.
-Pass: `consensus >= quorum` AND `correlation >= CORRELATION_MIN`.
-Fail: document reasons -> revert to prior phase -> retry gate. Two consecutive failures -> escalate to user.
 
 ---
 
@@ -372,13 +413,13 @@ open_questions: ["How are tokens revoked?"]
 files_examined: ["src/auth/**"]
 ```
 
-<rules>
+<exploration-rules>
 - Shards MUST write `findings.yaml` as their LAST action before returning
 - Partial results MUST be written with `status: partial` if shard hits an error or timeout
 - ORC MUST read findings from disk (not rely on Task() return text alone) for resume safety
 - On resume: scan `scratch/shard-*/findings.yaml` and skip shards with `status: complete`
 - Planning shards write to `scratch/shard-{id}/plan_fragment.yaml` (same structure, `phase: plan`)
-</rules>
+</exploration-rules>
 
 ---
 
@@ -444,51 +485,12 @@ Shards MAY self-decompose into child shards (bounded recursion). Eligibility —
 
 Depth 0 = ORC-spawned, 1 = child, 2 = grandchild. Hard ceiling: 3.
 
-<rules>
+<shard-rules>
 - Child shards MUST be launched as blocking Task() calls
 - Parent MUST wait for all children before writing its own output
 - If any child fails, parent MUST handle (retry, replan, or fail with partial)
 - At hard ceiling, shard MUST NOT self-decompose regardless of card settings
-</rules>
-
----
-
-## ADAPTIVE PLANNING
-
-`reports/plan.md` is NOT frozen. Update when new info invalidates assumptions, scope changes >20%, approach fails, or user feedback.
-
-| Trigger | Action |
-|---------|--------|
-| Blocker | STOP -> update plan -> may revert to PLAN |
-| Scope +20% | Pause -> update -> confirm with user |
-| Failure | Document -> plan alternative |
-
-When updating plan: add `## Revision [N]`, document change/why/impact, log to events.jsonl.
-
----
-
-## PHASE REVERSION
-
-Agents SHOULD revert to earlier phases when implementation reveals structural gaps. Reverting early prevents workarounds that compound technical debt.
-
-### When to Revert vs Push Through
-
-| Transition | Revert When | Push Through When |
-|------------|-------------|-------------------|
-| IMPLEMENT -> PLAN | Module boundaries need redesign; approach conflicts with plan | Local workaround not affecting other modules |
-| IMPLEMENT -> RESEARCH | Technical approach based on incorrect assumptions | Rare — indicates significant planning gap |
-| VALIDATE -> IMPLEMENT | Test failures reveal design flaw (not just a bug) | Implementation bugs fixable in-phase |
-| VALIDATE -> PLAN | Test strategy itself is wrong | Test execution failures, not strategy flaws |
-| REVIEW -> IMPLEMENT | Review requires structural changes beyond a patch | Minor fixes or cosmetic improvements |
-
-### Refactoring During Implementation
-
-When shards discover structural impediments, classify immediately:
-
-|  | Local (no interface change) | Architectural (changes shared interface) |
-|---|---|---|
-| **Blocking** (shard cannot complete) | Inline refactor. Separate commit. | Create prerequisite PRD. Phase revert to PLAN. |
-| **Deferrable** (shard can complete) | P2 TODO or QOL fix if <10 lines. | Create P2-P3 PRD. Add to roadmap backlog. |
+</shard-rules>
 
 ---
 
@@ -501,27 +503,27 @@ Heuristic: if shards are independent (<=5% file overlap), spawn `clamp(MIN_SHARD
 | Parallel blocking shards (multiple Task() in ONE message) | REQUIRED when independent |
 | Background Bash (`&` tracked in events.jsonl) | ALLOWED |
 
-<rules>
+<parallelism-rules>
 - Every Task() call MUST block (omit `run_in_background` or set `false`). WHY: background agents lose MCP tools, cause token explosion (30-50K+), context staleness, file lock deadlocks.
 - Self-check before every Task(): "Will I wait for this result before my next action?" YES = correct.
 - Before launching N parallel shards, ORC SHOULD test ONE shard first to validate prompt quality and tool access.
-</rules>
+</parallelism-rules>
 
 ---
 
 ## REQUIREMENTS
 
-<pre_development>
+<pre-development>
 Before IMPLEMENT, verify:
 1. Source identified (PRD, issue, request)
 2. Acceptance criteria in `plan.md`
 3. Each REQ has: ID, criterion, verification method
 4. Refactor prerequisites MUST be identified and addressed BEFORE feature work
-</pre_development>
+</pre-development>
 
-<post_development>
+<post-development>
 Before DELIVER, verify requirements traceability: each REQ maps to implementation files and test files with PASS status.
-</post_development>
+</post-development>
 
 ### AARE-F Workflow
 
@@ -540,13 +542,13 @@ Fallback: `trw_prd_create` + `trw_prd_validate` directly when skills are unavail
 
 ## TDD & CODE QUALITY
 
-<rules>
+<tdd-rules>
 - Non-trivial code MUST have tests first
 - `src/**` changes without `tests/**` -> validation MUST fail (exception: whitespace, comments, docs only)
 - Coverage: global >=85%, diff >=90%
 - Structured logging: JSONL with `ts`, `level`, `component`, `op`, `outcome`. Redact secrets and PII.
 - Run `trw_build_check(scope="full")` at VALIDATE and DELIVER
-</rules>
+</tdd-rules>
 
 ---
 
@@ -638,15 +640,15 @@ When `MCP_MODE: manual`, write learnings directly to CLAUDE.md or sub-CLAUDE.md 
 - Structure: Context, Key Facts, Gotchas, See Also.
 - Append (don't rewrite). Date-stamp entries.
 
-<mandatory_reads>
+<mandatory-reads>
 CLAUDE.md MUST be read at: session start, every PLAN phase, after errors, before major refactors.
-</mandatory_reads>
+</mandatory-reads>
 
 ---
 
 ## ARTIFACT & PROMPT PATTERNS
 
-<patterns>
+<prompt-patterns>
 | Pattern | Apply To | Why |
 |---------|----------|-----|
 | YAML over JSON | configs, structured data | 50% fewer tokens |
@@ -654,29 +656,29 @@ CLAUDE.md MUST be read at: session start, every PLAN phase, after errors, before
 | RFC 2119 caps | requirements (MUST/SHOULD/MAY) | Unambiguous obligation |
 | Tables over prose | comparisons, options, lists | Dense + scannable |
 | Rules not explanations | constraints, instructions | LLMs don't need "why" |
-</patterns>
+</prompt-patterns>
 
-<sub_agent_prompts>
+<sub-agent-prompts>
 Shard prompts use `<context>`, `<task>`, `<output_contract>`, `<constraints>` XML tags.
 Inputs as file paths (never inlined). Target: <500 tokens. Output: YAML. Write contract file LAST.
 
 **Prompt quality rule**: Shard prompt quality directly determines output quality. MUST include: specific file paths with line numbers, explicit tool sequences, concrete success criteria.
 
 Sub-agents inherit MCP tool access. Shards MUST use structured file-creation tools (Write tool) rather than shell heredocs — heredocs silently truncate outputs beyond ~500 lines.
-</sub_agent_prompts>
+</sub-agent-prompts>
 
 ---
 
 ## FRAMEWORK ADHERENCE
 
-<mandatory_triggers>
+<adherence-triggers>
 | Trigger | Action |
 |---------|--------|
 | Every 5 waves | Re-read framework, log compliance |
 | After compact | IMMEDIATELY re-read before work |
 | Phase transition | Re-read relevant section |
 | Gate failure | Re-read gate requirements |
-</mandatory_triggers>
+</adherence-triggers>
 
 ### Context Compaction Protocol
 
@@ -696,4 +698,4 @@ On context compact: (1) persist all state to `run.yaml` and critical files, (2) 
 
 Shards MAY fix minor issues (<10 lines, already-open files, obviously correct, no behavior change, <=5% effort). Separate commits. When in doubt -> P2 TODO.
 
-</critical>
+</trw-framework>

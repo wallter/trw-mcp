@@ -138,11 +138,11 @@ class TestContent:
         assert "trw_session_start" in content
         assert "trw_deliver" in content
 
-    def test_framework_md_is_v21(self, fake_git_repo: Path) -> None:
+    def test_framework_md_is_v23(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
         path = fake_git_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
         content = path.read_text(encoding="utf-8")
-        assert "v22.0_TRW" in content
+        assert "v23.0_TRW" in content
 
     def test_config_yaml_has_defaults(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)

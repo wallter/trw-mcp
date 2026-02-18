@@ -95,7 +95,7 @@ def init_project(
                     result,
                 )
 
-    # 4.5 Copy skills
+    # 5. Copy skills
     skills_source = _DATA_DIR / "skills"
     if skills_source.is_dir():
         for skill_dir in sorted(skills_source.iterdir()):
@@ -106,7 +106,7 @@ def init_project(
                     if skill_file.is_file():
                         _copy_file(skill_file, dest_skill / skill_file.name, force, result)
 
-    # 4.6 Copy agents
+    # 6. Copy agents
     agents_source = _DATA_DIR / "agents"
     if agents_source.is_dir():
         for agent_file in sorted(agents_source.iterdir()):
@@ -118,7 +118,7 @@ def init_project(
                     result,
                 )
 
-    # 5. Generate root-level files
+    # 7. Generate root-level files
     _write_if_missing(target_dir / ".mcp.json", _generate_mcp_json(), force, result)
     _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result)
 
@@ -159,7 +159,8 @@ def _copy_file(
         shutil.copy2(src, dest)
         # Ensure shell scripts are executable (pip install may strip permissions)
         if dest.suffix == ".sh":
-            os.chmod(dest, os.stat(dest).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            os.chmod(dest, os.stat(dest).st_mode | executable)
         result["created"].append(str(dest))
     except OSError as exc:
         result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")

@@ -109,7 +109,7 @@ class TRWConfig(BaseSettings):
     templates_dir: str = "templates"
 
     # Framework version and AARE-F standard
-    framework_version: str = "v22.0_TRW"
+    framework_version: str = "v23.0_TRW"
     aaref_version: str = "v1.1.0"
 
     # PRD quality gates (AARE-F standard)
