@@ -25,6 +25,8 @@ _TRW_DIRS = [
     ".trw/learnings/entries",
     ".trw/scripts",
     ".claude/hooks",
+    ".claude/skills",
+    ".claude/agents",
 ]
 
 # Mapping of bundled data files to their destination paths (relative to target).
@@ -87,6 +89,29 @@ def init_project(
                 _copy_file(
                     hook_file,
                     target_dir / ".claude" / "hooks" / hook_file.name,
+                    force,
+                    result,
+                )
+
+    # 4.5 Copy skills
+    skills_source = _DATA_DIR / "skills"
+    if skills_source.is_dir():
+        for skill_dir in sorted(skills_source.iterdir()):
+            if skill_dir.is_dir():
+                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
+                _ensure_dir(dest_skill, result)
+                for skill_file in sorted(skill_dir.iterdir()):
+                    if skill_file.is_file():
+                        _copy_file(skill_file, dest_skill / skill_file.name, force, result)
+
+    # 4.6 Copy agents
+    agents_source = _DATA_DIR / "agents"
+    if agents_source.is_dir():
+        for agent_file in sorted(agents_source.iterdir()):
+            if agent_file.suffix == ".md":
+                _copy_file(
+                    agent_file,
+                    target_dir / ".claude" / "agents" / agent_file.name,
                     force,
                     result,
                 )

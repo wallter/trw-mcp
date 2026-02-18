@@ -209,3 +209,94 @@ class TestHooks:
         for hook in self.EXPECTED_HOOKS:
             hook_file = hooks_dir / hook
             assert hook_file.stat().st_size > 0, f"Hook {hook} is empty"
+
+
+# ── Skills Tests ────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestSkills:
+    """Test skill directory deployment."""
+
+    EXPECTED_SKILLS = [
+        "deliver",
+        "framework-check",
+        "memory-audit",
+        "memory-optimize",
+        "prd-groom",
+        "prd-new",
+        "prd-review",
+        "sprint-finish",
+        "sprint-init",
+        "test-strategy",
+    ]
+
+    def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
+        """After init_project(), .claude/skills/ has 10 subdirectories each with SKILL.md."""
+        result = init_project(fake_git_repo)
+        assert not result["errors"]
+
+        skills_dir = fake_git_repo / ".claude" / "skills"
+        deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
+        assert deployed == self.EXPECTED_SKILLS
+
+        for skill in self.EXPECTED_SKILLS:
+            skill_md = skills_dir / skill / "SKILL.md"
+            assert skill_md.is_file(), f"Missing SKILL.md in {skill}"
+            assert skill_md.stat().st_size > 0, f"SKILL.md is empty in {skill}"
+
+    def test_init_force_overwrites_skills(self, fake_git_repo: Path) -> None:
+        """Write dummy SKILL.md, run init_project(force=True), verify content changed."""
+        init_project(fake_git_repo)
+
+        # Write dummy content to one skill
+        dummy_path = fake_git_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
+        dummy_path.write_text("dummy content", encoding="utf-8")
+
+        result = init_project(fake_git_repo, force=True)
+        assert not result["errors"]
+
+        restored = dummy_path.read_text(encoding="utf-8")
+        assert restored != "dummy content"
+
+    def test_init_skills_idempotent(self, fake_git_repo: Path) -> None:
+        """Run init_project() twice — no errors and same file count."""
+        result1 = init_project(fake_git_repo)
+        assert not result1["errors"]
+
+        result2 = init_project(fake_git_repo)
+        assert not result2["errors"]
+
+        # All skill files should be skipped on second run
+        skills_dir = fake_git_repo / ".claude" / "skills"
+        deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
+        assert deployed == self.EXPECTED_SKILLS
+
+
+# ── Agents Tests ────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestAgents:
+    """Test agent file deployment."""
+
+    EXPECTED_AGENTS = [
+        "code-simplifier.md",
+        "prd-groomer.md",
+        "requirement-reviewer.md",
+        "requirement-writer.md",
+        "traceability-checker.md",
+    ]
+
+    def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
+        """After init_project(), .claude/agents/ has agent .md files."""
+        result = init_project(fake_git_repo)
+        assert not result["errors"]
+
+        agents_dir = fake_git_repo / ".claude" / "agents"
+        deployed = sorted(f.name for f in agents_dir.iterdir() if f.suffix == ".md")
+        assert deployed == self.EXPECTED_AGENTS
+
+        for agent in self.EXPECTED_AGENTS:
+            agent_file = agents_dir / agent
+            assert agent_file.stat().st_size > 0, f"Agent {agent} is empty"
