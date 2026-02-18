@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, Generator
 from unittest.mock import patch
 
-import pytest
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import TRWConfig

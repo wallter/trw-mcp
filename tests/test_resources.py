@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import os
+from typing import Any
+
 from pathlib import Path
 
 import pytest
 
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateWriter
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +18,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _get_resources() -> dict[str, object]:
+def _get_resources() -> dict[str, Any]:
     """Create server and return resource map."""
     from fastmcp import FastMCP
     from trw_mcp.resources.config import register_config_resources

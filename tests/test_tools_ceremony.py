@@ -11,8 +11,9 @@ Covers:
 
 from __future__ import annotations
 
+from typing import Any
+
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -131,7 +132,7 @@ class TestDoCheckpoint:
     def test_appends_checkpoint_event(self, run_dir: Path) -> None:
         _do_checkpoint(run_dir, "delivery")
         events_path = run_dir / "meta" / "events.jsonl"
-        lines = [l for l in events_path.read_text(encoding="utf-8").strip().split("\n") if l]
+        lines = [line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line]
         assert len(lines) == 1
         event = json.loads(lines[0])
         assert event["event"] == "checkpoint"
@@ -309,11 +310,10 @@ class TestDoAutoProgress:
 
 def _make_ceremony_server(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Create a FastMCP server with ceremony tools and patched project root."""
     from fastmcp import FastMCP
     from trw_mcp.tools.ceremony import register_ceremony_tools
-    import trw_mcp.tools.ceremony as ceremony_mod
 
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
 
@@ -603,9 +603,9 @@ class TestDeliverPartialFailure:
 
         events_path = run_dir / "meta" / "events.jsonl"
         lines = [
-            l for l in events_path.read_text(encoding="utf-8").strip().split("\n") if l
+            line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line
         ]
         assert len(lines) >= 2
-        event_types = [json.loads(l)["event"] for l in lines]
+        event_types = [json.loads(line)["event"] for line in lines]
         assert "reflection_complete" in event_types
         assert "checkpoint" in event_types

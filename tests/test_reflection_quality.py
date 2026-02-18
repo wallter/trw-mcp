@@ -78,7 +78,7 @@ def _write_reflection(
 ) -> None:
     """Write a reflection YAML file."""
     learnings = new_learnings or []
-    learnings_str = ", ".join(f'"{l}"' for l in learnings)
+    learnings_str = ", ".join(f'"{entry}"' for entry in learnings)
     (reflections_dir / f"{name}.yaml").write_text(
         f"id: R-{name}\nscope: session\n"
         f"timestamp: '2026-02-01T00:00:00Z'\n"

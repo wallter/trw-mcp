@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,7 +46,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _get_tools() -> dict[str, object]:
+def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
     from trw_mcp.tools.learning import register_learning_tools
@@ -139,8 +141,8 @@ class TestTrwRecall:
         result = tools["trw_recall"].fn(query="tagged", tags=["python"])
         # Should only find the python-tagged one
         python_results = [
-            l for l in result["learnings"]
-            if "python" in (l.get("tags", []) if isinstance(l.get("tags"), list) else [])
+            entry for entry in result["learnings"]
+            if "python" in (entry.get("tags", []) if isinstance(entry.get("tags"), list) else [])
         ]
         assert len(python_results) >= 1
 
@@ -160,8 +162,8 @@ class TestTrwRecall:
 
         result = tools["trw_recall"].fn(query="impact learning filter", min_impact=0.5)
         assert all(
-            float(l.get("impact", 0)) >= 0.5
-            for l in result["learnings"]
+            float(entry.get("impact", 0)) >= 0.5
+            for entry in result["learnings"]
         )
 
     def test_multi_word_query_matches_tokens(self, tmp_path: Path) -> None:
@@ -294,7 +296,7 @@ class TestTrwClaudeMdSync:
             detail="Trigger sync",
             impact=0.9,
         )
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        tools["trw_claude_md_sync"].fn(scope="root")
 
         content = claude_md.read_text(encoding="utf-8")
         line_count = len(content.split("\n"))
@@ -813,12 +815,12 @@ class TestRecallUtilityRanking:
         tools = _get_tools()
 
         # Create two entries with same keyword but different utility
-        r1 = tools["trw_learn"].fn(
+        tools["trw_learn"].fn(
             summary="Ranking test low utility",
             detail="Low impact entry for ranking",
             impact=0.2,
         )
-        r2 = tools["trw_learn"].fn(
+        tools["trw_learn"].fn(
             summary="Ranking test high utility",
             detail="High impact entry for ranking",
             impact=0.9,
@@ -827,7 +829,7 @@ class TestRecallUtilityRanking:
         result = tools["trw_recall"].fn(query="ranking test")
         assert len(result["learnings"]) == 2
         # Higher impact should rank first (lambda blends utility into score)
-        summaries = [str(l.get("summary", "")) for l in result["learnings"]]
+        summaries = [str(entry.get("summary", "")) for entry in result["learnings"]]
         high_idx = next(i for i, s in enumerate(summaries) if "high" in s)
         low_idx = next(i for i, s in enumerate(summaries) if "low" in s)
         assert high_idx < low_idx
@@ -1417,7 +1419,7 @@ class TestBehavioralProtocol:
 
         result = render_behavioral_protocol()
         # Should have exactly 12 directive lines
-        directive_lines = [l for l in result.strip().split("\n") if l.startswith("- ")]
+        directive_lines = [line for line in result.strip().split("\n") if line.startswith("- ")]
         assert len(directive_lines) == 12
 
     def test_render_adherence_includes_behavioral_mandate_tag(
@@ -1535,7 +1537,6 @@ class TestRecallSearch:
             "description": "3-wave research pattern",
         })
         reader = FileStateReader()
-        from trw_mcp.state.recall_search import search_patterns
         matches = search_patterns(patterns_dir, ["research"], reader)
         assert len(matches) == 1
 
@@ -1549,7 +1550,6 @@ class TestRecallSearch:
             "id": "L-track", "summary": "test",
             "access_count": 0, "last_accessed_at": None,
         })
-        from trw_mcp.state.recall_search import update_access_tracking
         ids = update_access_tracking([entry_path], reader, writer)
         assert ids == ["L-track"]
         updated = reader.read_yaml(entry_path)
@@ -1561,7 +1561,6 @@ class TestAnalyticsExtraction:
 
     def test_extract_learnings_mechanical_errors(self, tmp_project: Path) -> None:
         """extract_learnings_mechanical creates entries from error events."""
-        from trw_mcp.state.analytics import extract_learnings_mechanical
         trw_dir = tmp_project / ".trw"
         errors = [{"event": "tool_error", "data": "disk full", "ts": "2026-01-01"}]
         result = extract_learnings_mechanical(errors, [], trw_dir)
@@ -1570,7 +1569,6 @@ class TestAnalyticsExtraction:
 
     def test_extract_learnings_mechanical_repeated(self, tmp_project: Path) -> None:
         """extract_learnings_mechanical creates entries from repeated ops."""
-        from trw_mcp.state.analytics import extract_learnings_mechanical
         trw_dir = tmp_project / ".trw"
         ops = [("git_push", 5)]
         result = extract_learnings_mechanical([], ops, trw_dir)
@@ -1579,9 +1577,8 @@ class TestAnalyticsExtraction:
 
     def test_extract_learnings_from_llm_saves_entries(self, tmp_project: Path) -> None:
         """extract_learnings_from_llm persists entries to disk."""
-        from trw_mcp.state.analytics import extract_learnings_from_llm
         trw_dir = tmp_project / ".trw"
-        items: list[dict[str, object]] = [
+        items: list[dict[str, Any]] = [
             {"summary": "LLM insight", "detail": "details", "tags": ["llm"], "impact": "0.7"},
         ]
         result = extract_learnings_from_llm(items, trw_dir)
@@ -1597,7 +1594,6 @@ class TestClaudeMdCollection:
 
     def test_collect_promotable_learnings(self, tmp_project: Path) -> None:
         """collect_promotable_learnings returns high-impact active entries."""
-        from trw_mcp.state.claude_md import collect_promotable_learnings
         writer = FileStateWriter()
         reader = FileStateReader()
         config = TRWConfig()
@@ -1618,7 +1614,6 @@ class TestClaudeMdCollection:
 
     def test_collect_patterns(self, tmp_project: Path) -> None:
         """collect_patterns returns non-index pattern files."""
-        from trw_mcp.state.claude_md import collect_patterns
         writer = FileStateWriter()
         reader = FileStateReader()
         config = TRWConfig()
@@ -1631,7 +1626,6 @@ class TestClaudeMdCollection:
 
     def test_collect_context_data(self, tmp_project: Path) -> None:
         """collect_context_data returns arch and conv data."""
-        from trw_mcp.state.claude_md import collect_context_data
         writer = FileStateWriter()
         reader = FileStateReader()
         config = TRWConfig()
@@ -1692,7 +1686,6 @@ class TestSuccessPatternDetection:
 
     def test_is_success_event_matches(self) -> None:
         """is_success_event detects success-related event types."""
-        from trw_mcp.state.analytics import is_success_event
 
         assert is_success_event({"event": "shard_complete"}) is True
         assert is_success_event({"event": "phase_gate_passed"}) is True
@@ -1704,7 +1697,6 @@ class TestSuccessPatternDetection:
 
     def test_is_success_event_rejects(self) -> None:
         """is_success_event rejects non-success event types."""
-        from trw_mcp.state.analytics import is_success_event
 
         assert is_success_event({"event": "error_occurred"}) is False
         assert is_success_event({"event": "shard_failed"}) is False
@@ -1713,9 +1705,8 @@ class TestSuccessPatternDetection:
 
     def test_find_success_patterns_aggregates(self) -> None:
         """find_success_patterns aggregates success events by type."""
-        from trw_mcp.state.analytics import find_success_patterns
 
-        events: list[dict[str, object]] = [
+        events: list[dict[str, Any]] = [
             {"event": "shard_complete", "data": {"shard": "S1"}},
             {"event": "shard_complete", "data": {"shard": "S2"}},
             {"event": "shard_complete", "data": {"shard": "S3"}},
@@ -1735,9 +1726,8 @@ class TestSuccessPatternDetection:
 
     def test_find_success_patterns_empty(self) -> None:
         """find_success_patterns returns empty for no success events."""
-        from trw_mcp.state.analytics import find_success_patterns
 
-        events: list[dict[str, object]] = [
+        events: list[dict[str, Any]] = [
             {"event": "error_occurred"},
             {"event": "phase_enter"},
         ]
@@ -1745,9 +1735,8 @@ class TestSuccessPatternDetection:
 
     def test_find_success_patterns_sorted_by_count(self) -> None:
         """Patterns are sorted by count descending."""
-        from trw_mcp.state.analytics import find_success_patterns
 
-        events: list[dict[str, object]] = [
+        events: list[dict[str, Any]] = [
             {"event": "shard_complete"},
             {"event": "shard_complete"},
             {"event": "shard_complete"},
@@ -1762,10 +1751,9 @@ class TestSuccessPatternDetection:
     def test_find_success_patterns_capped(self) -> None:
         """Patterns are capped at config.reflect_max_success_patterns."""
         from trw_mcp.models.config import TRWConfig
-        from trw_mcp.state.analytics import find_success_patterns
 
         config = TRWConfig()
-        events: list[dict[str, object]] = []
+        events: list[dict[str, Any]] = []
         for i in range(10):
             events.append({"event": f"success_type_{i}_complete"})
 

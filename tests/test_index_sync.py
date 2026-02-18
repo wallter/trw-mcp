@@ -225,7 +225,7 @@ class TestRenderRoadmapCatalogue:
         entries = scan_prd_frontmatters(prds_dir)
         result = render_roadmap_catalogue(entries)
         lines = result.split("\n")
-        table_rows = [l for l in lines if l.startswith("| PRD-")]
+        table_rows = [line for line in lines if line.startswith("| PRD-")]
         # Done first, then merged, then review, then draft
         assert "PRD-CORE-001" in table_rows[0]  # done
         assert "PRD-FIX-002" in table_rows[1]  # merged

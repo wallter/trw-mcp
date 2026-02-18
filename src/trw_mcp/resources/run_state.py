@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastmcp import FastMCP
 
 from trw_mcp.state._paths import resolve_project_root

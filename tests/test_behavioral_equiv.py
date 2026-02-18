@@ -6,6 +6,8 @@ structures with expected field presence, types, and key values.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,7 +25,7 @@ def _set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _get_tools() -> dict[str, object]:
+def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
     from trw_mcp.tools.learning import register_learning_tools
@@ -37,7 +39,7 @@ def _entries_dir(root: Path) -> Path:
     return root / _CFG.trw_dir / _CFG.learnings_dir / _CFG.entries_dir
 
 
-def _seed_learning(tools: dict[str, object], **kwargs: object) -> dict[str, str]:
+def _seed_learning(tools: dict[str, Any], **kwargs: object) -> dict[str, str]:
     """Record a learning and return the result."""
     defaults = {
         "summary": "Test learning entry",

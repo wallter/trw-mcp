@@ -10,6 +10,8 @@ Verifies that:
 
 from __future__ import annotations
 
+from typing import Any
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -149,7 +151,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _get_tools() -> dict[str, object]:
+def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
     from trw_mcp.tools.requirements import register_requirements_tools
@@ -159,7 +161,7 @@ def _get_tools() -> dict[str, object]:
     return {t.name: t for t in srv._tool_manager._tools.values()}
 
 
-def _run_validate(prd_text: str, tmp_path: Path) -> dict[str, object]:
+def _run_validate(prd_text: str, tmp_path: Path) -> dict[str, Any]:
     """Write prd_text to a temp file and run trw_prd_validate, returning the result."""
     prd_path = tmp_path / "test.md"
     prd_path.write_text(prd_text, encoding="utf-8")

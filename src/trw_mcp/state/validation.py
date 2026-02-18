@@ -1696,7 +1696,6 @@ def validate_prd_quality_v2(
 
     # Score 3 active dimensions (Phase 2a)
     dimensions: list[DimensionScore] = []
-    failures: list[ValidationFailure] = []
 
     # 1. Content Density (25 pts)
     try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(autouse=True)
-def _reset_config_singleton() -> None:  # type: ignore[misc]
+def _reset_config_singleton() -> Iterator[None]:
     """Reset TRWConfig singleton for test isolation."""
     _reset_config()
     yield

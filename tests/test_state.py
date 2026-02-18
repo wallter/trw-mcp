@@ -9,7 +9,6 @@ import pytest
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.requirements import PRDQualityGates, ValidationFailure
 from trw_mcp.models.run import (
     OutputContract,
     Phase,

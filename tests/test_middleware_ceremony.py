@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from mcp.types import TextContent
@@ -264,7 +263,6 @@ class TestCeremonyMiddleware:
     @pytest.mark.asyncio
     async def test_multiple_sessions_independent(self, middleware: CeremonyMiddleware) -> None:
         """Two parallel sessions are tracked independently."""
-        result = FakeToolResult(content=[TextContent(type="text", text="ok")])
 
         async def call_next(_ctx: Any) -> Any:
             return FakeToolResult(content=[TextContent(type="text", text="ok")])
