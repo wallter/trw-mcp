@@ -9,6 +9,14 @@
 #
 # Dependencies: jq (POSIX shell + jq only)
 
+# Source shared utilities for get_task_root
+_hook_dir="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-trw.sh
+. "$_hook_dir/lib-trw.sh" 2>/dev/null || true
+
+# Read task_root from config (defaults to "docs" if unavailable)
+_task_root=$(get_task_root 2>/dev/null) || _task_root="docs"
+
 # Read JSON input from stdin
 input=$(cat)
 
@@ -21,16 +29,16 @@ if [ -z "$file_path" ]; then
   exit 0
 fi
 
-# Rule 1: Allow writes to PRD files
+# Rule 1: Allow writes to PRD files (under task_root AARE-F directory)
 case "$file_path" in
-  */docs/requirements-aare-f/prds/PRD-*.md)
+  */requirements-aare-f/prds/PRD-*.md)
     exit 0
     ;;
 esac
 
 # Rule 2: Allow writes under planning run directories
 case "$file_path" in
-  */docs/requirements-aare-f/planning-runs/*)
+  */requirements-aare-f/planning-runs/*)
     exit 0
     ;;
 esac
@@ -44,7 +52,14 @@ esac
 
 # Rule 4: Allow writes under run directories (standard TRW runs)
 case "$file_path" in
-  */docs/*/runs/*)
+  */"$_task_root"/*/runs/*)
+    exit 0
+    ;;
+esac
+
+# Rule 5: Allow writes under .trw/ directory (learnings, context, etc.)
+case "$file_path" in
+  */.trw/*)
     exit 0
     ;;
 esac

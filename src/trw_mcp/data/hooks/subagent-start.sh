@@ -11,7 +11,7 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
-_run_dir=$(find_active_run "docs") || true
+_run_dir=$(find_active_run) || true
 
 echo "TRW SUB-AGENT CONTEXT:"
 echo "- ALWAYS call trw_recall for context; use trw_learn for discoveries; use trw_checkpoint periodically"

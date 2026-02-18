@@ -12,18 +12,18 @@ allowed-tools: Read, Glob, Grep, Bash
 
 # Test Strategy Audit Skill
 
-Audit test coverage and strategy for the TRW MCP codebase. Identifies untested modules, coverage gaps, and suggests targeted test improvements.
+Audit test coverage and strategy for the project codebase. Identifies untested modules, coverage gaps, and suggests targeted test improvements.
 
 ## Workflow
 
 1. **Determine scope**: Parse `$ARGUMENTS`:
    - If a specific module path (e.g., `tools/learning.py`), focus on that module
-   - If `all` or empty, audit the full `trw-mcp/src/trw_mcp/` codebase
+   - If `all` or empty, discover the project's source directory (look for `src/`, `lib/`, or top-level Python packages)
 
 2. **Run coverage**: Call `trw_build_check(scope="pytest")` to get current test results and coverage.
 
 3. **Analyze test structure**:
-   - Glob for test files: `trw-mcp/tests/test_*.py`
+   - Glob for test files: `tests/test_*.py` or `test_*.py` (discover the project's test directory)
    - For each source module in scope, check if a corresponding test file exists
    - Grep test files for function/class names from the source module
 

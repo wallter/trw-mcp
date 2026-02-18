@@ -26,7 +26,7 @@ fi
 _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 
 # Find active run
-_run_dir=$(find_active_run "docs") || true
+_run_dir=$(find_active_run) || true
 
 _run_path=""
 _phase=""

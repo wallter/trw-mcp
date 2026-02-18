@@ -202,6 +202,11 @@ class TestHooks:
         copied = sorted(f.name for f in hooks_dir.iterdir() if f.suffix == ".sh")
         assert copied == self.EXPECTED_HOOKS
 
+    def test_hooks_no_phase_check(self, fake_git_repo: Path) -> None:
+        """post-phase-check.sh should NOT be deployed (tool removed)."""
+        init_project(fake_git_repo)
+        assert not (fake_git_repo / ".claude" / "hooks" / "post-phase-check.sh").exists()
+
     def test_hooks_not_empty(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
         hooks_dir = fake_git_repo / ".claude" / "hooks"

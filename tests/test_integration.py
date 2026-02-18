@@ -22,11 +22,13 @@ def _get_all_tools() -> dict[str, object]:
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.requirements import register_requirements_tools
+    from trw_mcp.tools.ceremony import register_ceremony_tools
 
     srv = FastMCP("test")
     register_orchestration_tools(srv)
     register_learning_tools(srv)
     register_requirements_tools(srv)
+    register_ceremony_tools(srv)
     return {t.name: t for t in srv._tool_manager._tools.values()}
 
 
@@ -119,6 +121,80 @@ class TestFullWorkflow:
             )
             # The auto-generated PRD should have basic structure
             assert len(validate_result["sections_found"]) == 12
+
+
+class TestSessionLifecycle:
+    """Full session lifecycle: start -> init -> checkpoint -> deliver."""
+
+    def test_full_session_lifecycle(self, tmp_path: Path) -> None:
+        """Complete lifecycle without errors: session_start -> init -> checkpoint -> deliver."""
+        tools = _get_all_tools()
+
+        # Step 1: Session start (empty project — no learnings yet)
+        start_result = tools["trw_session_start"].fn()
+        assert start_result["success"]
+        assert start_result["learnings_count"] == 0
+
+        # Step 2: Init run
+        init_result = tools["trw_init"].fn(
+            task_name="lifecycle-test",
+            objective="Full lifecycle integration test",
+        )
+        assert init_result["status"] == "initialized"
+        run_path = init_result["run_path"]
+
+        # Step 3: Checkpoint
+        cp_result = tools["trw_checkpoint"].fn(
+            run_path=run_path,
+            message="mid-lifecycle",
+        )
+        assert cp_result["status"] == "checkpoint_created"
+
+        # Step 4: Deliver
+        deliver_result = tools["trw_deliver"].fn(
+            run_path=run_path,
+            skip_index_sync=True,
+        )
+        assert deliver_result["success"]
+        assert deliver_result["steps_completed"] >= 3
+
+    def test_fresh_project_session_start(self, tmp_path: Path) -> None:
+        """session_start on empty .trw/ returns zero learnings, no active run."""
+        tools = _get_all_tools()
+
+        result = tools["trw_session_start"].fn()
+        assert result["success"]
+        assert result["learnings_count"] == 0
+        assert isinstance(result["learnings"], list)
+        assert len(result["learnings"]) == 0
+
+        run_info = result["run"]
+        assert run_info["active_run"] is None
+
+    def test_learn_then_recall_roundtrip(self, tmp_path: Path) -> None:
+        """Write a learning then recall it by keyword."""
+        tools = _get_all_tools()
+
+        # Init to bootstrap .trw/
+        tools["trw_init"].fn(task_name="roundtrip-test")
+
+        # Learn
+        tools["trw_learn"].fn(
+            summary="Roundtrip discovery for integration test",
+            detail="This learning should be recallable by keyword",
+            tags=["roundtrip"],
+            impact=0.9,
+        )
+
+        # Recall by keyword
+        recall_result = tools["trw_recall"].fn(query="roundtrip")
+        assert recall_result["total_matches"] >= 1
+        summaries = [
+            entry["summary"]
+            for entry in recall_result["learnings"]
+            if "roundtrip" in entry["summary"].lower()
+        ]
+        assert len(summaries) >= 1
 
 
 class TestMultiSessionSimulation:

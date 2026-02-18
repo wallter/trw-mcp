@@ -7,7 +7,9 @@ required framework files into a target git repository.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -155,6 +157,9 @@ def _copy_file(
         return
     try:
         shutil.copy2(src, dest)
+        # Ensure shell scripts are executable (pip install may strip permissions)
+        if dest.suffix == ".sh":
+            os.chmod(dest, os.stat(dest).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         result["created"].append(str(dest))
     except OSError as exc:
         result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
@@ -200,12 +205,11 @@ def _generate_mcp_json() -> str:
 
 
 def _minimal_claude_md() -> str:
-    """Generate minimal ``CLAUDE.md`` with behavioral protocol header."""
+    """Generate ``CLAUDE.md`` with behavioral protocol and tool reference."""
     return """\
 # CLAUDE.md
 
-Before starting work: execute `trw_session_start()`.
-After completing work: execute `trw_deliver()`.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## What This Is
 
@@ -216,4 +220,64 @@ After completing work: execute `trw_deliver()`.
 ```bash
 # Add your project's build and test commands here
 ```
+
+## Project Conventions
+
+{Add project-specific conventions here}
+
+<!-- TRW AUTO-GENERATED — do not edit between markers -->
+<!-- trw:start -->
+
+CRITICAL — YOU MUST EXECUTE THESE TOOLS:
+- **BEFORE ANY WORK**: ALWAYS call `trw_session_start()` (or `trw_recall('*', min_impact=0.7)` for quick tasks). NEVER skip this step.
+- **AFTER COMPLETING WORK**: ALWAYS call `trw_deliver()` (or `trw_claude_md_sync` for quick tasks). NEVER skip this step.
+
+## TRW Behavioral Protocol (Auto-Generated)
+
+- ALWAYS execute `trw_session_start()` FIRST — server enforces this with warnings on every response if skipped
+- ALWAYS execute `trw_status()` when resuming a run — without this, you WILL overwrite in-progress work
+- ALWAYS execute `trw_init` to bootstrap run directory for new tasks
+- ALWAYS execute `trw_checkpoint` during implementation — without these, progress is lost on failure
+- After errors or >2 retries: ALWAYS execute `trw_learn` to record the discovery — unrecorded mistakes WILL recur
+- ALWAYS execute `trw_claude_md_sync` at delivery to persist learnings — without this, next session starts blind
+- Quick tasks (no run): ALWAYS use `trw_recall` at start, `trw_learn` for discoveries
+
+## TRW Ceremony Tools (Auto-Generated)
+
+### Execution Phases
+
+```
+RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
+```
+
+### Tool Lifecycle
+
+| Phase | Tool | When to Use |
+|-------|------|-------------|
+| Start | `trw_session_start` | ALWAYS at session start |
+| Start | `trw_recall` | ALWAYS for quick tasks (no run) |
+| Start | `trw_status` | ALWAYS when resuming a run |
+| RESEARCH | `trw_init` | ALWAYS for new tasks |
+| Any | `trw_learn` | ALWAYS on errors/discoveries |
+| Any | `trw_checkpoint` | Every milestone / ~10min |
+| VALIDATE | `trw_build_check` | ALWAYS before delivery |
+| DELIVER | `trw_claude_md_sync` | ALWAYS at delivery |
+| DELIVER | `trw_deliver` | ALWAYS at task completion |
+
+### Example Flows
+
+**Quick Task** (no run needed):
+```
+trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()
+```
+
+**Full Run**:
+```
+trw_session_start -> trw_init(task_name, prd_scope)
+  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)
+  -> trw_build_check(scope='full')
+  -> trw_deliver()
+```
+
+<!-- trw:end -->
 """

@@ -28,12 +28,13 @@ Check the current state of TRW framework compliance including ceremony adherence
    - Verify index.yaml `last_updated` is recent
 
 4. **Framework version check**:
-   - Read `FRAMEWORK.md` for version string
-   - Read bundled copy at `trw-mcp/src/trw_mcp/data/FRAMEWORK.md` for version
-   - Flag if versions differ (bundled copy out of date)
+   - Read `.trw/frameworks/FRAMEWORK.md` for version string
+   - Compare with the version shown in `trw_status()` output
+   - Flag if versions differ (deployed copy may be out of date)
 
 5. **PRD catalogue check**:
-   - Read `docs/requirements-aare-f/INDEX.md` for PRD status counts
+   - Search for `INDEX.md` in the requirements directory (commonly `docs/requirements-aare-f/INDEX.md`)
+   - If found, read PRD status counts
    - Flag any PRDs stuck in `review` or `approved` status (should progress to implementation)
 
 6. **Report**: Structured compliance checklist:

@@ -16,7 +16,7 @@ _project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 _block_file="$_project_root/.trw/context/stop_block_count"
 _context_dir="$_project_root/.trw/context"
 
-_run_dir=$(find_active_run "docs") || exit 0
+_run_dir=$(find_active_run) || exit 0
 [ -n "$_run_dir" ] || exit 0
 
 _events_path="${_run_dir}meta/events.jsonl"

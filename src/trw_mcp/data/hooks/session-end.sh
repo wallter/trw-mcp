@@ -11,7 +11,7 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
-_run_dir=$(find_active_run "docs") || exit 0
+_run_dir=$(find_active_run) || exit 0
 [ -n "$_run_dir" ] || exit 0
 
 _events_path="${_run_dir}meta/events.jsonl"

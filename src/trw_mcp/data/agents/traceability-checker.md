@@ -51,9 +51,9 @@ Verify 4 types of traceability links between PRDs, source code, and tests:
 <workflow>
 ## Verification Protocol
 
-1. **Collect PRDs**: Read all PRD files from `docs/requirements-aare-f/prds/`.
-   If the directory is empty or missing, report FAIL immediately with an
-   explanation.
+1. **Collect PRDs**: Find PRD files by searching for `PRD-*.md` files in the
+   repository (commonly under `docs/requirements-aare-f/prds/` or similar).
+   If no PRDs are found, report FAIL immediately with an explanation.
 
 2. **Extract Requirement IDs**: Parse each PRD for requirement IDs matching
    pattern `PRD-{CAT}-{SEQ}-FR{NN}`. Record the PRD ID, FR ID, and a brief
@@ -62,12 +62,13 @@ Verify 4 types of traceability links between PRDs, source code, and tests:
 3. **Check Prior Knowledge**: Call `trw_recall("traceability")` to surface
    any known traceability gaps or patterns from previous verification runs.
 
-4. **Grep Source Files**: Search `trw-mcp/src/**/*.py` for each requirement
-   ID using the patterns defined in `<tracing_patterns>`. Record which FRs
-   have source references and which do not.
+4. **Grep Source Files**: Search `src/**/*.py` (or the project's source directory)
+   for each requirement ID using the patterns defined in `<tracing_patterns>`.
+   Record which FRs have source references and which do not.
 
-5. **Grep Test Files**: Search `trw-mcp/tests/**/*.py` for each requirement
-   ID. Record which FRs have test references and which do not.
+5. **Grep Test Files**: Search `tests/**/*.py` (or the project's test directory)
+   for each requirement ID. Record which FRs have test references and which
+   do not.
 
 6. **Verify File Existence**: For each file path referenced in PRD
    Traceability Matrix sections (Section 12), verify the file exists on disk.
@@ -81,7 +82,7 @@ Verify 4 types of traceability links between PRDs, source code, and tests:
 <tracing_patterns>
 ## Source Code Reference Patterns
 
-Search for these patterns in `trw-mcp/src/**/*.py`:
+Search for these patterns in `src/**/*.py` (or the project's source directory):
 - `# PRD-{CAT}-{SEQ}` — PRD-level reference
 - `# PRD-{CAT}-{SEQ}-FR{NN}` — Requirement-level reference
 - `# {PRD-ID}:` — Inline reference with colon
@@ -89,7 +90,7 @@ Search for these patterns in `trw-mcp/src/**/*.py`:
 
 ## Test Reference Patterns
 
-Search for these patterns in `trw-mcp/tests/**/*.py`:
+Search for these patterns in `tests/**/*.py` (or the project's test directory):
 - `# Tests PRD-{CAT}-{SEQ}-FR{NN}`
 - `def test_*` function names matching requirement keywords
 - Docstrings referencing PRD IDs

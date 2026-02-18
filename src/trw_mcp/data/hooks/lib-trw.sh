@@ -4,11 +4,22 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
+# get_task_root: Read task_root from .trw/config.yaml or default to "docs".
+get_task_root() {
+  _gtr_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { printf 'docs'; return; }
+  _gtr_config="$_gtr_root/.trw/config.yaml"
+  if [ -f "$_gtr_config" ]; then
+    _gtr_val=$(grep '^task_root:' "$_gtr_config" | head -1 | sed 's/^task_root:[[:space:]]*//' | tr -d "'" | tr -d '"')
+    [ -n "$_gtr_val" ] && printf '%s' "$_gtr_val" && return
+  fi
+  printf 'docs'
+}
+
 # find_active_run: Locate the most recently created run directory.
 # Prints the path to the run directory, or empty string if none found.
 # Returns 0 if found, 1 if not.
 find_active_run() {
-  _task_root="${1:-docs}"
+  _task_root="${1:-$(get_task_root)}"
   _project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
   _latest=""
   _latest_name=""
@@ -109,7 +120,7 @@ log_hook_execution() {
 # Returns 0 if checked (output may be empty or contain missing steps).
 # Returns 1 if no active run or event count < 3 (caller should skip).
 check_ceremony_status() {
-  _cs_run_dir=$(find_active_run "docs") || return 1
+  _cs_run_dir=$(find_active_run) || return 1
   [ -n "$_cs_run_dir" ] || return 1
 
   _cs_events="${_cs_run_dir}meta/events.jsonl"

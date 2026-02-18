@@ -35,7 +35,7 @@ fi
 [ -n "$_file_path" ] || exit 0
 
 # Find active run — early exit if none (~10ms)
-_run_dir=$(find_active_run "docs") || exit 0
+_run_dir=$(find_active_run) || exit 0
 [ -n "$_run_dir" ] || exit 0
 
 _events_path="${_run_dir}meta/events.jsonl"
