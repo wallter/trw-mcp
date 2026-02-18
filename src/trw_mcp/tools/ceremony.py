@@ -249,10 +249,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
             errors.append(f"auto_progress: {exc}")
             results["auto_progress"] = {"status": "failed", "error": str(exc)}
 
-        total_steps = 5
         results["errors"] = errors
         results["success"] = len(errors) == 0
-        results["steps_completed"] = total_steps - len(errors)
+        results["steps_completed"] = 5 - len(errors)
 
         logger.info(
             "trw_deliver_complete",
@@ -281,18 +280,11 @@ def _do_reflect(
     _writer.ensure_dir(trw_dir / _config.reflections_dir)
 
     events: list[dict[str, object]] = []
-    run_id: str | None = None
 
     if run_dir:
         events_path = run_dir / "meta" / "events.jsonl"
         if _reader.exists(events_path):
             events = _reader.read_jsonl(events_path)
-        run_yaml = run_dir / "meta" / "run.yaml"
-        if _reader.exists(run_yaml):
-            state = _reader.read_yaml(run_yaml)
-            rid = state.get("run_id")
-            if isinstance(rid, str):
-                run_id = rid
 
     error_events = [e for e in events if is_error_event(e)]
     repeated_ops = find_repeated_operations(events)
@@ -323,9 +315,8 @@ def _do_reflect(
         positive_count += 1
 
     if run_dir:
-        run_events_path = run_dir / "meta" / "events.jsonl"
-        if run_events_path.parent.exists():
-            _events.log_event(run_events_path, "reflection_complete", {
+        if (run_dir / "meta").exists():
+            _events.log_event(run_dir / "meta" / "events.jsonl", "reflection_complete", {
                 "reflection_id": "delivery",
                 "scope": "delivery",
                 "learnings_produced": len(new_learnings),
@@ -436,13 +427,10 @@ def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
         return {"status": "skipped", "reason": "prds_dir_not_found"}
 
     progressions = auto_progress_prds(run_dir, "deliver", prds_dir, _config)
-    applied = [p for p in progressions if p.get("applied")]
 
     return {
         "status": "success",
         "total_evaluated": len(progressions),
-        "applied": len(applied),
+        "applied": sum(1 for p in progressions if p.get("applied")),
         "progressions": progressions,
     }
-
-

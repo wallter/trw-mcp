@@ -109,7 +109,7 @@ class TRWConfig(BaseSettings):
     templates_dir: str = "templates"
 
     # Framework version and AARE-F standard
-    framework_version: str = "v21.0_TRW"
+    framework_version: str = "v22.0_TRW"
     aaref_version: str = "v1.1.0"
 
     # PRD quality gates (AARE-F standard)
@@ -231,13 +231,11 @@ class TRWConfig(BaseSettings):
     gate_tokens_per_1k_chars: int = 500
     gate_architecture_score_penalty: float = 0.1
 
-    # Sprint management and workflow
-    sprint_code_simplifier_wave_size: int = 10
-    sprint_commit_pattern: str = "feat(sprint{num}): Track {track}"
-
-    # Code simplifier (PRD-QUAL-010)
+    # Code simplifier and sprint workflow (PRD-QUAL-010)
     auto_simplify_enabled: bool = False
     simplifier_wave_size: int = 10
+    sprint_code_simplifier_wave_size: int = 10  # legacy alias; prefer simplifier_wave_size
+    sprint_commit_pattern: str = "feat(sprint{num}): Track {track}"
     simplifier_verification_timeout_secs: int = 120
     simplifier_backup_dir: str = ".trw/simplifier-backups"
 
@@ -256,8 +254,8 @@ class TRWConfig(BaseSettings):
     # Debug and telemetry
     debug: bool = False
     logs_dir: str = "logs"
-    telemetry: bool = False  # consumed by trw_session_start status output
-    telemetry_enabled: bool = True  # reserved for future per-tool telemetry toggle
+    telemetry: bool = False          # session-level flag; consumed by trw_session_start
+    telemetry_enabled: bool = True   # per-tool toggle (reserved for future use)
     telemetry_file: str = "tool-telemetry.jsonl"
 
 
@@ -307,11 +305,13 @@ class PhaseTimeCaps(BaseModel):
     review: float = 0.10
     deliver: float = 0.05
 
+    # Maps canonical phase name → field name; only "validate" differs to avoid
+    # the Pydantic BaseModel reserved-name conflict.
     _PHASE_FIELDS: ClassVar[dict[str, str]] = {
         "research": "research",
         "plan": "plan",
         "implement": "implement",
-        "validate": "validate_phase",
+        "validate": "validate_phase",  # field renamed to avoid BaseModel collision
         "review": "review",
         "deliver": "deliver",
     }
@@ -327,7 +327,6 @@ class PhaseTimeCaps(BaseModel):
         """
         field = self._PHASE_FIELDS.get(phase)
         if field is None:
-            valid = list(self._PHASE_FIELDS.keys())
-            msg = f"Unknown phase: {phase!r}. Valid: {valid}"
+            msg = f"Unknown phase: {phase!r}. Valid: {list(self._PHASE_FIELDS)}"
             raise ValueError(msg)
         return float(getattr(self, field))

@@ -159,32 +159,36 @@ def _write_if_missing(
 
 def _default_config() -> str:
     """Generate default ``.trw/config.yaml``."""
-    return (
-        "# TRW Framework Configuration\n"
-        "# See trw://config resource for all available fields.\n"
-        "task_root: docs\n"
-        "debug: false\n"
-        "claude_md_max_lines: 300\n"
-    )
+    return """\
+# TRW Framework Configuration
+# See trw://config resource for all available fields.
+task_root: docs
+debug: false
+claude_md_max_lines: 300
+"""
 
 
 def _generate_mcp_json() -> str:
     """Generate ``.mcp.json`` pointing to installed trw-mcp."""
     cmd = shutil.which("trw-mcp") or f"{sys.executable} -m trw_mcp.server"
-    config = {"mcpServers": {"trw": {"command": cmd, "args": ["--debug"]}}}
-    return json.dumps(config, indent=2) + "\n"
+    return json.dumps({"mcpServers": {"trw": {"command": cmd, "args": ["--debug"]}}}, indent=2) + "\n"
 
 
 def _minimal_claude_md() -> str:
     """Generate minimal ``CLAUDE.md`` with behavioral protocol header."""
-    return (
-        "# CLAUDE.md\n\n"
-        "Before starting work: execute `trw_session_start()`.\n"
-        "After completing work: execute `trw_deliver()`.\n\n"
-        "## What This Is\n\n"
-        "{Describe your project here}\n\n"
-        "## Build & Test Commands\n\n"
-        "```bash\n"
-        "# Add your project's build and test commands here\n"
-        "```\n"
-    )
+    return """\
+# CLAUDE.md
+
+Before starting work: execute `trw_session_start()`.
+After completing work: execute `trw_deliver()`.
+
+## What This Is
+
+{Describe your project here}
+
+## Build & Test Commands
+
+```bash
+# Add your project's build and test commands here
+```
+"""

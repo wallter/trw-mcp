@@ -14,25 +14,9 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter, FileEven
 _UNIT_FILES: frozenset[str] = frozenset({
     "test_models.py",
     "test_scoring.py",
-    "test_smell_detection.py",
-    "test_readability.py",
-    "test_ears_classifier.py",
-    "test_gate_models.py",
-    "test_reliability_math.py",
-    "test_gate_strategy.py",
-    "test_gate_scaling.py",
-    "test_framework_models.py",
-    "test_phase_scoped_recall.py",
-    "test_event_aliases.py",
-    "test_architecture.py",
-    "test_velocity.py",
 })
 
-_E2E_FILES: frozenset[str] = frozenset({
-    "test_sprint8_signal_path.py",
-    "test_sprint9_flywheel.py",
-    "test_tools_sprint.py",
-})
+_E2E_FILES: frozenset[str] = frozenset()
 
 
 def pytest_collection_modifyitems(

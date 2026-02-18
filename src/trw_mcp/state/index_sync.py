@@ -50,20 +50,13 @@ class PRDEntry:
     notes: str = ""
 
 
-def scan_prd_frontmatters(prds_dir: Path) -> list[PRDEntry]:
-    """Scan all PRD files and extract frontmatter metadata.
-
-    Args:
-        prds_dir: Directory containing PRD markdown files.
-
-    Returns:
-        Sorted list of PRDEntry objects.
-    """
+def _scan_prd_dir(directory: Path) -> list[PRDEntry]:
+    """Scan a single directory for PRD files and extract frontmatter metadata."""
     entries: list[PRDEntry] = []
-    if not prds_dir.exists():
+    if not directory.exists():
         return entries
 
-    for prd_file in sorted(prds_dir.glob("PRD-*.md")):
+    for prd_file in sorted(directory.glob("PRD-*.md")):
         try:
             content = prd_file.read_text(encoding="utf-8")
             fm = parse_frontmatter(content)
@@ -85,7 +78,35 @@ def scan_prd_frontmatters(prds_dir: Path) -> list[PRDEntry]:
             ))
         except (ValueError, TypeError, OSError) as exc:
             logger.debug("prd_scan_skip", file=str(prd_file), error=str(exc))
-            continue
+
+    return entries
+
+
+def scan_prd_frontmatters(prds_dir: Path) -> list[PRDEntry]:
+    """Scan all PRD files and extract frontmatter metadata.
+
+    Scans both the active ``prds/`` directory and the sibling
+    ``archive/prds/`` directory (if it exists) so that archived
+    PRDs remain in the auto-generated catalogue.
+
+    Args:
+        prds_dir: Directory containing active PRD markdown files.
+
+    Returns:
+        Sorted list of PRDEntry objects (active + archived, deduplicated by ID).
+    """
+    entries = _scan_prd_dir(prds_dir)
+
+    # Also scan archived PRDs (sibling archive/prds/ directory)
+    archive_prds = prds_dir.parent / "archive" / "prds"
+    archived = _scan_prd_dir(archive_prds)
+
+    # Deduplicate: active PRDs take precedence over archived
+    seen_ids = {e.id for e in entries}
+    for entry in archived:
+        if entry.id not in seen_ids:
+            entries.append(entry)
+            seen_ids.add(entry.id)
 
     return entries
 
@@ -225,8 +246,7 @@ def render_roadmap_catalogue(entries: list[PRDEntry]) -> str:
             f"| {status_display} | {e.category} |",
         )
 
-    lines.append("")
-    lines.append(ROADMAP_CATALOGUE_END)
+    lines.extend(["", ROADMAP_CATALOGUE_END])
     return "\n".join(lines)
 
 

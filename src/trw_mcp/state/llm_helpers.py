@@ -31,7 +31,7 @@ def _parse_json_lines(text: str) -> list[dict[str, object]]:
         try:
             parsed: dict[str, object] = json.loads(line)
             results.append(parsed)
-        except (ValueError, KeyError):
+        except ValueError:
             continue
     return results
 
@@ -53,15 +53,11 @@ def llm_assess_learnings(
     Returns:
         List of candidate dicts with id, summary, suggested_status, and reason.
     """
-    summaries: list[str] = []
-    for _path, data in entries[:batch_cap]:
-        lid = str(data.get("id", ""))
-        summary = str(data.get("summary", ""))
-        detail = str(data.get("detail", ""))
-        created = str(data.get("created", ""))
-        summaries.append(
-            f"- ID: {lid} | Created: {created} | Summary: {summary} | Detail: {detail}"
-        )
+    summaries: list[str] = [
+        f"- ID: {data.get('id', '')} | Created: {data.get('created', '')}"
+        f" | Summary: {data.get('summary', '')} | Detail: {data.get('detail', '')}"
+        for _path, data in entries[:batch_cap]
+    ]
 
     if not summaries:
         return []

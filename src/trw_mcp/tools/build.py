@@ -226,11 +226,7 @@ def _run_mypy(
 
     output = _strip_ansi(result.stdout + "\n" + result.stderr)
     mypy_clean = result.returncode == 0
-
-    failures: list[str] = []
-    if not mypy_clean:
-        failures = _extract_failures(output, (": error:",))
-
+    failures = _extract_failures(output, (": error:",)) if not mypy_clean else []
     return {"mypy_clean": mypy_clean, "failures": failures}
 
 
@@ -361,7 +357,6 @@ def register_build_tools(server: FastMCP) -> None:
 
         cache_path = cache_build_status(trw_dir, status)
 
-        # Log event if run_path provided
         if run_path:
             from trw_mcp.state.persistence import FileEventLogger
 

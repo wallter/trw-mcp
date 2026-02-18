@@ -122,16 +122,6 @@
             "timeout": 3000
           }
         ]
-      },
-      {
-        "matcher": "mcp__trw__trw_phase_check",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/post-phase-check.sh\"",
-            "timeout": 5000
-          }
-        ]
       }
     ]
   }

@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.validation import validate_prd_quality, validate_prd_quality_v2
+from trw_mcp.state.validation import validate_prd_quality_v2
 
 
 # A well-formed PRD with all 12 sections and proper frontmatter
@@ -159,6 +159,15 @@ def _get_tools() -> dict[str, object]:
     return {t.name: t for t in srv._tool_manager._tools.values()}
 
 
+def _run_validate(prd_text: str, tmp_path: Path) -> dict[str, object]:
+    """Write prd_text to a temp file and run trw_prd_validate, returning the result."""
+    prd_path = tmp_path / "test.md"
+    prd_path.write_text(prd_text, encoding="utf-8")
+    tools = _get_tools()
+    result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+    return result  # type: ignore[return-value]
+
+
 # ---------------------------------------------------------------------------
 # Test: single V2 execution path (no separate V1 call)
 # ---------------------------------------------------------------------------
@@ -170,14 +179,13 @@ class TestSingleExecutionPath:
         """trw_prd_validate should call validate_prd_quality_v2 exactly once."""
         prd_path = tmp_path / "test.md"
         prd_path.write_text(_GOOD_PRD, encoding="utf-8")
-
         tools = _get_tools()
         with patch(
             "trw_mcp.tools.requirements.validate_prd_quality_v2",
             wraps=validate_prd_quality_v2,
         ) as mock_v2:
             tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-            assert mock_v2.call_count == 1
+        assert mock_v2.call_count == 1
 
     def test_v2_produces_v1_fields_without_separate_tool_call(self, tmp_path: Path) -> None:
         """V2 internally computes V1-compatible fields — the tool only calls V2.
@@ -191,11 +199,7 @@ class TestSingleExecutionPath:
             "Tool module should not import validate_prd_quality directly"
         )
 
-        # Also verify the tool produces V1-compatible output via V2
-        prd_path = tmp_path / "test.md"
-        prd_path.write_text(_GOOD_PRD, encoding="utf-8")
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        result = _run_validate(_GOOD_PRD, tmp_path)
         assert "completeness_score" in result
         assert "traceability_coverage" in result
 
@@ -254,14 +258,9 @@ class TestRichDiagnosticsExposed:
 
     def test_smell_findings_exposed(self, tmp_path: Path) -> None:
         """Result should include smell_findings list."""
-        prd_path = tmp_path / "test.md"
-        prd_path.write_text(_GOOD_PRD, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        result = _run_validate(_GOOD_PRD, tmp_path)
         assert "smell_findings" in result
         assert isinstance(result["smell_findings"], list)
-        # Each finding should have the expected keys
         for sf in result["smell_findings"]:
             assert "category" in sf
             assert "matched_text" in sf
@@ -271,31 +270,19 @@ class TestRichDiagnosticsExposed:
 
     def test_ears_classifications_exposed(self, tmp_path: Path) -> None:
         """Result should include ears_classifications list."""
-        prd_path = tmp_path / "test.md"
-        prd_path.write_text(_GOOD_PRD, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        result = _run_validate(_GOOD_PRD, tmp_path)
         assert "ears_classifications" in result
         assert isinstance(result["ears_classifications"], list)
 
     def test_readability_scores_exposed(self, tmp_path: Path) -> None:
         """Result should include readability metrics dict."""
-        prd_path = tmp_path / "test.md"
-        prd_path.write_text(_GOOD_PRD, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        result = _run_validate(_GOOD_PRD, tmp_path)
         assert "readability" in result
         assert isinstance(result["readability"], dict)
 
     def test_section_scores_exposed(self, tmp_path: Path) -> None:
         """Result should include per-section density scores."""
-        prd_path = tmp_path / "test.md"
-        prd_path.write_text(_GOOD_PRD, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        result = _run_validate(_GOOD_PRD, tmp_path)
         assert "section_scores" in result
         assert isinstance(result["section_scores"], list)
         assert len(result["section_scores"]) > 0
@@ -314,40 +301,25 @@ class TestBackwardCompatibleOutput:
 
     def test_backward_compatible_keys(self, tmp_path: Path) -> None:
         """trw_prd_validate output should include all V1-era keys."""
-        prd_path = tmp_path / "test.md"
-        prd_path.write_text(_GOOD_PRD, encoding="utf-8")
+        result = _run_validate(_GOOD_PRD, tmp_path)
 
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-
-        # V1 keys
-        assert "path" in result
-        assert "valid" in result
-        assert "completeness_score" in result
-        assert "traceability_coverage" in result
-        assert "ambiguity_rate" in result
-        assert "sections_found" in result
-        assert "sections_expected" in result
-        assert "failures" in result
-
-        # V2 keys
-        assert "total_score" in result
-        assert "quality_tier" in result
-        assert "grade" in result
-        assert "dimensions" in result
-        assert "improvement_suggestions" in result
-
-        # FIX-011 diagnostic keys
-        assert "smell_findings" in result
-        assert "ears_classifications" in result
-        assert "readability" in result
-        assert "section_scores" in result
+        expected_keys = [
+            # V1 keys
+            "path", "valid", "completeness_score", "traceability_coverage",
+            "ambiguity_rate", "sections_found", "sections_expected", "failures",
+            # V2 keys
+            "total_score", "quality_tier", "grade", "dimensions",
+            "improvement_suggestions",
+            # FIX-011 diagnostic keys
+            "smell_findings", "ears_classifications", "readability", "section_scores",
+        ]
+        for key in expected_keys:
+            assert key in result, f"Missing expected key: {key!r}"
 
     def test_failures_serialized_as_dicts(self, tmp_path: Path) -> None:
         """Failures should be serialized as plain dicts (not Pydantic models)."""
         prd_path = tmp_path / "incomplete.md"
         prd_path.write_text(_INCOMPLETE_PRD, encoding="utf-8")
-
         tools = _get_tools()
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
         assert len(result["failures"]) > 0
@@ -368,20 +340,12 @@ class TestAmbiguityDetection:
 
     def test_ambiguity_not_detected_without_smell_modules(self, tmp_path: Path) -> None:
         """With smell modules removed, smell_findings is always empty."""
-        prd_path = tmp_path / "ambiguous.md"
-        prd_path.write_text(_AMBIGUOUS_PRD, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        result = _run_validate(_AMBIGUOUS_PRD, tmp_path)
         # Smell detection modules were removed in strip-down
         assert result["smell_findings"] == []
 
     def test_clean_prd_low_ambiguity(self, tmp_path: Path) -> None:
         """A well-written PRD should have ambiguity rate below threshold."""
-        prd_path = tmp_path / "test.md"
-        prd_path.write_text(_GOOD_PRD, encoding="utf-8")
-
-        tools = _get_tools()
-        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        result = _run_validate(_GOOD_PRD, tmp_path)
         # Good PRD should stay below the default 5% threshold
         assert result["ambiguity_rate"] < 0.05

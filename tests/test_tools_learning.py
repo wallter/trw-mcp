@@ -2,13 +2,37 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.scoring import correlate_recalls, process_outcome, process_outcome_for_event
+from trw_mcp.state.analytics import (
+    extract_learnings_from_llm,
+    extract_learnings_mechanical,
+    find_success_patterns,
+    is_success_event,
+)
+from trw_mcp.state.claude_md import (
+    CEREMONY_TOOLS,
+    collect_context_data,
+    collect_patterns,
+    collect_promotable_learnings,
+    load_claude_md_template,
+    render_adherence,
+    render_behavioral_protocol,
+    render_ceremony_flows,
+    render_ceremony_table,
+    render_imperative_opener,
+    render_phase_descriptions,
+    render_template,
+)
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.recall_search import search_entries, search_patterns, update_access_tracking
 
 _CFG = TRWConfig()
 
@@ -163,8 +187,6 @@ class TestTrwRecall:
         assert result["total_matches"] == 0
 
 
-
-
 class TestTrwClaudeMdSync:
     """Tests for trw_claude_md_sync tool."""
 
@@ -312,8 +334,6 @@ class TestClaudeMdTemplate:
 
     def test_loads_bundled_template(self, tmp_path: Path) -> None:
         """Default template loaded from package data."""
-        from trw_mcp.state.claude_md import load_claude_md_template
-
         template = load_claude_md_template(tmp_path / _CFG.trw_dir)
         assert "{{categorized_learnings}}" in template
         assert "{{architecture_section}}" in template
@@ -322,8 +342,6 @@ class TestClaudeMdTemplate:
 
     def test_project_override_takes_precedence(self, tmp_path: Path) -> None:
         """Project-local template in .trw/templates/ overrides bundled."""
-        from trw_mcp.state.claude_md import load_claude_md_template
-
         trw_dir = tmp_path / _CFG.trw_dir
         templates_dir = trw_dir / _CFG.templates_dir
         templates_dir.mkdir(parents=True)
@@ -341,8 +359,6 @@ class TestClaudeMdTemplate:
 
     def test_render_replaces_placeholders(self, tmp_path: Path) -> None:
         """{{key}} tokens replaced with content."""
-        from trw_mcp.state.claude_md import render_template
-
         template = "## Title\n\n{{section_a}}{{section_b}}"
         context = {"section_a": "### A\n- item\n\n", "section_b": "### B\n- item\n\n"}
         result = render_template(template, context)
@@ -352,8 +368,6 @@ class TestClaudeMdTemplate:
 
     def test_render_empty_sections_collapse(self, tmp_path: Path) -> None:
         """Empty values don't leave runs of blank lines."""
-        from trw_mcp.state.claude_md import render_template
-
         template = "Header\n\n{{a}}{{b}}Footer"
         context = {"a": "", "b": ""}
         result = render_template(template, context)
@@ -427,8 +441,6 @@ class TestCeremonyRendering:
 
     def test_render_phase_descriptions(self) -> None:
         """All 6 phases present with arrow diagram."""
-        from trw_mcp.state.claude_md import render_phase_descriptions
-
         result = render_phase_descriptions()
         assert "### Execution Phases" in result
         assert "RESEARCH" in result
@@ -440,8 +452,6 @@ class TestCeremonyRendering:
 
     def test_render_ceremony_table(self) -> None:
         """Table headers and all 11 tools listed."""
-        from trw_mcp.state.claude_md import CEREMONY_TOOLS, render_ceremony_table
-
         result = render_ceremony_table()
         assert "### Tool Lifecycle" in result
         assert "| Phase | Tool | When to Use | What It Does | Example |" in result
@@ -453,8 +463,6 @@ class TestCeremonyRendering:
 
     def test_render_ceremony_flows(self) -> None:
         """Both quick and full flows present with key tool names."""
-        from trw_mcp.state.claude_md import render_ceremony_flows
-
         result = render_ceremony_flows()
         assert "**Quick Task**" in result
         assert "**Full Run**" in result
@@ -463,8 +471,6 @@ class TestCeremonyRendering:
 
     def test_render_imperative_opener(self) -> None:
         """Imperative opener contains high-salience trigger instructions."""
-        from trw_mcp.state.claude_md import render_imperative_opener
-
         result = render_imperative_opener()
         assert "CRITICAL" in result
         assert "BEFORE ANY WORK" in result
@@ -476,10 +482,7 @@ class TestCeremonyRendering:
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
         """Bundled template contains all ceremony placeholder tokens."""
-        from trw_mcp.state.claude_md import load_claude_md_template
-
         # Use a non-existent trw_dir so it falls through to bundled template
-        from pathlib import Path
         template = load_claude_md_template(Path("/nonexistent/.trw"))
         assert "{{imperative_opener}}" in template
         assert "{{ceremony_phases}}" in template
@@ -557,8 +560,6 @@ class TestTrwClaudeMdSyncLLM:
         )
         result = tools["trw_claude_md_sync"].fn(scope="root")
         assert "llm_used" in result
-
-
 
 
 class TestTrwLearnAnalytics:
@@ -671,8 +672,6 @@ class TestTrwRecallAccessTracking:
 
     def test_recall_appends_receipt(self, tmp_path: Path) -> None:
         """trw_recall appends a receipt to recall_log.jsonl."""
-        import json
-
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Receipt logging test",
@@ -696,8 +695,6 @@ class TestTrwRecallAccessTracking:
 
     def test_recall_receipt_contains_matched_ids(self, tmp_path: Path) -> None:
         """Receipt records the IDs of all matched learnings."""
-        import json
-
         tools = _get_tools()
         r1 = tools["trw_learn"].fn(
             summary="Receipt ID check alpha",
@@ -738,7 +735,6 @@ class TestTrwRecallAccessTracking:
         )
         # Receipt should still be logged (with empty matched_ids)
         if receipt_path.exists():
-            import json
             lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
             record = json.loads(lines[-1])
             assert len(record["matched_ids"]) == 0
@@ -1021,10 +1017,6 @@ class TestOutcomeCorrelation:
 
     def test_process_outcome_updates_q_values(self, tmp_path: Path) -> None:
         """_process_outcome updates Q-values for recently recalled learnings."""
-        from datetime import datetime, timezone
-
-        from trw_mcp.scoring import process_outcome
-
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Outcome correlation q update test",
@@ -1054,8 +1046,6 @@ class TestOutcomeCorrelation:
 
     def test_process_outcome_writes_history(self, tmp_path: Path) -> None:
         """Outcome processing appends to outcome_history."""
-        from trw_mcp.scoring import process_outcome
-
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Outcome history write test",
@@ -1085,7 +1075,6 @@ class TestOutcomeCorrelation:
     ) -> None:
         """outcome_history is capped to learning_outcome_history_cap."""
         import trw_mcp.scoring as scoring_mod
-        from trw_mcp.scoring import process_outcome
 
         # Set cap to 3 for testing — process_outcome reads from scoring._config
         cfg = TRWConfig(learning_outcome_history_cap=3)
@@ -1119,8 +1108,6 @@ class TestOutcomeCorrelation:
 
     def test_process_outcome_no_receipts(self, tmp_path: Path) -> None:
         """_process_outcome returns empty list when no receipts exist."""
-        from trw_mcp.scoring import process_outcome
-
         trw_dir = tmp_path / _CFG.trw_dir
         updated = process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
         assert updated == []
@@ -1129,11 +1116,6 @@ class TestOutcomeCorrelation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Only receipts within the correlation window are included."""
-        import json
-        from datetime import datetime, timedelta, timezone
-
-        from trw_mcp.scoring import correlate_recalls
-
         trw_dir = tmp_path / _CFG.trw_dir
         receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
         receipt_dir.mkdir(parents=True)
@@ -1164,11 +1146,6 @@ class TestOutcomeCorrelation:
 
     def test_correlate_recalls_recency_discount(self, tmp_path: Path) -> None:
         """More recent receipts get higher recency discount."""
-        import json
-        from datetime import datetime, timedelta, timezone
-
-        from trw_mcp.scoring import correlate_recalls
-
         trw_dir = tmp_path / _CFG.trw_dir
         receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
         receipt_dir.mkdir(parents=True)
@@ -1200,15 +1177,11 @@ class TestOutcomeCorrelation:
 
     def test_correlate_recalls_empty(self, tmp_path: Path) -> None:
         """No receipt file returns empty list."""
-        from trw_mcp.scoring import correlate_recalls
-
         trw_dir = tmp_path / _CFG.trw_dir
         assert correlate_recalls(trw_dir, window_minutes=30) == []
 
     def test_process_outcome_for_event_known_type(self, tmp_path: Path) -> None:
         """process_outcome_for_event triggers for known event types."""
-        from trw_mcp.scoring import process_outcome_for_event
-
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Event type correlation test",
@@ -1226,15 +1199,11 @@ class TestOutcomeCorrelation:
 
     def test_process_outcome_for_event_unknown_type(self, tmp_path: Path) -> None:
         """process_outcome_for_event returns empty for unknown event types."""
-        from trw_mcp.scoring import process_outcome_for_event
-
         updated = process_outcome_for_event("some_random_event")
         assert updated == []
 
     def test_process_outcome_for_event_error_keyword(self, tmp_path: Path) -> None:
         """Events with error keywords get negative reward."""
-        from trw_mcp.scoring import process_outcome_for_event
-
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Error keyword correlation test",
@@ -1259,8 +1228,6 @@ class TestOutcomeCorrelation:
 
     def test_negative_reward_decreases_q(self, tmp_path: Path) -> None:
         """Negative reward events decrease Q-value."""
-        from trw_mcp.scoring import process_outcome
-
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Negative reward q decrease test",
@@ -1285,8 +1252,6 @@ class TestOutcomeCorrelation:
 
     def test_multiple_outcomes_converge(self, tmp_path: Path) -> None:
         """Multiple positive outcomes increase Q-value progressively."""
-        from trw_mcp.scoring import process_outcome
-
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Convergence outcome test",
@@ -1296,7 +1261,6 @@ class TestOutcomeCorrelation:
         lid = result["learning_id"]
 
         trw_dir = tmp_path / _CFG.trw_dir
-        prev_q = 0.5
         for _ in range(5):
             tools["trw_recall"].fn(query="convergence outcome test")
             process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
@@ -1313,8 +1277,6 @@ class TestOutcomeCorrelation:
 
     def test_only_matched_learnings_updated(self, tmp_path: Path) -> None:
         """Only learnings in recent receipts have Q-values updated."""
-        from trw_mcp.scoring import process_outcome
-
         tools = _get_tools()
         r1 = tools["trw_learn"].fn(
             summary="Selective update alpha bravo",
@@ -1424,8 +1386,6 @@ class TestBehavioralProtocol:
 
     def test_render_behavioral_protocol_from_yaml(self, tmp_path: Path) -> None:
         """Renders directives from behavioral_protocol.yaml."""
-        from trw_mcp.state.claude_md import render_behavioral_protocol
-
         # Create protocol file
         writer = FileStateWriter()
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
@@ -1443,15 +1403,11 @@ class TestBehavioralProtocol:
 
     def test_render_behavioral_protocol_empty_when_missing(self, tmp_path: Path) -> None:
         """Returns empty string when protocol file does not exist."""
-        from trw_mcp.state.claude_md import render_behavioral_protocol
-
         result = render_behavioral_protocol()
         assert result == ""
 
     def test_render_behavioral_protocol_caps_at_12(self, tmp_path: Path) -> None:
         """Respects _BEHAVIORAL_PROTOCOL_CAP of 12 directives."""
-        from trw_mcp.state.claude_md import render_behavioral_protocol
-
         writer = FileStateWriter()
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
@@ -1468,8 +1424,6 @@ class TestBehavioralProtocol:
         self, tmp_path: Path,
     ) -> None:
         """behavioral-mandate tag is recognized by _render_adherence."""
-        from trw_mcp.state.claude_md import render_adherence
-
         entries = [
             {
                 "summary": "Execute trw_recall at every session start",
@@ -1486,8 +1440,6 @@ class TestBehavioralProtocol:
         self, tmp_path: Path,
     ) -> None:
         """behavioral-mandate entries promote summary, not detail sentences."""
-        from trw_mcp.state.claude_md import render_adherence
-
         entries = [
             {
                 "summary": "Always execute trw_reflect after implementation",
@@ -1551,7 +1503,6 @@ class TestRecallSearch:
             "status": "active",
         })
         reader = FileStateReader()
-        from trw_mcp.state.recall_search import search_entries
         matches, files = search_entries(entries_dir, ["jwt"], reader)
         assert len(matches) == 1
         assert matches[0]["id"] == "L-test001"

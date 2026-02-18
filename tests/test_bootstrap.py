@@ -94,9 +94,9 @@ class TestIdempotency:
         assert not result2["errors"]
 
         # File should be re-created
-        content = claude_md.read_text(encoding="utf-8")
-        assert content != "modified content"
-        assert "trw_session_start" in content
+        restored = claude_md.read_text(encoding="utf-8")
+        assert restored != "modified content"
+        assert "trw_session_start" in restored
 
 
 # ── Validation Tests ─────────────────────────────────────────────────────
@@ -140,35 +140,25 @@ class TestContent:
 
     def test_framework_md_is_v21(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
-        content = (
-            (fake_git_repo / ".trw" / "frameworks" / "FRAMEWORK.md")
-            .read_text(encoding="utf-8")
-        )
-        assert "v21.0_TRW" in content
+        path = fake_git_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+        content = path.read_text(encoding="utf-8")
+        assert "v22.0_TRW" in content
 
     def test_config_yaml_has_defaults(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
-        content = (
-            (fake_git_repo / ".trw" / "config.yaml")
-            .read_text(encoding="utf-8")
-        )
+        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
         assert "task_root: docs" in content
         assert "debug: false" in content
 
     def test_learnings_index_initialized(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
-        content = (
-            (fake_git_repo / ".trw" / "learnings" / "index.yaml")
-            .read_text(encoding="utf-8")
-        )
+        path = fake_git_repo / ".trw" / "learnings" / "index.yaml"
+        content = path.read_text(encoding="utf-8")
         assert "entries: []" in content
 
     def test_gitignore_has_expected_patterns(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
-        content = (
-            (fake_git_repo / ".trw" / ".gitignore")
-            .read_text(encoding="utf-8")
-        )
+        content = (fake_git_repo / ".trw" / ".gitignore").read_text(encoding="utf-8")
         assert "context/" in content
         assert "logs/" in content
         assert "reflections/" in content
@@ -176,20 +166,14 @@ class TestContent:
 
     def test_behavioral_protocol_copied(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
-        content = (
-            (fake_git_repo / ".trw" / "context" / "behavioral_protocol.yaml")
-            .read_text(encoding="utf-8")
-        )
+        path = fake_git_repo / ".trw" / "context" / "behavioral_protocol.yaml"
+        content = path.read_text(encoding="utf-8")
         assert "directives:" in content
 
     def test_settings_json_copied(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
-        content = (
-            (fake_git_repo / ".claude" / "settings.json")
-            .read_text(encoding="utf-8")
-        )
-        data = json.loads(content)
-        assert "hooks" in data
+        path = fake_git_repo / ".claude" / "settings.json"
+        assert "hooks" in json.loads(path.read_text(encoding="utf-8"))
 
 
 # ── Hooks Tests ──────────────────────────────────────────────────────────
@@ -201,7 +185,6 @@ class TestHooks:
 
     EXPECTED_HOOKS = [
         "lib-trw.sh",
-        "post-phase-check.sh",
         "post-tool-event.sh",
         "pre-compact.sh",
         "session-end.sh",

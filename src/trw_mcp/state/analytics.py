@@ -56,8 +56,8 @@ def _iter_entry_files(
 
     Silently skips files that fail to parse or have unexpected types.
     """
-    files = sorted(entries_dir.glob("*.yaml")) if sorted_order else entries_dir.glob("*.yaml")
-    for entry_file in files:
+    glob = entries_dir.glob("*.yaml")
+    for entry_file in (sorted(glob) if sorted_order else glob):
         if entry_file.name == "index.yaml":
             continue
         try:
@@ -167,9 +167,9 @@ def find_repeated_operations(
         List of (operation_name, count) tuples, sorted by count descending.
     """
     counts = Counter(
-        _get_event_type(event)
+        et
         for event in events
-        if _get_event_type(event)
+        if (et := _get_event_type(event))
     )
     threshold = _config.learning_repeated_op_threshold
     return sorted(
@@ -253,10 +253,10 @@ def detect_tool_sequences(
         total_anchors += 1
         start = max(0, i - lookback)
         preceding = [
-            str(events[j].get("event", "unknown"))
+            _get_event_type(events[j]) or "unknown"
             for j in range(start, i)
         ]
-        current_type = str(event.get("event", "unknown"))
+        current_type = _get_event_type(event) or "unknown"
         seq = tuple(preceding + [current_type])
         if len(seq) >= 2:
             sequence_counts[seq] = sequence_counts.get(seq, 0) + 1
@@ -345,15 +345,9 @@ def has_existing_success_learning(
         return False
 
     target = summary_prefix[:50].lower()
-    for entry_file in entries_dir.glob("*.yaml"):
-        try:
-            data = _reader.read_yaml(entry_file)
-            existing_summary = str(data.get("summary", ""))[:50].lower()
-            if existing_summary == target:
-                return True
-        except (StateError, ValueError, TypeError):
-            continue
-
+    for _path, data in _iter_entry_files(entries_dir):
+        if str(data.get("summary", ""))[:50].lower() == target:
+            return True
     return False
 
 
@@ -398,10 +392,10 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
         if _reader.exists(index_path):
             index_data = _reader.read_yaml(index_path)
 
-        entries_raw = index_data.get("entries", [])
-        entries: list[dict[str, object]] = []
-        if isinstance(entries_raw, list):
-            entries = [e for e in entries_raw if isinstance(e, dict)]
+        raw = index_data.get("entries", [])
+        entries: list[dict[str, object]] = (
+            [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+        )
 
         entries.append({
             "id": entry.id,
@@ -799,8 +793,13 @@ def auto_prune_excess_entries(
             active_count += 1
 
     if active_count <= max_entries:
-        return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0,
-                "active_count": active_count, "threshold": max_entries}
+        return {
+            "dedup_candidates": [],
+            "utility_candidates": [],
+            "actions_taken": 0,
+            "active_count": active_count,
+            "threshold": max_entries,
+        }
 
     # Step 1: Jaccard dedup
     duplicates = find_duplicate_learnings(entries_dir, jaccard_threshold)

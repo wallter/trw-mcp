@@ -65,7 +65,7 @@ class LLMClient:
             self._query_fn = sdk_query
             self._available = True
         except ImportError:
-            logger.warning("claude_agent_sdk import failed — LLM features disabled")
+            logger.warning("LLM features disabled — install with: pip install trw-mcp[ai]")
 
     @property
     def available(self) -> bool:
@@ -119,8 +119,7 @@ class LLMClient:
                         if isinstance(block, TextBlock):
                             text_parts.append(block.text)
 
-            result = "\n".join(text_parts).strip()
-            return result if result else None
+            return "\n".join(text_parts).strip() or None
 
         except Exception:
             logger.warning(

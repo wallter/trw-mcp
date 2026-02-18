@@ -48,14 +48,7 @@ class ReversionTrigger(str, Enum):
 
     @staticmethod
     def classify(trigger_str: str) -> "ReversionTrigger":
-        """Classify a trigger string, defaulting to OTHER for unknown values.
-
-        Args:
-            trigger_str: Trigger string to classify.
-
-        Returns:
-            Matching ReversionTrigger or OTHER if unrecognized.
-        """
+        """Return the matching ReversionTrigger, or OTHER if unrecognized."""
         try:
             return ReversionTrigger(trigger_str)
         except ValueError:
@@ -71,17 +64,7 @@ class Confidence(str, Enum):
 
     @staticmethod
     def from_score(score: float) -> "Confidence":
-        """Map a numeric confidence score to a categorical level.
-
-        Bridges the AARE-F percentile scale with the framework's categorical scale:
-        >=0.85 → high, >=0.70 → medium, <0.70 → low.
-
-        Args:
-            score: Confidence score from 0.0 to 1.0.
-
-        Returns:
-            Corresponding Confidence level.
-        """
+        """Map a 0.0–1.0 score to a level: >=0.85 → HIGH, >=0.70 → MEDIUM, else LOW."""
         if score >= 0.85:
             return Confidence.HIGH
         if score >= 0.70:
@@ -271,14 +254,7 @@ class EventType(str, Enum):
 
     @staticmethod
     def resolve(event_str: str) -> "EventType | None":
-        """Resolve an event type string to an EventType member.
-
-        Args:
-            event_str: Event type string to resolve.
-
-        Returns:
-            Matching EventType member, or None if unrecognized.
-        """
+        """Return the matching EventType member, or None if unrecognized."""
         try:
             return EventType(event_str)
         except ValueError:

@@ -14,8 +14,8 @@ init_hook_timer
 _run_dir=$(find_active_run "docs") || true
 
 echo "TRW SUB-AGENT CONTEXT:"
-echo "- ALWAYS call trw_shard_context FIRST — NEVER skip this step"
-echo "- ALWAYS use trw_event to log progress; ALWAYS use trw_learn for discoveries"
+echo "- ALWAYS call trw_recall for context; use trw_learn for discoveries; use trw_checkpoint periodically"
+echo "- ALWAYS use trw_learn to record discoveries and gotchas"
 echo "- ALWAYS read .trw/frameworks/FRAMEWORK.md for phase requirements"
 
 if [ -n "$_run_dir" ]; then

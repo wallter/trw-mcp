@@ -55,6 +55,17 @@ _INTEGRATION_CHECKLIST: dict[str, str] = {
 # Section heading pattern: ## N. Title
 _HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
 
+# PRD status ordering for phase gate comparisons (PRD-FIX-008: includes done/merged)
+_STATUS_ORDER: dict[str, int] = {
+    "draft": 0,
+    "review": 1,
+    "approved": 2,
+    "implemented": 3,
+    "done": 4,
+    "merged": 4,
+    "deprecated": 5,
+}
+
 
 # ---------------------------------------------------------------------------
 # PRD-QUAL-013: Risk-Based Validation Scaling
@@ -142,6 +153,7 @@ def get_risk_scaled_config(config: TRWConfig, risk_level: str) -> TRWConfig:
         "validation_readability_weight": weights[4],
         "validation_ears_weight": weights[5],
     })
+
 
 # Recognized event names for reflection and CLAUDE.md sync checks.
 _REFLECTION_EVENTS: frozenset[str] = frozenset(
@@ -477,16 +489,6 @@ def _check_prd_enforcement(
         )
         return failures
 
-    # Status ordering for comparison (PRD-FIX-008: includes done/merged)
-    _STATUS_ORDER: dict[str, int] = {
-        "draft": 0,
-        "review": 1,
-        "approved": 2,
-        "implemented": 3,
-        "done": 4,
-        "merged": 4,
-        "deprecated": 5,
-    }
     required_order = _STATUS_ORDER.get(required_status.value, 0)
 
     # Check each PRD's status
@@ -1187,7 +1189,7 @@ def validate_prd_quality(
     if isinstance(traceability, dict):
         for key in ("implements", "depends_on", "enables"):
             val = traceability.get(key, [])
-            if isinstance(val, list) and len(val) > 0:
+            if isinstance(val, list) and val:
                 has_traces = True
                 break
     if not has_traces:
@@ -1501,7 +1503,7 @@ def score_traceability_v2(
     if isinstance(trace_data, dict):
         for field in trace_fields:
             val = trace_data.get(field, [])
-            if isinstance(val, list) and len(val) > 0:
+            if isinstance(val, list) and val:
                 populated_fields += 1
 
     field_ratio = populated_fields / len(trace_fields)
@@ -1559,6 +1561,14 @@ def classify_quality_tier(
     return QualityTier.SKELETON
 
 
+_GRADE_MAP: dict[QualityTier, str] = {
+    QualityTier.APPROVED: "A",
+    QualityTier.REVIEW: "B",
+    QualityTier.DRAFT: "D",
+    QualityTier.SKELETON: "F",
+}
+
+
 def map_grade(tier: QualityTier) -> str:
     """Map a quality tier to a letter grade.
 
@@ -1568,13 +1578,7 @@ def map_grade(tier: QualityTier) -> str:
     Returns:
         Letter grade: A, B, D, or F.
     """
-    _grade_map: dict[QualityTier, str] = {
-        QualityTier.APPROVED: "A",
-        QualityTier.REVIEW: "B",
-        QualityTier.DRAFT: "D",
-        QualityTier.SKELETON: "F",
-    }
-    return _grade_map.get(tier, "F")
+    return _GRADE_MAP.get(tier, "F")
 
 
 def generate_improvement_suggestions(

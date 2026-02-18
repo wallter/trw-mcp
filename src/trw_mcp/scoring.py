@@ -192,12 +192,15 @@ def compute_utility_score(
     return _clamp01(utility)
 
 
-def _entry_utility(entry: dict[str, object], today: date, **kwargs: object) -> float:
+def _entry_utility(
+    entry: dict[str, object],
+    today: date,
+    fallback_days: int | None = None,
+) -> float:
     """Compute utility score for a learning entry using config defaults.
 
     Extracts scoring fields from the entry dict and delegates to
-    compute_utility_score with TRWConfig parameters. Additional kwargs
-    are forwarded (e.g., fallback_days for _days_since_access).
+    compute_utility_score with TRWConfig parameters.
     """
     q_value = _float_field(entry, "q_value", _float_field(entry, "impact", 0.5))
     base_impact = _float_field(entry, "impact", 0.5)
@@ -205,12 +208,7 @@ def _entry_utility(entry: dict[str, object], today: date, **kwargs: object) -> f
     recurrence = _int_field(entry, "recurrence", 1)
     access_count = _int_field(entry, "access_count", 0)
     source_type = str(entry.get("source_type", "agent"))
-
-    fallback_days = kwargs.get("fallback_days")
-    if isinstance(fallback_days, int):
-        days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
-    else:
-        days_unused = _days_since_access(entry, today)
+    days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
 
     return compute_utility_score(
         q_value=q_value,
@@ -258,11 +256,8 @@ def rank_by_utility(
         # Text relevance score (token overlap with field weighting)
         summary = str(entry.get("summary", "")).lower()
         detail = str(entry.get("detail", "")).lower()
-        entry_tags = entry.get("tags", [])
-        if isinstance(entry_tags, list):
-            tag_text = " ".join(str(t).lower() for t in entry_tags)
-        else:
-            tag_text = ""
+        raw_tags = entry.get("tags", [])
+        tag_text = " ".join(str(t).lower() for t in raw_tags) if isinstance(raw_tags, list) else ""
 
         if query_tokens:
             summary_hits = sum(1 for t in query_tokens if t in summary)
@@ -309,7 +304,7 @@ def utility_based_prune_candidates(
     seen_ids: set[str] = set()
     today = date.today()
 
-    for _path, data in entries:
+    for _, data in entries:
         entry_id = str(data.get("id", ""))
         if entry_id in seen_ids:
             continue

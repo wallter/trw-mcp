@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -60,7 +60,7 @@ class TestTRWConfig:
         assert config.consensus_quorum == 0.67
         assert config.checkpoint_secs == 600
         assert config.timebox_hours == 8
-        assert config.framework_version == "v21.0_TRW"
+        assert config.framework_version == "v22.0_TRW"
         assert config.telemetry is False
 
     def test_learning_defaults(self) -> None:
@@ -115,15 +115,14 @@ class TestTRWConfig:
 
     def test_config_yaml_with_removed_keys_loads(self, tmp_path: Path) -> None:
         """PRD-FIX-016-FR05: YAML with removed keys loads without error."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text(
+        # TRWConfig loads from env vars, not directly from YAML — extra="ignore"
+        # ensures unknown keys don't break loading.
+        (tmp_path / "config.yaml").write_text(
             "correlation_min: 0.99\n"
             "learning_prune_threshold: 0.5\n"
             "llm_max_tokens: 1000\n"
             "parallelism_max: 15\n"
         )
-        # TRWConfig loads from env vars, not directly from YAML file,
-        # but the extra="ignore" ensures unknown keys don't break loading.
         config = TRWConfig()
         assert not hasattr(config, "correlation_min")
 
@@ -139,10 +138,9 @@ class TestGetConfig:
 
     def test_reset_clears(self) -> None:
         _reset_config()
-        c1 = get_config()
+        first = get_config()
         _reset_config()
-        c2 = get_config()
-        assert c1 is not c2
+        assert get_config() is not first
 
     def test_reset_with_custom(self) -> None:
         custom = TRWConfig(debug=True)
@@ -237,16 +235,15 @@ class TestShardCard:
         assert card.self_decompose is True
 
     def test_with_output_contract(self) -> None:
-        contract = OutputContract(
-            file="result.yaml",
-            schema_keys=["summary", "findings"],
-            required=True,
-        )
         card = ShardCard(
             id="shard-002",
             title="Contracted shard",
             wave=1,
-            output_contract=contract,
+            output_contract=OutputContract(
+                file="result.yaml",
+                schema_keys=["summary", "findings"],
+                required=True,
+            ),
         )
         assert card.output_contract is not None
         assert card.output_contract.file == "result.yaml"

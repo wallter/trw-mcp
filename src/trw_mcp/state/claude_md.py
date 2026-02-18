@@ -350,7 +350,9 @@ def render_behavioral_protocol() -> str:
     Returns:
         Markdown bullet list of directives, or empty string if file missing.
     """
-    proto_path = resolve_project_root() / _config.trw_dir / _config.context_dir / "behavioral_protocol.yaml"
+    proto_path = (
+        resolve_project_root() / _config.trw_dir / _config.context_dir / "behavioral_protocol.yaml"
+    )
     if not proto_path.exists():
         return ""
     try:
@@ -504,11 +506,10 @@ def collect_promotable_learnings(
 
             impact = data.get("impact", 0.0)
             q_obs = int(str(data.get("q_observations", 0)))
-            q_val = data.get("q_value", impact)
 
             # Use q_value for mature entries, impact for cold-start
             if q_obs >= config.q_cold_start_threshold:
-                score = float(str(q_val))
+                score = float(str(data.get("q_value", impact)))
             else:
                 score = float(str(impact)) if isinstance(impact, (int, float)) else 0.0
 
@@ -613,14 +614,11 @@ def execute_claude_md_sync(
     patterns = collect_patterns(trw_dir, config, reader)
     arch_data, conv_data = collect_context_data(trw_dir, config, reader)
 
-    llm_used = False
     llm_summary: str | None = None
     if (high_impact or patterns) and config.llm_enabled and llm.available:  # pragma: no cover
         llm_summary = llm_summarize_learnings(
             high_impact, patterns, llm, CLAUDEMD_LEARNING_CAP, CLAUDEMD_PATTERN_CAP,
         )
-        if llm_summary is not None:
-            llm_used = True
 
     template = load_claude_md_template(trw_dir)
 
@@ -634,7 +632,7 @@ def execute_claude_md_sync(
     }
 
     # Content sections: LLM summary replaces manual rendering when available
-    if llm_used and llm_summary is not None:
+    if llm_summary is not None:
         tpl_context.update({
             "architecture_section": "",
             "conventions_section": "",
@@ -688,7 +686,7 @@ def execute_claude_md_sync(
         "learnings_promoted": len(high_impact),
         "patterns_included": len(patterns),
         "total_lines": total_lines,
-        "llm_used": llm_used,
+        "llm_used": llm_summary is not None,
         "agents_md_synced": agents_md_synced,
         "agents_md_path": agents_md_path,
         "bounded_contexts_synced": 0,

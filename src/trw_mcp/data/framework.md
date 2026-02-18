@@ -1,11 +1,11 @@
-v21.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
-Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated
-Version date: 2026-02-16 | Model: Opus 4.6
+v22.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
+Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven
+Version date: 2026-02-17 | Model: Opus 4.6
 
 <critical>
 ## EXECUTION MODEL SUMMARY
 
-**v21.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 11 MCP tools**
+**v22.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 11 MCP tools | 10 skills | 4 agents**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN (see PARALLELISM).
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
@@ -88,14 +88,14 @@ Treat persistence failures as P0 blockers.
 RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 ```
 
-| Phase | Exit Criteria | Cap (% of TIMEBOX_HOURS) |
-|-------|---------------|-----|
-| RESEARCH | plan.md draft, >=3 evidence paths, formation selected. Uses EXPLORATION SHARDS (findings.yaml). | 25% |
-| PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. Uses PLANNING SHARDS (plan_fragment.yaml). | 15% |
-| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. Uses WAVE ORCHESTRATION (output_contract). | 35% |
-| VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | 10% |
-| REVIEW | Critic reviewed, simplifications applied, reflection completed. | 10% |
-| DELIVER | PR created OR archived, final.md, CLAUDE.md synced (`trw_claude_md_sync`), CHANGELOG.md updated. | 5% |
+| Phase | Exit Criteria | Skills | Cap |
+|-------|---------------|--------|-----|
+| RESEARCH | plan.md draft, >=3 evidence paths, formation selected. | `/framework-check` | 25% |
+| PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/sprint-init`, `/prd-new`, `/prd-groom`, `/prd-review` | 15% |
+| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. | `/test-strategy` | 35% |
+| VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | `/test-strategy` | 10% |
+| REVIEW | Critic reviewed, simplifications applied, reflection completed. | `/memory-optimize`, `/memory-audit` | 10% |
+| DELIVER | PR created OR archived, final.md, CLAUDE.md synced. | `/deliver`, `/sprint-finish` | 5% |
 
 ORC tracks elapsed wall-clock against TIMEBOX_HOURS.
 
@@ -189,16 +189,20 @@ Scopes: `"full"` (pytest + mypy), `"pytest"`, `"mypy"`. Max timeout: 600s.
 | `trw://patterns` | Discovered patterns index |
 | `trw://run-state` | Current run state (latest run.yaml) |
 
-### Tool Lifecycle
+### Tool & Skill Lifecycle
 
 ```
 Session start -> trw_session_start()
-Work phase    -> trw_init(task_name, prd_scope)     [if new task]
-              -> trw_checkpoint(message)              [periodic]
+Sprint start  -> /sprint-init "name"                  [creates sprint doc + run]
+Requirements  -> /prd-new "feature"                   [skeleton PRD]
+              -> /prd-groom PRD-ID                    [sprint-ready quality]
+              -> /prd-review PRD-ID                   [quality gate]
+Work phase    -> trw_checkpoint(message)              [periodic]
               -> trw_learn(summary, detail)           [on discoveries]
-              -> trw_prd_create / trw_prd_validate    [requirements work]
+              -> /test-strategy                       [coverage audit]
 Validation    -> trw_build_check(scope="full")
-Delivery      -> trw_deliver()
+Delivery      -> /deliver                             [build gate + ceremony]
+Sprint end    -> /sprint-finish                       [validates + archives]
 ```
 
 Quick tasks (no run directory needed):
@@ -210,6 +214,73 @@ trw_session_start() -> work -> trw_learn() [if discovery] -> trw_deliver()
 
 - If a tool fails at runtime, fall back to manual bash/YAML equivalent and log the error.
 - `MCP_MODE: manual` -> write learnings directly to CLAUDE.md, write events to `events.jsonl` via bash.
+
+---
+
+## SKILLS & AGENTS
+
+Skills are user-invocable workflows (`.claude/skills/`) that cost 0 tokens until triggered. Agents are specialized sub-agents (`.claude/agents/`) spawned via Task(). ORC SHOULD use skills as the standard way to perform phase operations.
+
+### Skill-Phase Mapping
+
+| Skill | Phase | Mode | What It Does |
+|-------|-------|------|--------------|
+| `/sprint-init` | PLAN | inline | Survey draft PRDs, create sprint doc, bootstrap run |
+| `/prd-new` | PLAN | inline | Generate AARE-F PRD from feature description |
+| `/prd-groom` | PLAN | inline | Research + draft to bring PRD to sprint-ready (>=0.85) |
+| `/prd-review` | PLAN | fork->agent | Read-only 5-dimension quality review (READY/NEEDS WORK/BLOCK) |
+| `/test-strategy` | IMPLEMENT | inline | Audit coverage gaps, suggest targeted tests |
+| `/deliver` | DELIVER | inline | Build gate + `trw_deliver()` in one step |
+| `/sprint-finish` | DELIVER | inline | Validate PRDs, build gate, archive sprint doc, deliver |
+| `/memory-audit` | ANY | inline | Read-only learning health report |
+| `/memory-optimize` | REVIEW | inline | Prune stale learnings, consolidate duplicates |
+| `/framework-check` | ANY | inline | Ceremony compliance, run health, version check |
+
+### When to Use Skills vs Raw Tools
+
+| Operation | Use Skill | Use Raw Tool |
+|-----------|-----------|-------------|
+| Create a PRD | `/prd-new` | `trw_prd_create` only if skill unavailable |
+| Validate a PRD | `/prd-review` | `trw_prd_validate` for quick score only |
+| End a session | `/deliver` | `trw_deliver()` for ceremony-only (no build gate) |
+| Start a sprint | `/sprint-init` | `trw_init()` for run bootstrap without sprint context |
+| Record a learning | — | `trw_learn()` always (no skill needed) |
+| Check status | `/framework-check` | `trw_status()` for run state only |
+
+### Agents
+
+| Agent | Purpose | Spawned By |
+|-------|---------|------------|
+| `requirement-reviewer` | PRD quality review (5-dimension scoring) | `/prd-review` skill (fork) |
+| `prd-groomer` | Research + draft PRD sections to target quality | `/prd-groom` or Task() |
+| `requirement-writer` | Draft EARS-compliant FR/NFRs with confidence scores | Task() |
+| `traceability-checker` | Grep-based bidirectional traceability verification | Task() |
+| `code-simplifier` | Simplify code (10 preservation rules, trw-simplify skill) | Task() |
+
+### Automatic Invocation Rules
+
+Skills MUST be invoked at phase boundaries. ORC MUST NOT perform these operations manually when the skill is available.
+
+| Phase Transition | ORC MUST Invoke | Instead of Manual |
+|-----------------|-----------------|-------------------|
+| Entering PLAN (new sprint) | `/sprint-init` | Manual `trw_init` + ad-hoc sprint doc |
+| Creating requirements | `/prd-new` | Manual `trw_prd_create` without context check |
+| Pre-IMPLEMENT quality gate | `/prd-review` | Manual `trw_prd_validate` without 5-dimension scoring |
+| Entering VALIDATE | `/test-strategy` | Ad-hoc test selection |
+| Entering DELIVER | `/deliver` | Manual `trw_build_check` + `trw_deliver` separately |
+| Closing sprint | `/sprint-finish` | Manual PRD status check + archive |
+| REVIEW phase (>40 active learnings) | `/memory-optimize` | Manual learning pruning |
+
+Skills are also triggered by:
+1. **SessionStart hook** — injects available skills list into every session
+2. **Agents with `skills:` field** — preloaded skill content at spawn time
+3. **FRAMEWORK.md phase instructions** — agent reads phase table and invokes listed skills
+
+<rules>
+- ORC MUST invoke the skill listed in the Phase table when entering that phase
+- If a skill fails, ORC MAY fall back to raw MCP tool equivalents
+- Skills encapsulate best-practice tool sequences — manual equivalents skip validation steps
+</rules>
 
 ---
 
@@ -452,9 +523,18 @@ Before IMPLEMENT, verify:
 Before DELIVER, verify requirements traceability: each REQ maps to implementation files and test files with PASS status.
 </post_development>
 
-### AARE-F Tools
+### AARE-F Workflow
 
-When `MCP_MODE: tool` and AARE-F framework file exists: `trw_prd_create` at RESEARCH/PLAN, `trw_prd_validate` (MUST pass) pre-IMPLEMENT.
+When AARE-F framework file exists, ORC SHOULD use skills for the full PRD lifecycle:
+
+```
+/prd-new "feature description"     -> skeleton PRD (RESEARCH/PLAN)
+/prd-groom PRD-ID                  -> sprint-ready quality (PLAN)
+/prd-review PRD-ID                 -> quality verdict (PLAN, pre-IMPLEMENT)
+```
+
+Fallback: `trw_prd_create` + `trw_prd_validate` directly when skills are unavailable.
+`trw_prd_validate` MUST pass before IMPLEMENT regardless of method.
 
 ---
 
@@ -546,7 +626,9 @@ Use built-in `TaskCreate` / `TaskUpdate` for TODO tracking.
 | Workaround >2 retries | `trw_learn` + write to CLAUDE.md |
 | Non-obvious API behavior | `trw_learn` |
 | Environment-specific issue | `trw_learn` + root CLAUDE.md |
-| Task completion | `trw_deliver()` (includes reflection + sync) |
+| Task completion | `/deliver` (build gate + delivery ceremony) |
+| Sprint completion | `/sprint-finish` (validates + archives + delivers) |
+| Learning layer bloat (>40 active) | `/memory-audit` then `/memory-optimize` |
 
 When `MCP_MODE: manual`, write learnings directly to CLAUDE.md or sub-CLAUDE.md files.
 

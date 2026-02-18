@@ -16,7 +16,7 @@ from trw_mcp.tools.orchestration import register_orchestration_tools
 
 # Single source of truth for the expected framework version in test assertions.
 # Must match the default in TRWConfig.framework_version.
-FRAMEWORK_VERSION = "v21.0_TRW"
+FRAMEWORK_VERSION = "v22.0_TRW"
 
 
 @pytest.fixture(autouse=True)
@@ -123,27 +123,20 @@ class TestFrameworkDeployment:
         orch_tools["trw_init"].fn(task_name="fw-deploy-task")
         assert (tmp_path / ".trw" / "frameworks").exists()
 
-    def test_init_deploys_framework_md(
+    @pytest.mark.parametrize("filename,task_name", [
+        ("FRAMEWORK.md", "fw-content-task"),
+        ("AARE-F-FRAMEWORK.md", "aaref-deploy-task"),
+    ])
+    def test_init_deploys_framework_files(
         self, tmp_path: Path, orch_tools: dict[str, Any],
+        filename: str, task_name: str,
     ) -> None:
-        """FRAMEWORK.md deployed to .trw/frameworks/ with content."""
-        orch_tools["trw_init"].fn(task_name="fw-content-task")
+        """Framework markdown files deployed to .trw/frameworks/ with content."""
+        orch_tools["trw_init"].fn(task_name=task_name)
 
-        fw_path = tmp_path / ".trw" / "frameworks" / "FRAMEWORK.md"
+        fw_path = tmp_path / ".trw" / "frameworks" / filename
         assert fw_path.exists()
-        content = fw_path.read_text(encoding="utf-8")
-        assert len(content) > 100
-
-    def test_init_deploys_aaref_md(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
-    ) -> None:
-        """AARE-F-FRAMEWORK.md deployed to .trw/frameworks/."""
-        orch_tools["trw_init"].fn(task_name="aaref-deploy-task")
-
-        aaref_path = tmp_path / ".trw" / "frameworks" / "AARE-F-FRAMEWORK.md"
-        assert aaref_path.exists()
-        content = aaref_path.read_text(encoding="utf-8")
-        assert len(content) > 100
+        assert len(fw_path.read_text(encoding="utf-8")) > 100
 
     def test_init_creates_version_yaml(
         self, tmp_path: Path, orch_tools: dict[str, Any],
@@ -192,6 +185,13 @@ class TestFrameworkDeployment:
 class TestVersionTracking:
     """Tests for framework version tracking (PRD-CORE-002 Phase 3)."""
 
+    def _setup_upgrade(
+        self, monkeypatch: pytest.MonkeyPatch, upgraded_version: str,
+    ) -> None:
+        """Run first init at default version, then patch config to trigger upgrade."""
+        _make_orch_tools()["trw_init"].fn(task_name="upgrade-task1")
+        monkeypatch.setattr(orch_mod, "_config", TRWConfig(framework_version=upgraded_version))
+
     def test_same_version_skips_rewrite(
         self, tmp_path: Path, orch_tools: dict[str, Any],
     ) -> None:
@@ -205,55 +205,35 @@ class TestVersionTracking:
 
         orch_tools["trw_init"].fn(task_name="skip-rewrite-task2")
 
-        mtime_after_second = fw_path.stat().st_mtime
-        assert mtime_after_first == mtime_after_second
+        assert fw_path.stat().st_mtime == mtime_after_first
 
     def test_version_mismatch_triggers_upgrade(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Change config version, re-init, verify files updated."""
-        tools = _make_orch_tools()
-
-        # First init with default version
-        tools["trw_init"].fn(task_name="upgrade-task1")
+        upgraded_version = "v19.0_TRW"
+        self._setup_upgrade(monkeypatch, upgraded_version)
 
         version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
-        reader = FileStateReader()
-        data = reader.read_yaml(version_path)
-        assert data["framework_version"] == FRAMEWORK_VERSION
+        assert FileStateReader().read_yaml(version_path)["framework_version"] == FRAMEWORK_VERSION
 
-        # Change framework version in config to trigger upgrade
-        upgraded_version = "v19.0_TRW"
-        monkeypatch.setattr(orch_mod, "_config", TRWConfig(framework_version=upgraded_version))
+        _make_orch_tools()["trw_init"].fn(task_name="upgrade-task2")
 
-        # Re-init with new version
-        tools2 = _make_orch_tools()
-        tools2["trw_init"].fn(task_name="upgrade-task2")
-
-        updated = reader.read_yaml(version_path)
+        updated = FileStateReader().read_yaml(version_path)
         assert updated["framework_version"] == upgraded_version
 
     def test_upgrade_logs_event(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Upgrade event appears in events log."""
-        tools = _make_orch_tools()
-
-        # First init with default version
-        tools["trw_init"].fn(task_name="event-task1")
-
-        # Change version to trigger upgrade
         upgraded_version = "v19.0_TRW"
-        monkeypatch.setattr(orch_mod, "_config", TRWConfig(framework_version=upgraded_version))
+        self._setup_upgrade(monkeypatch, upgraded_version)
 
-        # Second init triggers upgrade
-        tools2 = _make_orch_tools()
-        tools2["trw_init"].fn(task_name="event-task2")
+        _make_orch_tools()["trw_init"].fn(task_name="event-task2")
 
         events_path = tmp_path / ".trw" / "upgrade_events.jsonl"
         assert events_path.exists()
-        reader = FileStateReader()
-        events = reader.read_jsonl(events_path)
+        events = FileStateReader().read_jsonl(events_path)
         upgrade_events = [e for e in events if e.get("event") == "framework_upgrade"]
         assert len(upgrade_events) >= 1
         assert upgrade_events[0]["old_framework"] == FRAMEWORK_VERSION

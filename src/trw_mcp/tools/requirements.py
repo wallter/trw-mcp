@@ -93,12 +93,9 @@ def register_requirements_tools(server: FastMCP) -> None:
             prds_dir_for_seq = resolve_project_root() / _config.prds_relative_path
             sequence = next_prd_sequence(prds_dir_for_seq, category.upper())
 
-        # Generate PRD ID
         prd_id = f"PRD-{category.upper()}-{sequence:03d}"
 
-        # Auto-generate title if not provided
         if not title:
-            # Use first sentence or first 60 chars of input
             first_line = input_text.strip().split("\n")[0]
             title = first_line[:60].rstrip(".")
 
@@ -158,11 +155,9 @@ def register_requirements_tools(server: FastMCP) -> None:
             slos=prefill_slos,
         )
 
-        # Combine frontmatter + body
         frontmatter_dict = model_to_dict(frontmatter)
         prd_content = _render_prd(frontmatter_dict, body)
 
-        # Save to project if .trw/ exists
         output_path = ""
         project_root = resolve_project_root()
         prds_dir = project_root / _config.prds_relative_path
@@ -453,27 +448,22 @@ def _apply_prefill(
         input_text,
     )
 
-    # Insert file refs into Key Files table
-    file_refs = prefill.get("file_refs", [])
-    if file_refs:
-        file_rows = "\n".join(
-            f"| `{f}` | <!-- changes needed --> |" for f in file_refs
-        )
+    if prefill.get("file_refs"):
         body = body.replace(
             "| `path/to/file.py` | {Description of changes} |",
-            file_rows,
+            "\n".join(
+                f"| `{f}` | <!-- changes needed --> |"
+                for f in prefill["file_refs"]
+            ),
         )
 
-    # Insert PRD deps into Dependencies table
-    prd_deps = prefill.get("prd_deps", [])
-    if prd_deps:
-        dep_rows = "\n".join(
-            f"| DEP-{i:03d} | {dep} | Pending | Yes |"
-            for i, dep in enumerate(prd_deps, 1)
-        )
+    if prefill.get("prd_deps"):
         body = body.replace(
             "| DEP-001 | {Dependency} | Resolved/Pending | Yes/No |",
-            dep_rows,
+            "\n".join(
+                f"| DEP-{i:03d} | {dep} | Pending | Yes |"
+                for i, dep in enumerate(prefill["prd_deps"], 1)
+            ),
         )
 
     return body
@@ -504,10 +494,11 @@ def _generate_prd_body(
         Markdown body content with all template sections.
     """
     body = _load_template_body()
-    seq = int(prd_id.split("-")[-1])
-    body = _substitute_template(body, prd_id, title, category, seq, priority, confidence)
-    prefill = _extract_prefill(input_text)
-    body = _apply_prefill(body, prefill, input_text)
+    body = _substitute_template(
+        body, prd_id, title, category,
+        int(prd_id.split("-")[-1]), priority, confidence,
+    )
+    body = _apply_prefill(body, _extract_prefill(input_text), input_text)
     return body
 
 

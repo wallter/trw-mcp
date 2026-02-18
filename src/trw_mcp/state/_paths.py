@@ -49,8 +49,8 @@ def _find_latest_run_dir(base_dir: Path) -> Path | None:
         The run directory whose ``run.yaml`` was most recently modified,
         or ``None`` if no valid run directories exist.
     """
-    latest_run: Path | None = None
-    latest_mtime: float = 0.0
+    latest_run = None
+    latest_mtime = 0.0
 
     for task_dir in base_dir.iterdir():
         runs_dir = task_dir / "runs"
@@ -149,7 +149,6 @@ def detect_current_phase() -> str | None:
         data = _reader.read_yaml(latest_yaml)
         if str(data.get("status", "")) != "active":
             return None
-        phase = str(data.get("phase", ""))
-        return phase or None
+        return str(data.get("phase", "")) or None
     except (OSError, ValueError, TypeError):
         return None

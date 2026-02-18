@@ -214,9 +214,8 @@ def create_reflection_record(
     what_failed = _build_what_failed(inputs.error_events)
     repeated_patterns = _build_repeated_patterns(inputs.repeated_ops)
 
-    reflection_id = generate_learning_id()
     return Reflection(
-        id=reflection_id,
+        id=generate_learning_id(),
         run_id=inputs.run_id,
         scope=scope,
         timestamp=datetime.now(timezone.utc),
@@ -271,8 +270,7 @@ def persist_reflection(
     _writer.write_yaml(reflection_path, model_to_dict(reflection))
 
     if run_path:
-        resolved_run = Path(run_path).resolve()
-        run_events_path = resolved_run / "meta" / "events.jsonl"
+        run_events_path = Path(run_path).resolve() / "meta" / "events.jsonl"
         if run_events_path.parent.exists():
             _events.log_event(run_events_path, "reflection_complete", {
                 "reflection_id": reflection.id,

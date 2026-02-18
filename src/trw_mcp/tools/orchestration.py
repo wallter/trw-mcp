@@ -73,7 +73,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         run_id = f"{timestamp}-{secrets.token_hex(4)}"
 
-        # Create .trw/ structure if it doesn't exist
         trw_subdirs = [
             _config.learnings_dir + "/" + _config.entries_dir,
             _config.reflections_dir,
@@ -86,7 +85,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         for subdir in trw_subdirs:
             _writer.ensure_dir(trw_dir / subdir)
 
-        # Write default config if missing
         config_path = trw_dir / "config.yaml"
         if not _reader.exists(config_path):
             config_data: dict[str, object] = {
@@ -114,7 +112,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # Resolve task_root: explicit param > config field > default "docs"
         resolved_task_root = task_root if task_root is not None else _config.task_root
 
-        # Create run directory structure
         task_dir = project_root / resolved_task_root / task_name
         run_root = task_dir / "runs" / run_id
         run_subdirs = [
@@ -134,7 +131,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         initial_phase = Phase.RESEARCH
 
-        # Build variables dict
         variables: dict[str, str] = {
             "TASK": task_name,
             "TASK_DIR": str(task_dir),
@@ -142,7 +138,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "TASK_ROOT": resolved_task_root,
         }
 
-        # Write run.yaml
         run_state = RunState(
             run_id=run_id,
             task=task_name,
@@ -160,14 +155,12 @@ def register_orchestration_tools(server: FastMCP) -> None:
             model_to_dict(run_state),
         )
 
-        # Initialize events.jsonl
         _events.log_event(
             run_root / "meta" / "events.jsonl",
             "run_init",
             {"task": task_name, "framework": _config.framework_version},
         )
 
-        # Write framework snapshot from bundled FRAMEWORK.md
         snapshot_content = _get_bundled_file("framework.md")
         if snapshot_content:
             snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
@@ -200,10 +193,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
 
-        run_yaml_path = meta_path / "run.yaml"
-        state_data = _reader.read_yaml(run_yaml_path)
+        state_data = _reader.read_yaml(meta_path / "run.yaml")
 
-        # Read wave manifest if exists
         wave_data: dict[str, object] = {}
         wave_manifest_path = resolved_path / "shards" / "wave_manifest.yaml"
         if not wave_manifest_path.exists():
@@ -211,7 +202,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if wave_manifest_path.exists():
             wave_data = _reader.read_yaml(wave_manifest_path)
 
-        # Count events
         events_path = meta_path / "events.jsonl"
         events = _reader.read_jsonl(events_path)
 
@@ -276,7 +266,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
 
-        # Read current state
         state_data = _reader.read_yaml(meta_path / "run.yaml")
 
         # Create checkpoint record
@@ -289,7 +278,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if shard_id:
             checkpoint["shard_id"] = shard_id
 
-        # Append to checkpoints.jsonl
         checkpoints_path = meta_path / "checkpoints.jsonl"
         _writer.append_jsonl(checkpoints_path, checkpoint)
 
@@ -326,7 +314,6 @@ def _compute_wave_progress(
     if not isinstance(waves_raw, list) or not waves_raw:
         return None
 
-    # Read shard manifest for status data
     shard_statuses: dict[str, str] = {}
     shard_manifest_path = run_path / "shards" / "manifest.yaml"
     if shard_manifest_path.exists():
@@ -354,7 +341,6 @@ def _compute_wave_progress(
         if not isinstance(wave_shard_ids, list):
             wave_shard_ids = []
 
-        # Count shard statuses for this wave
         counts: dict[str, int] = {
             "complete": 0, "active": 0, "pending": 0,
             "failed": 0, "partial": 0,
@@ -408,7 +394,6 @@ def _compute_reversion_metrics(
     total_transitions = revert_count + len(phase_enter_events)
     rate = revert_count / total_transitions if total_transitions > 0 else 0.0
 
-    # By-trigger aggregation
     by_trigger: dict[str, int] = {}
     for evt in revert_events:
         trigger = str(evt.get("trigger_classified", evt.get("trigger", "other")))
@@ -495,8 +480,6 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     current_aaref_version = _config.aaref_version
     current_pkg_version = _get_package_version()
 
-    current_versions = (current_fw_version, current_aaref_version, current_pkg_version)
-
     # Check existing VERSION.yaml for skip logic
     if _reader.exists(version_path):
         existing = _reader.read_yaml(version_path)
@@ -505,7 +488,7 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
             str(existing.get("aaref_version", "")),
             str(existing.get("trw_mcp_version", "")),
         )
-        if existing_versions == current_versions:
+        if existing_versions == (current_fw_version, current_aaref_version, current_pkg_version):
             return {"status": "up_to_date", "framework_version": current_fw_version}
 
         # Version mismatch — log upgrade event
@@ -518,7 +501,6 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
             "new_pkg": current_pkg_version,
         })
 
-    # Deploy framework files from bundled data
     framework_files = [
         ("framework.md", "FRAMEWORK.md"),
         ("aaref.md", "AARE-F-FRAMEWORK.md"),
@@ -528,7 +510,6 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         if content:
             (frameworks_dir / target_name).write_text(content, encoding="utf-8")
 
-    # Write VERSION.yaml
     version_data: dict[str, object] = {
         "framework_version": current_fw_version,
         "aaref_version": current_aaref_version,

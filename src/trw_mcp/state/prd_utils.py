@@ -167,7 +167,8 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
             )
 
         # Determine target dict: nested 'prd' key or top-level
-        target = data.get("prd", data) if "prd" in data and isinstance(data["prd"], dict) else data
+        prd_val = data.get("prd")
+        target = prd_val if isinstance(prd_val, dict) else data
 
         # Apply updates (support nested dicts via recursive merge)
         _deep_merge(target, updates)
@@ -185,13 +186,13 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         tmp_fd, tmp_path_str = tempfile.mkstemp(
             dir=str(path.parent), suffix=".md.tmp"
         )
+        tmp_path = Path(tmp_path_str)
         try:
             os.close(tmp_fd)
-            tmp_path = Path(tmp_path_str)
             tmp_path.write_text(new_content, encoding="utf-8")
             tmp_path.rename(path)
         except Exception:
-            Path(tmp_path_str).unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
             raise
 
         logger.info("frontmatter_updated", path=str(path), fields=list(updates.keys()))
@@ -292,42 +293,43 @@ def check_transition_guards(
     if current == PRDStatus.DRAFT and target == PRDStatus.REVIEW:
         density = compute_content_density(prd_content)
         threshold = _config.prd_min_content_density
+        density_details: dict[str, object] = {
+            "density": density,
+            "threshold": threshold,
+            "risk_level": effective_risk,
+        }
         if density < threshold:
             return TransitionResult(
                 allowed=False,
                 reason=f"Content density {density:.2f} is below threshold {threshold:.2f}.",
-                guard_details={"density": density, "threshold": threshold, "risk_level": effective_risk},
+                guard_details=density_details,
             )
         return TransitionResult(
             allowed=True,
             reason="Content density check passed.",
-            guard_details={"density": density, "threshold": threshold, "risk_level": effective_risk},
+            guard_details=density_details,
         )
 
     # Guard: REVIEW → APPROVED — V2 quality validation
     if current == PRDStatus.REVIEW and target == PRDStatus.APPROVED:
         result = validate_prd_quality_v2(prd_content, _config)
+        quality_details: dict[str, object] = {
+            "total_score": result.total_score,
+            "quality_tier": result.quality_tier.value,
+            "grade": result.grade,
+            "risk_level": effective_risk,
+        }
         if result.quality_tier in (QualityTier.SKELETON, QualityTier.DRAFT):
             return TransitionResult(
                 allowed=False,
                 reason=f"Quality tier '{result.quality_tier.value}' (score {result.total_score}) "
                 f"is below REVIEW tier required for approval.",
-                guard_details={
-                    "total_score": result.total_score,
-                    "quality_tier": result.quality_tier.value,
-                    "grade": result.grade,
-                    "risk_level": effective_risk,
-                },
+                guard_details=quality_details,
             )
         return TransitionResult(
             allowed=True,
             reason="Quality validation passed.",
-            guard_details={
-                "total_score": result.total_score,
-                "quality_tier": result.quality_tier.value,
-                "grade": result.grade,
-                "risk_level": effective_risk,
-            },
+            guard_details=quality_details,
         )
 
     # All other transitions have no guards
@@ -401,6 +403,9 @@ def _deep_merge(target: object, source: dict[str, object]) -> None:
 def next_prd_sequence(prds_dir: Path, category: str) -> int:
     """Scan existing PRD files and return max sequence + 1 for a category.
 
+    Scans both the active ``prds/`` directory and the sibling
+    ``archive/prds/`` directory to avoid reusing IDs from archived PRDs.
+
     Args:
         prds_dir: Directory containing PRD markdown files.
         category: PRD category (e.g., "CORE", "FIX").
@@ -408,16 +413,20 @@ def next_prd_sequence(prds_dir: Path, category: str) -> int:
     Returns:
         Next available sequence number (minimum 1).
     """
-    if not prds_dir.exists():
-        return 1
-
     prefix = f"PRD-{category}-"
     sequences: list[int] = []
-    for prd_file in prds_dir.glob("*.md"):
-        name = prd_file.stem
-        if name.startswith(prefix):
-            try:
-                sequences.append(int(name[len(prefix):]))
-            except ValueError:
-                continue
+
+    # Scan active and archived PRD directories
+    dirs_to_scan = [prds_dir, prds_dir.parent / "archive" / "prds"]
+    for scan_dir in dirs_to_scan:
+        if not scan_dir.exists():
+            continue
+        for prd_file in scan_dir.glob("*.md"):
+            name = prd_file.stem
+            if name.startswith(prefix):
+                try:
+                    sequences.append(int(name[len(prefix):]))
+                except ValueError:
+                    continue
+
     return max(sequences, default=0) + 1

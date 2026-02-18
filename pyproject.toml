@@ -29,7 +29,6 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "ruamel.yaml>=0.18.0",
     "structlog>=24.0.0",
-    "claude-agent-sdk>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -45,8 +44,10 @@ dev = [
     "mypy>=1.11.0",
     "types-pyyaml>=6.0.0",
 ]
-# ai extra deprecated — claude-agent-sdk is now a core dependency
-ai = []
+ai = [
+    "claude-agent-sdk>=0.1.0",
+    "anthropic>=0.40.0",
+]
 
 [project.scripts]
 trw-mcp = "trw_mcp.server:main"

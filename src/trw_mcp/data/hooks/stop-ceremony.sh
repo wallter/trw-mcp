@@ -27,7 +27,7 @@ _event_count=$(wc -l < "$_events_path" 2>/dev/null | tr -d ' ') || _event_count=
 [ "$_event_count" -gt 0 ] 2>/dev/null || exit 0
 
 # Check for reflection event — if present, clear block count and exit
-if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete"; then
+if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete" || has_event "$_events_path" "deliver_complete"; then
   rm -f "$_block_file" 2>/dev/null || true
   exit 0
 fi
@@ -42,7 +42,7 @@ _blocks=$((${_blocks:-0} + 0)) 2>/dev/null || _blocks=0
 
 if [ "$_blocks" -ge 2 ]; then
   # Max blocks reached — warn but allow
-  echo "TRW WARNING: Ceremony incomplete (trw_reflect not called, $_event_count events logged). Allowing exit after 2 previous blocks." >&2
+  echo "TRW WARNING: Ceremony incomplete (trw_deliver not called, $_event_count events logged). Allowing exit after 2 previous blocks." >&2
   rm -f "$_block_file" 2>/dev/null || true
   exit 0
 fi
@@ -50,7 +50,7 @@ fi
 # Block: increment counter and exit 2
 _blocks=$((_blocks + 1))
 printf '%s' "$_blocks" > "$_block_file" 2>/dev/null || true
-echo "TRW BLOCK: Execute trw_deliver() or trw_reflect() before stopping. $_event_count events logged but no reflection found. (Block $_blocks/2)" >&2
+echo "TRW BLOCK: Execute trw_deliver() before stopping. $_event_count events logged but no reflection found. (Block $_blocks/2)" >&2
 
 log_hook_execution "Stop" "" "2"
 

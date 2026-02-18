@@ -72,18 +72,17 @@ def prune_recall_receipts(trw_dir: Path) -> int:
         return 0
 
     records = _reader.read_jsonl(path)
-    max_entries = _config.recall_receipt_max_entries
+    limit = _config.recall_receipt_max_entries
 
-    if len(records) <= max_entries:
+    if len(records) <= limit:
         return 0
 
-    removed = len(records) - max_entries
-    kept = records[-max_entries:]
+    removed = len(records) - limit
 
     # Rewrite the file atomically (DEBT-028)
     content = "".join(
         json.dumps(record, default=json_serializer) + "\n"
-        for record in kept
+        for record in records[-limit:]
     )
     _writer.write_text(path, content)
 

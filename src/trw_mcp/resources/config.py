@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from io import StringIO
-from typing import Any
 
 from fastmcp import FastMCP
 from ruamel.yaml import YAML
@@ -17,7 +16,7 @@ _config = get_config()
 _reader = FileStateReader()
 
 
-def _dump_yaml(data: dict[str, Any]) -> str:
+def _dump_yaml(data: dict[str, object]) -> str:
     """Serialize a dict to YAML text.
 
     Creates a fresh YAML instance per call for thread safety

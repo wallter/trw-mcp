@@ -38,25 +38,24 @@ def run_dir(tmp_path: Path) -> Path:
     """Create a run directory with events."""
     writer = FileStateWriter()
     rd = tmp_path / "runs" / "test-run"
-    meta = rd / "meta"
-    meta.mkdir(parents=True)
-    writer.write_yaml(meta / "run.yaml", {
+    (rd / "meta").mkdir(parents=True)
+    writer.write_yaml(rd / "meta" / "run.yaml", {
         "run_id": "test-run-001",
         "task": "test",
         "phase": "implement",
         "status": "active",
     })
-    writer.append_jsonl(meta / "events.jsonl", {
+    writer.append_jsonl(rd / "meta" / "events.jsonl", {
         "ts": "2026-02-16T00:00:00Z",
         "event": "run_init",
         "data": {"task": "test"},
     })
-    writer.append_jsonl(meta / "events.jsonl", {
+    writer.append_jsonl(rd / "meta" / "events.jsonl", {
         "ts": "2026-02-16T00:01:00Z",
         "event": "error",
         "data": {"message": "import failed"},
     })
-    writer.append_jsonl(meta / "events.jsonl", {
+    writer.append_jsonl(rd / "meta" / "events.jsonl", {
         "ts": "2026-02-16T00:02:00Z",
         "event": "phase_transition",
         "data": {"from": "research", "to": "plan"},
