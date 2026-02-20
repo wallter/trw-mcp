@@ -83,6 +83,7 @@ class TRWConfig(BaseSettings):
     claude_md_max_lines: int = 300
     sub_claude_md_max_lines: int = 50
     agents_md_enabled: bool = True
+    agent_teams_enabled: bool = True
 
     # Scoring subsystem (outcome-based utility, Sprint 8 extraction)
     scoring_default_days_unused: int = 30
@@ -109,7 +110,7 @@ class TRWConfig(BaseSettings):
     templates_dir: str = "templates"
 
     # Framework version and AARE-F standard
-    framework_version: str = "v23.0_TRW"
+    framework_version: str = "v24.0_TRW"
     aaref_version: str = "v1.1.0"
 
     # PRD quality gates (AARE-F standard)

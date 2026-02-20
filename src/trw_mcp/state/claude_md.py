@@ -109,6 +109,7 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "{{ceremony_phases}}"
         "{{ceremony_table}}"
         "{{ceremony_flows}}"
+        "{{agent_teams_section}}"
         "## TRW Learnings (Auto-Generated)\n"
         "\n"
         "{{architecture_section}}"
@@ -433,6 +434,60 @@ def render_ceremony_flows() -> str:
     )
 
 
+def render_agent_teams_protocol() -> str:
+    """Render Agent Teams protocol section for CLAUDE.md auto-generation.
+
+    Provides teammates with dual-mode orchestration guidance, lifecycle
+    expectations, and hook-based quality gates (PRD-INFRA-010).
+
+    Returns:
+        Markdown string with Agent Teams protocol, or empty string
+        if the feature is not enabled.
+    """
+    if not _config.agent_teams_enabled:
+        return ""
+
+    return (
+        "## TRW Agent Teams Protocol (Auto-Generated)\n"
+        "\n"
+        "### Dual-Mode Orchestration\n"
+        "\n"
+        "| Mode | When | How |\n"
+        "|------|------|-----|\n"
+        "| Subagents | Focused tasks, research, cost-sensitive | `Task` tool with `subagent_type` |\n"
+        "| Agent Teams | Complex multi-file, peer coordination | `TeamCreate` + `Task` with `team_name` |\n"
+        "\n"
+        "### Teammate Lifecycle\n"
+        "\n"
+        "1. LEAD calls `TeamCreate` and `TaskCreate` for work items\n"
+        "2. LEAD spawns teammates via `Task` tool with `team_name` parameter\n"
+        "3. Teammates claim tasks via `TaskUpdate` (set `owner`)\n"
+        "4. Teammates work autonomously, using `trw_learn`/`trw_checkpoint` for ceremony\n"
+        "5. Teammates mark tasks `completed` via `TaskUpdate` when done\n"
+        "6. LEAD sends `shutdown_request` when all tasks complete\n"
+        "\n"
+        "### Quality Gate Hooks\n"
+        "\n"
+        "- **TeammateIdle**: Fires when teammate goes idle — soft gate, logs for monitoring\n"
+        "- **TaskCompleted**: Fires when task marked complete — extension point for validation\n"
+        "\n"
+        "### File Ownership\n"
+        "\n"
+        "Each teammate owns exclusive files to prevent write conflicts. "
+        "LEAD assigns ownership via playbook. Never edit files outside your assignment.\n"
+        "\n"
+        "### Teammate Roles\n"
+        "\n"
+        "| Agent | Model | Purpose |\n"
+        "|-------|-------|---------|\n"
+        "| `trw-implementer` | sonnet | Code implementation, TDD |\n"
+        "| `trw-tester` | sonnet | Test coverage, edge cases |\n"
+        "| `trw-reviewer` | opus | Code review, security audit |\n"
+        "| `trw-researcher` | sonnet | Codebase research, docs |\n"
+        "\n"
+    )
+
+
 def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
     """Merge TRW auto-generated section into a CLAUDE.md file.
 
@@ -629,6 +684,7 @@ def execute_claude_md_sync(
         "ceremony_phases": render_phase_descriptions(),
         "ceremony_table": render_ceremony_table(),
         "ceremony_flows": render_ceremony_flows(),
+        "agent_teams_section": render_agent_teams_protocol(),
     }
 
     # Content sections: LLM summary replaces manual rendering when available

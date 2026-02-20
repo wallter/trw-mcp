@@ -1,5 +1,5 @@
-v23.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
-Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven
+v24.0_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
+Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven | Agent-Teams
 Version date: 2026-02-18 | Model: Opus 4.6
 
 <trw-framework>
@@ -7,17 +7,21 @@ Version date: 2026-02-18 | Model: Opus 4.6
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v23.0_TRW | Opus 4.6 | 6 phases | 4 formations | 3 confidence levels | 11 MCP tools | 10 skills | 4 agents**
+**v24.0_TRW | Opus 4.6 | 6 phases | 4 formations + 5 team formations | 3 confidence levels | 11 MCP tools | 10 skills | 9 agents | Agent Teams**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN (see PARALLELISM).
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
 Principles: Behavioral > Structural. Prevention > Detection. External > Internal.
+Agent Teams: LEAD coordinates teammates via shared task list. Subagents for RESEARCH, Agent Teams for IMPLEMENT+.
 </execution-summary>
 
 <design-principles>
 P1: **Behavioral > Structural** — instruct what to DO, not what to BE
 P2: **Prevention > Detection** — make bad patterns structurally impossible
 P3: **External > Internal** — externalize infrastructure to tools, keep prompt behavioral
+P4: **Focused Context > Shared** — narrow scope per agent = better reasoning
+P5: **Coordinate > Command** — lead orchestrates, teammates self-organize
+P6: **PRD-to-Code Traceability** — every implementation line traces to a PRD requirement
 </design-principles>
 
 ---
@@ -381,6 +385,150 @@ Parallelizable without coordination?
 
 Formation scope: within a single wave. Each wave MAY use a different formation. Formations MUST NOT span waves.
 
+### Agent Teams Formations
+
+When using Agent Teams mode, ORC selects team formation based on task structure:
+
+```
+Multi-module, cross-layer?
++-- YES -> LAYER-SPECIALISTS (1 TM/layer + tester + reviewer)
++-- NO -> Single-module, deep?
+        +-- YES -> MAP-REDUCE (2-3 impl TMs + tester + reviewer)
+        +-- NO -> Exploratory?
+                +-- YES -> RESEARCH-SYNTHESIZE (2-4 researchers + synthesizer)
+                +-- NO -> High-risk?
+                        +-- YES -> BUILD-REVIEW-ITERATE (2 builders + 2 reviewers)
+                        +-- NO -> PIPELINE (2-3 TMs in sequence)
+```
+
+Team formation scope: entire team lifetime. Unlike shard formations, team formations persist across multiple task waves.
+
+---
+
+## AGENT TEAMS
+
+When the task benefits from independent context windows, peer communication, or self-coordinating workers, ORC SHOULD use Claude Code Agent Teams instead of subagent shards.
+
+<team-mode-selection>
+| Criteria | Use Subagents | Use Agent Teams |
+|----------|--------------|-----------------|
+| Communication | Results-only | Peer discussion needed |
+| Context | Shared with parent | Independent windows |
+| Cost sensitivity | Budget-constrained | Quality-prioritized |
+| Task coupling | Independent, no overlap | Interdependent, shared domain |
+| Duration | Short (single task) | Extended (multi-task) |
+| Phase | RESEARCH (always) | IMPLEMENT, TEST, REVIEW, AUDIT |
+</team-mode-selection>
+
+### Three Levels of Parallelism
+
+```
+LEAD → Subagents (RESEARCH)      blocking Task(), parallel in ONE message
+LEAD → Agent Team (IMPLEMENT+)   independent sessions, peer-to-peer, shared task list
+       └─ TMs → Shards           blocking Task() WITHIN TM, parallel in ONE message
+```
+
+| Level | Mechanism | Phase | Cost |
+|-------|-----------|-------|------|
+| Subagent | Task() from LEAD | RESEARCH | ~1x/agent |
+| Agent Team | Teammates via TeamCreate/SendMessage | IMPLEMENT/TEST/REVIEW | ~3-4x |
+| TM Shard | Task() from TM | Within TM for shardable tasks | ~1x/shard |
+
+ALL Task() calls (subagents AND TM shards) MUST be blocking. NO `run_in_background: true`. TM shards MUST NOT spawn sub-shards (depth 1 max).
+
+### Team Lifecycle
+
+```
+SPAWN → TASK → WORK → GATE → SYNTHESIZE → CLEANUP
+```
+
+1. **SPAWN**: Lead creates team via TeamCreate, defines roles, spawns teammates via Task(team_name, name, subagent_type)
+2. **TASK**: Lead creates shared task list with dependencies via TaskCreate/TaskUpdate(addBlockedBy)
+3. **WORK**: Teammates claim tasks from shared queue, work independently, message peers via SendMessage
+4. **GATE**: TeammateIdle/TaskCompleted hooks enforce quality (exit code 2 = keep working)
+5. **SYNTHESIZE**: Lead reviews teammate outputs, synthesizes findings, resolves conflicts
+6. **CLEANUP**: Lead sends shutdown_request to each teammate, waits for approval, calls TeamDelete
+
+### Team Formations
+
+| Pattern | Structure | Use When |
+|---------|----------|----------|
+| LAYER-SPECIALISTS | 1 TM/layer + tester + reviewer | Multi-module, cross-layer work |
+| MAP-REDUCE | 2-3 impl TMs + tester + reviewer | Single-module, deep work |
+| RESEARCH-SYNTHESIZE | 2-4 researchers + synthesizer | Exploratory investigation |
+| BUILD-REVIEW-ITERATE | 2 builders + 2 reviewers | High-risk/compliance work |
+| PIPELINE | 2-3 TMs in sequence | Sequential transformation |
+
+### File Ownership
+
+File ownership prevents the #1 Agent Teams failure mode: two teammates editing the same file.
+
+- Each file: at most ONE exclusive owner. Zero overlap. Validate before spawn.
+- TM shard file scope: subset of parent TM's exclusive files. No shard overlap within TM.
+- New files: creating TM owns them. Shared files: assign to ONE TM, others message requests.
+- LEAD MUST generate `file_ownership.yaml` during PLAN and validate before TEAM-UP.
+
+### Teammate Playbooks
+
+Each teammate receives a standalone playbook (≤3000 tokens) with 10 sections:
+
+```
+1. IDENTITY & MISSION — role, success criteria, accountability
+2. FRAMEWORK ESSENTIALS — key rules for this role (extracted, not full framework)
+3. FILE OWNERSHIP — exclusive + read_only lists. MUST NOT modify outside exclusive.
+4. TASKS — filtered from task list with acceptance criteria and dependencies
+5. INTERFACE CONTRACTS — from architecture, filtered to this TM's scope
+6. SHARD PROTOCOL — when/how to use Task() internally (max 4, depth 1, blocking)
+7. COORDINATION — who to message when, blocker protocol
+8. OUTPUT CONTRACT — scratch/tm-{name}/result.yaml schema
+9. QUALITY — TDD, coverage, logging, commit format
+10. PRD TRACEABILITY — which reqs this TM satisfies, how to document the link
+```
+
+### Hook-Based Quality Gates
+
+| Hook | Fires When | Exit Code 2 Effect | Enforces |
+|------|------------|-------------------|----------|
+| `TeammateIdle` | TM about to go idle | Keeps TM working with feedback | Output contracts, test pass |
+| `TaskCompleted` | Task being marked complete | Prevents completion with feedback | Acceptance criteria, deliverables |
+
+### Teammate MCP Tool Usage
+
+Teammates inherit MCP tools from the project. Each teammate SHOULD use:
+
+| Tool | When | Why |
+|------|------|-----|
+| `trw_recall` | At start of work | Load relevant learnings for their domain |
+| `trw_learn` | On discoveries/gotchas | Record findings for future sessions |
+| `trw_checkpoint` | At milestones | Snapshot progress for resume safety |
+| `trw_build_check` | At validation | Verify tests/types pass |
+
+LEAD additionally uses: `trw_session_start()`, `trw_init()`, `trw_deliver()`, `trw_prd_create/validate()`.
+
+### Model Strategy
+
+| Role | Model | Why |
+|------|-------|-----|
+| LEAD, Reviewer, Auditor | Opus | Judgment, synthesis, security analysis |
+| Implementer, Tester, Shards | Sonnet | Cost-effective execution |
+| Trivial shards | Haiku | Simple lookups, data extraction |
+
+### Session Resume Protocol
+
+Agent Teams cannot resume. On resume:
+1. Read `run.yaml` → `roster.yaml` → `task_plan.yaml` → `scratch/tm-*/result.yaml`
+2. Scope new team to only incomplete work
+3. Regenerate playbooks referencing completed outputs
+4. NEVER message previous teammates
+
+<team-rules>
+- LEAD MUST stay in delegate mode during IMPLEMENT. LEAD does NOT code.
+- Teammates read playbooks as FIRST action after spawn.
+- Plan approval SHOULD be required for code changes (mode: "plan").
+- 2-5 teammates optimal. Better task decomposition > more headcount.
+- Reviewer/Auditor: Opus model, read-only tools, adversarial stance.
+</team-rules>
+
 ---
 
 ## EXPLORATION & PLANNING SHARDS
@@ -508,6 +656,18 @@ Heuristic: if shards are independent (<=5% file overlap), spawn `clamp(MIN_SHARD
 - Self-check before every Task(): "Will I wait for this result before my next action?" YES = correct.
 - Before launching N parallel shards, ORC SHOULD test ONE shard first to validate prompt quality and tool access.
 </parallelism-rules>
+
+### Agent Teams Mode
+
+When ORC selects Agent Teams for IMPLEMENT+ phases:
+- Lead spawns teammates with specific roles and file boundaries
+- Task dependencies (blockedBy) replace wave_manifest.yaml for teammate coordination
+- TeammateIdle/TaskCompleted hooks replace manual output validation
+- Each teammate has full MCP tool access (inherited from project)
+- Teammates SHOULD call `trw_learn()` for discoveries
+- Teammates SHOULD call `trw_checkpoint()` at milestones
+- Lead MUST call `trw_deliver()` at completion
+- Lead MUST shut down all teammates before TeamDelete
 
 ---
 

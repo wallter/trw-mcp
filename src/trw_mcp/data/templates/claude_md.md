@@ -11,6 +11,7 @@
 {{ceremony_phases}}
 {{ceremony_table}}
 {{ceremony_flows}}
+{{agent_teams_section}}
 ## TRW Learnings (Auto-Generated)
 
 {{architecture_section}}

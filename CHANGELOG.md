@@ -2,6 +2,27 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.3.3] — 2026-02-19
+
+### Added
+- **Agent Teams CLAUDE.md rendering** — `render_agent_teams_protocol()` in `state/claude_md.py` (PRD-INFRA-010):
+  - Dual-mode orchestration table, teammate lifecycle steps, quality gate hooks, file ownership, teammate roles table
+  - Gated by `agent_teams_enabled` config field (default: `True`, env: `TRW_AGENT_TEAMS_ENABLED`)
+  - `{{agent_teams_section}}` placeholder in bundled template and inline fallback
+- `agent_teams_enabled: bool` field on `TRWConfig` (documentation generation group)
+- 42 new tests in `test_agent_teams.py` covering rendering, template integration, config, hooks, settings, agent definitions
+
+### Changed
+- **FRAMEWORK.md v24.0_TRW** — Agent Teams integration: new AGENT TEAMS section, updated PARALLELISM/FORMATIONS, principles P4-P6
+- `framework_version` config default: `v23.0_TRW` → `v24.0_TRW`
+- Bundled `data/FRAMEWORK.md` synced to v24.0
+- Test assertions updated for v24.0 version string
+
+### Stats
+- 683 tests, 84.87% coverage, mypy --strict clean
+
+---
+
 ## [0.3.2] — 2026-02-18
 
 ### Changed
