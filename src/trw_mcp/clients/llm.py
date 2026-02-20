@@ -11,6 +11,9 @@ override per-request.
 from __future__ import annotations
 
 import asyncio
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -50,10 +53,12 @@ class LLMClient:
         model: str = "haiku",
         max_turns: int = 1,
         system_prompt: str = "",
+        usage_log_path: Path | None = None,
     ) -> None:
         self._model = model
         self._max_turns = max_turns
         self._system_prompt = system_prompt
+        self._usage_log_path = usage_log_path
         self._available = False
         self._client: Any = None
         self._async_client: Any = None
@@ -96,9 +101,12 @@ class LLMClient:
         if not self._available or self._async_client is None:
             return None
 
+        resolved_model = _resolve_model(model or self._model)
+        start = time.monotonic()
+
         try:
             kwargs: dict[str, Any] = {
-                "model": _resolve_model(model or self._model),
+                "model": resolved_model,
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": prompt}],
             }
@@ -109,17 +117,58 @@ class LLMClient:
 
             response = await self._async_client.messages.create(**kwargs)
 
+            latency_ms = (time.monotonic() - start) * 1000
+            input_tokens = 0
+            output_tokens = 0
+            if hasattr(response, "usage"):
+                try:
+                    input_tokens = int(response.usage.input_tokens)
+                    output_tokens = int(response.usage.output_tokens)
+                except (TypeError, ValueError):
+                    pass
+            self._append_usage_record(resolved_model, input_tokens, output_tokens, latency_ms, success=True)
+
             if response.content:
                 return str(response.content[0].text) if hasattr(response.content[0], "text") else None
             return None
 
         except Exception:
+            latency_ms = (time.monotonic() - start) * 1000
+            self._append_usage_record(resolved_model, 0, 0, latency_ms, success=False)
             logger.warning(
                 "llm_call_failed",
                 prompt_preview=prompt[:80],
                 exc_info=True,
             )
             return None
+
+    def _append_usage_record(
+        self,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        latency_ms: float,
+        success: bool,
+    ) -> None:
+        """Append a usage record to the JSONL log (non-fatal)."""
+        usage_log_path: Path | None = getattr(self, "_usage_log_path", None)
+        if usage_log_path is None:
+            return
+        try:
+            from trw_mcp.state.persistence import FileStateWriter  # local import avoids circular
+
+            record: dict[str, object] = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "latency_ms": round(latency_ms, 2),
+                "caller": "ask",
+                "success": success,
+            }
+            FileStateWriter().append_jsonl(usage_log_path, record)
+        except Exception:
+            logger.warning("llm_usage_log_failed", exc_info=True)
 
     def ask_sync(
         self,

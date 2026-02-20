@@ -39,7 +39,11 @@ logger = structlog.get_logger()
 _config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
-_llm = LLMClient(model=_config.llm_default_model)
+_llm_usage_path: Path | None = None
+if _config.llm_usage_log_enabled:
+    _trw_dir = resolve_trw_dir()
+    _llm_usage_path = _trw_dir / _config.logs_dir / _config.llm_usage_log_file
+_llm = LLMClient(model=_config.llm_default_model, usage_log_path=_llm_usage_path)
 
 
 def _entries_path() -> tuple[Path, Path]:

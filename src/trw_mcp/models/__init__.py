@@ -34,6 +34,16 @@ from trw_mcp.models.requirements import (
     ValidationResult,
 )
 
+# report
+from trw_mcp.models.report import (
+    BuildSummary,
+    DurationInfo,
+    EventSummary,
+    LearningSummary,
+    PhaseEntry,
+    RunReport,
+)
+
 # run
 from trw_mcp.models.run import (
     Event,
@@ -77,6 +87,13 @@ __all__ = [
     "TraceabilityResult",
     "ValidationFailure",
     "ValidationResult",
+    # report
+    "BuildSummary",
+    "DurationInfo",
+    "EventSummary",
+    "LearningSummary",
+    "PhaseEntry",
+    "RunReport",
     # run
     "Event",
     "EventType",

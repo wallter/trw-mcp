@@ -12,6 +12,7 @@ from typing import NamedTuple
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
+from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.models.learning import LearningEntry, Reflection
 from trw_mcp.state.analytics import (
     detect_tool_sequences,
@@ -126,7 +127,11 @@ def generate_reflection_learnings(
     new_learnings: list[dict[str, str]] = []
     llm_used = False
 
-    llm = LLMClient(model=_config.llm_default_model)
+    _llm_usage_path: Path | None = None
+    if _config.llm_usage_log_enabled:
+        _reflect_trw_dir = resolve_trw_dir()
+        _llm_usage_path = _reflect_trw_dir / _config.logs_dir / _config.llm_usage_log_file
+    llm = LLMClient(model=_config.llm_default_model, usage_log_path=_llm_usage_path)
     if inputs.events and _config.llm_enabled and llm.available:  # pragma: no cover
         llm_result = llm_extract_learnings(inputs.events, llm)
         if llm_result is not None:
