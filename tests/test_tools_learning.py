@@ -1575,6 +1575,28 @@ class TestAnalyticsExtraction:
         assert len(result) == 1
         assert "Repeated operation" in result[0]["summary"]
 
+    def test_extract_mechanical_dedup_repeated_ops(self, tmp_project: Path) -> None:
+        """extract_learnings_mechanical skips repeated-ops with existing active entries."""
+        trw_dir = tmp_project / ".trw"
+        ops = [("git_push", 5)]
+        # First call creates the entry
+        result1 = extract_learnings_mechanical([], ops, trw_dir)
+        assert len(result1) == 1
+        # Second call with same op should skip (dedup)
+        result2 = extract_learnings_mechanical([], ops, trw_dir)
+        assert len(result2) == 0
+
+    def test_extract_mechanical_dedup_error_patterns(self, tmp_project: Path) -> None:
+        """extract_learnings_mechanical skips error patterns with existing active entries."""
+        trw_dir = tmp_project / ".trw"
+        errors = [{"event": "tool_error", "data": "disk full", "ts": "2026-01-01"}]
+        # First call creates the entry
+        result1 = extract_learnings_mechanical(errors, [], trw_dir)
+        assert len(result1) == 1
+        # Second call with same error should skip (dedup)
+        result2 = extract_learnings_mechanical(errors, [], trw_dir)
+        assert len(result2) == 0
+
     def test_extract_learnings_from_llm_saves_entries(self, tmp_project: Path) -> None:
         """extract_learnings_from_llm persists entries to disk."""
         trw_dir = tmp_project / ".trw"

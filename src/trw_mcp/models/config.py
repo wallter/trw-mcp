@@ -258,6 +258,8 @@ class TRWConfig(BaseSettings):
     telemetry: bool = False          # session-level flag; consumed by trw_session_start
     telemetry_enabled: bool = True   # per-tool toggle (reserved for future use)
     telemetry_file: str = "tool-telemetry.jsonl"
+    llm_usage_log_enabled: bool = True
+    llm_usage_log_file: str = "llm_usage.jsonl"
 
 
 # --- Singleton factory ---------------------------------------------------

@@ -351,6 +351,36 @@ def has_existing_success_learning(
     return False
 
 
+def has_existing_mechanical_learning(
+    trw_dir: Path,
+    prefix: str,
+) -> bool:
+    """Check if an active mechanical learning with the given prefix exists.
+
+    Deduplication check for repeated-operation and error-pattern learnings —
+    prevents creating duplicate auto-discovered entries across reflection cycles.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        prefix: Summary prefix to match (e.g. "Repeated operation: file_modified").
+
+    Returns:
+        True if a matching active learning already exists.
+    """
+    entries_dir = _entries_path(trw_dir)
+    if not entries_dir.exists():
+        return False
+
+    target = prefix.lower()
+    for _path, data in _iter_entry_files(entries_dir):
+        if str(data.get("status", "active")) != "active":
+            continue
+        summary = str(data.get("summary", "")).lower()
+        if summary.startswith(target):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Entry persistence
 # ---------------------------------------------------------------------------
@@ -633,9 +663,12 @@ def extract_learnings_mechanical(
     new_learnings: list[dict[str, str]] = []
 
     for err in error_events[:max_errors]:
+        prefix = f"Error pattern: {err.get('event', 'unknown')}"
+        if has_existing_mechanical_learning(trw_dir, prefix):
+            continue
         entry = LearningEntry(
             id=generate_learning_id(),
-            summary=f"Error pattern: {err.get('event', 'unknown')}",
+            summary=prefix,
             detail=str(err.get("data", err)),
             tags=["error", "auto-discovered"],
             evidence=[str(err.get("ts", ""))],
@@ -646,9 +679,12 @@ def extract_learnings_mechanical(
         _save_and_record(trw_dir, entry, new_learnings)
 
     for op_name, count in repeated_ops[:max_repeated]:
+        prefix = f"Repeated operation: {op_name}"
+        if has_existing_mechanical_learning(trw_dir, prefix):
+            continue
         entry = LearningEntry(
             id=generate_learning_id(),
-            summary=f"Repeated operation: {op_name} ({count}x)",
+            summary=f"{prefix} ({count}x)",
             detail=f"Operation '{op_name}' was repeated {count} times — candidate for scripting",
             tags=["repeated", "optimization"],
             impact=0.5,

@@ -84,12 +84,20 @@ class TestRenderAgentTeamsProtocol:
         assert "TeamCreate" in result
 
     def test_lifecycle_steps_ordered(self) -> None:
-        """Lifecycle steps are numbered 1 through 6."""
+        """Lifecycle steps appear in correct order (1-6)."""
         with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
             result = render_agent_teams_protocol()
 
+        positions = []
         for i in range(1, 7):
-            assert f"{i}." in result
+            pos = result.find(f"{i}.")
+            assert pos != -1, f"Step {i} must exist"
+            positions.append(pos)
+        # Verify strict ordering: each step appears after the previous
+        for i in range(1, len(positions)):
+            assert positions[i] > positions[i - 1], (
+                f"Step {i + 1} (pos {positions[i]}) must appear after step {i} (pos {positions[i - 1]})"
+            )
 
 
 class TestAgentTeamsTemplateIntegration:
@@ -317,17 +325,60 @@ class TestAgentDefinitions:
         ["trw-reviewer.md", "trw-researcher.md"],
     )
     def test_readonly_agents_no_write(self, agents_dir: Path, agent_name: str) -> None:
-        """Reviewer and researcher agents should not have write capabilities."""
+        """Reviewer and researcher agents have Write, Edit, and Bash in disallowedTools."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
-        content_lower = content.lower()
-        # These agents should mention being read-only or have disallowed tools
-        assert "read" in content_lower  # must mention read capability
+        # Parse YAML frontmatter to check disallowedTools
+        import yaml
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        disallowed = meta.get("disallowedTools", [])
+        allowed = meta.get("allowedTools", [])
+        assert "Write" in disallowed, f"{agent_name}: Write must be disallowed"
+        assert "Edit" in disallowed, f"{agent_name}: Edit must be disallowed"
+        assert "Bash" in disallowed, f"{agent_name}: Bash must be disallowed (write bypass)"
+        assert "Bash" not in allowed, f"{agent_name}: Bash must not be in allowedTools"
 
     @pytest.mark.parametrize(
         "agent_name",
         ["trw-implementer.md", "trw-tester.md"],
     )
     def test_implementation_agents_have_edit(self, agents_dir: Path, agent_name: str) -> None:
-        """Implementer and tester agents should have edit capability."""
+        """Implementer and tester agents have Edit and Write in allowedTools."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
-        assert "Edit" in content or "Write" in content
+        import yaml
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        allowed = meta.get("allowedTools", [])
+        assert "Edit" in allowed, f"{agent_name}: Edit must be in allowedTools"
+        assert "Write" in allowed, f"{agent_name}: Write must be in allowedTools"
+
+    @pytest.mark.parametrize(
+        "agent_name",
+        ["trw-implementer.md", "trw-tester.md", "trw-reviewer.md", "trw-researcher.md"],
+    )
+    def test_agent_no_stray_tags(self, agents_dir: Path, agent_name: str) -> None:
+        """Agent definitions must not contain stray XML closing tags."""
+        content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        # Check for orphan </output> tags outside of code blocks
+        lines = content.split("\n")
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped == "</output>":
+                raise AssertionError(f"{agent_name} line {i + 1}: stray </output> tag")
+
+    @pytest.mark.parametrize(
+        "agent_name",
+        ["trw-implementer.md", "trw-tester.md", "trw-reviewer.md", "trw-researcher.md"],
+    )
+    def test_agent_has_required_frontmatter(self, agents_dir: Path, agent_name: str) -> None:
+        """Agent definitions must have name, description, model in frontmatter."""
+        content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        import yaml
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        assert "name" in meta, f"{agent_name}: missing 'name'"
+        assert "description" in meta, f"{agent_name}: missing 'description'"
+        assert "model" in meta, f"{agent_name}: missing 'model'"
+        assert meta["model"] in ("opus", "sonnet", "haiku"), (
+            f"{agent_name}: model must be opus/sonnet/haiku, got {meta['model']}"
+        )

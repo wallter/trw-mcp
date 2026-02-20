@@ -2,6 +2,30 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.3.4] — 2026-02-20
+
+### Added
+- **Mechanical learning dedup** — `has_existing_mechanical_learning()` in `state/analytics.py`:
+  - Prevents duplicate "Repeated operation:" and "Error pattern:" entries across reflection cycles
+  - Prefix-match against active entries before creating new ones
+- 10 new tests: 8 in `test_agent_teams.py` (stray tags, frontmatter validation, behavioral assertions), 2 dedup tests in `test_tools_learning.py`
+
+### Changed
+- **FRAMEWORK.md compressed** — 861 → 506 lines (41% reduction): removed redundant sections, merged tables, compact MCP reference
+- Bundled `data/framework.md` synced to compressed v24.0
+- Agent definitions: removed Bash from reviewer/researcher `allowedTools`, added to `disallowedTools` (write bypass fix)
+- `test_readonly_agents_no_write` now parses YAML frontmatter instead of substring check
+- `test_lifecycle_steps_ordered` now verifies strict positional ordering
+
+### Fixed
+- Learning store noise: pruned 27 obsolete entries (repeated-operation duplicates, success reflections, superseded learnings)
+- Consolidated 10 cluster entries into 3 compendiums (WSL2, ceremony compliance, Agent Teams architecture)
+
+### Stats
+- 766 tests, 85.12% coverage, mypy --strict clean, 31 active learnings (down from 57)
+
+---
+
 ## [0.3.3] — 2026-02-19
 
 ### Added
@@ -10,7 +34,7 @@ All notable changes to the TRW MCP server package.
   - Gated by `agent_teams_enabled` config field (default: `True`, env: `TRW_AGENT_TEAMS_ENABLED`)
   - `{{agent_teams_section}}` placeholder in bundled template and inline fallback
 - `agent_teams_enabled: bool` field on `TRWConfig` (documentation generation group)
-- 42 new tests in `test_agent_teams.py` covering rendering, template integration, config, hooks, settings, agent definitions
+- 50 tests in `test_agent_teams.py` covering rendering, template integration, config, hooks, settings, agent definitions
 
 ### Changed
 - **FRAMEWORK.md v24.0_TRW** — Agent Teams integration: new AGENT TEAMS section, updated PARALLELISM/FORMATIONS, principles P4-P6
@@ -19,7 +43,7 @@ All notable changes to the TRW MCP server package.
 - Test assertions updated for v24.0 version string
 
 ### Stats
-- 683 tests, 84.87% coverage, mypy --strict clean
+- 766 tests, 85.12% coverage, mypy --strict clean
 
 ---
 
