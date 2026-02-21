@@ -10,13 +10,15 @@ from trw_mcp.audit import (
     _audit_index_consistency,
     _audit_learnings,
     _audit_recall_effectiveness,
+    _retire_telemetry_bloat,
     format_markdown,
     run_audit,
 )
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.persistence import FileStateWriter
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 _writer = FileStateWriter()
+_reader = FileStateReader()
 
 
 # ---------------------------------------------------------------------------
@@ -267,3 +269,78 @@ class TestFormatMarkdown:
         assert "## Fix Actions Applied" in md
         assert "3" in md
         assert "Index resynced" in md
+
+    def test_fix_actions_telemetry_bloat_retired(self) -> None:
+        audit: dict[str, object] = {
+            "project": "test",
+            "generated_at": "2026-02-21T00:00:00Z",
+            "fix_actions": {
+                "telemetry_bloat_retired": 5,
+                "prune": {"actions_taken": 0},
+                "index_resynced": True,
+            },
+        }
+        md = format_markdown(audit)
+        assert "Telemetry bloat retired: 5" in md
+
+
+class TestRetireTelemetryBloat:
+    """Tests for _retire_telemetry_bloat helper."""
+
+    def test_retires_repeated_operation_entries(self, tmp_path: Path) -> None:
+        project = _setup_project(tmp_path)
+        entries_dir = project / ".trw" / "learnings" / "entries"
+        _make_entry(entries_dir, summary="Repeated operation: checkpoint (22x)", status="active")
+        _make_entry(entries_dir, summary="Repeated operation: file_modified (5x)", status="active")
+        _make_entry(entries_dir, summary="Normal learning — keep me", status="active")
+
+        trw_dir = project / ".trw"
+        entries_list = [_reader.read_yaml(f) for f in sorted(entries_dir.glob("*.yaml"))]
+        retired = _retire_telemetry_bloat(entries_list, trw_dir)
+        assert retired == 2
+
+        # Verify the files were updated to obsolete
+        updated = [_reader.read_yaml(f) for f in sorted(entries_dir.glob("*.yaml"))]
+        statuses = {str(e.get("summary", "")): str(e.get("status", "")) for e in updated}
+        assert statuses["Repeated operation: checkpoint (22x)"] == "obsolete"
+        assert statuses["Repeated operation: file_modified (5x)"] == "obsolete"
+        assert statuses["Normal learning — keep me"] == "active"
+
+    def test_retires_success_entries(self, tmp_path: Path) -> None:
+        project = _setup_project(tmp_path)
+        entries_dir = project / ".trw" / "learnings" / "entries"
+        _make_entry(entries_dir, summary="Success: reflection_complete (6x)", status="active")
+        _make_entry(entries_dir, summary="Normal learning", status="active")
+
+        trw_dir = project / ".trw"
+        entries_list = [_reader.read_yaml(f) for f in sorted(entries_dir.glob("*.yaml"))]
+        retired = _retire_telemetry_bloat(entries_list, trw_dir)
+        assert retired == 1
+
+    def test_skips_already_obsolete_entries(self, tmp_path: Path) -> None:
+        project = _setup_project(tmp_path)
+        entries_dir = project / ".trw" / "learnings" / "entries"
+        _make_entry(entries_dir, summary="Repeated operation: old (3x)", status="obsolete")
+
+        trw_dir = project / ".trw"
+        entries_list = [_reader.read_yaml(f) for f in sorted(entries_dir.glob("*.yaml"))]
+        retired = _retire_telemetry_bloat(entries_list, trw_dir)
+        assert retired == 0
+
+    def test_returns_zero_for_empty_entries(self, tmp_path: Path) -> None:
+        project = _setup_project(tmp_path)
+        trw_dir = project / ".trw"
+        retired = _retire_telemetry_bloat([], trw_dir)
+        assert retired == 0
+
+    def test_run_audit_fix_retires_bloat(self, tmp_path: Path) -> None:
+        project = _setup_project(tmp_path)
+        entries_dir = project / ".trw" / "learnings" / "entries"
+        _make_entry(entries_dir, summary="Repeated operation: checkpoint (10x)", status="active")
+        _make_entry(entries_dir, summary="Success: build_check (3x)", status="active")
+        _make_entry(entries_dir, summary="Real insight about Pydantic", status="active")
+
+        result = run_audit(project, fix=True)
+        fix_actions = result.get("fix_actions")
+        assert isinstance(fix_actions, dict)
+        assert fix_actions.get("telemetry_bloat_retired") == 2

@@ -46,6 +46,7 @@ class TestInitProjectStructure:
         expected_files = [
             ".trw/frameworks/FRAMEWORK.md",
             ".trw/context/behavioral_protocol.yaml",
+            ".trw/context/messages.yaml",
             ".trw/templates/claude_md.md",
             ".trw/config.yaml",
             ".trw/learnings/index.yaml",

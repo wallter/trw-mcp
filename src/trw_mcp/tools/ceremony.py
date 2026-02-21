@@ -14,15 +14,11 @@ from fastmcp import FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
-from trw_mcp.models.learning import LearningEntry
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import find_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
-    generate_learning_id,
-    has_existing_success_learning,
     mark_promoted,
-    save_learning_entry,
     update_analytics,
     update_analytics_sync,
 )
@@ -313,24 +309,8 @@ def _do_reflect(
         max_errors=5, max_repeated=3,
     )
 
-    # Generate positive learnings from success patterns
-    positive_count = 0
-    for sp in success_patterns:
-        if positive_count >= _config.reflect_max_positive_learnings:
-            break
-        summary = sp["summary"]
-        if has_existing_success_learning(trw_dir, summary):
-            continue
-        sp_id = generate_learning_id()
-        sp_entry = LearningEntry(
-            id=sp_id, summary=summary, detail=sp.get("detail", ""),
-            tags=["success", "pattern", "auto-discovered"],
-            impact=0.5, recurrence=int(sp.get("count", 1)),
-            source_type="agent", source_identity="trw_deliver",
-        )
-        save_learning_entry(trw_dir, sp_entry)
-        new_learnings.append({"id": sp_id, "summary": sp_entry.summary})
-        positive_count += 1
+    # Success patterns are analytics data only — do NOT create learning entries
+    # (PRD-FIX-021: suppress telemetry noise from "Success: X (Nx)" entries).
 
     if run_dir:
         if (run_dir / "meta").exists():

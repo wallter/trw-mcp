@@ -39,7 +39,7 @@ case "$_phase" in
     echo "  3. Review your diff for DRY/KISS/SOLID quality"
     echo "  4. Run trw_build_check(scope='full') to confirm pytest + mypy pass"
     echo "  5. Write a completion summary in trw_checkpoint: FRs implemented, tests, integration points"
-    echo "Skipping self-review creates rework — doing it now saves the project a full extra pass."
+    echo "Doing this self-review now saves the project a full rework pass later."
     ;;
   validate*)
     echo ""

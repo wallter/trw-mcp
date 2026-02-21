@@ -55,7 +55,7 @@ class TestTRWConfig:
         assert config.learning_promotion_impact == 0.7
         assert config.learning_prune_age_days == 30
         assert config.learning_repeated_op_threshold == 3
-        assert config.claude_md_max_lines == 300
+        assert config.claude_md_max_lines == 500
         assert config.sub_claude_md_max_lines == 50
 
     def test_aaref_quality_gates(self) -> None:

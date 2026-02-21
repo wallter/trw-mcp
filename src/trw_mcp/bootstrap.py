@@ -41,6 +41,7 @@ _TRW_DIRS = [
 _DATA_FILE_MAP: list[tuple[str, str]] = [
     ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
+    ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
     ("gitignore.txt", ".trw/.gitignore"),
     ("settings.json", ".claude/settings.json"),
@@ -149,6 +150,7 @@ def init_project(
 _ALWAYS_UPDATE: list[tuple[str, str]] = [
     ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
+    ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
     ("settings.json", ".claude/settings.json"),
 ]

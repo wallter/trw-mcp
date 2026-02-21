@@ -653,15 +653,17 @@ def extract_learnings_mechanical(
 ) -> list[dict[str, str]]:
     """Extract learnings from events using mechanical heuristics (no LLM).
 
-    Processes error patterns and repeated operations into learning entries,
-    saves them to disk, and returns summary dicts.
+    Processes error patterns into learning entries, saves them to disk,
+    and returns summary dicts.  Repeated-operation telemetry is intentionally
+    NOT converted to learnings — it stays as analytics data only (PRD-FIX-021).
 
     Args:
         error_events: Events classified as errors.
         repeated_ops: (operation_name, count) tuples sorted by frequency.
+            Accepted for API compatibility but NOT persisted as learnings.
         trw_dir: Path to .trw directory.
         max_errors: Maximum error patterns to extract.
-        max_repeated: Maximum repeated operations to extract.
+        max_repeated: Unused — kept for API compatibility.
 
     Returns:
         List of dicts with 'id' and 'summary' keys for each new learning.
@@ -684,21 +686,9 @@ def extract_learnings_mechanical(
         )
         _save_and_record(trw_dir, entry, new_learnings)
 
-    for op_name, count in repeated_ops[:max_repeated]:
-        prefix = f"Repeated operation: {op_name}"
-        if has_existing_mechanical_learning(trw_dir, prefix):
-            continue
-        entry = LearningEntry(
-            id=generate_learning_id(),
-            summary=f"{prefix} ({count}x)",
-            detail=f"Operation '{op_name}' was repeated {count} times — candidate for scripting",
-            tags=["repeated", "optimization"],
-            impact=0.5,
-            recurrence=count,
-            source_type="agent",
-            source_identity="trw_reflect",
-        )
-        _save_and_record(trw_dir, entry, new_learnings)
+    # Repeated-ops are tracked as analytics counters only — do NOT create
+    # learning entries (PRD-FIX-021: suppress telemetry noise).
+    _ = repeated_ops  # acknowledged but intentionally unused
 
     return new_learnings
 

@@ -84,14 +84,25 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
     )
 
 
+_DEFAULT_INSTRUCTIONS = (
+    "TRW engineering memory and build verification. "
+    "Call trw_session_start() first to load your prior learnings and any active run "
+    "\u2014 this gives you full context before writing code. "
+    "Workflow: trw_session_start \u2192 work \u2192 trw_learn (discoveries) \u2192 trw_deliver. "
+    ".trw/ persists knowledge across sessions."
+)
+
+
+def _load_server_instructions() -> str:
+    """Load MCP server instructions from centralized messages, with fallback."""
+    from trw_mcp.prompts.messaging import get_message_or_default
+
+    return get_message_or_default("server_instructions", _DEFAULT_INSTRUCTIONS)
+
+
 mcp = FastMCP(
     "trw",
-    instructions=(
-        "TRW engineering memory + build verification. "
-        "MANDATORY FIRST CALL: trw_session_start(). "
-        "Workflow: trw_session_start → work → trw_learn (discoveries) → trw_deliver. "
-        ".trw/ persists knowledge across sessions."
-    ),
+    instructions=_load_server_instructions(),
     middleware=[CeremonyMiddleware()],
 )
 

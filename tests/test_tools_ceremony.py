@@ -164,6 +164,66 @@ class TestDoReflect:
         assert result["status"] == "success"
         assert result["events_analyzed"] == 2
 
+    def test_no_telemetry_noise_learnings_from_success_patterns(
+        self, trw_project: Path, run_dir: Path,
+    ) -> None:
+        """PRD-FIX-021: _do_reflect must not create 'Success: X (Nx)' learnings."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        # Many success events of the same type -> triggers success_patterns
+        success_events = [
+            {"ts": f"2026-02-11T12:0{i}:00Z", "event": "shard_complete", "data": {}}
+            for i in range(8)
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in success_events) + "\n",
+            encoding="utf-8",
+        )
+        trw_dir = trw_project / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        before_count = len(list(entries_dir.glob("*.yaml")))
+
+        _do_reflect(trw_dir, run_dir)
+
+        after_entries = list(entries_dir.glob("*.yaml"))
+        new_entries = after_entries[before_count:]
+        for f in new_entries:
+            from trw_mcp.state.persistence import FileStateReader
+            data = FileStateReader().read_yaml(f)
+            summary = str(data.get("summary", ""))
+            assert not summary.startswith("Success:"), (
+                f"Telemetry noise learning created: {summary}"
+            )
+
+    def test_no_telemetry_noise_learnings_from_repeated_ops(
+        self, trw_project: Path, run_dir: Path,
+    ) -> None:
+        """PRD-FIX-021: _do_reflect must not create 'Repeated operation: X' learnings."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        # Repeated same op -> triggers repeated_ops detection
+        repeated_events = [
+            {"ts": f"2026-02-11T12:0{i}:00Z", "event": "checkpoint", "data": {}}
+            for i in range(6)
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in repeated_events) + "\n",
+            encoding="utf-8",
+        )
+        trw_dir = trw_project / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        before_count = len(list(entries_dir.glob("*.yaml")))
+
+        _do_reflect(trw_dir, run_dir)
+
+        after_entries = list(entries_dir.glob("*.yaml"))
+        new_entries = after_entries[before_count:]
+        for f in new_entries:
+            from trw_mcp.state.persistence import FileStateReader
+            data = FileStateReader().read_yaml(f)
+            summary = str(data.get("summary", ""))
+            assert not summary.startswith("Repeated operation:"), (
+                f"Telemetry noise learning created: {summary}"
+            )
+
 
 # --- _do_claude_md_sync ---
 

@@ -60,15 +60,28 @@ def compute_ceremony_score(
 
     for evt in events:
         event_type = str(evt.get("event", ""))
-        if event_type == "session_start":
+        tool_name = str(evt.get("tool_name", ""))
+        is_tool_invocation = event_type == "tool_invocation"
+
+        if event_type == "session_start" or (
+            is_tool_invocation and tool_name == "trw_session_start"
+        ):
             has_session_start = True
-        elif event_type in ("reflection_complete", "claude_md_synced"):
+        elif event_type in ("reflection_complete", "claude_md_synced", "trw_deliver_complete") or (
+            is_tool_invocation and tool_name in ("trw_deliver", "trw_reflect")
+        ):
             has_deliver = True
-        elif event_type == "checkpoint":
+        elif event_type == "checkpoint" or (
+            is_tool_invocation and tool_name == "trw_checkpoint"
+        ):
             checkpoint_count += 1
-        elif "learn" in event_type:
+        elif "learn" in event_type or (
+            is_tool_invocation and tool_name == "trw_learn"
+        ):
             learn_count += 1
-        elif event_type == "build_check_complete":
+        elif event_type == "build_check_complete" or (
+            is_tool_invocation and tool_name == "trw_build_check"
+        ):
             has_build_check = True
             tests_passed_str = str(evt.get("tests_passed", ""))
             build_passed = tests_passed_str.lower() == "true"

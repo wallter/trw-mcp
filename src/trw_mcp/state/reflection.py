@@ -13,7 +13,7 @@ from typing import NamedTuple
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.models.learning import LearningEntry, Reflection
+from trw_mcp.models.learning import Reflection
 from trw_mcp.state.analytics import (
     detect_tool_sequences,
     extract_learnings_from_llm,
@@ -21,9 +21,7 @@ from trw_mcp.state.analytics import (
     find_repeated_operations,
     find_success_patterns,
     generate_learning_id,
-    has_existing_success_learning,
     is_error_event,
-    save_learning_entry,
     surface_validated_learnings,
 )
 from trw_mcp.state.llm_helpers import llm_extract_learnings
@@ -161,43 +159,25 @@ def _append_success_pattern_learnings(
     trw_dir: Path,
     new_learnings: list[dict[str, str]],
 ) -> int:
-    """Append success pattern learnings to the learnings list.
+    """No-op: success patterns are analytics data only (PRD-FIX-021).
+
+    Previously created "Success: <event> (Nx)" learning entries, which
+    accounted for ~27% telemetry noise in the knowledge base.  These are
+    now tracked as analytics counters only and NOT persisted as learnings.
 
     Args:
-        success_patterns: Success patterns discovered during reflection.
-        trw_dir: Path to .trw directory.
-        new_learnings: List to append new learnings to (mutated in place).
+        success_patterns: Success patterns (not converted to learnings).
+        trw_dir: Path to .trw directory (unused).
+        new_learnings: List to append new learnings to (unchanged).
 
     Returns:
-        Number of positive learnings created.
+        Always 0 — no positive learnings created from success patterns.
     """
-    positive_count = 0
-    max_positive = _config.reflect_max_positive_learnings
-
-    for pattern in success_patterns:
-        if positive_count >= max_positive:
-            break
-
-        summary = pattern["summary"]
-        if has_existing_success_learning(trw_dir, summary):
-            continue
-
-        learning_id = generate_learning_id()
-        entry = LearningEntry(
-            id=learning_id,
-            summary=summary,
-            detail=pattern.get("detail", ""),
-            tags=["success", "pattern", "auto-discovered"],
-            impact=0.5,
-            recurrence=int(pattern.get("count", 1)),
-            source_type="agent",
-            source_identity="trw_reflect",
-        )
-        save_learning_entry(trw_dir, entry)
-        new_learnings.append({"id": learning_id, "summary": entry.summary})
-        positive_count += 1
-
-    return positive_count
+    # Intentionally suppressed — PRD-FIX-021: telemetry bloat reduction.
+    _ = success_patterns
+    _ = trw_dir
+    _ = new_learnings
+    return 0
 
 
 def create_reflection_record(

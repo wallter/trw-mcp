@@ -17,6 +17,7 @@ from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.analytics import (
+    apply_status_update,
     auto_prune_excess_entries,
     compute_reflection_quality,
     find_duplicate_learnings,
@@ -285,6 +286,41 @@ def _audit_hook_versions(target_dir: Path) -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
+# Fix helpers
+# ---------------------------------------------------------------------------
+
+
+def _retire_telemetry_bloat(
+    entries: list[dict[str, object]],
+    trw_dir: Path,
+) -> int:
+    """Mark active telemetry-noise entries as obsolete.
+
+    Finds entries with summaries starting with "Repeated operation:" or
+    "Success:" and marks them obsolete (PRD-FIX-021).
+
+    Args:
+        entries: All learning entries from the project.
+        trw_dir: Path to .trw directory.
+
+    Returns:
+        Number of entries retired.
+    """
+    retired = 0
+    for entry in entries:
+        summary = str(entry.get("summary", ""))
+        status = str(entry.get("status", "active"))
+        if status != "active":
+            continue
+        if summary.startswith("Repeated operation:") or summary.startswith("Success:"):
+            entry_id = str(entry.get("id", ""))
+            if entry_id:
+                apply_status_update(trw_dir, entry_id, "obsolete")
+                retired += 1
+    return retired
+
+
+# ---------------------------------------------------------------------------
 # Main audit orchestrator
 # ---------------------------------------------------------------------------
 
@@ -327,6 +363,10 @@ def run_audit(
 
     if fix:
         fix_actions: dict[str, object] = {}
+
+        # Retire telemetry bloat entries (PRD-FIX-021)
+        retired_count = _retire_telemetry_bloat(entries, trw_dir)
+        fix_actions["telemetry_bloat_retired"] = retired_count
 
         # Prune duplicates
         old_root = os.environ.get("TRW_PROJECT_ROOT")
@@ -482,6 +522,9 @@ def format_markdown(audit: dict[str, object]) -> str:
     fix_actions = audit.get("fix_actions")
     if isinstance(fix_actions, dict):
         lines.append("## Fix Actions Applied")
+        retired = fix_actions.get("telemetry_bloat_retired", 0)
+        if retired:
+            lines.append(f"- Telemetry bloat retired: {retired} entries")
         prune = fix_actions.get("prune", {})
         if isinstance(prune, dict):
             lines.append(f"- Pruned: {prune.get('actions_taken', 0)} entries")

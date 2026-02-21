@@ -70,11 +70,15 @@ def search_entries(
                     continue
 
             # Check query match — all tokens must appear in summary, detail, or tags
-            tag_text = (
-                " ".join(str(t).lower() for t in entry_tags)
-                if isinstance(entry_tags, list)
-                else ""
-            )
+            # Expand hyphenated tags so "pydantic-v2" also matches query "pydantic"
+            tag_tokens: list[str] = []
+            if isinstance(entry_tags, list):
+                for t in entry_tags:
+                    tag_str = str(t).lower()
+                    tag_tokens.append(tag_str)
+                    if "-" in tag_str:
+                        tag_tokens.extend(tag_str.split("-"))
+            tag_text = " ".join(tag_tokens)
             text = summary + " " + detail + " " + tag_text
             if all(token in text for token in query_tokens):
                 matching.append(data)

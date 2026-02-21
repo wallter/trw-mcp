@@ -1,0 +1,19 @@
+# AI-facing messages — single source of truth for TRW messaging to AI instances.
+# PRD-INFRA-012: Centralized AI-Facing Messaging Registry with Value-Oriented Framing.
+#
+# Framing principle: value-oriented (what it gives you) > prescriptive (MUST/ALWAYS/NEVER).
+# Research basis: Anthropic Claude 4.6 best practices, context engineering guide,
+#   Constitutional AI — understanding enables generalization to novel situations.
+#
+# Consumed by:
+#   - Python: trw_mcp.prompts.messaging loads this file via get_message()
+#   - Deployed to user projects as .trw/context/messages.yaml via bootstrap
+#
+# Format: simple YAML strings. Avoid block scalars (> |) for shell grep-ability.
+# Use {placeholder} for runtime substitution via str.format().
+
+# --- MCP Server Instructions (server.py FastMCP constructor) ---
+server_instructions: "TRW engineering memory and build verification. Call trw_session_start() first to load your prior learnings and any active run — this gives you full context before writing code. Workflow: trw_session_start -> work -> trw_learn (discoveries) -> trw_deliver. .trw/ persists knowledge across sessions."
+
+# --- Ceremony Middleware Warning (prepended to tool responses when ceremony not run) ---
+ceremony_warning: "trw_session_start() has not been called yet for this session.\nWithout it, you are working without:\n  - Prior session learnings (patterns and gotchas that prevent re-work)\n  - Active run state (phase, progress, last checkpoint)\nCall trw_session_start() to load your context, then retry this operation."

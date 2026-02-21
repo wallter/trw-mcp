@@ -116,16 +116,20 @@ class TestGenerateReflectionLearnings:
         assert llm_used is False
         assert len(learnings) >= 1
 
-    def test_success_patterns_create_learnings(self, trw_dir: Path) -> None:
+    def test_success_patterns_no_longer_create_learnings(self, trw_dir: Path) -> None:
+        """PRD-FIX-021: success patterns are analytics data only — not learnings."""
         inputs = ReflectionInputs(
             events=[], run_id=None, error_events=[], phase_transitions=[],
             repeated_ops=[], tool_sequences=[], validated_learnings=[],
             success_patterns=[
-                {"summary": "build passed on first try", "detail": "good", "count": "3"},
+                {"summary": "Success: build_check (3x)", "detail": "good", "count": "3"},
             ],
         )
         learnings, _, positive = generate_reflection_learnings(inputs, trw_dir)
-        assert positive >= 1
+        assert positive == 0
+        assert all(
+            not l["summary"].startswith("Success:") for l in learnings
+        )
 
 
 class TestCreateReflectionRecord:

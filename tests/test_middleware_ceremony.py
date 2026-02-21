@@ -318,15 +318,19 @@ class TestCeremonyMiddleware:
 
 
 class TestCeremonyWarningText:
-    """Tests for the warning text content."""
-
-    def test_warning_contains_action_required(self) -> None:
-        assert "ACTION REQUIRED" in CEREMONY_WARNING
+    """Tests for the warning text content — value-oriented framing."""
 
     def test_warning_mentions_session_start(self) -> None:
         assert "trw_session_start()" in CEREMONY_WARNING
 
-    def test_warning_mentions_consequences(self) -> None:
-        assert "learnings are NOT loaded" in CEREMONY_WARNING
-        assert "run state is NOT recovered" in CEREMONY_WARNING
-        assert "FRAMEWORK.md" in CEREMONY_WARNING
+    def test_warning_uses_value_framing(self) -> None:
+        """Warning explains what the agent gains, not what it loses."""
+        lower = CEREMONY_WARNING.lower()
+        assert "learnings" in lower
+        assert "context" in lower
+
+    def test_warning_avoids_threat_framing(self) -> None:
+        """No CRITICAL/MUST/WILL threat language."""
+        assert "CRITICAL" not in CEREMONY_WARNING
+        assert "ACTION REQUIRED" not in CEREMONY_WARNING
+        assert "WILL repeat" not in CEREMONY_WARNING

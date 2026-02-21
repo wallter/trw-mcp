@@ -1702,6 +1702,27 @@ class TestRecallSearch:
         matches = search_patterns(patterns_dir, ["research"], reader)
         assert len(matches) == 1
 
+    def test_search_entries_matches_hyphenated_tag_parts(self, tmp_project: Path) -> None:
+        """search_entries matches individual parts of hyphenated tags."""
+        writer = FileStateWriter()
+        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
+        writer.write_yaml(entries_dir / "hyph.yaml", {
+            "id": "L-hyph001",
+            "summary": "Some gotcha",
+            "detail": "Details here",
+            "tags": ["pydantic-v2", "cross-project"],
+            "impact": 0.8,
+            "status": "active",
+        })
+        reader = FileStateReader()
+        # "pydantic" should match via expanded hyphenated tag "pydantic-v2"
+        matches, _ = search_entries(entries_dir, ["pydantic"], reader)
+        assert len(matches) == 1
+        assert matches[0]["id"] == "L-hyph001"
+        # "cross" should also match from "cross-project"
+        matches2, _ = search_entries(entries_dir, ["cross"], reader)
+        assert len(matches2) == 1
+
     def test_update_access_tracking_increments(self, tmp_project: Path) -> None:
         """update_access_tracking increments access_count."""
         writer = FileStateWriter()
@@ -1729,22 +1750,19 @@ class TestAnalyticsExtraction:
         assert len(result) == 1
         assert "Error pattern" in result[0]["summary"]
 
-    def test_extract_learnings_mechanical_repeated(self, tmp_project: Path) -> None:
-        """extract_learnings_mechanical creates entries from repeated ops."""
+    def test_extract_learnings_mechanical_repeated_suppressed(self, tmp_project: Path) -> None:
+        """extract_learnings_mechanical no longer creates entries from repeated ops (PRD-FIX-021)."""
         trw_dir = tmp_project / ".trw"
         ops = [("git_push", 5)]
         result = extract_learnings_mechanical([], ops, trw_dir)
-        assert len(result) == 1
-        assert "Repeated operation" in result[0]["summary"]
+        assert len(result) == 0  # Repeated-ops suppressed as telemetry noise
 
-    def test_extract_mechanical_dedup_repeated_ops(self, tmp_project: Path) -> None:
-        """extract_learnings_mechanical skips repeated-ops with existing active entries."""
+    def test_extract_mechanical_repeated_ops_no_entries(self, tmp_project: Path) -> None:
+        """extract_learnings_mechanical never creates repeated-op entries (PRD-FIX-021)."""
         trw_dir = tmp_project / ".trw"
         ops = [("git_push", 5)]
-        # First call creates the entry
         result1 = extract_learnings_mechanical([], ops, trw_dir)
-        assert len(result1) == 1
-        # Second call with same op should skip (dedup)
+        assert len(result1) == 0
         result2 = extract_learnings_mechanical([], ops, trw_dir)
         assert len(result2) == 0
 

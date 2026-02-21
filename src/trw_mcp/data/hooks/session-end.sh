@@ -27,7 +27,7 @@ if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" 
 fi
 
 # Events exist but no reflection — warn
-echo "TRW WARNING: Events were logged ($_event_count) but trw_deliver was not called. Execute trw_deliver() to capture learnings." >&2
+echo "TRW: $_event_count events logged but trw_deliver was not called. Running it captures your learnings so the next session benefits from your work." >&2
 
 log_hook_execution "SessionEnd" "" "0"
 

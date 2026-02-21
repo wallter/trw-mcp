@@ -79,7 +79,7 @@ case "$_source" in
     fi
     echo ""
     echo "CONTINUE: Call trw_status() to see your current state, then resume implementation."
-    echo "Your checkpoint has your progress — do NOT re-plan or restart from scratch."
+    echo "Your checkpoint has your progress — pick up where you left off rather than re-planning."
     ;;
 
   clear)

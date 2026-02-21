@@ -32,17 +32,26 @@ CEREMONY_TOOLS: frozenset[str] = frozenset({
 })
 
 # Warning prepended to every non-exempt tool response when ceremony
-# has not been run. ~500 chars — agent sees it once before self-correcting.
-CEREMONY_WARNING = (
-    "\u26a0\ufe0f CRITICAL \u2014 SESSION CEREMONY NOT EXECUTED.\n"
-    "You MUST call trw_session_start() (or trw_init() for new tasks) "
-    "BEFORE using any other TRW tools.\n"
-    "Skipping ceremony means:\n"
-    "  - Previous session learnings are NOT loaded (you WILL repeat past mistakes)\n"
-    "  - Active run state is NOT recovered (you WILL lose progress)\n"
-    "  - FRAMEWORK.md phase requirements are NOT read (you WILL violate protocol)\n"
-    "ACTION REQUIRED: Call trw_session_start() NOW, then retry this operation."
+# has not been run. Value-oriented framing — explains what the agent gains
+# by calling session_start, rather than threatening consequences.
+# Loaded from centralized messages.yaml with inline fallback.
+_DEFAULT_CEREMONY_WARNING = (
+    "trw_session_start() has not been called yet for this session.\n"
+    "Without it, you are working without:\n"
+    "  - Prior session learnings (patterns and gotchas that prevent re-work)\n"
+    "  - Active run state (phase, progress, last checkpoint)\n"
+    "Call trw_session_start() to load your context, then retry this operation."
 )
+
+
+def _load_ceremony_warning() -> str:
+    """Load ceremony warning from centralized messages, with inline fallback."""
+    from trw_mcp.prompts.messaging import get_message_or_default
+
+    return get_message_or_default("ceremony_warning", _DEFAULT_CEREMONY_WARNING)
+
+
+CEREMONY_WARNING = _load_ceremony_warning()
 
 
 def mark_session_active(session_id: str) -> None:

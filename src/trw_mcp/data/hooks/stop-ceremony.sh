@@ -54,7 +54,7 @@ _blocks=$((${_blocks:-0} + 0)) 2>/dev/null || _blocks=0
 
 if [ "$_blocks" -ge 2 ]; then
   # Max blocks reached — warn but allow
-  echo "TRW WARNING: Ceremony incomplete (trw_deliver not called, $_event_count events logged). Allowing exit after 2 previous blocks." >&2
+  echo "TRW: $_event_count events from this session. Running trw_deliver() next session captures your learnings. Allowing exit after 2 reminders." >&2
   rm -f "$_block_file" 2>/dev/null || true
   log_hook_execution "Stop" "" "0"
   exit 0
@@ -63,7 +63,7 @@ fi
 # Block: increment counter and exit 2
 _blocks=$((_blocks + 1))
 printf '%s' "$_blocks" > "$_block_file" 2>/dev/null || true
-echo "TRW BLOCK: Execute trw_deliver() before stopping. $_event_count events logged but no ceremony found. (Block $_blocks/2)" >&2
+echo "TRW: trw_deliver() has not been called yet ($_event_count events logged). Running it now preserves your learnings and progress for future sessions. (Reminder $_blocks/2)" >&2
 
 log_hook_execution "Stop" "" "2"
 

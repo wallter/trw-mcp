@@ -80,7 +80,7 @@ class TRWConfig(BaseSettings):
     recall_utility_lambda: float = 0.3
 
     # Documentation generation
-    claude_md_max_lines: int = 300
+    claude_md_max_lines: int = 500
     sub_claude_md_max_lines: int = 50
     agents_md_enabled: bool = True
     agent_teams_enabled: bool = True
@@ -251,6 +251,7 @@ class TRWConfig(BaseSettings):
     build_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     build_check_pytest_args: str = ""
     build_check_mypy_args: str = "--strict"
+    build_check_pytest_cmd: str | None = None  # Custom test command (e.g. "make test")
 
     # Debug and telemetry
     debug: bool = False

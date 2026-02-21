@@ -52,6 +52,12 @@ def _strip_ansi(text: str) -> str:
 def _find_executable(name: str, project_root: Path) -> str | None:
     """Locate a tool on PATH or in the project venv.
 
+    Resolution order:
+    1. PATH lookup (shutil.which)
+    2. {project_root}/.venv/bin/{name}
+    3. {project_root}/venv/bin/{name}
+    4. {source_package_path}/../.venv/bin/{name} (legacy)
+
     Args:
         name: Executable name (e.g. "pytest", "mypy").
         project_root: Project root directory.
@@ -62,7 +68,14 @@ def _find_executable(name: str, project_root: Path) -> str | None:
     path = shutil.which(name)
     if path is not None:
         return path
-    # Check venv in the build root (parent of source_package_path)
+
+    # Check common venv locations in project root
+    for venv_name in (".venv", "venv"):
+        candidate = project_root / venv_name / "bin" / name
+        if candidate.exists():
+            return str(candidate)
+
+    # Legacy: check venv in build root (parent of source_package_path)
     source_path = _config.source_package_path or "trw-mcp/src"
     pkg_dir = project_root / Path(source_path).parent
     venv_path = pkg_dir / ".venv" / "bin" / name
@@ -96,7 +109,7 @@ def _run_subprocess(
         )
     except subprocess.TimeoutExpired:
         return f"{cmd[0]} timed out after {timeout_secs}s"
-    except FileNotFoundError:
+    except OSError:
         return f"{cmd[0]} executable not found"
 
 
@@ -149,6 +162,23 @@ def _run_pytest(
     Returns:
         Dict with tests_passed, coverage_pct, test_count, failure_count, failures.
     """
+    # Custom test command takes precedence over auto-resolved pytest
+    custom_cmd = _config.build_check_pytest_cmd
+    if custom_cmd:
+        result = _run_subprocess(
+            custom_cmd.split(), project_root, timeout_secs,
+        )
+        if isinstance(result, str):
+            return _pytest_error(result)
+        output = _strip_ansi(result.stdout + "\n" + result.stderr)
+        return {
+            "tests_passed": result.returncode == 0,
+            "coverage_pct": 0.0,
+            "test_count": 0,
+            "failure_count": 0 if result.returncode == 0 else 1,
+            "failures": _extract_failures(output, ("FAILED ", "ERROR ")),
+        }
+
     pytest_path = _find_executable("pytest", project_root)
     if pytest_path is None:
         return _pytest_error("pytest not found — install with: pip install pytest")
