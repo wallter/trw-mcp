@@ -110,6 +110,7 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "{{ceremony_phases}}"
         "{{ceremony_table}}"
         "{{ceremony_flows}}"
+        "{{delegation_section}}"
         "{{agent_teams_section}}"
         "## TRW Learnings (Auto-Generated)\n"
         "\n"
@@ -118,6 +119,7 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "{{categorized_learnings}}"
         "{{patterns_section}}"
         "{{adherence_section}}"
+        "{{closing_reminder}}"
         f"{TRW_MARKER_END}\n"
     )
 
@@ -341,6 +343,8 @@ def render_imperative_opener() -> str:
         "TRW tools help you build effectively and preserve your work across sessions:\n"
         "- **Start**: call `trw_session_start()` to load prior learnings"
         " and recover any active run\n"
+        "- **During**: call `trw_checkpoint(message)` after milestones"
+        " so you resume here if context compacts\n"
         "- **Finish**: call `trw_deliver()` to persist your learnings"
         " for future sessions\n"
         "\n"
@@ -433,6 +437,62 @@ def render_ceremony_flows() -> str:
         "  -> review diff, fix gaps, trw_learn         [REVIEW]\n"
         "  -> trw_deliver()\n"
         "```\n"
+        "\n"
+    )
+
+
+def render_delegation_protocol() -> str:
+    """Render delegation discipline section for CLAUDE.md auto-generation.
+
+    Provides a compact delegation decision tree and mode comparison so
+    agents default to delegation for non-trivial tasks. Uses value-oriented
+    framing (why delegation produces better results) rather than prescriptive
+    mandates (MUST/NEVER).
+
+    Returns:
+        Markdown string with delegation guidance.
+    """
+    return (
+        "## TRW Delegation Protocol (Auto-Generated)\n"
+        "\n"
+        "Delegating to focused subagents or Agent Teams produces better results for non-trivial tasks "
+        "— each agent gets a clean context window, shard self-review catches 80%+ of integration "
+        "issues, and you retain strategic oversight.\n"
+        "\n"
+        "### When to Delegate\n"
+        "\n"
+        "```\n"
+        "Task arrives → Assess scope\n"
+        "├── Trivial? (≤3 lines, 1 file) → Self-implement\n"
+        "├── Research/read-only?          → Subagent (Explore/Plan type)\n"
+        "├── Single-scope? (≤3 files)     → Subagent (general-purpose)\n"
+        "├── Multi-scope? (4+ files)\n"
+        "│   ├── Independent tracks?      → Batched subagents\n"
+        "│   └── Interdependent?          → Agent Team\n"
+        "└── Sprint-scale? (4+ PRDs)      → Agent Team + playbooks\n"
+        "```\n"
+        "\n"
+        "**Default: subagents.** Agent Teams only when peers need to communicate.\n"
+        "\n"
+    )
+
+
+def render_closing_reminder() -> str:
+    """Render closing reminder that bookends the auto-generated section.
+
+    Position bias research (Liu et al. 2024) shows the end of a prompt
+    gets elevated attention weight. This repeats the two most-skipped
+    ceremony tools in a different semantic frame from the imperative opener.
+
+    Returns:
+        Markdown string with closing reminder.
+    """
+    return (
+        "### Session Boundaries\n"
+        "\n"
+        "Every session that loads learnings via `trw_session_start()` "
+        "should persist them via `trw_deliver()` — this is how "
+        "your work compounds across sessions instead of being lost.\n"
         "\n"
     )
 
@@ -687,7 +747,9 @@ def execute_claude_md_sync(
         "ceremony_phases": render_phase_descriptions(),
         "ceremony_table": render_ceremony_table(),
         "ceremony_flows": render_ceremony_flows(),
+        "delegation_section": render_delegation_protocol(),
         "agent_teams_section": render_agent_teams_protocol(),
+        "closing_reminder": render_closing_reminder(),
     }
 
     # Content sections: LLM summary replaces manual rendering when available

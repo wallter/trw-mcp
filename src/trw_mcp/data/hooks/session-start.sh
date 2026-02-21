@@ -48,6 +48,7 @@ case "$_source" in
     echo ""
     echo "SESSION START: Call trw_session_start() to load your learnings and any active run state."
     echo "This gives you prior discoveries, gotchas, and coding patterns before you begin."
+    echo "For multi-file tasks, delegate to subagents or Agent Teams — focused context produces better results."
     ;;
 
   resume)

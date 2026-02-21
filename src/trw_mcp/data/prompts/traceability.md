@@ -558,6 +558,18 @@ You are generating an audit-ready traceability report per AARE-F standards and s
 
 ---
 
+## Key Requirements to Verify
+
+Before submitting your traceability analysis, re-read and verify:
+1. Coverage percentages are calculated for all four dimensions (source, implementation, test, KE)
+2. Every orphan (implementation without requirements, tests without requirements) is listed
+3. Missing links are flagged with specific requirement IDs, not just counts
+4. Quality gate pass/fail is determined against stated thresholds
+
+Re-read the verification checks section above and confirm all check categories were evaluated.
+
+---
+
 ## Related Prompts
 
 - [Requirements Elicitation](requirements-elicitation.md) - Establish source traceability

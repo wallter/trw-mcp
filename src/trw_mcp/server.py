@@ -85,11 +85,11 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
 
 
 _DEFAULT_INSTRUCTIONS = (
-    "TRW engineering memory and build verification. "
-    "Call trw_session_start() first to load your prior learnings and any active run "
-    "\u2014 this gives you full context before writing code. "
+    "TRW gives you engineering memory that persists across sessions "
+    "\u2014 patterns, gotchas, and project knowledge that accumulate over time. "
+    "Call trw_session_start() first to load your prior learnings and any active run state. "
     "Workflow: trw_session_start \u2192 work \u2192 trw_learn (discoveries) \u2192 trw_deliver. "
-    ".trw/ persists knowledge across sessions."
+    "Without trw_deliver, your learnings from this session are lost to future agents."
 )
 
 
@@ -170,12 +170,14 @@ def _run_update_project(args: argparse.Namespace) -> None:
     from trw_mcp.bootstrap import update_project
 
     target = Path(args.target_dir).resolve()
-    result = update_project(target, pip_install=args.pip_install)
+    dry_run: bool = getattr(args, "dry_run", False)
+    result = update_project(target, pip_install=args.pip_install, dry_run=dry_run)
 
+    prefix = "[DRY RUN] " if dry_run else ""
     for f in result["updated"]:
-        print(f"  Updated: {f}")
+        print(f"  {prefix}Updated: {f}")
     for f in result["created"]:
-        print(f"  Created (new): {f}")
+        print(f"  {prefix}Created (new): {f}")
     for f in result["preserved"]:
         print(f"  Preserved: {f}")
     for w in result.get("warnings", []):
@@ -185,7 +187,8 @@ def _run_update_project(args: argparse.Namespace) -> None:
 
     total = len(result["updated"]) + len(result["created"])
     if not result["errors"]:
-        print(f"\nTRW framework updated in {target} ({total} files)")
+        verb = "would update" if dry_run else "updated"
+        print(f"\nTRW framework {verb} in {target} ({total} files)")
 
     sys.exit(1 if result["errors"] else 0)
 
@@ -334,6 +337,11 @@ def main() -> None:
         "--pip-install",
         action="store_true",
         help="Also reinstall the trw-mcp Python package",
+    )
+    update_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would change without modifying files",
     )
 
     # audit

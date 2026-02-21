@@ -29,6 +29,8 @@ from trw_mcp.state.claude_md import (
     render_behavioral_protocol,
     render_ceremony_flows,
     render_ceremony_table,
+    render_closing_reminder,
+    render_delegation_protocol,
     render_imperative_opener,
     render_phase_descriptions,
     render_template,
@@ -637,12 +639,35 @@ class TestCeremonyRendering:
         assert "trw_deliver()" in result
 
     def test_render_imperative_opener(self) -> None:
-        """Imperative opener uses value-oriented framing."""
+        """Imperative opener uses value-oriented framing with Start/During/Finish."""
         result = render_imperative_opener()
         assert "TRW tools help you build effectively" in result
         assert "trw_session_start()" in result
+        assert "trw_checkpoint" in result
         assert "trw_deliver()" in result
         assert "learnings" in result
+
+    def test_render_closing_reminder(self) -> None:
+        """Closing reminder bookends auto-generated section with session boundary tools."""
+        result = render_closing_reminder()
+        assert "### Session Boundaries" in result
+        assert "trw_session_start()" in result
+        assert "trw_deliver()" in result
+        assert "compounds" in result
+
+    def test_render_delegation_protocol(self) -> None:
+        """Delegation protocol contains decision tree and value-oriented framing."""
+        result = render_delegation_protocol()
+        assert "## TRW Delegation Protocol" in result
+        assert "### When to Delegate" in result
+        # Decision tree keywords
+        assert "Trivial?" in result
+        assert "Subagent" in result
+        assert "Agent Team" in result
+        assert "Self-implement" in result
+        # Value-oriented framing (not CRITICAL/ALWAYS/NEVER)
+        assert "better results" in result
+        assert "focused context" in result.lower() or "clean context" in result.lower()
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
         """Bundled template contains all ceremony placeholder tokens."""
@@ -652,6 +677,8 @@ class TestCeremonyRendering:
         assert "{{ceremony_phases}}" in template
         assert "{{ceremony_table}}" in template
         assert "{{ceremony_flows}}" in template
+        assert "{{delegation_section}}" in template
+        assert "{{closing_reminder}}" in template
 
     def test_sync_includes_ceremony_sections(self, tmp_path: Path) -> None:
         """Full sync produces CLAUDE.md with ceremony table content."""
@@ -683,12 +710,18 @@ class TestCeremonyRendering:
         assert "**Full Run**" in content
         # Value-oriented opener at top of auto-generated section
         assert "TRW tools help you build effectively" in content
+        # Delegation protocol section
+        assert "## TRW Delegation Protocol" in content
+        assert "When to Delegate" in content
         assert "trw_session_start()" in content
+        # Closing reminder bookends the section
+        assert "Session Boundaries" in content
         # No unreplaced placeholders
         assert "{{imperative_opener}}" not in content
         assert "{{ceremony_phases}}" not in content
         assert "{{ceremony_table}}" not in content
         assert "{{ceremony_flows}}" not in content
+        assert "{{closing_reminder}}" not in content
 
 
 class TestTrwClaudeMdSyncLLM:

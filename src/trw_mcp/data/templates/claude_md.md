@@ -11,6 +11,7 @@
 {{ceremony_phases}}
 {{ceremony_table}}
 {{ceremony_flows}}
+{{delegation_section}}
 {{agent_teams_section}}
 ## TRW Learnings (Auto-Generated)
 
@@ -19,4 +20,5 @@
 {{categorized_learnings}}
 {{patterns_section}}
 {{adherence_section}}
+{{closing_reminder}}
 <!-- trw:end -->

@@ -10,3 +10,4 @@ directives:
   - "`trw_learn(summary, detail)` records discoveries for all future sessions — call it when you hit errors or find gotchas so no agent repeats your mistakes"
   - "`trw_claude_md_sync()` promotes your best learnings into CLAUDE.md — call it at delivery so the next session starts with your insights built in"
   - "For quick tasks without a run: `trw_recall()` gives you relevant prior learnings at the start, `trw_learn()` saves new ones for next time"
+  - "`trw_deliver()` persists everything in one call (reflect + checkpoint + CLAUDE.md sync + index sync) — without it, your session's learnings are invisible to future agents"

@@ -494,6 +494,18 @@ quality_dashboard:
 
 ---
 
+## Key Requirements to Verify
+
+Before submitting your validation output, re-read and verify:
+1. Every finding has a specific location, severity, and actionable fix suggestion
+2. The ambiguity rate is calculated as (ambiguous requirements / total requirements)
+3. All quality gate thresholds are evaluated with pass/fail determination
+4. Improvement recommendations are prioritized (P0/P1/P2) with estimated impact
+
+Re-read each audit section's scoring criteria above to confirm all checks were applied.
+
+---
+
 ## Related Prompts
 
 - [Requirements Elicitation](requirements-elicitation.md) - Source of requirements

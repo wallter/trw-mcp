@@ -70,15 +70,19 @@ def register_requirements_tools(server: FastMCP) -> None:
         sequence: int = 1,
         risk_level: str = "",
     ) -> dict[str, object]:
-        """Generate an AARE-F compliant PRD from a feature request or requirements text.
+        """Turn a feature request into a structured PRD — ensures requirements are traceable, testable, and complete.
+
+        Generates an AARE-F compliant PRD with YAML frontmatter, 12 standard sections,
+        confidence scores, and traceability links. Auto-increments the PRD ID from
+        the existing catalogue and updates INDEX.md after creation.
 
         Args:
-            input_text: Feature request, requirements, or description to base the PRD on.
+            input_text: Feature request, requirements, or description — becomes the Problem Statement and Background.
             category: PRD category (CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX).
-            priority: Priority level (P0, P1, P2, P3).
+            priority: Priority level (P0, P1, P2, P3). Determines base confidence scores.
             title: PRD title. Auto-generated from input if not provided.
             sequence: Sequence number for PRD ID. Auto-increments from existing PRDs when default (1).
-            risk_level: Optional risk level (critical, high, medium, low). Derived from priority if not set.
+            risk_level: Optional risk level (critical, high, medium, low). Scales validation strictness.
         """
         # Validate priority
         try:
@@ -197,11 +201,12 @@ def register_requirements_tools(server: FastMCP) -> None:
     def trw_prd_validate(
         prd_path: str,
     ) -> dict[str, object]:
-        """Validate a PRD against AARE-F quality gates — reports failures and scores.
+        """Check your PRD quality before implementation — catches ambiguity, missing sections, and weak requirements early.
 
-        Single V2 execution path (PRD-FIX-011): V2 subsumes V1 checks.
-        Exposes rich diagnostics: smell findings, EARS classifications,
-        readability metrics, and section-level density scores.
+        Runs the full V2 validation suite: structure compliance, content quality,
+        AARE-F compliance, and ambiguity analysis. Returns a total score (0-100),
+        quality tier, grade, and actionable improvement suggestions. Catching
+        issues here prevents rework during implementation.
 
         Args:
             prd_path: Path to the PRD markdown file to validate.

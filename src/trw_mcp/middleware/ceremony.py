@@ -40,7 +40,8 @@ _DEFAULT_CEREMONY_WARNING = (
     "Without it, you are working without:\n"
     "  - Prior session learnings (patterns and gotchas that prevent re-work)\n"
     "  - Active run state (phase, progress, last checkpoint)\n"
-    "Call trw_session_start() to load your context, then retry this operation."
+    "Call trw_session_start() now \u2014 it takes one call and gives you the full context"
+    " accumulated from all prior sessions."
 )
 
 

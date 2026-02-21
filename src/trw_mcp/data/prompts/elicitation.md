@@ -282,6 +282,18 @@ After using any elicitation prompt, validate:
 
 ---
 
+## Key Requirements to Verify
+
+Before submitting your extraction output, re-read and verify:
+1. Every extracted requirement has an ID, priority level, and confidence score
+2. Implicit requirements are explicitly documented with their supporting assumptions
+3. Follow-up questions cover any ambiguous or incomplete requirements
+4. All requirements use "shall/should" language with testable acceptance criteria
+
+Re-read the output format section above and confirm all required fields are present.
+
+---
+
 ## Related Prompts
 
 - [PRD Creation](prd-creation.md) - Create PRDs from extracted requirements

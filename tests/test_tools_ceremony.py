@@ -268,6 +268,7 @@ class TestDoClaudeMdSync:
         assert "{{ceremony_phases}}" not in content
         assert "{{ceremony_table}}" not in content
         assert "{{ceremony_flows}}" not in content
+        assert "{{closing_reminder}}" not in content
 
 
 # --- _do_index_sync ---

@@ -381,11 +381,12 @@ def register_build_tools(server: FastMCP) -> None:
         run_path: str | None = None,
         timeout_secs: int | None = None,
     ) -> dict[str, object]:
-        """Run build verification (pytest + mypy) and cache results.
+        """Verify your code passes tests and type checking — the gate between implementation and delivery.
 
-        Executes pytest and/or mypy via subprocess, parses results,
-        caches to .trw/context/build-status.yaml, and returns BuildStatus.
-        Phase gates read the cached status — call this before trw_phase_check.
+        Runs pytest and/or mypy via subprocess, parses results, and caches to
+        .trw/context/build-status.yaml. Returns test count, coverage percentage,
+        failure details, and mypy status. This is the VALIDATE phase gate — run
+        it after implementation before moving to review and delivery.
 
         Args:
             scope: Check scope — 'full' (pytest + mypy), 'pytest', 'mypy'.

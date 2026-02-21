@@ -357,6 +357,18 @@ After generation, verify:
 
 ---
 
+## Key Requirements to Verify
+
+Before submitting your PRD, re-read and verify:
+1. All 12 AARE-F sections are present with substantive content (not just headers)
+2. Every functional requirement has a confidence score (0.0-1.0) and evidence level
+3. The traceability matrix links every requirement to source, implementation, and test
+4. Non-goals explicitly state what is out of scope and why
+
+Re-read the structure checklist and AARE-F compliance checklist above to confirm completeness.
+
+---
+
 ## Related Prompts
 
 - [Requirements Elicitation](requirements-elicitation.md) - Extract requirements first

@@ -30,11 +30,11 @@ def register_report_tools(server: FastMCP) -> None:
     @server.tool()
     @log_tool_call
     def trw_run_report(run_path: str | None = None) -> dict[str, object]:
-        """Generate a structured analytics report for a completed or active run.
+        """See what happened in a run — phase timing, event counts, learning yield, and build results.
 
-        Reads run.yaml (required), events.jsonl, checkpoints.jsonl, and
-        build-status.yaml to produce aggregated metrics including phase
-        timing, event counts, learning yield, and build status.
+        Reads run.yaml, events.jsonl, checkpoints.jsonl, and build-status.yaml to
+        produce aggregated metrics. Use this to understand a completed run's outcomes
+        or to diagnose issues in an active run.
 
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
@@ -60,15 +60,14 @@ def register_report_tools(server: FastMCP) -> None:
     @server.tool()
     @log_tool_call
     def trw_analytics_report(since: str | None = None) -> dict[str, object]:
-        """Generate cross-run analytics with ceremony compliance scoring.
+        """See trends across all runs — build pass rate, ceremony compliance, and whether process is improving.
 
-        Scans all run directories, computes per-run ceremony scores (0-100),
-        and returns aggregate metrics including build pass rate, average
-        ceremony score, and ceremony trend over time.
+        Scans all run directories, computes per-run ceremony scores (0-100), and
+        returns aggregate metrics with trend analysis. Use this to identify systemic
+        issues like declining test coverage or ceremony drift.
 
         Args:
-            since: Optional ISO date filter (YYYY-MM-DD). Only runs
-                started on or after this date are included.
+            since: Optional ISO date filter (YYYY-MM-DD). Only runs started on or after this date are included.
         """
         from trw_mcp.state.analytics_report import scan_all_runs
 

@@ -35,6 +35,7 @@ from trw_mcp.state.claude_md import (
     render_ceremony_flows,
     render_ceremony_table,
     render_conventions,
+    render_closing_reminder,
     render_imperative_opener,
     render_patterns,
     render_phase_descriptions,
@@ -81,11 +82,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
     @server.tool()
     @log_tool_call
     def trw_session_start() -> dict[str, object]:
-        """Combined session start: recall high-impact learnings + check run status.
+        """Load your prior learnings and any active run — gives you full context before writing code.
 
-        Replaces the manual sequence of trw_recall('*', min_impact=0.7)
-        followed by trw_status(). Runs both operations with partial-failure
-        resilience — if recall fails, status is still returned and vice versa.
+        Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
+        checks for an active run (phase, progress, last checkpoint). Without this context,
+        you risk re-implementing solved problems or repeating mistakes from prior sessions.
+
+        Partial-failure resilient: if recall fails, run status is still returned and vice versa.
         """
         results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
@@ -166,11 +169,12 @@ def register_ceremony_tools(server: FastMCP) -> None:
         skip_reflect: bool = False,
         skip_index_sync: bool = False,
     ) -> dict[str, object]:
-        """Combined delivery ceremony: reflect + checkpoint + claude_md_sync + index_sync.
+        """Persist your learnings and progress for future sessions — without this, your work is invisible to the next agent.
 
-        Replaces the manual sequence of trw_reflect → trw_checkpoint →
-        trw_claude_md_sync → trw_index_sync. Each sub-operation runs
-        independently — failures in one step do not block subsequent steps.
+        Runs reflect (extract learnings from events), checkpoint (save final state),
+        CLAUDE.md sync (promote high-impact learnings), and INDEX/ROADMAP sync.
+        Each sub-operation runs independently — a failure in one step does not
+        block the others. Your learnings become available to every future session.
 
         Args:
             run_path: Path to run directory (auto-detected if None).
@@ -370,6 +374,7 @@ def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
         "categorized_learnings": render_categorized_learnings(high_impact),
         "patterns_section": render_patterns(patterns),
         "adherence_section": render_adherence(high_impact),
+        "closing_reminder": render_closing_reminder(),
     }
     trw_section = render_template(template, tpl_context)
 

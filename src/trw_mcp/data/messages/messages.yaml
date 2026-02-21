@@ -13,7 +13,10 @@
 # Use {placeholder} for runtime substitution via str.format().
 
 # --- MCP Server Instructions (server.py FastMCP constructor) ---
-server_instructions: "TRW engineering memory and build verification. Call trw_session_start() first to load your prior learnings and any active run — this gives you full context before writing code. Workflow: trw_session_start -> work -> trw_learn (discoveries) -> trw_deliver. .trw/ persists knowledge across sessions."
+server_instructions: "TRW gives you engineering memory that persists across sessions — patterns, gotchas, and project knowledge that accumulate over time. Call trw_session_start() first to load your prior learnings and any active run state. Workflow: trw_session_start -> work -> trw_learn (discoveries) -> trw_deliver. Without trw_deliver, your learnings from this session are lost to future agents."
 
 # --- Ceremony Middleware Warning (prepended to tool responses when ceremony not run) ---
-ceremony_warning: "trw_session_start() has not been called yet for this session.\nWithout it, you are working without:\n  - Prior session learnings (patterns and gotchas that prevent re-work)\n  - Active run state (phase, progress, last checkpoint)\nCall trw_session_start() to load your context, then retry this operation."
+ceremony_warning: "trw_session_start() has not been called yet for this session.\nWithout it, you are working without:\n  - Prior session learnings (patterns and gotchas that prevent re-work)\n  - Active run state (phase, progress, last checkpoint)\nCall trw_session_start() now — it takes one call and gives you the full context accumulated from all prior sessions."
+
+# --- Delegation Guidance (CLAUDE.md auto-generated section, session-start hint) ---
+delegation_guidance: "For multi-file tasks, delegating to focused subagents (Task tool) or Agent Teams gives each agent a clean context window and enables the self-review checklist that catches 80%+ of integration issues. Reserve direct implementation for trivial fixes (≤3 lines, 1 file). Default: subagents. Use Agent Teams when teammates need peer communication."

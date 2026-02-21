@@ -56,10 +56,14 @@ def register_orchestration_tools(server: FastMCP) -> None:
         task_root: str | None = None,
         wave_manifest: list[dict[str, object]] | None = None,
     ) -> dict[str, str]:
-        """Bootstrap TRW run scaffolding — creates .trw/, run dirs, run.yaml, events.jsonl.
+        """Create your run directory so checkpoints and progress tracking work — required for structured tasks.
+
+        Bootstraps .trw/ directories, run.yaml, and events.jsonl. Without a run,
+        trw_checkpoint and trw_status have nowhere to write, and delivery cannot
+        track what you accomplished. Use this for any task beyond a quick fix.
 
         Args:
-            task_name: Name of the task (used for directory naming).
+            task_name: Name of the task — becomes the directory name and appears in status reports.
             objective: Optional objective description for the run.
             config_overrides: Optional config values to override defaults.
             prd_scope: Optional list of PRD IDs governing this run (e.g. ["PRD-CORE-009"]).
@@ -188,7 +192,11 @@ def register_orchestration_tools(server: FastMCP) -> None:
     @server.tool()
     @log_tool_call
     def trw_status(run_path: str | None = None) -> dict[str, object]:
-        """Return current run state — phase, wave progress, shard status, confidence.
+        """See your current phase, completed work, and what to do next — so you pick up where you left off instead of redoing work.
+
+        Returns run state including phase, wave progress, shard status, confidence,
+        and framework version. Essential when resuming after a context compaction
+        or session restart.
 
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
@@ -260,11 +268,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
         message: str = "",
         shard_id: str | None = None,
     ) -> dict[str, str]:
-        """Create atomic state snapshot — appends to checkpoints.jsonl with timestamp.
+        """Save your implementation progress — if context compacts, you resume here instead of re-implementing from scratch.
+
+        Appends an atomic snapshot to checkpoints.jsonl with timestamp. The checkpoint
+        message becomes your resumption point: the next session reads it to understand
+        exactly where you left off and what to work on next.
 
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
-            message: Optional message describing the checkpoint context.
+            message: Describe what you accomplished and what comes next — this becomes your resume point after compaction.
             shard_id: Optional shard identifier for sub-agent attribution.
         """
         resolved_path = resolve_run_path(run_path)

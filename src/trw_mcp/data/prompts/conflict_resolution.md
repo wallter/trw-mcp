@@ -545,6 +545,18 @@ Conflict Detected
 
 ---
 
+## Key Requirements to Verify
+
+Before submitting your resolution output, re-read and verify:
+1. Every conflict has both requirements fully quoted with their IDs
+2. The resolution method matches the decision tree (risk-based for safety, AHP-TOPSIS for trade-offs)
+3. Residual risk is documented with specific mitigation strategies
+4. Stakeholder impact is assessed for each proposed resolution
+
+Re-read the output format for your chosen resolution method and confirm all required fields are present.
+
+---
+
 ## Related Prompts
 
 - [Quality Validation](quality-validation.md) - Detect conflicts during validation

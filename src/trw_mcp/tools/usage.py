@@ -49,11 +49,11 @@ def register_usage_tools(server: FastMCP) -> None:
     @server.tool()
     @log_tool_call
     def trw_usage_report(period: str = "all") -> dict[str, object]:
-        """Aggregate LLM token usage and cost estimates from .trw/logs/llm_usage.jsonl.
+        """Track your LLM API spend — total tokens, costs, and breakdowns by model and caller.
 
-        Reads all recorded LLM call records and returns totals, per-model
-        breakdowns, and per-caller breakdowns. Useful for tracking API spend
-        across sessions and tasks.
+        Reads .trw/logs/llm_usage.jsonl and aggregates token usage, cost estimates,
+        and call counts. Useful for understanding which operations consume the most
+        tokens and optimizing accordingly.
 
         Args:
             period: Aggregation period — only "all" is supported currently.

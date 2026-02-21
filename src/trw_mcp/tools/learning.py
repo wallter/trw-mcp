@@ -76,14 +76,18 @@ def register_learning_tools(server: FastMCP) -> None:
         source_type: str = "agent",
         source_identity: str = "",
     ) -> dict[str, str]:
-        """Record a specific learning entry manually to .trw/learnings/.
+        """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
+
+        Writes a learning entry to .trw/learnings/ with utility scoring. High-impact
+        learnings (>=0.7) get promoted into CLAUDE.md during delivery, becoming
+        permanent project knowledge that every session loads automatically.
 
         Args:
-            summary: One-line summary of the learning.
-            detail: Detailed description with context.
-            tags: Categorization tags (e.g., ["testing", "gotcha"]).
-            evidence: Supporting evidence (file paths, error messages, etc.).
-            impact: Impact score from 0.0 to 1.0 (higher = more important).
+            summary: One-line summary — this appears in CLAUDE.md when promoted.
+            detail: Full context including what you tried, what failed, and what worked.
+            tags: Categorization tags (e.g., ["testing", "gotcha"]) for filtered recall.
+            evidence: Supporting evidence (file paths, error messages) that validates the learning.
+            impact: Impact score 0.0-1.0 — learnings at 0.7+ get promoted to CLAUDE.md.
             shard_id: Optional shard identifier for sub-agent attribution.
             source_type: Learning provenance — "human" or "agent".
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
@@ -117,15 +121,15 @@ def register_learning_tools(server: FastMCP) -> None:
         impact: float | None = None,
         summary: str | None = None,
     ) -> dict[str, str]:
-        """Update an existing learning entry — change status, refine detail, or adjust impact.
+        """Keep your knowledge base accurate — mark resolved issues, retire obsolete gotchas, or refine details.
 
-        Use this to mark learnings as resolved (issue was fixed) or obsolete
-        (no longer applicable), or to refine the detail/summary of an existing
-        learning with better information.
+        Stale learnings waste attention budget. Use this to mark learnings as resolved
+        (issue was fixed) or obsolete (no longer applicable), or to refine the
+        detail/summary with better information discovered during implementation.
 
         Args:
             learning_id: ID of the learning to update (e.g., "L-abc12345").
-            status: New status — "active", "resolved", or "obsolete".
+            status: New status — "active", "resolved", or "obsolete". Resolved/obsolete entries stop appearing in recall.
             detail: Updated detail text (replaces existing detail).
             impact: Updated impact score (0.0-1.0).
             summary: Updated summary text (replaces existing summary).
@@ -193,13 +197,17 @@ def register_learning_tools(server: FastMCP) -> None:
         max_results: int = _config.recall_max_results,
         compact: bool | None = None,
     ) -> dict[str, object]:
-        """Search learnings and patterns relevant to a query from .trw/.
+        """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
+
+        Searches .trw/learnings/ by keyword, tags, and impact score. Results are
+        ranked by utility (impact x recency x relevance). Use this before starting
+        work on an unfamiliar area to load existing project knowledge.
 
         Args:
             query: Search query (keywords matched against summaries/details).
                 Use "*" to list all (auto-enables compact mode).
             tags: Optional tag filter — only return entries matching these tags.
-            min_impact: Minimum impact score filter (0.0-1.0).
+            min_impact: Minimum impact score filter (0.0-1.0). Use 0.7 for high-impact only.
             status: Optional status filter — 'active', 'resolved', or 'obsolete'.
             shard_id: Optional shard identifier for receipt attribution.
             max_results: Maximum learnings to return (default 25, 0 = unlimited).
@@ -272,7 +280,11 @@ def register_learning_tools(server: FastMCP) -> None:
         scope: str = "root",
         target_dir: str | None = None,
     ) -> dict[str, object]:
-        """Generate/update CLAUDE.md from high-impact .trw/ learnings.
+        """Promote your best learnings into CLAUDE.md — the next session starts with your insights built in.
+
+        Renders high-impact learnings, behavioral protocol, ceremony guidance, and
+        patterns into the auto-generated CLAUDE.md section. This is how individual
+        session discoveries become permanent project instructions.
 
         Args:
             scope: Sync scope — "root" for project CLAUDE.md, "sub" for module-level.
