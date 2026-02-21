@@ -3,6 +3,8 @@
 <!-- trw:start -->
 
 {{imperative_opener}}
+{{delegation_section}}
+{{agent_teams_section}}
 ## TRW Behavioral Protocol (Auto-Generated)
 
 {{behavioral_protocol}}
@@ -11,8 +13,6 @@
 {{ceremony_phases}}
 {{ceremony_table}}
 {{ceremony_flows}}
-{{delegation_section}}
-{{agent_teams_section}}
 ## TRW Learnings (Auto-Generated)
 
 {{architecture_section}}

@@ -102,6 +102,8 @@ def load_claude_md_template(trw_dir: Path) -> str:
         f"{TRW_MARKER_START}\n"
         "\n"
         "{{imperative_opener}}"
+        "{{delegation_section}}"
+        "{{agent_teams_section}}"
         "## TRW Behavioral Protocol (Auto-Generated)\n"
         "\n"
         "{{behavioral_protocol}}"
@@ -110,8 +112,6 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "{{ceremony_phases}}"
         "{{ceremony_table}}"
         "{{ceremony_flows}}"
-        "{{delegation_section}}"
-        "{{agent_teams_section}}"
         "## TRW Learnings (Auto-Generated)\n"
         "\n"
         "{{architecture_section}}"
@@ -340,6 +340,11 @@ def render_imperative_opener() -> str:
         Markdown string with value-framed instructions.
     """
     return (
+        "Your primary role is **orchestration** — you produce better outcomes by assessing tasks, "
+        "delegating to focused agents (subagents or Agent Teams), verifying integration, and "
+        "preserving knowledge. Reserve direct implementation for trivial edits "
+        "(≤3 lines, 1 file). For everything else, delegate.\n"
+        "\n"
         "TRW tools help you build effectively and preserve your work across sessions:\n"
         "- **Start**: call `trw_session_start()` to load prior learnings"
         " and recover any active run\n"
@@ -453,11 +458,12 @@ def render_delegation_protocol() -> str:
         Markdown string with delegation guidance.
     """
     return (
-        "## TRW Delegation Protocol (Auto-Generated)\n"
+        "## TRW Delegation & Orchestration (Auto-Generated)\n"
         "\n"
-        "Delegating to focused subagents or Agent Teams produces better results for non-trivial tasks "
-        "— each agent gets a clean context window, shard self-review catches 80%+ of integration "
-        "issues, and you retain strategic oversight.\n"
+        "As orchestrator, your responsibilities are: (1) assess and decompose tasks, "
+        "(2) delegate to focused agents, (3) verify integration and quality, "
+        "(4) maintain strategic oversight, (5) preserve knowledge via TRW tools. "
+        "Direct implementation is reserved for trivial edits only.\n"
         "\n"
         "### When to Delegate\n"
         "\n"
@@ -472,7 +478,9 @@ def render_delegation_protocol() -> str:
         "└── Sprint-scale? (4+ PRDs)      → Agent Team + playbooks\n"
         "```\n"
         "\n"
-        "**Default: subagents.** Agent Teams only when peers need to communicate.\n"
+        "**Default: subagents.** Use Agent Teams when teammates need peer communication "
+        "or when tasks span 2+ modules with shared interfaces. As team lead, you "
+        "orchestrate, monitor, and validate — teammates do the implementation.\n"
         "\n"
     )
 
@@ -493,6 +501,11 @@ def render_closing_reminder() -> str:
         "Every session that loads learnings via `trw_session_start()` "
         "should persist them via `trw_deliver()` — this is how "
         "your work compounds across sessions instead of being lost.\n"
+        "\n"
+        "Sessions where you orchestrate (delegate, verify, learn) "
+        "rather than implement directly produce higher quality and "
+        "fewer rework cycles — your strategic oversight is more "
+        "valuable than your keystrokes.\n"
         "\n"
     )
 

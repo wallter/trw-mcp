@@ -639,35 +639,43 @@ class TestCeremonyRendering:
         assert "trw_deliver()" in result
 
     def test_render_imperative_opener(self) -> None:
-        """Imperative opener uses value-oriented framing with Start/During/Finish."""
+        """Imperative opener defines orchestrator role and ceremony tools."""
         result = render_imperative_opener()
+        # Orchestrator role identity (Frame 1 of semantic repetition)
+        assert "orchestration" in result.lower()
+        assert "delegate" in result.lower()
+        # Ceremony tools
         assert "TRW tools help you build effectively" in result
         assert "trw_session_start()" in result
         assert "trw_checkpoint" in result
         assert "trw_deliver()" in result
-        assert "learnings" in result
 
     def test_render_closing_reminder(self) -> None:
-        """Closing reminder bookends auto-generated section with session boundary tools."""
+        """Closing reminder bookends with session boundaries + orchestration reinforcement."""
         result = render_closing_reminder()
         assert "### Session Boundaries" in result
         assert "trw_session_start()" in result
         assert "trw_deliver()" in result
         assert "compounds" in result
+        # Frame 3: orchestration bookend (position bias — end gets elevated attention)
+        assert "orchestrate" in result.lower()
 
     def test_render_delegation_protocol(self) -> None:
-        """Delegation protocol contains decision tree and value-oriented framing."""
+        """Delegation protocol contains orchestrator role, decision tree, and value framing."""
         result = render_delegation_protocol()
-        assert "## TRW Delegation Protocol" in result
+        assert "## TRW Delegation & Orchestration" in result
         assert "### When to Delegate" in result
+        # Orchestrator role responsibilities
+        assert "orchestrator" in result.lower()
+        assert "delegate" in result.lower()
+        assert "verify" in result.lower()
         # Decision tree keywords
         assert "Trivial?" in result
         assert "Subagent" in result
         assert "Agent Team" in result
         assert "Self-implement" in result
-        # Value-oriented framing (not CRITICAL/ALWAYS/NEVER)
-        assert "better results" in result
-        assert "focused context" in result.lower() or "clean context" in result.lower()
+        # Role-focused framing (not CRITICAL/ALWAYS/NEVER)
+        assert "teammates do the implementation" in result
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
         """Bundled template contains all ceremony placeholder tokens."""
@@ -711,7 +719,7 @@ class TestCeremonyRendering:
         # Value-oriented opener at top of auto-generated section
         assert "TRW tools help you build effectively" in content
         # Delegation protocol section
-        assert "## TRW Delegation Protocol" in content
+        assert "## TRW Delegation & Orchestration" in content
         assert "When to Delegate" in content
         assert "trw_session_start()" in content
         # Closing reminder bookends the section
