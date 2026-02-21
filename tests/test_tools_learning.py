@@ -1823,6 +1823,21 @@ class TestAnalyticsExtraction:
         entries_dir = trw_dir / "learnings" / "entries"
         assert len(list(entries_dir.glob("*.yaml"))) >= 1
 
+    def test_extract_learnings_from_llm_filters_telemetry_noise(
+        self, tmp_project: Path,
+    ) -> None:
+        """PRD-FIX-021: LLM-generated telemetry noise must be suppressed."""
+        trw_dir = tmp_project / ".trw"
+        items: list[dict[str, Any]] = [
+            {"summary": "Repeated operation: file_modified (85x)", "detail": "noise", "impact": "0.5"},
+            {"summary": "Success: reflection_complete (6x)", "detail": "noise", "impact": "0.5"},
+            {"summary": "repeated operation: checkpoint (3x)", "detail": "noise", "impact": "0.5"},
+            {"summary": "Actual actionable insight", "detail": "real", "tags": ["llm"], "impact": "0.7"},
+        ]
+        result = extract_learnings_from_llm(items, trw_dir)
+        assert len(result) == 1
+        assert result[0]["summary"] == "Actual actionable insight"
+
 
 class TestClaudeMdCollection:
     """Unit tests for claude_md collection helpers."""

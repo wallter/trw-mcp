@@ -130,7 +130,9 @@ def llm_extract_learnings(
         "Analyze these events from a software development session and extract key learnings.\n"
         "For each learning, respond with a JSON line:\n"
         '{"summary": "one-line", "detail": "explanation", "tags": ["tag1"], "impact": 0.5}\n'
-        "Extract 1-5 learnings. Focus on actionable insights.\n\n"
+        "Extract 1-5 learnings. Focus on actionable insights.\n"
+        "Do NOT extract learnings about event frequencies, repeated operations, or success counts"
+        " — these are tracked separately as analytics data.\n\n"
         + "\n".join(event_summaries)
     )
 

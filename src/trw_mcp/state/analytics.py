@@ -693,11 +693,24 @@ def extract_learnings_mechanical(
     return new_learnings
 
 
+def _is_telemetry_noise(summary: str) -> bool:
+    """Check if a learning summary is telemetry noise that should be suppressed.
+
+    Matches summaries starting with "Repeated operation:" or "Success:" which
+    are analytics counters, not actionable learnings (PRD-FIX-021).
+    """
+    lower = summary.lower()
+    return lower.startswith("repeated operation:") or lower.startswith("success:")
+
+
 def extract_learnings_from_llm(
     llm_items: list[dict[str, object]],
     trw_dir: Path,
 ) -> list[dict[str, str]]:
     """Convert LLM-extracted learning dicts into persisted LearningEntry objects.
+
+    Filters out telemetry noise (PRD-FIX-021): summaries starting with
+    "Repeated operation:" or "Success:" are analytics data, not learnings.
 
     Args:
         llm_items: List of dicts with summary, detail, tags, impact keys.
@@ -709,11 +722,14 @@ def extract_learnings_from_llm(
     new_learnings: list[dict[str, str]] = []
 
     for item in llm_items:
+        summary = str(item.get("summary", "LLM-extracted learning"))
+        if _is_telemetry_noise(summary):
+            continue
         raw_tags = item.get("tags")
         tags = raw_tags if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
         entry = LearningEntry(
             id=generate_learning_id(),
-            summary=str(item.get("summary", "LLM-extracted learning")),
+            summary=summary,
             detail=str(item.get("detail", "")),
             tags=tags,
             impact=_safe_float(item, "impact", 0.6),

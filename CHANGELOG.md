@@ -2,6 +2,19 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.3.6] — 2026-02-21
+
+### Fixed
+- **LLM-path telemetry noise suppression** (PRD-FIX-021): `extract_learnings_from_llm` now filters
+  summaries starting with "Repeated operation:" or "Success:" — previously only the mechanical path
+  was guarded, allowing the LLM to generate noise entries that polluted the knowledge base (~20% of entries)
+- LLM reflection prompt updated to explicitly instruct against generating frequency/count learnings
+
+### Stats
+- 998 tests, 86% coverage, mypy --strict clean
+
+---
+
 ## [0.3.5] — 2026-02-21
 
 ### Added
