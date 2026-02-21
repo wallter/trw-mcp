@@ -1,5 +1,5 @@
 ---
-name: trw-sprint-finish
+name: sprint-finish
 description: >
   Complete a sprint. Validates deliverables, runs build gate,
   updates PRD statuses, archives sprint doc, runs delivery ceremony.

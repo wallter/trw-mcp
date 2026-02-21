@@ -1,5 +1,5 @@
 ---
-name: trw-prd-review
+name: prd-review
 description: >
   Review a PRD for quality, returning a structured READY/NEEDS WORK/BLOCK
   verdict with per-dimension scores. Read-only — never modifies files.
@@ -7,16 +7,16 @@ description: >
 user-invocable: true
 argument-hint: "[PRD-ID or file path]"
 context: fork
-agent: trw-requirement-reviewer
+agent: requirement-reviewer
 ---
 
 # PRD Review Skill
 
-Performs a comprehensive quality review of a PRD using the trw-requirement-reviewer agent.
+Performs a comprehensive quality review of a PRD using the requirement-reviewer agent.
 
 ## How It Works
 
-This skill forks execution to the `trw-requirement-reviewer` agent, which performs a read-only 5-dimension quality assessment:
+This skill forks execution to the `requirement-reviewer` agent, which performs a read-only 5-dimension quality assessment:
 
 1. **Structure** — AARE-F section completeness and formatting
 2. **Content Quality** — substantive depth vs. placeholder content
@@ -44,7 +44,7 @@ The agent returns a structured review with:
 
 When reviewing multiple PRDs, batch them into parallel subagents — never 1 agent per PRD:
 
-- **2-4 PRDs**: 2 parallel `trw-requirement-reviewer` agents, each reviewing 1-2 PRDs
+- **2-4 PRDs**: 2 parallel `requirement-reviewer` agents, each reviewing 1-2 PRDs
 - **5-8 PRDs**: 3 parallel agents, each reviewing 2-3 PRDs sequentially
 - Launch all agents in ONE message for parallelism
 - Each agent returns a structured verdict per PRD
@@ -53,4 +53,4 @@ When reviewing multiple PRDs, batch them into parallel subagents — never 1 age
 
 - This skill is read-only — it never modifies the PRD file
 - Uses fork mode to keep the review output out of the main conversation context
-- The trw-requirement-reviewer agent runs on the default model with project memory
+- The requirement-reviewer agent runs on the default model with project memory

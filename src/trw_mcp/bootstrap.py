@@ -138,7 +138,10 @@ def init_project(
     _merge_mcp_json(target_dir, result)
     _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result)
 
-    # 8. Write installer metadata
+    # 8. Write managed-artifacts manifest
+    _write_manifest(target_dir, result)
+
+    # 9. Write installer metadata
     _write_installer_metadata(target_dir, "init-project", result)
 
     logger.info(
@@ -469,64 +472,154 @@ def _minimal_claude_md_trw_block() -> str:
     return ""
 
 
+def _get_bundled_names() -> dict[str, list[str]]:
+    """Return sorted lists of bundled artifact names by category."""
+    skills_source = _DATA_DIR / "skills"
+    agents_source = _DATA_DIR / "agents"
+    hooks_source = _DATA_DIR / "hooks"
+    return {
+        "skills": sorted(
+            d.name for d in skills_source.iterdir() if d.is_dir()
+        ) if skills_source.is_dir() else [],
+        "agents": sorted(
+            f.name for f in agents_source.iterdir() if f.suffix == ".md"
+        ) if agents_source.is_dir() else [],
+        "hooks": sorted(
+            f.name for f in hooks_source.iterdir() if f.suffix == ".sh"
+        ) if hooks_source.is_dir() else [],
+    }
+
+
+_MANIFEST_FILE = "managed-artifacts.yaml"
+
+
+def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
+    """Read the managed-artifacts manifest from a target project.
+
+    Returns ``None`` if the manifest does not exist (first update after
+    manifest support was added).
+    """
+    manifest_path = target_dir / ".trw" / _MANIFEST_FILE
+    if not manifest_path.exists():
+        return None
+    try:
+        from trw_mcp.state.persistence import FileStateReader
+
+        reader = FileStateReader()
+        data = reader.read_yaml(manifest_path)
+        if not isinstance(data, dict):
+            return None
+        skills_raw = data.get("skills", [])
+        agents_raw = data.get("agents", [])
+        hooks_raw = data.get("hooks", [])
+        return {
+            "skills": [str(s) for s in skills_raw] if isinstance(skills_raw, list) else [],
+            "agents": [str(a) for a in agents_raw] if isinstance(agents_raw, list) else [],
+            "hooks": [str(h) for h in hooks_raw] if isinstance(hooks_raw, list) else [],
+        }
+    except OSError:
+        return None
+
+
+def _write_manifest(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Write the managed-artifacts manifest to the target project.
+
+    The manifest records which skills, agents, and hooks were installed
+    by TRW so that ``_remove_stale_artifacts`` can distinguish
+    TRW-managed artifacts from user-created custom ones.
+    """
+    bundled = _get_bundled_names()
+    manifest = {
+        "version": 1,
+        "skills": bundled["skills"],
+        "agents": bundled["agents"],
+        "hooks": bundled["hooks"],
+    }
+    manifest_path = target_dir / ".trw" / _MANIFEST_FILE
+    try:
+        from trw_mcp.state.persistence import FileStateWriter
+
+        writer = FileStateWriter()
+        writer.write_yaml(manifest_path, manifest)
+        key = "updated" if "updated" in result else "created"
+        result[key].append(str(manifest_path))
+    except OSError as exc:
+        result["errors"].append(f"Failed to write manifest: {exc}")
+
+
 def _remove_stale_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
 ) -> None:
     """Remove hooks/skills/agents that no longer exist in bundled data.
 
-    This ensures clean updates — if a hook is renamed or a skill is removed
-    in a new version, the stale file is cleaned up.
+    Uses a manifest file (``.trw/managed-artifacts.yaml``) to track which
+    artifacts were previously installed by TRW.  Only artifacts listed in
+    the manifest are candidates for removal — custom user-created
+    artifacts are never touched.
+
+    On the first update after manifest support is added, no stale cleanup
+    is performed (the manifest is written for future updates).
     """
-    # Stale hooks
-    hooks_source = _DATA_DIR / "hooks"
-    if hooks_source.is_dir():
-        bundled_hooks = {f.name for f in hooks_source.iterdir() if f.suffix == ".sh"}
-        target_hooks = target_dir / ".claude" / "hooks"
-        if target_hooks.is_dir():
-            for existing in target_hooks.iterdir():
-                if existing.suffix == ".sh" and existing.name not in bundled_hooks:
-                    try:
-                        existing.unlink()
-                        result["updated"].append(f"removed:{existing}")
-                    except OSError:
-                        pass  # Non-critical
+    prev_manifest = _read_manifest(target_dir)
+    bundled = _get_bundled_names()
+    bundled_skills = set(bundled["skills"])
+    bundled_agents = set(bundled["agents"])
+    bundled_hooks = set(bundled["hooks"])
 
-    # Stale skills (directories not in bundled data)
-    skills_source = _DATA_DIR / "skills"
-    if skills_source.is_dir():
-        bundled_skills = {d.name for d in skills_source.iterdir() if d.is_dir()}
-        target_skills = target_dir / ".claude" / "skills"
-        if target_skills.is_dir():
-            for existing in target_skills.iterdir():
-                if (
-                    existing.is_dir()
-                    and existing.name.startswith("trw-")
-                    and existing.name not in bundled_skills
-                ):
-                    try:
-                        shutil.rmtree(existing)
-                        result["updated"].append(f"removed:{existing}")
-                    except OSError:
-                        pass
+    if prev_manifest is None:
+        # First run with manifest support — write manifest, skip cleanup
+        _write_manifest(target_dir, result)
+        return
 
-    # Stale agents
-    agents_source = _DATA_DIR / "agents"
-    if agents_source.is_dir():
-        bundled_agents = {f.name for f in agents_source.iterdir() if f.suffix == ".md"}
-        target_agents = target_dir / ".claude" / "agents"
-        if target_agents.is_dir():
-            for existing in target_agents.iterdir():
-                if (
-                    existing.suffix == ".md"
-                    and existing.name.startswith("trw-")
-                    and existing.name not in bundled_agents
-                ):
-                    try:
-                        existing.unlink()
-                        result["updated"].append(f"removed:{existing}")
-                    except OSError:
-                        pass
+    prev_skills = set(prev_manifest.get("skills", []))
+    prev_agents = set(prev_manifest.get("agents", []))
+    prev_hooks = set(prev_manifest.get("hooks", []))
+
+    # Stale skills: previously managed but no longer in current bundle
+    stale_skills = prev_skills - bundled_skills
+    target_skills = target_dir / ".claude" / "skills"
+    if target_skills.is_dir():
+        for skill_name in stale_skills:
+            stale = target_skills / skill_name
+            if stale.is_dir():
+                try:
+                    shutil.rmtree(stale)
+                    result["updated"].append(f"removed:{stale}")
+                except OSError:
+                    pass
+
+    # Stale agents: previously managed but no longer in current bundle
+    stale_agents = prev_agents - bundled_agents
+    target_agents = target_dir / ".claude" / "agents"
+    if target_agents.is_dir():
+        for agent_name in stale_agents:
+            stale = target_agents / agent_name
+            if stale.is_file():
+                try:
+                    stale.unlink()
+                    result["updated"].append(f"removed:{stale}")
+                except OSError:
+                    pass
+
+    # Stale hooks: previously managed but no longer in current bundle
+    stale_hooks = prev_hooks - bundled_hooks
+    target_hooks = target_dir / ".claude" / "hooks"
+    if target_hooks.is_dir():
+        for hook_name in stale_hooks:
+            stale = target_hooks / hook_name
+            if stale.is_file():
+                try:
+                    stale.unlink()
+                    result["updated"].append(f"removed:{stale}")
+                except OSError:
+                    pass
+
+    # Write updated manifest
+    _write_manifest(target_dir, result)
 
 
 def _check_package_version(result: dict[str, list[str]]) -> None:

@@ -1,5 +1,5 @@
 ---
-name: trw-prd-groomer
+name: prd-groomer
 description: >
   Invoke when a PRD has content density < 0.25 or fails validation
   quality gates. Researches, drafts, validates, and iterates until

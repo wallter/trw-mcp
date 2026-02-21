@@ -1,5 +1,5 @@
 ---
-name: trw-test-strategy
+name: test-strategy
 description: >
   Audit test coverage and strategy. Identifies untested modules,
   coverage gaps, and suggests test improvements. Use before or

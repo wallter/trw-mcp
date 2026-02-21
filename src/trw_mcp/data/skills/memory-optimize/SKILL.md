@@ -1,5 +1,5 @@
 ---
-name: trw-memory-optimize
+name: memory-optimize
 description: >
   Optimize learning memory. Prunes stale entries, consolidates duplicates,
   rebalances tags. Interactive — confirms before deleting.

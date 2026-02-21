@@ -1,5 +1,5 @@
 ---
-name: trw-project-health
+name: project-health
 description: >
   Audit TRW health in the current or target project. Summarizes tool usage,
   ceremony compliance, hook enforcement, active runs, learnings, and issues.

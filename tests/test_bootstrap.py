@@ -83,7 +83,7 @@ class TestIdempotency:
         # Dirs don't report as created when they already exist.
         # .mcp.json (merge) and installer-meta.yaml (always-write) are expected.
         file_creates = [c for c in result2["created"] if not c.endswith("/")]
-        expected_always_write = {".mcp.json", "installer-meta.yaml"}
+        expected_always_write = {".mcp.json", "installer-meta.yaml", "managed-artifacts.yaml"}
         unexpected = [c for c in file_creates
                       if not any(e in c for e in expected_always_write)]
         assert len(unexpected) == 0, f"Unexpected creates: {unexpected}"
@@ -229,19 +229,19 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
-        "trw-deliver",
-        "trw-framework-check",
-        "trw-learn",
-        "trw-memory-audit",
-        "trw-memory-optimize",
-        "trw-prd-groom",
-        "trw-prd-new",
-        "trw-prd-review",
-        "trw-project-health",
-        "trw-simplify",
-        "trw-sprint-finish",
-        "trw-sprint-init",
-        "trw-test-strategy",
+        "deliver",
+        "framework-check",
+        "learn",
+        "memory-audit",
+        "memory-optimize",
+        "prd-groom",
+        "prd-new",
+        "prd-review",
+        "project-health",
+        "simplify",
+        "sprint-finish",
+        "sprint-init",
+        "test-strategy",
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
@@ -263,7 +263,7 @@ class TestSkills:
         init_project(fake_git_repo)
 
         # Write dummy content to one skill
-        dummy_path = fake_git_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
+        dummy_path = fake_git_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
         dummy_path.write_text("dummy content", encoding="utf-8")
 
         result = init_project(fake_git_repo, force=True)
@@ -294,15 +294,15 @@ class TestAgents:
     """Test agent file deployment."""
 
     EXPECTED_AGENTS = [
-        "trw-code-simplifier.md",
+        "code-simplifier.md",
+        "prd-groomer.md",
+        "requirement-reviewer.md",
+        "requirement-writer.md",
+        "traceability-checker.md",
         "trw-implementer.md",
-        "trw-prd-groomer.md",
-        "trw-requirement-reviewer.md",
-        "trw-requirement-writer.md",
         "trw-researcher.md",
         "trw-reviewer.md",
         "trw-tester.md",
-        "trw-traceability-checker.md",
     ]
 
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
@@ -457,7 +457,7 @@ class TestUpdateOverwritesFrameworkFiles:
 
     def test_updates_skills(self, initialized_repo: Path) -> None:
         """Skill files are overwritten with latest versions."""
-        skill_path = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
+        skill_path = initialized_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
         skill_path.write_text("old skill", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -468,7 +468,7 @@ class TestUpdateOverwritesFrameworkFiles:
     def test_updates_agents(self, initialized_repo: Path) -> None:
         """Agent files are overwritten with latest versions."""
         agent_path = (
-            initialized_repo / ".claude" / "agents" / "trw-code-simplifier.md"
+            initialized_repo / ".claude" / "agents" / "code-simplifier.md"
         )
         agent_path.write_text("old agent", encoding="utf-8")
 
@@ -537,8 +537,19 @@ class TestUpdateClaudeMdSmartMerge:
 class TestUpdateRemovesStaleArtifacts:
     """Test that update_project cleans up renamed/removed artifacts."""
 
-    def test_removes_stale_hook(self, initialized_repo: Path) -> None:
-        """Hook scripts not in bundled data are removed."""
+    def test_removes_stale_managed_hook(self, initialized_repo: Path) -> None:
+        """Hook listed in manifest but no longer bundled is removed."""
+        # init_project writes manifest; add a fake entry to simulate stale
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        reader = FileStateReader()
+        manifest = reader.read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        hooks_list = list(manifest.get("hooks", []))
+        hooks_list.append("old-removed-hook.sh")
+        manifest["hooks"] = hooks_list
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
         stale_hook = initialized_repo / ".claude" / "hooks" / "old-removed-hook.sh"
         stale_hook.write_text("#!/bin/sh\nexit 0", encoding="utf-8")
 
@@ -547,9 +558,19 @@ class TestUpdateRemovesStaleArtifacts:
         assert not stale_hook.exists()
         assert any("removed:" in u and "old-removed-hook" in u for u in result["updated"])
 
-    def test_removes_stale_trw_skill(self, initialized_repo: Path) -> None:
-        """Stale trw-prefixed skill directories are removed."""
-        stale_skill = initialized_repo / ".claude" / "skills" / "trw-old-skill"
+    def test_removes_stale_managed_skill(self, initialized_repo: Path) -> None:
+        """Skill listed in manifest but no longer bundled is removed."""
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        reader = FileStateReader()
+        manifest = reader.read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        skills_list = list(manifest.get("skills", []))
+        skills_list.append("old-skill")
+        manifest["skills"] = skills_list
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+        stale_skill = initialized_repo / ".claude" / "skills" / "old-skill"
         stale_skill.mkdir(parents=True, exist_ok=True)
         (stale_skill / "SKILL.md").write_text("old", encoding="utf-8")
 
@@ -557,9 +578,19 @@ class TestUpdateRemovesStaleArtifacts:
 
         assert not stale_skill.exists()
 
-    def test_removes_stale_trw_agent(self, initialized_repo: Path) -> None:
-        """Stale trw-prefixed agent files are removed."""
-        stale_agent = initialized_repo / ".claude" / "agents" / "trw-old-agent.md"
+    def test_removes_stale_managed_agent(self, initialized_repo: Path) -> None:
+        """Agent listed in manifest but no longer bundled is removed."""
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        reader = FileStateReader()
+        manifest = reader.read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        agents_list = list(manifest.get("agents", []))
+        agents_list.append("old-agent.md")
+        manifest["agents"] = agents_list
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+        stale_agent = initialized_repo / ".claude" / "agents" / "old-agent.md"
         stale_agent.write_text("old agent", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -576,7 +607,7 @@ class TestUpdateRemovesStaleArtifacts:
         assert other_file.exists()
 
     def test_custom_skill_survives_update(self, initialized_repo: Path) -> None:
-        """Custom skills without trw- prefix are NOT deleted by update."""
+        """Custom skills NOT in manifest are never deleted by update."""
         custom_skill = initialized_repo / ".claude" / "skills" / "my-deploy"
         custom_skill.mkdir(parents=True, exist_ok=True)
         (custom_skill / "SKILL.md").write_text("custom", encoding="utf-8")
@@ -587,7 +618,7 @@ class TestUpdateRemovesStaleArtifacts:
         assert (custom_skill / "SKILL.md").read_text(encoding="utf-8") == "custom"
 
     def test_custom_agent_survives_update(self, initialized_repo: Path) -> None:
-        """Custom agents without trw- prefix are NOT deleted by update."""
+        """Custom agents NOT in manifest are never deleted by update."""
         custom_agent = initialized_repo / ".claude" / "agents" / "my-reviewer.md"
         custom_agent.write_text("custom agent", encoding="utf-8")
 
@@ -595,6 +626,26 @@ class TestUpdateRemovesStaleArtifacts:
 
         assert custom_agent.exists()
         assert custom_agent.read_text(encoding="utf-8") == "custom agent"
+
+    def test_no_cleanup_without_manifest(self, fake_git_repo: Path) -> None:
+        """First update without manifest writes manifest but skips cleanup."""
+        # Manually init without manifest (simulate pre-manifest install)
+        init_project(fake_git_repo)
+        manifest_path = fake_git_repo / ".trw" / "managed-artifacts.yaml"
+        manifest_path.unlink()  # Remove manifest written by init
+
+        # Add a custom skill that should survive
+        custom_skill = fake_git_repo / ".claude" / "skills" / "my-custom"
+        custom_skill.mkdir(parents=True, exist_ok=True)
+        (custom_skill / "SKILL.md").write_text("custom", encoding="utf-8")
+
+        result = update_project(fake_git_repo)
+        assert not result["errors"]
+
+        # Custom skill survives (no cleanup without prior manifest)
+        assert custom_skill.exists()
+        # Manifest is now written for future updates
+        assert manifest_path.exists()
 
 
 @pytest.mark.unit
@@ -610,9 +661,9 @@ class TestUpdateCreatesNewArtifacts:
         skills_dir = initialized_repo / ".claude" / "skills"
         deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
         # Should have all expected skills
-        assert "trw-deliver" in deployed
-        assert "trw-learn" in deployed
-        assert "trw-project-health" in deployed
+        assert "deliver" in deployed
+        assert "learn" in deployed
+        assert "project-health" in deployed
 
     def test_creates_new_agent(self, initialized_repo: Path) -> None:
         """New agents in bundled data are deployed."""
@@ -840,3 +891,58 @@ class TestVerifyInstallation:
             if "executable" in w or "missing" in w.lower() or "not valid" in w
         ]
         assert len(health_warnings) == 0, f"Unexpected health warnings: {health_warnings}"
+
+
+# ── Manifest Tests ──────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestManagedArtifactsManifest:
+    """Test .trw/managed-artifacts.yaml creation and stale-cleanup behavior."""
+
+    def test_manifest_written_on_init(self, fake_git_repo: Path) -> None:
+        """init_project writes the managed-artifacts manifest."""
+        init_project(fake_git_repo)
+        manifest_path = fake_git_repo / ".trw" / "managed-artifacts.yaml"
+        assert manifest_path.exists()
+
+        from trw_mcp.state.persistence import FileStateReader
+        data = FileStateReader().read_yaml(manifest_path)
+        assert isinstance(data, dict)
+        assert data["version"] == 1
+        skills = data.get("skills", [])
+        assert isinstance(skills, list)
+        assert "deliver" in skills
+        assert "learn" in skills
+
+    def test_manifest_written_on_update(self, initialized_repo: Path) -> None:
+        """update_project refreshes the managed-artifacts manifest."""
+        update_project(initialized_repo)
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        assert manifest_path.exists()
+
+        from trw_mcp.state.persistence import FileStateReader
+        data = FileStateReader().read_yaml(manifest_path)
+        assert isinstance(data, dict)
+        agents = data.get("agents", [])
+        assert isinstance(agents, list)
+        assert "code-simplifier.md" in agents
+        assert "trw-implementer.md" in agents
+
+    def test_manifest_lists_all_bundled_artifacts(self, fake_git_repo: Path) -> None:
+        """Manifest includes all bundled skills, agents, and hooks."""
+        init_project(fake_git_repo)
+        manifest_path = fake_git_repo / ".trw" / "managed-artifacts.yaml"
+
+        from trw_mcp.state.persistence import FileStateReader
+        data = FileStateReader().read_yaml(manifest_path)
+        assert isinstance(data, dict)
+        skills = data.get("skills", [])
+        agents = data.get("agents", [])
+        hooks = data.get("hooks", [])
+        assert isinstance(skills, list)
+        assert isinstance(agents, list)
+        assert isinstance(hooks, list)
+        assert len(skills) == 13
+        assert len(agents) == 9
+        assert len(hooks) > 0

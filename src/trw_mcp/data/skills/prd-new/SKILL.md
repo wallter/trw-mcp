@@ -1,5 +1,5 @@
 ---
-name: trw-prd-new
+name: prd-new
 description: >
   Create a new PRD from a feature description. Generates AARE-F
   skeleton, runs initial validation, reports quality score.
