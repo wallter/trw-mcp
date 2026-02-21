@@ -179,6 +179,103 @@ def _run_update_project(args: argparse.Namespace) -> None:
     sys.exit(1 if result["errors"] else 0)
 
 
+def _run_audit(args: argparse.Namespace) -> None:
+    """Handle the ``audit`` subcommand."""
+    from trw_mcp.audit import format_markdown, run_audit
+
+    target = Path(args.target_dir).resolve()
+    result = run_audit(target, fix=args.fix)
+
+    if result.get("status") == "failed":
+        print(f"  ERROR: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+    if args.format == "json":
+        import json
+
+        output = json.dumps(result, indent=2, default=str)
+    else:
+        output = format_markdown(result)
+
+    if args.output:
+        out_path = Path(args.output).resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(output, encoding="utf-8")
+        print(f"  Audit report written to: {out_path}")
+    else:
+        print(output)
+
+    sys.exit(0)
+
+
+def _run_export(args: argparse.Namespace) -> None:
+    """Handle the ``export`` subcommand."""
+    import json
+
+    from trw_mcp.export import export_data
+
+    target = Path(args.target_dir).resolve()
+    result = export_data(
+        target,
+        args.scope,
+        fmt=args.format,
+        since=getattr(args, "since", None),
+        min_impact=getattr(args, "min_impact", 0.0),
+    )
+
+    if result.get("status") == "failed":
+        print(f"  ERROR: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+    # CSV output for learnings
+    if args.format == "csv" and "learnings_csv" in result:
+        output = str(result["learnings_csv"])
+    else:
+        output = json.dumps(result, indent=2, default=str)
+
+    if args.output:
+        out_path = Path(args.output).resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(output, encoding="utf-8")
+        print(f"  Export written to: {out_path}")
+    else:
+        print(output)
+
+    sys.exit(0)
+
+
+def _run_import_learnings(args: argparse.Namespace) -> None:
+    """Handle the ``import-learnings`` subcommand."""
+    from trw_mcp.export import import_learnings
+
+    source = Path(args.source_file).resolve()
+    target = Path(args.target_dir).resolve()
+
+    tag_list: list[str] | None = None
+    if args.tags:
+        tag_list = [t.strip() for t in args.tags.split(",")]
+
+    result = import_learnings(
+        source,
+        target,
+        min_impact=args.min_impact,
+        tags=tag_list,
+        dry_run=args.dry_run,
+    )
+
+    if result.get("status") == "failed":
+        print(f"  ERROR: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+    prefix = "[DRY RUN] " if args.dry_run else ""
+    print(f"  {prefix}Source: {result.get('source_project', 'unknown')} ({result.get('total_source', 0)} entries)")
+    print(f"  {prefix}Imported: {result.get('imported', 0)}")
+    print(f"  {prefix}Skipped (duplicate): {result.get('skipped_duplicate', 0)}")
+    print(f"  {prefix}Skipped (filter): {result.get('skipped_filter', 0)}")
+
+    sys.exit(0)
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command."""
     parser = argparse.ArgumentParser(
@@ -195,6 +292,7 @@ def main() -> None:
 
     subparsers.add_parser("serve", help="Run MCP server (default)")
 
+    # init-project
     init_parser = subparsers.add_parser(
         "init-project", help="Bootstrap TRW in a project directory"
     )
@@ -210,6 +308,7 @@ def main() -> None:
         help="Overwrite existing files",
     )
 
+    # update-project
     update_parser = subparsers.add_parser(
         "update-project",
         help="Update TRW framework files (preserves user config)",
@@ -226,6 +325,102 @@ def main() -> None:
         help="Also reinstall the trw-mcp Python package",
     )
 
+    # audit
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Run comprehensive TRW health audit on a project",
+    )
+    audit_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Target project directory (default: current directory)",
+    )
+    audit_parser.add_argument(
+        "--format",
+        choices=["json", "markdown"],
+        default="markdown",
+        help="Output format (default: markdown)",
+    )
+    audit_parser.add_argument(
+        "--output",
+        help="Write output to file instead of stdout",
+    )
+    audit_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Auto-prune duplicates and resync index",
+    )
+
+    # export
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export TRW data (learnings, runs, analytics)",
+    )
+    export_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Target project directory (default: current directory)",
+    )
+    export_parser.add_argument(
+        "--scope",
+        choices=["learnings", "runs", "analytics", "all"],
+        default="all",
+        help="Export scope (default: all)",
+    )
+    export_parser.add_argument(
+        "--format",
+        choices=["json", "csv"],
+        default="json",
+        help="Output format (default: json, csv only for learnings)",
+    )
+    export_parser.add_argument(
+        "--output",
+        help="Write output to file instead of stdout",
+    )
+    export_parser.add_argument(
+        "--since",
+        help="ISO date filter (YYYY-MM-DD)",
+    )
+    export_parser.add_argument(
+        "--min-impact",
+        type=float,
+        default=0.0,
+        help="Minimum impact threshold for learnings",
+    )
+
+    # import-learnings
+    import_parser = subparsers.add_parser(
+        "import-learnings",
+        help="Import learnings from an export file",
+    )
+    import_parser.add_argument(
+        "source_file",
+        help="Path to exported JSON file",
+    )
+    import_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Target project directory (default: current directory)",
+    )
+    import_parser.add_argument(
+        "--min-impact",
+        type=float,
+        default=0.0,
+        help="Minimum impact threshold for import",
+    )
+    import_parser.add_argument(
+        "--tags",
+        help="Comma-separated tag filter",
+    )
+    import_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be imported without writing",
+    )
+
     args = parser.parse_args()
 
     if args.command == "init-project":
@@ -234,6 +429,18 @@ def main() -> None:
 
     if args.command == "update-project":
         _run_update_project(args)
+        return
+
+    if args.command == "audit":
+        _run_audit(args)
+        return
+
+    if args.command == "export":
+        _run_export(args)
+        return
+
+    if args.command == "import-learnings":
+        _run_import_learnings(args)
         return
 
     # Default: run MCP server (no subcommand or "serve")
