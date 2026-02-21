@@ -17,7 +17,7 @@ Create a new PRD from a feature description using the TRW framework's AARE-F req
 
 1. **Search context**: Call `trw_recall` with keywords from `$ARGUMENTS` to find related learnings and prior work.
 
-2. **Check existing PRDs**: Read `docs/requirements-aare-f/INDEX.md` to verify no duplicate PRD exists for this feature. Check the draft PRD list and recently completed PRDs.
+2. **Check existing PRDs**: Read `INDEX.md` in the PRD parent directory (read `prds_relative_path` from `.trw/config.yaml`, default: `docs/requirements-aare-f/prds`) to verify no duplicate PRD exists for this feature. Check the draft PRD list and recently completed PRDs.
 
 3. **Generate PRD**: Call `trw_prd_create(input_text="$ARGUMENTS")` to generate an AARE-F-compliant PRD skeleton. The tool auto-increments the sequence number per category.
 

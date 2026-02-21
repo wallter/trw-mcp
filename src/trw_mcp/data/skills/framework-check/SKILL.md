@@ -33,7 +33,7 @@ Check the current state of TRW framework compliance including ceremony adherence
    - Flag if versions differ (deployed copy may be out of date)
 
 5. **PRD catalogue check**:
-   - Search for `INDEX.md` in the requirements directory (commonly `docs/requirements-aare-f/INDEX.md`)
+   - Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) and search for `INDEX.md` in its parent directory
    - If found, read PRD status counts
    - Flag any PRDs stuck in `review` or `approved` status (should progress to implementation)
 

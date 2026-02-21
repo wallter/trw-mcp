@@ -45,12 +45,16 @@ def init_project(
     target_dir: Path,
     *,
     force: bool = False,
+    source_package: str = "",
+    test_path: str = "",
 ) -> dict[str, list[str]]:
     """Bootstrap TRW framework in *target_dir*.
 
     Args:
         target_dir: Root of the target git repository.
         force: If ``True``, overwrite existing files.
+        source_package: Pre-populate ``source_package_name`` in config.
+        test_path: Pre-populate ``tests_relative_path`` in config.
 
     Returns:
         Dict with ``created``, ``skipped``, ``errors`` lists.
@@ -74,7 +78,10 @@ def init_project(
 
     # 3. Write generated config and seed files
     _write_if_missing(
-        target_dir / ".trw" / "config.yaml", _default_config(), force, result
+        target_dir / ".trw" / "config.yaml",
+        _default_config(source_package=source_package, test_path=test_path),
+        force,
+        result,
     )
     _write_if_missing(
         target_dir / ".trw" / "learnings" / "index.yaml",
@@ -188,15 +195,29 @@ def _write_if_missing(
 # ---------------------------------------------------------------------------
 
 
-def _default_config() -> str:
-    """Generate default ``.trw/config.yaml``."""
-    return """\
-# TRW Framework Configuration
-# See trw://config resource for all available fields.
-task_root: docs
-debug: false
-claude_md_max_lines: 300
-"""
+def _default_config(
+    *,
+    source_package: str = "",
+    test_path: str = "",
+) -> str:
+    """Generate default ``.trw/config.yaml``.
+
+    Args:
+        source_package: If set, adds ``source_package_name`` field.
+        test_path: If set, adds ``tests_relative_path`` field.
+    """
+    lines = [
+        "# TRW Framework Configuration",
+        "# See trw://config resource for all available fields.",
+        "task_root: docs",
+        "debug: false",
+        "claude_md_max_lines: 300",
+    ]
+    if source_package:
+        lines.append(f"source_package_name: {source_package}")
+    if test_path:
+        lines.append(f"tests_relative_path: {test_path}")
+    return "\n".join(lines) + "\n"
 
 
 def _generate_mcp_json() -> str:

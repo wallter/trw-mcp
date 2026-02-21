@@ -305,3 +305,37 @@ class TestAgents:
         for agent in self.EXPECTED_AGENTS:
             agent_file = agents_dir / agent
             assert agent_file.stat().st_size > 0, f"Agent {agent} is empty"
+
+
+# ── Bootstrap Config Flags — PRD-INFRA-011-FR06 ────────────────────────
+
+
+@pytest.mark.unit
+class TestBootstrapConfigFlags:
+    """Tests for source_package and test_path bootstrap flags — PRD-INFRA-011-FR06."""
+
+    def test_source_package_in_config(self, fake_git_repo: Path) -> None:
+        """source_package='myapp' → config.yaml has source_package_name: myapp."""
+        init_project(fake_git_repo, source_package="myapp")
+        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
+        assert "source_package_name: myapp" in content
+
+    def test_test_path_in_config(self, fake_git_repo: Path) -> None:
+        """test_path='tests' → config.yaml has tests_relative_path: tests."""
+        init_project(fake_git_repo, test_path="tests")
+        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
+        assert "tests_relative_path: tests" in content
+
+    def test_both_flags_in_config(self, fake_git_repo: Path) -> None:
+        """Both flags → config.yaml has both fields."""
+        init_project(fake_git_repo, source_package="myapp", test_path="tests")
+        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
+        assert "source_package_name: myapp" in content
+        assert "tests_relative_path: tests" in content
+
+    def test_default_no_extra_fields(self, fake_git_repo: Path) -> None:
+        """No args → config.yaml does NOT have source_package_name or tests_relative_path."""
+        init_project(fake_git_repo)
+        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
+        assert "source_package_name" not in content
+        assert "tests_relative_path" not in content

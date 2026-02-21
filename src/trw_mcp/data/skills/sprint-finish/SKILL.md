@@ -12,9 +12,13 @@ allowed-tools: Read, Grep, Glob, Write, Edit, Bash
 
 Complete an active sprint by validating deliverables, running the build gate, archiving the sprint document, and executing the full delivery ceremony.
 
+## Path Discovery
+
+Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate the PRD and sprint directories. Sprint docs and archives are siblings of the prds directory under the same parent.
+
 ## Workflow
 
-1. **Find active sprint**: Look for sprint docs in `docs/requirements-aare-f/sprints/active/`. If multiple exist, ask the user which sprint to close.
+1. **Find active sprint**: Look for sprint docs in the `sprints/active/` subdirectory (sibling of `prds_relative_path`). If multiple exist, ask the user which sprint to close.
 
 2. **Read sprint doc**: Extract assigned PRDs, goals, and completion criteria.
 
@@ -26,7 +30,7 @@ Complete an active sprint by validating deliverables, running the build gate, ar
    - If build **fails**: Report failures, do NOT proceed. The sprint cannot be completed with a failing build.
    - If build **passes**: Continue.
 
-5. **Archive sprint doc**: Move the sprint doc from `sprints/active/` to `docs/requirements-aare-f/archive/sprints/`. Update its status to "Completed" with the completion date.
+5. **Archive sprint doc**: Move the sprint doc from `sprints/active/` to the `archive/sprints/` subdirectory. Update its status to "Completed" with the completion date.
 
 6. **Delivery ceremony**: Call `trw_deliver()` for full delivery (reflect, checkpoint, claude_md_sync, index_sync).
 

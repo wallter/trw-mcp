@@ -17,7 +17,7 @@ Groom a PRD to sprint-ready quality (>= 0.85 completeness) through systematic re
 
 1. **Resolve PRD path**: Find the PRD file from `$ARGUMENTS[0]`:
    - If a file path, use directly
-   - If a PRD ID (e.g., `PRD-CORE-020`), search in `docs/requirements-aare-f/prds/` and `docs/requirements-aare-f/archive/prds/`
+   - If a PRD ID (e.g., `PRD-CORE-020`), read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) and search in that directory and its sibling `archive/prds/`
 
 2. **Read and baseline**: Read the PRD file completely. Call `trw_prd_validate(prd_path)` for baseline quality score.
 

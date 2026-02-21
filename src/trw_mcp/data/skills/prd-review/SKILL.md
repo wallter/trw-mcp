@@ -28,7 +28,9 @@ This skill forks execution to the `requirement-reviewer` agent, which performs a
 
 Pass a PRD ID or file path as the argument:
 - `/prd-review PRD-CORE-020`
-- `/prd-review docs/requirements-aare-f/prds/PRD-CORE-020.md`
+- `/prd-review path/to/PRD-CORE-020.md`
+
+To resolve a PRD ID to a file path, read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`).
 
 ## Output
 
