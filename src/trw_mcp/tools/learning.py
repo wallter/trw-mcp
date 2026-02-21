@@ -19,7 +19,9 @@ from trw_mcp.models.learning import LearningEntry
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.analytics import (
+    find_entry_by_id,
     generate_learning_id,
+    resync_learning_index,
     save_learning_entry,
     update_analytics,
 )
@@ -105,6 +107,80 @@ def register_learning_tools(server: FastMCP) -> None:
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
         return {"learning_id": learning_id, "path": str(entry_path), "status": "recorded"}
+
+    @server.tool()
+    @log_tool_call
+    def trw_learn_update(
+        learning_id: str,
+        status: str | None = None,
+        detail: str | None = None,
+        impact: float | None = None,
+        summary: str | None = None,
+    ) -> dict[str, str]:
+        """Update an existing learning entry — change status, refine detail, or adjust impact.
+
+        Use this to mark learnings as resolved (issue was fixed) or obsolete
+        (no longer applicable), or to refine the detail/summary of an existing
+        learning with better information.
+
+        Args:
+            learning_id: ID of the learning to update (e.g., "L-abc12345").
+            status: New status — "active", "resolved", or "obsolete".
+            detail: Updated detail text (replaces existing detail).
+            impact: Updated impact score (0.0-1.0).
+            summary: Updated summary text (replaces existing summary).
+        """
+        from datetime import date as date_type
+
+        trw_dir, entries_dir = _entries_path()
+
+        result = find_entry_by_id(entries_dir, learning_id)
+        if result is None:
+            return {"error": f"Learning {learning_id} not found", "status": "not_found"}
+
+        entry_path, data = result
+        changes: list[str] = []
+
+        if status is not None:
+            valid_statuses = {"active", "resolved", "obsolete"}
+            if status not in valid_statuses:
+                return {"error": f"Invalid status '{status}'. Must be one of: {valid_statuses}", "status": "invalid"}
+            data["status"] = status
+            changes.append(f"status→{status}")
+            if status in ("resolved", "obsolete"):
+                data["resolved_at"] = date_type.today().isoformat()
+
+        if detail is not None:
+            data["detail"] = detail
+            changes.append("detail updated")
+
+        if summary is not None:
+            data["summary"] = summary
+            changes.append("summary updated")
+
+        if impact is not None:
+            if not 0.0 <= impact <= 1.0:
+                return {"error": f"Impact must be 0.0-1.0, got {impact}", "status": "invalid"}
+            data["impact"] = impact
+            changes.append(f"impact→{impact}")
+
+        if not changes:
+            return {"learning_id": learning_id, "status": "no_changes"}
+
+        data["updated"] = date_type.today().isoformat()
+        _writer.write_yaml(entry_path, data)
+        resync_learning_index(trw_dir)
+
+        logger.info(
+            "trw_learn_updated",
+            learning_id=learning_id,
+            changes=changes,
+        )
+        return {
+            "learning_id": learning_id,
+            "changes": ", ".join(changes),
+            "status": "updated",
+        }
 
     @server.tool()
     @log_tool_call

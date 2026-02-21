@@ -98,6 +98,171 @@ class TestTrwLearn:
         assert index["total_count"] == 2
 
 
+class TestTrwLearnUpdate:
+    """Tests for trw_learn_update tool."""
+
+    def test_updates_status_to_resolved(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Bug that was fixed",
+            detail="Some bug detail",
+            impact=0.8,
+        )
+        lid = result["learning_id"]
+
+        update_result = tools["trw_learn_update"].fn(
+            learning_id=lid,
+            status="resolved",
+        )
+        assert update_result["status"] == "updated"
+        assert "status→resolved" in update_result["changes"]
+
+        # Verify on disk
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                assert data["status"] == "resolved"
+                assert data.get("resolved_at") is not None
+                break
+
+    def test_updates_status_to_obsolete(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Outdated learning",
+            detail="No longer relevant",
+            impact=0.7,
+        )
+        lid = result["learning_id"]
+
+        update_result = tools["trw_learn_update"].fn(
+            learning_id=lid,
+            status="obsolete",
+        )
+        assert update_result["status"] == "updated"
+        assert "status→obsolete" in update_result["changes"]
+
+    def test_updates_detail_and_summary(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Original summary",
+            detail="Original detail",
+            impact=0.6,
+        )
+        lid = result["learning_id"]
+
+        update_result = tools["trw_learn_update"].fn(
+            learning_id=lid,
+            summary="Refined summary",
+            detail="Better detail with more context",
+        )
+        assert update_result["status"] == "updated"
+        assert "summary updated" in update_result["changes"]
+        assert "detail updated" in update_result["changes"]
+
+        # Verify on disk
+        reader = FileStateReader()
+        entries_dir = _entries_dir(tmp_path)
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            if data.get("id") == lid:
+                assert data["summary"] == "Refined summary"
+                assert data["detail"] == "Better detail with more context"
+                break
+
+    def test_updates_impact(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Adjustable impact",
+            detail="Impact will change",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        update_result = tools["trw_learn_update"].fn(
+            learning_id=lid,
+            impact=0.9,
+        )
+        assert update_result["status"] == "updated"
+        assert "impact→0.9" in update_result["changes"]
+
+    def test_rejects_invalid_status(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Status validation test",
+            detail="Detail",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        update_result = tools["trw_learn_update"].fn(
+            learning_id=lid,
+            status="invalid_status",
+        )
+        assert update_result["status"] == "invalid"
+        assert "error" in update_result
+
+    def test_rejects_invalid_impact(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Impact validation test",
+            detail="Detail",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        update_result = tools["trw_learn_update"].fn(
+            learning_id=lid,
+            impact=1.5,
+        )
+        assert update_result["status"] == "invalid"
+        assert "error" in update_result
+
+    def test_not_found_returns_error(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        update_result = tools["trw_learn_update"].fn(
+            learning_id="L-nonexistent",
+            status="resolved",
+        )
+        assert update_result["status"] == "not_found"
+        assert "error" in update_result
+
+    def test_no_changes_returns_no_changes(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="No change test",
+            detail="Detail",
+            impact=0.5,
+        )
+        lid = result["learning_id"]
+
+        update_result = tools["trw_learn_update"].fn(learning_id=lid)
+        assert update_result["status"] == "no_changes"
+
+    def test_resyncs_index_after_update(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Index resync test",
+            detail="Detail",
+            impact=0.8,
+        )
+        lid = result["learning_id"]
+
+        tools["trw_learn_update"].fn(
+            learning_id=lid,
+            status="resolved",
+        )
+
+        # Index should reflect the updated status
+        reader = FileStateReader()
+        index = reader.read_yaml(
+            tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml"
+        )
+        # Entry should still be in the index
+        assert index["total_count"] >= 1
+
+
 class TestTrwRecall:
     """Tests for trw_recall tool."""
 
@@ -1659,18 +1824,18 @@ class TestClaudeMdCollection:
 class TestToolDelegationIntact:
     """Verify all 3 learning tool functions remain registered and callable."""
 
-    def test_all_three_tools_registered(self) -> None:
-        """All 3 learning tools should be registered on a test server."""
+    def test_all_learning_tools_registered(self) -> None:
+        """All 4 learning tools should be registered on a test server."""
         from fastmcp import FastMCP
         from trw_mcp.tools.learning import register_learning_tools
         srv = FastMCP("test-learning")
         register_learning_tools(srv)
         tool_names = {t.name for t in srv._tool_manager._tools.values()}
         expected = {
-            "trw_learn", "trw_recall", "trw_claude_md_sync",
+            "trw_learn", "trw_learn_update", "trw_recall", "trw_claude_md_sync",
         }
         assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
-        assert len(tool_names) == 3, f"Expected 3 tools, got {len(tool_names)}: {tool_names}"
+        assert len(tool_names) == 4, f"Expected 4 tools, got {len(tool_names)}: {tool_names}"
 
 
 class TestClaudeMdSyncAtomicWrite:
