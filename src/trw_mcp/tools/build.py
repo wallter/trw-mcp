@@ -21,6 +21,7 @@ from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
+from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
@@ -61,7 +62,10 @@ def _find_executable(name: str, project_root: Path) -> str | None:
     path = shutil.which(name)
     if path is not None:
         return path
-    venv_path = project_root / "trw-mcp" / ".venv" / "bin" / name
+    # Check venv in the build root (parent of source_package_path)
+    source_path = _config.source_package_path or "trw-mcp/src"
+    pkg_dir = project_root / Path(source_path).parent
+    venv_path = pkg_dir / ".venv" / "bin" / name
     if venv_path.exists():
         return str(venv_path)
     return None
@@ -149,11 +153,24 @@ def _run_pytest(
     if pytest_path is None:
         return _pytest_error("pytest not found — install with: pip install pytest")
 
+    # Derive build root and cwd from config (PRD-INFRA-011-FR01)
+    source_path = _config.source_package_path or "trw-mcp/src"
+    build_root = str(Path(source_path).parent)
+    cwd = project_root / build_root
+
+    # Test directory relative to cwd (strip build_root prefix)
+    tests_full = _config.tests_relative_path or "trw-mcp/tests"
+    test_dir = tests_full.removeprefix(build_root + "/") if build_root != "." else tests_full
+    if not test_dir.endswith("/"):
+        test_dir += "/"
+
+    cov_target = _config.source_package_name or "trw_mcp"
+
     cmd = [
         pytest_path,
-        "tests/",
+        test_dir,
         "-v",
-        "--cov=trw_mcp",
+        f"--cov={cov_target}",
         "--cov-report=term-missing",
         "--tb=line",
         f"--maxfail={_MAX_FAILURES}",
@@ -161,7 +178,7 @@ def _run_pytest(
     if extra_args:
         cmd.extend(extra_args.split())
 
-    result = _run_subprocess(cmd, project_root / "trw-mcp", timeout_secs)
+    result = _run_subprocess(cmd, cwd, timeout_secs)
     if isinstance(result, str):
         return _pytest_error(result)
 
@@ -215,12 +232,22 @@ def _run_mypy(
             "failures": ["mypy not found — install with: pip install mypy"],
         }
 
+    # Derive build root and cwd from config (PRD-INFRA-011-FR02)
+    source_path = _config.source_package_path or "trw-mcp/src"
+    build_root = str(Path(source_path).parent)
+    cwd = project_root / build_root
+
+    # Source target relative to cwd
+    src_rel = source_path.removeprefix(build_root + "/") if build_root != "." else source_path
+    pkg_name = _config.source_package_name or "trw_mcp"
+    src_target = f"{src_rel}/{pkg_name}/"
+
     cmd = [mypy_path]
     if extra_args:
         cmd.extend(extra_args.split())
-    cmd.append("src/trw_mcp/")
+    cmd.append(src_target)
 
-    result = _run_subprocess(cmd, project_root / "trw-mcp", timeout_secs)
+    result = _run_subprocess(cmd, cwd, timeout_secs)
     if isinstance(result, str):
         return {"mypy_clean": False, "failures": [result]}
 
@@ -318,6 +345,7 @@ def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
 
     @server.tool()
+    @log_tool_call
     def trw_build_check(
         scope: str = "full",
         run_path: str | None = None,

@@ -40,6 +40,7 @@ from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
     validate_prd_quality_v2,
 )
+from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
@@ -60,6 +61,7 @@ def register_requirements_tools(server: FastMCP) -> None:
     """
 
     @server.tool()
+    @log_tool_call
     def trw_prd_create(
         input_text: str,
         category: str = "CORE",
@@ -191,6 +193,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         }
 
     @server.tool()
+    @log_tool_call
     def trw_prd_validate(
         prd_path: str,
     ) -> dict[str, object]:

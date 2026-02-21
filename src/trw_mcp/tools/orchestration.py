@@ -28,6 +28,7 @@ from trw_mcp.state.persistence import (
     FileStateWriter,
     model_to_dict,
 )
+from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
@@ -45,6 +46,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
     """
 
     @server.tool()
+    @log_tool_call
     def trw_init(
         task_name: str,
         objective: str = "",
@@ -184,6 +186,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         return result
 
     @server.tool()
+    @log_tool_call
     def trw_status(run_path: str | None = None) -> dict[str, object]:
         """Return current run state — phase, wave progress, shard status, confidence.
 
@@ -251,6 +254,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         return result
 
     @server.tool()
+    @log_tool_call
     def trw_checkpoint(
         run_path: str | None = None,
         message: str = "",

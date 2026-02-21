@@ -238,6 +238,10 @@ class EventType(str, Enum):
     CHECKPOINT = "checkpoint"
     CLAUDE_MD_SYNCED = "claude_md_synced"
 
+    # --- Telemetry (PRD-CORE-031) ---
+    TOOL_INVOCATION = "tool_invocation"
+    BUILD_CHECK_COMPLETE = "build_check_complete"
+
     # --- Compliance ---
     COMPLIANCE_CHECK = "compliance_check"
     COMPLIANCE_PASSED = "compliance_passed"

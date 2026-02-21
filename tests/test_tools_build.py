@@ -19,6 +19,7 @@ from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.validation import _check_build_status
 from trw_mcp.tools.build import (
+    _find_executable,
     _strip_ansi,
     cache_build_status,
     run_build_check,
@@ -536,3 +537,207 @@ class TestBuildConfig:
         config = TRWConfig()
         assert config.build_check_enabled is False
         assert config.build_gate_enforcement == "strict"
+
+
+# ---------------------------------------------------------------------------
+# Config-driven path wiring — PRD-INFRA-011
+# ---------------------------------------------------------------------------
+
+
+class TestBuildConfigWiring:
+    """Tests for config-driven paths in build tools — PRD-INFRA-011."""
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    def test_pytest_default_cwd_is_build_root(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """FR01: Default config → cwd = project_root / 'trw-mcp'."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
+        run_build_check(tmp_path, scope="pytest")
+        cwd = mock_run.call_args.kwargs["cwd"]
+        assert cwd == str(tmp_path / "trw-mcp")
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    def test_pytest_custom_source_path_cwd(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR01: source_package_path='src' → cwd = project_root (build_root='.')."""
+        config = TRWConfig(
+            source_package_path="src",
+            tests_relative_path="tests",
+            source_package_name="myapp",
+        )
+        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
+        run_build_check(tmp_path, scope="pytest")
+        cwd = mock_run.call_args.kwargs["cwd"]
+        assert cwd == str(tmp_path / ".")
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    def test_pytest_cov_target_from_config(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR01: source_package_name='myapp' → --cov=myapp."""
+        config = TRWConfig(source_package_name="myapp")
+        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
+        run_build_check(tmp_path, scope="pytest")
+        cmd = mock_run.call_args.args[0]
+        assert "--cov=myapp" in cmd
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    def test_pytest_test_dir_strips_build_root(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """FR01: tests_relative_path='trw-mcp/tests' → stripped to 'tests/' for cwd."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
+        run_build_check(tmp_path, scope="pytest")
+        cmd = mock_run.call_args.args[0]
+        assert "tests/" in cmd
+        assert "trw-mcp/tests/" not in " ".join(cmd)
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    def test_mypy_default_cwd_is_build_root(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """FR02: Default config → mypy cwd = project_root / 'trw-mcp'."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
+        run_build_check(tmp_path, scope="mypy")
+        cwd = mock_run.call_args.kwargs["cwd"]
+        assert cwd == str(tmp_path / "trw-mcp")
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    def test_mypy_custom_source_target(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR02: Custom config → src_target='src/myapp/'."""
+        config = TRWConfig(
+            source_package_path="src",
+            source_package_name="myapp",
+        )
+        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
+        run_build_check(tmp_path, scope="mypy")
+        cmd = mock_run.call_args.args[0]
+        assert cmd[-1] == "src/myapp/"
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    def test_mypy_default_source_target(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """FR02: Default config → src_target='src/trw_mcp/'."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
+        run_build_check(tmp_path, scope="mypy")
+        cmd = mock_run.call_args.args[0]
+        assert cmd[-1] == "src/trw_mcp/"
+
+    def test_find_executable_custom_venv_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR03: source_package_path='src' → checks project_root/.venv/bin/."""
+        config = TRWConfig(source_package_path="src")
+        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build.shutil.which", lambda _: None)
+
+        venv_bin = tmp_path / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "pytest").touch()
+
+        result = _find_executable("pytest", tmp_path)
+        assert result == str(venv_bin / "pytest")
+
+    def test_find_executable_default_venv_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR03: Default config → checks project_root/trw-mcp/.venv/bin/."""
+        monkeypatch.setattr("trw_mcp.tools.build.shutil.which", lambda _: None)
+
+        venv_bin = tmp_path / "trw-mcp" / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "pytest").touch()
+
+        result = _find_executable("pytest", tmp_path)
+        assert result == str(venv_bin / "pytest")
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    def test_pytest_empty_config_falls_back(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """NFR02/RISK-001: Empty string config fields fall back to TRW defaults."""
+        config = TRWConfig(
+            source_package_path="",
+            tests_relative_path="",
+            source_package_name="",
+        )
+        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
+        status = run_build_check(tmp_path, scope="pytest")
+        assert status.tests_passed is True
+        cmd = mock_run.call_args.args[0]
+        cwd = mock_run.call_args.kwargs["cwd"]
+        # Fallback: cov target = trw_mcp, cwd = project_root/trw-mcp
+        assert "--cov=trw_mcp" in cmd
+        assert cwd == str(tmp_path / "trw-mcp")
+
+    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    def test_mypy_empty_config_falls_back(
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """NFR02/RISK-001: Empty string mypy config falls back to TRW defaults."""
+        config = TRWConfig(
+            source_package_path="",
+            source_package_name="",
+        )
+        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
+        status = run_build_check(tmp_path, scope="mypy")
+        assert status.mypy_clean is True
+        cmd = mock_run.call_args.args[0]
+        cwd = mock_run.call_args.kwargs["cwd"]
+        assert cmd[-1] == "src/trw_mcp/"
+        assert cwd == str(tmp_path / "trw-mcp")

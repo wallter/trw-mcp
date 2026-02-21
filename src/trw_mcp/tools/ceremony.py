@@ -16,7 +16,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.scoring import rank_by_utility
-from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.state._paths import find_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
     generate_learning_id,
@@ -54,6 +54,7 @@ from trw_mcp.state.recall_search import (
     update_access_tracking,
 )
 from trw_mcp.state.receipts import log_recall_receipt
+from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
@@ -61,35 +62,6 @@ _config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 _events = FileEventLogger(_writer)
-
-
-def _find_active_run() -> Path | None:
-    """Find the most recent active run directory.
-
-    Returns:
-        Path to run directory, or None if no active run found.
-    """
-    try:
-        project_root = resolve_trw_dir().parent
-        task_root = project_root / _config.task_root
-        if not task_root.exists():
-            return None
-
-        latest_name = ""
-        latest_dir: Path | None = None
-        for task_dir in task_root.iterdir():
-            runs_dir = task_dir / "runs"
-            if not runs_dir.is_dir():
-                continue
-            for run_dir in runs_dir.iterdir():
-                run_yaml = run_dir / "meta" / "run.yaml"
-                if run_yaml.exists() and run_dir.name > latest_name:
-                    latest_name = run_dir.name
-                    latest_dir = run_dir
-
-        return latest_dir
-    except (StateError, OSError):
-        return None
 
 
 def _get_run_status(run_dir: Path) -> dict[str, object]:
@@ -111,6 +83,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
     """Register session ceremony composite tools on the MCP server."""
 
     @server.tool()
+    @log_tool_call
     def trw_session_start() -> dict[str, object]:
         """Combined session start: recall high-impact learnings + check run status.
 
@@ -150,8 +123,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
             results["learnings_count"] = 0
 
         # Step 2: Check active run status
+        run_dir: Path | None = None
         try:
-            run_dir = _find_active_run()
+            run_dir = find_active_run()
             if run_dir is not None:
                 results["run"] = _get_run_status(run_dir)
             else:
@@ -159,6 +133,25 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception as exc:
             errors.append(f"status: {exc}")
             results["run"] = {"active_run": None, "status": "error"}
+
+        # Step 3: Log session_start event (FR01, PRD-CORE-031)
+        try:
+            event_data: dict[str, object] = {
+                "learnings_recalled": int(str(results.get("learnings_count", 0))),
+                "run_detected": run_dir is not None,
+            }
+            if run_dir is not None:
+                events_path = run_dir / "meta" / "events.jsonl"
+                if events_path.parent.exists():
+                    _events.log_event(events_path, "session_start", event_data)
+            else:
+                trw_dir_path = resolve_trw_dir()
+                context_path = trw_dir_path / _config.context_dir
+                _writer.ensure_dir(context_path)
+                fallback_path = context_path / "session-events.jsonl"
+                _events.log_event(fallback_path, "session_start", event_data)
+        except Exception:
+            pass  # Fail-open: event write failure must not affect tool result
 
         results["errors"] = errors
         results["success"] = len(errors) == 0
@@ -171,6 +164,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         return results
 
     @server.tool()
+    @log_tool_call
     def trw_deliver(
         run_path: str | None = None,
         skip_reflect: bool = False,
@@ -196,7 +190,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         if run_path:
             resolved_run = Path(run_path).resolve()
         else:
-            resolved_run = _find_active_run()
+            resolved_run = find_active_run()
 
         results["run_path"] = str(resolved_run) if resolved_run else None
 

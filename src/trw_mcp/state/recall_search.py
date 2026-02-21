@@ -9,8 +9,12 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+logger = structlog.get_logger()
 
 
 def search_entries(
@@ -78,6 +82,12 @@ def search_entries(
         except (StateError, ValueError, TypeError):
             continue
 
+    logger.debug(
+        "recall_search_complete",
+        query_tokens=query_tokens,
+        results=len(matching),
+        scanned=len(list(entries_dir.glob("*.yaml"))) if entries_dir.exists() else 0,
+    )
     return matching, matched_files
 
 

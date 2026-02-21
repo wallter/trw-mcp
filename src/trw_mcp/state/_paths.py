@@ -68,6 +68,39 @@ def _find_latest_run_dir(base_dir: Path) -> Path | None:
     return latest_run
 
 
+def find_active_run() -> Path | None:
+    """Find the most recent active run directory by lexicographic name.
+
+    Scans ``{task_root}/*/runs/*/meta/run.yaml`` and returns the run
+    directory with the highest-sorting name (ISO timestamp prefix ensures
+    chronological ordering).
+
+    Returns:
+        Path to run directory, or None if no active run found.
+    """
+    try:
+        project_root = resolve_project_root()
+        task_root = project_root / _config.task_root
+        if not task_root.exists():
+            return None
+
+        latest_name = ""
+        latest_dir: Path | None = None
+        for task_dir in task_root.iterdir():
+            runs_dir = task_dir / "runs"
+            if not runs_dir.is_dir():
+                continue
+            for run_dir in runs_dir.iterdir():
+                run_yaml = run_dir / "meta" / "run.yaml"
+                if run_yaml.exists() and run_dir.name > latest_name:
+                    latest_name = run_dir.name
+                    latest_dir = run_dir
+
+        return latest_dir
+    except (StateError, OSError):
+        return None
+
+
 def resolve_run_path(run_path: str | None = None) -> Path:
     """Resolve a run directory from an explicit path or auto-detection.
 
@@ -76,7 +109,7 @@ def resolve_run_path(run_path: str | None = None) -> Path:
 
     Resolution order:
     1. If *run_path* is provided, resolve to absolute and verify existence.
-    2. Otherwise, scan ``docs/*/runs/*/meta/run.yaml`` and select the
+    2. Otherwise, scan ``{task_root}/*/runs/*/meta/run.yaml`` and select the
        directory whose ``run.yaml`` has the most recent ``st_mtime``.
 
     Args:
@@ -99,17 +132,17 @@ def resolve_run_path(run_path: str | None = None) -> Path:
         return resolved
 
     project_root = resolve_project_root()
-    docs_dir = project_root / "docs"
-    if not docs_dir.exists():
+    task_dir = project_root / _config.task_root
+    if not task_dir.exists():
         raise StateError(
-            "Cannot auto-detect run path: docs/ directory not found",
+            f"Cannot auto-detect run path: {_config.task_root}/ directory not found",
             project_root=str(project_root),
         )
 
-    latest_run = _find_latest_run_dir(docs_dir)
+    latest_run = _find_latest_run_dir(task_dir)
     if latest_run is None:
         raise StateError(
-            "No active runs found in docs/*/runs/",
+            f"No active runs found in {_config.task_root}/*/runs/",
             project_root=str(project_root),
         )
 

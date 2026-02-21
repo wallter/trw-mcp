@@ -12,6 +12,7 @@ from fastmcp import FastMCP
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
@@ -46,6 +47,7 @@ def register_usage_tools(server: FastMCP) -> None:
     """Register LLM usage reporting tools on the MCP server."""
 
     @server.tool()
+    @log_tool_call
     def trw_usage_report(period: str = "all") -> dict[str, object]:
         """Aggregate LLM token usage and cost estimates from .trw/logs/llm_usage.jsonl.
 

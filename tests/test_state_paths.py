@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._paths import resolve_run_path
 
 
@@ -189,3 +190,58 @@ class TestResolveRunPath:
         run.mkdir()
         result = resolve_run_path(str(run))
         assert result.is_absolute()
+
+
+# ---------------------------------------------------------------------------
+# Config-driven task_root wiring — PRD-INFRA-011-FR04
+# ---------------------------------------------------------------------------
+
+
+class TestResolveRunPathConfigWiring:
+    """Tests for config-driven task_root in path resolution — PRD-INFRA-011."""
+
+    def test_custom_task_root_auto_detect(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR04: task_root='work' → finds runs under work/ instead of docs/."""
+        config = TRWConfig(task_root="work")
+        monkeypatch.setattr("trw_mcp.state._paths._config", config)
+
+        project = tmp_path / "project"
+        run = project / "work" / "task1" / "runs" / "run-001"
+        (run / "meta").mkdir(parents=True)
+        (run / "meta" / "run.yaml").write_text("run_id: run-001\n")
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        assert resolve_run_path() == run
+
+    def test_custom_task_root_error_no_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR04: task_root='work' → error references 'work/' not 'docs/'."""
+        config = TRWConfig(task_root="work")
+        monkeypatch.setattr("trw_mcp.state._paths._config", config)
+
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        with pytest.raises(StateError, match="work/ directory not found"):
+            resolve_run_path()
+
+    def test_custom_task_root_no_runs_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR04: task_root='work' → error references 'work/*/runs/'."""
+        config = TRWConfig(task_root="work")
+        monkeypatch.setattr("trw_mcp.state._paths._config", config)
+
+        project = tmp_path / "project"
+        (project / "work" / "task1" / "runs").mkdir(parents=True)
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+        )
+        with pytest.raises(StateError, match=r"work/\*/runs/"):
+            resolve_run_path()

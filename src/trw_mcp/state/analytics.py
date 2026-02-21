@@ -15,9 +15,13 @@ from datetime import date
 from pathlib import Path
 from typing import Iterator
 
+import structlog
+
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.learning import LearningEntry, LearningStatus
+
+logger = structlog.get_logger()
 from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
@@ -400,6 +404,7 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     filename = f"{entry.created.isoformat()}-{slug}.yaml"
     entry_path = _entries_path(trw_dir) / filename
     _writer.write_yaml(entry_path, model_to_dict(entry))
+    logger.debug("learning_entry_saved", learning_id=entry.id, path=str(entry_path))
 
     update_learning_index(trw_dir, entry)
     return entry_path
@@ -510,6 +515,7 @@ def update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
     data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
 
     _writer.write_yaml(analytics_path, data)
+    logger.debug("analytics_updated", new_learnings=new_learnings_count, total=total_learnings)
 
 
 def update_analytics_sync(trw_dir: Path) -> None:

@@ -32,6 +32,7 @@ from trw_mcp.state.recall_search import (
     update_access_tracking,
 )
 from trw_mcp.state.receipts import log_recall_receipt
+from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
@@ -62,6 +63,7 @@ def register_learning_tools(server: FastMCP) -> None:
     """Register self-learning tools on the MCP server."""
 
     @server.tool()
+    @log_tool_call
     def trw_learn(
         summary: str,
         detail: str,
@@ -105,6 +107,7 @@ def register_learning_tools(server: FastMCP) -> None:
         return {"learning_id": learning_id, "path": str(entry_path), "status": "recorded"}
 
     @server.tool()
+    @log_tool_call
     def trw_recall(
         query: str,
         tags: list[str] | None = None,
@@ -188,6 +191,7 @@ def register_learning_tools(server: FastMCP) -> None:
         }
 
     @server.tool()
+    @log_tool_call
     def trw_claude_md_sync(
         scope: str = "root",
         target_dir: str | None = None,
