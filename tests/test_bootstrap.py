@@ -594,3 +594,29 @@ class TestUpdateCreatesNewArtifacts:
         deployed = sorted(f.name for f in agents_dir.iterdir() if f.suffix == ".md")
         assert "trw-implementer.md" in deployed
         assert "trw-tester.md" in deployed
+
+
+@pytest.mark.unit
+class TestUpdateWarningsAndVersionCheck:
+    """Test update_project warnings, version check, and restart guidance."""
+
+    def test_includes_restart_warning(self, initialized_repo: Path) -> None:
+        """update_project always warns about restarting sessions."""
+        result = update_project(initialized_repo)
+        assert "warnings" in result
+        assert any("Restart" in w for w in result["warnings"])
+
+    def test_includes_version_check(self, initialized_repo: Path) -> None:
+        """update_project checks installed package version."""
+        result = update_project(initialized_repo)
+        # Should have either a version match (preserved) or mismatch (warning)
+        version_related = [
+            p for p in result["preserved"] if "trw-mcp package" in p
+        ] + [w for w in result["warnings"] if "trw-mcp" in w and "differs" in w]
+        assert len(version_related) > 0
+
+    def test_warnings_key_always_present(self, initialized_repo: Path) -> None:
+        """update_project result always includes 'warnings' key."""
+        result = update_project(initialized_repo)
+        assert "warnings" in result
+        assert isinstance(result["warnings"], list)

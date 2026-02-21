@@ -159,7 +159,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
     from trw_mcp.bootstrap import update_project
 
     target = Path(args.target_dir).resolve()
-    result = update_project(target)
+    result = update_project(target, pip_install=args.pip_install)
 
     for f in result["updated"]:
         print(f"  Updated: {f}")
@@ -167,13 +167,14 @@ def _run_update_project(args: argparse.Namespace) -> None:
         print(f"  Created (new): {f}")
     for f in result["preserved"]:
         print(f"  Preserved: {f}")
+    for w in result.get("warnings", []):
+        print(f"  WARNING: {w}")
     for e in result["errors"]:
         print(f"  ERROR: {e}")
 
     total = len(result["updated"]) + len(result["created"])
     if not result["errors"]:
         print(f"\nTRW framework updated in {target} ({total} files)")
-        print("User files (config.yaml, learnings, CLAUDE.md user sections) preserved.")
 
     sys.exit(1 if result["errors"] else 0)
 
@@ -218,6 +219,11 @@ def main() -> None:
         nargs="?",
         default=".",
         help="Target project directory (default: current directory)",
+    )
+    update_parser.add_argument(
+        "--pip-install",
+        action="store_true",
+        help="Also reinstall the trw-mcp Python package",
     )
 
     args = parser.parse_args()

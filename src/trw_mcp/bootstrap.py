@@ -10,10 +10,12 @@ skills, agents, FRAMEWORK.md) while preserving user-customized files
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -167,6 +169,8 @@ _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers --
 
 def update_project(
     target_dir: Path,
+    *,
+    pip_install: bool = False,
 ) -> dict[str, list[str]]:
     """Update TRW framework files in *target_dir* while preserving user config.
 
@@ -180,15 +184,18 @@ def update_project(
 
     Args:
         target_dir: Root of the target git repository.
+        pip_install: If True, reinstall the trw-mcp package after file updates.
 
     Returns:
-        Dict with ``updated``, ``created``, ``preserved``, ``errors`` lists.
+        Dict with ``updated``, ``created``, ``preserved``, ``errors``,
+        and ``warnings`` lists.
     """
     result: dict[str, list[str]] = {
         "updated": [],
         "created": [],
         "preserved": [],
         "errors": [],
+        "warnings": [],
     }
 
     # Validate target has TRW installed
@@ -298,6 +305,19 @@ def update_project(
 
     # 8. Remove stale hooks/skills/agents no longer in bundled data
     _remove_stale_artifacts(target_dir, result)
+
+    # 9. Check installed package version
+    _check_package_version(result)
+
+    # 10. Reinstall package if requested
+    if pip_install:
+        _pip_install_package(target_dir, result)
+
+    # 11. Remind about running sessions
+    result["warnings"].append(
+        "Running Claude Code sessions use cached hooks/settings. "
+        "Restart active sessions (or run /mcp) to pick up updates."
+    )
 
     logger.info(
         "update_complete",
@@ -417,6 +437,74 @@ def _remove_stale_artifacts(
                         result["updated"].append(f"removed:{existing}")
                     except OSError:
                         pass
+
+
+def _check_package_version(result: dict[str, list[str]]) -> None:
+    """Compare installed trw-mcp version against source version.
+
+    Warns if the installed package is outdated, which means server-side
+    fixes (log filtering, LLM client, tool logic) won't be active.
+    """
+    from trw_mcp import __version__ as source_version
+
+    try:
+        installed_version = importlib.metadata.version("trw-mcp")
+    except importlib.metadata.PackageNotFoundError:
+        result["warnings"].append(
+            "trw-mcp package not found in Python environment. "
+            "Install with: pip install -e trw-mcp[dev]"
+        )
+        return
+
+    if installed_version != source_version:
+        result["warnings"].append(
+            f"Installed trw-mcp ({installed_version}) differs from source "
+            f"({source_version}). Server-side fixes require reinstall: "
+            f"pip install -e trw-mcp[dev]"
+        )
+    else:
+        result["preserved"].append(
+            f"trw-mcp package v{installed_version} (up to date)"
+        )
+
+
+def _pip_install_package(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Reinstall trw-mcp package from the source tree.
+
+    Uses the trw-mcp directory that contains the bundled data, ensuring
+    the installed package matches the source version.
+    """
+    # The package source is the parent of the data directory
+    package_dir = _DATA_DIR.parent.parent.parent  # trw-mcp/src -> trw-mcp/
+    if not (package_dir / "pyproject.toml").exists():
+        # Fall back: try to find trw-mcp relative to data dir
+        package_dir = _DATA_DIR.parent.parent.parent
+        if not (package_dir / "pyproject.toml").exists():
+            result["errors"].append(
+                "Cannot find trw-mcp pyproject.toml for pip install. "
+                "Manually run: pip install -e /path/to/trw-mcp[dev]"
+            )
+            return
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", f"{package_dir}[dev]"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if proc.returncode == 0:
+            result["updated"].append(f"pip install trw-mcp (reinstalled)")
+        else:
+            result["errors"].append(
+                f"pip install failed (exit {proc.returncode}): {proc.stderr[:200]}"
+            )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        result["errors"].append(f"pip install failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
