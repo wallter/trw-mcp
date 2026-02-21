@@ -2,6 +2,31 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.3.5] — 2026-02-21
+
+### Added
+- **Managed-artifacts manifest** — `.trw/managed-artifacts.yaml` tracks TRW-installed skills, agents, and hooks:
+  - Written by both `init_project()` and `update_project()`
+  - `_remove_stale_artifacts()` uses manifest comparison instead of prefix matching
+  - Custom user-created artifacts are never touched (not in manifest = safe)
+  - First update without manifest writes it and skips cleanup (safe migration)
+- **Bundled `simplify` skill** — generic code simplification skill for `code-simplifier` agent (PRD-FIX-023)
+- 3 new manifest tests in `test_bootstrap.py`: init writes, update refreshes, counts all artifacts
+- 7 updated stale-artifact tests: manifest-based removal, custom survival, no-manifest migration
+
+### Changed
+- **Skill/agent naming reverted to short names** — removed `trw-` prefix (PRD-INFRA-013):
+  - Skills: `deliver`, `framework-check`, `learn`, etc. (invoked as `/deliver`, `/sprint-init`)
+  - Agents: `code-simplifier`, `prd-groomer`, `requirement-reviewer`, etc.
+  - 4 agent-teams agents keep original `trw-` prefix (`trw-implementer`, etc.)
+- **FRAMEWORK.md** — all skill/agent references updated to short names
+- **Cross-references** — `prd-review`, `prd-groom`, `code-simplifier` agent refs updated
+
+### Stats
+- 997 tests, 86% coverage, mypy --strict clean
+
+---
+
 ## [0.3.4] — 2026-02-20
 
 ### Added
