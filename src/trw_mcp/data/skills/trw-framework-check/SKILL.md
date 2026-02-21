@@ -1,5 +1,5 @@
 ---
-name: framework-check
+name: trw-framework-check
 description: >
   Check TRW framework compliance. Reports ceremony adherence,
   phase gate status, and active run health. Use when unsure if

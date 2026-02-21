@@ -1,5 +1,5 @@
 ---
-name: sprint-init
+name: trw-sprint-init
 description: >
   Initialize a new sprint. Lists draft PRDs, creates sprint doc,
   bootstraps run directory, sets up tracking.

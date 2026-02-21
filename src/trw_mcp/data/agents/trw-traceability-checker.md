@@ -1,5 +1,5 @@
 ---
-name: traceability-checker
+name: trw-traceability-checker
 description: >
   Invoke at VALIDATE or DELIVER phase to verify bidirectional traceability
   between PRDs, source code, and tests. Returns a structured coverage

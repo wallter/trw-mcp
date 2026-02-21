@@ -80,9 +80,13 @@ class TestIdempotency:
         assert not result2["errors"]
         # All files should be skipped, no new creates (dirs already exist too)
         assert len(result2["skipped"]) > 0
-        # Dirs don't report as created when they already exist
+        # Dirs don't report as created when they already exist.
+        # .mcp.json (merge) and installer-meta.yaml (always-write) are expected.
         file_creates = [c for c in result2["created"] if not c.endswith("/")]
-        assert len(file_creates) == 0
+        expected_always_write = {".mcp.json", "installer-meta.yaml"}
+        unexpected = [c for c in file_creates
+                      if not any(e in c for e in expected_always_write)]
+        assert len(unexpected) == 0, f"Unexpected creates: {unexpected}"
 
     def test_force_overwrites(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
@@ -225,22 +229,23 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
-        "deliver",
-        "framework-check",
-        "learn",
-        "memory-audit",
-        "memory-optimize",
-        "prd-groom",
-        "prd-new",
-        "prd-review",
-        "project-health",
-        "sprint-finish",
-        "sprint-init",
-        "test-strategy",
+        "trw-deliver",
+        "trw-framework-check",
+        "trw-learn",
+        "trw-memory-audit",
+        "trw-memory-optimize",
+        "trw-prd-groom",
+        "trw-prd-new",
+        "trw-prd-review",
+        "trw-project-health",
+        "trw-simplify",
+        "trw-sprint-finish",
+        "trw-sprint-init",
+        "trw-test-strategy",
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 12 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 13 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -258,7 +263,7 @@ class TestSkills:
         init_project(fake_git_repo)
 
         # Write dummy content to one skill
-        dummy_path = fake_git_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
+        dummy_path = fake_git_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
         dummy_path.write_text("dummy content", encoding="utf-8")
 
         result = init_project(fake_git_repo, force=True)
@@ -289,15 +294,15 @@ class TestAgents:
     """Test agent file deployment."""
 
     EXPECTED_AGENTS = [
-        "code-simplifier.md",
-        "prd-groomer.md",
-        "requirement-reviewer.md",
-        "requirement-writer.md",
-        "traceability-checker.md",
+        "trw-code-simplifier.md",
         "trw-implementer.md",
+        "trw-prd-groomer.md",
+        "trw-requirement-reviewer.md",
+        "trw-requirement-writer.md",
         "trw-researcher.md",
         "trw-reviewer.md",
         "trw-tester.md",
+        "trw-traceability-checker.md",
     ]
 
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
@@ -452,7 +457,7 @@ class TestUpdateOverwritesFrameworkFiles:
 
     def test_updates_skills(self, initialized_repo: Path) -> None:
         """Skill files are overwritten with latest versions."""
-        skill_path = initialized_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
+        skill_path = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
         skill_path.write_text("old skill", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -462,7 +467,9 @@ class TestUpdateOverwritesFrameworkFiles:
 
     def test_updates_agents(self, initialized_repo: Path) -> None:
         """Agent files are overwritten with latest versions."""
-        agent_path = initialized_repo / ".claude" / "agents" / "code-simplifier.md"
+        agent_path = (
+            initialized_repo / ".claude" / "agents" / "trw-code-simplifier.md"
+        )
         agent_path.write_text("old agent", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -540,9 +547,9 @@ class TestUpdateRemovesStaleArtifacts:
         assert not stale_hook.exists()
         assert any("removed:" in u and "old-removed-hook" in u for u in result["updated"])
 
-    def test_removes_stale_skill(self, initialized_repo: Path) -> None:
-        """Skill directories not in bundled data are removed."""
-        stale_skill = initialized_repo / ".claude" / "skills" / "old-skill"
+    def test_removes_stale_trw_skill(self, initialized_repo: Path) -> None:
+        """Stale trw-prefixed skill directories are removed."""
+        stale_skill = initialized_repo / ".claude" / "skills" / "trw-old-skill"
         stale_skill.mkdir(parents=True, exist_ok=True)
         (stale_skill / "SKILL.md").write_text("old", encoding="utf-8")
 
@@ -550,9 +557,9 @@ class TestUpdateRemovesStaleArtifacts:
 
         assert not stale_skill.exists()
 
-    def test_removes_stale_agent(self, initialized_repo: Path) -> None:
-        """Agent files not in bundled data are removed."""
-        stale_agent = initialized_repo / ".claude" / "agents" / "old-agent.md"
+    def test_removes_stale_trw_agent(self, initialized_repo: Path) -> None:
+        """Stale trw-prefixed agent files are removed."""
+        stale_agent = initialized_repo / ".claude" / "agents" / "trw-old-agent.md"
         stale_agent.write_text("old agent", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -568,6 +575,27 @@ class TestUpdateRemovesStaleArtifacts:
 
         assert other_file.exists()
 
+    def test_custom_skill_survives_update(self, initialized_repo: Path) -> None:
+        """Custom skills without trw- prefix are NOT deleted by update."""
+        custom_skill = initialized_repo / ".claude" / "skills" / "my-deploy"
+        custom_skill.mkdir(parents=True, exist_ok=True)
+        (custom_skill / "SKILL.md").write_text("custom", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        assert custom_skill.exists()
+        assert (custom_skill / "SKILL.md").read_text(encoding="utf-8") == "custom"
+
+    def test_custom_agent_survives_update(self, initialized_repo: Path) -> None:
+        """Custom agents without trw- prefix are NOT deleted by update."""
+        custom_agent = initialized_repo / ".claude" / "agents" / "my-reviewer.md"
+        custom_agent.write_text("custom agent", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        assert custom_agent.exists()
+        assert custom_agent.read_text(encoding="utf-8") == "custom agent"
+
 
 @pytest.mark.unit
 class TestUpdateCreatesNewArtifacts:
@@ -582,9 +610,9 @@ class TestUpdateCreatesNewArtifacts:
         skills_dir = initialized_repo / ".claude" / "skills"
         deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
         # Should have all expected skills
-        assert "deliver" in deployed
-        assert "learn" in deployed
-        assert "project-health" in deployed
+        assert "trw-deliver" in deployed
+        assert "trw-learn" in deployed
+        assert "trw-project-health" in deployed
 
     def test_creates_new_agent(self, initialized_repo: Path) -> None:
         """New agents in bundled data are deployed."""
@@ -621,3 +649,194 @@ class TestUpdateWarningsAndVersionCheck:
         result = update_project(initialized_repo)
         assert "warnings" in result
         assert isinstance(result["warnings"], list)
+
+
+# ── .mcp.json Smart Merge Tests ───────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestMcpJsonMerge:
+    """Test that .mcp.json merge preserves user servers and ensures trw entry."""
+
+    def test_merge_preserves_user_servers(self, initialized_repo: Path) -> None:
+        """Existing user-configured MCP servers survive update."""
+        mcp_path = initialized_repo / ".mcp.json"
+        mcp_path.write_text(json.dumps({
+            "mcpServers": {
+                "trw": {"command": "trw-mcp", "args": ["--debug"]},
+                "my-tool": {"command": "my-tool-server", "args": []},
+            }
+        }, indent=2), encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        assert "my-tool" in data["mcpServers"]
+        assert data["mcpServers"]["my-tool"]["command"] == "my-tool-server"
+
+    def test_merge_restores_trw_key(self, initialized_repo: Path) -> None:
+        """Missing 'trw' key is added back during update."""
+        mcp_path = initialized_repo / ".mcp.json"
+        mcp_path.write_text(json.dumps({
+            "mcpServers": {
+                "my-tool": {"command": "my-tool-server", "args": []},
+            }
+        }, indent=2), encoding="utf-8")
+
+        result = update_project(initialized_repo)
+
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        assert "trw" in data["mcpServers"]
+        assert "command" in data["mcpServers"]["trw"]
+        # Should be reported as an update
+        assert any("trw entry" in u for u in result["updated"])
+
+    def test_merge_updates_trw_command(self, initialized_repo: Path) -> None:
+        """Stale trw command path is refreshed."""
+        mcp_path = initialized_repo / ".mcp.json"
+        mcp_path.write_text(json.dumps({
+            "mcpServers": {
+                "trw": {"command": "/old/path/trw-mcp", "args": []},
+            }
+        }, indent=2), encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["trw"]["command"] != "/old/path/trw-mcp"
+
+    def test_merge_creates_if_missing(self, fake_git_repo: Path) -> None:
+        """Fresh .mcp.json generated when init runs on a new project."""
+        result = init_project(fake_git_repo)
+        assert not result["errors"]
+
+        mcp_path = fake_git_repo / ".mcp.json"
+        assert mcp_path.exists()
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        assert "trw" in data["mcpServers"]
+
+
+# ── Installer Metadata Tests ──────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestInstallerMetadata:
+    """Test .trw/installer-meta.yaml creation and updates."""
+
+    def test_metadata_written_on_init(self, fake_git_repo: Path) -> None:
+        """installer-meta.yaml created during init_project."""
+        init_project(fake_git_repo)
+        meta_path = fake_git_repo / ".trw" / "installer-meta.yaml"
+        assert meta_path.exists()
+
+        from trw_mcp.state.persistence import FileStateReader
+        reader = FileStateReader()
+        data = reader.read_yaml(meta_path)
+        assert data["installed_by"] == "trw-mcp init-project"
+        assert "framework_version" in data
+        assert "package_version" in data
+        assert data["hooks_count"] > 0
+
+    def test_metadata_updated_on_update(self, initialized_repo: Path) -> None:
+        """installer-meta.yaml refreshed during update_project."""
+        update_project(initialized_repo)
+        meta_path = initialized_repo / ".trw" / "installer-meta.yaml"
+        assert meta_path.exists()
+
+        from trw_mcp.state.persistence import FileStateReader
+        reader = FileStateReader()
+        data = reader.read_yaml(meta_path)
+        assert data["installed_by"] == "trw-mcp update-project"
+        assert data["skills_count"] > 0
+        assert data["agents_count"] > 0
+
+
+# ── Dry-Run Tests ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestDryRun:
+    """Test --dry-run mode doesn't modify files."""
+
+    def test_dry_run_no_file_changes(self, initialized_repo: Path) -> None:
+        """--dry-run doesn't modify any files."""
+        framework_md = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+
+        # Modify a file to create a diff
+        framework_md.write_text("old content", encoding="utf-8")
+        old_content = framework_md.read_text(encoding="utf-8")
+
+        result = update_project(initialized_repo, dry_run=True)
+        assert not result["errors"]
+
+        # File should not be changed
+        assert framework_md.read_text(encoding="utf-8") == old_content
+
+    def test_dry_run_reports_would_update(self, initialized_repo: Path) -> None:
+        """Dry run result lists expected changes."""
+        # Modify a framework file to create a diff
+        framework_md = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+        framework_md.write_text("old content", encoding="utf-8")
+
+        result = update_project(initialized_repo, dry_run=True)
+
+        # Should report would-update items
+        assert any("would" in u for u in result["updated"])
+        # Should include dry-run warning
+        assert any("DRY RUN" in w for w in result["warnings"])
+
+    def test_dry_run_reports_missing_trw_entry(self, initialized_repo: Path) -> None:
+        """Dry run detects missing trw key in .mcp.json."""
+        mcp_path = initialized_repo / ".mcp.json"
+        mcp_path.write_text(json.dumps({
+            "mcpServers": {"other": {"command": "x", "args": []}},
+        }, indent=2), encoding="utf-8")
+
+        result = update_project(initialized_repo, dry_run=True)
+
+        assert any("trw entry" in u for u in result["updated"])
+
+    def test_dry_run_no_installer_metadata(self, initialized_repo: Path) -> None:
+        """Dry run doesn't write installer metadata."""
+        meta_path = initialized_repo / ".trw" / "installer-meta.yaml"
+        meta_existed = meta_path.exists()
+
+        update_project(initialized_repo, dry_run=True)
+
+        if not meta_existed:
+            assert not meta_path.exists()
+
+
+# ── Default Config Tests ──────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestDefaultConfig:
+    """Test _default_config() matches TRWConfig defaults."""
+
+    def test_default_config_matches_trwconfig(self) -> None:
+        """_default_config() claude_md_max_lines matches TRWConfig default."""
+        from trw_mcp.bootstrap import _default_config
+        from trw_mcp.models.config import TRWConfig
+
+        config_text = _default_config()
+        default_model = TRWConfig()
+        assert f"claude_md_max_lines: {default_model.claude_md_max_lines}" in config_text
+
+
+# ── Verification Tests ───────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestVerifyInstallation:
+    """Test post-update health verification."""
+
+    def test_verify_passes_healthy(self, initialized_repo: Path) -> None:
+        """Verification passes on a clean install — no health warnings."""
+        result = update_project(initialized_repo)
+        # Filter to only health-check warnings (not restart/version warnings)
+        health_warnings = [
+            w for w in result["warnings"]
+            if "executable" in w or "missing" in w.lower() or "not valid" in w
+        ]
+        assert len(health_warnings) == 0, f"Unexpected health warnings: {health_warnings}"

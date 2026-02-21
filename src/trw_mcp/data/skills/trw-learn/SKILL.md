@@ -1,5 +1,5 @@
 ---
-name: learn
+name: trw-learn
 description: >
   Record, update, or retire learnings. With a summary: records a new learning.
   With "resolve/obsolete L-id": changes status. Without arguments: reflects on

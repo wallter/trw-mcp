@@ -10,6 +10,7 @@ skills, agents, FRAMEWORK.md) while preserving user-customized files
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -17,6 +18,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -133,8 +135,11 @@ def init_project(
                 )
 
     # 7. Generate root-level files
-    _write_if_missing(target_dir / ".mcp.json", _generate_mcp_json(), force, result)
+    _merge_mcp_json(target_dir, result)
     _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result)
+
+    # 8. Write installer metadata
+    _write_installer_metadata(target_dir, "init-project", result)
 
     logger.info(
         "bootstrap_complete",
@@ -160,8 +165,12 @@ _ALWAYS_UPDATE: list[tuple[str, str]] = [
 _NEVER_OVERWRITE = {
     ".trw/config.yaml",
     ".trw/learnings/index.yaml",
-    ".mcp.json",
 }
+
+# Files that are smart-merged during update (preserve user content, ensure
+# framework entries exist).  .mcp.json was previously in _NEVER_OVERWRITE
+# which caused the trw server entry to be lost if removed by the user.
+_MERGE_FILES = {".mcp.json"}
 
 # CLAUDE.md markers for the auto-generated section.
 _TRW_START_MARKER = "<!-- trw:start -->"
@@ -173,13 +182,17 @@ def update_project(
     target_dir: Path,
     *,
     pip_install: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, list[str]]:
     """Update TRW framework files in *target_dir* while preserving user config.
 
     Always updates: hooks, skills, agents, FRAMEWORK.md, behavioral_protocol.yaml,
     claude_md template, settings.json.
 
-    Never overwrites: config.yaml, learnings/, .mcp.json.
+    Never overwrites: config.yaml, learnings/.
+
+    Smart merge: .mcp.json — ensures ``trw`` server entry exists while preserving
+    all other user-configured MCP servers.
 
     Smart update: CLAUDE.md — replaces content between ``trw:start``/``trw:end``
     markers while preserving all user-written sections.
@@ -187,6 +200,7 @@ def update_project(
     Args:
         target_dir: Root of the target git repository.
         pip_install: If True, reinstall the trw-mcp package after file updates.
+        dry_run: If True, report what would change without modifying files.
 
     Returns:
         Dict with ``updated``, ``created``, ``preserved``, ``errors``,
@@ -200,6 +214,9 @@ def update_project(
         "warnings": [],
     }
 
+    if dry_run:
+        result["warnings"].append("DRY RUN — no files will be modified.")
+
     # Validate target has TRW installed
     if not (target_dir / ".trw").exists():
         result["errors"].append(
@@ -209,22 +226,30 @@ def update_project(
         return result
 
     # 1. Ensure directories exist
-    for rel_dir in _TRW_DIRS:
-        _ensure_dir(target_dir / rel_dir, result)
+    if not dry_run:
+        for rel_dir in _TRW_DIRS:
+            _ensure_dir(target_dir / rel_dir, result)
 
     # 2. Update framework files (always overwrite)
     for data_name, dest_rel in _ALWAYS_UPDATE:
         src = _DATA_DIR / data_name
         dest = target_dir / dest_rel
-        existed = dest.exists()
-        try:
-            shutil.copy2(src, dest)
-            if existed:
-                result["updated"].append(str(dest))
+        if dry_run:
+            if dest.exists():
+                if not _files_identical(src, dest):
+                    result["updated"].append(f"would update: {dest}")
             else:
-                result["created"].append(str(dest))
-        except OSError as exc:
-            result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+                result["created"].append(f"would create: {dest}")
+        else:
+            existed = dest.exists()
+            try:
+                shutil.copy2(src, dest)
+                if existed:
+                    result["updated"].append(str(dest))
+                else:
+                    result["created"].append(str(dest))
+            except OSError as exc:
+                result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
 
     # 3. Create-only files (never overwrite existing)
     for rel_path in _NEVER_OVERWRITE:
@@ -238,20 +263,27 @@ def update_project(
         for hook_file in sorted(hooks_source.iterdir()):
             if hook_file.suffix == ".sh":
                 dest = target_dir / ".claude" / "hooks" / hook_file.name
-                existed = dest.exists()
-                try:
-                    shutil.copy2(hook_file, dest)
-                    if dest.suffix == ".sh":
-                        executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-                        os.chmod(dest, os.stat(dest).st_mode | executable)
-                    if existed:
-                        result["updated"].append(str(dest))
+                if dry_run:
+                    if dest.exists():
+                        if not _files_identical(hook_file, dest):
+                            result["updated"].append(f"would update: {dest}")
                     else:
-                        result["created"].append(str(dest))
-                except OSError as exc:
-                    result["errors"].append(
-                        f"Failed to copy {hook_file} -> {dest}: {exc}"
-                    )
+                        result["created"].append(f"would create: {dest}")
+                else:
+                    existed = dest.exists()
+                    try:
+                        shutil.copy2(hook_file, dest)
+                        if dest.suffix == ".sh":
+                            executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                            os.chmod(dest, os.stat(dest).st_mode | executable)
+                        if existed:
+                            result["updated"].append(str(dest))
+                        else:
+                            result["created"].append(str(dest))
+                    except OSError as exc:
+                        result["errors"].append(
+                            f"Failed to copy {hook_file} -> {dest}: {exc}"
+                        )
 
     # 5. Update skills (always overwrite)
     skills_source = _DATA_DIR / "skills"
@@ -259,21 +291,29 @@ def update_project(
         for skill_dir in sorted(skills_source.iterdir()):
             if skill_dir.is_dir():
                 dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
-                _ensure_dir(dest_skill, result)
+                if not dry_run:
+                    _ensure_dir(dest_skill, result)
                 for skill_file in sorted(skill_dir.iterdir()):
                     if skill_file.is_file():
                         dest = dest_skill / skill_file.name
-                        existed = dest.exists()
-                        try:
-                            shutil.copy2(skill_file, dest)
-                            if existed:
-                                result["updated"].append(str(dest))
+                        if dry_run:
+                            if dest.exists():
+                                if not _files_identical(skill_file, dest):
+                                    result["updated"].append(f"would update: {dest}")
                             else:
-                                result["created"].append(str(dest))
-                        except OSError as exc:
-                            result["errors"].append(
-                                f"Failed to copy {skill_file} -> {dest}: {exc}"
-                            )
+                                result["created"].append(f"would create: {dest}")
+                        else:
+                            existed = dest.exists()
+                            try:
+                                shutil.copy2(skill_file, dest)
+                                if existed:
+                                    result["updated"].append(str(dest))
+                                else:
+                                    result["created"].append(str(dest))
+                            except OSError as exc:
+                                result["errors"].append(
+                                    f"Failed to copy {skill_file} -> {dest}: {exc}"
+                                )
 
     # 6. Update agents (always overwrite)
     agents_source = _DATA_DIR / "agents"
@@ -281,41 +321,80 @@ def update_project(
         for agent_file in sorted(agents_source.iterdir()):
             if agent_file.suffix == ".md":
                 dest = target_dir / ".claude" / "agents" / agent_file.name
-                existed = dest.exists()
-                try:
-                    shutil.copy2(agent_file, dest)
-                    if existed:
-                        result["updated"].append(str(dest))
+                if dry_run:
+                    if dest.exists():
+                        if not _files_identical(agent_file, dest):
+                            result["updated"].append(f"would update: {dest}")
                     else:
-                        result["created"].append(str(dest))
-                except OSError as exc:
-                    result["errors"].append(
-                        f"Failed to copy {agent_file} -> {dest}: {exc}"
-                    )
+                        result["created"].append(f"would create: {dest}")
+                else:
+                    existed = dest.exists()
+                    try:
+                        shutil.copy2(agent_file, dest)
+                        if existed:
+                            result["updated"].append(str(dest))
+                        else:
+                            result["created"].append(str(dest))
+                    except OSError as exc:
+                        result["errors"].append(
+                            f"Failed to copy {agent_file} -> {dest}: {exc}"
+                        )
 
-    # 7. Smart-update CLAUDE.md (preserve user sections, update trw block)
-    claude_md_path = target_dir / "CLAUDE.md"
-    if claude_md_path.exists():
-        _update_claude_md_trw_section(claude_md_path, result)
+    # 7. Smart-merge .mcp.json (ensure trw entry, preserve user entries)
+    if not dry_run:
+        _merge_mcp_json(target_dir, result)
     else:
-        # No CLAUDE.md yet — write the full template
-        try:
-            claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
-            result["created"].append(str(claude_md_path))
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
+        mcp_path = target_dir / ".mcp.json"
+        if mcp_path.exists():
+            try:
+                data = json.loads(mcp_path.read_text(encoding="utf-8"))
+                servers = data.get("mcpServers", {})
+                if "trw" not in servers:
+                    result["updated"].append(f"would merge: {mcp_path} (add trw entry)")
+                else:
+                    result["preserved"].append(str(mcp_path))
+            except (json.JSONDecodeError, OSError):
+                result["updated"].append(f"would merge: {mcp_path}")
+        else:
+            result["created"].append(f"would create: {mcp_path}")
 
-    # 8. Remove stale hooks/skills/agents no longer in bundled data
-    _remove_stale_artifacts(target_dir, result)
+    # 8. Smart-update CLAUDE.md (preserve user sections, update trw block)
+    claude_md_path = target_dir / "CLAUDE.md"
+    if dry_run:
+        if claude_md_path.exists():
+            result["updated"].append(f"would update: {claude_md_path} (TRW section)")
+        else:
+            result["created"].append(f"would create: {claude_md_path}")
+    else:
+        if claude_md_path.exists():
+            _update_claude_md_trw_section(claude_md_path, result)
+        else:
+            try:
+                claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+                result["created"].append(str(claude_md_path))
+            except OSError as exc:
+                result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
 
-    # 9. Check installed package version
+    # 9. Remove stale hooks/skills/agents no longer in bundled data
+    if not dry_run:
+        _remove_stale_artifacts(target_dir, result)
+
+    # 10. Check installed package version
     _check_package_version(result)
 
-    # 10. Reinstall package if requested
-    if pip_install:
+    # 11. Reinstall package if requested
+    if pip_install and not dry_run:
         _pip_install_package(target_dir, result)
 
-    # 11. Remind about running sessions
+    # 12. Write installer metadata
+    if not dry_run:
+        _write_installer_metadata(target_dir, "update-project", result)
+
+    # 13. Post-update verification
+    if not dry_run:
+        _verify_installation(target_dir, result)
+
+    # 14. Remind about running sessions
     result["warnings"].append(
         "Running Claude Code sessions use cached hooks/settings. "
         "Restart active sessions (or run /mcp) to pick up updates."
@@ -328,6 +407,7 @@ def update_project(
         created=len(result["created"]),
         preserved=len(result["preserved"]),
         errors=len(result["errors"]),
+        dry_run=dry_run,
     )
     return result
 
@@ -419,7 +499,11 @@ def _remove_stale_artifacts(
         target_skills = target_dir / ".claude" / "skills"
         if target_skills.is_dir():
             for existing in target_skills.iterdir():
-                if existing.is_dir() and existing.name not in bundled_skills:
+                if (
+                    existing.is_dir()
+                    and existing.name.startswith("trw-")
+                    and existing.name not in bundled_skills
+                ):
                     try:
                         shutil.rmtree(existing)
                         result["updated"].append(f"removed:{existing}")
@@ -433,7 +517,11 @@ def _remove_stale_artifacts(
         target_agents = target_dir / ".claude" / "agents"
         if target_agents.is_dir():
             for existing in target_agents.iterdir():
-                if existing.suffix == ".md" and existing.name not in bundled_agents:
+                if (
+                    existing.suffix == ".md"
+                    and existing.name.startswith("trw-")
+                    and existing.name not in bundled_agents
+                ):
                     try:
                         existing.unlink()
                         result["updated"].append(f"removed:{existing}")
@@ -581,7 +669,7 @@ def _default_config(
         "# See trw://config resource for all available fields.",
         "task_root: docs",
         "debug: false",
-        "claude_md_max_lines: 300",
+        "claude_md_max_lines: 500",
     ]
     if source_package:
         lines.append(f"source_package_name: {source_package}")
@@ -590,10 +678,161 @@ def _default_config(
     return "\n".join(lines) + "\n"
 
 
-def _generate_mcp_json() -> str:
-    """Generate ``.mcp.json`` pointing to installed trw-mcp."""
+def _files_identical(a: Path, b: Path) -> bool:
+    """Compare two files by SHA-256 hash for dry-run diffing."""
+    try:
+        ha = hashlib.sha256(a.read_bytes()).hexdigest()
+        hb = hashlib.sha256(b.read_bytes()).hexdigest()
+        return ha == hb
+    except OSError:
+        return False
+
+
+def _trw_mcp_server_entry() -> dict[str, object]:
+    """Build the ``trw`` MCP server entry for .mcp.json."""
     cmd = shutil.which("trw-mcp") or f"{sys.executable} -m trw_mcp.server"
-    return json.dumps({"mcpServers": {"trw": {"command": cmd, "args": ["--debug"]}}}, indent=2) + "\n"
+    return {"command": cmd, "args": ["--debug"]}
+
+
+def _merge_mcp_json(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Ensure ``.mcp.json`` has the ``trw`` server entry.
+
+    Reads existing .mcp.json, merges the ``trw`` key into ``mcpServers``
+    while preserving all other user-configured servers, and writes back.
+    Creates the file from scratch if it doesn't exist.
+    """
+    mcp_path = target_dir / ".mcp.json"
+    trw_entry = _trw_mcp_server_entry()
+
+    if mcp_path.exists():
+        try:
+            data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        servers = data.get("mcpServers", {})
+        if not isinstance(servers, dict):
+            servers = {}
+        existed = "trw" in servers
+        servers["trw"] = trw_entry
+        data["mcpServers"] = servers
+        try:
+            mcp_path.write_text(
+                json.dumps(data, indent=2) + "\n", encoding="utf-8",
+            )
+            key = "updated" if "updated" in result else "created"
+            if existed:
+                result[key].append(str(mcp_path))
+            else:
+                result[key].append(f"{mcp_path} (added trw entry)")
+        except OSError as exc:
+            result["errors"].append(f"Failed to write {mcp_path}: {exc}")
+    else:
+        content = json.dumps(
+            {"mcpServers": {"trw": trw_entry}}, indent=2,
+        ) + "\n"
+        try:
+            mcp_path.write_text(content, encoding="utf-8")
+            result["created"].append(str(mcp_path))
+        except OSError as exc:
+            result["errors"].append(f"Failed to write {mcp_path}: {exc}")
+
+
+def _write_installer_metadata(
+    target_dir: Path,
+    action: str,
+    result: dict[str, list[str]],
+) -> None:
+    """Write ``.trw/installer-meta.yaml`` with deployment metadata.
+
+    Tracks framework version, package version, timestamp, and artifact
+    counts so audits can detect stale deployments.
+    """
+    from trw_mcp import __version__ as pkg_version
+    from trw_mcp.models.config import get_config
+
+    config = get_config()
+
+    # Count deployed artifacts
+    hooks_dir = target_dir / ".claude" / "hooks"
+    skills_dir = target_dir / ".claude" / "skills"
+    agents_dir = target_dir / ".claude" / "agents"
+    hooks_count = len(list(hooks_dir.glob("*.sh"))) if hooks_dir.is_dir() else 0
+    skills_count = len([d for d in skills_dir.iterdir() if d.is_dir()]) if skills_dir.is_dir() else 0
+    agents_count = len(list(agents_dir.glob("*.md"))) if agents_dir.is_dir() else 0
+
+    meta = {
+        "framework_version": config.framework_version,
+        "package_version": pkg_version,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "installed_by": f"trw-mcp {action}",
+        "hooks_count": hooks_count,
+        "skills_count": skills_count,
+        "agents_count": agents_count,
+    }
+    meta_path = target_dir / ".trw" / "installer-meta.yaml"
+    try:
+        from trw_mcp.state.persistence import FileStateWriter
+
+        writer = FileStateWriter()
+        writer.write_yaml(meta_path, meta)
+        # init_project uses "created", update_project uses "updated"
+        key = "updated" if "updated" in result else "created"
+        result[key].append(str(meta_path))
+    except OSError as exc:
+        result["errors"].append(f"Failed to write {meta_path}: {exc}")
+
+
+def _verify_installation(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Run lightweight post-update health checks.
+
+    Verifies hooks are executable, .mcp.json has trw entry, and
+    CLAUDE.md has TRW markers.  Adds warnings for any failures.
+    """
+    # Check hooks are executable
+    hooks_dir = target_dir / ".claude" / "hooks"
+    if hooks_dir.is_dir():
+        for hook in hooks_dir.glob("*.sh"):
+            if not os.access(hook, os.X_OK):
+                result["warnings"].append(f"Hook not executable: {hook.name}")
+
+    # Check .mcp.json has trw entry
+    mcp_path = target_dir / ".mcp.json"
+    if mcp_path.exists():
+        try:
+            data = json.loads(mcp_path.read_text(encoding="utf-8"))
+            if "trw" not in data.get("mcpServers", {}):
+                result["warnings"].append(
+                    ".mcp.json missing 'trw' server entry"
+                )
+        except (json.JSONDecodeError, OSError):
+            result["warnings"].append(".mcp.json is not valid JSON")
+    else:
+        result["warnings"].append(".mcp.json not found")
+
+    # Check CLAUDE.md has TRW markers
+    claude_md = target_dir / "CLAUDE.md"
+    if claude_md.exists():
+        content = claude_md.read_text(encoding="utf-8")
+        if _TRW_START_MARKER not in content or _TRW_END_MARKER not in content:
+            result["warnings"].append(
+                "CLAUDE.md missing TRW auto-generated markers"
+            )
+
+
+def _generate_mcp_json() -> str:
+    """Generate ``.mcp.json`` pointing to installed trw-mcp.
+
+    Legacy helper kept for backward compatibility. New code uses
+    ``_merge_mcp_json()`` which does smart merging.
+    """
+    entry = _trw_mcp_server_entry()
+    return json.dumps({"mcpServers": {"trw": entry}}, indent=2) + "\n"
 
 
 def _minimal_claude_md() -> str:

@@ -1,5 +1,5 @@
 ---
-name: requirement-writer
+name: trw-requirement-writer
 description: >
   Invoke to draft or expand functional and non-functional requirements
   in a PRD. Writes EARS-compliant requirements with confidence scores

@@ -1,5 +1,5 @@
 ---
-name: prd-groom
+name: trw-prd-groom
 description: >
   Groom a PRD to sprint-ready quality. Researches codebase,
   drafts missing sections, iterates until validation passes.
@@ -55,8 +55,8 @@ Groom a PRD to sprint-ready quality (>= 0.85 completeness) through systematic re
 
 When grooming multiple PRDs (e.g., during sprint planning), batch them into parallel subagents — never 1 agent per PRD:
 
-- **2-4 PRDs**: 2 parallel `prd-groomer` agents, each handling 1-2 PRDs sequentially
-- **5-8 PRDs**: 3 parallel `prd-groomer` agents, each handling 2-3 PRDs sequentially
+- **2-4 PRDs**: 2 parallel `trw-prd-groomer` agents, each handling 1-2 PRDs sequentially
+- **5-8 PRDs**: 3 parallel `trw-prd-groomer` agents, each handling 2-3 PRDs sequentially
 - Group PRDs by domain similarity when possible (related PRDs share research context)
 - Launch all agents in ONE message for parallelism
 

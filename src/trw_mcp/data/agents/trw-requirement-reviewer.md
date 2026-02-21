@@ -1,5 +1,5 @@
 ---
-name: requirement-reviewer
+name: trw-requirement-reviewer
 description: >
   Invoke to assess PRD quality before sprint planning or after grooming.
   Returns a structured review with per-dimension scores and a

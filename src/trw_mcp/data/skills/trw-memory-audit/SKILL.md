@@ -1,5 +1,5 @@
 ---
-name: memory-audit
+name: trw-memory-audit
 description: >
   Audit learning memory health. Shows tag distribution, impact spread,
   staleness, duplicate candidates, and recommendations. Read-only.

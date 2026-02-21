@@ -1,5 +1,5 @@
 ---
-name: deliver
+name: trw-deliver
 description: >
   Enhanced delivery with pre-flight build verification.
   Runs build check first, then trw_deliver, then reports summary.
