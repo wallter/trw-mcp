@@ -82,9 +82,9 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 |-------|---------------|--------|-----|
 | RESEARCH | plan.md draft, >=3 evidence paths, formation selected. | `/framework-check` | 25% |
 | PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/sprint-init`, `/prd-new`, `/prd-groom`, `/prd-review` | 15% |
-| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. | `/test-strategy` | 35% |
-| VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | `/test-strategy` | 10% |
-| REVIEW | Critic reviewed, simplifications applied, reflection completed. | `/memory-audit` | 10% |
+| IMPLEMENT | Shards/waves complete OR checkpointed, tests written, shard self-review done. | `/test-strategy` | 35% |
+| VALIDATE | `trw_build_check(scope="full")` passes. Coverage >= target. No P0 findings. Lead verifies shard integration. | `/test-strategy` | 10% |
+| REVIEW | Lead reviews diff for quality (DRY/KISS/SOLID). Simplifications applied. Incomplete integrations fixed. `trw_learn` for discoveries. | `/review-pr`, `/memory-audit` | 10% |
 | DELIVER | PR created OR archived, final.md, CLAUDE.md synced. | `/deliver`, `/sprint-finish` | 5% |
 
 ORC tracks elapsed wall-clock against TIMEBOX_HOURS. ORC MUST NOT advance until exit criteria met OR cap exceeded with rationale. Refine plan until stable — fixing a plan is cheaper than rewriting code.
@@ -131,6 +131,60 @@ When shards discover structural impediments:
 
 ---
 
+## PLAN → IMPLEMENT TRANSITION
+
+When PRDs are groomed and approved, ORC automatically decomposes into parallel implementation:
+
+1. **Analyze file ownership**: For each PRD, identify the files/modules it touches
+2. **Check independence**: PRDs with <5% file overlap are independent → can parallelize
+3. **Group into tracks**: Batch independent PRDs into tracks of 1-2 PRDs each
+4. **Select formation**: Independent tracks → MAP-REDUCE with `ceil(tracks / 3)` agents. Interdependent PRDs → PIPELINE or single-agent sequential
+5. **Launch**: Spawn parallel blocking subagents, each with a track assignment and file ownership list
+
+```
+6 independent PRDs → 3 tracks of 2 PRDs → 3 parallel subagents
+4 PRDs, 2 share models/ → Track A (2 independent), Track B (2 dependent, sequential) → 2 parallel subagents
+```
+
+Each implementation subagent follows the full cycle per PRD: implement → write tests → self-review → validate. The lead agent verifies completeness and runs the final build gate after all tracks complete.
+
+This transition is automatic — the user only needs to approve PRDs, not direct parallelism.
+
+### Shard Definition of Done
+
+Before marking a task complete, every implementation shard (subagent or teammate) completes this checklist. Shards that skip self-review produce incomplete integrations, missing functionality, and low-quality code that requires additional passes — doing it here saves the project from rework.
+
+```
+IMPLEMENT complete? → SELF-REVIEW CHECKLIST:
+1. Re-read assigned PRD FRs — verify EVERY requirement is implemented (not just the easy ones)
+2. Check integration points — are new functions/classes actually called from existing code?
+3. Run tests — do they pass? Do they cover the new code paths?
+4. Review your own code for quality:
+   - DRY: duplicated logic? Extract shared helpers
+   - KISS: over-engineered? Simplify to minimum viable
+   - SOLID: single responsibility? Interface segregation?
+   - Edge cases: error handling, empty inputs, boundary conditions
+5. Check imports and wiring — new modules must be imported where they're used
+6. Run trw_build_check(scope="full") — confirms pytest + mypy pass
+7. Call trw_checkpoint with a summary of what was implemented and tested
+```
+
+Only after passing this checklist should a shard mark its task complete. This self-review catches 80%+ of issues that would otherwise require a separate review pass or a second implementation cycle.
+
+### Lead Verification of Shard Work
+
+The lead/ORC verifies shard completeness before advancing to DELIVER. Without this check, incomplete shard work flows through to delivery and creates quality debt.
+
+After all shards report complete:
+
+1. **Check shard summaries**: Read each shard's final checkpoint message. Verify it describes implemented FRs, test counts, and integration points — not just "done"
+2. **Spot-check integration**: For each track, verify that new code is actually wired into the codebase (imported, called, registered) — not just written as standalone modules
+3. **Run full build gate**: `trw_build_check(scope="full")` — this is the VALIDATE phase, not an optional step
+4. **Quick quality review**: Read the diff for obvious issues — missing error handling, hardcoded values, dead code, unused imports
+5. **If gaps found**: Message the shard with specific findings and have it fix in-place. Do not advance to DELIVER with known gaps — fixing them now costs minutes, fixing them later costs a full session
+
+---
+
 ## ADAPTIVE PLANNING
 
 `reports/plan.md` is NOT frozen. Update on: new info invalidating assumptions, scope +20%, approach failure, user feedback. Add `## Revision [N]`, document change/why/impact, log to events.jsonl.
@@ -150,14 +204,16 @@ When `MCP_MODE: tool`, use these instead of manual equivalents. When `MCP_MODE: 
 | `trw_claude_md_sync(scope?)` | DELIVER | MUST | Promote learnings to CLAUDE.md |
 | `trw_init(task_name, prd_scope?)` | RESEARCH | MUST | Bootstrap run directory |
 | `trw_status(run_path?)` | Any | SHOULD | Run state, phase, confidence |
-| `trw_checkpoint(message?)` | Any | SHOULD | Atomic state snapshot (~10min) |
+| `trw_checkpoint(message?)` | Any | SHOULD | Saves your progress so you resume here after compaction instead of re-implementing |
 | `trw_prd_create(input_text)` | PLAN | SHOULD | Generate AARE-F PRD |
 | `trw_prd_validate(prd_path)` | PLAN | MUST | PRD quality gate check |
 | `trw_build_check(scope?)` | VALIDATE | MUST | Run pytest + mypy |
 
-Lifecycle: `trw_session_start → /sprint-init → /prd-new → /prd-groom → /prd-review → work + trw_checkpoint + trw_learn → trw_build_check → /deliver → /sprint-finish`
+Lifecycle: `trw_session_start → /sprint-init → /prd-new → /prd-groom → /prd-review → work + trw_checkpoint + trw_learn → trw_build_check (VALIDATE) → review diff + fix gaps (REVIEW) → /deliver → /sprint-finish`
 
 Quick tasks: `trw_session_start → work → trw_learn [if discovery] → trw_deliver()`
+
+**Progress tracking**: Use `TaskCreate`/`TaskUpdate` to maintain a todo list of your remaining work items. This helps you resume efficiently after compaction — instead of re-reading all files to figure out where you were, check your task list. Call `trw_checkpoint` after completing each task with a message describing what you finished, so you have a breadcrumb trail back to your exact position.
 
 If a tool fails, fall back to manual bash/YAML equivalent and log the error.
 
@@ -252,13 +308,27 @@ When tasks benefit from independent context windows or peer communication, ORC S
 | Context | Shared with parent | Independent windows |
 | Cost sensitivity | Budget-constrained | Quality-prioritized |
 | Task coupling | Independent | Interdependent |
-| Phase | RESEARCH (always) | IMPLEMENT+ |
+| Phase | RESEARCH, PLAN, grooming, review | IMPLEMENT+ with cross-file coordination |
+| Example | Groom 6 PRDs in 2-3 batches | Build feature spanning 4 modules |
+
+**Default to subagents.** Agent Teams add overhead (team files, task lists, messaging protocol, playbooks). Use them only when teammates need to communicate with each other or coordinate on shared state. Most RESEARCH, PLAN, grooming, and review work is embarrassingly parallel — use batched subagents.
+
+### Batch Sizing
+
+Never spawn 1 agent per item. Batch items into groups of 2-3 per subagent:
+
+```
+BAD:  6 PRDs → 6 agents (wasteful, context overhead per agent)
+GOOD: 6 PRDs → 2-3 agents, each handling 2-3 PRDs sequentially
+```
+
+Formula: `agents = ceil(items / 3)`, clamped to `[2, PARALLELISM_MAX]`. Each agent processes its batch sequentially within one Task() call. All Task() calls launch in ONE message for parallelism.
 
 ### Parallelism Levels
 
 | Level | Mechanism | Notes |
 |-------|-----------|-------|
-| Subagent | Task() from LEAD | RESEARCH phase, blocking, parallel in ONE message |
+| Subagent | Task() from LEAD | Blocking, parallel in ONE message, batch 2-3 items per agent |
 | Agent Team | TeamCreate/SendMessage | IMPLEMENT+, independent sessions, shared task list |
 | TM Shard | Task() from TM | Max 4 shards, depth 1, blocking |
 

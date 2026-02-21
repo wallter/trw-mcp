@@ -41,9 +41,9 @@ class CeremonyTool(NamedTuple):
 PHASE_DESCRIPTIONS: list[tuple[str, str]] = [
     ("RESEARCH", "Discover context, audit codebase, register findings"),
     ("PLAN", "Design implementation approach, identify dependencies"),
-    ("IMPLEMENT", "Execute work with periodic checkpoints"),
-    ("VALIDATE", "Run tests, build checks, verify correctness"),
-    ("REVIEW", "Reflect on learnings, check compliance"),
+    ("IMPLEMENT", "Execute work with periodic checkpoints, shard self-review before completing"),
+    ("VALIDATE", "Run trw_build_check, verify coverage, lead checks shard integration"),
+    ("REVIEW", "Review diff for quality (DRY/KISS/SOLID), fix gaps, record learnings"),
     ("DELIVER", "Sync artifacts, checkpoint, close run"),
 ]
 
@@ -57,7 +57,8 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
     CeremonyTool("Any", "trw_checkpoint", "After milestones — preserves progress across compactions", "Atomic state snapshot", "trw_checkpoint(message='...')"),
     CeremonyTool("PLAN", "trw_prd_create", "When defining requirements", "Generate AARE-F PRD", "trw_prd_create(input_text='...')"),
     CeremonyTool("PLAN", "trw_prd_validate", "Before implementation", "PRD quality gate", "trw_prd_validate(prd_path='...')"),
-    CeremonyTool("VALIDATE", "trw_build_check", "Before delivery — runs pytest + mypy", "Run pytest + mypy", "trw_build_check(scope='full')"),
+    CeremonyTool("VALIDATE", "trw_build_check", "After implementation — runs pytest + mypy, verifies integration", "Run pytest + mypy", "trw_build_check(scope='full')"),
+    CeremonyTool("REVIEW", "review diff", "After VALIDATE — check quality (DRY/KISS/SOLID), fix gaps, record learnings", "Review diff, fix incomplete integrations", "Read diff, fix gaps, trw_learn(summary='...')"),
     CeremonyTool("DELIVER", "trw_claude_md_sync", "At delivery — promotes learnings to CLAUDE.md", "Promote learnings to CLAUDE.md", "trw_claude_md_sync()"),
     CeremonyTool("DELIVER", "trw_deliver", "At task completion — persists everything in one call", "reflect+sync+checkpoint+index", "trw_deliver()"),
 ]
@@ -428,7 +429,8 @@ def render_ceremony_flows() -> str:
         "```\n"
         "trw_session_start -> trw_init(task_name, prd_scope)\n"
         "  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)\n"
-        "  -> trw_build_check(scope='full')\n"
+        "  -> trw_build_check(scope='full')           [VALIDATE]\n"
+        "  -> review diff, fix gaps, trw_learn         [REVIEW]\n"
         "  -> trw_deliver()\n"
         "```\n"
         "\n"

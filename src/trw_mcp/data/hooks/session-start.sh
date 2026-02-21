@@ -1,6 +1,8 @@
 #!/bin/sh
 # PRD-INFRA-002-FR01/FR02/FR03/FR04: Unified SessionStart hook.
 # Dispatches on $SOURCE (startup|resume|compact|clear) from stdin JSON.
+# Framing: value-oriented — explains what each tool gives the agent.
+# Research: Anthropic context engineering, motivation framing, self-interest framing.
 # Fail-open: any error silently exits 0.
 set -e
 trap 'exit 0' EXIT
@@ -24,63 +26,69 @@ fi
 
 _project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 
-# --- Common protocol ---
-_protocol_file="$_project_root/.trw/context/behavioral_protocol.yaml"
+# --- Value-oriented protocol summary ---
 _emit_protocol() {
+  _protocol_file="$_project_root/.trw/context/behavioral_protocol.yaml"
   if [ -f "$_protocol_file" ]; then
-    echo "TRW BEHAVIORAL PROTOCOL:"
+    echo "TRW PROTOCOL — tools that help you build effectively:"
     grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
   else
-    echo "TRW BEHAVIORAL PROTOCOL: Execute trw_session_start() to load learnings. Use trw_checkpoint during work. Execute trw_deliver() at completion."
+    echo "TRW PROTOCOL — tools that help you build effectively:"
+    echo "- trw_session_start(): loads learnings + recovers active run"
+    echo "- trw_checkpoint(): saves progress so you resume after compaction"
+    echo "- trw_learn(): records discoveries for future sessions"
+    echo "- trw_deliver(): persists everything in one call when done"
   fi
 }
 
 case "$_source" in
   startup)
-    # FR01: Full startup protocol
+    # FR01: Fresh startup — explain what's available and why
     _emit_protocol
-    echo "SESSION TYPE: Fresh startup"
-    echo "ACTION: ALWAYS call trw_session_start() or trw_recall('*', min_impact=0.7) — NEVER skip this step"
-    echo "ACTION: ALWAYS read .trw/frameworks/FRAMEWORK.md"
-    echo "ACTION: ALWAYS execute trw_init for new tasks"
+    echo ""
+    echo "SESSION START: Call trw_session_start() to load your learnings and any active run state."
+    echo "This gives you prior discoveries, gotchas, and coding patterns before you begin."
     ;;
 
   resume)
-    # FR02: Resume protocol
+    # FR02: Resume — brief, goal-oriented
     _emit_protocol
-    echo "SESSION TYPE: Resumed session"
-    echo "ACTION: ALWAYS call trw_status() to check active run state"
-    echo "ACTION: ALWAYS call trw_recall('*', min_impact=0.7) for recent learnings"
-    echo "ACTION: ALWAYS read .trw/frameworks/FRAMEWORK.md"
+    echo ""
+    echo "SESSION RESUMED — your run state and learnings are preserved."
+    echo "Call trw_status() to see where you left off and what to work on next."
     ;;
 
   compact)
-    # FR03: Compaction recovery protocol
-    echo "NOTICE: Context was compacted — prior conversation state was compressed."
+    # FR03: Compaction recovery — emphasize progress is safe, show recovered state
+    echo "CONTEXT COMPACTED — your conversation was compressed but your implementation progress is safe."
+    echo ""
     _emit_protocol
-    echo "SESSION TYPE: Post-compaction recovery"
-    echo "ACTION: ALWAYS re-read .trw/frameworks/FRAMEWORK.md (lost during compaction)"
-    echo "ACTION: ALWAYS call trw_recall('*', min_impact=0.7) — NEVER skip this step"
-    echo "ACTION: ALWAYS call trw_status() to recover active run state"
+    echo ""
     # Recover pre-compaction state if available
     _state_file="$_project_root/.trw/context/pre_compact_state.json"
     if [ -f "$_state_file" ] && command -v jq >/dev/null 2>&1; then
       _run_path=$(jq -r '.run_path // empty' "$_state_file" 2>/dev/null) || true
       _phase=$(jq -r '.phase // empty' "$_state_file" 2>/dev/null) || true
-      [ -n "$_run_path" ] && echo "RECOVERED: Active run at $_run_path"
-      [ -n "$_phase" ] && echo "RECOVERED: Phase was $_phase"
+      _event_count=$(jq -r '.events_logged // 0' "$_state_file" 2>/dev/null) || true
+      _last_cp=$(jq -r '.last_checkpoint // empty' "$_state_file" 2>/dev/null) || true
+      if [ -n "$_run_path" ]; then
+        echo "RECOVERED: Run at $_run_path"
+        [ -n "$_phase" ] && echo "RECOVERED: Phase: $_phase | Events: ${_event_count:-0}"
+        [ -n "$_last_cp" ] && echo "LAST CHECKPOINT: \"$_last_cp\""
+      fi
     fi
+    echo ""
+    echo "CONTINUE: Call trw_status() to see your current state, then resume implementation."
+    echo "Your checkpoint has your progress — do NOT re-plan or restart from scratch."
     ;;
 
   clear)
     # FR04: Minimal clear protocol
-    _emit_protocol
-    echo "SESSION TYPE: Cleared session"
-    echo "ACTION: ALWAYS call trw_recall('*', min_impact=0.7)"
+    echo "TRW: Call trw_recall('*', min_impact=0.7) to load relevant learnings from prior sessions."
     ;;
 
   *)
-    # Fallback for unknown source (including empty)
+    # Fallback for unknown source
     _emit_protocol
     ;;
 esac

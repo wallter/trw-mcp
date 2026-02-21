@@ -194,6 +194,30 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         results["run_path"] = str(resolved_run) if resolved_run else None
 
+        # Premature delivery guard: warn if run has only init/ceremony events
+        if resolved_run is not None:
+            events_path = resolved_run / "meta" / "events.jsonl"
+            if _reader.exists(events_path):
+                all_events = _reader.read_jsonl(events_path)
+                ceremony_only = {"run_init", "checkpoint", "reflection_complete",
+                                 "trw_reflect_complete", "trw_deliver_complete",
+                                 "trw_session_start_complete"}
+                work_events = [
+                    e for e in all_events
+                    if str(e.get("event", "")) not in ceremony_only
+                ]
+                if len(work_events) == 0 and len(all_events) > 0:
+                    results["warning"] = (
+                        "Premature delivery — no work events found beyond ceremony. "
+                        "This run has only init/checkpoint events. Proceeding anyway, "
+                        "but consider whether work was actually completed."
+                    )
+                    logger.warning(
+                        "premature_delivery",
+                        total_events=len(all_events),
+                        work_events=0,
+                    )
+
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:
             try:

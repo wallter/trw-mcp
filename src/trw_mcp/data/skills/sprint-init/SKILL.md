@@ -69,6 +69,17 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
 - [ ] Delivery ceremony completed (/deliver)
 ```
 
+## After Grooming: Auto-Parallel Implementation
+
+Once PRDs are groomed and approved, proceed to implementation automatically:
+
+1. **Analyze file overlap**: For each PRD, identify the modules/files it touches
+2. **Group into tracks**: PRDs with <5% file overlap go in separate tracks (parallelizable). PRDs sharing modules go in the same track (sequential)
+3. **Launch parallel subagents**: One subagent per track (not per PRD). Each subagent implements its track's PRDs sequentially, writes tests, and validates
+4. **Final gate**: After all tracks complete, run `trw_build_check(scope="full")` to verify no cross-track regressions
+
+The user does not need to direct parallelism — this is the default behavior after PRD approval.
+
 ## Notes
 
 - Sprint docs live in the `sprints/active/` subdirectory while active

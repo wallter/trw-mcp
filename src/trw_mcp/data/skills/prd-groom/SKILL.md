@@ -51,6 +51,15 @@ Groom a PRD to sprint-ready quality (>= 0.85 completeness) through systematic re
 
 7. **Completion**: Call `trw_learn(summary="PRD groomed: {PRD-ID} to {score}", tags=["prd-workflow"])`. Report final quality score and any remaining gaps.
 
+## Multi-PRD Batching
+
+When grooming multiple PRDs (e.g., during sprint planning), batch them into parallel subagents — never 1 agent per PRD:
+
+- **2-4 PRDs**: 2 parallel `prd-groomer` agents, each handling 1-2 PRDs sequentially
+- **5-8 PRDs**: 3 parallel `prd-groomer` agents, each handling 2-3 PRDs sequentially
+- Group PRDs by domain similarity when possible (related PRDs share research context)
+- Launch all agents in ONE message for parallelism
+
 ## Constraints
 
 - NEVER fabricate requirements not grounded in Background or codebase evidence

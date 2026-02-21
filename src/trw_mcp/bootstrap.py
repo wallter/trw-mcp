@@ -1,7 +1,11 @@
-"""Project bootstrap — sets up TRW framework in a target directory.
+"""Project bootstrap — sets up and updates TRW framework in a target directory.
 
 PRD-INFRA-006: ``trw-mcp init-project`` CLI command that copies all
 required framework files into a target git repository.
+
+``trw-mcp update-project`` selectively updates framework files (hooks,
+skills, agents, FRAMEWORK.md) while preserving user-customized files
+(config.yaml, learnings, CLAUDE.md user sections).
 """
 
 from __future__ import annotations
@@ -139,6 +143,282 @@ def init_project(
     return result
 
 
+# Files that are always overwritten during update (framework-managed).
+_ALWAYS_UPDATE: list[tuple[str, str]] = [
+    ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
+    ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
+    ("templates/claude_md.md", ".trw/templates/claude_md.md"),
+    ("settings.json", ".claude/settings.json"),
+]
+
+# Files that are never overwritten during update (user-customized).
+# These are only created if missing.
+_NEVER_OVERWRITE = {
+    ".trw/config.yaml",
+    ".trw/learnings/index.yaml",
+    ".mcp.json",
+}
+
+# CLAUDE.md markers for the auto-generated section.
+_TRW_START_MARKER = "<!-- trw:start -->"
+_TRW_END_MARKER = "<!-- trw:end -->"
+_TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
+
+
+def update_project(
+    target_dir: Path,
+) -> dict[str, list[str]]:
+    """Update TRW framework files in *target_dir* while preserving user config.
+
+    Always updates: hooks, skills, agents, FRAMEWORK.md, behavioral_protocol.yaml,
+    claude_md template, settings.json.
+
+    Never overwrites: config.yaml, learnings/, .mcp.json.
+
+    Smart update: CLAUDE.md — replaces content between ``trw:start``/``trw:end``
+    markers while preserving all user-written sections.
+
+    Args:
+        target_dir: Root of the target git repository.
+
+    Returns:
+        Dict with ``updated``, ``created``, ``preserved``, ``errors`` lists.
+    """
+    result: dict[str, list[str]] = {
+        "updated": [],
+        "created": [],
+        "preserved": [],
+        "errors": [],
+    }
+
+    # Validate target has TRW installed
+    if not (target_dir / ".trw").exists():
+        result["errors"].append(
+            f"{target_dir} does not have TRW installed (.trw/ not found). "
+            "Run `trw-mcp init-project` first."
+        )
+        return result
+
+    # 1. Ensure directories exist
+    for rel_dir in _TRW_DIRS:
+        _ensure_dir(target_dir / rel_dir, result)
+
+    # 2. Update framework files (always overwrite)
+    for data_name, dest_rel in _ALWAYS_UPDATE:
+        src = _DATA_DIR / data_name
+        dest = target_dir / dest_rel
+        existed = dest.exists()
+        try:
+            shutil.copy2(src, dest)
+            if existed:
+                result["updated"].append(str(dest))
+            else:
+                result["created"].append(str(dest))
+        except OSError as exc:
+            result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+
+    # 3. Create-only files (never overwrite existing)
+    for rel_path in _NEVER_OVERWRITE:
+        dest = target_dir / rel_path
+        if dest.exists():
+            result["preserved"].append(str(dest))
+
+    # 4. Update hooks (always overwrite)
+    hooks_source = _DATA_DIR / "hooks"
+    if hooks_source.is_dir():
+        for hook_file in sorted(hooks_source.iterdir()):
+            if hook_file.suffix == ".sh":
+                dest = target_dir / ".claude" / "hooks" / hook_file.name
+                existed = dest.exists()
+                try:
+                    shutil.copy2(hook_file, dest)
+                    if dest.suffix == ".sh":
+                        executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                        os.chmod(dest, os.stat(dest).st_mode | executable)
+                    if existed:
+                        result["updated"].append(str(dest))
+                    else:
+                        result["created"].append(str(dest))
+                except OSError as exc:
+                    result["errors"].append(
+                        f"Failed to copy {hook_file} -> {dest}: {exc}"
+                    )
+
+    # 5. Update skills (always overwrite)
+    skills_source = _DATA_DIR / "skills"
+    if skills_source.is_dir():
+        for skill_dir in sorted(skills_source.iterdir()):
+            if skill_dir.is_dir():
+                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
+                _ensure_dir(dest_skill, result)
+                for skill_file in sorted(skill_dir.iterdir()):
+                    if skill_file.is_file():
+                        dest = dest_skill / skill_file.name
+                        existed = dest.exists()
+                        try:
+                            shutil.copy2(skill_file, dest)
+                            if existed:
+                                result["updated"].append(str(dest))
+                            else:
+                                result["created"].append(str(dest))
+                        except OSError as exc:
+                            result["errors"].append(
+                                f"Failed to copy {skill_file} -> {dest}: {exc}"
+                            )
+
+    # 6. Update agents (always overwrite)
+    agents_source = _DATA_DIR / "agents"
+    if agents_source.is_dir():
+        for agent_file in sorted(agents_source.iterdir()):
+            if agent_file.suffix == ".md":
+                dest = target_dir / ".claude" / "agents" / agent_file.name
+                existed = dest.exists()
+                try:
+                    shutil.copy2(agent_file, dest)
+                    if existed:
+                        result["updated"].append(str(dest))
+                    else:
+                        result["created"].append(str(dest))
+                except OSError as exc:
+                    result["errors"].append(
+                        f"Failed to copy {agent_file} -> {dest}: {exc}"
+                    )
+
+    # 7. Smart-update CLAUDE.md (preserve user sections, update trw block)
+    claude_md_path = target_dir / "CLAUDE.md"
+    if claude_md_path.exists():
+        _update_claude_md_trw_section(claude_md_path, result)
+    else:
+        # No CLAUDE.md yet — write the full template
+        try:
+            claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+            result["created"].append(str(claude_md_path))
+        except OSError as exc:
+            result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
+
+    # 8. Remove stale hooks/skills/agents no longer in bundled data
+    _remove_stale_artifacts(target_dir, result)
+
+    logger.info(
+        "update_complete",
+        target=str(target_dir),
+        updated=len(result["updated"]),
+        created=len(result["created"]),
+        preserved=len(result["preserved"]),
+        errors=len(result["errors"]),
+    )
+    return result
+
+
+def _update_claude_md_trw_section(
+    claude_md_path: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Replace the auto-generated TRW section in CLAUDE.md.
+
+    Preserves all user-written content above and below the markers.
+    """
+    content = claude_md_path.read_text(encoding="utf-8")
+    new_block = _minimal_claude_md_trw_block()
+
+    start_idx = content.find(_TRW_START_MARKER)
+    end_idx = content.find(_TRW_END_MARKER)
+
+    if start_idx != -1 and end_idx != -1:
+        # Replace the existing auto-generated section
+        end_idx += len(_TRW_END_MARKER)
+        # Also capture the header marker line if present
+        header_idx = content.rfind(_TRW_HEADER_MARKER, 0, start_idx)
+        replace_start = header_idx if header_idx != -1 else start_idx
+        updated = content[:replace_start] + new_block + content[end_idx:]
+        try:
+            claude_md_path.write_text(updated, encoding="utf-8")
+            result["updated"].append(str(claude_md_path))
+        except OSError as exc:
+            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
+    elif _TRW_START_MARKER not in content:
+        # No TRW section — append it
+        if not content.endswith("\n"):
+            content += "\n"
+        content += "\n" + new_block
+        try:
+            claude_md_path.write_text(content, encoding="utf-8")
+            result["updated"].append(str(claude_md_path))
+        except OSError as exc:
+            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
+    else:
+        result["errors"].append(
+            f"CLAUDE.md has malformed TRW markers — found start but not end"
+        )
+
+
+def _minimal_claude_md_trw_block() -> str:
+    """Return just the auto-generated TRW section for CLAUDE.md updates."""
+    # Extract the TRW block from the full template
+    full = _minimal_claude_md()
+    start_idx = full.find(_TRW_HEADER_MARKER)
+    end_idx = full.find(_TRW_END_MARKER)
+    if start_idx != -1 and end_idx != -1:
+        return full[start_idx : end_idx + len(_TRW_END_MARKER)] + "\n"
+    # Fallback: return entire trw:start..trw:end
+    start_idx = full.find(_TRW_START_MARKER)
+    if start_idx != -1 and end_idx != -1:
+        return full[start_idx : end_idx + len(_TRW_END_MARKER)] + "\n"
+    return ""
+
+
+def _remove_stale_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Remove hooks/skills/agents that no longer exist in bundled data.
+
+    This ensures clean updates — if a hook is renamed or a skill is removed
+    in a new version, the stale file is cleaned up.
+    """
+    # Stale hooks
+    hooks_source = _DATA_DIR / "hooks"
+    if hooks_source.is_dir():
+        bundled_hooks = {f.name for f in hooks_source.iterdir() if f.suffix == ".sh"}
+        target_hooks = target_dir / ".claude" / "hooks"
+        if target_hooks.is_dir():
+            for existing in target_hooks.iterdir():
+                if existing.suffix == ".sh" and existing.name not in bundled_hooks:
+                    try:
+                        existing.unlink()
+                        result["updated"].append(f"removed:{existing}")
+                    except OSError:
+                        pass  # Non-critical
+
+    # Stale skills (directories not in bundled data)
+    skills_source = _DATA_DIR / "skills"
+    if skills_source.is_dir():
+        bundled_skills = {d.name for d in skills_source.iterdir() if d.is_dir()}
+        target_skills = target_dir / ".claude" / "skills"
+        if target_skills.is_dir():
+            for existing in target_skills.iterdir():
+                if existing.is_dir() and existing.name not in bundled_skills:
+                    try:
+                        shutil.rmtree(existing)
+                        result["updated"].append(f"removed:{existing}")
+                    except OSError:
+                        pass
+
+    # Stale agents
+    agents_source = _DATA_DIR / "agents"
+    if agents_source.is_dir():
+        bundled_agents = {f.name for f in agents_source.iterdir() if f.suffix == ".md"}
+        target_agents = target_dir / ".claude" / "agents"
+        if target_agents.is_dir():
+            for existing in target_agents.iterdir():
+                if existing.suffix == ".md" and existing.name not in bundled_agents:
+                    try:
+                        existing.unlink()
+                        result["updated"].append(f"removed:{existing}")
+                    except OSError:
+                        pass
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -250,19 +530,19 @@ This file provides guidance to Claude Code when working with code in this reposi
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 <!-- trw:start -->
 
-CRITICAL — YOU MUST EXECUTE THESE TOOLS:
-- **BEFORE ANY WORK**: ALWAYS call `trw_session_start()` (or `trw_recall('*', min_impact=0.7)` for quick tasks). NEVER skip this step.
-- **AFTER COMPLETING WORK**: ALWAYS call `trw_deliver()` (or `trw_claude_md_sync` for quick tasks). NEVER skip this step.
+TRW tools help you build effectively and preserve your work across sessions:
+- **Start**: call `trw_session_start()` to load prior learnings and recover any active run
+- **Finish**: call `trw_deliver()` to persist your learnings for future sessions
 
 ## TRW Behavioral Protocol (Auto-Generated)
 
-- ALWAYS execute `trw_session_start()` FIRST — server enforces this with warnings on every response if skipped
-- ALWAYS execute `trw_status()` when resuming a run — without this, you WILL overwrite in-progress work
-- ALWAYS execute `trw_init` to bootstrap run directory for new tasks
-- ALWAYS execute `trw_checkpoint` during implementation — without these, progress is lost on failure
-- After errors or >2 retries: ALWAYS execute `trw_learn` to record the discovery — unrecorded mistakes WILL recur
-- ALWAYS execute `trw_claude_md_sync` at delivery to persist learnings — without this, next session starts blind
-- Quick tasks (no run): ALWAYS use `trw_recall` at start, `trw_learn` for discoveries
+- `trw_session_start()` loads your prior learnings and recovers any active run — call it first so you have full context before writing code
+- `trw_status()` shows your current phase, completed work, and next steps — call it when resuming so you pick up where you left off instead of redoing work
+- `trw_init(task_name)` creates your run directory and event log — call it for new tasks so checkpoints and progress tracking work
+- `trw_checkpoint(message)` saves your implementation progress — call it after each milestone so you can resume here if context compacts, instead of re-implementing from scratch
+- `trw_learn(summary, detail)` records discoveries for all future sessions — call it when you hit errors or find gotchas so no agent repeats your mistakes
+- `trw_claude_md_sync()` promotes your best learnings into CLAUDE.md — call it at delivery so the next session starts with your insights built in
+- For quick tasks without a run: `trw_recall()` gives you relevant prior learnings at the start, `trw_learn()` saves new ones for next time
 
 ## TRW Ceremony Tools (Auto-Generated)
 
@@ -276,15 +556,15 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 
 | Phase | Tool | When to Use |
 |-------|------|-------------|
-| Start | `trw_session_start` | ALWAYS at session start |
-| Start | `trw_recall` | ALWAYS for quick tasks (no run) |
-| Start | `trw_status` | ALWAYS when resuming a run |
-| RESEARCH | `trw_init` | ALWAYS for new tasks |
-| Any | `trw_learn` | ALWAYS on errors/discoveries |
-| Any | `trw_checkpoint` | Every milestone / ~10min |
-| VALIDATE | `trw_build_check` | ALWAYS before delivery |
-| DELIVER | `trw_claude_md_sync` | ALWAYS at delivery |
-| DELIVER | `trw_deliver` | ALWAYS at task completion |
+| Start | `trw_session_start` | At session start — loads learnings + run state |
+| Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings |
+| Start | `trw_status` | When resuming — shows phase, progress, next steps |
+| RESEARCH | `trw_init` | New tasks — creates run directory for tracking |
+| Any | `trw_learn` | On errors/discoveries — saves for future sessions |
+| Any | `trw_checkpoint` | After milestones — preserves progress across compactions |
+| VALIDATE | `trw_build_check` | Before delivery — runs pytest + mypy |
+| DELIVER | `trw_claude_md_sync` | At delivery — promotes learnings to CLAUDE.md |
+| DELIVER | `trw_deliver` | At task completion — persists everything in one call |
 
 ### Example Flows
 

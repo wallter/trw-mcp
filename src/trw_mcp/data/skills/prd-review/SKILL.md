@@ -40,6 +40,15 @@ The agent returns a structured review with:
 - Specific findings with severity and recommendations
 - Suggested next actions
 
+## Multi-PRD Batching
+
+When reviewing multiple PRDs, batch them into parallel subagents — never 1 agent per PRD:
+
+- **2-4 PRDs**: 2 parallel `requirement-reviewer` agents, each reviewing 1-2 PRDs
+- **5-8 PRDs**: 3 parallel agents, each reviewing 2-3 PRDs sequentially
+- Launch all agents in ONE message for parallelism
+- Each agent returns a structured verdict per PRD
+
 ## Notes
 
 - This skill is read-only — it never modifies the PRD file

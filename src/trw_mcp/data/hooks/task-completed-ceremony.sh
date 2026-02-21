@@ -1,10 +1,10 @@
 #!/bin/sh
-# PRD-INFRA-004-FR01: TaskCompleted hook — ceremony enforcement gate.
-# Blocks (exit 2) if events logged but ceremony incomplete, max 2 blocks.
-# After 2 blocks, warns but allows. Fail-open on errors.
+# PRD-INFRA-004-FR01: TaskCompleted hook — soft quality gate.
+# Logs completion events. Warns about incomplete ceremony but does NOT block.
+# Ceremony enforcement is handled by the Stop hook (stop-ceremony.sh).
+# Subagent task completions should never be blocked — they are intermediate steps.
 set -e
-_trw_intentional_exit=""
-trap '[ -n "$_trw_intentional_exit" ] || exit 0' EXIT
+trap 'exit 0' EXIT
 
 _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
@@ -12,40 +12,27 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
-_project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-_block_file="$_project_root/.trw/context/task_ceremony_block_count"
-_context_dir="$_project_root/.trw/context"
-
-# Check ceremony status — returns missing steps or empty if complete.
-# Returns non-zero if no active run or event count < 3.
-_missing=$(check_ceremony_status) || exit 0
-
-# If ceremony complete or too few events, reset counter and allow
-if [ -z "$_missing" ]; then
-  rm -f "$_block_file" 2>/dev/null || true
-  exit 0
+# Read stdin payload for logging
+_payload=$(cat) || exit 0
+_task_subject=""
+_teammate_name=""
+if command -v jq >/dev/null 2>&1; then
+  _task_subject=$(printf '%s' "$_payload" | jq -r '.task_subject // empty' 2>/dev/null) || true
+  _teammate_name=$(printf '%s' "$_payload" | jq -r '.teammate_name // empty' 2>/dev/null) || true
 fi
 
-# Read and manage block counter (same pattern as stop-ceremony.sh)
-[ -d "$_context_dir" ] || mkdir -p "$_context_dir" 2>/dev/null || exit 0
-_blocks=0
-if [ -f "$_block_file" ]; then
-  _blocks=$(tr -d '[:space:]' < "$_block_file" 2>/dev/null) || true
-fi
-_blocks=$((${_blocks:-0} + 0)) 2>/dev/null || _blocks=0
-
-if [ "$_blocks" -ge 2 ]; then
-  echo "TRW WARNING: Ceremony incomplete. Allowing after 2 blocks." >&2
-  rm -f "$_block_file" 2>/dev/null || true
-  log_hook_execution "TaskCompleted" "" "0"
-  exit 0
+# Fallback extraction without jq
+if [ -z "$_task_subject" ]; then
+  _task_subject=$(printf '%s' "$_payload" | grep -o '"task_subject"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"task_subject"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
 fi
 
-# Block: increment counter and exit 2
-_blocks=$((_blocks + 1))
-printf '%s' "$_blocks" > "$_block_file" 2>/dev/null || true
-echo "$_missing (Block $_blocks/2)" >&2
+# Log the completion event (informational only)
+log_hook_execution "TaskCompleted" "${_teammate_name:-unknown}:${_task_subject}" "0"
 
-log_hook_execution "TaskCompleted" "" "2"
-_trw_intentional_exit=1
-exit 2
+# Soft check: warn about incomplete ceremony but allow completion
+_missing=$(check_ceremony_status 2>/dev/null) || exit 0
+if [ -n "$_missing" ]; then
+  echo "TRW NOTE: Ceremony pending — remember to call trw_deliver() when all tasks are done." >&2
+fi
+
+exit 0

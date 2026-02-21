@@ -236,9 +236,9 @@ class TestHookScripts:
         assert "PRD-INFRA-010" in content
 
     def test_task_completed_prd_reference(self, hooks_dir: Path) -> None:
-        """task-completed.sh references PRD-INFRA-010."""
+        """task-completed.sh references PRD-INFRA-004."""
         content = (hooks_dir / "task-completed.sh").read_text(encoding="utf-8")
-        assert "PRD-INFRA-010" in content
+        assert "PRD-INFRA-004" in content
 
 
 class TestSettingsJson:

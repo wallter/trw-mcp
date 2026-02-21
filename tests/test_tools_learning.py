@@ -461,7 +461,7 @@ class TestCeremonyRendering:
         # All 11 tools present
         for ct in CEREMONY_TOOLS:
             assert f"`{ct.tool}`" in result
-        assert len(CEREMONY_TOOLS) == 11
+        assert len(CEREMONY_TOOLS) == 12
 
     def test_render_ceremony_flows(self) -> None:
         """Both quick and full flows present with key tool names."""

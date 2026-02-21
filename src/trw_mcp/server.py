@@ -50,9 +50,22 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
         handlers.append(logging.FileHandler(str(log_file), encoding="utf-8"))
         base_processors.append(structlog.processors.format_exc_info)
 
-        # Suppress FastMCP Redis noise (~1.25M lines/day, 145 MB vs ~800 TRW events)
-        for logger_name in ("fastmcp", "redis", "httpcore", "httpx", "asyncio"):
+        # Suppress FastMCP / Redis / HTTP noise (~1.25M lines/day, 145 MB vs ~800 TRW events)
+        for logger_name in (
+            "fastmcp", "redis", "redis.asyncio", "redis.connection",
+            "httpcore", "httpx", "asyncio", "urllib3",
+        ):
             logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+        # Filter non-JSON lines from file handler (catches raw Redis >>> protocol output)
+        class _JsonOnlyFilter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                msg = str(record.getMessage())
+                return msg.startswith("{") or msg.startswith("[")
+
+        for handler in handlers:
+            if isinstance(handler, logging.FileHandler):
+                handler.addFilter(_JsonOnlyFilter())
 
     logging.basicConfig(
         format="%(message)s",
@@ -141,6 +154,30 @@ def _run_init_project(args: argparse.Namespace) -> None:
     sys.exit(1 if result["errors"] else 0)
 
 
+def _run_update_project(args: argparse.Namespace) -> None:
+    """Handle the ``update-project`` subcommand."""
+    from trw_mcp.bootstrap import update_project
+
+    target = Path(args.target_dir).resolve()
+    result = update_project(target)
+
+    for f in result["updated"]:
+        print(f"  Updated: {f}")
+    for f in result["created"]:
+        print(f"  Created (new): {f}")
+    for f in result["preserved"]:
+        print(f"  Preserved: {f}")
+    for e in result["errors"]:
+        print(f"  ERROR: {e}")
+
+    total = len(result["updated"]) + len(result["created"])
+    if not result["errors"]:
+        print(f"\nTRW framework updated in {target} ({total} files)")
+        print("User files (config.yaml, learnings, CLAUDE.md user sections) preserved.")
+
+    sys.exit(1 if result["errors"] else 0)
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command."""
     parser = argparse.ArgumentParser(
@@ -172,10 +209,25 @@ def main() -> None:
         help="Overwrite existing files",
     )
 
+    update_parser = subparsers.add_parser(
+        "update-project",
+        help="Update TRW framework files (preserves user config)",
+    )
+    update_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Target project directory (default: current directory)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "init-project":
         _run_init_project(args)
+        return
+
+    if args.command == "update-project":
+        _run_update_project(args)
         return
 
     # Default: run MCP server (no subcommand or "serve")

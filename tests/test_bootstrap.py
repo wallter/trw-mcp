@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.bootstrap import init_project
+from trw_mcp.bootstrap import init_project, update_project
 
 
 @pytest.fixture()
@@ -226,18 +226,20 @@ class TestSkills:
     EXPECTED_SKILLS = [
         "deliver",
         "framework-check",
+        "learn",
         "memory-audit",
         "memory-optimize",
         "prd-groom",
         "prd-new",
         "prd-review",
+        "project-health",
         "sprint-finish",
         "sprint-init",
         "test-strategy",
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 10 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 12 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -291,6 +293,10 @@ class TestAgents:
         "requirement-reviewer.md",
         "requirement-writer.md",
         "traceability-checker.md",
+        "trw-implementer.md",
+        "trw-researcher.md",
+        "trw-reviewer.md",
+        "trw-tester.md",
     ]
 
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
@@ -339,3 +345,252 @@ class TestBootstrapConfigFlags:
         content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
         assert "source_package_name" not in content
         assert "tests_relative_path" not in content
+
+
+# ── Update Project Tests ─────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def initialized_repo(fake_git_repo: Path) -> Path:
+    """Create a repo with TRW already initialized."""
+    result = init_project(fake_git_repo)
+    assert not result["errors"]
+    return fake_git_repo
+
+
+@pytest.mark.unit
+class TestUpdateProjectBasics:
+    """Test update_project basic behavior."""
+
+    def test_requires_trw_installed(self, tmp_path: Path) -> None:
+        """update_project errors if .trw/ does not exist."""
+        result = update_project(tmp_path)
+        assert len(result["errors"]) == 1
+        assert ".trw/ not found" in result["errors"][0]
+
+    def test_no_errors_on_initialized_repo(self, initialized_repo: Path) -> None:
+        """update_project succeeds on an initialized repo."""
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+    def test_reports_updated_files(self, initialized_repo: Path) -> None:
+        """update_project reports framework files as updated."""
+        result = update_project(initialized_repo)
+        assert len(result["updated"]) > 0
+        # Should have updated hooks, skills, agents, framework files
+        updated_str = "\n".join(result["updated"])
+        assert "FRAMEWORK.md" in updated_str
+        assert "hooks" in updated_str
+
+    def test_reports_preserved_files(self, initialized_repo: Path) -> None:
+        """update_project reports user files as preserved."""
+        result = update_project(initialized_repo)
+        preserved_str = "\n".join(result["preserved"])
+        assert "config.yaml" in preserved_str
+
+
+@pytest.mark.unit
+class TestUpdatePreservesUserFiles:
+    """Test that update_project never overwrites user-customized files."""
+
+    def test_preserves_config_yaml(self, initialized_repo: Path) -> None:
+        """User's config.yaml is never overwritten."""
+        config_path = initialized_repo / ".trw" / "config.yaml"
+        config_path.write_text("custom_setting: true\n", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = config_path.read_text(encoding="utf-8")
+        assert "custom_setting: true" in content
+
+    def test_preserves_learnings(self, initialized_repo: Path) -> None:
+        """User's learnings index is never overwritten."""
+        index_path = initialized_repo / ".trw" / "learnings" / "index.yaml"
+        index_path.write_text("entries:\n- id: L001\n", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = index_path.read_text(encoding="utf-8")
+        assert "L001" in content
+
+    def test_preserves_mcp_json(self, initialized_repo: Path) -> None:
+        """User's .mcp.json is never overwritten."""
+        mcp_path = initialized_repo / ".mcp.json"
+        mcp_path.write_text('{"custom": true}\n', encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = mcp_path.read_text(encoding="utf-8")
+        assert '"custom": true' in content
+
+
+@pytest.mark.unit
+class TestUpdateOverwritesFrameworkFiles:
+    """Test that update_project overwrites framework-managed files."""
+
+    def test_updates_framework_md(self, initialized_repo: Path) -> None:
+        """FRAMEWORK.md is overwritten with latest version."""
+        fw_path = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+        fw_path.write_text("old framework content", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = fw_path.read_text(encoding="utf-8")
+        assert content != "old framework content"
+        assert "v24.0_TRW" in content
+
+    def test_updates_hooks(self, initialized_repo: Path) -> None:
+        """Hook scripts are overwritten with latest versions."""
+        hook_path = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        hook_path.write_text("old hook", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = hook_path.read_text(encoding="utf-8")
+        assert content != "old hook"
+
+    def test_updates_skills(self, initialized_repo: Path) -> None:
+        """Skill files are overwritten with latest versions."""
+        skill_path = initialized_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
+        skill_path.write_text("old skill", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = skill_path.read_text(encoding="utf-8")
+        assert content != "old skill"
+
+    def test_updates_agents(self, initialized_repo: Path) -> None:
+        """Agent files are overwritten with latest versions."""
+        agent_path = initialized_repo / ".claude" / "agents" / "code-simplifier.md"
+        agent_path.write_text("old agent", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = agent_path.read_text(encoding="utf-8")
+        assert content != "old agent"
+
+
+@pytest.mark.unit
+class TestUpdateClaudeMdSmartMerge:
+    """Test that update_project smart-merges CLAUDE.md."""
+
+    def test_preserves_user_sections(self, initialized_repo: Path) -> None:
+        """User content above TRW markers is preserved."""
+        claude_md = initialized_repo / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+
+        # Add user content before the TRW section
+        user_section = "## My Custom Section\n\nThis is user content.\n\n"
+        content = content.replace("<!-- TRW AUTO-GENERATED", user_section + "<!-- TRW AUTO-GENERATED")
+        claude_md.write_text(content, encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        updated = claude_md.read_text(encoding="utf-8")
+        assert "My Custom Section" in updated
+        assert "This is user content." in updated
+        assert "trw_session_start" in updated  # TRW section still present
+
+    def test_updates_trw_section(self, initialized_repo: Path) -> None:
+        """TRW auto-generated section is updated."""
+        claude_md = initialized_repo / "CLAUDE.md"
+
+        update_project(initialized_repo)
+
+        content = claude_md.read_text(encoding="utf-8")
+        assert "<!-- trw:start -->" in content
+        assert "<!-- trw:end -->" in content
+        assert "trw_session_start" in content
+
+    def test_appends_trw_section_if_missing(self, initialized_repo: Path) -> None:
+        """If CLAUDE.md has no TRW markers, append the section."""
+        claude_md = initialized_repo / "CLAUDE.md"
+        claude_md.write_text("# My Project\n\nNo TRW section here.\n", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        content = claude_md.read_text(encoding="utf-8")
+        assert "# My Project" in content
+        assert "<!-- trw:start -->" in content
+        assert "trw_session_start" in content
+
+    def test_creates_claude_md_if_missing(self, initialized_repo: Path) -> None:
+        """If CLAUDE.md doesn't exist, create it from template."""
+        claude_md = initialized_repo / "CLAUDE.md"
+        claude_md.unlink()
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+        assert claude_md.exists()
+        assert "trw_session_start" in claude_md.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+class TestUpdateRemovesStaleArtifacts:
+    """Test that update_project cleans up renamed/removed artifacts."""
+
+    def test_removes_stale_hook(self, initialized_repo: Path) -> None:
+        """Hook scripts not in bundled data are removed."""
+        stale_hook = initialized_repo / ".claude" / "hooks" / "old-removed-hook.sh"
+        stale_hook.write_text("#!/bin/sh\nexit 0", encoding="utf-8")
+
+        result = update_project(initialized_repo)
+
+        assert not stale_hook.exists()
+        assert any("removed:" in u and "old-removed-hook" in u for u in result["updated"])
+
+    def test_removes_stale_skill(self, initialized_repo: Path) -> None:
+        """Skill directories not in bundled data are removed."""
+        stale_skill = initialized_repo / ".claude" / "skills" / "old-skill"
+        stale_skill.mkdir(parents=True, exist_ok=True)
+        (stale_skill / "SKILL.md").write_text("old", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        assert not stale_skill.exists()
+
+    def test_removes_stale_agent(self, initialized_repo: Path) -> None:
+        """Agent files not in bundled data are removed."""
+        stale_agent = initialized_repo / ".claude" / "agents" / "old-agent.md"
+        stale_agent.write_text("old agent", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        assert not stale_agent.exists()
+
+    def test_does_not_remove_non_md_agents(self, initialized_repo: Path) -> None:
+        """Non-.md files in agents directory are not touched."""
+        other_file = initialized_repo / ".claude" / "agents" / "notes.txt"
+        other_file.write_text("user notes", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        assert other_file.exists()
+
+
+@pytest.mark.unit
+class TestUpdateCreatesNewArtifacts:
+    """Test that update_project creates new artifacts from newer versions."""
+
+    def test_creates_new_skill(self, initialized_repo: Path) -> None:
+        """New skills in bundled data are deployed."""
+        # All skills should exist after update
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        skills_dir = initialized_repo / ".claude" / "skills"
+        deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
+        # Should have all expected skills
+        assert "deliver" in deployed
+        assert "learn" in deployed
+        assert "project-health" in deployed
+
+    def test_creates_new_agent(self, initialized_repo: Path) -> None:
+        """New agents in bundled data are deployed."""
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        agents_dir = initialized_repo / ".claude" / "agents"
+        deployed = sorted(f.name for f in agents_dir.iterdir() if f.suffix == ".md")
+        assert "trw-implementer.md" in deployed
+        assert "trw-tester.md" in deployed

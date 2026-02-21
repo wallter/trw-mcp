@@ -1,12 +1,12 @@
 # Behavioral directives — single source of truth for all injection channels.
 # Read by: CLAUDE.md template, SessionStart hook, MCP instructions.
-# NOTE: Server-side enforcement (PRD-INFRA-007) prepends warnings to every
-# tool response until ceremony is executed. These directives are mandatory.
+# Framing: value-oriented (what it gives you) > threat-oriented (what you lose).
+# Research basis: Anthropic context engineering, motivation framing, self-interest framing.
 directives:
-  - "ALWAYS execute `trw_session_start()` FIRST — server enforces this with warnings on every response if skipped"
-  - "ALWAYS execute `trw_status()` when resuming a run — without this, you WILL overwrite in-progress work"
-  - "ALWAYS execute `trw_init` to bootstrap run directory for new tasks"
-  - "ALWAYS execute `trw_checkpoint` during implementation — without these, progress is lost on failure"
-  - "After errors or >2 retries: ALWAYS execute `trw_learn` to record the discovery — unrecorded mistakes WILL recur"
-  - "ALWAYS execute `trw_claude_md_sync` at delivery to persist learnings — without this, next session starts blind"
-  - "Quick tasks (no run): ALWAYS use `trw_recall` at start, `trw_learn` for discoveries"
+  - "`trw_session_start()` loads your prior learnings and recovers any active run — call it first so you have full context before writing code"
+  - "`trw_status()` shows your current phase, completed work, and next steps — call it when resuming so you pick up where you left off instead of redoing work"
+  - "`trw_init(task_name)` creates your run directory and event log — call it for new tasks so checkpoints and progress tracking work"
+  - "`trw_checkpoint(message)` saves your implementation progress — call it after each milestone so you can resume here if context compacts, instead of re-implementing from scratch"
+  - "`trw_learn(summary, detail)` records discoveries for all future sessions — call it when you hit errors or find gotchas so no agent repeats your mistakes"
+  - "`trw_claude_md_sync()` promotes your best learnings into CLAUDE.md — call it at delivery so the next session starts with your insights built in"
+  - "For quick tasks without a run: `trw_recall()` gives you relevant prior learnings at the start, `trw_learn()` saves new ones for next time"
