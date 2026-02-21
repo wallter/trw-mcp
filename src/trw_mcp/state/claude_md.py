@@ -49,17 +49,17 @@ PHASE_DESCRIPTIONS: list[tuple[str, str]] = [
 
 # 11 lifecycle-critical tools in execution order
 CEREMONY_TOOLS: list[CeremonyTool] = [
-    CeremonyTool("Start", "trw_session_start", "ALWAYS at session start", "Recall learnings + check run status", "trw_session_start()"),
-    CeremonyTool("Start", "trw_recall", "ALWAYS for quick tasks (no run)", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
-    CeremonyTool("Start", "trw_status", "ALWAYS when resuming a run", "Show run state and phase", "trw_status()"),
-    CeremonyTool("RESEARCH", "trw_init", "ALWAYS for new tasks", "Bootstrap run directory + events", "trw_init(task_name='...')"),
-    CeremonyTool("Any", "trw_learn", "ALWAYS on errors/discoveries", "Record learning entry", "trw_learn(summary='...', impact=0.8)"),
-    CeremonyTool("Any", "trw_checkpoint", "Every milestone / ~10min", "Atomic state snapshot", "trw_checkpoint(message='...')"),
+    CeremonyTool("Start", "trw_session_start", "At session start — loads learnings + run state", "Recall learnings + check run status", "trw_session_start()"),
+    CeremonyTool("Start", "trw_recall", "Quick tasks — retrieves relevant prior learnings", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
+    CeremonyTool("Start", "trw_status", "When resuming — shows phase, progress, next steps", "Show run state and phase", "trw_status()"),
+    CeremonyTool("RESEARCH", "trw_init", "New tasks — creates run directory for tracking", "Bootstrap run directory + events", "trw_init(task_name='...')"),
+    CeremonyTool("Any", "trw_learn", "On errors/discoveries — saves for future sessions", "Record learning entry", "trw_learn(summary='...', impact=0.8)"),
+    CeremonyTool("Any", "trw_checkpoint", "After milestones — preserves progress across compactions", "Atomic state snapshot", "trw_checkpoint(message='...')"),
     CeremonyTool("PLAN", "trw_prd_create", "When defining requirements", "Generate AARE-F PRD", "trw_prd_create(input_text='...')"),
     CeremonyTool("PLAN", "trw_prd_validate", "Before implementation", "PRD quality gate", "trw_prd_validate(prd_path='...')"),
-    CeremonyTool("VALIDATE", "trw_build_check", "ALWAYS before delivery", "Run pytest + mypy", "trw_build_check(scope='full')"),
-    CeremonyTool("DELIVER", "trw_claude_md_sync", "ALWAYS at delivery", "Promote learnings to CLAUDE.md", "trw_claude_md_sync()"),
-    CeremonyTool("DELIVER", "trw_deliver", "ALWAYS at task completion", "reflect+sync+checkpoint+index", "trw_deliver()"),
+    CeremonyTool("VALIDATE", "trw_build_check", "Before delivery — runs pytest + mypy", "Run pytest + mypy", "trw_build_check(scope='full')"),
+    CeremonyTool("DELIVER", "trw_claude_md_sync", "At delivery — promotes learnings to CLAUDE.md", "Promote learnings to CLAUDE.md", "trw_claude_md_sync()"),
+    CeremonyTool("DELIVER", "trw_deliver", "At task completion — persists everything in one call", "reflect+sync+checkpoint+index", "trw_deliver()"),
 ]
 
 
@@ -326,21 +326,22 @@ def render_adherence(high_impact: list[dict[str, object]]) -> str:
 
 
 def render_imperative_opener() -> str:
-    """Render the high-salience imperative opener for the TRW auto-generated section.
+    """Render the value-oriented opener for the TRW auto-generated section.
 
-    This MUST appear at the very top of the auto-generated block so agents
-    see it before anything else. It provides the minimum viable ceremony
-    trigger that drives tool adoption.
+    Appears at the very top of the auto-generated block. Uses motivation
+    framing (what the tools give you) rather than threat framing (what
+    you lose). Research: Anthropic context engineering, Claude 4.6 best
+    practices recommend natural language over CRITICAL/ALWAYS/NEVER.
 
     Returns:
-        Markdown string with imperative instructions.
+        Markdown string with value-framed instructions.
     """
     return (
-        "CRITICAL — YOU MUST EXECUTE THESE TOOLS:\n"
-        "- **BEFORE ANY WORK**: ALWAYS call `trw_session_start()` "
-        "(or `trw_recall('*', min_impact=0.7)` for quick tasks). NEVER skip this step.\n"
-        "- **AFTER COMPLETING WORK**: ALWAYS call `trw_deliver()` "
-        "(or `trw_claude_md_sync` for quick tasks). NEVER skip this step.\n"
+        "TRW tools help you build effectively and preserve your work across sessions:\n"
+        "- **Start**: call `trw_session_start()` to load prior learnings"
+        " and recover any active run\n"
+        "- **Finish**: call `trw_deliver()` to persist your learnings"
+        " for future sessions\n"
         "\n"
     )
 

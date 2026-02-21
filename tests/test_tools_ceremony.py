@@ -19,13 +19,13 @@ from unittest.mock import patch
 
 import pytest
 
+from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools.ceremony import (
     _do_auto_progress,
     _do_checkpoint,
     _do_claude_md_sync,
     _do_index_sync,
     _do_reflect,
-    _find_active_run,
     _get_run_status,
 )
 
@@ -74,26 +74,24 @@ def run_dir(tmp_path: Path) -> Path:
     return d
 
 
-# --- _find_active_run ---
+# --- find_active_run ---
 
 
 class TestFindActiveRun:
     """Helper function for locating active runs."""
 
     def test_returns_none_when_no_task_root(self, tmp_path: Path) -> None:
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        with patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir):
-            result = _find_active_run()
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
+            with patch("trw_mcp.state._paths._config") as mock_config:
+                mock_config.task_root = "nonexistent"
+                result = find_active_run()
         assert result is None
 
     def test_finds_run_directory(self, tmp_path: Path, run_dir: Path) -> None:
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        with patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir):
-            with patch("trw_mcp.tools.ceremony._config") as mock_config:
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
+            with patch("trw_mcp.state._paths._config") as mock_config:
                 mock_config.task_root = "docs"
-                result = _find_active_run()
+                result = find_active_run()
         assert result is not None
         assert "20260211T120000Z-test" in str(result)
 
@@ -203,8 +201,8 @@ class TestDoClaudeMdSync:
         assert "### Example Flows" in content
         assert "`trw_session_start`" in content
         assert "`trw_deliver`" in content
-        # Imperative opener present
-        assert "BEFORE ANY WORK" in content
+        # Value-oriented opener present
+        assert "TRW tools help you build effectively" in content
         # No unreplaced placeholders
         assert "{{imperative_opener}}" not in content
         assert "{{ceremony_phases}}" not in content
@@ -341,7 +339,7 @@ class TestSessionStartPartialFailure:
                 side_effect=Exception("recall boom"),
             ),
             patch(
-                "trw_mcp.tools.ceremony._find_active_run",
+                "trw_mcp.tools.ceremony.find_active_run",
                 return_value=None,
             ),
         ):
@@ -365,7 +363,7 @@ class TestSessionStartPartialFailure:
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch(
-                "trw_mcp.tools.ceremony._find_active_run",
+                "trw_mcp.tools.ceremony.find_active_run",
                 side_effect=Exception("status boom"),
             ),
         ):
@@ -387,7 +385,7 @@ class TestSessionStartPartialFailure:
 
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
         ):
             result = tools["trw_session_start"].fn()
 
@@ -424,7 +422,7 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools.ceremony._do_reflect",
                 side_effect=Exception("reflect boom"),
             ),
-            patch("trw_mcp.tools.ceremony._find_active_run", return_value=run_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch(
                 "trw_mcp.tools.ceremony._do_claude_md_sync",
                 return_value={"status": "success", "learnings_promoted": 0,
@@ -468,7 +466,7 @@ class TestDeliverPartialFailure:
                 return_value={"status": "success", "events_analyzed": 0,
                               "learnings_produced": 0},
             ),
-            patch("trw_mcp.tools.ceremony._find_active_run", return_value=run_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch(
                 "trw_mcp.tools.ceremony._do_checkpoint",
                 side_effect=Exception("checkpoint boom"),
@@ -507,7 +505,7 @@ class TestDeliverPartialFailure:
                 return_value={"status": "success", "events_analyzed": 0,
                               "learnings_produced": 0},
             ),
-            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
                 "trw_mcp.tools.ceremony._do_claude_md_sync",
                 return_value={"status": "success", "learnings_promoted": 0,
@@ -536,7 +534,7 @@ class TestDeliverPartialFailure:
 
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
                 "trw_mcp.tools.ceremony._do_claude_md_sync",
                 return_value={"status": "success", "learnings_promoted": 0,
@@ -563,7 +561,7 @@ class TestDeliverPartialFailure:
 
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.ceremony._find_active_run", return_value=None),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
                 "trw_mcp.tools.ceremony._do_reflect",
                 return_value={"status": "success", "events_analyzed": 0,

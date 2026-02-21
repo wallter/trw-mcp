@@ -472,15 +472,12 @@ class TestCeremonyRendering:
         assert "trw_deliver()" in result
 
     def test_render_imperative_opener(self) -> None:
-        """Imperative opener contains high-salience trigger instructions."""
+        """Imperative opener uses value-oriented framing."""
         result = render_imperative_opener()
-        assert "CRITICAL" in result
-        assert "BEFORE ANY WORK" in result
+        assert "TRW tools help you build effectively" in result
         assert "trw_session_start()" in result
-        assert "trw_recall" in result
-        assert "NEVER skip" in result
-        assert "AFTER COMPLETING WORK" in result
         assert "trw_deliver()" in result
+        assert "learnings" in result
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
         """Bundled template contains all ceremony placeholder tokens."""
@@ -519,8 +516,8 @@ class TestCeremonyRendering:
         assert "### Example Flows" in content
         assert "**Quick Task**" in content
         assert "**Full Run**" in content
-        # Imperative opener at top of auto-generated section
-        assert "BEFORE ANY WORK" in content
+        # Value-oriented opener at top of auto-generated section
+        assert "TRW tools help you build effectively" in content
         assert "trw_session_start()" in content
         # No unreplaced placeholders
         assert "{{imperative_opener}}" not in content
