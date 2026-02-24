@@ -2,6 +2,21 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.3.7] — 2026-02-24
+
+### Changed
+- **Publisher upsert sync** — `publish_learnings()` now sends all active high-impact learnings on every call (backend handles dedup):
+  - Removed `published_to_platform` guard and write-back logic
+  - Added `source_learning_id` (local YAML `id` field) to payload for backend upsert matching
+  - Removed `FileStateWriter` dependency from publisher
+- 2 new tests: `test_publish_sends_source_learning_id`, `test_publish_resends_on_every_call`
+- Removed `test_publish_skips_already_published` (guard no longer exists)
+
+### Stats
+- 17 publisher tests passing
+
+---
+
 ## [0.3.6] — 2026-02-21
 
 ### Fixed
