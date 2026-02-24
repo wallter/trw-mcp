@@ -5,7 +5,7 @@ description: >
   staleness, duplicate candidates, and recommendations. Read-only.
   Use: /memory-audit
 user-invocable: true
-allowed-tools: Read, Glob, Grep
+allowed-tools: Read, Glob, Grep, mcp__trw__trw_recall
 ---
 
 # Memory Audit Skill

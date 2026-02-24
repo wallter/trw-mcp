@@ -10,7 +10,7 @@ readme = "README.md"
 license = "CC-BY-NC-SA-4.0"
 requires-python = ">=3.10"
 authors = [
-    { name = "TRW Framework", email = "noreply@trw.dev" },
+    { name = "TRW Framework", email = "noreply@trwframework.com" },
 ]
 keywords = ["mcp", "claude", "orchestration", "requirements", "framework"]
 classifiers = [

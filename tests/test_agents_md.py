@@ -117,6 +117,56 @@ class TestAgentsMdCreation:
 
         assert second_content == third_content
 
+    def test_truncation_preserves_trw_markers(self, tmp_project: Path) -> None:
+        """QUAL-018: Truncation never cuts inside TRW marker boundaries."""
+        target = tmp_project / "CLAUDE.md"
+        # Create a large user section that will exceed the line limit
+        user_lines = [f"# Line {i}" for i in range(200)]
+        user_content = "\n".join(user_lines) + "\n"
+        target.write_text(user_content, encoding="utf-8")
+
+        trw_section = f"\n{TRW_MARKER_START}\n## TRW Section\n- learning 1\n- learning 2\n{TRW_MARKER_END}\n"
+        merge_trw_section(target, trw_section, max_lines=100)
+
+        content = target.read_text(encoding="utf-8")
+        assert TRW_MARKER_START in content, "TRW start marker must survive truncation"
+        assert TRW_MARKER_END in content, "TRW end marker must survive truncation"
+        assert "learning 1" in content, "TRW section content must survive truncation"
+        assert "truncated" in content.lower(), "Truncation comment should be present"
+        assert content.split("\n").__len__() <= 102, "Total lines should respect limit"
+
+    def test_truncation_without_markers_falls_back(self, tmp_project: Path) -> None:
+        """QUAL-018: Without TRW markers, truncation falls back to simple slice."""
+        target = tmp_project / "CLAUDE.md"
+        content = "\n".join([f"# Line {i}" for i in range(200)]) + "\n"
+        target.write_text(content, encoding="utf-8")
+
+        # No TRW section — just truncate
+        merge_trw_section(target, "\n## New Section\n- content\n", max_lines=50)
+
+        result = target.read_text(encoding="utf-8")
+        lines = result.split("\n")
+        assert len(lines) <= 52  # 50 + truncation comment + possible trailing newline
+
+    def test_truncation_user_content_trimmed_not_trw(self, tmp_project: Path) -> None:
+        """QUAL-018: User content is trimmed, TRW section is preserved intact."""
+        target = tmp_project / "CLAUDE.md"
+        user_lines = [f"# User line {i}" for i in range(150)]
+        target.write_text("\n".join(user_lines) + "\n", encoding="utf-8")
+
+        trw_section = f"\n{TRW_MARKER_START}\n## TRW Generated\n- item a\n- item b\n- item c\n{TRW_MARKER_END}\n"
+        merge_trw_section(target, trw_section, max_lines=50)
+
+        content = target.read_text(encoding="utf-8")
+        # TRW section must be fully intact
+        assert TRW_MARKER_START in content
+        assert TRW_MARKER_END in content
+        assert "item a" in content
+        assert "item b" in content
+        assert "item c" in content
+        # User content should be truncated
+        assert "User line 149" not in content
+
     def test_agents_md_root_scope_only(self, tmp_project: Path) -> None:
         """AGENTS.md is only synced for root scope, not sub scope."""
         sub_dir = tmp_project / "submodule"

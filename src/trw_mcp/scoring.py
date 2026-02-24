@@ -201,6 +201,9 @@ def _entry_utility(
 
     Extracts scoring fields from the entry dict and delegates to
     compute_utility_score with TRWConfig parameters.
+
+    PRD-CORE-034: Applies time decay to base_impact before computing utility
+    so that older learnings naturally sink in recall ranking results.
     """
     q_value = _float_field(entry, "q_value", _float_field(entry, "impact", 0.5))
     base_impact = _float_field(entry, "impact", 0.5)
@@ -209,6 +212,18 @@ def _entry_utility(
     access_count = _int_field(entry, "access_count", 0)
     source_type = str(entry.get("source_type", "agent"))
     days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
+
+    # PRD-CORE-034: Apply time decay to both base_impact and q_value so that
+    # older learnings naturally sink in recall ranking, regardless of whether
+    # the cold-start threshold has been crossed.
+    created_raw = str(entry.get("created", ""))
+    if created_raw and created_raw != "None":
+        try:
+            created_dt = datetime.fromisoformat(created_raw)
+            base_impact = apply_time_decay(base_impact, created_dt)
+            q_value = apply_time_decay(q_value, created_dt)
+        except ValueError:
+            pass  # Fall through: use raw values if date is unparseable
 
     return compute_utility_score(
         q_value=q_value,
@@ -224,6 +239,281 @@ def _entry_utility(
         access_count_boost_cap=_config.access_count_utility_boost_cap,
         source_human_boost=_config.source_human_utility_boost,
     )
+
+
+# --- Impact distribution analysis (PRD-CORE-034) ---
+
+
+def compute_impact_distribution(
+    entries_dir: Path,
+) -> dict[str, object]:
+    """Compute the current impact score distribution across active learnings.
+
+    Returns:
+        Dict with tier counts and percentages:
+        {
+            "total_active": int,
+            "critical": {"count": int, "pct": float},  # 0.9-1.0
+            "high": {"count": int, "pct": float},       # 0.7-0.89
+            "medium": {"count": int, "pct": float},     # 0.4-0.69
+            "low": {"count": int, "pct": float},        # 0.0-0.39
+        }
+    """
+    if not entries_dir.exists():
+        return {
+            "total_active": 0,
+            "critical": {"count": 0, "pct": 0.0},
+            "high": {"count": 0, "pct": 0.0},
+            "medium": {"count": 0, "pct": 0.0},
+            "low": {"count": 0, "pct": 0.0},
+        }
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    total = 0
+
+    for yaml_file in entries_dir.glob("*.yaml"):
+        try:
+            data = _reader.read_yaml(yaml_file)
+        except Exception:  # noqa: BLE001
+            continue
+        if str(data.get("status", "active")) != "active":
+            continue
+        score = _float_field(data, "impact", 0.5)
+        total += 1
+        if score >= 0.9:
+            counts["critical"] += 1
+        elif score >= 0.7:
+            counts["high"] += 1
+        elif score >= 0.4:
+            counts["medium"] += 1
+        else:
+            counts["low"] += 1
+
+    def _pct(n: int) -> float:
+        return round(n / total, 4) if total > 0 else 0.0
+
+    return {
+        "total_active": total,
+        "critical": {"count": counts["critical"], "pct": _pct(counts["critical"])},
+        "high": {"count": counts["high"], "pct": _pct(counts["high"])},
+        "medium": {"count": counts["medium"], "pct": _pct(counts["medium"])},
+        "low": {"count": counts["low"], "pct": _pct(counts["low"])},
+    }
+
+
+# --- Bayesian impact score calibration (PRD-CORE-034) ---
+
+
+def bayesian_calibrate(
+    user_impact: float,
+    org_mean: float = 0.5,
+    user_weight: float = 1.0,
+    org_weight: float = 0.5,
+) -> float:
+    """Compute Bayesian posterior impact score.
+
+    Combines user-assigned impact with org-wide mean using weighted average.
+    Higher user_weight = more trust in user's scoring accuracy.
+    Higher org_weight = stronger regression toward org mean.
+
+    Formula: (user_impact * user_weight + org_mean * org_weight) / (user_weight + org_weight)
+
+    Args:
+        user_impact: Score assigned by user (0.0-1.0)
+        org_mean: Average impact across all org learnings (default 0.5)
+        user_weight: User calibration accuracy weight (starts 1.0, increases with accuracy)
+        org_weight: Org evidence weight (starts 0.5, caps at 2.0)
+
+    Returns:
+        Calibrated impact score (0.0-1.0)
+    """
+    if user_weight + org_weight == 0:
+        return user_impact
+
+    # Cap org_weight at 2.0
+    org_weight = min(org_weight, 2.0)
+
+    posterior = (user_impact * user_weight + org_mean * org_weight) / (user_weight + org_weight)
+    return max(0.0, min(1.0, posterior))
+
+
+def compute_calibration_accuracy(recall_stats: dict[str, object]) -> float:
+    """Compute user calibration accuracy from recall tracking data.
+
+    Users whose high-impact learnings are frequently recalled get higher accuracy.
+
+    Returns:
+        Accuracy score 0.0-2.0 (used as user_weight in bayesian_calibrate)
+    """
+    total = int(str(recall_stats.get("total_recalls", 0)))
+    positive = int(str(recall_stats.get("positive_outcomes", 0)))
+
+    if total == 0:
+        return 1.0  # default weight
+
+    # Positive outcome ratio → weight mapping
+    # 50%+ positive → weight 1.5
+    # 75%+ positive → weight 2.0
+    # <25% positive → weight 0.5
+    ratio = positive / total
+    if ratio >= 0.75:
+        return 2.0
+    elif ratio >= 0.50:
+        return 1.5
+    elif ratio >= 0.25:
+        return 1.0
+    else:
+        return 0.5
+
+
+# --- Forced distribution enforcement (PRD-CORE-034) ---
+
+
+def enforce_tier_distribution(
+    entries: list[tuple[str, float]],
+    *,
+    critical_cap: float | None = None,
+    high_cap: float | None = None,
+    entry_dates: dict[str, str] | None = None,
+) -> list[tuple[str, float]]:
+    """Enforce forced distribution caps on impact tier percentages.
+
+    When a tier exceeds its cap (critical >5%, high >20%), demotes the
+    lowest-scored entry in that tier to the next tier down.  Only one
+    demotion per tier per call — callers may iterate to convergence if
+    desired.
+
+    Args:
+        entries: List of (learning_id, impact_score) tuples.  Only active
+            learnings should be included; caller is responsible for filtering.
+        critical_cap: Maximum fraction allowed in critical tier (0.9-1.0).
+            Defaults to config value.
+        high_cap: Maximum fraction allowed in high tier (0.7-0.89).
+            Defaults to config value.
+        entry_dates: Optional mapping of learning_id -> ISO date string
+            (e.g. "2025-08-01T12:00:00"). When provided, time decay is
+            applied to each score before tier classification so that older
+            high-impact learnings are not kept in upper tiers indefinitely.
+            The demotion target scores (0.89, 0.69) remain absolute —
+            decay only affects which entries are classified into each tier.
+
+    Returns:
+        List of (learning_id, new_impact) tuples for entries whose scores
+        were changed.  Empty list if no demotions were needed.
+    """
+    cfg = _config
+    effective_critical_cap = critical_cap if critical_cap is not None else cfg.impact_tier_critical_cap
+    effective_high_cap = high_cap if high_cap is not None else cfg.impact_tier_high_cap
+
+    if not entries:
+        return []
+
+    total = len(entries)
+
+    # Don't enforce distribution on very small sets — percentage caps are
+    # meaningless with fewer than 5 active learnings.
+    if total < 5:
+        return []
+
+    # Build decayed score lookup for tier classification only.
+    # When entry_dates is None, decayed == original (backward compat).
+    def _decayed_score(lid: str, score: float) -> float:
+        if entry_dates is None:
+            return score
+        date_str = entry_dates.get(lid, "")
+        if not date_str:
+            return score
+        try:
+            created_dt = datetime.fromisoformat(date_str)
+            return apply_time_decay(score, created_dt)
+        except ValueError:
+            return score
+
+    # Separate into tiers using decayed scores for classification,
+    # but store original scores so demotions use absolute targets.
+    critical: list[tuple[str, float]] = []
+    high: list[tuple[str, float]] = []
+
+    for lid, score in entries:
+        tier_score = _decayed_score(lid, score)
+        if tier_score >= 0.9:
+            critical.append((lid, score))
+        elif tier_score >= 0.7:
+            high.append((lid, score))
+
+    demotions: list[tuple[str, float]] = []
+
+    # Enforce critical cap: demote lowest-scored critical → high
+    if critical and len(critical) / total > effective_critical_cap:
+        # Sort ascending by score to find lowest
+        critical_sorted = sorted(critical, key=lambda x: x[1])
+        victim_id, victim_score = critical_sorted[0]
+        # Demote to top of high tier (0.89)
+        new_score = round(min(0.89, max(0.7, victim_score - 0.1)), 4)
+        demotions.append((victim_id, new_score))
+        logger.info(
+            "tier_demotion",
+            learning_id=victim_id,
+            from_tier="critical",
+            to_tier="high",
+            old_score=victim_score,
+            new_score=new_score,
+        )
+
+    # Re-compute high count after potential demotion from critical
+    demoted_ids = {d[0] for d in demotions}
+    effective_high = [e for e in high if e[0] not in demoted_ids]
+    # Add demoted critical entries to high count
+    effective_high_count = len(effective_high) + len(demotions)
+
+    # Enforce high cap: demote lowest-scored high → medium
+    if effective_high_count > 0 and effective_high_count / total > effective_high_cap:
+        high_sorted = sorted(
+            [(lid, s) for lid, s in high if lid not in demoted_ids],
+            key=lambda x: x[1],
+        )
+        if high_sorted:
+            victim_id, victim_score = high_sorted[0]
+            new_score = round(min(0.69, max(0.4, victim_score - 0.1)), 4)
+            demotions.append((victim_id, new_score))
+            logger.info(
+                "tier_demotion",
+                learning_id=victim_id,
+                from_tier="high",
+                to_tier="medium",
+                old_score=victim_score,
+                new_score=new_score,
+            )
+
+    return demotions
+
+
+# --- Ebbinghaus decay for impact scores (PRD-CORE-034) ---
+
+
+def apply_time_decay(impact: float, created_at: datetime) -> float:
+    """Apply Ebbinghaus-inspired time decay to a raw impact score.
+
+    The decay factor is linear (not exponential) over a 1-year window,
+    floored at 0.3 to preserve minimum relevance for very old entries.
+
+    Formula:
+        days = (now - created_at).days
+        decay_factor = max(0.3, 1.0 - (days / 365) * 0.3)
+        effective_impact = impact * decay_factor
+
+    Args:
+        impact: Raw impact score (0.0-1.0).
+        created_at: When the learning was created (timezone-aware or naive UTC).
+
+    Returns:
+        Decayed impact score in [0.0, 1.0].
+    """
+    now = datetime.now(timezone.utc)
+    created_utc = _ensure_utc(created_at)
+    days = max(0, (now - created_utc).days)
+    decay_factor = max(0.3, 1.0 - (days / 365) * 0.3)
+    return _clamp01(impact * decay_factor)
 
 
 # --- Recall ranking (PRD-FIX-010: moved from tools/learning.py) ---

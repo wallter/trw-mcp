@@ -22,8 +22,14 @@ _event_count=$(wc -l < "$_events_path" 2>/dev/null | tr -d ' ') || _event_count=
 [ "$_event_count" -gt 0 ] 2>/dev/null || exit 0
 
 # Check for reflection event
-if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete" || has_event "$_events_path" "deliver_complete"; then
+if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete" || has_event "$_events_path" "trw_deliver_complete"; then
   exit 0
+fi
+
+# Housekeeping: clean up per-teammate block count files
+_project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
+if [ -n "$_project_root" ]; then
+  cleanup_block_files "$_project_root/.trw/context"
 fi
 
 # Events exist but no reflection — warn

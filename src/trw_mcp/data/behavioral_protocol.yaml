@@ -3,6 +3,7 @@
 # Framing: value-oriented (what it gives you) > threat-oriented (what you lose).
 # Research basis: Anthropic context engineering, motivation framing, self-interest framing.
 directives:
+  - "Your primary role is orchestration — for non-trivial tasks, delegating to subagents or Agent Teams produces better results than direct implementation because focused context windows enable deeper work, shard self-review catches integration gaps, and you keep strategic oversight of the full picture"
   - "`trw_session_start()` loads your prior learnings and recovers any active run — call it first so you have full context before writing code"
   - "`trw_status()` shows your current phase, completed work, and next steps — call it when resuming so you pick up where you left off instead of redoing work"
   - "`trw_init(task_name)` creates your run directory and event log — call it for new tasks so checkpoints and progress tracking work"

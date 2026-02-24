@@ -14,6 +14,7 @@ allowedTools:
   - mcp__trw__trw_learn
   - mcp__trw__trw_recall
   - mcp__trw__trw_build_check
+  - mcp__trw__trw_checkpoint
 disallowedTools:
   - Bash
   - Edit

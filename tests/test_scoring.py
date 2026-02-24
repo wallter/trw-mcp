@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from trw_mcp.scoring import compute_utility_score, update_q_value
+from trw_mcp.scoring import compute_impact_distribution, compute_utility_score, update_q_value
 
 
 class TestUpdateQValue:
@@ -168,3 +170,63 @@ class TestComputeUtilityScore:
         ]
         for i in range(1, len(scores)):
             assert scores[i] <= scores[i - 1]
+
+
+class TestComputeImpactDistribution:
+    """Tests for compute_impact_distribution function."""
+
+    def _write_entry(self, entries_dir: Path, fname: str, impact: float, status: str = "active") -> None:
+        entries_dir.mkdir(parents=True, exist_ok=True)
+        (entries_dir / fname).write_text(
+            f"id: {fname}\nimpact: {impact}\nstatus: {status}\n"
+        )
+
+    def test_empty_dir_returns_zeros(self, tmp_path: Path) -> None:
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        result = compute_impact_distribution(entries_dir)
+        assert result["total_active"] == 0
+        critical = result["critical"]
+        assert isinstance(critical, dict)
+        assert critical["count"] == 0
+        assert critical["pct"] == 0.0
+
+    def test_nonexistent_dir_returns_zeros(self, tmp_path: Path) -> None:
+        result = compute_impact_distribution(tmp_path / "nonexistent")
+        assert result["total_active"] == 0
+
+    def test_mixed_tiers(self, tmp_path: Path) -> None:
+        entries_dir = tmp_path / "entries"
+        # 1 critical (0.95), 2 high (0.75, 0.80), 1 medium (0.5), 1 low (0.2)
+        self._write_entry(entries_dir, "a.yaml", 0.95)
+        self._write_entry(entries_dir, "b.yaml", 0.75)
+        self._write_entry(entries_dir, "c.yaml", 0.80)
+        self._write_entry(entries_dir, "d.yaml", 0.50)
+        self._write_entry(entries_dir, "e.yaml", 0.20)
+        result = compute_impact_distribution(entries_dir)
+        assert result["total_active"] == 5
+        critical = result["critical"]
+        assert isinstance(critical, dict)
+        assert critical["count"] == 1
+        assert abs(critical["pct"] - 0.2) < 0.01
+        high = result["high"]
+        assert isinstance(high, dict)
+        assert high["count"] == 2
+        assert abs(high["pct"] - 0.4) < 0.01
+        medium = result["medium"]
+        assert isinstance(medium, dict)
+        assert medium["count"] == 1
+        low = result["low"]
+        assert isinstance(low, dict)
+        assert low["count"] == 1
+
+    def test_ignores_inactive_entries(self, tmp_path: Path) -> None:
+        entries_dir = tmp_path / "entries"
+        self._write_entry(entries_dir, "active.yaml", 0.9)
+        self._write_entry(entries_dir, "resolved.yaml", 0.9, status="resolved")
+        self._write_entry(entries_dir, "obsolete.yaml", 0.9, status="obsolete")
+        result = compute_impact_distribution(entries_dir)
+        assert result["total_active"] == 1
+        critical = result["critical"]
+        assert isinstance(critical, dict)
+        assert critical["count"] == 1

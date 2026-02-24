@@ -16,7 +16,7 @@ from fastmcp import FastMCP
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
 from trw_mcp.models.learning import LearningEntry
-from trw_mcp.scoring import rank_by_utility
+from trw_mcp.scoring import compute_impact_distribution, enforce_tier_distribution, rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_entry_by_id,
@@ -94,6 +94,20 @@ def register_learning_tools(server: FastMCP) -> None:
         """
         trw_dir, _ = _entries_path()
 
+        # Bayesian calibration of impact score using recall tracking stats (PRD-CORE-034)
+        calibrated_impact = impact
+        try:
+            from trw_mcp.scoring import bayesian_calibrate, compute_calibration_accuracy
+            from trw_mcp.state.recall_tracking import get_recall_stats
+            recall_stats = get_recall_stats()
+            user_weight = compute_calibration_accuracy(recall_stats)
+            calibrated_impact = bayesian_calibrate(
+                user_impact=impact,
+                user_weight=user_weight,
+            )
+        except Exception:
+            pass  # Fail-open: calibration failure falls back to raw impact
+
         learning_id = generate_learning_id()
         entry = LearningEntry(
             id=learning_id,
@@ -101,7 +115,7 @@ def register_learning_tools(server: FastMCP) -> None:
             detail=detail,
             tags=tags or [],
             evidence=evidence or [],
-            impact=impact,
+            impact=calibrated_impact,
             shard_id=shard_id,
             source_type=source_type,
             source_identity=source_identity,
@@ -109,8 +123,60 @@ def register_learning_tools(server: FastMCP) -> None:
         entry_path = save_learning_entry(trw_dir, entry)
         update_analytics(trw_dir, 1)
 
+        # Forced distribution enforcement (PRD-CORE-034)
+        # Only runs when the new learning is in a high/critical tier, matching
+        # the original advisory check threshold (impact >= 0.7).
+        distribution_warning = ""
+        demoted_ids: list[str] = []
+        if _config.impact_forced_distribution_enabled and impact >= 0.7:
+            try:
+                _, entries_dir = _entries_path()
+                # Build (id, impact) list of all active entries including the new one
+                all_entries: list[tuple[str, float]] = []
+                from trw_mcp.state.analytics import find_entry_by_id
+                for yaml_file in sorted(entries_dir.glob("*.yaml")):
+                    try:
+                        data = _reader.read_yaml(yaml_file)
+                    except Exception:
+                        continue
+                    if str(data.get("status", "active")) != "active":
+                        continue
+                    lid = str(data.get("id", ""))
+                    sc = float(str(data.get("impact", 0.5)))
+                    if lid:
+                        all_entries.append((lid, sc))
+
+                demotions = enforce_tier_distribution(all_entries)
+                for demoted_id, new_score in demotions:
+                    demoted_ids.append(demoted_id)
+                    # Find and update the demoted entry on disk
+                    found = find_entry_by_id(entries_dir, demoted_id)
+                    if found is not None:
+                        entry_path_dem, data_dem = found
+                        data_dem["impact"] = new_score
+                        from datetime import date as _date
+                        data_dem["updated"] = _date.today().isoformat()
+                        _writer.write_yaml(entry_path_dem, data_dem)
+
+                if demotions:
+                    # Use raw impact for tier name in warning (user-facing label)
+                    tier_name = "critical" if impact >= 0.9 else "high"
+                    distribution_warning = (
+                        f"Impact tier '{tier_name}' exceeded cap. "
+                        f"Forced distribution: demoted {len(demotions)} entr"
+                        f"{'y' if len(demotions) == 1 else 'ies'} to maintain tier caps. "
+                        f"IDs: {[d[0] for d in demotions]}"
+                    )
+            except Exception:
+                pass  # Fail-open: distribution enforcement must not block learning recording
+
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
-        return {"learning_id": learning_id, "path": str(entry_path), "status": "recorded"}
+        return {
+            "learning_id": learning_id,
+            "path": str(entry_path),
+            "status": "recorded",
+            "distribution_warning": distribution_warning,
+        }
 
     @server.tool()
     @log_tool_call
@@ -226,6 +292,23 @@ def register_learning_tools(server: FastMCP) -> None:
         )
         matched_ids = update_access_tracking(matched_files, _reader, _writer)
         log_recall_receipt(trw_dir, query, matched_ids, shard_id=shard_id)
+
+        # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
+        try:
+            from trw_mcp.state.recall_tracking import record_recall as _record_recall
+            for lid in matched_ids:
+                _record_recall(lid, query)
+        except Exception:
+            pass  # Fail-open: tracking failure must not affect tool result
+
+        # Augment local results with remote shared learnings (PRD-CORE-033)
+        try:
+            from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
+            remote = fetch_shared_learnings(query)
+            if remote:
+                matching_learnings = list(matching_learnings) + remote
+        except Exception:
+            pass  # Fail-open: remote recall failure must not affect local results
 
         # Search patterns and rank all results by utility
         matching_patterns = search_patterns(

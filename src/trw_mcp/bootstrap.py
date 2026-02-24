@@ -42,6 +42,7 @@ _TRW_DIRS = [
 # Mapping of bundled data files to their destination paths (relative to target).
 _DATA_FILE_MAP: list[tuple[str, str]] = [
     ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
+    ("framework.md", "FRAMEWORK.md"),
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
@@ -157,6 +158,7 @@ def init_project(
 # Files that are always overwritten during update (framework-managed).
 _ALWAYS_UPDATE: list[tuple[str, str]] = [
     ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
+    ("framework.md", "FRAMEWORK.md"),
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),

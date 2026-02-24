@@ -1339,8 +1339,6 @@ def score_section_density(
     """
     lines = section_body.split("\n")
     total = len(lines)
-    if total == 0:
-        return SectionScore(section_name=section_name)
 
     substantive = 0
     placeholder = 0

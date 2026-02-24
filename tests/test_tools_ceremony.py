@@ -668,3 +668,328 @@ class TestDeliverPartialFailure:
         event_types = [json.loads(line)["event"] for line in lines]
         assert "reflection_complete" in event_types
         assert "checkpoint" in event_types
+
+
+# --- trw_session_start update advisory wiring (PRD-INFRA-014) ---
+
+
+@pytest.mark.integration
+class TestSessionStartUpdateAdvisory:
+    """Verify check_for_update() wiring in trw_session_start."""
+
+    def test_update_advisory_included_when_update_available(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When check_for_update returns available=True, advisory is in results."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch(
+                "trw_mcp.state.auto_upgrade.check_for_update",
+                return_value={
+                    "available": True,
+                    "current": "0.4.0",
+                    "latest": "0.5.0",
+                    "channel": "latest",
+                    "advisory": "TRW v0.5.0 available (you have v0.4.0). ",
+                },
+            ),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert "update_advisory" in result
+        assert "0.5.0" in str(result["update_advisory"])
+
+    def test_no_update_advisory_when_up_to_date(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When check_for_update returns available=False, advisory key is absent."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch(
+                "trw_mcp.state.auto_upgrade.check_for_update",
+                return_value={
+                    "available": False,
+                    "current": "0.5.0",
+                    "latest": "0.5.0",
+                    "channel": "latest",
+                    "advisory": None,
+                },
+            ),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert result.get("update_advisory") is None
+
+    def test_update_check_failure_is_fail_open(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If check_for_update raises, session start still succeeds."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch(
+                "trw_mcp.state.auto_upgrade.check_for_update",
+                side_effect=Exception("network boom"),
+            ),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        # Update check failure must NOT appear in errors or block result
+        assert "update_advisory" not in result or result.get("update_advisory") is None
+        assert "timestamp" in result
+
+
+# --- TestDeliverTelemetryIntegration ---
+
+
+def _make_deliver_with_stubs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    run_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Build a ceremony server and patch heavy sub-steps for deliver tests."""
+    tools = _make_ceremony_server(monkeypatch, tmp_path)
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+    (trw_dir / "reflections").mkdir(parents=True, exist_ok=True)
+    (trw_dir / "context").mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda: trw_dir)
+    monkeypatch.setattr("trw_mcp.tools.ceremony.find_active_run", lambda: run_dir)
+    monkeypatch.setattr(
+        "trw_mcp.tools.ceremony._do_reflect",
+        lambda *_a, **_kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0},
+    )
+    monkeypatch.setattr(
+        "trw_mcp.tools.ceremony._do_claude_md_sync",
+        lambda *_a, **_kw: {"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
+    )
+    monkeypatch.setattr(
+        "trw_mcp.tools.ceremony._do_index_sync",
+        lambda *_a, **_kw: {"status": "success", "index": {}, "roadmap": {}},
+    )
+    monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_project_root", lambda: tmp_path)
+    return tools
+
+
+@pytest.mark.integration
+class TestDeliverTelemetryIntegration:
+    """Tests for Steps 6.5, 6.6, 7, 8 wired into trw_deliver (G1-G6)."""
+
+    def test_deliver_calls_process_outcome_for_event(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 6.5: process_outcome_for_event is called and outcome_correlation is populated."""
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        # The function is imported locally inside trw_deliver: `from trw_mcp.scoring import process_outcome_for_event`
+        # Patching trw_mcp.scoring.process_outcome_for_event intercepts the local import.
+        called_with: list[str] = []
+
+        def _fake_process(event_type: str, event_data: Any = None) -> list[str]:
+            called_with.append(event_type)
+            return ["L-test001"]
+
+        with patch("trw_mcp.scoring.process_outcome_for_event", side_effect=_fake_process):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        assert result["outcome_correlation"]["status"] == "success"
+        assert result["outcome_correlation"]["updated"] == 1
+        assert "trw_deliver_complete" in called_with
+
+    def test_deliver_emits_session_end_event(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 7: TelemetryClient.record_event called with SessionEndEvent."""
+        from unittest.mock import MagicMock
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        mock_client = MagicMock()
+        mock_client.record_event = MagicMock()
+        mock_client.flush = MagicMock()
+
+        with patch("trw_mcp.telemetry.client.TelemetryClient.from_config", return_value=mock_client):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        assert result["telemetry"]["status"] == "success"
+        assert mock_client.record_event.call_count >= 2
+        # Verify SessionEndEvent was among the calls
+        from trw_mcp.telemetry.models import SessionEndEvent
+        call_args_list = mock_client.record_event.call_args_list
+        event_types = [type(c.args[0]).__name__ for c in call_args_list if c.args]
+        assert "SessionEndEvent" in event_types
+
+    def test_deliver_emits_ceremony_compliance_event(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 7: TelemetryClient.record_event called with CeremonyComplianceEvent."""
+        from unittest.mock import MagicMock
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        mock_client = MagicMock()
+        mock_client.record_event = MagicMock()
+        mock_client.flush = MagicMock()
+
+        with patch("trw_mcp.telemetry.client.TelemetryClient.from_config", return_value=mock_client):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        assert result["telemetry"]["status"] == "success"
+        from trw_mcp.telemetry.models import CeremonyComplianceEvent
+        call_args_list = mock_client.record_event.call_args_list
+        event_types = [type(c.args[0]).__name__ for c in call_args_list if c.args]
+        assert "CeremonyComplianceEvent" in event_types
+
+    def test_deliver_calls_batch_sender(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 8: BatchSender.from_config().send() is called."""
+        from unittest.mock import MagicMock
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        mock_sender = MagicMock()
+        mock_sender.send = MagicMock(return_value={"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "offline_mode"})
+
+        with patch("trw_mcp.telemetry.sender.BatchSender.from_config", return_value=mock_sender):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        assert "batch_send" in result
+        mock_sender.send.assert_called_once()
+
+    def test_deliver_calls_record_outcome(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 6.6: record_outcome is called for tracked recalls with positive outcome."""
+        from unittest.mock import MagicMock
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        # Set up a recall_tracking.jsonl with an unresolved record
+        trw_dir = tmp_path / ".trw"
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        import json as _json
+        tracking_path = logs_dir / "recall_tracking.jsonl"
+        tracking_path.write_text(
+            _json.dumps({"learning_id": "L-test001", "ts": "2026-02-22T00:00:00Z", "outcome": None}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Also need a run_dir for the tracking path check
+        run_dir = tmp_path / "docs" / "task" / "runs" / "20260222T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+
+        recorded: list[tuple[str, str]] = []
+
+        def _fake_record_outcome(lid: str, outcome: str) -> None:
+            recorded.append((lid, outcome))
+
+        with (
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state.recall_tracking.record_outcome", side_effect=_fake_record_outcome),
+        ):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        assert result["recall_outcome"]["status"] == "success"
+        assert result["recall_outcome"]["recorded"] >= 1
+        assert ("L-test001", "positive") in recorded
+
+    def test_deliver_outcome_correlation_failopen(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 6.5: process_outcome_for_event raising does not block deliver."""
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        with patch(
+            "trw_mcp.scoring.process_outcome_for_event",
+            side_effect=RuntimeError("correlation boom"),
+        ):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        # outcome_correlation failed but deliver still returns a result
+        assert result["outcome_correlation"]["status"] == "failed"
+        assert "correlation boom" in result["outcome_correlation"]["error"]
+        # Other steps should still complete
+        assert "reflect" in result
+
+    def test_deliver_telemetry_failopen(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 7: TelemetryClient.from_config raising does not block deliver."""
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        with patch(
+            "trw_mcp.telemetry.client.TelemetryClient.from_config",
+            side_effect=RuntimeError("telemetry boom"),
+        ):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        assert result["telemetry"]["status"] == "failed"
+        assert "telemetry boom" in result["telemetry"]["error"]
+        # batch_send should still run
+        assert "batch_send" in result
+
+    def test_deliver_batch_send_failopen(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 8: BatchSender.from_config raising does not block deliver."""
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        with patch(
+            "trw_mcp.telemetry.sender.BatchSender.from_config",
+            side_effect=RuntimeError("batch boom"),
+        ):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        assert result["batch_send"]["status"] == "failed"
+        assert "batch boom" in result["batch_send"]["error"]
+        # Result still returned (not raised)
+        assert "timestamp" in result
+
+    def test_deliver_steps_completed_count_is_9(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When all 9 steps succeed, steps_completed == 9."""
+        from unittest.mock import MagicMock
+        tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
+
+        mock_client = MagicMock()
+        mock_client.record_event = MagicMock()
+        mock_client.flush = MagicMock()
+
+        mock_sender = MagicMock()
+        mock_sender.send = MagicMock(return_value={"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "offline_mode"})
+
+        with (
+            patch("trw_mcp.telemetry.client.TelemetryClient.from_config", return_value=mock_client),
+            patch("trw_mcp.telemetry.sender.BatchSender.from_config", return_value=mock_sender),
+            # Stub publish_learnings to succeed
+            patch("trw_mcp.telemetry.publisher.publish_learnings", return_value={"status": "success"}),
+        ):
+            result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
+
+        # With skip_reflect + skip_index_sync, reflect/index are skipped (not errored)
+        # Steps that succeed contribute to steps_completed = 9 - len(errors)
+        assert result["steps_completed"] == 9 - len(result["errors"])

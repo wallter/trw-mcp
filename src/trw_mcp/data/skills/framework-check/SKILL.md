@@ -6,7 +6,7 @@ description: >
   framework obligations are being met.
   Use: /framework-check
 user-invocable: true
-allowed-tools: Read, Glob, Grep
+allowed-tools: Read, Glob, Grep, mcp__trw__trw_status, mcp__trw__trw_recall
 ---
 
 # Framework Compliance Check Skill

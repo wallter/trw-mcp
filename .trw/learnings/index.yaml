@@ -1,0 +1,22 @@
+entries:
+- id: L-e060ed09
+  summary: New critical learning
+  tags: []
+  impact: 0.7999999999999999
+  created: '2026-02-22'
+- id: L-ff98b2e3
+  summary: Critical
+  tags: []
+  impact: 0.7999999999999999
+  created: '2026-02-22'
+- id: L-14a49e1b
+  summary: Critical learning
+  tags: []
+  impact: 0.7999999999999999
+  created: '2026-02-22'
+- id: L-9941046f
+  summary: Low impact
+  tags: []
+  impact: 0.5
+  created: '2026-02-22'
+total_count: 4

@@ -498,6 +498,23 @@ def _read_analytics(trw_dir: Path) -> tuple[Path, dict[str, object]]:
     return analytics_path, data
 
 
+def _update_core_counters(
+    data: dict[str, object],
+    new_learnings_count: int,
+) -> tuple[int, int]:
+    """Increment sessions_tracked, total_learnings, and avg_learnings_per_session.
+
+    Returns:
+        Tuple of (sessions, total_learnings) after update.
+    """
+    sessions = _safe_int(data, "sessions_tracked") + 1
+    total_learnings = _safe_int(data, "total_learnings") + new_learnings_count
+    data["sessions_tracked"] = sessions
+    data["total_learnings"] = total_learnings
+    data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
+    return sessions, total_learnings
+
+
 def update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
     """Update .trw/context/analytics.yaml with reflection metrics.
 
@@ -506,14 +523,7 @@ def update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
         new_learnings_count: Number of new learnings produced.
     """
     analytics_path, data = _read_analytics(trw_dir)
-
-    sessions = _safe_int(data, "sessions_tracked") + 1
-    total_learnings = _safe_int(data, "total_learnings") + new_learnings_count
-
-    data["sessions_tracked"] = sessions
-    data["total_learnings"] = total_learnings
-    data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
-
+    _, total_learnings = _update_core_counters(data, new_learnings_count)
     _writer.write_yaml(analytics_path, data)
     logger.debug("analytics_updated", new_learnings=new_learnings_count, total=total_learnings)
 
@@ -549,12 +559,8 @@ def update_analytics_extended(
     """
     analytics_path, data = _read_analytics(trw_dir)
 
-    # Core counters (backward compatible with existing update_analytics)
-    sessions = _safe_int(data, "sessions_tracked") + 1
-    total_learnings = _safe_int(data, "total_learnings") + new_learnings_count
-    data["sessions_tracked"] = sessions
-    data["total_learnings"] = total_learnings
-    data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
+    # Core counters (shared with update_analytics)
+    _update_core_counters(data, new_learnings_count)
 
     # FR02: Reflection tracking
     if is_reflection:

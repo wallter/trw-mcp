@@ -6,7 +6,7 @@ description: >
   Use: /sprint-init "Sprint 16: Skills Architecture"
 user-invocable: true
 argument-hint: "[sprint name]"
-allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash, mcp__trw__trw_init, mcp__trw__trw_checkpoint
 ---
 
 # Sprint Initialization Skill

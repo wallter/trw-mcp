@@ -597,8 +597,32 @@ def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
 
     content_lines = new_content.split("\n")
     if len(content_lines) > max_lines:
-        content_lines = content_lines[:max_lines]
-        content_lines.append("<!-- trw: truncated to line limit -->")
+        # QUAL-018: Preserve TRW marker boundaries when truncating.
+        # Find the TRW markers to ensure we never cut inside them.
+        start_idx: int | None = None
+        end_idx: int | None = None
+        for i, line in enumerate(content_lines):
+            if TRW_MARKER_START in line:
+                start_idx = i
+            if TRW_MARKER_END in line:
+                end_idx = i
+
+        if start_idx is not None and end_idx is not None and end_idx < len(content_lines):
+            # TRW section is intact — truncate user content before it
+            user_lines = content_lines[:start_idx]
+            trw_lines = content_lines[start_idx:end_idx + 1]
+            after_lines = content_lines[end_idx + 1:]
+
+            # Budget: max_lines minus TRW section minus after-marker content
+            trw_size = len(trw_lines) + len(after_lines)
+            user_budget = max(0, max_lines - trw_size - 1)  # -1 for truncation comment
+            truncated_user = user_lines[:user_budget]
+            truncated_user.append("<!-- trw: user content truncated to line limit -->")
+            content_lines = truncated_user + trw_lines + after_lines
+        else:
+            # No intact markers — fall back to simple truncation
+            content_lines = content_lines[:max_lines]
+            content_lines.append("<!-- trw: truncated to line limit -->")
         new_content = "\n".join(content_lines)
 
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,25 @@
+runs:
+- run_id: 20260219T100000Z-abcd1234
+  started_at: '2026-02-19T10:00:00+00:00'
+  task: task1
+  status: complete
+  phase: deliver
+  score: 0
+  session_start: false
+  deliver: false
+  checkpoint_count: 0
+  learn_count: 0
+  build_check: false
+  build_passed:
+aggregate:
+  total_runs: 1
+  avg_ceremony_score: 0.0
+  build_pass_rate: 0.0
+  avg_learnings_per_run: 0.0
+  ceremony_trend:
+  - run_id: 20260219T100000Z-abcd1234
+    score: 0
+    started_at: '2026-02-19T10:00:00+00:00'
+generated_at: '2026-02-24T00:57:11.436963+00:00'
+runs_scanned: 1
+parse_errors: []

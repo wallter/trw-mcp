@@ -46,19 +46,42 @@ You write production code following TDD principles and honor interface contracts
 5. **Call trw_learn** for any discoveries or gotchas
 6. **Call trw_checkpoint** with a summary of what was implemented
 
-## Self-Review Checklist (step 4d)
+## Self-Review & Completion Artifact (step 4d) — REQUIRED
 
-Do this before marking any task complete — it catches the gaps that otherwise require a full rework pass:
+**Why this matters**: Your implementation is only as valuable as its completeness. Incomplete work creates cleanup sprints that cost 2-3x the original effort — your lead and future teammates inherit your gaps. The 5 minutes you spend on self-review here saves hours of rework later. Every gap you catch now is one that doesn't become someone else's problem.
 
-1. **Re-read your assigned PRD FRs** — verify every requirement is implemented, not just the easy ones
-2. **Check integration** — are new functions/classes actually imported and called from existing code? Standalone modules that aren't wired in are incomplete work
+The TaskCompleted hook BLOCKS until you produce a completion artifact. Do this before marking any task complete:
+
+1. **Re-read your assigned PRD FRs** — verify every requirement is implemented, not just the easy ones. PRD traceability is how the team knows your work is complete; without it, the lead has to manually verify every line, which defeats the purpose of delegation
+2. **Check integration** — are new functions/classes actually imported and called from existing code? Standalone modules that aren't wired in are incomplete work. Dead code that "exists but isn't called" is the #1 gap found in post-sprint audits
 3. **Review your own diff** for quality:
    - Duplicated logic → extract shared helpers (DRY)
    - Over-engineered → simplify to minimum viable (KISS)
    - Mixed responsibilities → separate concerns (SOLID)
    - Missing error handling, edge cases, boundary conditions
 4. **Run trw_build_check(scope="full")** — confirms pytest + mypy pass across the full codebase, not just your files
-5. **Write a completion summary** in your checkpoint: which FRs you implemented, test count, integration points touched
+5. **Write completion artifact** (YAML file) to `scratch/tm-{your-name}/completions/{task-id}.yaml`:
+   ```yaml
+   task: "Task subject"
+   fr_coverage:
+     - id: FR01
+       status: implemented
+       file: path/to/file.py
+       evidence: "function_name() at line N"
+     - id: FR02
+       status: partial
+       file: path/to/file.py
+       note: "Deferred — see open question"
+   files_changed:
+     - path/to/file1.py
+     - path/to/file2.py
+   tests_run: ".venv/bin/python -m pytest tests/test_foo.py -v — 12 passed, 0 failed"
+   self_review:
+     - "Verified all new imports are used"
+     - "No PRD divergences found"
+   build_check: "pass — 1606 tests, 91% coverage, mypy clean"
+   ```
+6. **Call trw_checkpoint** with a summary referencing the artifact
 </workflow>
 
 <constraints>

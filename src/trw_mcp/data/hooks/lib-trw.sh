@@ -153,3 +153,12 @@ check_ceremony_status() {
   fi
   return 0
 }
+
+# cleanup_block_files: Remove stale per-teammate block count files.
+# Called by session-end.sh as housekeeping.
+# Args: $1=context_dir
+cleanup_block_files() {
+  _cbd_dir="${1:-}"
+  [ -d "$_cbd_dir" ] || return 0
+  rm -f "$_cbd_dir"/idle_block_* "$_cbd_dir"/tc_block_* 2>/dev/null || true
+}

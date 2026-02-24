@@ -196,7 +196,8 @@ class TestHooks:
         "session-start.sh",
         "stop-ceremony.sh",
         "subagent-start.sh",
-        "task-completed-ceremony.sh",
+        "task-completed.sh",
+        "teammate-idle.sh",
         "validate-prd-write.sh",
     ]
 
@@ -241,11 +242,13 @@ class TestSkills:
         "simplify",
         "sprint-finish",
         "sprint-init",
+        "sprint-team",
+        "team-playbook",
         "test-strategy",
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 13 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 15 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -943,6 +946,52 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
-        assert len(skills) == 13
+        assert len(skills) == 15
         assert len(agents) == 9
         assert len(hooks) > 0
+
+
+# ── Root FRAMEWORK.md Tests (PRD-FIX-025) ──────────────────────────────
+
+
+@pytest.mark.unit
+class TestRootFrameworkMd:
+    """Test that init/update deploy FRAMEWORK.md to the project root."""
+
+    def test_init_creates_root_framework_md(self, fake_git_repo: Path) -> None:
+        """init_project creates FRAMEWORK.md at the project root."""
+        result = init_project(fake_git_repo)
+        assert not result["errors"]
+
+        root_fw = fake_git_repo / "FRAMEWORK.md"
+        assert root_fw.is_file()
+        content = root_fw.read_text(encoding="utf-8")
+        assert "v24.0_TRW" in content
+
+    def test_init_root_matches_cached(self, fake_git_repo: Path) -> None:
+        """Root FRAMEWORK.md matches .trw/frameworks/FRAMEWORK.md after init."""
+        init_project(fake_git_repo)
+
+        root_fw = fake_git_repo / "FRAMEWORK.md"
+        cached_fw = fake_git_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+        assert root_fw.read_text(encoding="utf-8") == cached_fw.read_text(encoding="utf-8")
+
+    def test_update_overwrites_stale_root_framework_md(self, initialized_repo: Path) -> None:
+        """update_project overwrites a stale root FRAMEWORK.md."""
+        root_fw = initialized_repo / "FRAMEWORK.md"
+        root_fw.write_text("old stale content v16.0", encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        content = root_fw.read_text(encoding="utf-8")
+        assert content != "old stale content v16.0"
+        assert "v24.0_TRW" in content
+
+    def test_update_root_matches_cached(self, initialized_repo: Path) -> None:
+        """After update, root FRAMEWORK.md matches cached version."""
+        update_project(initialized_repo)
+
+        root_fw = initialized_repo / "FRAMEWORK.md"
+        cached_fw = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+        assert root_fw.read_text(encoding="utf-8") == cached_fw.read_text(encoding="utf-8")

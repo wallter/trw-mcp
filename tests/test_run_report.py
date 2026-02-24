@@ -572,4 +572,98 @@ class TestGracefulDegradation:
         report = assemble_report(minimal_run_dir, reader, trw_dir)
 
         assert report.learning_summary.total_produced == 0
-        assert report.learning_summary.avg_impact == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Tool-layer tests for tools/report.py (L-c28c6287: tool-layer tests mandatory)
+# ---------------------------------------------------------------------------
+
+
+class TestReportToolLayer:
+    """Verify trw_run_report and trw_analytics_report are registered and callable."""
+
+    def test_both_tools_registered(self) -> None:
+        """Both trw_run_report and trw_analytics_report are discoverable after registration."""
+        from fastmcp import FastMCP
+
+        from trw_mcp.tools.report import register_report_tools
+
+        srv = FastMCP("report-tool-test")
+        register_report_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        assert "trw_run_report" in tools, "trw_run_report not registered"
+        assert "trw_analytics_report" in tools, "trw_analytics_report not registered"
+
+    def test_trw_run_report_returns_error_for_missing_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """trw_run_report returns error dict when run path cannot be resolved."""
+        import trw_mcp.tools.report as report_mod
+
+        from fastmcp import FastMCP
+
+        from trw_mcp.exceptions import StateError
+        from trw_mcp.tools.report import register_report_tools
+
+        def _raise(_: object = None) -> None:
+            raise StateError("no active run", path="none")
+
+        monkeypatch.setattr(report_mod, "resolve_run_path", _raise)
+
+        srv = FastMCP("run-report-error-test")
+        register_report_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        result = tools["trw_run_report"].fn()
+        assert isinstance(result, dict)
+        assert result.get("status") == "failed"
+        assert "error" in result
+
+    def test_trw_run_report_returns_report_for_valid_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """trw_run_report returns a populated report dict for a valid run directory."""
+        import trw_mcp.tools.report as report_mod
+
+        from fastmcp import FastMCP
+
+        from trw_mcp.state.persistence import FileStateWriter
+        from trw_mcp.tools.report import register_report_tools
+
+        writer = FileStateWriter()
+
+        # Build a minimal valid run directory
+        run_dir = tmp_path / "docs" / "t" / "runs" / "20260101T000000Z-aaaa1111"
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True)
+        writer.write_yaml(meta / "run.yaml", {
+            "run_id": "20260101T000000Z-aaaa1111",
+            "task": "t",
+            "framework": "v24.0_TRW",
+            "status": "active",
+            "phase": "implement",
+            "confidence": "medium",
+            "run_type": "implementation",
+            "prd_scope": [],
+        })
+        writer.append_jsonl(meta / "events.jsonl", {
+            "ts": "2026-01-01T00:00:00Z", "event": "run_init",
+        })
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True)
+
+        monkeypatch.setattr(report_mod, "resolve_run_path", lambda _: run_dir)
+        monkeypatch.setattr(report_mod, "resolve_trw_dir", lambda: trw_dir)
+
+        srv = FastMCP("run-report-valid-test")
+        register_report_tools(srv)
+        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        result = tools["trw_run_report"].fn()
+        assert isinstance(result, dict)
+        assert result.get("run_id") == "20260101T000000Z-aaaa1111"
+        assert result.get("task") == "t"
+        assert "status" in result

@@ -207,9 +207,11 @@ class TestHookScripts:
         ["teammate-idle.sh", "task-completed.sh"],
     )
     def test_hook_fail_open(self, hooks_dir: Path, script_name: str) -> None:
-        """Hook script has fail-open trap (exit 0 on any error)."""
+        """Hook script has fail-open trap (exit 0 on unexpected error)."""
         content = (hooks_dir / script_name).read_text(encoding="utf-8")
-        assert "trap 'exit 0' EXIT" in content
+        # Hooks use conditional fail-open: intentional exits (exit 2 for blocking)
+        # are allowed, but unexpected errors silently exit 0.
+        assert 'exit 0' in content and 'trap' in content
 
     @pytest.mark.parametrize(
         "script_name",

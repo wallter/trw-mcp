@@ -6,7 +6,7 @@ description: >
   Use: /prd-new "Add rate limiting to the API"
 user-invocable: true
 argument-hint: "[feature description]"
-allowed-tools: Read, Grep, Glob, Write, Bash
+allowed-tools: Read, Grep, Glob, Write, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_create, mcp__trw__trw_prd_validate
 ---
 
 # PRD Creation Skill

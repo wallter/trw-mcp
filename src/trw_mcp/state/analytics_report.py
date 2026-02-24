@@ -299,6 +299,83 @@ def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+# --- Stale Run Auto-Close ---
+
+
+def auto_close_stale_runs(
+    age_days: int | None = None,
+) -> dict[str, object]:
+    """Auto-close active runs older than a configurable threshold.
+
+    Prevents orphaned runs from accumulating indefinitely. Runs that were
+    never delivered or closed (stuck in 'active' status) are marked as
+    'abandoned' after the threshold period.
+
+    Called automatically during trw_session_start when enabled.
+
+    Args:
+        age_days: Days of inactivity before closing. Defaults to config value.
+
+    Returns:
+        Dict with runs_closed list, count, and any errors.
+    """
+    cfg = get_config()
+    threshold = age_days if age_days is not None else cfg.run_auto_close_age_days
+    project_root = resolve_project_root()
+    task_root = project_root / cfg.task_root
+
+    closed: list[str] = []
+    errors: list[str] = []
+    now = datetime.now(timezone.utc)
+
+    if not task_root.exists():
+        return {"runs_closed": closed, "count": 0, "errors": errors}
+
+    for task_dir in sorted(task_root.iterdir()):
+        runs_dir = task_dir / "runs"
+        if not runs_dir.is_dir():
+            continue
+        for run_dir in sorted(runs_dir.iterdir()):
+            run_yaml = run_dir / "meta" / "run.yaml"
+            if not run_yaml.exists():
+                continue
+            try:
+                data = _reader.read_yaml(run_yaml)
+                status = str(data.get("status", ""))
+                if status != "active":
+                    continue
+
+                run_id = str(data.get("run_id", run_dir.name))
+                started_at = _parse_run_id_timestamp(run_id)
+                try:
+                    run_dt = datetime.fromisoformat(started_at)
+                except ValueError:
+                    continue
+
+                age = (now - run_dt).days
+                if age <= threshold:
+                    continue
+
+                data["status"] = "abandoned"
+                data["abandoned_at"] = now.isoformat()
+                data["abandoned_reason"] = (
+                    f"Auto-closed: active for {age} days (threshold: {threshold})"
+                )
+                _writer.write_yaml(run_yaml, data)
+                closed.append(run_id)
+
+                logger.info(
+                    "run_auto_closed",
+                    run_id=run_id,
+                    age_days=age,
+                    task=str(data.get("task", "")),
+                )
+            except Exception as exc:
+                errors.append(f"{run_dir.name}: {exc}")
+
+    return {"runs_closed": closed, "count": len(closed), "errors": errors}
+
+
 def _empty_report(parse_errors: list[str]) -> dict[str, object]:
     """Return an empty analytics report."""
     return {

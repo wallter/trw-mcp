@@ -90,13 +90,25 @@
         ]
       }
     ],
+    "TeammateIdle": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/teammate-idle.sh\"",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
     "TaskCompleted": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/task-completed-ceremony.sh\"",
+            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/task-completed.sh\"",
             "timeout": 3000
           }
         ]
@@ -124,5 +136,8 @@
         ]
       }
     ]
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   }
 }

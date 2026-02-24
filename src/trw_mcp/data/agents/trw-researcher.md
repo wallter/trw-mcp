@@ -15,6 +15,7 @@ allowedTools:
   - WebFetch
   - mcp__trw__trw_learn
   - mcp__trw__trw_recall
+  - mcp__trw__trw_checkpoint
 disallowedTools:
   - Bash
   - Edit

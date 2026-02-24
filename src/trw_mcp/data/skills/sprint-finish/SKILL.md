@@ -5,7 +5,7 @@ description: >
   updates PRD statuses, archives sprint doc, runs delivery ceremony.
   Use: /sprint-finish
 user-invocable: true
-allowed-tools: Read, Grep, Glob, Write, Edit, Bash
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash, mcp__trw__trw_build_check, mcp__trw__trw_deliver
 ---
 
 # Sprint Completion Skill

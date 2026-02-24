@@ -6,7 +6,7 @@ description: >
   Use: /memory-optimize
 user-invocable: true
 disable-model-invocation: true
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__trw__trw_recall, mcp__trw__trw_learn_update, mcp__trw__trw_claude_md_sync
 ---
 
 # Memory Optimization Skill

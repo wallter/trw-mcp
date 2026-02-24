@@ -62,6 +62,11 @@ class TRWConfig(BaseSettings):
         {"id", "summary", "impact", "tags", "status"}
     )
 
+    # Impact score forced distribution (PRD-CORE-034)
+    impact_forced_distribution_enabled: bool = True
+    impact_tier_critical_cap: float = 0.05   # max 5% at 0.9-1.0
+    impact_tier_high_cap: float = 0.20       # max 20% at 0.7-0.89
+
     # Learning: utility scoring with Ebbinghaus decay (PRD-CORE-004, PRD-CORE-026)
     learning_decay_half_life_days: float = 14.0
     learning_decay_use_exponent: float = 0.6
@@ -253,6 +258,14 @@ class TRWConfig(BaseSettings):
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None  # Custom test command (e.g. "make test")
 
+    # Maintenance: auto-close orphaned runs (active > N days)
+    run_auto_close_enabled: bool = True
+    run_auto_close_age_days: int = 7
+
+    # Maintenance: auto-prune learnings on deliver when active count exceeds cap
+    learning_auto_prune_on_deliver: bool = True
+    learning_auto_prune_cap: int = 150
+
     # Debug and telemetry
     debug: bool = False
     logs_dir: str = "logs"
@@ -261,6 +274,14 @@ class TRWConfig(BaseSettings):
     telemetry_file: str = "tool-telemetry.jsonl"
     llm_usage_log_enabled: bool = True
     llm_usage_log_file: str = "llm_usage.jsonl"
+
+    # Platform and update channel (PRD-CORE-031, PRD-INFRA-014, PRD-INFRA-016)
+    platform_telemetry_enabled: bool = False  # opt-in; sends anonymized usage to trwframework.com
+    update_channel: str = "latest"            # update channel: latest | lts
+    platform_url: str = ""                    # trwframework.com backend URL (empty = offline)
+    platform_api_key: str = ""                # API key for platform backend authentication
+    installation_id: str = ""                 # anonymized installation identifier
+    auto_upgrade: bool = False                # auto-install updates on session start (PRD-INFRA-014)
 
 
 # --- Singleton factory ---------------------------------------------------
@@ -271,13 +292,58 @@ _singleton: TRWConfig | None = None
 def get_config() -> TRWConfig:
     """Return the shared TRWConfig singleton.
 
-    First call creates the instance; subsequent calls return the same object.
+    First call creates the instance with config.yaml overrides merged.
+    Subsequent calls return the same object.
     Use ``_reset_config()`` in tests to clear cached state.
     """
     global _singleton  # noqa: PLW0603
     if _singleton is None:
-        _singleton = TRWConfig()
+        _singleton = _build_config()
     return _singleton
+
+
+def _build_config() -> TRWConfig:
+    """Build TRWConfig with ``.trw/config.yaml`` overrides merged.
+
+    Precedence (highest wins):
+    1. Environment variables (``TRW_*``) — checked explicitly
+    2. ``.trw/config.yaml`` values — passed as init kwargs
+    3. Field defaults defined in TRWConfig
+
+    Pydantic BaseSettings gives init kwargs *highest* priority, so we
+    must exclude config.yaml keys that have a corresponding ``TRW_*``
+    env var set to preserve the documented precedence.
+
+    Gracefully falls back to defaults-only when:
+    - Running outside a git repository (e.g. during ``pip install``)
+    - config.yaml is missing or malformed
+    - Any import or filesystem error occurs
+    """
+    import os
+
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.state.persistence import FileStateReader
+
+        project_root = resolve_project_root()
+        config_path = project_root / ".trw" / "config.yaml"
+        if config_path.exists():
+            reader = FileStateReader()
+            overrides = reader.read_yaml(config_path)
+            if isinstance(overrides, dict):
+                # Filter to non-None values with string keys,
+                # excluding keys that have a TRW_ env var set
+                filtered = {
+                    str(k): v
+                    for k, v in overrides.items()
+                    if v is not None
+                    and f"TRW_{str(k).upper()}" not in os.environ
+                }
+                if filtered:
+                    return TRWConfig(**filtered)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001
+        pass  # Fall back to defaults if project root not found
+    return TRWConfig()
 
 
 def _reset_config(config: TRWConfig | None = None) -> None:
