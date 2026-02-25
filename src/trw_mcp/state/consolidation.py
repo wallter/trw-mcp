@@ -1,7 +1,7 @@
 """Memory consolidation engine — PRD-CORE-044.
 
 Clusters semantically similar learning entries using embeddings and
-single-linkage agglomerative clustering, then consolidates each cluster
+complete-linkage agglomerative clustering, then consolidates each cluster
 into a single entry via LLM summarization (with a longest-entry fallback).
 Original entries are archived to the cold tier after consolidation.
 """
@@ -29,7 +29,7 @@ logger = structlog.get_logger()
 
 # NFR06 — Path redaction pattern for LLM prompts
 _PATH_RE = re.compile(
-    r"(?:/home/|/Users/|[A-Z]:\\)[^\s,;\"')\]}>]*",
+    r"(?:/home/|/Users/|/mnt/|/tmp/|/var/|[A-Z]:\\)[^\s,;\"')\]}>]*",
 )
 
 
@@ -54,7 +54,7 @@ def find_clusters(
     """Detect clusters of semantically similar active learning entries.
 
     Loads up to *max_entries* active entries from *entries_dir*, generates
-    embeddings in a single batch call, then applies single-linkage
+    embeddings in a single batch call, then applies complete-linkage
     agglomerative clustering: two entries belong to the same cluster when
     every pair in the group has cosine similarity >= *similarity_threshold*.
 
@@ -118,7 +118,7 @@ def find_clusters(
     if len(indexed) < min_cluster_size:
         return []
 
-    # Single-linkage agglomerative clustering
+    # Complete-linkage agglomerative clustering
     # Invariant: every pair within a cluster must be >= threshold
     n = len(indexed)
     cluster_id: list[int] = list(range(n))  # each entry starts in its own cluster
@@ -309,6 +309,7 @@ def _create_consolidated_entry(
         "status": "active",
         "created": date.today().isoformat(),
         "updated": date.today().isoformat(),
+        "last_accessed_at": date.today().isoformat(),
     }
 
     slug = entry_id.replace("/", "-")
@@ -363,23 +364,15 @@ def _archive_originals(
         if not entry_id:
             continue
 
-        # Locate the YAML file on disk
-        candidates = list(entries_dir.glob(f"*{entry_id}*.yaml"))
-        if not candidates:
-            # Try exact filename derivation
-            slug = entry_id.replace("/", "-").replace(":", "-")
-            candidate = entries_dir / f"{slug}.yaml"
-            if candidate.exists():
-                candidates = [candidate]
-
-        if not candidates:
+        # Derive exact filename from entry_id (safe slugify, no glob injection)
+        slug = re.sub(r"[^a-zA-Z0-9_\-]", "-", entry_id)
+        entry_path = entries_dir / f"{slug}.yaml"
+        if not entry_path.exists():
             logger.warning(
                 "consolidation_archive_file_not_found",
                 entry_id=entry_id,
             )
             continue
-
-        entry_path = candidates[0]
 
         try:
             data = reader.read_yaml(entry_path)

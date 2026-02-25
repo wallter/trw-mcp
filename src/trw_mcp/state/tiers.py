@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections import OrderedDict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -226,15 +227,12 @@ class TierManager:
         entries_dir = (
             self._trw_dir / cfg.learnings_dir / cfg.entries_dir
         )
-        # Derive filename from entry.id (same convention as the rest of the codebase)
-        sanitized = entry_id.replace("/", "-").replace(":", "-")
-        # Try to find the YAML file using a glob (entries use slugified filenames)
-        candidates = list(entries_dir.glob(f"*{sanitized}*.yaml"))
-        if not candidates:
+        # Derive exact filename from entry.id (same slugify convention as the codebase)
+        sanitized = re.sub(r"[^a-zA-Z0-9_\-]", "-", entry_id)
+        target = entries_dir / f"{sanitized}.yaml"
+        if not target.exists():
             # No file yet — nothing to flush
             return
-
-        target = candidates[0]
         try:
             data = self._reader.read_yaml(target)
             data["last_accessed_at"] = date.today().isoformat()
