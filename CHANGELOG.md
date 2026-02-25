@@ -30,7 +30,7 @@ All notable changes to the TRW MCP server package.
 - Path redaction (`_redact_paths`) in LLM prompts — NFR06: strips `/home/`, `/Users/`, `C:\` paths before sending to API
 
 ### Stats
-- 2503 tests passing (170 new Sprint 32 tests: 64 tiers + 106 consolidation), mypy --strict clean (64 files)
+- 2513 tests passing (170 new Sprint 32 tests: 64 tiers + 106 consolidation), mypy --strict clean (64 files)
 - New modules: `state/tiers.py`, `state/consolidation.py`
 - 12 new TRWConfig fields, 2 new LearningEntry fields
 - Code simplified via /simplify pass on both new modules

@@ -329,7 +329,7 @@ class TestAgentDefinitions:
         ("agent_name", "expected_model"),
         [
             ("trw-lead.md", "opus"),
-            ("trw-implementer.md", "sonnet"),
+            ("trw-implementer.md", "opus"),
             ("trw-tester.md", "sonnet"),
             ("trw-reviewer.md", "opus"),
             ("trw-researcher.md", "sonnet"),
