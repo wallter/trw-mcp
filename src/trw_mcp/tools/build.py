@@ -430,6 +430,14 @@ def register_build_tools(server: FastMCP) -> None:
                     "duration_secs": str(status.duration_secs),
                 })
 
+        # Q-learning: reward recalled learnings based on build outcome
+        try:
+            from trw_mcp.scoring import process_outcome_for_event
+            event_type = "build_passed" if status.tests_passed and status.mypy_clean else "build_failed"
+            process_outcome_for_event(event_type)
+        except Exception:
+            pass  # Q-learning is best-effort, never block build check
+
         logger.info(
             "build_check_complete",
             scope=scope,

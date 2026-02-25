@@ -294,7 +294,11 @@ class TestSkills:
 
 @pytest.mark.unit
 class TestAgents:
-    """Test agent file deployment."""
+    """Test agent file deployment.
+
+    Adding a new agent? See TestAgentDefinitions docstring in test_agent_teams.py
+    for the full update sequence (7 locations).
+    """
 
     EXPECTED_AGENTS = [
         "code-simplifier.md",
@@ -303,6 +307,7 @@ class TestAgents:
         "requirement-writer.md",
         "traceability-checker.md",
         "trw-implementer.md",
+        "trw-lead.md",
         "trw-researcher.md",
         "trw-reviewer.md",
         "trw-tester.md",
@@ -947,7 +952,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
         assert len(skills) == 15
-        assert len(agents) == 9
+        assert len(agents) == 10
         assert len(hooks) > 0
 
 

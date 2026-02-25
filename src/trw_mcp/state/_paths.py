@@ -17,6 +17,18 @@ _config = get_config()
 _reader = FileStateReader()
 
 
+def resolve_memory_store_path() -> Path:
+    """Resolve the sqlite-vec memory store database path.
+
+    Strips the ``.trw/`` prefix from the configured ``memory_store_path``
+    and joins with the resolved .trw directory.
+
+    Returns:
+        Absolute path to the sqlite-vec database file.
+    """
+    return resolve_trw_dir() / _config.memory_store_path.removeprefix(".trw/")
+
+
 def resolve_project_root() -> Path:
     """Resolve the project root from environment or CWD.
 

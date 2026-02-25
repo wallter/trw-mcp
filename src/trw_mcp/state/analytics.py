@@ -406,6 +406,24 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     _writer.write_yaml(entry_path, model_to_dict(entry))
     logger.debug("learning_entry_saved", learning_id=entry.id, path=str(entry_path))
 
+    # Index in vector store for hybrid search (PRD-CORE-041)
+    try:
+        from trw_mcp.telemetry.embeddings import embed
+        from trw_mcp.state.memory_store import MemoryStore
+        if MemoryStore.available():
+            text = entry.summary + " " + entry.detail
+            embedding = embed(text)
+            if embedding is not None:
+                from trw_mcp.state._paths import resolve_memory_store_path
+                store_path = resolve_memory_store_path()
+                store = MemoryStore(store_path)
+                try:
+                    store.upsert(entry.id, embedding, {"summary": entry.summary[:100]})
+                finally:
+                    store.close()
+    except Exception:  # noqa: BLE001
+        pass  # Vector indexing is best-effort
+
     update_learning_index(trw_dir, entry)
     return entry_path
 

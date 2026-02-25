@@ -552,10 +552,13 @@ def render_agent_teams_protocol() -> str:
         "Each teammate owns exclusive files to prevent write conflicts. "
         "LEAD assigns ownership via playbook. Never edit files outside your assignment.\n"
         "\n"
+        # Adding a new agent? See TestAgentDefinitions in test_agent_teams.py
+        # for the full 7-location update sequence.
         "### Teammate Roles\n"
         "\n"
         "| Agent | Model | Purpose |\n"
         "|-------|-------|---------|\n"
+        "| `trw-lead` | opus | Team lead, 6-phase orchestrator, quality gates |\n"
         "| `trw-implementer` | sonnet | Code implementation, TDD |\n"
         "| `trw-tester` | sonnet | Test coverage, edge cases |\n"
         "| `trw-reviewer` | opus | Code review, security audit |\n"
@@ -667,6 +670,17 @@ def collect_promotable_learnings(
                 score = float(str(data.get("q_value", impact)))
             else:
                 score = float(str(impact)) if isinstance(impact, (int, float)) else 0.0
+
+            # Apply time decay for accurate promotion decisions
+            created_at_raw = str(data.get("created_at", ""))
+            if created_at_raw:
+                try:
+                    from datetime import datetime as _dt
+                    from trw_mcp.scoring import apply_time_decay
+                    created_dt = _dt.fromisoformat(created_at_raw)
+                    score = apply_time_decay(score, created_dt)
+                except (ValueError, ImportError):
+                    pass  # Malformed date — use raw score
 
             if score >= config.learning_promotion_impact:
                 high_impact.append(data)

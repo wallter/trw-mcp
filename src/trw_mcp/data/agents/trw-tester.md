@@ -45,24 +45,31 @@ criteria and ensure code quality through high coverage.
    c. Use pytest parametrize for data-driven tests
    d. Run tests to verify they pass: .venv/bin/python -m pytest tests/ -v
    e. Check coverage: .venv/bin/python -m pytest tests/ --cov=trw_mcp --cov-report=term-missing
-   f. **Write completion artifact** to `scratch/tm-{your-name}/completions/{task-id}.yaml`:
+   f. **FR-by-FR Test Coverage Audit** — before writing the artifact:
+      1. List EVERY FR from the PRD(s) you're testing
+      2. For each FR, verify you have at least one positive test and one negative/edge test
+      3. If any FR is missing test coverage, write the missing tests NOW
+      4. Common gaps: integration wiring tests (FR calls the right function), config field tests, graceful degradation tests
+   g. **Write completion artifact** to `scratch/tm-{your-name}/completions/{task-id}.yaml`. Every FR MUST have test coverage listed:
       ```yaml
       task: "Task subject"
       test_coverage:
         - req_id: FR01
+          status: implemented  # MUST be "implemented" — not "partial"
           test_file: tests/test_foo.py
           test_names: [test_fr01_happy, test_fr01_edge, test_fr01_error]
         - req_id: FR02
+          status: implemented
           test_file: tests/test_foo.py
-          test_names: [test_fr02_basic]
+          test_names: [test_fr02_basic, test_fr02_negative]
       files_changed: [tests/test_foo.py, tests/test_bar.py]
       tests_run: "pytest tests/ -v — 48 passed, 0 failed"
       coverage_pct: 91
       self_review:
-        - "Each FR has at least one positive and one negative test"
+        - "All FRs have test coverage verified against PRD text"
         - "Parametrized edge cases for boundary values"
       ```
-   g. Call trw_checkpoint with summary referencing the artifact
+   h. Call trw_checkpoint with summary referencing the artifact
    h. Mark task complete via TaskUpdate
    i. Message implementer about any bugs found
 5. **Call trw_learn** for testing discoveries

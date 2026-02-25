@@ -220,7 +220,9 @@ def _entry_utility(
     if created_raw and created_raw != "None":
         try:
             created_dt = datetime.fromisoformat(created_raw)
+            # query-time only — does not write to disk (PRD-FIX-027-FR06)
             base_impact = apply_time_decay(base_impact, created_dt)
+            # query-time only — does not write to disk (PRD-FIX-027-FR06)
             q_value = apply_time_decay(q_value, created_dt)
         except ValueError:
             pass  # Fall through: use raw values if date is unparseable
@@ -425,6 +427,7 @@ def enforce_tier_distribution(
             return score
         try:
             created_dt = datetime.fromisoformat(date_str)
+            # query-time only — does not write to disk (PRD-FIX-027-FR06)
             return apply_time_decay(score, created_dt)
         except ValueError:
             return score
@@ -678,6 +681,9 @@ REWARD_MAP: dict[str, float] = {
     EventType.FILE_MODIFIED: 0.2,
     EventType.PRD_APPROVED: 0.7,
     EventType.WAVE_COMPLETE: 0.8,
+    EventType.DELIVER_COMPLETE: 1.0,  # Highest reward — delivery is the goal
+    EventType.BUILD_PASSED: 0.6,
+    EventType.BUILD_FAILED: -0.4,
 }
 
 # PRD-CORE-026: Alias mapping for internal event types that don't match
@@ -703,9 +709,6 @@ EVENT_ALIASES: dict[str, str | float | None] = {
     EventType.PRD_CREATED: 0.3,
     # Testing
     EventType.TEST_RUN: None,  # Data-aware: routed by passed/failed in event_data
-    # Build
-    EventType.BUILD_PASSED: 0.6,
-    EventType.BUILD_FAILED: -0.4,
     # Checkpoint/reflection
     EventType.CHECKPOINT: 0.1,
     EventType.REFLECTION_COMPLETED: EventType.REFLECTION_COMPLETE,

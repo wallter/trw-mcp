@@ -66,6 +66,12 @@ class LearningEntry(BaseModel):
         description="Name of the source (e.g., 'Tyler', 'claude-opus-4-6').",
     )
 
+    # PRD-CORE-042: Dedup merge tracking
+    merged_from: list[str] = Field(
+        default_factory=list,
+        description="IDs of learnings that were merged into this entry.",
+    )
+
 
 class LearningIndex(BaseModel):
     """Index of all learning entries in .trw/learnings/index.yaml."""

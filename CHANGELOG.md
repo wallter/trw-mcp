@@ -2,6 +2,60 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.4.0] — 2026-02-24
+
+### Added — Sprint 31: Frontier Memory Foundation (PRD-FIX-027, PRD-CORE-041, PRD-CORE-042)
+
+- **Hybrid retrieval engine** (PRD-CORE-041) — `state/retrieval.py`:
+  - BM25 sparse search via `rank_bm25` with hyphenated-tag expansion and zero-IDF fallback
+  - Dense vector search via `state/memory_store.py` (sqlite-vec, 384-dim all-MiniLM-L6-v2)
+  - Reciprocal Rank Fusion (RRF, k=60) combining both rankings
+  - `hybrid_search()` called by `recall_search.py` with graceful degradation (BM25-only when vectors unavailable)
+  - 7 new config fields: `memory_store_path`, `hybrid_bm25_candidates`, `hybrid_vector_candidates`, `hybrid_rrf_k`, `hybrid_reranking_enabled`, `retrieval_fallback_enabled`, `retrieval_embedding_dim`
+
+- **sqlite-vec memory store** (PRD-CORE-041) — `state/memory_store.py`:
+  - `MemoryStore` class: `upsert()`, `search()`, `delete()`, `count()`, `close()`, `migrate()`
+  - `available()` class method for graceful feature detection
+  - `migrate()` batch-indexes existing YAML entries into vector store
+  - Auto-indexing on `save_learning_entry()` in analytics.py
+
+- **Semantic deduplication** (PRD-CORE-042) — `state/dedup.py`:
+  - Three-tier write-time dedup: skip (≥0.95), merge (≥0.85), store (<0.85) via cosine similarity
+  - `check_duplicate()` compares new learning against all active entries
+  - `merge_entries()` with audit trail: union tags/evidence, max impact, recurrence increment, merged_from tracking
+  - `batch_dedup()` one-time migration for existing entries with `is_migration_needed()` check
+  - 3 new config fields: `dedup_enabled`, `dedup_skip_threshold`, `dedup_merge_threshold`
+  - `merged_from: list[str]` field added to `LearningEntry` model
+
+- **Q-learning activation** (PRD-FIX-027) — `scoring.py` + `tools/build.py`:
+  - `DELIVER_COMPLETE: 1.0` added to REWARD_MAP
+  - `BUILD_PASSED: 0.6` and `BUILD_FAILED: -0.4` promoted from EVENT_ALIASES to REWARD_MAP
+  - `process_outcome_for_event()` wired after build check completion
+  - `EventType.DELIVER_COMPLETE` added to run model
+
+### Fixed — PRD-FIX-027: Scoring & Decay Bugs
+
+- `apply_time_decay()` call sites annotated with query-time-only comments (FR06)
+- `lstrip(".trw/")` → `removeprefix(".trw/")` in analytics.py and dedup.py (was stripping individual characters)
+- `batch_dedup` entries_unchanged double-subtraction corrected
+- Dedup return fields: `existing_id` → `duplicate_of` (skip) / `merged_into` (merge) per PRD spec
+
+### Changed
+
+- **DRY refactors**: `resolve_memory_store_path()` added to `state/_paths.py`, replacing duplicated path resolution in analytics.py, dedup.py, retrieval.py
+- Unused `StateError` import removed from retrieval.py
+- **Framework improvements**:
+  - `trw-implementer.md`: FR-by-FR Verification Protocol — agents must verify each FR before marking complete
+  - `trw-tester.md`: FR-by-FR Test Coverage Audit — testers verify every FR has test coverage
+  - `task-completed.sh`: Content validation hook — blocks completion when partial/incomplete/stub/todo markers found
+
+### Stats
+- 2343 tests passing (163 new Sprint 31 tests), mypy --strict clean (62 files)
+- New modules: `state/retrieval.py`, `state/memory_store.py`, `state/dedup.py`
+- 10 new TRWConfig fields, 1 new LearningEntry field, 1 new EventType
+
+---
+
 ## [0.3.7] — 2026-02-24
 
 ### Changed

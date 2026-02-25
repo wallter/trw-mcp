@@ -56,11 +56,12 @@ class TestRenderAgentTeamsProtocol:
 
         assert result == ""
 
-    def test_contains_all_four_roles(self) -> None:
-        """All four teammate roles appear in the rendered table."""
+    def test_contains_all_five_roles(self) -> None:
+        """All five teammate roles appear in the rendered table."""
         with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
             result = render_agent_teams_protocol()
 
+        assert "trw-lead" in result
         assert "trw-implementer" in result
         assert "trw-tester" in result
         assert "trw-reviewer" in result
@@ -291,7 +292,19 @@ class TestSettingsJson:
 
 
 class TestAgentDefinitions:
-    """Tests for .claude/agents/ teammate definitions."""
+    """Tests for .claude/agents/ teammate definitions.
+
+    Adding a new agent? Update these locations in order:
+    1. Create `.claude/agents/{name}.md` (YAML frontmatter + markdown body)
+    2. Copy to `trw-mcp/src/trw_mcp/data/agents/{name}.md` (bundled for pip install)
+       — or run `scripts/sync-data.sh` which copies .claude/agents/ -> data/agents/
+    3. Add to parametrized lists below (test_agent_file_exists, test_agent_model_assignment,
+       test_agent_no_stray_tags, test_agent_has_required_frontmatter) + role-specific tests
+    4. Add to `TestAgents.EXPECTED_AGENTS` in `test_bootstrap.py`
+    5. Update agent count in `test_manifest_lists_all_bundled_artifacts` in `test_bootstrap.py`
+    6. Add to `render_agent_teams_protocol()` table in `state/claude_md.py`
+    7. Add to FRAMEWORK.md agents table (root + `.trw/frameworks/` copy)
+    """
 
     @pytest.fixture()
     def agents_dir(self) -> Path:
@@ -300,7 +313,13 @@ class TestAgentDefinitions:
 
     @pytest.mark.parametrize(
         "agent_name",
-        ["trw-implementer.md", "trw-tester.md", "trw-reviewer.md", "trw-researcher.md"],
+        [
+            "trw-lead.md",
+            "trw-implementer.md",
+            "trw-tester.md",
+            "trw-reviewer.md",
+            "trw-researcher.md",
+        ],
     )
     def test_agent_file_exists(self, agents_dir: Path, agent_name: str) -> None:
         """Agent definition file exists."""
@@ -309,6 +328,7 @@ class TestAgentDefinitions:
     @pytest.mark.parametrize(
         ("agent_name", "expected_model"),
         [
+            ("trw-lead.md", "opus"),
             ("trw-implementer.md", "sonnet"),
             ("trw-tester.md", "sonnet"),
             ("trw-reviewer.md", "opus"),
@@ -342,10 +362,10 @@ class TestAgentDefinitions:
 
     @pytest.mark.parametrize(
         "agent_name",
-        ["trw-implementer.md", "trw-tester.md"],
+        ["trw-lead.md", "trw-implementer.md", "trw-tester.md"],
     )
     def test_implementation_agents_have_edit(self, agents_dir: Path, agent_name: str) -> None:
-        """Implementer and tester agents have Edit and Write in allowedTools."""
+        """Lead, implementer, and tester agents have Edit and Write in allowedTools."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
         import yaml
         _, frontmatter, _ = content.split("---", 2)
@@ -354,9 +374,56 @@ class TestAgentDefinitions:
         assert "Edit" in allowed, f"{agent_name}: Edit must be in allowedTools"
         assert "Write" in allowed, f"{agent_name}: Write must be in allowedTools"
 
+    def test_lead_has_team_management_tools(self, agents_dir: Path) -> None:
+        """trw-lead has TaskCreate, TaskUpdate, TeamCreate, SendMessage tools."""
+        content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
+        import yaml
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        allowed = meta.get("allowedTools", [])
+        for tool in ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+                      "TeamCreate", "TeamDelete", "SendMessage"]:
+            assert tool in allowed, f"trw-lead: {tool} must be in allowedTools"
+
+    def test_lead_has_all_trw_mcp_tools(self, agents_dir: Path) -> None:
+        """trw-lead has access to all TRW MCP orchestration tools."""
+        content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
+        import yaml
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        allowed = meta.get("allowedTools", [])
+        for tool in [
+            "mcp__trw__trw_session_start",
+            "mcp__trw__trw_init",
+            "mcp__trw__trw_status",
+            "mcp__trw__trw_checkpoint",
+            "mcp__trw__trw_deliver",
+            "mcp__trw__trw_learn",
+            "mcp__trw__trw_recall",
+            "mcp__trw__trw_build_check",
+            "mcp__trw__trw_prd_create",
+            "mcp__trw__trw_prd_validate",
+        ]:
+            assert tool in allowed, f"trw-lead: {tool} must be in allowedTools"
+
+    def test_lead_has_skill_tool(self, agents_dir: Path) -> None:
+        """trw-lead has Skill tool for invoking skills at phase boundaries."""
+        content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
+        import yaml
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        allowed = meta.get("allowedTools", [])
+        assert "Skill" in allowed, "trw-lead: Skill must be in allowedTools"
+
     @pytest.mark.parametrize(
         "agent_name",
-        ["trw-implementer.md", "trw-tester.md", "trw-reviewer.md", "trw-researcher.md"],
+        [
+            "trw-lead.md",
+            "trw-implementer.md",
+            "trw-tester.md",
+            "trw-reviewer.md",
+            "trw-researcher.md",
+        ],
     )
     def test_agent_no_stray_tags(self, agents_dir: Path, agent_name: str) -> None:
         """Agent definitions must not contain stray XML closing tags."""
@@ -370,7 +437,13 @@ class TestAgentDefinitions:
 
     @pytest.mark.parametrize(
         "agent_name",
-        ["trw-implementer.md", "trw-tester.md", "trw-reviewer.md", "trw-researcher.md"],
+        [
+            "trw-lead.md",
+            "trw-implementer.md",
+            "trw-tester.md",
+            "trw-reviewer.md",
+            "trw-researcher.md",
+        ],
     )
     def test_agent_has_required_frontmatter(self, agents_dir: Path, agent_name: str) -> None:
         """Agent definitions must have name, description, model in frontmatter."""

@@ -62,6 +62,20 @@ class TRWConfig(BaseSettings):
         {"id", "summary", "impact", "tags", "status"}
     )
 
+    # Hybrid retrieval (PRD-CORE-041)
+    memory_store_path: str = ".trw/memory/vectors.db"
+    hybrid_bm25_candidates: int = 50
+    hybrid_vector_candidates: int = 50
+    hybrid_rrf_k: int = 60
+    hybrid_reranking_enabled: bool = False  # Future: cross-encoder reranking
+    retrieval_fallback_enabled: bool = True  # Fall back to keyword search when hybrid unavailable
+    retrieval_embedding_dim: int = 384  # Embedding dimensionality
+
+    # Semantic deduplication (PRD-CORE-042)
+    dedup_enabled: bool = True
+    dedup_skip_threshold: float = 0.95  # cosine >= this → skip (exact duplicate)
+    dedup_merge_threshold: float = 0.85  # cosine >= this → merge (near duplicate)
+
     # Impact score forced distribution (PRD-CORE-034)
     impact_forced_distribution_enabled: bool = True
     impact_tier_critical_cap: float = 0.05   # max 5% at 0.9-1.0

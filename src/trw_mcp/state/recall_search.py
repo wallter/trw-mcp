@@ -28,6 +28,9 @@ def search_entries(
 ) -> tuple[list[dict[str, object]], list[Path]]:
     """Search learning entries matching query, tags, impact, and status filters.
 
+    Uses hybrid search (BM25 + RRF) when query_tokens are provided and the
+    retrieval module is available. Falls back to keyword scan when not.
+
     Args:
         entries_dir: Path to the learnings/entries/ directory.
         query_tokens: Lowercased query tokens (empty list for wildcard).
@@ -45,6 +48,51 @@ def search_entries(
     if not entries_dir.exists():
         return matching, matched_files
 
+    # --- Hybrid search path (CORE-041) ---
+    if query_tokens:
+        try:
+            from trw_mcp.models.config import get_config
+            from trw_mcp.state.retrieval import hybrid_search
+
+            config = get_config()
+            query = " ".join(query_tokens)
+            hybrid_results = hybrid_search(query, entries_dir, reader, config=config)
+            if hybrid_results:
+                # Apply tag, impact, status filters to hybrid results
+                for data in hybrid_results:
+                    entry_tags = data.get("tags", [])
+                    raw_impact = data.get("impact", 0.0)
+                    entry_impact = float(str(raw_impact))
+                    if entry_impact < min_impact:
+                        continue
+                    if status is not None:
+                        entry_status = str(data.get("status", "active"))
+                        if entry_status != status:
+                            continue
+                    if tags and isinstance(entry_tags, list):
+                        if not any(t in entry_tags for t in tags):
+                            continue
+                    matching.append(data)
+                    entry_id = str(data.get("id", ""))
+                    # Resolve file path for access tracking
+                    if entry_id:
+                        for fname in entries_dir.glob("*.yaml"):
+                            if entry_id in fname.name:
+                                matched_files.append(fname)
+                                break
+                        else:
+                            matched_files.append(entries_dir / f"{entry_id}.yaml")
+
+                logger.debug(
+                    "recall_search_hybrid_complete",
+                    query_tokens=query_tokens,
+                    results=len(matching),
+                )
+                return matching, matched_files
+        except Exception:  # noqa: BLE001
+            pass  # Fall through to keyword search
+
+    # --- Keyword scan fallback ---
     for entry_file in sorted(entries_dir.glob("*.yaml")):
         try:
             data = reader.read_yaml(entry_file)

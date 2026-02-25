@@ -106,7 +106,20 @@ if [ "$_has_checkpoint" -eq 1 ]; then
   fi
 
   if [ -n "$_completion_artifact" ]; then
-    # Has checkpoint AND completion artifact — allow
+    # Validate completion artifact content — check for partial/incomplete FRs
+    _has_partial=""
+    if command -v grep >/dev/null 2>&1; then
+      _has_partial=$(grep -c 'status:.*partial\|status:.*incomplete\|status:.*stub\|status:.*todo' "$_completion_artifact" 2>/dev/null) || _has_partial="0"
+    fi
+    if [ "${_has_partial:-0}" != "0" ] && [ "$_blocks" -lt 2 ]; then
+      _blocks=$((_blocks + 1))
+      printf '%s' "$_blocks" > "$_block_file" 2>/dev/null || true
+      echo "TRW: Completion artifact has ${_has_partial} partial/incomplete FR(s). Implement ALL FRs before completing — partial work costs 2-3x to fix later. Re-read each FR, verify your code matches, then update the artifact. (Block $_blocks/2)" >&2
+      log_hook_execution "TaskCompleted" "${_teammate_name:-unknown}:${_task_subject}" "2:partial-frs"
+      _trw_intentional_exit=1
+      exit 2
+    fi
+    # Has checkpoint AND verified completion artifact — allow
     log_hook_execution "TaskCompleted" "${_teammate_name:-unknown}:${_task_subject}" "0:artifact-verified"
     exit 0
   fi

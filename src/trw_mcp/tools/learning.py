@@ -75,7 +75,7 @@ def register_learning_tools(server: FastMCP) -> None:
         shard_id: str | None = None,
         source_type: str = "agent",
         source_identity: str = "",
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
         Writes a learning entry to .trw/learnings/ with utility scoring. High-impact
@@ -93,6 +93,15 @@ def register_learning_tools(server: FastMCP) -> None:
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
         """
         trw_dir, _ = _entries_path()
+
+        # One-time batch dedup migration (PRD-CORE-042 FR05)
+        if _config.dedup_enabled:
+            try:
+                from trw_mcp.state.dedup import batch_dedup, is_migration_needed
+                if is_migration_needed(trw_dir):
+                    batch_dedup(trw_dir, _reader, _writer, config=_config)
+            except Exception:  # noqa: BLE001
+                pass  # Migration is best-effort
 
         # Bayesian calibration of impact score using recall tracking stats (PRD-CORE-034)
         calibrated_impact = impact
@@ -120,6 +129,76 @@ def register_learning_tools(server: FastMCP) -> None:
             source_type=source_type,
             source_identity=source_identity,
         )
+
+        # Semantic dedup check (PRD-CORE-042)
+        if _config.dedup_enabled:
+            try:
+                from trw_mcp.state.dedup import check_duplicate, merge_entries
+                _, entries_dir = _entries_path()
+                dedup_result = check_duplicate(
+                    summary, detail, entries_dir, _reader, config=_config,
+                )
+
+                if dedup_result.action == "skip":
+                    # FR04: Update access_count and recurrence on existing entry
+                    dedup_existing_id = dedup_result.existing_id or ""
+                    _, entries_dir = _entries_path()
+                    for yaml_file in sorted(entries_dir.glob("*.yaml")):
+                        if yaml_file.name == "index.yaml":
+                            continue
+                        try:
+                            data = _reader.read_yaml(yaml_file)
+                            if str(data.get("id", "")) == dedup_existing_id:
+                                from datetime import date as _date
+                                data["access_count"] = int(str(data.get("access_count", 0))) + 1
+                                data["recurrence"] = int(str(data.get("recurrence", 1))) + 1
+                                data["updated"] = _date.today().isoformat()
+                                _writer.write_yaml(yaml_file, data)
+                                break
+                        except Exception:  # noqa: BLE001
+                            continue
+                    logger.info(
+                        "learning_dedup_skipped",
+                        new_id=learning_id,
+                        existing_id=dedup_existing_id,
+                        similarity=dedup_result.similarity,
+                    )
+                    return {
+                        "status": "skipped",
+                        "learning_id": learning_id,
+                        "duplicate_of": dedup_existing_id,
+                        "similarity": round(dedup_result.similarity, 3),
+                        "message": f"Near-identical entry already exists: {dedup_existing_id}",
+                    }
+                elif dedup_result.action == "merge":
+                    # Find the existing entry file and merge into it
+                    for yaml_file in sorted(entries_dir.glob("*.yaml")):
+                        if yaml_file.name == "index.yaml":
+                            continue
+                        try:
+                            data = _reader.read_yaml(yaml_file)
+                            if str(data.get("id", "")) == dedup_result.existing_id:
+                                from trw_mcp.state.persistence import model_to_dict
+                                merge_entries(yaml_file, model_to_dict(entry), _reader, _writer)
+                                logger.info(
+                                    "learning_dedup_merged",
+                                    new_id=learning_id,
+                                    existing_id=dedup_result.existing_id,
+                                    similarity=dedup_result.similarity,
+                                )
+                                return {
+                                    "status": "merged",
+                                    "merged_into": dedup_result.existing_id or "",
+                                    "new_id": learning_id,
+                                    "similarity": str(round(dedup_result.similarity, 3)),
+                                    "message": f"Merged into existing entry: {dedup_result.existing_id}",
+                                }
+                        except Exception:  # noqa: BLE001
+                            continue
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("dedup_check_failed", error=str(exc))
+                # Fall through to normal save on any dedup failure
+
         entry_path = save_learning_entry(trw_dir, entry)
         update_analytics(trw_dir, 1)
 

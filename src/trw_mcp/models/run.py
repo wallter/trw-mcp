@@ -237,6 +237,7 @@ class EventType(str, Enum):
     REFLECTION_COMPLETED = "reflection_completed"
     CHECKPOINT = "checkpoint"
     CLAUDE_MD_SYNCED = "claude_md_synced"
+    DELIVER_COMPLETE = "trw_deliver_complete"
 
     # --- Telemetry (PRD-CORE-031) ---
     TOOL_INVOCATION = "tool_invocation"
