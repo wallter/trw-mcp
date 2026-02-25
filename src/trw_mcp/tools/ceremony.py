@@ -275,6 +275,21 @@ def register_ceremony_tools(server: FastMCP) -> None:
             errors.append(f"auto_prune: {exc}")
             results["auto_prune"] = {"status": "failed", "error": str(exc)}
 
+        # Step 2.6: Memory consolidation (PRD-CORE-044)
+        try:
+            if _config.memory_consolidation_enabled:
+                from trw_mcp.state.consolidation import consolidate_cycle
+                consolidation_result = consolidate_cycle(
+                    trw_dir,
+                    max_entries=_config.memory_consolidation_max_per_cycle,
+                )
+                results["consolidation"] = consolidation_result
+            else:
+                results["consolidation"] = {"status": "skipped", "reason": "disabled"}
+        except Exception as exc:
+            errors.append(f"consolidation: {exc}")
+            results["consolidation"] = {"status": "failed", "error": str(exc)}
+
         # Step 3: CLAUDE.md sync
         try:
             sync_result = _do_claude_md_sync(trw_dir)

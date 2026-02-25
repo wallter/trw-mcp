@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +75,22 @@ class TRWConfig(BaseSettings):
     dedup_enabled: bool = True
     dedup_skip_threshold: float = 0.95  # cosine >= this → skip (exact duplicate)
     dedup_merge_threshold: float = 0.85  # cosine >= this → merge (near duplicate)
+
+    # Memory consolidation (PRD-CORE-044)
+    memory_consolidation_enabled: bool = True
+    memory_consolidation_interval_days: int = 7
+    memory_consolidation_min_cluster: int = Field(default=3, ge=2)
+    memory_consolidation_similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    memory_consolidation_max_per_cycle: int = Field(default=50, ge=1)
+
+    # Tiered memory storage (PRD-CORE-043)
+    memory_hot_max_entries: int = 50
+    memory_hot_ttl_days: int = 7
+    memory_cold_threshold_days: int = 90
+    memory_retention_days: int = 365
+    memory_score_w1: float = 0.4   # relevance weight
+    memory_score_w2: float = 0.3   # recency weight
+    memory_score_w3: float = 0.3   # importance weight
 
     # Impact score forced distribution (PRD-CORE-034)
     impact_forced_distribution_enabled: bool = True

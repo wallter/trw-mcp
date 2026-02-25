@@ -72,6 +72,13 @@ class LearningEntry(BaseModel):
         description="IDs of learnings that were merged into this entry.",
     )
 
+    # PRD-CORE-044: Consolidation tracking
+    consolidated_from: list[str] = Field(
+        default_factory=list,
+        description="IDs of learnings consolidated into this entry (source entries).",
+    )
+    consolidated_into: str | None = None
+
 
 class LearningIndex(BaseModel):
     """Index of all learning entries in .trw/learnings/index.yaml."""

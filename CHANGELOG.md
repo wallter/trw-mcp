@@ -2,6 +2,42 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.5.0] — 2026-02-24
+
+### Added — Sprint 32: Memory Lifecycle & Consolidation (PRD-CORE-043, PRD-CORE-044)
+
+- **Tiered memory storage** (PRD-CORE-043) — `state/tiers.py`:
+  - Hot tier: in-memory LRU cache (`OrderedDict`) with configurable max entries and TTL
+  - Warm tier: sqlite-vec backed with JSONL sidecar for metadata
+  - Cold tier: YAML archive at `.trw/memory/cold/{YYYY}/{MM}/` with keyword search
+  - Stanford Generative Agents importance scoring: `w1*relevance + w2*recency + w3*importance`
+  - `TierManager` class: `hot_get/put/clear`, `warm_add/remove/search`, `cold_archive/promote/search`
+  - `sweep()` with 4 transitions: Hot→Warm (TTL/overflow), Warm→Cold (idle+low-impact), Cold→Warm (on access), Cold→Purge (365d+low-impact)
+  - Purge audit trail at `.trw/memory/purge_audit.jsonl`
+  - 7 new config fields: `memory_hot_max_entries`, `memory_hot_ttl_days`, `memory_cold_threshold_days`, `memory_retention_days`, `memory_score_w1/w2/w3`
+
+- **Memory consolidation engine** (PRD-CORE-044) — `state/consolidation.py`:
+  - Embedding-based cluster detection: single-linkage agglomerative clustering with pairwise cosine threshold
+  - LLM-powered summarization via `anthropic` SDK (claude-haiku) with length check and retry
+  - Consolidated entry creation: max impact, sorted union tags, deduplicated evidence, sum recurrence, max q_value
+  - Original entry archival to cold tier with atomic rollback on failure
+  - Graceful fallback: longest-summary selection when LLM unavailable
+  - Dry-run mode: cluster preview without writes
+  - Auto-trigger as Step 2.6 in `trw_deliver` (after auto-prune, before CLAUDE.md sync)
+  - 5 new config fields: `memory_consolidation_enabled`, `memory_consolidation_interval_days`, `memory_consolidation_min_cluster`, `memory_consolidation_similarity_threshold`, `memory_consolidation_max_per_cycle`
+
+- `consolidated_from: list[str]` and `consolidated_into: str | None` fields added to `LearningEntry` model
+- Path redaction (`_redact_paths`) in LLM prompts — NFR06: strips `/home/`, `/Users/`, `C:\` paths before sending to API
+
+### Stats
+- 2503 tests passing (170 new Sprint 32 tests: 64 tiers + 106 consolidation), mypy --strict clean (64 files)
+- New modules: `state/tiers.py`, `state/consolidation.py`
+- 12 new TRWConfig fields, 2 new LearningEntry fields
+- Code simplified via /simplify pass on both new modules
+- FR-by-FR verification completed for both PRDs
+
+---
+
 ## [0.4.0] — 2026-02-24
 
 ### Added — Sprint 31: Frontier Memory Foundation (PRD-FIX-027, PRD-CORE-041, PRD-CORE-042)
