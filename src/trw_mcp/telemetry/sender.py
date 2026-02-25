@@ -32,14 +32,14 @@ class BatchSender:
     def __init__(
         self,
         *,
-        platform_url: str,
+        platform_urls: list[str],
         platform_api_key: str = "",
         input_path: Path,
         batch_size: int = 100,
         max_retries: int = 3,
         backoff_base: float = 1.0,
     ) -> None:
-        self._platform_url = platform_url
+        self._platform_urls = platform_urls
         self._platform_api_key = platform_api_key
         self._input_path = input_path
         self._batch_size = batch_size
@@ -55,18 +55,20 @@ class BatchSender:
         trw_dir = resolve_trw_dir()
         input_path = trw_dir / cfg.logs_dir / cfg.telemetry_file
         return cls(
-            platform_url=cfg.platform_url,
+            platform_urls=cfg.effective_platform_urls,
             platform_api_key=cfg.platform_api_key,
             input_path=input_path,
         )
 
     def send(self) -> dict[str, object]:
-        """Send all queued events to the platform backend.
+        """Send all queued events to all platform backends.
 
+        Fan-out: sends to every configured URL. A batch is "sent" if
+        at least one backend accepted it.
         Returns dict with: sent, failed, remaining, skipped_reason.
         Fail-open: network errors do NOT raise exceptions.
         """
-        if not self._platform_url:
+        if not self._platform_urls:
             return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "offline_mode"}
 
         if not self._input_path.exists():
@@ -81,8 +83,8 @@ class BatchSender:
 
         for i in range(0, len(records), self._batch_size):
             batch = records[i : i + self._batch_size]
-            success = self._send_batch(batch)
-            if success:
+            any_success = self._send_batch_fanout(batch)
+            if any_success:
                 total_sent += len(batch)
             else:
                 total_failed += len(batch)
@@ -98,9 +100,17 @@ class BatchSender:
             "skipped_reason": None,
         }
 
-    def _send_batch(self, batch: list[dict[str, Any]]) -> bool:
-        """Attempt to send a batch with exponential backoff retry."""
-        url = f"{self._platform_url.rstrip('/')}/v1/telemetry"
+    def _send_batch_fanout(self, batch: list[dict[str, Any]]) -> bool:
+        """Send a batch to all configured URLs. Returns True if any succeeded."""
+        any_success = False
+        for base_url in self._platform_urls:
+            if self._send_batch_to(base_url, batch):
+                any_success = True
+        return any_success
+
+    def _send_batch_to(self, base_url: str, batch: list[dict[str, Any]]) -> bool:
+        """Attempt to send a batch to one URL with exponential backoff retry."""
+        url = f"{base_url.rstrip('/')}/v1/telemetry"
 
         for attempt in range(self._max_retries):
             try:
@@ -112,17 +122,14 @@ class BatchSender:
                     "batch_send_retry",
                     attempt=attempt + 1,
                     max_retries=self._max_retries,
+                    url=url,
                 )
 
             if attempt < self._max_retries - 1:
                 sleep_time = self._backoff_base * (2**attempt)
                 time.sleep(sleep_time)
 
-        logger.warning(
-            "batch_send_failed",
-            batch_size=len(batch),
-            url=url,
-        )
+        logger.warning("batch_send_failed", batch_size=len(batch), url=url)
         return False
 
     def _http_post(self, url: str, payload: list[dict[str, Any]]) -> bool:

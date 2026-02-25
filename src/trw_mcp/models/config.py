@@ -308,10 +308,28 @@ class TRWConfig(BaseSettings):
     # Platform and update channel (PRD-CORE-031, PRD-INFRA-014, PRD-INFRA-016)
     platform_telemetry_enabled: bool = False  # opt-in; sends anonymized usage to trwframework.com
     update_channel: str = "latest"            # update channel: latest | lts
-    platform_url: str = ""                    # trwframework.com backend URL (empty = offline)
+    platform_url: str = ""                    # single backend URL (backward compat, empty = offline)
+    platform_urls: list[str] = Field(default_factory=list)  # multi-backend: fan-out writes, first-success reads
     platform_api_key: str = ""                # API key for platform backend authentication
     installation_id: str = ""                 # anonymized installation identifier
     auto_upgrade: bool = False                # auto-install updates on session start (PRD-INFRA-014)
+
+    @property
+    def effective_platform_urls(self) -> list[str]:
+        """Merged list of all configured platform URLs (deduped, non-empty)."""
+        urls: list[str] = []
+        if self.platform_url:
+            urls.append(self.platform_url)
+        urls.extend(self.platform_urls)
+        # Dedupe while preserving order
+        seen: set[str] = set()
+        result: list[str] = []
+        for u in urls:
+            normalized = u.rstrip("/")
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                result.append(normalized)
+        return result
 
 
 # --- Singleton factory ---------------------------------------------------

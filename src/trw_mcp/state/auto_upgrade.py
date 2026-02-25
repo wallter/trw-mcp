@@ -40,7 +40,8 @@ def check_for_update() -> dict[str, object]:
     cfg = get_config()
     current = get_installed_version()
 
-    if not cfg.platform_url:
+    urls = cfg.effective_platform_urls
+    if not urls:
         return {
             "available": False,
             "current": current,
@@ -49,29 +50,31 @@ def check_for_update() -> dict[str, object]:
             "advisory": None,
         }
 
-    try:
-        url = f"{cfg.platform_url.rstrip('/')}/v1/releases/latest?channel={cfg.update_channel}"
-        headers: dict[str, str] = {}
-        if cfg.platform_api_key:
-            headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
-        req = urllib.request.Request(url, method="GET", headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as response:
-            if 200 <= response.status < 300:
-                data: Any = json.loads(response.read().decode("utf-8"))
-                latest = str(data.get("version", current))
-                available = _compare_versions(current, latest)
-                advisory: str | None = (
-                    f"TRW v{latest} available (you have v{current}). " if available else None
-                )
-                return {
-                    "available": available,
-                    "current": current,
-                    "latest": latest,
-                    "channel": cfg.update_channel,
-                    "advisory": advisory,
-                }
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError, KeyError):
-        logger.debug("Version check failed — proceeding with current version")
+    # First-success: try each backend until one responds
+    for base_url in urls:
+        try:
+            url = f"{base_url.rstrip('/')}/v1/releases/latest?channel={cfg.update_channel}"
+            headers: dict[str, str] = {}
+            if cfg.platform_api_key:
+                headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+            req = urllib.request.Request(url, method="GET", headers=headers)
+            with urllib.request.urlopen(req, timeout=3) as response:
+                if 200 <= response.status < 300:
+                    data: Any = json.loads(response.read().decode("utf-8"))
+                    latest = str(data.get("version", current))
+                    available = _compare_versions(current, latest)
+                    advisory: str | None = (
+                        f"TRW v{latest} available (you have v{current}). " if available else None
+                    )
+                    return {
+                        "available": available,
+                        "current": current,
+                        "latest": latest,
+                        "channel": cfg.update_channel,
+                        "advisory": advisory,
+                    }
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError, KeyError):
+            logger.debug("Version check failed for %s — trying next", base_url)
 
     return {
         "available": False,

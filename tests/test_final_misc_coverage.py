@@ -604,6 +604,7 @@ class TestPublisherCoverage:
         with patch("trw_mcp.telemetry.publisher.get_config") as mock_cfg:
             cfg = MagicMock()
             cfg.platform_url = "http://test.example.com"
+            cfg.effective_platform_urls = ["http://test.example.com"]
             cfg.platform_telemetry_enabled = True
             cfg.installation_id = "test"
             mock_cfg.return_value = cfg
@@ -638,8 +639,10 @@ class TestPublisherCoverage:
         with patch("trw_mcp.telemetry.publisher.get_config") as mock_cfg:
             cfg = MagicMock()
             cfg.platform_url = "http://test.example.com"
+            cfg.effective_platform_urls = ["http://test.example.com"]
             cfg.platform_telemetry_enabled = True
             cfg.installation_id = "test"
+            cfg.platform_api_key = ""
             mock_cfg.return_value = cfg
 
             with patch("trw_mcp.telemetry.publisher.resolve_trw_dir") as mock_trw:

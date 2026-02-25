@@ -27,7 +27,8 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[dict[str, An
     Returns empty list on any failure (fail-open).
     """
     cfg = get_config()
-    if not cfg.platform_url or not cfg.platform_telemetry_enabled:
+    urls = cfg.effective_platform_urls
+    if not urls or not cfg.platform_telemetry_enabled:
         return []
 
     # Generate embedding for query
@@ -39,26 +40,31 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[dict[str, An
         "limit": limit,
     }
 
-    url = f"{cfg.platform_url.rstrip('/')}/v1/learnings/search"
-    try:
-        data = json.dumps(payload).encode("utf-8")
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if cfg.platform_api_key:
-            headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers=headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=REMOTE_RECALL_TIMEOUT) as response:
-            if 200 <= response.status < 300:
-                results = json.loads(response.read().decode("utf-8"))
-                # Label as shared
-                for r in results.get("results", []):
-                    r["summary"] = f"[shared] {r.get('summary', '')}"
-                return list(results.get("results", []))
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
-        logger.debug("Remote recall failed — proceeding with local-only")
+    # First-success: try each backend until one responds
+    for base_url in urls:
+        url = f"{base_url.rstrip('/')}/v1/learnings/search"
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if cfg.platform_api_key:
+                headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=REMOTE_RECALL_TIMEOUT) as response:
+                if 200 <= response.status < 300:
+                    body = json.loads(response.read().decode("utf-8"))
+                    # Backend may return a list directly or {"results": [...]}
+                    items: list[dict[str, Any]] = (
+                        body if isinstance(body, list) else body.get("results", [])
+                    )
+                    for r in items:
+                        r["summary"] = f"[shared] {r.get('summary', '')}"
+                    return items
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
+            logger.debug("Remote recall failed for %s — trying next", base_url)
 
     return []

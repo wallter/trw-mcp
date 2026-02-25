@@ -28,7 +28,8 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
     Fail-open: never raises exceptions.
     """
     cfg = get_config()
-    if not cfg.platform_url or not cfg.platform_telemetry_enabled:
+    urls = cfg.effective_platform_urls
+    if not urls or not cfg.platform_telemetry_enabled:
         return {"published": 0, "skipped": 0, "errors": 0, "skipped_reason": "offline_mode"}
 
     trw_dir = resolve_trw_dir()
@@ -79,8 +80,12 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
                 "source_learning_id": str(data.get("id", "")),
             }
 
-            success = _post_learning(cfg.platform_url, payload, cfg.platform_api_key)
-            if success:
+            # Fan-out: publish to all configured backends
+            any_success = False
+            for url in urls:
+                if _post_learning(url, payload, cfg.platform_api_key):
+                    any_success = True
+            if any_success:
                 published += 1
             else:
                 errors += 1

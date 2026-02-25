@@ -45,8 +45,9 @@ def _make_sender(
     backoff_base: float = 0.0,
 ) -> tuple[BatchSender, Path]:
     input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
+    urls = [platform_url] if platform_url else []
     sender = BatchSender(
-        platform_url=platform_url,
+        platform_urls=urls,
         input_path=input_path,
         batch_size=batch_size,
         max_retries=max_retries,
@@ -359,7 +360,7 @@ class TestFromConfig:
         ):
             sender = BatchSender.from_config()
 
-        assert sender._platform_url == "https://api.trwframework.com"
+        assert sender._platform_urls == ["https://api.trwframework.com"]
         assert sender._input_path == trw_dir / "logs" / "tool-telemetry.jsonl"
 
     def test_from_config_offline_when_no_platform_url(
@@ -382,7 +383,7 @@ class TestFromConfig:
         ):
             sender = BatchSender.from_config()
 
-        assert sender._platform_url == ""
+        assert sender._platform_urls == []
 
         result = sender.send()
         assert result["skipped_reason"] == "offline_mode"

@@ -784,8 +784,9 @@ def _make_sender(
     from trw_mcp.telemetry.sender import BatchSender
 
     input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
+    urls = [platform_url] if platform_url else []
     sender = BatchSender(
-        platform_url=platform_url,
+        platform_urls=urls,
         input_path=input_path,
         batch_size=batch_size,
         max_retries=max_retries,
