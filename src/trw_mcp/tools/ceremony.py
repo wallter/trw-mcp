@@ -121,6 +121,24 @@ def register_ceremony_tools(server: FastMCP) -> None:
             results["learnings"] = []
             results["learnings_count"] = 0
 
+        # Step 1.5: One-time vector store migration (PRD-CORE-041)
+        try:
+            from trw_mcp.state.memory_store import MemoryStore
+            if MemoryStore.available():
+                from trw_mcp.state._paths import resolve_memory_store_path
+                migrate_trw = resolve_trw_dir()
+                migrate_entries = migrate_trw / _config.learnings_dir / _config.entries_dir
+                store_path = resolve_memory_store_path()
+                store = MemoryStore(store_path, dim=_config.retrieval_embedding_dim)
+                try:
+                    if store.count() == 0 and migrate_entries.exists():
+                        migrate_result = store.migrate(migrate_entries, _reader)
+                        results["vector_migration"] = migrate_result
+                finally:
+                    store.close()
+        except Exception:
+            pass  # Fail-open: migration is best-effort
+
         # Step 2: Check active run status
         run_dir: Path | None = None
         try:
@@ -290,6 +308,22 @@ def register_ceremony_tools(server: FastMCP) -> None:
             errors.append(f"consolidation: {exc}")
             results["consolidation"] = {"status": "failed", "error": str(exc)}
 
+        # Step 2.7: Tier lifecycle sweep (PRD-CORE-043)
+        try:
+            from trw_mcp.state.tiers import TierManager
+            tier_mgr = TierManager(trw_dir, _reader, _writer)
+            sweep_result = tier_mgr.sweep()
+            results["tier_sweep"] = {
+                "status": "success",
+                "promoted": sweep_result.promoted,
+                "demoted": sweep_result.demoted,
+                "purged": sweep_result.purged,
+                "errors": sweep_result.errors,
+            }
+        except Exception as exc:
+            errors.append(f"tier_sweep: {exc}")
+            results["tier_sweep"] = {"status": "failed", "error": str(exc)}
+
         # Step 3: CLAUDE.md sync
         try:
             sync_result = _do_claude_md_sync(trw_dir)
@@ -405,7 +439,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         results["errors"] = errors
         results["success"] = len(errors) == 0
-        results["steps_completed"] = 9 - len(errors)
+        results["steps_completed"] = 10 - len(errors)
 
         logger.info(
             "trw_deliver_complete",

@@ -83,6 +83,7 @@ you must bypass that guard by creating the prerequisite data before triggering t
 - `tools/learning.py` — 100% (2026-02-22, via test_final_coverage_push.py)
 - `tools/requirements.py` — 100% (2026-02-22, via test_final_coverage_push.py)
 - `tools/telemetry.py` — 100% (2026-02-22, via test_final_coverage_push.py)
+- `state/consolidation.py` — 100% (2026-02-24, via test_consolidation.py)
 
 ## Covered Modules (99%+)
 - `state/prd_utils.py` — 99% (2026-02-22, line 111 is unreachable dead code)
@@ -95,7 +96,20 @@ you must bypass that guard by creating the prerequisite data before triggering t
 - Line 1343: `return SectionScore(section_name=section_name)` when `total == 0` — dead because `str.split('\n')` always returns at least `['']`, so `total` is never 0.
 
 ## Global Coverage
-- 99.84% as of 2026-02-22 (2112 tests)
+- ~99%+ as of 2026-02-24 (2502 tests)
+
+## TierManager Cold Archive Gotcha (consolidation.py)
+`_archive_originals` in `state/consolidation.py` calls `tier_manager.cold_archive(entry_id, path)`.
+TierManager is available in the test env and MOVES the file from `entries_dir` to cold tier (e.g., `.trw/memory/cold/2026/02/`).
+- Tests checking archived entries after a full cycle MUST use `trw_dir.rglob("*.yaml")` not `entries_dir.glob("*.yaml")`
+- Consolidated entries (L- prefixed) stay in entries_dir; originals get moved to cold tier
+
+## Consolidation Module Patching (consolidation.py)
+`find_clusters` and `_mean_pairwise_similarity` use function-local imports:
+- `from trw_mcp.telemetry.embeddings import embed_batch, embedding_available`
+- Patch at source: `trw_mcp.telemetry.embeddings.embed_batch` and `trw_mcp.telemetry.embeddings.embedding_available`
+- Both functions share the same import module — one patch context covers both functions
+TierManager init patching in consolidate_cycle: patch at `trw_mcp.state.tiers.TierManager` directly (not via consolidation module).
 
 ## Publisher/Telemetry Gotcha
 `telemetry/publisher.py` looks at `trw_dir / "learnings" / "entries"` for YAML files.

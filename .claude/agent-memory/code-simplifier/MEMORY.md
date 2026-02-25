@@ -75,3 +75,18 @@ Examples seen in orchestration.py:
 
 - `run_yaml_path = meta_path / "run.yaml"` in `trw_status` — inline into `_reader.read_yaml(...)` directly
 - `current_versions = (fw, aaref, pkg)` tuple in `_deploy_frameworks` — inline into `==` comparison; `existing_versions` is multi-use (comparison + log), keep named
+
+## Unused parameter naming pattern
+
+When a private method has a parameter it never uses, remove it from the signature and update all call sites.
+Example: `_flush_last_accessed(entry_id, _entry)` where `_entry` was never accessed — remove it, pass only `entry_id` at call sites.
+
+## Consistent loop variable naming in sidecar JSONL loops
+
+When iterating JSONL lines and stripping whitespace, use `line_s` (not shadow-reassigning `line = line.strip()`)
+to avoid shadowing the loop variable. This is consistent with the project pattern in `warm_remove`.
+
+## Unused dict unpacking
+
+When `dict.popitem()` returns a tuple but only one value is needed, use `val, _ = d.popitem()` rather
+than `val, unused_var = d.popitem()` to suppress unused-variable warnings cleanly.

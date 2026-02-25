@@ -968,10 +968,10 @@ class TestDeliverTelemetryIntegration:
         # Result still returned (not raised)
         assert "timestamp" in result
 
-    def test_deliver_steps_completed_count_is_9(
+    def test_deliver_steps_completed_count_is_10(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When all 9 steps succeed, steps_completed == 9."""
+        """When all 10 steps succeed, steps_completed == 10."""
         from unittest.mock import MagicMock
         tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
 
@@ -991,5 +991,5 @@ class TestDeliverTelemetryIntegration:
             result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
 
         # With skip_reflect + skip_index_sync, reflect/index are skipped (not errored)
-        # Steps that succeed contribute to steps_completed = 9 - len(errors)
-        assert result["steps_completed"] == 9 - len(result["errors"])
+        # Steps that succeed contribute to steps_completed = 10 - len(errors)
+        assert result["steps_completed"] == 10 - len(result["errors"])

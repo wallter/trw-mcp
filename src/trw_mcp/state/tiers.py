@@ -618,7 +618,9 @@ class TierManager:
                 logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
                 errors += 1
 
-        # 2. Warm → Cold: scan entries/ directory for idle low-impact entries
+        # 2. Warm → Cold: scan entries/ directory for idle low-importance entries
+        #    Uses compute_importance_score (Stanford Generative Agents formula)
+        #    instead of raw impact for more nuanced tier transition decisions.
         if entries_dir.exists():
             for yaml_file in sorted(entries_dir.glob("*.yaml")):
                 if yaml_file.name == "index.yaml":
@@ -632,15 +634,15 @@ class TierManager:
                     if str(data.get("status", "active")) != "active":
                         continue
                     days = _days_since_access(data, today)
-                    impact = float(str(data.get("impact", 0.5)))
-                    if days > cfg.memory_cold_threshold_days and impact < 0.5:
+                    importance = compute_importance_score(data, [], config=cfg)
+                    if days > cfg.memory_cold_threshold_days and importance < 0.22:
                         self.cold_archive(entry_id, yaml_file)
                         demoted += 1
                         logger.debug(
                             "sweep_warm_to_cold",
                             entry_id=entry_id,
                             days=days,
-                            impact=impact,
+                            importance_score=importance,
                         )
                 except Exception:  # noqa: BLE001
                     logger.warning(
@@ -651,6 +653,7 @@ class TierManager:
                     errors += 1
 
         # 3. Cold → Purge: scan cold archive for expired entries
+        #    Uses compute_importance_score for purge decisions.
         cold_base = self._cold_dir()
         if cold_base.exists():
             for yaml_file in sorted(cold_base.rglob("*.yaml")):
@@ -658,14 +661,15 @@ class TierManager:
                     data = self._reader.read_yaml(yaml_file)
                     entry_id = str(data.get("id", ""))
                     days = _days_since_access(data, today)
-                    impact = float(str(data.get("impact", 0.5)))
-                    if days > cfg.memory_retention_days and impact < 0.3:
+                    importance = compute_importance_score(data, [], config=cfg)
+                    if days > cfg.memory_retention_days and importance < 0.1:
                         # Append to purge audit log before deleting
                         audit_record: dict[str, object] = {
                             "entry_id": entry_id,
                             "purged_at": datetime.now(timezone.utc).isoformat(),
                             "days_idle": days,
-                            "impact": impact,
+                            "importance_score": importance,
+                            "impact": float(str(data.get("impact", 0.5))),
                             "summary": str(data.get("summary", "")),
                         }
                         purge_audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -677,7 +681,7 @@ class TierManager:
                             "sweep_cold_purge",
                             entry_id=entry_id,
                             days=days,
-                            impact=impact,
+                            importance_score=importance,
                         )
                 except Exception:  # noqa: BLE001
                     logger.warning(
