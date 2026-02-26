@@ -2,6 +2,10 @@
 
 PRD-CORE-019: Composite tools that reduce ceremony from 7 manual calls
 to 2, with partial-failure resilience on each sub-operation.
+PRD-CORE-049: Phase-contextual auto-recall in trw_session_start.
+
+Review tool: trw_mcp.tools.review (PRD-QUAL-022)
+Checkpoint tools: trw_mcp.tools.checkpoint (PRD-CORE-053)
 """
 
 from __future__ import annotations
@@ -46,10 +50,6 @@ from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
 )
-from trw_mcp.state.recall_search import (
-    search_entries,
-    update_access_tracking,
-)
 from trw_mcp.state.receipts import log_recall_receipt
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -59,6 +59,33 @@ _config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 _events = FileEventLogger(_writer)
+
+# --- Phase-contextual auto-recall (PRD-CORE-049) ---
+
+_PHASE_TAG_MAP: dict[str, list[str]] = {
+    "research": ["architecture", "gotcha", "codebase"],
+    "plan": ["architecture", "pattern", "dependency"],
+    "implement": ["gotcha", "testing", "pattern"],
+    "validate": ["testing", "build", "coverage"],
+    "review": ["security", "performance", "maintainability"],
+    "deliver": ["ceremony", "deployment", "integration"],
+}
+
+
+def _phase_to_tags(phase: str) -> list[str]:
+    """Map a framework phase to relevant learning tags (PRD-CORE-049 FR02)."""
+    return _PHASE_TAG_MAP.get(phase.lower(), [])
+
+
+# Re-export checkpoint helpers for backward compatibility with tests/hooks
+from trw_mcp.tools.checkpoint import (  # noqa: E402
+    _do_checkpoint,
+    _maybe_auto_checkpoint,
+    _reset_tool_call_counter,
+)
+
+# Suppress unused import warnings — these are re-exports
+__all__ = ["_maybe_auto_checkpoint", "_reset_tool_call_counter", "_do_checkpoint"]
 
 
 def _get_run_status(run_dir: Path) -> dict[str, object]:
@@ -74,6 +101,153 @@ def _get_run_status(run_dir: Path) -> dict[str, object]:
     except (StateError, OSError, ValueError):
         result["status"] = "error_reading"
     return result
+
+
+def _run_step(
+    name: str,
+    fn: object,  # Callable[[], dict[str, object] | None]
+    results: dict[str, object],
+    errors: list[str],
+) -> None:
+    """Execute a delivery step with fail-open error handling.
+
+    If ``fn`` returns a dict, it is stored in ``results[name]``.
+    If ``fn`` returns None, nothing is stored (used for conditional steps).
+    Exceptions are appended to ``errors`` and a failure dict is stored.
+    """
+    from collections.abc import Callable
+    assert isinstance(fn, Callable)  # type: ignore[arg-type]
+    try:
+        step_result = fn()  # type: ignore[operator]
+        if step_result is not None:
+            results[name] = step_result
+    except Exception as exc:
+        errors.append(f"{name}: {exc}")
+        results[name] = {"status": "failed", "error": str(exc)}
+
+
+# --- Deliver step helpers ---
+
+
+def _step_checkpoint(resolved_run: Path) -> dict[str, object]:
+    """Step 2: Delivery state snapshot."""
+    _do_checkpoint(resolved_run, "delivery")
+    return {"status": "success"}
+
+
+def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
+    """Step 2.5: Auto-prune excess learnings."""
+    if not _config.learning_auto_prune_on_deliver:
+        return None
+    from trw_mcp.state.analytics import auto_prune_excess_entries
+    prune_result = auto_prune_excess_entries(
+        trw_dir,
+        max_entries=_config.learning_auto_prune_cap,
+    )
+    pruned = int(str(prune_result.get("actions_taken", 0)))
+    return prune_result if pruned > 0 else None
+
+
+def _step_consolidation(trw_dir: Path) -> dict[str, object]:
+    """Step 2.6: Memory consolidation (PRD-CORE-044)."""
+    if not _config.memory_consolidation_enabled:
+        return {"status": "skipped", "reason": "disabled"}
+    from trw_mcp.state.consolidation import consolidate_cycle
+    return dict(consolidate_cycle(
+        trw_dir,
+        max_entries=_config.memory_consolidation_max_per_cycle,
+    ))
+
+
+def _step_tier_sweep(trw_dir: Path) -> dict[str, object]:
+    """Step 2.7: Tier lifecycle sweep (PRD-CORE-043)."""
+    from trw_mcp.state.tiers import TierManager
+    tier_mgr = TierManager(trw_dir, _reader, _writer)
+    sweep_result = tier_mgr.sweep()
+    return {
+        "status": "success",
+        "promoted": sweep_result.promoted,
+        "demoted": sweep_result.demoted,
+        "purged": sweep_result.purged,
+        "errors": sweep_result.errors,
+    }
+
+
+def _step_auto_progress(resolved_run: Path | None) -> dict[str, object]:
+    """Step 5: Auto-progress PRD statuses."""
+    return _do_auto_progress(resolved_run)
+
+
+def _step_publish_learnings() -> dict[str, object]:
+    """Step 6: Publish high-impact learnings to platform backend."""
+    from trw_mcp.telemetry.publisher import publish_learnings
+    return dict(publish_learnings())
+
+
+def _step_outcome_correlation() -> dict[str, object]:
+    """Step 6.5: Outcome correlation (G1)."""
+    from trw_mcp.scoring import process_outcome_for_event
+    outcome_ids = process_outcome_for_event("trw_deliver_complete")
+    return {"status": "success", "updated": len(outcome_ids)}
+
+
+def _step_recall_outcome(resolved_run: Path | None) -> dict[str, object]:
+    """Step 6.6: Recall outcome tracking (G6)."""
+    from trw_mcp.state.recall_tracking import get_recall_stats, record_outcome
+    recall_stats = get_recall_stats()
+    unique_ids = recall_stats.get("unique_learnings", 0)
+    recalled_count = 0
+    if unique_ids and resolved_run is not None:
+        trw_dir_rt = resolve_trw_dir()
+        tracking_path = trw_dir_rt / "logs" / "recall_tracking.jsonl"
+        if tracking_path.exists():
+            from trw_mcp.state.persistence import FileStateReader as _FSR
+            rt_reader = _FSR()
+            records_rt = rt_reader.read_jsonl(tracking_path)
+            seen: set[str] = set()
+            for rec in records_rt:
+                lid = str(rec.get("learning_id", ""))
+                if lid and rec.get("outcome") is None and lid not in seen:
+                    record_outcome(lid, "positive")
+                    seen.add(lid)
+                    recalled_count += 1
+    return {"status": "success", "recorded": recalled_count}
+
+
+def _step_telemetry(resolved_run: Path | None) -> dict[str, object]:
+    """Step 7: Telemetry events (G3 + G4)."""
+    from trw_mcp.models.config import get_config as _get_cfg
+    from trw_mcp.telemetry.client import TelemetryClient
+    from trw_mcp.telemetry.models import CeremonyComplianceEvent, SessionEndEvent
+    cfg = _get_cfg()
+    tel_client = TelemetryClient.from_config()
+    tools_invoked = 0
+    if resolved_run is not None:
+        ev_path = resolved_run / "meta" / "events.jsonl"
+        if ev_path.exists():
+            from trw_mcp.state.persistence import FileStateReader as _FSR2
+            ev_reader = _FSR2()
+            tools_invoked = len(ev_reader.read_jsonl(ev_path))
+    tel_client.record_event(SessionEndEvent(
+        installation_id=cfg.installation_id or "local",
+        framework_version=cfg.framework_version,
+        tools_invoked=tools_invoked,
+    ))
+    run_id_str = str(resolved_run.name) if resolved_run else "unknown"
+    tel_client.record_event(CeremonyComplianceEvent(
+        installation_id=cfg.installation_id or "local",
+        framework_version=cfg.framework_version,
+        run_id=run_id_str,
+        score=0,
+    ))
+    tel_client.flush()
+    return {"status": "success", "events": 2}
+
+
+def _step_batch_send() -> dict[str, object]:
+    """Step 8: Batch send (G2)."""
+    from trw_mcp.telemetry.sender import BatchSender
+    return dict(BatchSender.from_config().send())
 
 
 def register_ceremony_tools(server: FastMCP) -> None:
@@ -93,51 +267,30 @@ def register_ceremony_tools(server: FastMCP) -> None:
         results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
 
-        # Step 1: Recall high-impact learnings (compact mode)
+        # Step 1: Recall high-impact learnings via SQLite adapter (compact mode)
         try:
+            from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
+            from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
             trw_dir = resolve_trw_dir()
-            entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-            matching, matched_files = search_entries(
-                entries_dir, [], _reader, min_impact=0.7,
+
+            # adapter_recall returns list[dict] directly
+            learnings = adapter_recall(
+                trw_dir, query="*", min_impact=0.7,
+                max_results=_config.recall_max_results, compact=True,
             )
-            matched_ids = update_access_tracking(matched_files, _reader, _writer)
+
+            # Update access tracking for recalled IDs
+            matched_ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
+            adapter_update_access(trw_dir, matched_ids)
             log_recall_receipt(trw_dir, "*", matched_ids)
-
-            ranked = rank_by_utility(
-                matching, [], _config.recall_utility_lambda,
-            )
-
-            compact_fields = _config.recall_compact_fields
-            learnings = [
-                {k: v for k, v in e.items() if k in compact_fields}
-                for e in ranked[:_config.recall_max_results]
-            ]
 
             results["learnings"] = learnings
             results["learnings_count"] = len(learnings)
-            results["total_available"] = len(ranked)
+            results["total_available"] = len(learnings)
         except Exception as exc:
             errors.append(f"recall: {exc}")
             results["learnings"] = []
             results["learnings_count"] = 0
-
-        # Step 1.5: One-time vector store migration (PRD-CORE-041)
-        try:
-            from trw_mcp.state.memory_store import MemoryStore
-            if MemoryStore.available():
-                from trw_mcp.state._paths import resolve_memory_store_path
-                migrate_trw = resolve_trw_dir()
-                migrate_entries = migrate_trw / _config.learnings_dir / _config.entries_dir
-                store_path = resolve_memory_store_path()
-                store = MemoryStore(store_path, dim=_config.retrieval_embedding_dim)
-                try:
-                    if store.count() == 0 and migrate_entries.exists():
-                        migrate_result = store.migrate(migrate_entries, _reader)
-                        results["vector_migration"] = migrate_result
-                finally:
-                    store.close()
-        except Exception:
-            pass  # Fail-open: migration is best-effort
 
         # Step 2: Check active run status
         run_dir: Path | None = None
@@ -190,6 +343,49 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:
             pass  # Fail-open: maintenance must not break session start
 
+        # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
+        try:
+            if _config.auto_recall_enabled:
+                from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall_step6
+
+                trw_dir_ar = resolve_trw_dir()
+
+                # Build context query from active run
+                query_tokens: list[str] = []
+                phase_tags: list[str] | None = None
+                if run_dir is not None:
+                    run_status = results.get("run", {})
+                    if isinstance(run_status, dict):
+                        task_name = str(run_status.get("task_name", ""))
+                        phase = str(run_status.get("phase", ""))
+                        if task_name:
+                            query_tokens.append(task_name)
+                        if phase:
+                            query_tokens.append(phase)
+                            phase_tag_list = _phase_to_tags(phase)
+                            if phase_tag_list:
+                                phase_tags = phase_tag_list
+
+                ar_query = " ".join(query_tokens) if query_tokens else "*"
+                ar_entries = adapter_recall_step6(
+                    trw_dir_ar, query=ar_query,
+                    tags=phase_tags, min_impact=0.5,
+                    max_results=0, compact=False,
+                )
+                if ar_entries:
+                    ranked = rank_by_utility(
+                        ar_entries, query_tokens,
+                        lambda_weight=_config.recall_utility_lambda,
+                    )
+                    capped = ranked[:_config.auto_recall_max_results]
+                    results["auto_recalled"] = [
+                        {"id": e.get("id"), "summary": e.get("summary"), "impact": e.get("impact")}
+                        for e in capped
+                    ]
+                    results["auto_recall_count"] = len(capped)
+        except Exception:
+            pass  # Fail-open: auto-recall must not break session start
+
         results["errors"] = errors
         results["success"] = len(errors) == 0
 
@@ -232,6 +428,27 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         results["run_path"] = str(resolved_run) if resolved_run else None
 
+        # Step 0: Review soft gate (PRD-QUAL-022)
+        if resolved_run is not None:
+            review_path = resolved_run / "meta" / "review.yaml"
+            if review_path.exists():
+                try:
+                    review_data = _reader.read_yaml(review_path)
+                    rv_verdict = str(review_data.get("verdict", ""))
+                    rv_critical = int(str(review_data.get("critical_count", 0)))
+                    if rv_verdict == "block" and rv_critical > 0:
+                        results["review_warning"] = (
+                            f"Review has {rv_critical} critical findings. "
+                            f"Delivery proceeding but review issues should be addressed."
+                        )
+                except Exception:
+                    pass  # Fail-open: review gate should not block delivery
+            else:
+                results["review_advisory"] = (
+                    "No trw_review was run before delivery. "
+                    "Consider running trw_review for quality assurance."
+                )
+
         # Premature delivery guard: warn if run has only init/ceremony events
         if resolved_run is not None:
             events_path = resolved_run / "meta" / "events.jsonl"
@@ -258,184 +475,51 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:
-            try:
-                reflect_result = _do_reflect(trw_dir, resolved_run)
-                results["reflect"] = reflect_result
-            except Exception as exc:
-                errors.append(f"reflect: {exc}")
-                results["reflect"] = {"status": "failed", "error": str(exc)}
+            _run_step("reflect", lambda: _do_reflect(trw_dir, resolved_run), results, errors)
         else:
             results["reflect"] = {"status": "skipped"}
 
         # Step 2: Checkpoint (delivery state snapshot)
         if resolved_run is not None:
-            try:
-                _do_checkpoint(resolved_run, "delivery")
-                results["checkpoint"] = {"status": "success"}
-            except Exception as exc:
-                errors.append(f"checkpoint: {exc}")
-                results["checkpoint"] = {"status": "failed", "error": str(exc)}
+            _run_step("checkpoint", lambda: _step_checkpoint(resolved_run), results, errors)
         else:
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
         # Step 2.5: Auto-prune excess learnings (prevents saturation)
-        try:
-            if _config.learning_auto_prune_on_deliver:
-                from trw_mcp.state.analytics import auto_prune_excess_entries
-                prune_result = auto_prune_excess_entries(
-                    trw_dir,
-                    max_entries=_config.learning_auto_prune_cap,
-                )
-                pruned = int(str(prune_result.get("actions_taken", 0)))
-                if pruned > 0:
-                    results["auto_prune"] = prune_result
-        except Exception as exc:
-            errors.append(f"auto_prune: {exc}")
-            results["auto_prune"] = {"status": "failed", "error": str(exc)}
+        _run_step("auto_prune", lambda: _step_auto_prune(trw_dir), results, errors)
 
         # Step 2.6: Memory consolidation (PRD-CORE-044)
-        try:
-            if _config.memory_consolidation_enabled:
-                from trw_mcp.state.consolidation import consolidate_cycle
-                consolidation_result = consolidate_cycle(
-                    trw_dir,
-                    max_entries=_config.memory_consolidation_max_per_cycle,
-                )
-                results["consolidation"] = consolidation_result
-            else:
-                results["consolidation"] = {"status": "skipped", "reason": "disabled"}
-        except Exception as exc:
-            errors.append(f"consolidation: {exc}")
-            results["consolidation"] = {"status": "failed", "error": str(exc)}
+        _run_step("consolidation", lambda: _step_consolidation(trw_dir), results, errors)
 
         # Step 2.7: Tier lifecycle sweep (PRD-CORE-043)
-        try:
-            from trw_mcp.state.tiers import TierManager
-            tier_mgr = TierManager(trw_dir, _reader, _writer)
-            sweep_result = tier_mgr.sweep()
-            results["tier_sweep"] = {
-                "status": "success",
-                "promoted": sweep_result.promoted,
-                "demoted": sweep_result.demoted,
-                "purged": sweep_result.purged,
-                "errors": sweep_result.errors,
-            }
-        except Exception as exc:
-            errors.append(f"tier_sweep: {exc}")
-            results["tier_sweep"] = {"status": "failed", "error": str(exc)}
+        _run_step("tier_sweep", lambda: _step_tier_sweep(trw_dir), results, errors)
 
         # Step 3: CLAUDE.md sync
-        try:
-            sync_result = _do_claude_md_sync(trw_dir)
-            results["claude_md_sync"] = sync_result
-        except Exception as exc:
-            errors.append(f"claude_md_sync: {exc}")
-            results["claude_md_sync"] = {"status": "failed", "error": str(exc)}
+        _run_step("claude_md_sync", lambda: _do_claude_md_sync(trw_dir), results, errors)
 
         # Step 4: INDEX.md / ROADMAP.md sync
         if not skip_index_sync:
-            try:
-                index_result = _do_index_sync()
-                results["index_sync"] = index_result
-            except Exception as exc:
-                errors.append(f"index_sync: {exc}")
-                results["index_sync"] = {"status": "failed", "error": str(exc)}
+            _run_step("index_sync", lambda: _do_index_sync(), results, errors)
         else:
             results["index_sync"] = {"status": "skipped"}
 
         # Step 5: Auto-progress PRD statuses (PRD-CORE-025 via GAP-PROC-001)
-        try:
-            progress_result = _do_auto_progress(resolved_run)
-            results["auto_progress"] = progress_result
-        except Exception as exc:
-            errors.append(f"auto_progress: {exc}")
-            results["auto_progress"] = {"status": "failed", "error": str(exc)}
+        _run_step("auto_progress", lambda: _step_auto_progress(resolved_run), results, errors)
 
         # Step 6: Publish high-impact learnings to platform backend (PRD-CORE-033)
-        try:
-            from trw_mcp.telemetry.publisher import publish_learnings
-            publish_result = publish_learnings()
-            results["publish_learnings"] = publish_result
-        except Exception as exc:
-            errors.append(f"publish_learnings: {exc}")
-            results["publish_learnings"] = {"status": "failed", "error": str(exc)}
+        _run_step("publish_learnings", lambda: _step_publish_learnings(), results, errors)
 
         # Step 6.5: Outcome correlation (G1)
-        try:
-            from trw_mcp.scoring import process_outcome_for_event
-            outcome_ids = process_outcome_for_event("trw_deliver_complete")
-            results["outcome_correlation"] = {"status": "success", "updated": len(outcome_ids)}
-        except Exception as exc:
-            errors.append(f"outcome_correlation: {exc}")
-            results["outcome_correlation"] = {"status": "failed", "error": str(exc)}
+        _run_step("outcome_correlation", lambda: _step_outcome_correlation(), results, errors)
 
         # Step 6.6: Recall outcome tracking (G6)
-        try:
-            from trw_mcp.state.recall_tracking import get_recall_stats, record_outcome
-            recall_stats = get_recall_stats()
-            unique_ids = recall_stats.get("unique_learnings", 0)
-            # Record positive outcome for all tracked recalls on successful deliver
-            recalled_count = 0
-            if unique_ids and resolved_run is not None:
-                trw_dir_rt = resolve_trw_dir()
-                tracking_path = trw_dir_rt / "logs" / "recall_tracking.jsonl"
-                if tracking_path.exists():
-                    from trw_mcp.state.persistence import FileStateReader as _FSR
-                    rt_reader = _FSR()
-                    records_rt = rt_reader.read_jsonl(tracking_path)
-                    seen: set[str] = set()
-                    for rec in records_rt:
-                        lid = str(rec.get("learning_id", ""))
-                        if lid and rec.get("outcome") is None and lid not in seen:
-                            record_outcome(lid, "positive")
-                            seen.add(lid)
-                            recalled_count += 1
-            results["recall_outcome"] = {"status": "success", "recorded": recalled_count}
-        except Exception as exc:
-            errors.append(f"recall_outcome: {exc}")
-            results["recall_outcome"] = {"status": "failed", "error": str(exc)}
+        _run_step("recall_outcome", lambda: _step_recall_outcome(resolved_run), results, errors)
 
         # Step 7: Telemetry events (G3 + G4)
-        try:
-            from trw_mcp.models.config import get_config as _get_cfg
-            from trw_mcp.telemetry.client import TelemetryClient
-            from trw_mcp.telemetry.models import CeremonyComplianceEvent, SessionEndEvent
-            cfg = _get_cfg()
-            tel_client = TelemetryClient.from_config()
-            # Count events in active run for tools_invoked approximation
-            tools_invoked = 0
-            if resolved_run is not None:
-                ev_path = resolved_run / "meta" / "events.jsonl"
-                if ev_path.exists():
-                    from trw_mcp.state.persistence import FileStateReader as _FSR2
-                    ev_reader = _FSR2()
-                    tools_invoked = len(ev_reader.read_jsonl(ev_path))
-            tel_client.record_event(SessionEndEvent(
-                installation_id=cfg.installation_id or "local",
-                framework_version=cfg.framework_version,
-                tools_invoked=tools_invoked,
-            ))
-            run_id_str = str(resolved_run.name) if resolved_run else "unknown"
-            tel_client.record_event(CeremonyComplianceEvent(
-                installation_id=cfg.installation_id or "local",
-                framework_version=cfg.framework_version,
-                run_id=run_id_str,
-                score=0,
-            ))
-            tel_client.flush()
-            results["telemetry"] = {"status": "success", "events": 2}
-        except Exception as exc:
-            errors.append(f"telemetry: {exc}")
-            results["telemetry"] = {"status": "failed", "error": str(exc)}
+        _run_step("telemetry", lambda: _step_telemetry(resolved_run), results, errors)
 
         # Step 8: Batch send (G2)
-        try:
-            from trw_mcp.telemetry.sender import BatchSender
-            send_result = BatchSender.from_config().send()
-            results["batch_send"] = send_result
-        except Exception as exc:
-            errors.append(f"batch_send: {exc}")
-            results["batch_send"] = {"status": "failed", "error": str(exc)}
+        _run_step("batch_send", lambda: _step_batch_send(), results, errors)
 
         results["errors"] = errors
         results["success"] = len(errors) == 0
@@ -447,7 +531,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
             errors=len(errors),
         )
         return results
-
 
 def _do_reflect(
     trw_dir: Path,
@@ -502,20 +585,6 @@ def _do_reflect(
         "learnings_produced": len(new_learnings),
         "success_patterns": len(success_patterns),
     }
-
-
-def _do_checkpoint(run_dir: Path, message: str) -> None:
-    """Append a checkpoint to the run's checkpoints.jsonl."""
-    checkpoints_path = run_dir / "meta" / "checkpoints.jsonl"
-    checkpoint_data: dict[str, object] = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "message": message,
-    }
-    _writer.append_jsonl(checkpoints_path, checkpoint_data)
-
-    events_path = run_dir / "meta" / "events.jsonl"
-    if events_path.parent.exists():
-        _events.log_event(events_path, "checkpoint", {"message": message})
 
 
 def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:

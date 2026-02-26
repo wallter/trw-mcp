@@ -1,0 +1,33 @@
+id: L-525396a9
+summary: 'Lambda deploy: >50MB zip requires S3 intermediary, backend has no requirements.txt'
+detail: 'Two deployment gotchas: (1) Lambda direct zip upload limit is 50MB — the
+  backend package with all deps is ~52MB, so must upload to S3 first then use --s3-bucket/--s3-key
+  flags. Created s3://trw-backend-deploy for this. (2) The backend pyproject.toml
+  lacks packages config so pip install . fails with setuptools discovery error — install
+  deps explicitly by listing them in a subprocess call rather than using pip install
+  .[postgres]. Always verify key deps exist in the package (fastapi, mangum, sqlalchemy,
+  pydantic) before deploying.'
+tags:
+- deployment
+- lambda
+- aws
+- backend
+evidence: []
+impact: 0.6333333333333333
+status: active
+recurrence: 1
+created: '2026-02-25'
+updated: '2026-02-25'
+resolved_at:
+promoted_to_claude_md: false
+last_accessed_at:
+access_count: 0
+q_value: 0.5
+q_observations: 0
+outcome_history: []
+shard_id:
+source_type: human
+source_identity: ''
+merged_from: []
+consolidated_from: []
+consolidated_into:

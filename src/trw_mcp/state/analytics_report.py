@@ -6,7 +6,7 @@ compute ceremony compliance scores, and assemble aggregate analytics.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
@@ -299,28 +299,142 @@ def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
-# --- Stale Run Auto-Close ---
+# --- Stale Run Auto-Close (PRD-FIX-028) ---
+
+
+def _get_last_activity_timestamp(run_dir: Path) -> datetime | None:
+    """Get the most recent checkpoint timestamp from a run directory.
+
+    Returns None if no checkpoints exist.
+    """
+    cp_path = run_dir / "meta" / "checkpoints.jsonl"
+    if not cp_path.exists():
+        return None
+
+    try:
+        records = _reader.read_jsonl(cp_path)
+    except Exception:
+        return None
+
+    if not records:
+        return None
+
+    latest: datetime | None = None
+    for record in records:
+        ts_str = str(record.get("ts", ""))
+        if ts_str:
+            try:
+                ts = datetime.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if latest is None or ts > latest:
+                    latest = ts
+            except ValueError:
+                continue
+    return latest
+
+
+def _write_archive_summary(
+    run_dir: Path,
+    run_data: dict[str, object],
+    closed_at: str,
+) -> None:
+    """Write a summary.yaml artifact when closing a stale run."""
+    meta = run_dir / "meta"
+
+    # Count events
+    events_count = 0
+    events_path = meta / "events.jsonl"
+    if events_path.exists():
+        try:
+            events_count = len(_reader.read_jsonl(events_path))
+        except Exception:
+            pass
+
+    # Count checkpoints
+    checkpoints_count = 0
+    cp_path = meta / "checkpoints.jsonl"
+    if cp_path.exists():
+        try:
+            checkpoints_count = len(_reader.read_jsonl(cp_path))
+        except Exception:
+            pass
+
+    # Determine started_at from run_id
+    run_id = str(run_data.get("run_id", run_dir.name))
+    started_at = _parse_run_id_timestamp(run_id)
+
+    # Get last activity
+    last_activity = _get_last_activity_timestamp(run_dir)
+    last_activity_str = last_activity.isoformat() if last_activity else started_at
+
+    summary: dict[str, object] = {
+        "run_id": run_id,
+        "task": str(run_data.get("task", "")),
+        "reason": "Stale timeout \u2014 run exceeded TTL with no activity",
+        "closed_at": closed_at,
+        "started_at": started_at,
+        "last_activity": last_activity_str,
+        "events_count": events_count,
+        "checkpoints_count": checkpoints_count,
+    }
+    _writer.write_yaml(meta / "summary.yaml", summary)
+
+
+def _is_run_stale(
+    run_dir: Path,
+    run_data: dict[str, object],
+    ttl_hours: int,
+    now: datetime,
+) -> bool:
+    """Check if a run is stale (exceeds hour-level TTL).
+
+    Considers checkpoint timestamps: the most recent checkpoint resets the
+    staleness clock.
+    """
+    run_id = str(run_data.get("run_id", run_dir.name))
+    started_at = _parse_run_id_timestamp(run_id)
+    try:
+        run_dt = datetime.fromisoformat(started_at)
+    except ValueError:
+        return False
+
+    # Check last checkpoint
+    last_cp = _get_last_activity_timestamp(run_dir)
+    effective_dt = last_cp if last_cp is not None else run_dt
+
+    age_hours = (now - effective_dt).total_seconds() / 3600
+    return age_hours > ttl_hours
 
 
 def auto_close_stale_runs(
     age_days: int | None = None,
+    ttl_hours: int | None = None,
 ) -> dict[str, object]:
     """Auto-close active runs older than a configurable threshold.
 
-    Prevents orphaned runs from accumulating indefinitely. Runs that were
-    never delivered or closed (stuck in 'active' status) are marked as
-    'abandoned' after the threshold period.
+    Supports both day-level (legacy) and hour-level TTL (PRD-FIX-028).
+    When ttl_hours is provided, it takes precedence over age_days.
+    Checkpoint timestamps extend the TTL: the most recent checkpoint
+    resets the staleness clock.
 
     Called automatically during trw_session_start when enabled.
 
     Args:
         age_days: Days of inactivity before closing. Defaults to config value.
+        ttl_hours: Hour-level TTL override. Takes precedence when set.
 
     Returns:
         Dict with runs_closed list, count, and any errors.
     """
     cfg = get_config()
-    threshold = age_days if age_days is not None else cfg.run_auto_close_age_days
+    if ttl_hours is not None:
+        threshold_hours = ttl_hours
+    elif age_days is not None:
+        threshold_hours = age_days * 24
+    else:
+        threshold_hours = cfg.run_stale_ttl_hours
+
     project_root = resolve_project_root()
     task_root = project_root / cfg.task_root
 
@@ -345,35 +459,75 @@ def auto_close_stale_runs(
                 if status != "active":
                     continue
 
+                if not _is_run_stale(run_dir, data, threshold_hours, now):
+                    continue
+
                 run_id = str(data.get("run_id", run_dir.name))
-                started_at = _parse_run_id_timestamp(run_id)
-                try:
-                    run_dt = datetime.fromisoformat(started_at)
-                except ValueError:
-                    continue
-
-                age = (now - run_dt).days
-                if age <= threshold:
-                    continue
-
+                original_phase = str(data.get("phase", ""))
                 data["status"] = "abandoned"
                 data["abandoned_at"] = now.isoformat()
+                data["original_phase"] = original_phase
                 data["abandoned_reason"] = (
-                    f"Auto-closed: active for {age} days (threshold: {threshold})"
+                    f"Stale timeout — exceeded threshold: {threshold_hours}h"
                 )
                 _writer.write_yaml(run_yaml, data)
                 closed.append(run_id)
 
+                # Write archive summary
+                _write_archive_summary(run_dir, data, now.isoformat())
+
                 logger.info(
                     "run_auto_closed",
                     run_id=run_id,
-                    age_days=age,
+                    threshold_hours=threshold_hours,
                     task=str(data.get("task", "")),
                 )
             except Exception as exc:
                 errors.append(f"{run_dir.name}: {exc}")
 
     return {"runs_closed": closed, "count": len(closed), "errors": errors}
+
+
+def count_stale_runs(ttl_hours: int | None = None) -> int:
+    """Count active runs that exceed the staleness TTL (read-only).
+
+    Does not modify any run files. Used by trw_status for reporting.
+
+    Args:
+        ttl_hours: Hour-level TTL override. Defaults to config value.
+
+    Returns:
+        Number of stale active runs.
+    """
+    cfg = get_config()
+    threshold_hours = ttl_hours if ttl_hours is not None else cfg.run_stale_ttl_hours
+    project_root = resolve_project_root()
+    task_root = project_root / cfg.task_root
+    now = datetime.now(timezone.utc)
+
+    count = 0
+    if not task_root.exists():
+        return 0
+
+    for task_dir in sorted(task_root.iterdir()):
+        runs_dir = task_dir / "runs"
+        if not runs_dir.is_dir():
+            continue
+        for run_dir in sorted(runs_dir.iterdir()):
+            run_yaml = run_dir / "meta" / "run.yaml"
+            if not run_yaml.exists():
+                continue
+            try:
+                data = _reader.read_yaml(run_yaml)
+                status = str(data.get("status", ""))
+                if status != "active":
+                    continue
+                if _is_run_stale(run_dir, data, threshold_hours, now):
+                    count += 1
+            except Exception:
+                continue
+
+    return count
 
 
 def _empty_report(parse_errors: list[str]) -> dict[str, object]:

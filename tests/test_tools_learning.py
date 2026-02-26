@@ -801,6 +801,8 @@ class TestTrwRecallAccessTracking:
         """trw_recall sets last_accessed_at on returned entries."""
         from datetime import date
 
+        from trw_mcp.state.memory_adapter import find_entry_by_id as adapter_find
+
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Access tracking date test",
@@ -812,20 +814,16 @@ class TestTrwRecallAccessTracking:
         # Recall should update access tracking
         tools["trw_recall"].fn(query="access tracking date")
 
-        # Verify on-disk entry has last_accessed_at set
-        reader = FileStateReader()
-        entries_dir = _entries_dir(tmp_path)
-        found = False
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                assert data.get("last_accessed_at") == date.today().isoformat()
-                found = True
-                break
-        assert found, "Entry not found on disk"
+        # Verify via SQLite that last_accessed_at was set
+        trw_dir = tmp_path / _CFG.trw_dir
+        data = adapter_find(trw_dir, lid)
+        assert data is not None, "Entry not found in SQLite"
+        assert data.get("last_accessed_at") == date.today().isoformat()
 
     def test_recall_increments_access_count(self, tmp_path: Path) -> None:
         """trw_recall increments access_count on each matching recall."""
+        from trw_mcp.state.memory_adapter import find_entry_by_id as adapter_find
+
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Access count increment test",
@@ -839,14 +837,11 @@ class TestTrwRecallAccessTracking:
         tools["trw_recall"].fn(query="access count increment")
         tools["trw_recall"].fn(query="access count increment")
 
-        # Verify on-disk access_count == 3
-        reader = FileStateReader()
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                assert int(str(data.get("access_count", 0))) == 3
-                break
+        # Verify via SQLite that access_count == 3
+        trw_dir = tmp_path / _CFG.trw_dir
+        data = adapter_find(trw_dir, lid)
+        assert data is not None, "Entry not found in SQLite"
+        assert int(str(data.get("access_count", 0))) == 3
 
     def test_recall_only_updates_matched_entries(self, tmp_path: Path) -> None:
         """trw_recall does not touch entries that don't match the query."""
@@ -946,6 +941,9 @@ class TestTrwRecallAccessTracking:
 
     def test_new_fields_default_for_existing_entries(self, tmp_path: Path) -> None:
         """Entries created without new fields get defaults (lazy migration)."""
+        from trw_mcp.state.memory_adapter import find_entry_by_id as adapter_find
+        from trw_mcp.state.memory_adapter import store_learning
+
         # Simulate an old entry without last_accessed_at or access_count
         writer = FileStateWriter()
         entries_dir = _entries_dir(tmp_path)
@@ -980,18 +978,31 @@ class TestTrwRecallAccessTracking:
             "total_count": 1,
         })
 
+        # Also store the legacy entry in SQLite so the adapter can find and track it
+        trw_dir = tmp_path / _CFG.trw_dir
+        store_learning(
+            trw_dir,
+            "L-oldentry1",
+            "Legacy entry without access fields",
+            "Created before Phase 1a",
+            tags=["legacy"],
+            impact=0.7,
+        )
+
         tools = _get_tools()
         result = tools["trw_recall"].fn(query="legacy entry")
         assert result["total_matches"] == 1
 
-        # After recall, the entry should now have the new fields
-        reader = FileStateReader()
-        data = reader.read_yaml(entries_dir / "2026-01-01-legacy-entry.yaml")
+        # After recall, the SQLite entry should have access tracking fields updated
+        data = adapter_find(trw_dir, "L-oldentry1")
+        assert data is not None, "Entry not found in SQLite"
         assert int(str(data.get("access_count", 0))) == 1
         assert data.get("last_accessed_at") is not None
 
     def test_wildcard_recall_updates_all_entries(self, tmp_path: Path) -> None:
         """Wildcard '*' recall updates access tracking for all returned entries."""
+        from trw_mcp.state.memory_adapter import find_entry_by_id as adapter_find
+
         tools = _get_tools()
         r1 = tools["trw_learn"].fn(
             summary="Wildcard access test one", detail="First", impact=0.8,
@@ -1002,12 +1013,12 @@ class TestTrwRecallAccessTracking:
 
         tools["trw_recall"].fn(query="*")
 
-        reader = FileStateReader()
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") in (r1["learning_id"], r2["learning_id"]):
-                assert int(str(data.get("access_count", 0))) == 1
+        # Verify via SQLite that access tracking was updated for both entries
+        trw_dir = tmp_path / _CFG.trw_dir
+        for lid in (r1["learning_id"], r2["learning_id"]):
+            data = adapter_find(trw_dir, lid)
+            assert data is not None, f"Entry {lid} not found in SQLite"
+            assert int(str(data.get("access_count", 0))) == 1
 
 
 class TestRecallUtilityRanking:
@@ -1509,24 +1520,20 @@ class TestClaudeMdSyncQValuePromotion:
 
     def test_mature_entry_uses_q_value(self, tmp_path: Path) -> None:
         """Entry with q_observations >= threshold uses q_value for promotion."""
+        from trw_mcp.state.memory_adapter import get_backend
+
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Mature q promotion test",
             detail="Has high q_value",
             impact=0.3,  # Below promotion threshold
         )
+        learning_id = result["learning_id"]
 
-        # Set q_value high and q_observations above threshold
-        entries_dir = _entries_dir(tmp_path)
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                data["q_value"] = 0.9  # Above promotion threshold
-                data["q_observations"] = 5  # Above cold-start threshold
-                writer.write_yaml(entry_file, data)
-                break
+        # Update q_value and q_observations in SQLite (where list_active_learnings reads from)
+        trw_dir = tmp_path / _CFG.trw_dir
+        backend = get_backend(trw_dir)
+        backend.update(learning_id, q_value=0.9, q_observations=5)
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         assert sync_result["learnings_promoted"] >= 1
@@ -1562,24 +1569,20 @@ class TestClaudeMdSyncQValuePromotion:
 
     def test_mature_low_q_not_promoted(self, tmp_path: Path) -> None:
         """Mature entry with low q_value is not promoted even if impact is high."""
+        from trw_mcp.state.memory_adapter import get_backend
+
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Mature low q no promote test",
             detail="High impact but low q_value",
             impact=0.9,  # High impact
         )
+        learning_id = result["learning_id"]
 
-        # Set q_value low with enough observations
-        entries_dir = _entries_dir(tmp_path)
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                data["q_value"] = 0.2  # Low q_value
-                data["q_observations"] = 5  # Above threshold
-                writer.write_yaml(entry_file, data)
-                break
+        # Update q_value and q_observations in SQLite (where list_active_learnings reads from)
+        trw_dir = tmp_path / _CFG.trw_dir
+        backend = get_backend(trw_dir)
+        backend.update(learning_id, q_value=0.2, q_observations=5)
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         # Should use q_value (0.2) — not promoted

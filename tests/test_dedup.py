@@ -1259,10 +1259,11 @@ class TestSkipUpdatesAccessCount:
         assert result["status"] == "skipped"
         assert result["learning_id"] == "L-skip-test"
 
-        # Verify access_count was incremented
+        # Sprint 34: YAML is now a backup — access_count/recurrence tracking
+        # moved to SQLite adapter. YAML file is NOT updated on skip.
         updated_data = mock_reader.read_yaml(entries_dir / "L-existing-skip.yaml")
-        assert int(str(updated_data.get("access_count", 0))) == 4
-        assert int(str(updated_data.get("recurrence", 1))) == 2
+        assert int(str(updated_data.get("access_count", 0))) == 3
+        assert int(str(updated_data.get("recurrence", 1))) == 1
 
 
 # ---------------------------------------------------------------------------

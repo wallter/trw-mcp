@@ -107,6 +107,7 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "## TRW Behavioral Protocol (Auto-Generated)\n"
         "\n"
         "{{behavioral_protocol}}"
+        "{{rationalization_watchlist}}"
         "## TRW Ceremony Tools (Auto-Generated)\n"
         "\n"
         "{{ceremony_phases}}"
@@ -485,6 +486,56 @@ def render_delegation_protocol() -> str:
     )
 
 
+def render_rationalization_watchlist() -> str:
+    """Render anti-rationalization watchlist and rigid/flexible classification.
+
+    Lists specific thoughts agents have when skipping process, paired with
+    consequence-framed counter-arguments. Research basis: superpowers framework
+    (obra/superpowers), Cialdini persuasion principles (Meincke et al. 2025),
+    consequence framing (BCSP Neurocomputing 2025).
+
+    Returns:
+        Markdown string with watchlist table and tool classification.
+    """
+    return (
+        "## Rationalization Watchlist (Auto-Generated)\n"
+        "\n"
+        "If you catch yourself thinking any of these, stop and follow the process:\n"
+        "\n"
+        "| Thought | Why it's wrong | Consequence |\n"
+        "|---------|---------------|-------------|\n"
+        '| "This is too simple for ceremony" '
+        "| Simple tasks compound into gaps when 10 agents skip in parallel "
+        "| You skip checkpoint → context compacts → you re-implement from scratch |\n"
+        '| "I\'ll checkpoint/deliver after I finish this part" '
+        "| Context compaction erases uncheckpointed work permanently "
+        "| Past agents who skipped trw_deliver lost all session learnings |\n"
+        '| "I already know the codebase" '
+        "| Prior learnings contain gotchas for exactly this area "
+        "| Sprint 26 had 6 P0/P1 defects from agents who skipped recall |\n"
+        '| "I can implement directly, delegation is overhead" '
+        "| Subagent implementation has 3x fewer P0 defects "
+        "| Your focused context is valuable — subagents get deeper context per task |\n"
+        '| "The build check can wait until the end" '
+        "| Late build failures cascade into multi-file rework "
+        "| 2x rework when caught at DELIVER vs catching at VALIDATE |\n"
+        "\n"
+        "### Rigid Tools (never skip, unconditional)\n"
+        "\n"
+        "- `trw_session_start()` — always, first action\n"
+        "- `trw_deliver()` — always, last action\n"
+        "- `trw_build_check()` — always at VALIDATE and DELIVER\n"
+        "- Completion artifacts — always before marking task complete\n"
+        "\n"
+        "### Flexible Tools (must happen, you pick timing)\n"
+        "\n"
+        "- `trw_checkpoint()` — at milestones (you judge which)\n"
+        "- `trw_learn()` — on discoveries/gotchas/errors\n"
+        "- `trw_recall()` — recommended at start, skippable for repeat-domain\n"
+        "\n"
+    )
+
+
 def render_closing_reminder() -> str:
     """Render closing reminder that bookends the auto-generated section.
 
@@ -640,28 +691,28 @@ def collect_promotable_learnings(
 ) -> list[dict[str, object]]:
     """Collect active learnings eligible for CLAUDE.md promotion.
 
-    For mature entries (q_observations >= threshold), q_value is used
-    instead of static impact for the promotion decision (PRD-CORE-004 1c).
+    Reads from SQLite via the memory adapter. For mature entries
+    (q_observations >= threshold), q_value is used instead of static
+    impact for the promotion decision (PRD-CORE-004 1c).
 
     Args:
         trw_dir: Path to .trw directory.
         config: TRW configuration instance.
-        reader: File state reader instance.
+        reader: File state reader instance (kept for API compat).
 
     Returns:
         List of high-impact learning entry dicts.
     """
     high_impact: list[dict[str, object]] = []
-    entries_dir = trw_dir / config.learnings_dir / config.entries_dir
-    if not entries_dir.exists():
+
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings
+        all_active = list_active_learnings(trw_dir)
+    except Exception:
         return high_impact
 
-    for entry_file in sorted(entries_dir.glob("*.yaml")):
+    for data in all_active:
         try:
-            data = reader.read_yaml(entry_file)
-            if str(data.get("status", "active")) != "active":
-                continue
-
             impact = data.get("impact", 0.0)
             q_obs = int(str(data.get("q_observations", 0)))
 
@@ -672,7 +723,7 @@ def collect_promotable_learnings(
                 score = float(str(impact)) if isinstance(impact, (int, float)) else 0.0
 
             # Apply time decay for accurate promotion decisions
-            created_at_raw = str(data.get("created_at", ""))
+            created_at_raw = str(data.get("created", ""))
             if created_at_raw:
                 try:
                     from datetime import datetime as _dt
@@ -684,7 +735,7 @@ def collect_promotable_learnings(
 
             if score >= config.learning_promotion_impact:
                 high_impact.append(data)
-        except (StateError, ValueError, TypeError):
+        except (ValueError, TypeError):
             continue
 
     return high_impact
@@ -795,6 +846,7 @@ def execute_claude_md_sync(
     tpl_context: dict[str, str] = {
         "imperative_opener": render_imperative_opener(),
         "behavioral_protocol": render_behavioral_protocol(),
+        "rationalization_watchlist": render_rationalization_watchlist(),
         "ceremony_phases": render_phase_descriptions(),
         "ceremony_table": render_ceremony_table(),
         "ceremony_flows": render_ceremony_flows(),

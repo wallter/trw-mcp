@@ -303,11 +303,33 @@ def surface_validated_learnings(
         List of dicts with ``learning_id``, ``summary``, ``q_value``,
         ``q_observations``, and ``tags`` keys.
     """
+    validated: list[dict[str, object]] = []
+
+    # Primary: read from SQLite via adapter
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings
+        all_active = list_active_learnings(trw_dir)
+        for data in all_active:
+            q_value = float(str(data.get("q_value", 0.0)))
+            q_observations = int(str(data.get("q_observations", 0)))
+            if q_value >= q_threshold and q_observations >= cold_start_threshold:
+                validated.append({
+                    "learning_id": str(data.get("id", "")),
+                    "summary": str(data.get("summary", "")),
+                    "q_value": q_value,
+                    "q_observations": q_observations,
+                    "tags": data.get("tags", []),
+                })
+        validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
+        return validated
+    except Exception:
+        pass  # Fall through to YAML
+
+    # Fallback: YAML scan
     entries_dir = _entries_path(trw_dir)
     if not entries_dir.exists():
         return []
 
-    validated: list[dict[str, object]] = []
     for _path, data in _iter_entry_files(entries_dir, sorted_order=True):
         if str(data.get("status", "active")) != "active":
             continue
@@ -344,11 +366,23 @@ def has_existing_success_learning(
     Returns:
         True if a matching learning already exists.
     """
+    target = summary_prefix[:50].lower()
+
+    # Check SQLite first, then YAML (entries may exist in either during migration)
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings
+        all_active = list_active_learnings(trw_dir)
+        for data in all_active:
+            if str(data.get("summary", ""))[:50].lower() == target:
+                return True
+    except Exception:
+        pass  # Fall through to YAML
+
+    # Also check YAML (entries from save_learning_entry may only be in YAML)
     entries_dir = _entries_path(trw_dir)
     if not entries_dir.exists():
         return False
 
-    target = summary_prefix[:50].lower()
     for _path, data in _iter_entry_files(entries_dir):
         if str(data.get("summary", ""))[:50].lower() == target:
             return True
@@ -371,10 +405,22 @@ def has_existing_mechanical_learning(
     Returns:
         True if a matching active learning already exists.
     """
+    # Check SQLite first, then YAML fallback (entries may exist in either during migration)
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings
+        all_active = list_active_learnings(trw_dir)
+        target = prefix.lower()
+        for data in all_active:
+            summary = str(data.get("summary", "")).lower()
+            if summary.startswith(target):
+                return True
+    except Exception:
+        pass  # Fall through to YAML
+
+    # Also check YAML (entries from save_learning_entry may only be in YAML)
     entries_dir = _entries_path(trw_dir)
     if not entries_dir.exists():
         return False
-
     target = prefix.lower()
     for _path, data in _iter_entry_files(entries_dir):
         if str(data.get("status", "active")) != "active":
@@ -390,14 +436,18 @@ def has_existing_mechanical_learning(
 # ---------------------------------------------------------------------------
 
 def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
-    """Save a learning entry to .trw/learnings/entries/.
+    """Save a learning entry to .trw/learnings/entries/ as YAML backup.
+
+    YAML-only: the caller (trw_learn) handles the primary SQLite write
+    via memory_adapter.store_learning().  This function writes the YAML
+    backup for rollback safety during the migration period.
 
     Args:
         trw_dir: Path to .trw directory.
         entry: Learning entry to save.
 
     Returns:
-        Path to the saved entry file.
+        Path to the saved YAML entry file.
     """
     raw = entry.summary[:_SLUG_MAX_LEN].lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
@@ -405,24 +455,6 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     entry_path = _entries_path(trw_dir) / filename
     _writer.write_yaml(entry_path, model_to_dict(entry))
     logger.debug("learning_entry_saved", learning_id=entry.id, path=str(entry_path))
-
-    # Index in vector store for hybrid search (PRD-CORE-041)
-    try:
-        from trw_mcp.telemetry.embeddings import embed
-        from trw_mcp.state.memory_store import MemoryStore
-        if MemoryStore.available():
-            text = entry.summary + " " + entry.detail
-            embedding = embed(text)
-            if embedding is not None:
-                from trw_mcp.state._paths import resolve_memory_store_path
-                store_path = resolve_memory_store_path()
-                store = MemoryStore(store_path)
-                try:
-                    store.upsert(entry.id, embedding, {"summary": entry.summary[:100]})
-                finally:
-                    store.close()
-    except Exception:  # noqa: BLE001
-        pass  # Vector indexing is best-effort
 
     update_learning_index(trw_dir, entry)
     return entry_path
@@ -594,15 +626,25 @@ def update_analytics_extended(
     data["success_rate"] = round(successes / max(total_outcomes, 1), 3)
 
     # FR03: Q-learning activations (scan entries for q_observations > 0)
-    entries_dir = _entries_path(trw_dir)
     q_activations = 0
     high_impact = 0
-    if entries_dir.is_dir():
-        for _path, entry_data in _iter_entry_files(entries_dir):
-            if _safe_int(entry_data, "q_observations") > 0:
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings
+        all_active = list_active_learnings(trw_dir)
+        for entry_data in all_active:
+            if int(str(entry_data.get("q_observations", 0))) > 0:
                 q_activations += 1
-            if _safe_float(entry_data, "impact", 0.5) >= 0.7:
+            if float(str(entry_data.get("impact", 0.5))) >= 0.7:
                 high_impact += 1
+    except Exception:
+        # Fallback: YAML scan
+        entries_dir = _entries_path(trw_dir)
+        if entries_dir.is_dir():
+            for _path, entry_data in _iter_entry_files(entries_dir):
+                if _safe_int(entry_data, "q_observations") > 0:
+                    q_activations += 1
+                if _safe_float(entry_data, "impact", 0.5) >= 0.7:
+                    high_impact += 1
     data["q_learning_activations"] = q_activations
     data["high_impact_learnings"] = high_impact
 
@@ -616,14 +658,28 @@ def update_analytics_extended(
 def mark_promoted(trw_dir: Path, learning_id: str) -> None:
     """Mark a learning entry as promoted to CLAUDE.md.
 
+    Updates both SQLite (primary) and YAML (fallback) if available.
+
     Args:
         trw_dir: Path to .trw directory.
         learning_id: ID of the learning entry to mark.
     """
+    # Primary: update in SQLite
+    try:
+        from trw_mcp.state.memory_adapter import get_backend
+        backend = get_backend(trw_dir)
+        entry = backend.get(learning_id)
+        if entry is not None:
+            metadata = dict(entry.metadata) if entry.metadata else {}
+            metadata["promoted_to_claude_md"] = "true"
+            backend.update(learning_id, metadata=metadata)
+    except Exception:
+        pass  # Fail-open
+
+    # Fallback: also update YAML if it exists
     entries_dir = _entries_path(trw_dir)
     if not entries_dir.exists():
         return
-
     found = find_entry_by_id(entries_dir, learning_id)
     if found is not None:
         entry_file, data = found
@@ -955,7 +1011,28 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     unique_tags: set[str] = set()
     source_types: set[str] = set()
 
-    if entries_dir.is_dir():
+    _used_sqlite = False
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings, count_entries
+        total_entries = count_entries(trw_dir)
+        all_active = list_active_learnings(trw_dir)
+        active_entries = len(all_active)
+        for data in all_active:
+            if int(str(data.get("access_count", 0))) > 0:
+                accessed_entries += 1
+            if int(str(data.get("q_observations", 0))) > 0:
+                q_activated += 1
+            entry_tags = data.get("tags", [])
+            if isinstance(entry_tags, list):
+                unique_tags.update(str(t) for t in entry_tags)
+            src = str(data.get("source_type", ""))
+            if src:
+                source_types.add(src)
+        _used_sqlite = True
+    except Exception:
+        pass  # Fall through to YAML
+
+    if not _used_sqlite and entries_dir.is_dir():
         for _path, data in _iter_entry_files(entries_dir):
             total_entries += 1
             if str(data.get("status", "active")) == "active":

@@ -90,12 +90,12 @@ class TestAutoCloseStaleRuns:
         assert updated["status"] == "abandoned"
         assert "abandoned_at" in updated
         assert "abandoned_reason" in updated
-        assert "Auto-closed" in str(updated["abandoned_reason"])
+        assert "Stale timeout" in str(updated["abandoned_reason"])
 
     def test_recent_active_run_is_not_closed(self, tmp_path: Path) -> None:
         """A run younger than the threshold is skipped even if active."""
         task_root = tmp_path / "docs"
-        run_id = _make_run_id(days_ago=3)  # 3 days old, threshold default=7
+        run_id = _make_run_id(days_ago=0)  # 0 days old (< 48h threshold)
         _create_run(task_root, "my-task", run_id)
 
         with (
@@ -257,7 +257,7 @@ class TestAutoCloseStaleRuns:
         """Only the stale run is closed; the recent run is left intact."""
         task_root = tmp_path / "docs"
         stale_id = _make_run_id(days_ago=14)
-        recent_id = _make_run_id(days_ago=2)
+        recent_id = _make_run_id(days_ago=0)  # 0 days old (< 48h threshold)
         _create_run(task_root, "task-stale", stale_id)
         _create_run(task_root, "task-recent", recent_id)
 
@@ -289,7 +289,7 @@ class TestAutoCloseStaleRuns:
         updated = _reader.read_yaml(run_dir / "meta" / "run.yaml")
         reason = str(updated["abandoned_reason"])
         assert "threshold" in reason
-        assert "7" in reason  # default threshold
+        assert "48" in reason  # default threshold is 48h
 
     def test_error_reading_yaml_captured_in_errors(self, tmp_path: Path) -> None:
         """If reading run.yaml raises, the error is captured in the errors list."""
@@ -436,8 +436,7 @@ class TestSessionStartAutoClose:
                 patch.object(ceremony_mod, "_config", cfg),
                 patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
                 patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-                patch("trw_mcp.tools.ceremony.search_entries", return_value=([], [])),
-                patch("trw_mcp.tools.ceremony.update_access_tracking", return_value=[]),
+                patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
                 patch("trw_mcp.tools.ceremony.log_recall_receipt"),
                 patch("trw_mcp.tools.ceremony.rank_by_utility", return_value=[]),
                 patch("trw_mcp.tools.ceremony._writer"),
@@ -464,8 +463,7 @@ class TestSessionStartAutoClose:
             patch.object(ceremony_mod, "_config", cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony.search_entries", return_value=([], [])),
-            patch("trw_mcp.tools.ceremony.update_access_tracking", return_value=[]),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
             patch("trw_mcp.tools.ceremony.log_recall_receipt"),
             patch("trw_mcp.tools.ceremony.rank_by_utility", return_value=[]),
             patch("trw_mcp.tools.ceremony._writer"),
@@ -493,8 +491,7 @@ class TestSessionStartAutoClose:
             patch.object(ceremony_mod, "_config", cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony.search_entries", return_value=([], [])),
-            patch("trw_mcp.tools.ceremony.update_access_tracking", return_value=[]),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
             patch("trw_mcp.tools.ceremony.log_recall_receipt"),
             patch("trw_mcp.tools.ceremony.rank_by_utility", return_value=[]),
             patch("trw_mcp.tools.ceremony._writer"),

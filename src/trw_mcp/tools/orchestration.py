@@ -22,6 +22,7 @@ from trw_mcp.models.run import (
     RunStatus,
 )
 from trw_mcp.state._paths import resolve_project_root, resolve_run_path
+from trw_mcp.state.analytics_report import count_stale_runs
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -257,6 +258,18 @@ def register_orchestration_tools(server: FastMCP) -> None:
         )
         if version_warning:
             result["version_warning"] = version_warning
+
+        # Stale run count (PRD-FIX-028: hour-level TTL reporting)
+        try:
+            stale = count_stale_runs()
+            result["stale_count"] = stale
+            if stale > 0:
+                result["stale_runs_advisory"] = (
+                    f"{stale} stale run(s) detected. "
+                    f"Use trw_session_start to auto-close them."
+                )
+        except Exception:
+            pass  # Fail-open: omit stale_count on error
 
         logger.info("trw_status_read", run_id=result["run_id"])
         return result

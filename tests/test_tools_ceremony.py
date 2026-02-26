@@ -367,18 +367,7 @@ class TestDoAutoProgress:
 # --- Integration tests: partial failure resilience (GAP-TEST-003) ---
 
 
-def _make_ceremony_server(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> dict[str, Any]:
-    """Create a FastMCP server with ceremony tools and patched project root."""
-    from fastmcp import FastMCP
-    from trw_mcp.tools.ceremony import register_ceremony_tools
-
-    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-
-    srv = FastMCP("test")
-    register_ceremony_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 
 
 @pytest.mark.integration

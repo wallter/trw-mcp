@@ -115,18 +115,22 @@ def _register_tools() -> None:
     from trw_mcp.resources.templates import register_template_resources
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
+    from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.report import register_report_tools
     from trw_mcp.tools.requirements import register_requirements_tools
+    from trw_mcp.tools.review import register_review_tools
     from trw_mcp.tools.usage import register_usage_tools
 
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
+    register_checkpoint_tools(mcp)
     register_learning_tools(mcp)
     register_orchestration_tools(mcp)
     register_report_tools(mcp)
     register_requirements_tools(mcp)
+    register_review_tools(mcp)
     register_usage_tools(mcp)
 
     register_config_resources(mcp)
@@ -145,7 +149,12 @@ def _run_init_project(args: argparse.Namespace) -> None:
     from trw_mcp.bootstrap import init_project
 
     target = Path(args.target_dir).resolve()
-    result = init_project(target, force=args.force)
+    result = init_project(
+        target,
+        force=args.force,
+        source_package=args.source_package,
+        test_path=args.test_path,
+    )
 
     for f in result["created"]:
         print(f"  Created: {f}")
@@ -320,6 +329,16 @@ def main() -> None:
         "--force",
         action="store_true",
         help="Overwrite existing files",
+    )
+    init_parser.add_argument(
+        "--source-package",
+        default="",
+        help="Source package name for build checks (e.g., myapp)",
+    )
+    init_parser.add_argument(
+        "--test-path",
+        default="",
+        help="Test directory path relative to source (e.g., tests)",
     )
 
     # update-project

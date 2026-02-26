@@ -1,0 +1,33 @@
+id: L-64ef8444
+summary: 'Multi-backend fan-out pattern: writes to all URLs, reads use first-success'
+detail: 'platform_urls is a list field in TRWConfig with effective_platform_urls property
+  that merges singular platform_url + platform_urls (deduped, normalized). Write paths
+  (sender.py, publisher.py) fan out to ALL URLs — success if any succeed. Read paths
+  (remote_recall.py, auto_upgrade.py) iterate URLs with first-success — return on
+  first 2xx response. This enables projects to write to both local and remote backends
+  while reads prefer the fastest available. Config example: platform_urls: ["https://api.trwframework.com",
+  "http://localhost:8000"]. Remote-only projects just list the remote URL.'
+tags:
+- architecture
+- telemetry
+- multi-backend
+- config
+evidence: []
+impact: 0.6
+status: active
+recurrence: 1
+created: '2026-02-25'
+updated: '2026-02-25'
+resolved_at:
+promoted_to_claude_md: false
+last_accessed_at:
+access_count: 0
+q_value: 0.5
+q_observations: 0
+outcome_history: []
+shard_id:
+source_type: human
+source_identity: ''
+merged_from: []
+consolidated_from: []
+consolidated_into:

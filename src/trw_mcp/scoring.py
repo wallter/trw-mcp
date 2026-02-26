@@ -519,6 +519,68 @@ def apply_time_decay(impact: float, created_at: datetime) -> float:
     return _clamp01(impact * decay_factor)
 
 
+def apply_impact_decay(
+    entries: list[dict[str, object]],
+    half_life_days: int | None = None,
+) -> list[dict[str, object]]:
+    """Apply exponential impact decay to stale learnings (PRD-CORE-034-FR03).
+
+    For each entry, reads ``last_accessed`` (or ``created``) date and computes
+    days since that date.  If days_since exceeds ``half_life_days``, the impact
+    is decayed using an exponential formula:
+
+        new_impact = impact * exp(-0.693 * (days_since - half_life_days) / half_life_days)
+
+    The result is clamped to [0.1, 1.0].  This is a batch operation intended
+    to be called during ``trw_deliver``.
+
+    Args:
+        entries: List of learning entry dicts.  Modified in-place *and* returned.
+        half_life_days: Days before decay starts.  Defaults to config value.
+
+    Returns:
+        The same list with ``impact`` fields updated where decay applied.
+    """
+    cfg = _config
+    effective_half_life = half_life_days if half_life_days is not None else cfg.impact_decay_half_life_days
+    now = datetime.now(timezone.utc)
+
+    for entry in entries:
+        impact = _float_field(entry, "impact", 0.5)
+
+        # Find the best date to measure staleness from
+        ref_date_str = ""
+        for field in ("last_accessed_at", "last_accessed", "created"):
+            raw = str(entry.get(field, ""))
+            if raw and raw != "None":
+                ref_date_str = raw
+                break
+
+        if not ref_date_str:
+            continue
+
+        try:
+            ref_dt = _ensure_utc(datetime.fromisoformat(ref_date_str))
+        except ValueError:
+            continue
+
+        days_since = max(0, (now - ref_dt).days)
+
+        if days_since <= effective_half_life:
+            continue  # Not stale yet
+
+        # Exponential decay: exp(-ln(2) * excess_days / half_life)
+        excess = days_since - effective_half_life
+        decay_factor = math.exp(-0.693 * excess / max(effective_half_life, 1))
+        new_impact = impact * decay_factor
+
+        # Clamp to [0.1, 1.0]
+        new_impact = max(0.1, min(1.0, new_impact))
+        entry["impact"] = round(new_impact, 4)
+
+    return entries
+
+
 # --- Recall ranking (PRD-FIX-010: moved from tools/learning.py) ---
 
 

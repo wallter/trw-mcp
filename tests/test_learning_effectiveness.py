@@ -52,6 +52,7 @@ def _write_learning(
         f"status: {status}\nimpact: {impact}\n"
         f"q_observations: {q_observations}\nq_value: 0.5\n"
         f"access_count: {access_count}\nsource_type: {source_type}\n"
+        f"source: {source_type}\n"
         f"source_identity: ''\ntags: [{tag_str}]\n"
         f"created: '2026-02-01'\n",
         encoding="utf-8",

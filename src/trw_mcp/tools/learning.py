@@ -15,23 +15,25 @@ from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
-from trw_mcp.models.learning import LearningEntry
-from trw_mcp.scoring import compute_impact_distribution, enforce_tier_distribution, rank_by_utility
+from trw_mcp.scoring import enforce_tier_distribution, rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.analytics import (
-    find_entry_by_id,
     generate_learning_id,
-    resync_learning_index,
     save_learning_entry,
     update_analytics,
 )
 from trw_mcp.state.claude_md import execute_claude_md_sync
+from trw_mcp.state.memory_adapter import (
+    list_active_learnings,
+    recall_learnings as adapter_recall,
+    store_learning as adapter_store,
+    update_access_tracking as adapter_update_access,
+    update_learning as adapter_update,
+)
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import (
     collect_context,
-    search_entries,
     search_patterns,
-    update_access_tracking,
 )
 from trw_mcp.state.receipts import log_recall_receipt
 from trw_mcp.tools.telemetry import log_tool_call
@@ -47,18 +49,6 @@ if _config.llm_usage_log_enabled:
     _trw_dir = resolve_trw_dir()
     _llm_usage_path = _trw_dir / _config.logs_dir / _config.llm_usage_log_file
 _llm = LLMClient(model=_config.llm_default_model, usage_log_path=_llm_usage_path)
-
-
-def _entries_path() -> tuple[Path, Path]:
-    """Resolve .trw dir and ensure the entries directory exists.
-
-    Returns:
-        Tuple of (trw_dir, entries_dir).
-    """
-    trw_dir = resolve_trw_dir()
-    entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-    _writer.ensure_dir(entries_dir)
-    return trw_dir, entries_dir
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -92,7 +82,9 @@ def register_learning_tools(server: FastMCP) -> None:
             source_type: Learning provenance — "human" or "agent".
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
         """
-        trw_dir, _ = _entries_path()
+        trw_dir = resolve_trw_dir()
+        entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+        _writer.ensure_dir(entries_dir)
 
         # One-time batch dedup migration (PRD-CORE-042 FR05)
         if _config.dedup_enabled:
@@ -117,61 +109,68 @@ def register_learning_tools(server: FastMCP) -> None:
         except Exception:
             pass  # Fail-open: calibration failure falls back to raw impact
 
-        learning_id = generate_learning_id()
-        entry = LearningEntry(
-            id=learning_id,
-            summary=summary,
-            detail=detail,
-            tags=tags or [],
-            evidence=evidence or [],
-            impact=calibrated_impact,
-            shard_id=shard_id,
-            source_type=source_type,
-            source_identity=source_identity,
-        )
+        # Fetch active learnings once — reused by soft-cap check and forced distribution
+        all_active: list[dict[str, object]] = []
+        try:
+            all_active = list_active_learnings(trw_dir)
+        except Exception:
+            pass  # Fail-open: listing failure must not block learning recording
 
-        # Semantic dedup check (PRD-CORE-042)
+        # Forced distribution soft-cap check (PRD-CORE-034-FR01)
+        distribution_soft_cap_warning: str | None = None
+        try:
+            high_count = sum(1 for e in all_active if float(str(e.get("impact", 0.5))) >= 0.8)
+            total = len(all_active)
+            new_total = total + 1
+            new_high = high_count + (1 if calibrated_impact >= 0.8 else 0)
+            threshold_pct = _config.impact_high_threshold_pct
+            threshold_frac = threshold_pct / 100.0
+
+            if new_total >= 5 and new_total > 0 and (new_high / new_total) > threshold_frac:
+                adjusted = calibrated_impact
+                while adjusted >= 0.8 and new_total > 0 and (new_high / new_total) > threshold_frac:
+                    adjusted *= 0.9
+                    if adjusted < 0.8:
+                        new_high = high_count
+                    if adjusted < 0.5:
+                        adjusted = 0.5
+                        break
+                if adjusted != calibrated_impact:
+                    distribution_soft_cap_warning = (
+                        f"Impact soft-capped from {calibrated_impact:.2f} to {adjusted:.2f}: "
+                        f"high-impact entries ({high_count}/{total} active) would exceed "
+                        f"{threshold_pct}% threshold."
+                    )
+                    calibrated_impact = round(adjusted, 4)
+        except Exception:
+            pass  # Fail-open: distribution check must not block learning recording
+
+        learning_id = generate_learning_id()
+
+        # Semantic dedup check (PRD-CORE-042) — must run BEFORE storing
         if _config.dedup_enabled:
             try:
                 from trw_mcp.state.dedup import check_duplicate, merge_entries
-                _, entries_dir = _entries_path()
                 dedup_result = check_duplicate(
                     summary, detail, entries_dir, _reader, config=_config,
                 )
 
                 if dedup_result.action == "skip":
-                    # FR04: Update access_count and recurrence on existing entry
-                    dedup_existing_id = dedup_result.existing_id or ""
-                    _, entries_dir = _entries_path()
-                    for yaml_file in sorted(entries_dir.glob("*.yaml")):
-                        if yaml_file.name == "index.yaml":
-                            continue
-                        try:
-                            data = _reader.read_yaml(yaml_file)
-                            if str(data.get("id", "")) == dedup_existing_id:
-                                from datetime import date as _date
-                                data["access_count"] = int(str(data.get("access_count", 0))) + 1
-                                data["recurrence"] = int(str(data.get("recurrence", 1))) + 1
-                                data["updated"] = _date.today().isoformat()
-                                _writer.write_yaml(yaml_file, data)
-                                break
-                        except Exception:  # noqa: BLE001
-                            continue
                     logger.info(
                         "learning_dedup_skipped",
                         new_id=learning_id,
-                        existing_id=dedup_existing_id,
+                        existing_id=dedup_result.existing_id,
                         similarity=dedup_result.similarity,
                     )
                     return {
                         "status": "skipped",
                         "learning_id": learning_id,
-                        "duplicate_of": dedup_existing_id,
+                        "duplicate_of": dedup_result.existing_id or "",
                         "similarity": round(dedup_result.similarity, 3),
-                        "message": f"Near-identical entry already exists: {dedup_existing_id}",
+                        "message": f"Near-identical entry already exists: {dedup_result.existing_id}",
                     }
                 elif dedup_result.action == "merge":
-                    # Find the existing entry file and merge into it
+                    # Find existing file and merge
                     for yaml_file in sorted(entries_dir.glob("*.yaml")):
                         if yaml_file.name == "index.yaml":
                             continue
@@ -179,6 +178,18 @@ def register_learning_tools(server: FastMCP) -> None:
                             data = _reader.read_yaml(yaml_file)
                             if str(data.get("id", "")) == dedup_result.existing_id:
                                 from trw_mcp.state.persistence import model_to_dict
+                                from trw_mcp.models.learning import LearningEntry
+                                entry = LearningEntry(
+                                    id=learning_id,
+                                    summary=summary,
+                                    detail=detail,
+                                    tags=tags or [],
+                                    evidence=evidence or [],
+                                    impact=calibrated_impact,
+                                    shard_id=shard_id,
+                                    source_type=source_type,
+                                    source_identity=source_identity,
+                                )
                                 merge_entries(yaml_file, model_to_dict(entry), _reader, _writer)
                                 logger.info(
                                     "learning_dedup_merged",
@@ -197,48 +208,63 @@ def register_learning_tools(server: FastMCP) -> None:
                             continue
             except Exception as exc:  # noqa: BLE001
                 logger.debug("dedup_check_failed", error=str(exc))
-                # Fall through to normal save on any dedup failure
 
-        entry_path = save_learning_entry(trw_dir, entry)
-        update_analytics(trw_dir, 1)
+        # Store via SQLite adapter (primary path) — after dedup to avoid orphans
+        adapter_store(
+            trw_dir,
+            learning_id=learning_id,
+            summary=summary,
+            detail=detail,
+            tags=tags or [],
+            evidence=evidence or [],
+            impact=calibrated_impact,
+            shard_id=shard_id,
+            source_type=source_type,
+            source_identity=source_identity,
+        )
+
+        # Save YAML backup via analytics (dual-write for rollback safety)
+        try:
+            from trw_mcp.models.learning import LearningEntry
+            entry = LearningEntry(
+                id=learning_id,
+                summary=summary,
+                detail=detail,
+                tags=tags or [],
+                evidence=evidence or [],
+                impact=calibrated_impact,
+                shard_id=shard_id,
+                source_type=source_type,
+                source_identity=source_identity,
+            )
+            entry_path = save_learning_entry(trw_dir, entry)
+            update_analytics(trw_dir, 1)
+        except Exception:  # noqa: BLE001
+            entry_path = entries_dir / f"{learning_id}.yaml"
 
         # Forced distribution enforcement (PRD-CORE-034)
-        # Only runs when the new learning is in a high/critical tier, matching
-        # the original advisory check threshold (impact >= 0.7).
         distribution_warning = ""
         demoted_ids: list[str] = []
         if _config.impact_forced_distribution_enabled and impact >= 0.7:
             try:
-                _, entries_dir = _entries_path()
-                # Build (id, impact) list of all active entries including the new one
+                # Append newly stored entry so forced distribution sees it
+                all_active.append({"id": learning_id, "impact": calibrated_impact})
                 all_entries: list[tuple[str, float]] = []
-                from trw_mcp.state.analytics import find_entry_by_id
-                for yaml_file in sorted(entries_dir.glob("*.yaml")):
-                    try:
-                        data = _reader.read_yaml(yaml_file)
-                    except Exception:
-                        continue
-                    if str(data.get("status", "active")) != "active":
-                        continue
-                    lid = str(data.get("id", ""))
-                    sc = float(str(data.get("impact", 0.5)))
+                for e in all_active:
+                    lid = str(e.get("id", ""))
+                    sc = float(str(e.get("impact", 0.5)))
                     if lid:
                         all_entries.append((lid, sc))
 
                 demotions = enforce_tier_distribution(all_entries)
                 for demoted_id, new_score in demotions:
                     demoted_ids.append(demoted_id)
-                    # Find and update the demoted entry on disk
-                    found = find_entry_by_id(entries_dir, demoted_id)
-                    if found is not None:
-                        entry_path_dem, data_dem = found
-                        data_dem["impact"] = new_score
-                        from datetime import date as _date
-                        data_dem["updated"] = _date.today().isoformat()
-                        _writer.write_yaml(entry_path_dem, data_dem)
+                    try:
+                        adapter_update(trw_dir, demoted_id, impact=new_score)
+                    except Exception:
+                        pass
 
                 if demotions:
-                    # Use raw impact for tier name in warning (user-facing label)
                     tier_name = "critical" if impact >= 0.9 else "high"
                     distribution_warning = (
                         f"Impact tier '{tier_name}' exceeded cap. "
@@ -250,12 +276,15 @@ def register_learning_tools(server: FastMCP) -> None:
                 pass  # Fail-open: distribution enforcement must not block learning recording
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
-        return {
+        result_dict: dict[str, object] = {
             "learning_id": learning_id,
             "path": str(entry_path),
             "status": "recorded",
             "distribution_warning": distribution_warning,
         }
+        if distribution_soft_cap_warning:
+            result_dict["soft_cap_warning"] = distribution_soft_cap_warning
+        return result_dict
 
     @server.tool()
     @log_tool_call
@@ -279,57 +308,42 @@ def register_learning_tools(server: FastMCP) -> None:
             impact: Updated impact score (0.0-1.0).
             summary: Updated summary text (replaces existing summary).
         """
-        from datetime import date as date_type
-
-        trw_dir, entries_dir = _entries_path()
-
-        result = find_entry_by_id(entries_dir, learning_id)
-        if result is None:
-            return {"error": f"Learning {learning_id} not found", "status": "not_found"}
-
-        entry_path, data = result
-        changes: list[str] = []
-
-        if status is not None:
-            valid_statuses = {"active", "resolved", "obsolete"}
-            if status not in valid_statuses:
-                return {"error": f"Invalid status '{status}'. Must be one of: {valid_statuses}", "status": "invalid"}
-            data["status"] = status
-            changes.append(f"status→{status}")
-            if status in ("resolved", "obsolete"):
-                data["resolved_at"] = date_type.today().isoformat()
-
-        if detail is not None:
-            data["detail"] = detail
-            changes.append("detail updated")
-
-        if summary is not None:
-            data["summary"] = summary
-            changes.append("summary updated")
-
-        if impact is not None:
-            if not 0.0 <= impact <= 1.0:
-                return {"error": f"Impact must be 0.0-1.0, got {impact}", "status": "invalid"}
-            data["impact"] = impact
-            changes.append(f"impact→{impact}")
-
-        if not changes:
-            return {"learning_id": learning_id, "status": "no_changes"}
-
-        data["updated"] = date_type.today().isoformat()
-        _writer.write_yaml(entry_path, data)
-        resync_learning_index(trw_dir)
-
-        logger.info(
-            "trw_learn_updated",
+        trw_dir = resolve_trw_dir()
+        result = adapter_update(
+            trw_dir,
             learning_id=learning_id,
-            changes=changes,
+            status=status,
+            detail=detail,
+            impact=impact,
+            summary=summary,
         )
-        return {
-            "learning_id": learning_id,
-            "changes": ", ".join(changes),
-            "status": "updated",
-        }
+
+        # Dual-write: also update YAML backup for rollback safety
+        if result.get("status") == "updated":
+            try:
+                from datetime import date as date_type
+                from trw_mcp.state.analytics import find_entry_by_id, resync_learning_index
+                entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+                found = find_entry_by_id(entries_dir, learning_id)
+                if found is not None:
+                    entry_path, data = found
+                    if status is not None:
+                        data["status"] = status
+                        if status in ("resolved", "obsolete"):
+                            data["resolved_at"] = date_type.today().isoformat()
+                    if detail is not None:
+                        data["detail"] = detail
+                    if summary is not None:
+                        data["summary"] = summary
+                    if impact is not None:
+                        data["impact"] = impact
+                    data["updated"] = date_type.today().isoformat()
+                    _writer.write_yaml(entry_path, data)
+                    resync_learning_index(trw_dir)
+            except Exception:  # noqa: BLE001
+                pass  # Fail-open: YAML backup update is best-effort
+
+        return result
 
     @server.tool()
     @log_tool_call
@@ -344,7 +358,7 @@ def register_learning_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
 
-        Searches .trw/learnings/ by keyword, tags, and impact score. Results are
+        Searches the learning store by keyword, tags, and impact score. Results are
         ranked by utility (impact x recency x relevance). Use this before starting
         work on an unfamiliar area to load existing project knowledge.
 
@@ -359,17 +373,20 @@ def register_learning_tools(server: FastMCP) -> None:
             compact: When True, return only essential fields per learning.
                 When None (default), auto-enables for wildcard queries.
         """
-        trw_dir, entries_dir = _entries_path()
+        trw_dir = resolve_trw_dir()
         is_wildcard = query.strip() in ("*", "")
         query_tokens = [] if is_wildcard else query.lower().split()
         use_compact = compact if compact is not None else is_wildcard
 
-        # Search entries and update access tracking
-        matching_learnings, matched_files = search_entries(
-            entries_dir, query_tokens, _reader,
-            tags=tags, min_impact=min_impact, status=status,
+        # Search entries via SQLite adapter (returns list of dicts directly)
+        matching_learnings = adapter_recall(
+            trw_dir, query=query, tags=tags, min_impact=min_impact,
+            status=status, max_results=0, compact=False,  # get all, we rank locally
         )
-        matched_ids = update_access_tracking(matched_files, _reader, _writer)
+
+        # Update access tracking for recalled IDs
+        matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
+        adapter_update_access(trw_dir, matched_ids)
         log_recall_receipt(trw_dir, query, matched_ids, shard_id=shard_id)
 
         # Track each recalled learning for outcome-based calibration (PRD-CORE-034)

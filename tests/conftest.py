@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-
 import pytest
 
 from trw_mcp.models.config import TRWConfig, _reset_config
@@ -47,6 +46,15 @@ def _reset_config_singleton() -> Iterator[None]:
     _reset_config()
     yield
     _reset_config()
+
+
+@pytest.fixture(autouse=True)
+def _reset_memory_backend() -> Iterator[None]:
+    """Reset memory adapter singleton for test isolation."""
+    from trw_mcp.state.memory_adapter import reset_backend
+    reset_backend()
+    yield
+    reset_backend()
 
 
 @pytest.fixture

@@ -70,8 +70,10 @@ class TestCeremonySessionStartFailurePaths:
         register_ceremony_tools(server)
         tool = _extract_tool(server, "trw_session_start")
 
+        # Step 1 now uses adapter_recall (local import from memory_adapter).
+        # Patch the source module so the local import picks up the mock.
         with patch(
-            "trw_mcp.tools.ceremony.search_entries",
+            "trw_mcp.state.memory_adapter.recall_learnings",
             side_effect=RuntimeError("disk failure"),
         ), patch(
             "trw_mcp.tools.ceremony.resolve_trw_dir",
@@ -101,10 +103,7 @@ class TestCeremonySessionStartFailurePaths:
             "trw_mcp.tools.ceremony.resolve_trw_dir",
             return_value=tmp_path / ".trw",
         ), patch(
-            "trw_mcp.tools.ceremony.search_entries",
-            return_value=([], []),
-        ), patch(
-            "trw_mcp.tools.ceremony.update_access_tracking",
+            "trw_mcp.state.memory_adapter.recall_learnings",
             return_value=[],
         ), patch(
             "trw_mcp.tools.ceremony.log_recall_receipt",
@@ -240,10 +239,10 @@ class TestLearningExceptionPaths:
         return _extract_tool(server, name)
 
     def test_trw_learn_yaml_read_exception_skips_file(self, tmp_path: Path) -> None:
-        """Lines 140-141: when read_yaml raises inside distribution loop, file is skipped."""
+        """Distribution check is fail-open when list_active_learnings raises."""
         import trw_mcp.tools.learning as mod
 
-        # Enable forced distribution so the loop runs
+        # Enable forced distribution so the distribution block runs
         old_config = mod._config
         try:
             cfg = mod._config.__class__()
@@ -253,39 +252,34 @@ class TestLearningExceptionPaths:
             tool = self._register_and_get("trw_learn")
 
             with patch(
-                "trw_mcp.tools.learning._entries_path",
-                return_value=(tmp_path / ".trw", tmp_path / ".trw" / "learnings" / "entries"),
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
             ), patch(
                 "trw_mcp.tools.learning.generate_learning_id",
                 return_value="L-test0001",
             ), patch(
-                "trw_mcp.tools.learning.save_learning_entry",
-                return_value=tmp_path / "entry.yaml",
+                "trw_mcp.tools.learning.adapter_store",
+                return_value={"learning_id": "L-test0001", "path": "sqlite://L-test0001", "status": "recorded", "distribution_warning": ""},
             ), patch(
                 "trw_mcp.tools.learning.update_analytics",
-            ), patch.object(
-                mod._reader, "read_yaml",
-                side_effect=StateError("bad yaml"),
+            ), patch(
+                "trw_mcp.tools.learning.list_active_learnings",
+                side_effect=StateError("adapter read failure"),
             ):
-                # Create a fake yaml file in the entries dir so glob finds it
-                entries_dir = tmp_path / ".trw" / "learnings" / "entries"
-                entries_dir.mkdir(parents=True, exist_ok=True)
-                (entries_dir / "fake.yaml").write_text("invalid")
-
                 result = tool(
                     summary="test summary",
                     detail="test detail",
                     impact=0.8,  # >= 0.7 triggers distribution check
                 )
 
-            # Distribution enforcement ran but exception was swallowed (fail-open)
+            # Distribution enforcement raised but exception was swallowed (fail-open)
             assert result["status"] == "recorded"
             assert result["learning_id"] == "L-test0001"
         finally:
             mod._config = old_config
 
     def test_trw_learn_distribution_exception_fail_open(self, tmp_path: Path) -> None:
-        """Lines 170-171: outer distribution exception is fail-open."""
+        """enforce_tier_distribution raising is fail-open in trw_learn."""
         import trw_mcp.tools.learning as mod
 
         old_config = mod._config
@@ -297,26 +291,23 @@ class TestLearningExceptionPaths:
             tool = self._register_and_get("trw_learn")
 
             with patch(
-                "trw_mcp.tools.learning._entries_path",
-                return_value=(tmp_path / ".trw", tmp_path / ".trw" / "learnings" / "entries"),
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
             ), patch(
                 "trw_mcp.tools.learning.generate_learning_id",
                 return_value="L-test0002",
             ), patch(
-                "trw_mcp.tools.learning.save_learning_entry",
-                return_value=tmp_path / "entry.yaml",
+                "trw_mcp.tools.learning.adapter_store",
+                return_value={"learning_id": "L-test0002", "path": "sqlite://L-test0002", "status": "recorded", "distribution_warning": ""},
             ), patch(
                 "trw_mcp.tools.learning.update_analytics",
+            ), patch(
+                "trw_mcp.tools.learning.list_active_learnings",
+                return_value=[{"id": "L-abc", "impact": 0.8}],
             ), patch(
                 "trw_mcp.tools.learning.enforce_tier_distribution",
                 side_effect=RuntimeError("distribution exploded"),
             ):
-                entries_dir = tmp_path / ".trw" / "learnings" / "entries"
-                entries_dir.mkdir(parents=True, exist_ok=True)
-                (entries_dir / "fake.yaml").write_text(
-                    "id: L-abc\nstatus: active\nimpact: 0.8\n"
-                )
-
                 result = tool(
                     summary="test summary",
                     detail="test detail",
@@ -329,28 +320,15 @@ class TestLearningExceptionPaths:
             mod._config = old_config
 
     def test_trw_learn_update_write_failure(self, tmp_path: Path) -> None:
-        """Lines 170-171 (adjacent path): learn_update write failure path."""
-        import trw_mcp.tools.learning as mod
-
-        # Create a real entry on disk
-        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
-        entries_dir.mkdir(parents=True, exist_ok=True)
-        entry_file = entries_dir / "2026-01-01-test.yaml"
-        entry_file.write_text(
-            "id: L-testXX\nstatus: active\nimpact: 0.5\n"
-            "summary: test\ndetail: detail\n"
-        )
-
+        """learn_update delegates to adapter_update and returns 'updated' status."""
         tool = self._register_and_get("trw_learn_update")
 
         with patch(
-            "trw_mcp.tools.learning._entries_path",
-            return_value=(tmp_path / ".trw", entries_dir),
+            "trw_mcp.tools.learning.resolve_trw_dir",
+            return_value=tmp_path / ".trw",
         ), patch(
-            "trw_mcp.tools.learning.find_entry_by_id",
-            return_value=(entry_file, {"id": "L-testXX", "status": "active", "impact": 0.5, "summary": "s", "detail": "d"}),
-        ), patch(
-            "trw_mcp.tools.learning.resync_learning_index",
+            "trw_mcp.tools.learning.adapter_update",
+            return_value={"learning_id": "L-testXX", "changes": "status→resolved", "status": "updated"},
         ):
             result = tool(learning_id="L-testXX", status="resolved")
 
@@ -1235,7 +1213,7 @@ class TestLearningDistributionSkipsInactiveEntries:
     """Line 143: inactive entries (status != 'active') are skipped with continue."""
 
     def test_trw_learn_distribution_skips_inactive_entries(self, tmp_path: Path) -> None:
-        """Line 143: Non-active entries are skipped when building distribution list."""
+        """list_active_learnings only returns active entries; inactive are excluded."""
         import trw_mcp.tools.learning as mod
 
         old_config = mod._config
@@ -1248,28 +1226,22 @@ class TestLearningDistributionSkipsInactiveEntries:
             register_learning_tools(server)
             tool = _extract_tool(server, "trw_learn")
 
-            entries_dir = tmp_path / ".trw" / "learnings" / "entries"
-            entries_dir.mkdir(parents=True, exist_ok=True)
-
-            # Write an entry with status=resolved (non-active) and one active
-            (entries_dir / "resolved.yaml").write_text(
-                "id: L-resolved\nstatus: resolved\nimpact: 0.9\nsummary: old\n"
-            )
-            (entries_dir / "active.yaml").write_text(
-                "id: L-active\nstatus: active\nimpact: 0.5\nsummary: current\n"
-            )
-
+            # list_active_learnings already filters to active only.
+            # Return only the active entry (resolved is excluded by the adapter).
             with patch(
-                "trw_mcp.tools.learning._entries_path",
-                return_value=(tmp_path / ".trw", entries_dir),
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
             ), patch(
                 "trw_mcp.tools.learning.generate_learning_id",
                 return_value="L-new001",
             ), patch(
-                "trw_mcp.tools.learning.save_learning_entry",
-                return_value=tmp_path / "entry.yaml",
+                "trw_mcp.tools.learning.adapter_store",
+                return_value={"learning_id": "L-new001", "path": "sqlite://L-new001", "status": "recorded", "distribution_warning": ""},
             ), patch(
                 "trw_mcp.tools.learning.update_analytics",
+            ), patch(
+                "trw_mcp.tools.learning.list_active_learnings",
+                return_value=[{"id": "L-active", "impact": 0.5}],  # resolved excluded
             ), patch(
                 "trw_mcp.tools.learning.enforce_tier_distribution",
                 return_value=[],  # No demotions
@@ -1294,25 +1266,22 @@ class TestLearningRecallTrackingException:
     """Lines 301-302: record_recall raises, exception is silently swallowed."""
 
     def test_trw_recall_tracking_failure_fail_open(self, tmp_path: Path) -> None:
-        """Lines 301-302: When record_recall raises, trw_recall still returns results."""
+        """When record_recall raises, trw_recall still returns results (fail-open)."""
         server = _make_server()
         register_learning_tools(server)
         tool = _extract_tool(server, "trw_recall")
 
-        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
-        entries_dir.mkdir(parents=True, exist_ok=True)
-
         mock_record_recall = MagicMock(side_effect=RuntimeError("tracking db down"))
 
+        # trw_recall now uses adapter_recall (SQLite). Patch it to return a result.
         with patch(
-            "trw_mcp.tools.learning._entries_path",
-            return_value=(tmp_path / ".trw", entries_dir),
+            "trw_mcp.tools.learning.resolve_trw_dir",
+            return_value=tmp_path / ".trw",
         ), patch(
-            "trw_mcp.tools.learning.search_entries",
-            return_value=([{"id": "L-001", "summary": "test"}], ["file.yaml"]),
+            "trw_mcp.tools.learning.adapter_recall",
+            return_value=[{"id": "L-001", "summary": "test"}],
         ), patch(
-            "trw_mcp.tools.learning.update_access_tracking",
-            return_value=["L-001"],
+            "trw_mcp.tools.learning.adapter_update_access",
         ), patch(
             "trw_mcp.tools.learning.log_recall_receipt",
         ), patch(

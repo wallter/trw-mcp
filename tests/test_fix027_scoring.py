@@ -337,16 +337,17 @@ class TestPromotableLearnungsTimeDecay:
     def test_malformed_created_at_falls_back_to_raw_score(
         self, tmp_path: Path
     ) -> None:
-        """Malformed created_at ISO string triggers ValueError — raw score used."""
-        trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
+        """Malformed 'created' date in list_active_learnings falls back to raw score."""
+        from unittest.mock import patch
 
-        writer = FileStateWriter()
+        trw_dir = tmp_path / ".trw"
         reader = FileStateReader()
         config = TRWConfig(trw_dir=str(trw_dir))
 
-        data = {
+        # Entry with malformed 'created' field — collect_promotable_learnings
+        # reads from list_active_learnings (SQLite adapter). Patch it to return
+        # an entry with a bad date so we exercise the ValueError fallback path.
+        bad_entry = {
             "id": "L-baddate",
             "summary": "Entry with bad date",
             "detail": "Detail",
@@ -354,13 +355,17 @@ class TestPromotableLearnungsTimeDecay:
             "q_value": 0.9,
             "q_observations": 0,
             "status": "active",
-            "created_at": "not-a-valid-date",  # Will trigger ValueError on fromisoformat
+            "created": "not-a-valid-date",  # Will trigger ValueError on fromisoformat
             "tags": [],
         }
-        writer.write_yaml(entries_dir / "baddate.yaml", data)
 
-        # Should not raise — malformed date falls back to raw score
-        result = collect_promotable_learnings(trw_dir, config, reader)
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=[bad_entry],
+        ):
+            # Should not raise — malformed date falls back to raw score
+            result = collect_promotable_learnings(trw_dir, config, reader)
+
         ids = [str(d.get("id", "")) for d in result]
         # With raw impact=0.9 and no decay, should be promoted (0.9 >= 0.7 threshold)
         assert "L-baddate" in ids

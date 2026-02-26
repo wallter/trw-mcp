@@ -8,6 +8,7 @@
 ## TRW Behavioral Protocol (Auto-Generated)
 
 {{behavioral_protocol}}
+{{rationalization_watchlist}}
 ## TRW Ceremony Tools (Auto-Generated)
 
 {{ceremony_phases}}

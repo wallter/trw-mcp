@@ -266,6 +266,21 @@ class EventType(str, Enum):
             return None
 
 
+class ReviewFinding(BaseModel):
+    """Structured code review finding (PRD-QUAL-022).
+
+    Immutable value object for findings produced by trw_review.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    category: str
+    severity: str  # "critical", "warning", "info"
+    description: str
+    file_path: str = ""
+    suggestion: str = ""
+
+
 class Event(BaseModel):
     """Structured event for events.jsonl audit log.
 

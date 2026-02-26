@@ -94,3 +94,16 @@ For large test suites, decompose by category:
 - Shard 4: Concurrency / async tests (if applicable)
 Max 4 shards, parallel blocking Task() in ONE message.
 </shard-protocol>
+
+<rationalization-watchlist>
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "Coverage percentage is high enough, I can skip the FR audit" | High coverage ≠ requirement coverage — 91% line coverage can miss 40% of FRs | The lead audits FR-by-FR, not coverage % — missing FR tests get sent back for rework |
+| "Edge cases are unlikely, basic tests are sufficient" | Edge cases are where production bugs live — 70% of sprint defects were edge cases | Basic tests pass but production fails on the exact scenario you skipped |
+| "The implementer already tested this" | Implementer tests verify their mental model; your tests verify the specification | Implementer tests validate the bug, not the spec — Sprint 34 review found this pattern in 4 PRDs |
+| "I can skip the completion artifact, my test output is enough" | The TaskCompleted hook BLOCKS without a completion artifact | Writing it takes 2 minutes; getting re-blocked costs 10+ minutes of re-running tests |
+</rationalization-watchlist>

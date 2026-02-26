@@ -1689,35 +1689,39 @@ class TestCollectPromotableLearningsExceptionContinue:
     """Cover claude_md.py lines 673-674: exception handling in collect_promotable_learnings."""
 
     def test_read_error_on_entry_file_is_skipped(self, tmp_path: Path) -> None:
+        """Entry with unparseable q_observations raises ValueError and is skipped."""
+        from unittest.mock import patch
         from trw_mcp.state.claude_md import collect_promotable_learnings
 
         config = TRWConfig()
         trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / config.learnings_dir / config.entries_dir
-        entries_dir.mkdir(parents=True)
 
-        _writer.write_yaml(entries_dir / "good.yaml", {
+        # collect_promotable_learnings now reads from SQLite via list_active_learnings.
+        # Patch it to return one good entry and one bad entry where q_observations
+        # has a type that causes int() to raise (exercises the ValueError/TypeError
+        # continue branch at lines 687-688).
+        good_entry: dict[str, object] = {
             "id": "L-good",
             "summary": "Good learning",
             "status": "active",
             "impact": 0.9,
-        })
-        _writer.write_yaml(entries_dir / "bad.yaml", {
+            "q_observations": 0,
+        }
+        bad_entry: dict[str, object] = {
             "id": "L-bad",
             "summary": "Bad learning",
             "status": "active",
             "impact": 0.9,
-        })
+            # dict cannot be converted to int — triggers TypeError in the loop
+            "q_observations": {"invalid": "value"},
+        }
 
-        def _selective_read(path: Path) -> dict[str, object]:
-            if "bad" in path.name:
-                raise StateError("parse failed")
-            return _reader.read_yaml(path)
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=[good_entry, bad_entry],
+        ):
+            result = collect_promotable_learnings(trw_dir, config, _reader)
 
-        mock_reader = MagicMock(spec=FileStateReader)
-        mock_reader.read_yaml.side_effect = _selective_read
-
-        result = collect_promotable_learnings(trw_dir, config, mock_reader)
-        # bad.yaml should be skipped; good.yaml returned
+        # bad entry should be skipped due to TypeError; good entry returned
         assert any(e.get("id") == "L-good" for e in result)
         assert all(e.get("id") != "L-bad" for e in result)

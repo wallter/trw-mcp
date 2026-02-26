@@ -267,7 +267,7 @@ class TestSessionStartEvent:
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.ceremony.search_entries", return_value=([], [])),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
         ):
             result = tools["trw_session_start"].fn()
 
@@ -294,7 +294,7 @@ class TestSessionStartEvent:
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony.search_entries", return_value=([], [])),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
         ):
             result = tools["trw_session_start"].fn()
 
@@ -321,7 +321,7 @@ class TestSessionStartEvent:
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony.search_entries", return_value=([], [])),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
             # Make the FileEventLogger.log_event raise inside the ceremony module
             patch(
                 "trw_mcp.tools.ceremony._events",
@@ -355,7 +355,7 @@ class TestSessionStartEvent:
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", side_effect=resolve_trw_dir_side_effect),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony.search_entries", return_value=([], [])),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
         ):
             result = tools["trw_session_start"].fn()
 
