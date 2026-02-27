@@ -49,6 +49,16 @@ Run a complete delivery ceremony with pre-flight build verification and post-tea
    - Learnings promoted (if any)
    - INDEX.md/ROADMAP.md sync status
 
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "The build passed earlier, I can skip the pre-flight check" | Build state changes between VALIDATE and DELIVER — new code may have been added | Shipping with a stale build check is the #1 cause of broken deliveries |
+| "Team learning synthesis is optional, I'll skip it" | Duplicate/conflicting learnings from teammates pollute future recall | Next session loads contradictory advice — agents get confused and make worse decisions |
+| "I'll just call trw_deliver directly, the skill is overkill" | The skill adds build verification + team synthesis that raw trw_deliver skips | Manual delivery skips validation steps — 3x more defects in audits |
+
 ## Notes
 
 - This is the recommended way to end any implementation session, especially after Agent Team runs

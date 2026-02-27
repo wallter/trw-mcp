@@ -329,6 +329,16 @@ def register_ceremony_tools(server: FastMCP) -> None:
             update_info = check_for_update()
             if update_info.get("available"):
                 results["update_advisory"] = update_info.get("advisory")
+
+            # Auto-apply if configured
+            cfg = get_config()
+            if update_info.get("available") and cfg.auto_upgrade:
+                from trw_mcp.state.auto_upgrade import perform_upgrade
+                upgrade_result = perform_upgrade(update_info)
+                if upgrade_result.get("applied"):
+                    parts: list[str] = []
+                    parts.append(f"Auto-upgraded to v{upgrade_result.get('version', '?')}: {upgrade_result.get('details', '')}")
+                    results["auto_upgrade"] = upgrade_result
         except Exception:
             pass  # Fail-open: update check failure must not affect tool result
 
@@ -385,6 +395,21 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     results["auto_recall_count"] = len(capped)
         except Exception:
             pass  # Fail-open: auto-recall must not break session start
+
+        # Step 7: Embeddings status check + backfill
+        try:
+            from trw_mcp.state.memory_adapter import check_embeddings_status
+            emb_status = check_embeddings_status()
+            if emb_status.get("advisory"):
+                results["embeddings_advisory"] = emb_status["advisory"]
+            elif emb_status.get("enabled") and emb_status.get("available"):
+                # First-time backfill: generate embeddings for existing entries
+                from trw_mcp.state.memory_adapter import backfill_embeddings
+                backfill = backfill_embeddings(resolve_trw_dir())
+                if backfill.get("embedded", 0) > 0:
+                    results["embeddings_backfill"] = backfill
+        except Exception:
+            pass  # Fail-open: embedding setup must not break session start
 
         results["errors"] = errors
         results["success"] = len(errors) == 0

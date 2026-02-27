@@ -47,6 +47,8 @@ For each PRD listed in the sprint:
   - Technical Approach section (to understand affected modules and files)
   - Dependencies / Traceability section (cross-PRD dependencies)
 - Estimate complexity: Low (1-3 FRs), Medium (4-7 FRs), High (8+ FRs)
+- If an execution plan exists for a PRD (check `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`), use its wave plan and file ownership mapping instead of estimating from the PRD alone. Execution plans provide pre-computed micro-task decompositions that reduce self-decomposition variance.
+- If an execution plan exists for a PRD (check `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`), use its wave plan and file ownership mapping instead of estimating from the PRD alone. Execution plans provide pre-computed micro-task decompositions that reduce self-decomposition variance.
 - List key files likely to be created or modified (from Technical Approach)
 - Note which PRDs are prerequisites for others
 
@@ -226,6 +228,27 @@ When all tasks are complete:
 3. Send `shutdown_request` to each teammate via `SendMessage`
 4. After all teammates confirm shutdown, call `TeamDelete`
 5. Run `/deliver` for full ceremony
+
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "The team structure is obvious, I'll skip user approval" | User approval prevents misaligned team structures that waste entire sprint budgets | Past sprints without approval had teammate assignments that required full re-spawning |
+| "Playbook generation is slow, I'll spawn teammates with inline prompts" | Inline prompts skip file ownership validation — the #1 Agent Teams failure mode | Two teammates editing the same file creates merge conflicts and unreviewed code |
+| "I know the file ownership, I don't need to validate zero overlap" | File ownership violations cause silent overwrites that are discovered only at REVIEW | One file conflict can cascade into 3-4 re-implementation tasks |
+
+
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "The team structure is obvious, I'll skip user approval" | User approval prevents misaligned team structures that waste entire sprint budgets | Past sprints without approval had teammate assignments that required full re-spawning |
+| "Playbook generation is slow, I'll spawn teammates with inline prompts" | Inline prompts skip file ownership validation — the #1 Agent Teams failure mode | Two teammates editing the same file creates merge conflicts and unreviewed code |
+| "I know the file ownership, I don't need to validate zero overlap" | File ownership violations cause silent overwrites that are discovered only at REVIEW | One file conflict can cascade into 3-4 re-implementation tasks |
 
 ## Notes
 

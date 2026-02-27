@@ -51,6 +51,16 @@ Groom a PRD to sprint-ready quality (>= 0.85 completeness) through systematic re
 
 7. **Completion**: Call `trw_learn(summary="PRD groomed: {PRD-ID} to {score}", tags=["prd-workflow"])`. Report final quality score and any remaining gaps.
 
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "The PRD is good enough at 0.75, close enough to 0.85" | The 0.85 threshold exists because lower scores correlate with implementation gaps | PRDs below 0.85 have 2x more "Open Questions" that become P0 blockers during implementation |
+| "I can fabricate this requirement to fill the gap" | Fabricated requirements create false confidence and wrong implementations | Agents implement the fabricated requirement faithfully — wrong code that passes all tests |
+| "The traceability matrix can be filled in later" | Traceability is how the lead validates FR coverage during REVIEW | Missing traceability means the lead can't verify implementation — delays delivery by a full review cycle |
+
 ## Constraints
 
 - NEVER fabricate requirements not grounded in Background or codebase evidence

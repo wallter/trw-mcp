@@ -2,6 +2,40 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.5.1] — 2026-02-26
+
+### Added — Config-Driven Embeddings & Cross-Project Updates
+
+- **Config-driven embedding opt-in** — `embeddings_enabled` and `retrieval_embedding_model` fields in TRWConfig:
+  - Default `false` — embeddings only activate when user explicitly opts in via `.trw/config.yaml`
+  - Lazy singleton embedder in `memory_adapter.py` with thread-safe initialization
+  - Hybrid recall: keyword search + vector similarity + RRF fusion when embedder available
+  - Graceful degradation: falls back to keyword-only search when deps missing or disabled
+  - Session-start advisory: notifies user when enabled but `trw-memory[embeddings]` not installed
+  - One-time backfill: generates embeddings for all existing entries on first activation
+  - `check_embeddings_status()` and `backfill_embeddings()` public APIs
+
+- **Semantic dedup respects config** — `check_duplicate()` and `batch_dedup()` now check `embeddings_enabled` before using embeddings, preventing unintended merging when sentence-transformers is installed but embeddings are disabled
+
+- **Cross-project update pipeline** (Phases 1-6):
+  - Bundled data synced: hooks, agents, skills (20), FRAMEWORK.md as single source of truth
+  - `update_project()` protects custom artifacts from deletion via manifest tracking
+  - `data_dir` parameter enables remote artifact-based updates
+  - CLAUDE.md sync runs after file updates to resolve placeholders
+  - Release model extended with artifact delivery columns
+  - `build_release_bundle()` creates versioned `.tar.gz` bundles
+  - Auto-upgrade check wired into `trw_session_start()` with file-lock safety
+
+### Fixed
+
+- Dedup tests updated to explicitly set `embeddings_enabled=True` — prevents test-env regression when sentence-transformers is installed
+
+### Stats
+- 2628 tests passing, mypy --strict clean
+- Modified: `models/config.py`, `state/memory_adapter.py`, `state/dedup.py`, `tools/ceremony.py`
+
+---
+
 ## [0.5.0] — 2026-02-24
 
 ### Added — Sprint 32: Memory Lifecycle & Consolidation (PRD-CORE-043, PRD-CORE-044)

@@ -119,7 +119,22 @@ if [ "$_has_checkpoint" -eq 1 ]; then
       _trw_intentional_exit=1
       exit 2
     fi
-    # Has checkpoint AND verified completion artifact — allow
+    # Check for evidence fields — completion artifacts must have timestamped verification
+    _has_evidence=""
+    _evidence_count="0"
+    if command -v grep >/dev/null 2>&1; then
+      _evidence_count=$(grep -c 'evidence:' "$_completion_artifact" 2>/dev/null) || _evidence_count="0"
+      _has_evidence=$(grep -c 'verified.*[0-9]\{4\}-[0-9]\{2\}' "$_completion_artifact" 2>/dev/null) || _has_evidence="0"
+    fi
+    if [ "${_evidence_count:-0}" = "0" ] && [ "$_blocks" -lt 2 ]; then
+      _blocks=$((_blocks + 1))
+      printf '%s' "$_blocks" > "$_block_file" 2>/dev/null || true
+      echo "TRW: Completion artifact has no evidence fields. Each FR needs: evidence: \"verified {timestamp} — {method}: {specific output}\". Run the 5-step verification ritual (IDENTIFY → RUN → READ → VERIFY → RECORD) for each FR. (Block $_blocks/2)" >&2
+      log_hook_execution "TaskCompleted" "${_teammate_name:-unknown}:${_task_subject}" "2:missing-evidence"
+      _trw_intentional_exit=1
+      exit 2
+    fi
+    # Has checkpoint AND verified completion artifact with evidence — allow
     log_hook_execution "TaskCompleted" "${_teammate_name:-unknown}:${_task_subject}" "0:artifact-verified"
     exit 0
   fi

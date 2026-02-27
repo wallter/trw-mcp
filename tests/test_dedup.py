@@ -113,7 +113,7 @@ class TestCheckDuplicate:
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         reader = FileStateReader()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
             result = check_duplicate("test summary", "test detail", entries_dir, reader, config=config)
@@ -128,7 +128,7 @@ class TestCheckDuplicate:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         summary = "unique test summary for dedup"
         detail = "unique test detail for dedup that is quite long"
@@ -152,7 +152,7 @@ class TestCheckDuplicate:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         existing_summary = "some learning about python testing"
         existing_detail = "detail about pytest fixtures"
@@ -204,7 +204,7 @@ class TestCheckDuplicate:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         write_entry(entries_dir, writer, "L-existing02", "some summary", "some detail")
 
@@ -221,7 +221,7 @@ class TestCheckDuplicate:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         write_entry(entries_dir, writer, "L-diff01", "python testing pytest", "how to use fixtures")
 
@@ -239,7 +239,7 @@ class TestCheckDuplicate:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig(dedup_enabled=False)
+        config = TRWConfig(dedup_enabled=False, embeddings_enabled=True)
 
         write_entry(entries_dir, writer, "L-existing03", "test summary", "test detail")
 
@@ -263,7 +263,7 @@ class TestCheckDuplicate:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         path = entries_dir / "L-resolved01.yaml"
         writer.write_yaml(path, {
@@ -571,7 +571,7 @@ class TestTrwLearnDedup:
         logs_dir.mkdir(parents=True)
 
         # Patch module singletons
-        mock_config = TRWConfig(dedup_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
         mock_reader = FileStateReader()
         mock_writer = FileStateWriter()
 
@@ -631,7 +631,7 @@ class TestTrwLearnDedup:
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)
 
-        mock_config = TRWConfig(dedup_enabled=False)
+        mock_config = TRWConfig(dedup_enabled=False, embeddings_enabled=True)
         mock_reader = FileStateReader()
         mock_writer = FileStateWriter()
 
@@ -670,6 +670,7 @@ class TestTrwLearnDedup:
 
         mock_config = TRWConfig(
             dedup_enabled=True,
+            embeddings_enabled=True,
             dedup_skip_threshold=0.95,
             dedup_merge_threshold=0.85,
         )
@@ -743,7 +744,7 @@ class TestCheckDuplicateEdgeCases:
         """entries_dir does not exist → DedupResult('store', None, 0.0) even when embed succeeds."""
         missing_dir = tmp_path / "does_not_exist"
         reader = FileStateReader()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
             result = check_duplicate("some summary", "some detail", missing_dir, reader, config=config)
@@ -758,7 +759,7 @@ class TestCheckDuplicateEdgeCases:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         # Write index.yaml (should be skipped) and a real entry
         writer.write_yaml(entries_dir / "index.yaml", {
@@ -785,7 +786,7 @@ class TestCheckDuplicateEdgeCases:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         # Write a valid entry and a corrupt one
         write_entry(entries_dir, writer, "L-good01", "valid entry", "valid detail")
@@ -807,7 +808,7 @@ class TestCheckDuplicateEdgeCases:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         write_entry(entries_dir, writer, "L-skip-embed", "some summary", "some detail")
 
@@ -832,7 +833,7 @@ class TestCheckDuplicateEdgeCases:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig(dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
         write_entry(entries_dir, writer, "L-boundary01", "boundary test", "detail")
         existing_vec = mock_embed("boundary test detail")
@@ -878,7 +879,7 @@ class TestCheckDuplicateEdgeCases:
         entries_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig(dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
         # Existing entry with distinct text
         write_entry(entries_dir, writer, "L-boundary02", "existing merge test entry", "existing detail here")
@@ -1175,7 +1176,7 @@ class TestThresholdValidation:
         writer = FileStateWriter()
 
         # Config where merge >= skip is invalid
-        config = TRWConfig(dedup_skip_threshold=0.80, dedup_merge_threshold=0.85)
+        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.80, dedup_merge_threshold=0.85)
 
         summary = "threshold validation test"
         detail = "some detail"
@@ -1195,7 +1196,7 @@ class TestThresholdValidation:
         reader = FileStateReader()
 
         # Equal thresholds are also invalid
-        config = TRWConfig(dedup_skip_threshold=0.90, dedup_merge_threshold=0.90)
+        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.90, dedup_merge_threshold=0.90)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
             result = check_duplicate("any summary", "any detail", entries_dir, reader, config=config)
@@ -1222,7 +1223,7 @@ class TestSkipUpdatesAccessCount:
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)
 
-        mock_config = TRWConfig(dedup_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
         mock_reader = FileStateReader()
         mock_writer = FileStateWriter()
 
@@ -1283,7 +1284,7 @@ class TestBatchDedup:
 
     def test_is_migration_needed_false_after_marker_written(self, tmp_path: Path) -> None:
         """is_migration_needed returns False when marker file exists."""
-        cfg = TRWConfig()
+        cfg = TRWConfig(embeddings_enabled=True)
         trw_dir = tmp_path / ".trw"
         learnings_dir = trw_dir / cfg.learnings_dir
         learnings_dir.mkdir(parents=True)
@@ -1297,7 +1298,7 @@ class TestBatchDedup:
         trw_dir.mkdir()
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         result = batch_dedup(trw_dir, reader, writer, config=config)
         assert result["status"] == "skipped"
@@ -1310,7 +1311,7 @@ class TestBatchDedup:
         entries_dir.mkdir(parents=True)
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         with patch("trw_mcp.state.dedup.embedding_available", return_value=False):
             result = batch_dedup(trw_dir, reader, writer, config=config)
@@ -1325,7 +1326,7 @@ class TestBatchDedup:
         entries_dir.mkdir(parents=True)
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         with patch("trw_mcp.state.dedup.embedding_available", return_value=True):
             with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
@@ -1345,7 +1346,7 @@ class TestBatchDedup:
         entries_dir.mkdir(parents=True)
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig(dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
         # Write two entries
         write_entry(entries_dir, writer, "L-batch01", "batch test alpha", "first detail here alpha")
@@ -1387,7 +1388,7 @@ class TestBatchDedup:
         entries_dir.mkdir(parents=True)
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig()
+        config = TRWConfig(embeddings_enabled=True)
 
         # Write only resolved entries
         path = entries_dir / "L-resolved.yaml"
@@ -1420,7 +1421,7 @@ class TestBatchDedup:
         entries_dir.mkdir(parents=True)
         reader = FileStateReader()
         writer = FileStateWriter()
-        config = TRWConfig(dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
         identical_summary = "exact duplicate entry for batch"
         identical_detail = "same detail for exact duplicate"
@@ -1456,7 +1457,7 @@ class TestTrwLearnGracefulDegradation:
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)
 
-        mock_config = TRWConfig(dedup_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
         mock_reader = FileStateReader()
         mock_writer = FileStateWriter()
 
@@ -1549,7 +1550,7 @@ class TestTrwLearnReturnDictKeys:
         entries_dir.mkdir(parents=True)
         (tmp_path / ".trw" / "logs").mkdir(parents=True)
 
-        cfg = TRWConfig(dedup_enabled=dedup_enabled, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        cfg = TRWConfig(dedup_enabled=dedup_enabled, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
         reader = FileStateReader()
         writer = FileStateWriter()
 
@@ -1682,7 +1683,7 @@ class TestTrwLearnReturnDictKeys:
         writer = FileStateWriter()
 
         # Config with explicit thresholds
-        config = TRWConfig(dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
         summary = "skip threshold test"
         detail = "boundary condition at 0.95"

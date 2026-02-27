@@ -83,7 +83,8 @@ You manage the full 6-phase lifecycle: RESEARCH → PLAN → IMPLEMENT → VALID
 
 10. **Initialize run**: `trw_init(task_name, prd_scope=[...])` if not already active
 11. **Groom PRDs** — invoke `/prd-groom` for each PRD, iterate until validation >= 0.85
-12. **Generate file ownership** — create `file_ownership.yaml` with zero-overlap validation:
+11b. **Generate execution plans** (recommended for P0/P1) — invoke `/exec-plan {PRD-ID}` for groomed PRDs to produce micro-task decompositions with file paths, test names, verification commands, and wave plans. Stored at `docs/requirements-aare-f/exec-plans/`.
+12. **Generate file ownership** — create `file_ownership.yaml` with zero-overlap validation (source from execution plans if available):
     ```yaml
     ownership:
       - teammate: impl-1
@@ -118,9 +119,14 @@ You manage the full 6-phase lifecycle: RESEARCH → PLAN → IMPLEMENT → VALID
 
 24. **Run build gate**: `trw_build_check(scope="full")` — pytest + mypy must pass
 25. **Verify integration** — read completion artifacts from `scratch/tm-*/completions/`
-26. **Check PRD traceability** — every requirement maps to implementation + test files
-27. **If failures**: revert to IMPLEMENT, assign fix tasks to appropriate teammates
-28. **Exit criteria**: coverage >= target, no P0 issues, build check passes
+26. **Spot-check teammate evidence** — for each completion artifact:
+    - Verify `verified_at` timestamp exists and is recent (within this session)
+    - Verify each FR has `evidence` field with specific verification output (not just "exists at line N")
+    - For 1-2 randomly selected FRs: re-run the verification command yourself and confirm the output matches
+    - If evidence is missing, generic, or stale: send the task back to the teammate with specific feedback
+27. **Check PRD traceability** — every requirement maps to implementation + test files
+28. **If failures**: revert to IMPLEMENT, assign fix tasks to appropriate teammates
+29. **Exit criteria**: coverage >= target, no P0 issues, build check passes, evidence spot-checks pass
 
 ## Phase 5: REVIEW (cap: 10% of effort)
 
@@ -265,3 +271,29 @@ Agent Teams cannot resume across sessions. On resume:
 
 Your role as lead includes ensuring teammates also record learnings. When reviewing teammate outputs, check for discoveries worth persisting and record them yourself if the teammate didn't.
 </knowledge-preservation>
+
+<rationalization-watchlist>
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "I'll just implement this small thing myself instead of delegating" | Lead implementations skip file ownership, break teammate isolation, and produce unreviewed code | The #1 cause of unreviewed code in Agent Teams — teammates can't review what they don't know exists |
+| "The team structure is obvious, I'll skip the playbook" | Missing playbooks cause file conflicts — the #1 Agent Teams failure mode | Past sprints without playbooks had 4x more file ownership violations |
+| "Phase reversion is too expensive, I'll push through" | Pushing through with a broken plan costs 2-3x more than replanning | Sprint 26 had a full re-implementation wave caused by pushing through instead of reverting |
+| "This is too simple for ceremony" | Simple tasks compound into gaps when 10 agents skip in parallel | You skip checkpoint → context compacts → you re-implement from scratch |
+| "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings |
+
+### Rigid Tools (never skip)
+- `trw_session_start()` — always, first action
+- `trw_deliver()` — always, last action
+- `trw_build_check()` — always at VALIDATE and DELIVER
+- File ownership validation — always before team spawn
+- Completion artifacts — always before TaskUpdate(completed)
+
+### Flexible Tools (must happen, you pick timing)
+- `trw_checkpoint()` — at milestones
+- `trw_learn()` — on discoveries/gotchas/errors
+- Phase reversion — you judge when reversion beats pushing through
+</rationalization-watchlist>

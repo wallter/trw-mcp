@@ -147,7 +147,7 @@ class TestContent:
         init_project(fake_git_repo)
         path = fake_git_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
         content = path.read_text(encoding="utf-8")
-        assert "v24.0_TRW" in content
+        assert "v24.1_TRW" in content
 
     def test_config_yaml_has_defaults(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
@@ -230,7 +230,9 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
+        "commit",
         "deliver",
+        "exec-plan",
         "framework-check",
         "learn",
         "memory-audit",
@@ -239,6 +241,8 @@ class TestSkills:
         "prd-new",
         "prd-review",
         "project-health",
+        "review-pr",
+        "security-check",
         "simplify",
         "sprint-finish",
         "sprint-init",
@@ -451,7 +455,7 @@ class TestUpdateOverwritesFrameworkFiles:
 
         content = fw_path.read_text(encoding="utf-8")
         assert content != "old framework content"
-        assert "v24.0_TRW" in content
+        assert "v24.1_TRW" in content
 
     def test_updates_hooks(self, initialized_repo: Path) -> None:
         """Hook scripts are overwritten with latest versions."""
@@ -951,7 +955,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
-        assert len(skills) == 15
+        assert len(skills) == 19
         assert len(agents) == 10
         assert len(hooks) > 0
 
@@ -971,7 +975,7 @@ class TestRootFrameworkMd:
         root_fw = fake_git_repo / "FRAMEWORK.md"
         assert root_fw.is_file()
         content = root_fw.read_text(encoding="utf-8")
-        assert "v24.0_TRW" in content
+        assert "v24.1_TRW" in content
 
     def test_init_root_matches_cached(self, fake_git_repo: Path) -> None:
         """Root FRAMEWORK.md matches .trw/frameworks/FRAMEWORK.md after init."""
@@ -991,7 +995,7 @@ class TestRootFrameworkMd:
 
         content = root_fw.read_text(encoding="utf-8")
         assert content != "old stale content v16.0"
-        assert "v24.0_TRW" in content
+        assert "v24.1_TRW" in content
 
     def test_update_root_matches_cached(self, initialized_repo: Path) -> None:
         """After update, root FRAMEWORK.md matches cached version."""

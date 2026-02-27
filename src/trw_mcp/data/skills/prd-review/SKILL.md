@@ -40,6 +40,12 @@ The agent returns a structured review with:
 - Specific findings with severity and recommendations
 - Suggested next actions
 
+## Execution Plan Readiness Advisory
+
+When the verdict is **READY**, include an advisory note:
+
+> "This PRD is sprint-ready. For P0/P1 PRDs, consider generating an execution plan via `/exec-plan {PRD-ID}` before implementation — this decomposes FRs into micro-tasks with file paths, test names, and verification commands."
+
 ## Notes
 
 - This skill is read-only — it never modifies the PRD file

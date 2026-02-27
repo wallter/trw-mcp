@@ -299,6 +299,74 @@ def _run_import_learnings(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def _run_build_release(args: argparse.Namespace) -> None:
+    """Handle the ``build-release`` subcommand."""
+    from trw_mcp.release_builder import build_release_bundle
+
+    version: str | None = getattr(args, "version", None)
+    output_dir = Path(getattr(args, "output_dir", ".")).resolve()
+
+    result = build_release_bundle(version=version, output_dir=output_dir)
+
+    print(f"  Bundle: {result['path']}")
+    print(f"  Version: {result['version']}")
+    print(f"  SHA-256: {result['checksum']}")
+    print(f"  Size: {result['size_bytes']} bytes")
+
+    push = getattr(args, "push", False)
+    if push:
+        backend_url = getattr(args, "backend_url", None)
+        api_key = getattr(args, "api_key", None)
+        if not backend_url or not api_key:
+            print("  ERROR: --push requires --backend-url and --api-key")
+            sys.exit(1)
+        _push_release(result, backend_url, api_key)
+
+    sys.exit(0)
+
+
+def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> None:
+    """Push release metadata to the backend."""
+    import json
+    import urllib.request
+
+    url = f"{backend_url.rstrip('/')}/v1/releases"
+    payload = json.dumps({
+        "version": str(result["version"]),
+        "artifact_url": str(result["path"]),
+        "artifact_checksum": str(result["checksum"]),
+        "artifact_size_bytes": int(str(result["size_bytes"])),
+        "framework_version": _get_framework_version(),
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            print(f"  Published: v{data.get('version', '?')} to {backend_url}")
+    except Exception as exc:
+        print(f"  ERROR publishing: {exc}")
+        sys.exit(1)
+
+
+def _get_framework_version() -> str:
+    """Extract framework version from bundled FRAMEWORK.md."""
+    fw_path = Path(__file__).parent / "data" / "framework.md"
+    if fw_path.exists():
+        first_line = fw_path.read_text(encoding="utf-8").split("\n", 1)[0]
+        # "v24.1_TRW — CLAUDE CODE..."
+        return first_line.split("—")[0].strip().split()[0] if "—" in first_line else first_line.split()[0]
+    return "unknown"
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command."""
     parser = argparse.ArgumentParser(
@@ -459,6 +527,34 @@ def main() -> None:
         help="Report what would be imported without writing",
     )
 
+    # build-release
+    build_parser = subparsers.add_parser(
+        "build-release",
+        help="Build a release bundle (.tar.gz) of bundled data",
+    )
+    build_parser.add_argument(
+        "--version",
+        help="Release version (default: read from pyproject.toml)",
+    )
+    build_parser.add_argument(
+        "--output-dir",
+        default=".",
+        help="Output directory for the bundle (default: current directory)",
+    )
+    build_parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Push release to backend after building",
+    )
+    build_parser.add_argument(
+        "--backend-url",
+        help="Backend API base URL (required with --push)",
+    )
+    build_parser.add_argument(
+        "--api-key",
+        help="API key for backend authentication (required with --push)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "init-project":
@@ -479,6 +575,10 @@ def main() -> None:
 
     if args.command == "import-learnings":
         _run_import_learnings(args)
+        return
+
+    if args.command == "build-release":
+        _run_build_release(args)
         return
 
     # Default: run MCP server (no subcommand or "serve")

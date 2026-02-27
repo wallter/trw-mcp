@@ -42,6 +42,16 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    - Learnings promoted
    - Suggested next steps
 
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "Some PRDs are still draft but the build passes, so let's close the sprint" | Draft PRDs mean unfinished work — closing the sprint archives them as implicitly done | Future sprints won't pick up the draft PRDs, creating permanent gaps in the requirements catalogue |
+| "The build gate failed but it's just a flaky test" | Flaky tests mask real failures — the gate exists to catch exactly this | Shipping past a failed gate has caused 3 production regressions in past sprints |
+| "I'll skip the delivery ceremony, the commit is enough" | Delivery ceremony syncs learnings, updates INDEX.md, and checkpoints the run | Skipping trw_deliver means the next session starts with zero knowledge from this sprint |
+
 ## Notes
 
 - A sprint cannot be completed if the build gate fails

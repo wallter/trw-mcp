@@ -46,10 +46,15 @@ case "$_source" in
     # FR01: Fresh startup — explain what's available and why
     _emit_protocol
     echo ""
-    echo ""
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
-    echo "As orchestrator: assess scope, dispatch agents, monitor progress, verify integration, run quality gates."
+    echo ""
+    echo "RATIONALIZATION WATCHLIST — if you think any of these, stop and follow the process:"
+    echo "- 'This is too simple for ceremony' → Simple tasks compound into gaps. Skip checkpoint → context compacts → re-implement from scratch."
+    echo "- 'I'll deliver after I finish' → Context compaction erases uncheckpointed work permanently."
+    echo "- 'I already know the codebase' → Sprint 26 had 6 P0/P1 defects from agents who skipped recall."
+    echo ""
+    echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, completion artifacts."
     echo ""
     echo "Call trw_session_start() to load your learnings and any active run state."
     ;;

@@ -10,6 +10,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from trw_mcp.models.config import get_config
@@ -93,3 +94,203 @@ def _compare_versions(current: str, latest: str) -> bool:
         return lat_parts > cur_parts
     except (ValueError, TypeError):
         return False
+
+
+def download_release_artifact(
+    artifact_url: str,
+    expected_checksum: str | None = None,
+) -> Path | None:
+    """Download and verify a release artifact.
+
+    Args:
+        artifact_url: URL to the .tar.gz bundle
+        expected_checksum: SHA-256 hex digest to verify against
+
+    Returns:
+        Path to extracted data/ directory, or None on failure.
+    Fail-open: returns None on any error.
+    """
+    import hashlib
+    import tarfile
+    import tempfile
+
+    try:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="trw-upgrade-"))
+        archive_path = tmp_dir / "release.tar.gz"
+
+        # Download
+        cfg = get_config()
+        headers: dict[str, str] = {}
+        if cfg.platform_api_key:
+            headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+        req = urllib.request.Request(artifact_url, method="GET", headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            archive_path.write_bytes(response.read())
+
+        # Verify checksum
+        if expected_checksum:
+            h = hashlib.sha256()
+            with open(archive_path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    h.update(chunk)
+            actual = h.hexdigest()
+            if actual != expected_checksum:
+                logger.warning(
+                    "Checksum mismatch: expected %s, got %s",
+                    expected_checksum,
+                    actual,
+                )
+                return None
+
+        # Extract
+        with tarfile.open(archive_path, "r:gz") as tar:
+            # Security: prevent path traversal
+            for member in tar.getmembers():
+                if member.name.startswith("/") or ".." in member.name:
+                    logger.warning("Suspicious archive member: %s", member.name)
+                    return None
+            tar.extractall(tmp_dir)
+
+        data_dir = tmp_dir / "data"
+        if data_dir.is_dir():
+            return data_dir
+
+        logger.warning("Extracted archive does not contain data/ directory")
+        return None
+
+    except Exception:
+        logger.debug("Failed to download/verify release artifact", exc_info=True)
+        return None
+
+
+def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
+    """Download and apply a TRW update.
+
+    Args:
+        update_info: Result from check_for_update() with artifact details.
+
+    Returns:
+        {applied: bool, version: str, details: str}
+    Fail-open: returns applied=False on any error.
+    """
+    import fcntl
+
+    cfg = get_config()
+    target_dir = Path.cwd()
+    lock_path = target_dir / cfg.trw_dir / "update.lock"
+
+    try:
+        # Acquire exclusive lock
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = open(lock_path, "w")
+        try:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock_fd.close()
+            return {
+                "applied": False,
+                "version": str(update_info.get("latest", "")),
+                "details": "Another upgrade is in progress",
+            }
+
+        try:
+            # Get artifact info from backend
+            artifact_info = _fetch_artifact_info(str(update_info.get("latest", "")))
+            if artifact_info is None:
+                return {
+                    "applied": False,
+                    "version": str(update_info.get("latest", "")),
+                    "details": "Could not fetch artifact info",
+                }
+
+            artifact_url = str(artifact_info.get("artifact_url", ""))
+            checksum = artifact_info.get("artifact_checksum")
+            min_version = str(artifact_info.get("min_compatible_version", "0.0.0") or "0.0.0")
+
+            # Check compatibility
+            current = get_installed_version()
+            if not _is_compatible(current, min_version):
+                return {
+                    "applied": False,
+                    "version": str(update_info.get("latest", "")),
+                    "details": f"Current v{current} below min compatible v{min_version}",
+                }
+
+            # Download and verify
+            data_dir = download_release_artifact(
+                artifact_url,
+                expected_checksum=str(checksum) if checksum else None,
+            )
+            if data_dir is None:
+                return {
+                    "applied": False,
+                    "version": str(update_info.get("latest", "")),
+                    "details": "Download or verification failed",
+                }
+
+            # Apply update
+            from trw_mcp.bootstrap import update_project
+
+            result = update_project(target_dir, data_dir=data_dir)
+            errors = result.get("errors", [])
+            if errors:
+                return {
+                    "applied": False,
+                    "version": str(update_info.get("latest", "")),
+                    "details": f"Update errors: {'; '.join(str(e) for e in errors)}",
+                }
+
+            total = len(result.get("updated", [])) + len(result.get("created", []))
+            return {
+                "applied": True,
+                "version": str(update_info.get("latest", "")),
+                "details": f"Updated {total} files",
+            }
+        finally:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+            lock_fd.close()
+            try:
+                lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    except Exception:
+        logger.debug("Auto-upgrade failed", exc_info=True)
+        return {
+            "applied": False,
+            "version": str(update_info.get("latest", "")),
+            "details": "Unexpected error during upgrade",
+        }
+
+
+def _fetch_artifact_info(version: str) -> dict[str, object] | None:
+    """Fetch artifact download info for a specific release version."""
+    cfg = get_config()
+    urls = cfg.effective_platform_urls
+    if not urls:
+        return None
+
+    for base_url in urls:
+        try:
+            url = f"{base_url.rstrip('/')}/v1/releases/{version}/artifact"
+            headers: dict[str, str] = {}
+            if cfg.platform_api_key:
+                headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+            req = urllib.request.Request(url, method="GET", headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as response:
+                if 200 <= response.status < 300:
+                    return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
+            continue
+
+    return None
+
+
+def _is_compatible(current: str, min_version: str) -> bool:
+    """Return True if current version meets minimum compatibility requirement."""
+    try:
+        cur = tuple(int(x) for x in current.split(".")[:3])
+        minimum = tuple(int(x) for x in min_version.split(".")[:3])
+        return cur >= minimum
+    except (ValueError, TypeError):
+        return True  # Fail-open: assume compatible if parsing fails

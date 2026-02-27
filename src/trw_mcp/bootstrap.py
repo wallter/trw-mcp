@@ -188,6 +188,7 @@ def update_project(
     *,
     pip_install: bool = False,
     dry_run: bool = False,
+    data_dir: Path | None = None,
 ) -> dict[str, list[str]]:
     """Update TRW framework files in *target_dir* while preserving user config.
 
@@ -206,11 +207,14 @@ def update_project(
         target_dir: Root of the target git repository.
         pip_install: If True, reinstall the trw-mcp package after file updates.
         dry_run: If True, report what would change without modifying files.
+        data_dir: Optional override for the bundled data directory. When provided,
+            artifact lookups use this path instead of the module-level ``_DATA_DIR``.
 
     Returns:
         Dict with ``updated``, ``created``, ``preserved``, ``errors``,
         and ``warnings`` lists.
     """
+    effective_data = data_dir or _DATA_DIR
     result: dict[str, list[str]] = {
         "updated": [],
         "created": [],
@@ -237,7 +241,7 @@ def update_project(
 
     # 2. Update framework files (always overwrite)
     for data_name, dest_rel in _ALWAYS_UPDATE:
-        src = _DATA_DIR / data_name
+        src = effective_data / data_name
         dest = target_dir / dest_rel
         if dry_run:
             if dest.exists():
@@ -263,7 +267,7 @@ def update_project(
             result["preserved"].append(str(dest))
 
     # 4. Update hooks (always overwrite)
-    hooks_source = _DATA_DIR / "hooks"
+    hooks_source = effective_data / "hooks"
     if hooks_source.is_dir():
         for hook_file in sorted(hooks_source.iterdir()):
             if hook_file.suffix == ".sh":
@@ -291,7 +295,7 @@ def update_project(
                         )
 
     # 5. Update skills (always overwrite)
-    skills_source = _DATA_DIR / "skills"
+    skills_source = effective_data / "skills"
     if skills_source.is_dir():
         for skill_dir in sorted(skills_source.iterdir()):
             if skill_dir.is_dir():
@@ -321,7 +325,7 @@ def update_project(
                                 )
 
     # 6. Update agents (always overwrite)
-    agents_source = _DATA_DIR / "agents"
+    agents_source = effective_data / "agents"
     if agents_source.is_dir():
         for agent_file in sorted(agents_source.iterdir()):
             if agent_file.suffix == ".md":
@@ -382,7 +386,7 @@ def update_project(
 
     # 9. Remove stale hooks/skills/agents no longer in bundled data
     if not dry_run:
-        _remove_stale_artifacts(target_dir, result)
+        _remove_stale_artifacts(target_dir, result, data_dir)
 
     # 10. Check installed package version
     _check_package_version(result)
@@ -398,6 +402,10 @@ def update_project(
     # 13. Post-update verification
     if not dry_run:
         _verify_installation(target_dir, result)
+
+    # 13b. Post-update CLAUDE.md sync (resolve placeholders, promote learnings)
+    if not dry_run:
+        _run_claude_md_sync(target_dir, result)
 
     # 14. Remind about running sessions
     result["warnings"].append(
@@ -474,11 +482,12 @@ def _minimal_claude_md_trw_block() -> str:
     return ""
 
 
-def _get_bundled_names() -> dict[str, list[str]]:
+def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
     """Return sorted lists of bundled artifact names by category."""
-    skills_source = _DATA_DIR / "skills"
-    agents_source = _DATA_DIR / "agents"
-    hooks_source = _DATA_DIR / "hooks"
+    effective = data_dir or _DATA_DIR
+    skills_source = effective / "skills"
+    agents_source = effective / "agents"
+    hooks_source = effective / "hooks"
     return {
         "skills": sorted(
             d.name for d in skills_source.iterdir() if d.is_dir()
@@ -490,6 +499,38 @@ def _get_bundled_names() -> dict[str, list[str]]:
             f.name for f in hooks_source.iterdir() if f.suffix == ".sh"
         ) if hooks_source.is_dir() else [],
     }
+
+
+def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[str, list[str]]:
+    """Return sorted lists of user-created artifact names not in bundled data."""
+    bundled = _get_bundled_names(data_dir)
+    bundled_skills = set(bundled["skills"])
+    bundled_agents = set(bundled["agents"])
+    bundled_hooks = set(bundled["hooks"])
+    result: dict[str, list[str]] = {"skills": [], "agents": [], "hooks": []}
+
+    skills_dir = target_dir / ".claude" / "skills"
+    if skills_dir.is_dir():
+        result["skills"] = sorted(
+            d.name for d in skills_dir.iterdir()
+            if d.is_dir() and d.name not in bundled_skills
+        )
+
+    agents_dir = target_dir / ".claude" / "agents"
+    if agents_dir.is_dir():
+        result["agents"] = sorted(
+            f.name for f in agents_dir.iterdir()
+            if f.suffix == ".md" and f.name not in bundled_agents
+        )
+
+    hooks_dir = target_dir / ".claude" / "hooks"
+    if hooks_dir.is_dir():
+        result["hooks"] = sorted(
+            f.name for f in hooks_dir.iterdir()
+            if f.suffix == ".sh" and f.name not in bundled_hooks
+        )
+
+    return result
 
 
 _MANIFEST_FILE = "managed-artifacts.yaml"
@@ -514,10 +555,16 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
         skills_raw = data.get("skills", [])
         agents_raw = data.get("agents", [])
         hooks_raw = data.get("hooks", [])
+        custom_skills_raw = data.get("custom_skills", [])
+        custom_agents_raw = data.get("custom_agents", [])
+        custom_hooks_raw = data.get("custom_hooks", [])
         return {
             "skills": [str(s) for s in skills_raw] if isinstance(skills_raw, list) else [],
             "agents": [str(a) for a in agents_raw] if isinstance(agents_raw, list) else [],
             "hooks": [str(h) for h in hooks_raw] if isinstance(hooks_raw, list) else [],
+            "custom_skills": [str(s) for s in custom_skills_raw] if isinstance(custom_skills_raw, list) else [],
+            "custom_agents": [str(a) for a in custom_agents_raw] if isinstance(custom_agents_raw, list) else [],
+            "custom_hooks": [str(h) for h in custom_hooks_raw] if isinstance(custom_hooks_raw, list) else [],
         }
     except OSError:
         return None
@@ -526,6 +573,7 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
 def _write_manifest(
     target_dir: Path,
     result: dict[str, list[str]],
+    data_dir: Path | None = None,
 ) -> None:
     """Write the managed-artifacts manifest to the target project.
 
@@ -533,12 +581,16 @@ def _write_manifest(
     by TRW so that ``_remove_stale_artifacts`` can distinguish
     TRW-managed artifacts from user-created custom ones.
     """
-    bundled = _get_bundled_names()
+    bundled = _get_bundled_names(data_dir)
+    custom = _get_custom_names(target_dir, data_dir)
     manifest = {
         "version": 1,
         "skills": bundled["skills"],
         "agents": bundled["agents"],
         "hooks": bundled["hooks"],
+        "custom_skills": custom["skills"],
+        "custom_agents": custom["agents"],
+        "custom_hooks": custom["hooks"],
     }
     manifest_path = target_dir / ".trw" / _MANIFEST_FILE
     try:
@@ -555,6 +607,7 @@ def _write_manifest(
 def _remove_stale_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
+    data_dir: Path | None = None,
 ) -> None:
     """Remove hooks/skills/agents that no longer exist in bundled data.
 
@@ -567,25 +620,30 @@ def _remove_stale_artifacts(
     is performed (the manifest is written for future updates).
     """
     prev_manifest = _read_manifest(target_dir)
-    bundled = _get_bundled_names()
+    bundled = _get_bundled_names(data_dir)
     bundled_skills = set(bundled["skills"])
     bundled_agents = set(bundled["agents"])
     bundled_hooks = set(bundled["hooks"])
 
     if prev_manifest is None:
         # First run with manifest support — write manifest, skip cleanup
-        _write_manifest(target_dir, result)
+        _write_manifest(target_dir, result, data_dir)
         return
 
     prev_skills = set(prev_manifest.get("skills", []))
     prev_agents = set(prev_manifest.get("agents", []))
     prev_hooks = set(prev_manifest.get("hooks", []))
+    prev_custom_skills = set(prev_manifest.get("custom_skills", []))
+    prev_custom_agents = set(prev_manifest.get("custom_agents", []))
+    prev_custom_hooks = set(prev_manifest.get("custom_hooks", []))
 
     # Stale skills: previously managed but no longer in current bundle
     stale_skills = prev_skills - bundled_skills
     target_skills = target_dir / ".claude" / "skills"
     if target_skills.is_dir():
         for skill_name in stale_skills:
+            if skill_name in prev_custom_skills:
+                continue
             stale = target_skills / skill_name
             if stale.is_dir():
                 try:
@@ -599,6 +657,8 @@ def _remove_stale_artifacts(
     target_agents = target_dir / ".claude" / "agents"
     if target_agents.is_dir():
         for agent_name in stale_agents:
+            if agent_name in prev_custom_agents:
+                continue
             stale = target_agents / agent_name
             if stale.is_file():
                 try:
@@ -612,6 +672,8 @@ def _remove_stale_artifacts(
     target_hooks = target_dir / ".claude" / "hooks"
     if target_hooks.is_dir():
         for hook_name in stale_hooks:
+            if hook_name in prev_custom_hooks:
+                continue
             stale = target_hooks / hook_name
             if stale.is_file():
                 try:
@@ -621,7 +683,7 @@ def _remove_stale_artifacts(
                     pass
 
     # Write updated manifest
-    _write_manifest(target_dir, result)
+    _write_manifest(target_dir, result, data_dir)
 
 
 def _check_package_version(result: dict[str, list[str]]) -> None:
@@ -784,8 +846,18 @@ def _files_identical(a: Path, b: Path) -> bool:
 
 
 def _trw_mcp_server_entry() -> dict[str, object]:
-    """Build the ``trw`` MCP server entry for .mcp.json."""
-    cmd = shutil.which("trw-mcp") or f"{sys.executable} -m trw_mcp.server"
+    """Build the ``trw`` MCP server entry for .mcp.json.
+
+    Prefers the venv-local ``trw-mcp`` (same Python that has all deps)
+    over a system-wide install which may lack trw_memory.
+    """
+    # Check for venv-local trw-mcp first (same Python with all deps)
+    venv_bin = Path(sys.executable).parent / "trw-mcp"
+    if venv_bin.exists():
+        cmd = str(venv_bin)
+    else:
+        system_cmd = shutil.which("trw-mcp")
+        cmd = system_cmd or f"{sys.executable} -m trw_mcp.server"
     return {"command": cmd, "args": ["--debug"]}
 
 
@@ -918,6 +990,54 @@ def _verify_installation(
             result["warnings"].append(
                 "CLAUDE.md missing TRW auto-generated markers"
             )
+
+
+def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
+    """Run CLAUDE.md sync after update to resolve placeholders and promote learnings.
+
+    Temporarily changes cwd to the target project so that resolve_project_root()
+    finds the correct .trw/ directory and learnings database.
+    Fail-open: rendering errors are logged as warnings but never break the update.
+    """
+    import os
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(target_dir)
+
+        from trw_mcp.state.claude_md import execute_claude_md_sync
+        from trw_mcp.models.config import get_config, _reset_config
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        from trw_mcp.state.llm_helpers import LLMClient
+
+        # Reset config so it picks up the target project's .trw/config.yaml
+        _reset_config()
+        config = get_config()
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        llm = LLMClient()
+
+        sync_result = execute_claude_md_sync(
+            scope="root",
+            target_dir=None,
+            config=config,
+            reader=reader,
+            writer=writer,
+            llm=llm,
+        )
+        result["updated"].append(
+            f"CLAUDE.md synced (learnings promoted: {sync_result.get('learnings_promoted', 0)})"
+        )
+    except Exception as exc:
+        result["warnings"].append(f"CLAUDE.md sync skipped: {exc}")
+    finally:
+        os.chdir(original_cwd)
+        # Reset config back to original project
+        try:
+            from trw_mcp.models.config import _reset_config
+            _reset_config()
+        except Exception:
+            pass
 
 
 def _generate_mcp_json() -> str:

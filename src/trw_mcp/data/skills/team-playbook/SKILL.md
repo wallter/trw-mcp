@@ -59,6 +59,10 @@ For each assigned PRD, read the PRD file and extract:
 - **Acceptance criteria**: per-FR success conditions
 - **Dependencies**: other PRDs or external components this PRD depends on
 
+If an execution plan exists at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`, read it and use its micro-task decomposition, wave plan, and file ownership mapping as the primary source for task and file assignments. This eliminates the need to re-derive file ownership from the PRD's Technical Approach section.
+
+If an execution plan exists at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`, read it and use its micro-task decomposition, wave plan, and file ownership mapping as the primary source for task and file assignments. This eliminates the need to re-derive file ownership from the PRD's Technical Approach section.
+
 Group the extracted FRs by teammate based on the sprint doc's PRD assignments.
 
 ### Step 4: Determine File Ownership
@@ -342,6 +346,17 @@ Next step: Run /sprint-team to create the team and spawn teammates using these p
 ```
 
 If any validation failed (file overlap, unresolved ambiguity), report FAIL and list the issues. Do not report "Next step" if validation failed.
+
+
+## Rationalization Watchlist
+
+If you catch yourself thinking any of these, stop and follow the process:
+
+| Thought | Why it's wrong | Consequence |
+|---------|---------------|-------------|
+| "The file ownership is obvious, I don't need validation" | File ownership violations cause silent overwrites discovered only at REVIEW | One file conflict cascades into 3-4 re-implementation tasks |
+| "I'll skip the interface contract, the code is self-documenting" | Interface contracts prevent field name mismatches between teammates | Missing contracts cause integration failures that only surface at VALIDATE |
+| "Token budget doesn't matter, I'll include everything" | Oversized playbooks exceed context limits and degrade agent performance | Agents past the instruction density cliff (~150 rules) start ignoring critical guidance |
 
 ## Notes
 

@@ -82,6 +82,11 @@ def check_duplicate(
         and similarity score.
     """
     cfg = config or TRWConfig()
+
+    # Respect embeddings_enabled config — dedup requires embeddings
+    if not cfg.embeddings_enabled:
+        return DedupResult("store", None, 0.0)
+
     skip_threshold = cfg.dedup_skip_threshold
     merge_threshold = cfg.dedup_merge_threshold
 
@@ -284,6 +289,10 @@ def batch_dedup(
         Dict with status, entries_scanned, entries_merged, entries_skipped.
     """
     cfg = config or get_config()
+
+    # Respect embeddings_enabled config — batch dedup requires embeddings
+    if not cfg.embeddings_enabled:
+        return {"status": "skipped", "reason": "embeddings not enabled in config"}
 
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
     if not entries_dir.exists():

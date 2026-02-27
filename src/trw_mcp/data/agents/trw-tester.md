@@ -50,18 +50,27 @@ criteria and ensure code quality through high coverage.
       2. For each FR, verify you have at least one positive test and one negative/edge test
       3. If any FR is missing test coverage, write the missing tests NOW
       4. Common gaps: integration wiring tests (FR calls the right function), config field tests, graceful degradation tests
-   g. **Write completion artifact** to `scratch/tm-{your-name}/completions/{task-id}.yaml`. Every FR MUST have test coverage listed:
+   g. **5-Step Verification Ritual** (per FR, FRESH evidence required):
+      1. **IDENTIFY**: What test verifies this FR? (e.g., `test_fr01_happy`)
+      2. **RUN**: Execute `pytest tests/test_foo.py::test_fr01_happy -v` NOW (fresh, not from memory)
+      3. **READ**: Read the FULL pytest output (not just PASSED/FAILED)
+      4. **VERIFY**: Does the test actually assert the FR requirement? (not just that the function runs)
+      5. **RECORD**: Write evidence with timestamp into the completion artifact
+   h. **Write completion artifact** to `scratch/tm-{your-name}/completions/{task-id}.yaml`. Every FR MUST have test coverage with timestamped evidence:
       ```yaml
       task: "Task subject"
+      verified_at: "2026-02-26T21:00:00Z"
       test_coverage:
         - req_id: FR01
           status: implemented  # MUST be "implemented" — not "partial"
           test_file: tests/test_foo.py
           test_names: [test_fr01_happy, test_fr01_edge, test_fr01_error]
+          evidence: "verified 2026-02-26T21:00:00Z — pytest: 3/3 PASSED, asserts return value matches spec"
         - req_id: FR02
           status: implemented
           test_file: tests/test_foo.py
           test_names: [test_fr02_basic, test_fr02_negative]
+          evidence: "verified 2026-02-26T21:01:00Z — pytest: 2/2 PASSED, negative test confirms error handling"
       files_changed: [tests/test_foo.py, tests/test_bar.py]
       tests_run: "pytest tests/ -v — 48 passed, 0 failed"
       coverage_pct: 91
@@ -69,8 +78,8 @@ criteria and ensure code quality through high coverage.
         - "All FRs have test coverage verified against PRD text"
         - "Parametrized edge cases for boundary values"
       ```
-   h. Call trw_checkpoint with summary referencing the artifact
-   h. Mark task complete via TaskUpdate
+   i. Call trw_checkpoint with summary referencing the artifact
+   j. Mark task complete via TaskUpdate
    i. Message implementer about any bugs found
 5. **Call trw_learn** for testing discoveries
 </workflow>

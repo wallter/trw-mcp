@@ -3,6 +3,11 @@
 Provides singleton backend access, one-time YAML→SQLite migration, and
 CRUD operations that preserve the exact return shapes of the original
 YAML-based learning tools.
+
+When ``embeddings_enabled=True`` in config, the adapter:
+- Generates embeddings on store via :class:`LocalEmbeddingProvider`
+- Uses hybrid search (BM25 + dense + RRF fusion) on recall
+- Backfills embeddings for existing entries on first activation
 """
 
 from __future__ import annotations
@@ -22,9 +27,13 @@ from trw_mcp.models.config import get_config
 
 logger = structlog.get_logger()
 
-# Module-level singleton
+# Module-level singletons
 _backend: SQLiteBackend | None = None
 _backend_lock = threading.Lock()
+
+_embedder: Any = None  # LocalEmbeddingProvider | None
+_embedder_lock = threading.Lock()
+_embedder_checked: bool = False
 
 _SENTINEL_NAME = ".migrated"
 _NAMESPACE = "default"
@@ -77,6 +86,102 @@ def reset_backend() -> None:
         if _backend is not None:
             _backend.close()
             _backend = None
+    reset_embedder()
+
+
+# ---------------------------------------------------------------------------
+# Embedder lifecycle
+# ---------------------------------------------------------------------------
+
+def get_embedder() -> Any:
+    """Return the singleton LocalEmbeddingProvider, or None if unavailable.
+
+    Only attempts initialization when ``embeddings_enabled=True`` in config.
+    The result is cached — repeated calls are cheap.
+    """
+    global _embedder, _embedder_checked  # noqa: PLW0603
+    if _embedder_checked:
+        return _embedder
+
+    with _embedder_lock:
+        if _embedder_checked:
+            return _embedder  # pragma: no cover — race guard
+
+        cfg = get_config()
+        if not cfg.embeddings_enabled:
+            _embedder_checked = True
+            return None
+
+        try:
+            from trw_memory.embeddings.local import LocalEmbeddingProvider
+            provider = LocalEmbeddingProvider(
+                model_name=cfg.retrieval_embedding_model,
+                dim=cfg.retrieval_embedding_dim,
+            )
+            if provider.available():
+                _embedder = provider
+                logger.info(
+                    "embedder_initialized",
+                    model=cfg.retrieval_embedding_model,
+                    dim=cfg.retrieval_embedding_dim,
+                )
+            else:
+                logger.info(
+                    "embeddings_enabled_but_deps_missing",
+                    hint="pip install trw-memory[embeddings]",
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("embedder_init_failed")
+
+        _embedder_checked = True
+        return _embedder
+
+
+def reset_embedder() -> None:
+    """Reset the embedder singleton (for tests)."""
+    global _embedder, _embedder_checked  # noqa: PLW0603
+    with _embedder_lock:
+        _embedder = None
+        _embedder_checked = False
+
+
+def check_embeddings_status() -> dict[str, object]:
+    """Check embedding readiness and return status for session_start advisory.
+
+    Returns a dict with:
+    - ``enabled``: whether config has embeddings_enabled=True
+    - ``available``: whether deps are installed and model loads
+    - ``advisory``: human-readable message (empty when everything is fine)
+    """
+    cfg = get_config()
+    if not cfg.embeddings_enabled:
+        return {"enabled": False, "available": False, "advisory": ""}
+
+    embedder = get_embedder()
+    if embedder is not None:
+        return {"enabled": True, "available": True, "advisory": ""}
+
+    return {
+        "enabled": True,
+        "available": False,
+        "advisory": (
+            "Embeddings enabled but sentence-transformers not installed. "
+            "Run: pip install trw-memory[embeddings]"
+        ),
+    }
+
+
+def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
+    """Generate embedding for text and upsert into vector table. Fail-silent."""
+    embedder = get_embedder()
+    if embedder is None:
+        return
+    try:
+        vector = embedder.embed(text)
+        if vector is not None:
+            backend.upsert_vector(entry_id, vector)
+    except Exception:  # noqa: BLE001
+        logger.debug("embed_and_store_failed", entry_id=entry_id)
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +356,10 @@ def store_learning(
     )
     backend.store(entry)
 
+    # Generate and store embedding when enabled
+    embed_text = f"{summary} {detail}"
+    _embed_and_store(backend, learning_id, embed_text)
+
     logger.info("memory_store_learning", learning_id=learning_id)
     return {
         "learning_id": learning_id,
@@ -258,6 +367,135 @@ def store_learning(
         "status": "recorded",
         "distribution_warning": "",
     }
+
+
+def _search_entries(
+    backend: SQLiteBackend,
+    query: str,
+    *,
+    top_k: int = 25,
+    tags: list[str] | None = None,
+    mem_status: MemoryStatus | None = None,
+    min_impact: float = 0.0,
+) -> list[MemoryEntry]:
+    """Search entries using hybrid (keyword + vector RRF) or keyword fallback.
+
+    When embedder is available, runs keyword search and sqlite-vec vector search
+    in parallel, then fuses via Reciprocal Rank Fusion. Otherwise falls back to
+    multi-token intersection keyword search.
+    """
+    # Always run keyword search
+    keyword_results = _keyword_search(
+        backend, query, top_k=top_k, tags=tags,
+        mem_status=mem_status, min_impact=min_impact,
+    )
+
+    # Try vector search when embedder is available
+    embedder = get_embedder()
+    if embedder is None:
+        return keyword_results
+
+    try:
+        query_vec = embedder.embed(query)
+        if query_vec is None:
+            return keyword_results
+
+        cfg = get_config()
+        vector_hits = backend.search_vectors(query_vec, top_k=cfg.hybrid_vector_candidates)
+        if not vector_hits:
+            return keyword_results
+
+        # RRF fusion: merge keyword and vector rankings
+        keyword_ranking = [(e.id, 1.0 / (i + 1)) for i, e in enumerate(keyword_results)]
+        vector_ranking = [(eid, score) for eid, score in vector_hits]
+
+        from trw_memory.retrieval.fusion import rrf_fuse
+        fused = rrf_fuse([keyword_ranking, vector_ranking], k=cfg.hybrid_rrf_k)
+
+        # Build id→entry map from keyword results + vector-matched entries
+        entry_map: dict[str, MemoryEntry] = {e.id: e for e in keyword_results}
+        # Fetch any vector-only hits not already in keyword results
+        for eid, _ in vector_hits:
+            if eid not in entry_map:
+                entry = backend.get(eid)
+                if entry is not None:
+                    # Apply same filters as keyword search
+                    if min_impact > 0.0 and entry.importance < min_impact:
+                        continue
+                    if mem_status is not None and entry.status != mem_status:
+                        continue
+                    if tags:
+                        if not set(tags).issubset(set(entry.tags)):
+                            continue
+                    entry_map[eid] = entry
+
+        results: list[MemoryEntry] = []
+        for eid, _ in fused[:top_k]:
+            if eid in entry_map:
+                results.append(entry_map[eid])
+
+        logger.debug(
+            "hybrid_recall_complete",
+            keyword_hits=len(keyword_results),
+            vector_hits=len(vector_hits),
+            fused=len(results),
+        )
+        return results
+
+    except Exception:  # noqa: BLE001
+        logger.debug("vector_search_failed_fallback_to_keyword", query=query[:80])
+        return keyword_results
+
+
+def _keyword_search(
+    backend: SQLiteBackend,
+    query: str,
+    *,
+    top_k: int = 25,
+    tags: list[str] | None = None,
+    mem_status: MemoryStatus | None = None,
+    min_impact: float = 0.0,
+) -> list[MemoryEntry]:
+    """Multi-token intersection keyword search."""
+    tokens = query.split()
+    if len(tokens) <= 1:
+        return backend.search(
+            query,
+            top_k=top_k,
+            tags=tags,
+            status=mem_status,
+            min_importance=min_impact,
+            namespace=_NAMESPACE,
+        )
+
+    # Intersect: entry must match ALL tokens
+    token_id_sets: list[set[str]] = []
+    token_entry_map: dict[str, Any] = {}
+    first_token_ordered: list[Any] = []
+    for i, token in enumerate(tokens):
+        token_results = backend.search(
+            token,
+            top_k=top_k,
+            tags=tags,
+            status=mem_status,
+            min_importance=min_impact,
+            namespace=_NAMESPACE,
+        )
+        token_ids: set[str] = set()
+        for e in token_results:
+            token_ids.add(e.id)
+            token_entry_map[e.id] = e
+        token_id_sets.append(token_ids)
+        if i == 0:
+            first_token_ordered = list(token_results)
+
+    if not token_id_sets:
+        return []
+
+    common_ids = token_id_sets[0]
+    for s in token_id_sets[1:]:
+        common_ids = common_ids & s
+    return [e for e in first_token_ordered if e.id in common_ids]
 
 
 def recall_learnings(
@@ -292,48 +530,11 @@ def recall_learnings(
             limit=max_results if max_results > 0 else _MAX_ENTRIES,
         )
     else:
-        # For multi-word queries, tokenize and intersect per-token results so
-        # that each token can match in *any* field (content OR detail OR tags).
-        # This allows "database postgresql" to match an entry where "database"
-        # is in the summary and "postgresql" is in the detail.
-        tokens = query.split()
         top_k = max_results if max_results > 0 else _MAX_ENTRIES
-        if len(tokens) <= 1:
-            entries = backend.search(
-                query,
-                top_k=top_k,
-                tags=tags,
-                status=mem_status,
-                min_importance=min_impact,
-                namespace=_NAMESPACE,
-            )
-        else:
-            # Intersect: entry must match ALL tokens
-            token_id_sets: list[set[str]] = []
-            token_entry_map: dict[str, Any] = {}
-            first_token_ordered: list[Any] = []
-            for i, token in enumerate(tokens):
-                token_results = backend.search(
-                    token,
-                    top_k=top_k,
-                    tags=tags,
-                    status=mem_status,
-                    min_importance=min_impact,
-                    namespace=_NAMESPACE,
-                )
-                token_ids: set[str] = set()
-                for e in token_results:
-                    token_ids.add(e.id)
-                    token_entry_map[e.id] = e
-                token_id_sets.append(token_ids)
-                if i == 0:
-                    first_token_ordered = list(token_results)
-            # Only keep entries that matched every token, preserving
-            # relevance ordering from the first token's search results
-            common_ids = token_id_sets[0]
-            for s in token_id_sets[1:]:
-                common_ids = common_ids & s
-            entries = [e for e in first_token_ordered if e.id in common_ids]
+        entries = _search_entries(
+            backend, query, top_k=top_k, tags=tags,
+            mem_status=mem_status, min_impact=min_impact,
+        )
 
     results: list[dict[str, object]] = []
     for entry in entries:
@@ -467,3 +668,51 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                 )
         except Exception:
             continue
+
+
+def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
+    """Generate embeddings for all entries that don't have one yet.
+
+    Called on first activation of embeddings (session_start with
+    embeddings_enabled=True and deps available). Idempotent — skips
+    entries that already have a vector stored.
+
+    Returns counts: ``{"embedded": N, "skipped": N, "failed": N}``.
+    """
+    embedder = get_embedder()
+    if embedder is None:
+        return {"embedded": 0, "skipped": 0, "failed": 0}
+
+    backend = get_backend(trw_dir)
+    entries = backend.list_entries(namespace=_NAMESPACE, limit=_MAX_ENTRIES)
+
+    embedded = 0
+    skipped = 0
+    failed = 0
+
+    for entry in entries:
+        # Check if vector already exists by attempting a search
+        # with high top_k — cheaper than adding a get_vector method
+        try:
+            text = f"{entry.content} {entry.detail}"
+            if not text.strip():
+                skipped += 1
+                continue
+
+            vector = embedder.embed(text)
+            if vector is None:
+                failed += 1
+                continue
+
+            backend.upsert_vector(entry.id, vector)
+            embedded += 1
+        except Exception:  # noqa: BLE001
+            failed += 1
+
+    logger.info(
+        "embeddings_backfill_complete",
+        embedded=embedded,
+        skipped=skipped,
+        failed=failed,
+    )
+    return {"embedded": embedded, "skipped": skipped, "failed": failed}

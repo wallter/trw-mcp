@@ -110,12 +110,14 @@ class TRWConfig(BaseSettings):
     # ── 4. Hybrid retrieval (CORE-041) ───────────────────────────────────
 
     memory_store_path: str = ".trw/memory/vectors.db"
+    embeddings_enabled: bool = False  # Opt-in: requires `pip install trw-memory[embeddings]` (~2GB, PyTorch)
+    retrieval_embedding_model: str = "all-MiniLM-L6-v2"  # HuggingFace model for local embeddings
+    retrieval_embedding_dim: int = 384  # Must match chosen model
     hybrid_bm25_candidates: int = 50
     hybrid_vector_candidates: int = 50
     hybrid_rrf_k: int = 60
     hybrid_reranking_enabled: bool = False  # Future: cross-encoder reranking
     retrieval_fallback_enabled: bool = True  # Fall back to keyword search when hybrid unavailable
-    retrieval_embedding_dim: int = 384  # Embedding dimensionality
 
     # ── 5. Semantic dedup (CORE-042) ─────────────────────────────────────
 
