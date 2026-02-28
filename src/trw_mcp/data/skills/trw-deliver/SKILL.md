@@ -1,9 +1,9 @@
 ---
-name: deliver
+name: trw-deliver
 description: >
   Enhanced delivery with pre-flight build verification and team learning synthesis.
   Runs build check, synthesizes teammate learnings if a team was active, then
-  trw_deliver, then reports summary. Use: /deliver
+  trw_deliver, then reports summary. Use: /trw-deliver
 user-invocable: true
 allowed-tools: Read, Bash, mcp__trw__trw_build_check, mcp__trw__trw_deliver, mcp__trw__trw_recall, mcp__trw__trw_status, mcp__trw__trw_learn_update, mcp__trw__trw_learn
 ---

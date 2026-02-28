@@ -1,10 +1,10 @@
 ---
-name: security-check
+name: trw-security-check
 description: >
   OWASP-focused security audit of the trw-mcp codebase. Checks for
   command injection, YAML deserialization, path traversal, secrets,
   and input validation. Read-only.
-  Use: /security-check [module or 'all']
+  Use: /trw-security-check [module or 'all']
 user-invocable: true
 argument-hint: "[module or 'all']"
 allowed-tools: Read, Glob, Grep, Bash

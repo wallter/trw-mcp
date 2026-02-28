@@ -1,5 +1,5 @@
 ---
-name: project-health
+name: trw-project-health
 description: >
   Audit TRW health in the current or target project. Summarizes tool usage,
   ceremony compliance, hook enforcement, active runs, learnings, and issues.
@@ -131,4 +131,4 @@ Generate a comprehensive TRW health report for a project, covering tool usage, c
 - This skill is read-only — it never modifies project files
 - Works on the current project or any project with a `.trw/` directory
 - For cross-project monitoring, pass the target project path as an argument
-- Pairs well with `/memory-audit` for deeper learning analysis
+- Pairs well with `/trw-memory-audit` for deeper learning analysis

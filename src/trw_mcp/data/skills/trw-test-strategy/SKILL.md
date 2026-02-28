@@ -1,10 +1,10 @@
 ---
-name: test-strategy
+name: trw-test-strategy
 description: >
   Audit test coverage and strategy. Identifies untested modules,
   coverage gaps, and suggests test improvements. Use before or
   during IMPLEMENT phase.
-  Use: /test-strategy [module or 'all']
+  Use: /trw-test-strategy [module or 'all']
 user-invocable: true
 argument-hint: "[module or 'all']"
 allowed-tools: Read, Glob, Grep, Bash, mcp__trw__trw_build_check

@@ -1,9 +1,9 @@
 ---
-name: learn
+name: trw-learn
 description: >
   Record, update, or retire learnings. With a summary: records a new learning.
   With "resolve/obsolete L-id": changes status. Without arguments: reflects on
-  session memory. Use: /learn ["summary" | resolve L-id | obsolete L-id]
+  session memory. Use: /trw-learn ["summary" | resolve L-id | obsolete L-id]
 user-invocable: true
 argument-hint: "[\"summary\" | resolve L-id [reason] | obsolete L-id [reason]]"
 allowed-tools: Read, Bash, mcp__trw__trw_recall, mcp__trw__trw_learn, mcp__trw__trw_learn_update
@@ -13,9 +13,9 @@ allowed-tools: Read, Bash, mcp__trw__trw_recall, mcp__trw__trw_learn, mcp__trw__
 
 Manage TRW's learning memory. Three modes:
 
-- **Record**: `/learn "summary"` — record a new high-value learning
-- **Retire**: `/learn resolve L-id` or `/learn obsolete L-id` — mark a learning as fixed or outdated
-- **Reflect**: `/learn` (no args) — review session for discoveries, refine or retire stale entries
+- **Record**: `/trw-learn "summary"` — record a new high-value learning
+- **Retire**: `/trw-learn resolve L-id` or `/trw-learn obsolete L-id` — mark a learning as fixed or outdated
+- **Reflect**: `/trw-learn` (no args) — review session for discoveries, refine or retire stale entries
 
 ## Quality Gate — Record Only If
 
@@ -68,7 +68,7 @@ When `$ARGUMENTS` starts with `resolve` or `obsolete`:
 
 4. **Confirm**: Report the change — learning ID, old status, new status, and reason.
 
-If the user doesn't provide a specific ID but describes the learning (e.g., `/learn resolve "the stop hook race condition"`), use `trw_recall` to search for matching entries, confirm the match with the user, then update.
+If the user doesn't provide a specific ID but describes the learning (e.g., `/trw-learn resolve "the stop hook race condition"`), use `trw_recall` to search for matching entries, confirm the match with the user, then update.
 
 ## Workflow — Reflect (no arguments)
 
@@ -97,11 +97,11 @@ When `$ARGUMENTS` is empty, reflect on the current session:
 ## Examples
 
 ```
-/learn "Pydantic v2 use_enum_values changes comparison semantics"
-/learn "TaskCompleted hook must be soft gate" --impact 0.9
-/learn resolve L-abc12345 "Fixed in commit df6ec89"
-/learn obsolete L-def67890 "Superseded by new update mechanism"
-/learn resolve "the stop hook race condition"
+/trw-learn "Pydantic v2 use_enum_values changes comparison semantics"
+/trw-learn "TaskCompleted hook must be soft gate" --impact 0.9
+/trw-learn resolve L-abc12345 "Fixed in commit df6ec89"
+/trw-learn obsolete L-def67890 "Superseded by new update mechanism"
+/trw-learn resolve "the stop hook race condition"
 /learn
 ```
 
@@ -111,4 +111,4 @@ When `$ARGUMENTS` is empty, reflect on the current session:
 - Resolved/obsolete learnings are excluded from CLAUDE.md promotion and recall results
 - The learning memory is shared across all sessions — every entry costs attention
 - Prefer retiring stale learnings over letting them accumulate noise
-- Use `/memory-audit` to review health and find candidates for retirement
+- Use `/trw-memory-audit` to review health and find candidates for retirement

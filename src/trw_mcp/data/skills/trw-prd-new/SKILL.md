@@ -1,9 +1,9 @@
 ---
-name: prd-new
+name: trw-prd-new
 description: >
   Create a new PRD from a feature description. Generates AARE-F
   skeleton, runs initial validation, reports quality score.
-  Use: /prd-new "Add rate limiting to the API"
+  Use: /trw-prd-new "Add rate limiting to the API"
 user-invocable: true
 argument-hint: "[feature description]"
 allowed-tools: Read, Grep, Glob, Write, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_create, mcp__trw__trw_prd_validate
@@ -29,9 +29,9 @@ Create a new PRD from a feature description using the TRW framework's AARE-F req
    - PRD ID and file path
    - Quality score and tier
    - Sections that need work
-   - Suggested next step: `/prd-groom {PRD-ID}` to bring it to sprint-ready quality, or `/prd-review {PRD-ID}` for a quality assessment
+   - Suggested next step: `/trw-prd-groom {PRD-ID}` to bring it to sprint-ready quality, or `/trw-prd-review {PRD-ID}` for a quality assessment
 
 ## Notes
 
 - Default category is CORE. If the feature is clearly a bug fix, use FIX; if infrastructure, use INFRA; if quality, use QUAL.
-- The generated PRD is a skeleton — it needs grooming (`/prd-groom`) to reach sprint-ready quality (>= 0.85 completeness).
+- The generated PRD is a skeleton — it needs grooming (`/trw-prd-groom`) to reach sprint-ready quality (>= 0.85 completeness).

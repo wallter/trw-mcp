@@ -1,10 +1,10 @@
 ---
-name: exec-plan
+name: trw-exec-plan
 description: >
   Generate an execution plan from a groomed PRD. Decomposes FRs into micro-tasks
   with file paths, test names, verification commands, and dependency graphs.
   Bridges PRDs to concrete implementation steps.
-  Use: /exec-plan PRD-CORE-020
+  Use: /trw-exec-plan PRD-CORE-020
 user-invocable: true
 argument-hint: "[PRD-ID or file path]"
 allowed-tools: Read, Grep, Glob, Write, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_validate
@@ -36,7 +36,7 @@ Check `$ARGUMENTS` for a PRD ID or file path:
 ### Step 2: Validate PRD Readiness
 
 Call `trw_prd_validate(prd_path)` to check quality:
-- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /prd-groom first."
+- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /trw-prd-groom first."
 - If score >= 0.85: continue
 
 ### Step 3: Research Context

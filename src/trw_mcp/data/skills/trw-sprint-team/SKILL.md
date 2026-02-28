@@ -1,9 +1,9 @@
 ---
-name: sprint-team
+name: trw-sprint-team
 description: >
   Automate Agent Teams setup from a sprint plan. Reads sprint doc, analyzes PRDs,
   proposes team structure with file ownership, and spawns teammates with generated
-  playbooks. Use: /sprint-team [sprint-doc-path]
+  playbooks. Use: /trw-sprint-team [sprint-doc-path]
 user-invocable: true
 argument-hint: "[sprint-doc-path]"
 allowed-tools: Read, Write, Glob, Grep, Bash, Edit, mcp__trw__trw_recall, mcp__trw__trw_status, mcp__trw__trw_init, mcp__trw__trw_checkpoint
@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash, Edit, mcp__trw__trw_recall, mcp__t
 
 # Sprint Team Automation Skill
 
-Automate Agent Teams setup from a sprint plan. This skill reads the sprint document, analyzes PRD scope and complexity, proposes a team structure with file ownership, gets user approval, generates playbooks via `/team-playbook`, creates the team, spawns teammates, and assigns tasks. This is the highest-leverage sprint automation — turning 30 minutes of manual team setup into a single command.
+Automate Agent Teams setup from a sprint plan. This skill reads the sprint document, analyzes PRD scope and complexity, proposes a team structure with file ownership, gets user approval, generates playbooks via `/trw-team-playbook`, creates the team, spawns teammates, and assigns tasks. This is the highest-leverage sprint automation — turning 30 minutes of manual team setup into a single command.
 
 ## Path Discovery
 
@@ -25,7 +25,7 @@ Check `$ARGUMENTS` for a sprint doc path:
 - If `$ARGUMENTS` is a valid file path, read that sprint doc directly.
 - If `$ARGUMENTS` is empty or "active", look for sprint docs in `sprints/active/` (sibling of `prds_relative_path`).
 - If multiple active sprint docs are found, list them and ask the user to pick one.
-- If no sprint doc is found, abort with: "No active sprint found. Run /sprint-init first to create a sprint."
+- If no sprint doc is found, abort with: "No active sprint found. Run /trw-sprint-init first to create a sprint."
 
 ### Step 2: Read Sprint Document
 
@@ -106,20 +106,20 @@ After presenting the proposal, ask explicitly:
 
 - If the user approves ("yes", "looks good", "proceed", "go ahead"): continue to step 6.
 - If the user requests changes: revise the proposal and re-present. Repeat up to 3 iterations.
-- After 3 rejected iterations without approval: abort with "Team setup aborted after 3 revision cycles. Please run /sprint-team again when the team structure is clearer."
+- After 3 rejected iterations without approval: abort with "Team setup aborted after 3 revision cycles. Please run /trw-sprint-team again when the team structure is clearer."
 - Do NOT proceed to TeamCreate or teammate spawning without explicit user approval.
 
 ### Step 6: Generate Playbooks
 
-Invoke the `/team-playbook` skill with the approved structure:
+Invoke the `/trw-team-playbook` skill with the approved structure:
 - Pass the sprint doc path and approved teammate assignments as context.
-- The `/team-playbook` skill generates:
+- The `/trw-team-playbook` skill generates:
   - `scratch/team-playbooks/file_ownership.yaml`
   - `scratch/team-playbooks/interface-contract.yaml`
   - `scratch/team-playbooks/playbooks/tm-{name}.md` (one per teammate)
 
-Wait for `/team-playbook` to complete before proceeding. If it fails or the output artifacts are not found, abort with:
-"Playbook generation failed. Cannot spawn teammates without playbooks. Fix the /team-playbook error and retry."
+Wait for `/trw-team-playbook` to complete before proceeding. If it fails or the output artifacts are not found, abort with:
+"Playbook generation failed. Cannot spawn teammates without playbooks. Fix the /trw-team-playbook error and retry."
 
 Verify playbook artifacts exist before continuing:
 - Confirm `scratch/team-playbooks/file_ownership.yaml` exists
@@ -217,7 +217,7 @@ See: scratch/team-playbooks/file_ownership.yaml
 - Use Shift+Down to cycle through teammate panels
 - Use Ctrl+T for task list
 - Teammates will message you when tasks complete or when they need input
-- Run /sprint-finish when all tasks show 'completed' status
+- Run /trw-sprint-finish when all tasks show 'completed' status
 ```
 
 ## Shutdown Protocol
@@ -227,7 +227,7 @@ When all tasks are complete:
 2. Run `trw_build_check(scope="full")` to validate integration
 3. Send `shutdown_request` to each teammate via `SendMessage`
 4. After all teammates confirm shutdown, call `TeamDelete`
-5. Run `/deliver` for full ceremony
+5. Run `/trw-deliver` for full ceremony
 
 ## Rationalization Watchlist
 
@@ -252,10 +252,10 @@ If you catch yourself thinking any of these, stop and follow the process:
 
 ## Notes
 
-- This skill composites `/team-playbook` (step 6) — it does not duplicate playbook generation logic.
+- This skill composites `/trw-team-playbook` (step 6) — it does not duplicate playbook generation logic.
 - Only the team lead should run this skill — teammates cannot create teams.
-- If `/team-playbook` fails, abort before `TeamCreate` is called.
-- Sprint doc must exist before running — use `/sprint-init` first if needed.
+- If `/trw-team-playbook` fails, abort before `TeamCreate` is called.
+- Sprint doc must exist before running — use `/trw-sprint-init` first if needed.
 - The team name is derived from the sprint doc filename (e.g., `sprint-25-agent-teams-quality.md` -> `sprint-25-agent-teams-quality`).
 - One team per session — clean up the previous team first if one exists.
 - Maximum 5 teammates per team — coordination overhead grows quadratically beyond this.

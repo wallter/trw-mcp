@@ -1,9 +1,9 @@
 ---
-name: prd-groom
+name: trw-prd-groom
 description: >
   Groom a PRD to sprint-ready quality. Researches codebase,
   drafts missing sections, iterates until validation passes.
-  Use: /prd-groom PRD-CORE-020
+  Use: /trw-prd-groom PRD-CORE-020
 user-invocable: true
 argument-hint: "[PRD-ID or file path]"
 allowed-tools: Read, Grep, Glob, Edit, Write, WebSearch, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn

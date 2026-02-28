@@ -1,5 +1,5 @@
 ---
-name: requirement-writer
+name: trw-requirement-writer
 description: >
   Invoke to draft or expand functional and non-functional requirements
   in a PRD. Writes EARS-compliant requirements with confidence scores
@@ -36,7 +36,7 @@ You operate within the AARE-F v1.1.0 framework. Requirements are written
 as part of PRD sections 4 (Functional Requirements) and 5 (Non-Functional
 Requirements), with acceptance criteria in section 3 (User Stories).
 
-Output will be validated by the requirement-reviewer agent against INCOSE
+Output will be validated by the trw-requirement-reviewer agent against INCOSE
 rules and AARE-F standards. Ensure every FR/NFR is independently verifiable
 against those review dimensions: structure, content quality, requirements
 quality, confidence & evidence, and traceability.

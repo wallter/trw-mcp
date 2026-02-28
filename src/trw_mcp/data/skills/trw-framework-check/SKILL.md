@@ -1,10 +1,10 @@
 ---
-name: framework-check
+name: trw-framework-check
 description: >
   Check TRW framework compliance. Reports ceremony adherence,
   phase gate status, and active run health. Use when unsure if
   framework obligations are being met.
-  Use: /framework-check
+  Use: /trw-framework-check
 user-invocable: true
 allowed-tools: Read, Glob, Grep, mcp__trw__trw_status, mcp__trw__trw_recall
 ---

@@ -30,8 +30,8 @@ You MUST follow these rules. Violating ANY of them is a critical failure:
 3. **DO NOT remove TODO/FIXME comments** - These are intentional design markers
 4. **DO NOT remove PRD traceability comments** - Any comment matching `# PRD-XXX-NNN` must stay
 5. **DO NOT modify Pydantic ConfigDict settings** - `use_enum_values=True`, `populate_by_name=True`, etc. are load-bearing
-6. **DO NOT change atomic persistence patterns** - `lock_for_rmw`, temp-file-then-rename patterns are critical for data safety
-7. **DO NOT remove TRWConfig references** - Configuration imports and usage must remain
+6. **DO NOT change atomic persistence patterns** - Temp-file-then-rename patterns are critical for data safety
+7. **DO NOT remove configuration references** - Configuration imports and usage must remain
 8. **DO NOT alter public API signatures** - Function names, parameter names, parameter types, return types must not change
 9. **DO NOT remove imports used in type annotations** - Including `TYPE_CHECKING` block imports
 10. **DO NOT modify structlog calls** - `event` is a reserved keyword in structlog; do not rename or restructure logging calls

@@ -1,9 +1,9 @@
 ---
-name: commit
+name: trw-commit
 description: >
   Convention-enforced git commit. Analyzes changes, generates
   type(scope): msg format with WHY rationale and PRD-ID linking.
-  Use: /commit or /commit "optional message hint"
+  Use: /trw-commit or /trw-commit "optional message hint"
 user-invocable: true
 argument-hint: "[optional message hint]"
 allowed-tools: Read, Grep, Glob, Bash

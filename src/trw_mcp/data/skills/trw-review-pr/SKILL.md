@@ -1,10 +1,10 @@
 ---
-name: review-pr
+name: trw-review-pr
 description: >
   Structured code review using the FRAMEWORK.md rubric. Scores
   correctness, tests, security, performance, maintainability,
   and completeness. Use before merging.
-  Use: /review-pr [branch or PR number]
+  Use: /trw-review-pr [branch or PR number]
 user-invocable: true
 argument-hint: "[branch, PR number, or 'HEAD']"
 allowed-tools: Read, Glob, Grep, Bash, mcp__trw__trw_recall, mcp__trw__trw_build_check

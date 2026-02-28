@@ -1,9 +1,9 @@
 ---
-name: memory-optimize
+name: trw-memory-optimize
 description: >
   Optimize learning memory. Prunes stale entries, consolidates duplicates,
   rebalances tags. Interactive — confirms before deleting.
-  Use: /memory-optimize
+  Use: /trw-memory-optimize
 user-invocable: true
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__trw__trw_recall, mcp__trw__trw_learn_update, mcp__trw__trw_claude_md_sync
 ---
@@ -14,7 +14,7 @@ Optimize the TRW self-learning layer by pruning low-value entries, consolidating
 
 ## Workflow
 
-1. **Audit first**: Run the same analysis as `/memory-audit`:
+1. **Audit first**: Run the same analysis as `/trw-memory-audit`:
    - Call `trw_recall('*', compact=true)` for all learnings
    - Read `.trw/learnings/index.yaml`
    - Analyze tags, impact, staleness, duplicates
@@ -56,4 +56,4 @@ Optimize the TRW self-learning layer by pruning low-value entries, consolidating
 
 - Optimal learning layer size: 20-40 active entries
 - Run after major milestones (strip-downs, sprint completions) when many entries may be stale
-- Use `/memory-audit` first for a read-only preview
+- Use `/trw-memory-audit` first for a read-only preview

@@ -1,9 +1,9 @@
 ---
-name: memory-audit
+name: trw-memory-audit
 description: >
   Audit learning memory health. Shows tag distribution, impact spread,
   staleness, duplicate candidates, and recommendations. Read-only.
-  Use: /memory-audit
+  Use: /trw-memory-audit
 user-invocable: true
 allowed-tools: Read, Glob, Grep, mcp__trw__trw_recall
 ---
@@ -56,6 +56,6 @@ Analyze the health of TRW's self-learning memory layer and provide actionable re
 
 ## Notes
 
-- This skill is read-only — use `/memory-optimize` to act on recommendations
+- This skill is read-only — use `/trw-memory-optimize` to act on recommendations
 - Run periodically (every few sprints) to keep the learning layer healthy
 - The learning layer is most effective with 20-40 high-impact active entries

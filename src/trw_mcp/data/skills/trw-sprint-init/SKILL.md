@@ -1,9 +1,9 @@
 ---
-name: sprint-init
+name: trw-sprint-init
 description: >
   Initialize a new sprint. Lists draft PRDs, creates sprint doc,
   bootstraps run directory, sets up tracking.
-  Use: /sprint-init "Sprint 16: Skills Architecture"
+  Use: /trw-sprint-init "Sprint 16: Skills Architecture"
 user-invocable: true
 argument-hint: "[sprint name]"
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash, mcp__trw__trw_init, mcp__trw__trw_checkpoint
@@ -16,6 +16,13 @@ Initialize a new sprint by selecting PRDs, creating a sprint planning document, 
 ## Path Discovery
 
 Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate the PRD directory. The INDEX.md and sprints directories are siblings of the prds directory under the same parent.
+
+## Pre-flight: Prior Sprint Verification
+
+Before creating a new sprint, check that the prior sprint (N-1) has been properly archived:
+1. Look for `sprint-{N-1}*.md` in `sprints/completed/` or `archive/sprints/`
+2. If the prior sprint doc is still in `sprints/active/` or `sprints/planned/`, **warn** the user: "Sprint N-1 has not been completed yet. Run `/trw-sprint-finish` first, or acknowledge this gap."
+3. This is a **warning**, not a blocker -- the user can proceed if they acknowledge.
 
 ## Workflow
 
@@ -38,7 +45,32 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
 
 ## Sprint Document Template
 
-```markdown
+Sprint docs should include YAML frontmatter for machine-readable exit criteria. The `sprint-finish` skill reads this frontmatter for automated verification.
+
+````markdown
+---
+sprint: {N}
+coverage_threshold: 80
+exit_criteria:
+  - id: prd-status
+    description: All assigned PRDs reach done status
+    type: auto
+    verified: false
+  - id: build-gate
+    description: Build gate passes -- pytest + mypy clean
+    type: auto
+    command: "trw_build_check(scope='full')"
+    verified: false
+  - id: coverage
+    description: "Coverage >= {coverage_threshold}%"
+    type: auto
+    verified: false
+  - id: delivery
+    description: Delivery ceremony completed (/trw-deliver)
+    type: auto
+    verified: false
+---
+
 # {Sprint Name}
 
 **Created**: {date}
@@ -61,13 +93,13 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
 - Mid-sprint review: --
 - Sprint end: --
 
-## Completion Criteria
+## Exit Criteria
 
 - [ ] All assigned PRDs reach done status
 - [ ] Build gate passes: pytest + mypy clean
-- [ ] Coverage >= 80%
-- [ ] Delivery ceremony completed (/deliver)
-```
+- [ ] Coverage >= {coverage_threshold}%
+- [ ] Delivery ceremony completed (/trw-deliver)
+````
 
 ## After Grooming: Auto-Parallel Implementation
 
@@ -78,10 +110,11 @@ Once PRDs are groomed and approved, proceed to implementation automatically:
 3. **Launch parallel subagents**: One subagent per track (not per PRD). Each subagent implements its track's PRDs sequentially, writes tests, and validates
 4. **Final gate**: After all tracks complete, run `trw_build_check(scope="full")` to verify no cross-track regressions
 
-The user does not need to direct parallelism — this is the default behavior after PRD approval.
+The user does not need to direct parallelism -- this is the default behavior after PRD approval.
 
 ## Notes
 
 - Sprint docs live in the `sprints/active/` subdirectory while active
-- On sprint completion (`/sprint-finish`), the doc moves to `archive/sprints/`
+- On sprint completion (`/trw-sprint-finish`), the doc moves to `sprints/completed/` or `archive/sprints/`
 - Each sprint can have multiple tracks (A, B, C) for parallel work streams
+- The YAML frontmatter `exit_criteria` section enables machine-readable verification by `sprint-finish`
