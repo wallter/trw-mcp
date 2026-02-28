@@ -638,11 +638,14 @@ def _remove_stale_artifacts(
     prev_custom_hooks = set(prev_manifest.get("custom_hooks", []))
 
     # Stale skills: previously managed but no longer in current bundle
+    # Defense-in-depth: only remove trw-prefixed skills to protect custom artifacts
     stale_skills = prev_skills - bundled_skills
     target_skills = target_dir / ".claude" / "skills"
     if target_skills.is_dir():
         for skill_name in stale_skills:
             if skill_name in prev_custom_skills:
+                continue
+            if not skill_name.startswith("trw-"):
                 continue
             stale = target_skills / skill_name
             if stale.is_dir():
@@ -653,11 +656,14 @@ def _remove_stale_artifacts(
                     pass
 
     # Stale agents: previously managed but no longer in current bundle
+    # Defense-in-depth: only remove trw-prefixed agents to protect custom artifacts
     stale_agents = prev_agents - bundled_agents
     target_agents = target_dir / ".claude" / "agents"
     if target_agents.is_dir():
         for agent_name in stale_agents:
             if agent_name in prev_custom_agents:
+                continue
+            if not agent_name.startswith("trw-"):
                 continue
             stale = target_agents / agent_name
             if stale.is_file():

@@ -80,12 +80,12 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 
 | Phase | Exit Criteria | Skills | Cap |
 |-------|---------------|--------|-----|
-| RESEARCH | plan.md draft, >=3 evidence paths, formation selected. | `/framework-check` | 25% |
-| PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/sprint-init`, `/prd-new`, `/prd-groom`, `/prd-review` | 15% |
-| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. | `/test-strategy` | 35% |
-| VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | `/test-strategy` | 10% |
-| REVIEW | Critic reviewed, simplifications applied, reflection completed. | `/memory-audit` | 10% |
-| DELIVER | PR created OR archived, final.md, CLAUDE.md synced. | `/deliver`, `/sprint-finish` | 5% |
+| RESEARCH | plan.md draft, >=3 evidence paths, formation selected. | `/trw-framework-check` | 25% |
+| PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/trw-sprint-init`, `/trw-prd-new`, `/trw-prd-groom`, `/trw-prd-review` | 15% |
+| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. | `/trw-test-strategy` | 35% |
+| VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | `/trw-test-strategy` | 10% |
+| REVIEW | Critic reviewed, simplifications applied, reflection completed. | `/trw-memory-audit` | 10% |
+| DELIVER | PR created OR archived, final.md, CLAUDE.md synced. | `/trw-deliver`, `/trw-sprint-finish` | 5% |
 
 ORC tracks elapsed wall-clock against TIMEBOX_HOURS. ORC MUST NOT advance until exit criteria met OR cap exceeded with rationale. Refine plan until stable — fixing a plan is cheaper than rewriting code.
 
@@ -191,7 +191,7 @@ When `MCP_MODE: tool`, use these instead of manual equivalents. When `MCP_MODE: 
 | `trw_prd_validate(prd_path)` | PLAN | MUST | PRD quality gate check |
 | `trw_build_check(scope?)` | VALIDATE | MUST | Run pytest + mypy |
 
-Lifecycle: `trw_session_start → /sprint-init → /prd-new → /prd-groom → /prd-review → work + trw_checkpoint + trw_learn → trw_build_check → /deliver → /sprint-finish`
+Lifecycle: `trw_session_start → /trw-sprint-init → /trw-prd-new → /trw-prd-groom → /trw-prd-review → work + trw_checkpoint + trw_learn → trw_build_check → /trw-deliver → /trw-sprint-finish`
 
 Quick tasks: `trw_session_start → work → trw_learn [if discovery] → trw_deliver()`
 
@@ -205,16 +205,16 @@ Skills (`.claude/skills/`) are user-invocable workflows costing 0 tokens until t
 
 | Skill | Phase | What It Does |
 |-------|-------|--------------|
-| `/sprint-init` | PLAN | Survey draft PRDs, create sprint doc, bootstrap run |
-| `/prd-new` | PLAN | Generate AARE-F PRD from feature description |
-| `/prd-groom` | PLAN | Research + draft to sprint-ready quality (>=0.85) |
-| `/prd-review` | PLAN | 5-dimension quality review (READY/NEEDS WORK/BLOCK) |
-| `/test-strategy` | IMPLEMENT | Audit coverage gaps, suggest targeted tests |
-| `/deliver` | DELIVER | Build gate + `trw_deliver()` in one step |
-| `/sprint-finish` | DELIVER | Validate PRDs, build gate, archive, deliver |
-| `/memory-audit` | ANY | Read-only learning health report |
-| `/framework-check` | ANY | Ceremony compliance, run health, version check |
-| `/commit` | ANY | Convention-enforced git commit |
+| `/trw-sprint-init` | PLAN | Survey draft PRDs, create sprint doc, bootstrap run |
+| `/trw-prd-new` | PLAN | Generate AARE-F PRD from feature description |
+| `/trw-prd-groom` | PLAN | Research + draft to sprint-ready quality (>=0.85) |
+| `/trw-prd-review` | PLAN | 5-dimension quality review (READY/NEEDS WORK/BLOCK) |
+| `/trw-test-strategy` | IMPLEMENT | Audit coverage gaps, suggest targeted tests |
+| `/trw-deliver` | DELIVER | Build gate + `trw_deliver()` in one step |
+| `/trw-sprint-finish` | DELIVER | Validate PRDs, build gate, archive, deliver |
+| `/trw-memory-audit` | ANY | Read-only learning health report |
+| `/trw-framework-check` | ANY | Ceremony compliance, run health, version check |
+| `/trw-commit` | ANY | Convention-enforced git commit |
 
 | Agent | Model | Purpose |
 |-------|-------|---------|
@@ -223,11 +223,11 @@ Skills (`.claude/skills/`) are user-invocable workflows costing 0 tokens until t
 | `trw-tester` | Sonnet | Comprehensive tests, >=90% diff coverage, parametrized edge cases |
 | `trw-reviewer` | Opus | Adversarial code review + security audit (read-only, rubric-scored) |
 | `trw-researcher` | Sonnet | Codebase exploration, evidence gathering, structured findings |
-| `requirement-reviewer` | Sonnet | PRD quality review (5-dimension scoring) |
-| `prd-groomer` | Sonnet | Research + draft PRD sections to target quality |
-| `requirement-writer` | Sonnet | Draft EARS-compliant FR/NFRs |
-| `traceability-checker` | Haiku | Bidirectional traceability verification (cost-optimized) |
-| `code-simplifier` | Sonnet | Code simplification (10 preservation rules) |
+| `trw-requirement-reviewer` | Sonnet | PRD quality review (5-dimension scoring) |
+| `trw-prd-groomer` | Sonnet | Research + draft PRD sections to target quality |
+| `trw-requirement-writer` | Sonnet | Draft EARS-compliant FR/NFRs |
+| `trw-traceability-checker` | Haiku | Bidirectional traceability verification (cost-optimized) |
+| `trw-code-simplifier` | Sonnet | Code simplification (10 preservation rules) |
 
 If a skill fails, ORC MAY fall back to raw MCP tools. Skills encapsulate best-practice sequences — manual equivalents skip validation steps.
 
@@ -338,7 +338,7 @@ Agent Teams cannot resume. On resume: read `run.yaml` → `roster.yaml` → `tas
 - Reviewer/Auditor: Opus model (`trw-reviewer`), read-only tools, adversarial stance.
 - Implementer/Tester: Sonnet model (`trw-implementer`/`trw-tester`), cost-effective execution.
 - Researcher: Sonnet model (`trw-researcher`), read-only, evidence-based findings.
-- Trivial shards: Haiku model (`traceability-checker`) for simple lookups/extraction.
+- Trivial shards: Haiku model (`trw-traceability-checker`) for simple lookups/extraction.
 </team-rules>
 
 ---
@@ -424,9 +424,9 @@ Before IMPLEMENT: source identified (PRD/issue/request), acceptance criteria in 
 
 Before DELIVER: each REQ maps to implementation files and test files with PASS status.
 
-PRD lifecycle via skills: `/prd-new` → `/prd-groom` → `/prd-review`. Fallback: `trw_prd_create` + `trw_prd_validate`. Validation MUST pass before IMPLEMENT.
+PRD lifecycle via skills: `/trw-prd-new` → `/trw-prd-groom` → `/trw-prd-review`. Fallback: `trw_prd_create` + `trw_prd_validate`. Validation MUST pass before IMPLEMENT.
 
-**Execution Plans** (optional, recommended for P0/P1 PRDs): After `/prd-review` returns READY, generate an execution plan via `/exec-plan` that decomposes FRs into micro-tasks with file paths, test names, and verification commands. Stored at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`. Consumed by `/sprint-team` and `/team-playbook` during PLAN phase.
+**Execution Plans** (optional, recommended for P0/P1 PRDs): After `/trw-prd-review` returns READY, generate an execution plan via `/trw-exec-plan` that decomposes FRs into micro-tasks with file paths, test names, and verification commands. Stored at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`. Consumed by `/trw-sprint-team` and `/trw-team-playbook` during PLAN phase.
 
 ---
 
@@ -514,8 +514,8 @@ Use `TaskCreate` / `TaskUpdate`. P0: resolve immediately. P1: next wave shard. P
 | Workaround >2 retries | `trw_learn` + CLAUDE.md |
 | Non-obvious API behavior | `trw_learn` |
 | Environment-specific issue | `trw_learn` + root CLAUDE.md |
-| Task/sprint completion | `/deliver` or `/sprint-finish` |
-| >40 active learnings | `/memory-audit` |
+| Task/sprint completion | `/trw-deliver` or `/trw-sprint-finish` |
+| >40 active learnings | `/trw-memory-audit` |
 
 Root CLAUDE.md: max 200 lines. Sub-CLAUDE.md: max 50 lines, max depth 3.
 CLAUDE.md MUST be read at: session start, every PLAN phase, after errors, before major refactors.

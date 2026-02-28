@@ -116,6 +116,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
+    from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.report import register_report_tools
@@ -126,6 +127,7 @@ def _register_tools() -> None:
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
     register_checkpoint_tools(mcp)
+    register_knowledge_tools(mcp)
     register_learning_tools(mcp)
     register_orchestration_tools(mcp)
     register_report_tools(mcp)
