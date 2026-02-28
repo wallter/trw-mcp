@@ -162,6 +162,88 @@ Output a summary:
 - Wave count and estimated total time
 - File ownership summary
 - Execution plan file path
+- Test skeleton file path (if generated)
+
+### Step 10: Generate Test Skeletons
+
+Generate spec-first test stubs so tests exist BEFORE implementation. All tests SHOULD FAIL before code is written (TDD).
+
+For each FR in the execution plan:
+
+1. **Create test function stubs** with naming: `test_{fr_id}_{case_type}`
+   - `_happy` — primary acceptance criterion
+   - `_edge` — boundary/edge cases from acceptance criteria
+   - `_error` — error paths and negative cases
+
+2. **Include docstring** with the exact acceptance criterion text from the PRD
+
+3. **Add placeholder assertion**: `assert False, "TODO: implement — {acceptance criterion summary}"`
+
+4. **Parametrize** similar cases where multiple inputs share the same assertion pattern
+
+Write test skeleton to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.py`:
+
+```python
+"""
+Test skeletons for {PRD-ID}: {PRD title}
+Generated from PRD acceptance criteria — all tests MUST FAIL before implementation.
+"""
+import pytest
+
+
+# --- FR01: {FR title} ---
+
+def test_fr01_happy():
+    """Given {precondition}, When {action}, Then {expected result}."""
+    assert False, "TODO: implement — {acceptance criterion summary}"
+
+
+def test_fr01_edge():
+    """Given {edge case}, When {action}, Then {expected boundary behavior}."""
+    assert False, "TODO: implement — {edge case summary}"
+
+
+def test_fr01_error():
+    """Given {error condition}, When {action}, Then {error response}."""
+    assert False, "TODO: implement — {error case summary}"
+
+
+@pytest.mark.parametrize("input_val,expected", [
+    # (case_1_input, case_1_expected),
+    # (case_2_input, case_2_expected),
+])
+def test_fr01_parametrized(input_val, expected):
+    """Parametrized cases for FR01 acceptance criteria."""
+    assert False, "TODO: implement parametrized assertion"
+
+
+# --- FR02: {FR title} ---
+# ... repeat for each FR
+```
+
+Write manifest to `docs/requirements-aare-f/test-skeletons/MANIFEST-{PRD-ID}.yaml`:
+
+```yaml
+prd_id: PRD-{CATEGORY}-{SEQ}
+prd_title: "{title}"
+generated: "{ISO 8601 timestamp}"
+skeleton_file: "test-skeletons/TEST-SKELETON-{PRD-ID}.py"
+fr_coverage:
+  - fr_id: FR01
+    test_count: 3
+    tests:
+      - test_fr01_happy
+      - test_fr01_edge
+      - test_fr01_error
+  - fr_id: FR02
+    test_count: 3
+    tests:
+      - test_fr02_happy
+      - test_fr02_edge
+      - test_fr02_error
+total_tests: 6
+status: all_failing  # Expected — implementation has not started
+```
 
 ## Rationalization Watchlist
 
