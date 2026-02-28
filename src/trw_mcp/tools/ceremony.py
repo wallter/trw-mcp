@@ -19,7 +19,7 @@ from fastmcp import FastMCP
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.scoring import rank_by_utility
-from trw_mcp.state._paths import find_active_run, resolve_project_root, resolve_trw_dir
+from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
     mark_promoted,
@@ -292,11 +292,14 @@ def register_ceremony_tools(server: FastMCP) -> None:
             results["learnings"] = []
             results["learnings_count"] = 0
 
-        # Step 2: Check active run status
+        # Step 2: Check active run status (and pin it for this process)
         run_dir: Path | None = None
         try:
             run_dir = find_active_run()
             if run_dir is not None:
+                # Pin the discovered run so subsequent calls in this process
+                # use it, preventing telemetry hijack from parallel instances.
+                pin_active_run(run_dir)
                 results["run"] = _get_run_status(run_dir)
             else:
                 results["run"] = {"active_run": None, "status": "no_active_run"}
@@ -473,6 +476,29 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     "No trw_review was run before delivery. "
                     "Consider running trw_review for quality assurance."
                 )
+
+        # Step 0b: Build gate — warn if no successful build check (RC-003 + RC-006)
+        if resolved_run is not None:
+            try:
+                bg_events_path = resolved_run / "meta" / "events.jsonl"
+                if _reader.exists(bg_events_path):
+                    bg_events = _reader.read_jsonl(bg_events_path)
+                    def _build_passed(ev: dict[str, object]) -> bool:
+                        if str(ev.get("event", "")) != "build_check_complete":
+                            return False
+                        data = ev.get("data")
+                        if isinstance(data, dict):
+                            return data.get("tests_passed") is True
+                        return False
+
+                    build_passed = any(_build_passed(e) for e in bg_events)
+                    if not build_passed:
+                        results["build_gate_warning"] = (
+                            "No successful build check found before delivery. "
+                            "Run trw_build_check() to verify tests pass and mypy is clean."
+                        )
+            except Exception:
+                pass  # Fail-open: build gate check should not block delivery
 
         # Premature delivery guard: warn if run has only init/ceremony events
         if resolved_run is not None:

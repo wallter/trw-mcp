@@ -16,6 +16,38 @@ from trw_mcp.state.persistence import FileStateReader
 _config = get_config()
 _reader = FileStateReader()
 
+# --- Process-local run pinning (RC-001 fix) ---
+# Each Claude Code instance spawns its own MCP process (stdio transport).
+# trw_init pins the run it creates so all subsequent find_active_run() calls
+# in THIS process return it, preventing telemetry hijack when parallel
+# instances share the same filesystem.
+_pinned_run_dir: Path | None = None
+
+
+def pin_active_run(run_dir: Path) -> None:
+    """Pin a run directory as the active run for this process.
+
+    After pinning, find_active_run() returns this directory instead of
+    scanning the filesystem. This prevents telemetry hijack when multiple
+    instances share the same project root.
+
+    Args:
+        run_dir: Absolute path to the run directory to pin.
+    """
+    global _pinned_run_dir  # noqa: PLW0603
+    _pinned_run_dir = run_dir.resolve()
+
+
+def unpin_active_run() -> None:
+    """Remove the process-local run pin, reverting to filesystem scan."""
+    global _pinned_run_dir  # noqa: PLW0603
+    _pinned_run_dir = None
+
+
+def get_pinned_run() -> Path | None:
+    """Return the currently pinned run directory, or None."""
+    return _pinned_run_dir
+
 
 def resolve_memory_store_path() -> Path:
     """Resolve the sqlite-vec memory store database path.
@@ -81,15 +113,23 @@ def _find_latest_run_dir(base_dir: Path) -> Path | None:
 
 
 def find_active_run() -> Path | None:
-    """Find the most recent active run directory by lexicographic name.
+    """Find the active run directory for this process.
 
-    Scans ``{task_root}/*/runs/*/meta/run.yaml`` and returns the run
-    directory with the highest-sorting name (ISO timestamp prefix ensures
-    chronological ordering).
+    Resolution order:
+    1. Process-local pinned run (set by ``pin_active_run`` during ``trw_init``)
+    2. Filesystem scan: ``{task_root}/*/runs/*/meta/run.yaml``, highest
+       lexicographic name (ISO timestamp prefix ensures chronological ordering)
+
+    The pinned run prevents telemetry hijack when multiple Claude Code
+    instances share the same filesystem — each instance's MCP process
+    pins its own run at init time.
 
     Returns:
         Path to run directory, or None if no active run found.
     """
+    if _pinned_run_dir is not None:
+        return _pinned_run_dir
+
     try:
         project_root = resolve_project_root()
         task_root = project_root / _config.task_root
@@ -162,16 +202,28 @@ def resolve_run_path(run_path: str | None = None) -> Path:
 
 
 def detect_current_phase() -> str | None:
-    """Detect the current phase from the most recent active run.
+    """Detect the current phase from the active run.
 
-    Scans ``{task_root}/*/runs/`` for the latest ``run.yaml`` with
-    ``status: active`` and returns its ``phase`` field.  Selects the
-    run directory by lexicographic name (newest naming convention wins).
+    Resolution order:
+    1. Pinned run directory (process-local, set by ``trw_init``)
+    2. Filesystem scan: ``{task_root}/*/runs/`` for the latest ``run.yaml``
+
+    Only returns a phase when the run's ``status`` is ``"active"``.
 
     Returns:
         Current phase string (e.g. ``"implement"``), or ``None`` if no active run.
     """
     try:
+        # Use pinned run if available
+        if _pinned_run_dir is not None:
+            run_yaml = _pinned_run_dir / "meta" / "run.yaml"
+            if run_yaml.exists():
+                data = _reader.read_yaml(run_yaml)
+                if str(data.get("status", "")) != "active":
+                    return None
+                return str(data.get("phase", "")) or None
+            return None
+
         task_root = resolve_project_root() / _config.task_root
         if not task_root.exists():
             return None

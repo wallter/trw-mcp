@@ -21,7 +21,7 @@ from trw_mcp.models.run import (
     RunState,
     RunStatus,
 )
-from trw_mcp.state._paths import resolve_project_root, resolve_run_path
+from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
 from trw_mcp.state.analytics_report import count_stale_runs
 from trw_mcp.state.persistence import (
     FileEventLogger,
@@ -162,6 +162,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             model_to_dict(run_state),
         )
 
+        # Pin this run as the active run for this process (RC-001 fix).
+        # Prevents telemetry hijack when parallel instances share filesystem.
+        pin_active_run(run_root)
+
         _events.log_event(
             run_root / "meta" / "events.jsonl",
             "run_init",
@@ -251,6 +255,39 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # Reversion frequency metrics
         reversion_metrics = _compute_reversion_metrics(events)
         result["reversions"] = reversion_metrics
+
+        # Last activity tracking (RC-002: detect stale/abandoned tracks)
+        checkpoints_path = meta_path / "checkpoints.jsonl"
+        if checkpoints_path.exists():
+            checkpoints = _reader.read_jsonl(checkpoints_path)
+            if checkpoints:
+                last_cp = checkpoints[-1]
+                last_ts = str(last_cp.get("ts", ""))
+                result["last_activity_ts"] = last_ts
+                if last_ts:
+                    try:
+                        last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        delta_hours = (now - last_dt).total_seconds() / 3600
+                        result["hours_since_activity"] = round(delta_hours, 1)
+                    except (ValueError, TypeError):
+                        pass
+        if "last_activity_ts" not in result:
+            # Fall back to run.yaml creation (run_init event)
+            run_init_events = [
+                e for e in events if str(e.get("event", "")) == "run_init"
+            ]
+            if run_init_events:
+                init_ts = str(run_init_events[0].get("ts", ""))
+                if init_ts:
+                    result["last_activity_ts"] = init_ts
+                    try:
+                        init_dt = datetime.fromisoformat(init_ts.replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        delta_hours = (now - init_dt).total_seconds() / 3600
+                        result["hours_since_activity"] = round(delta_hours, 1)
+                    except (ValueError, TypeError):
+                        pass
 
         # Stale framework version warning
         version_warning = _check_framework_version_staleness(

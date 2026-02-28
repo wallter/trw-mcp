@@ -2048,3 +2048,42 @@ def check_integration(source_dir: Path) -> dict[str, object]:
             "test_pattern": "tools/X.py → tests/test_tools_X.py",
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# RC-004: Sprint exit criteria parser
+# ---------------------------------------------------------------------------
+
+_EXIT_CRITERIA_RE = re.compile(r"^##\s*Exit\s+Criteria", re.IGNORECASE | re.MULTILINE)
+_CHECKBOX_RE = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.+)$", re.MULTILINE)
+
+
+def parse_exit_criteria(sprint_md: str) -> list[dict[str, object]]:
+    """Parse exit criteria checkboxes from a sprint markdown document.
+
+    Extracts ``- [ ]`` (unchecked) and ``- [x]`` (checked) lines from
+    the "Exit Criteria" section. Stops at the next ``##`` heading or EOF.
+
+    Args:
+        sprint_md: Full sprint markdown content.
+
+    Returns:
+        List of dicts with ``text`` (str) and ``checked`` (bool) keys.
+    """
+    # Find the Exit Criteria section
+    match = _EXIT_CRITERIA_RE.search(sprint_md)
+    if match is None:
+        return []
+
+    # Extract section content until next ## heading or EOF
+    start = match.end()
+    next_heading = re.search(r"^##\s", sprint_md[start:], re.MULTILINE)
+    section = sprint_md[start:start + next_heading.start()] if next_heading else sprint_md[start:]
+
+    criteria: list[dict[str, object]] = []
+    for cb_match in _CHECKBOX_RE.finditer(section):
+        checked = cb_match.group(1).strip().lower() == "x"
+        text = cb_match.group(2).strip()
+        criteria.append({"text": text, "checked": checked})
+
+    return criteria
