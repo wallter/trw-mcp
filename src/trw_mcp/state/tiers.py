@@ -618,10 +618,59 @@ class TierManager:
                 logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
                 errors += 1
 
-        # 2. Warm → Cold: scan entries/ directory for idle low-importance entries
+        # 2. Warm → Cold: scan entries for idle low-importance entries
+        #    PRD-FIX-033-FR05: Uses SQLite via list_active_learnings when
+        #    available, falling back to YAML glob on error.
         #    Uses compute_importance_score (Stanford Generative Agents formula)
         #    instead of raw impact for more nuanced tier transition decisions.
-        if entries_dir.exists():
+        _used_sqlite = False
+        try:
+            from trw_mcp.state.memory_adapter import (
+                find_yaml_path_for_entry,
+                list_active_learnings,
+            )
+            active_entries = list_active_learnings(self._trw_dir)
+            for data in active_entries:
+                entry_id = str(data.get("id", ""))
+                if not entry_id:
+                    continue
+                try:
+                    days = _days_since_access(data, today)
+                    importance = compute_importance_score(data, [], config=cfg)
+                    if days > cfg.memory_cold_threshold_days and importance < 0.22:
+                        # Resolve YAML path for cold_archive
+                        yaml_file = find_yaml_path_for_entry(self._trw_dir, entry_id)
+                        if yaml_file is None:
+                            logger.warning(
+                                "sweep_warm_to_cold_no_yaml",
+                                entry_id=entry_id,
+                            )
+                            continue
+                        self.cold_archive(entry_id, yaml_file)
+                        demoted += 1
+                        logger.debug(
+                            "sweep_warm_to_cold",
+                            entry_id=entry_id,
+                            days=days,
+                            importance_score=importance,
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "sweep_warm_to_cold_failed",
+                        entry_id=entry_id,
+                        exc_info=True,
+                    )
+                    errors += 1
+            _used_sqlite = True
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "sqlite_read_fallback",
+                step="sweep_warm_to_cold",
+                reason="list_active_learnings failed",
+            )
+
+        if not _used_sqlite and entries_dir.exists():
+            # YAML fallback path (original implementation)
             for yaml_file in sorted(entries_dir.glob("*.yaml")):
                 if yaml_file.name == "index.yaml":
                     continue

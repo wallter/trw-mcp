@@ -23,12 +23,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from trw_mcp.bootstrap import (
+    PREDECESSOR_MAP,
+    _CONTEXT_ALLOWLIST,
     _check_package_version,
+    _cleanup_context_transients,
     _copy_file,
     _files_identical,
     _generate_mcp_json,
     _get_bundled_names,
     _merge_mcp_json,
+    _migrate_prefix_predecessors,
     _minimal_claude_md,
     _minimal_claude_md_trw_block,
     _pip_install_package,
@@ -1015,3 +1019,320 @@ class TestUpdateCreatesMissingFrameworkFiles:
 
         assert hook_path.exists()
         assert any("session-start.sh" in c for c in result["created"])
+
+
+# ---------------------------------------------------------------------------
+# Context Cleanup Edge Cases (PRD-FIX-031)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestContextCleanupEdgeCases:
+    """Edge case tests for _cleanup_context_transients — PRD-FIX-031."""
+
+    def test_cleanup_skips_directories(self, tmp_path: Path) -> None:
+        """Subdirectory named like a transient pattern is NOT deleted."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        subdir = context / "tc_block_subdir"
+        subdir.mkdir()
+        (subdir / "data.txt").write_text("keep me", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert subdir.is_dir()
+        assert (subdir / "data.txt").exists()
+        assert result["cleaned"] == []
+
+    def test_cleanup_skips_symlinks(self, tmp_path: Path) -> None:
+        """Symlink in context dir is NOT deleted."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        real_file = tmp_path / "real_data.txt"
+        real_file.write_text("important data", encoding="utf-8")
+        symlink = context / "stale_link.yaml"
+        symlink.symlink_to(real_file)
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert symlink.is_symlink()
+        assert real_file.exists()
+        assert result["cleaned"] == []
+
+    def test_cleanup_missing_context_dir(self, tmp_path: Path) -> None:
+        """No error when .trw/context/ does not exist."""
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert result["cleaned"] == []
+        assert result["errors"] == []
+
+    def test_cleanup_oserror_appended_to_errors(self, tmp_path: Path) -> None:
+        """OSError on unlink is appended to result['errors']."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        stale = context / "velocity.yaml"
+        stale.write_text("stale", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        with patch.object(Path, "unlink", side_effect=OSError("permission denied")):
+            _cleanup_context_transients(tmp_path, result)
+
+        assert len(result["errors"]) == 1
+        assert "permission denied" in result["errors"][0]
+        assert result["cleaned"] == []
+
+    def test_cleanup_empty_context_dir(self, tmp_path: Path) -> None:
+        """Empty context dir produces no errors and empty cleaned list."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert result["cleaned"] == []
+        assert result["errors"] == []
+
+    def test_cleanup_glob_pattern_tc_block(self, tmp_path: Path) -> None:
+        """File named tc_block_session_abc is deleted."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        stale = context / "tc_block_session_abc"
+        stale.write_text("", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert not stale.exists()
+        assert len(result["cleaned"]) == 1
+
+    def test_cleanup_glob_pattern_idle_block(self, tmp_path: Path) -> None:
+        """File named idle_block_lead is deleted."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        stale = context / "idle_block_lead"
+        stale.write_text("", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert not stale.exists()
+        assert len(result["cleaned"]) == 1
+
+    def test_cleanup_glob_pattern_findings(self, tmp_path: Path) -> None:
+        """File named sprint-34-findings.yaml is deleted."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        stale = context / "sprint-34-findings.yaml"
+        stale.write_text("", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert not stale.exists()
+        assert len(result["cleaned"]) == 1
+
+    def test_cleanup_velocity_yaml(self, tmp_path: Path) -> None:
+        """File named velocity.yaml is deleted (not in allowlist)."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        stale = context / "velocity.yaml"
+        stale.write_text("sprints: []", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert not stale.exists()
+        assert len(result["cleaned"]) == 1
+
+    def test_cleanup_tool_telemetry(self, tmp_path: Path) -> None:
+        """File named tool-telemetry.jsonl is deleted."""
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        stale = context / "tool-telemetry.jsonl"
+        stale.write_text('{"ts":"2026-01-01"}\n', encoding="utf-8")
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert not stale.exists()
+        assert len(result["cleaned"]) == 1
+
+    def test_update_project_cleans_context_end_to_end(
+        self, initialized_repo: Path
+    ) -> None:
+        """Full update_project() call removes stale context files end-to-end."""
+        context = initialized_repo / ".trw" / "context"
+        # Create a mix of allowlisted and transient files
+        for name in _CONTEXT_ALLOWLIST:
+            (context / name).write_text("preserved", encoding="utf-8")
+        stale_files = [
+            "tc_block_session123",
+            "idle_block_x",
+            "sprint-34-findings.yaml",
+            "velocity.yaml",
+            "tool-telemetry.jsonl",
+            "hook-executions.log",
+        ]
+        for name in stale_files:
+            (context / name).write_text("stale", encoding="utf-8")
+
+        result = update_project(initialized_repo)
+
+        # All allowlisted files preserved
+        for name in _CONTEXT_ALLOWLIST:
+            assert (context / name).exists(), f"Allowlisted file deleted: {name}"
+        # All stale files removed
+        for name in stale_files:
+            assert not (context / name).exists(), f"Stale file not removed: {name}"
+        # Result reflects the cleanup
+        assert len(result["cleaned"]) == len(stale_files)
+        assert "cleaned" in result
+
+
+# ── PRD-FIX-032: Prefix Migration Edge Cases ─────────────────────────
+
+
+@pytest.mark.unit
+class TestPrefixMigrationExtra:
+    """Edge-case tests for _migrate_prefix_predecessors and manifest cleanup."""
+
+    def test_migrate_oserror_resilience(self, tmp_path: Path) -> None:
+        """OSError during shutil.rmtree skips the item and continues."""
+        target = tmp_path
+        skills_dir = target / ".claude" / "skills"
+        skills_dir.mkdir(parents=True)
+        # Create two predecessor/successor pairs
+        for old, new in [("commit", "trw-commit"), ("deliver", "trw-deliver")]:
+            (skills_dir / old).mkdir()
+            (skills_dir / old / "SKILL.md").write_text("old", encoding="utf-8")
+            (skills_dir / new).mkdir()
+            (skills_dir / new / "SKILL.md").write_text("new", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        call_count = 0
+
+        original_rmtree = shutil.rmtree
+
+        def failing_rmtree(path: Path, *args: object, **kwargs: object) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise OSError("permission denied")
+            original_rmtree(path)  # type: ignore[arg-type]
+
+        with patch("trw_mcp.bootstrap.shutil.rmtree", side_effect=failing_rmtree):
+            _migrate_prefix_predecessors(target, result)
+
+        # No exception raised; at least one predecessor was processed
+        # (the first one failed, the second should succeed)
+        assert not result.get("errors")
+
+    def test_dry_run_migration_reports_would_migrate(
+        self, initialized_repo: Path
+    ) -> None:
+        """dry_run=True appends 'would migrate:' without deleting."""
+        skills_dir = initialized_repo / ".claude" / "skills"
+        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "trw-commit").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "trw-commit" / "SKILL.md").write_text("new", encoding="utf-8")
+
+        result = update_project(initialized_repo, dry_run=True)
+
+        # Old dir still present
+        assert (skills_dir / "commit").exists()
+        # "would migrate:" entry in result
+        would_migrate = [
+            e for e in result["updated"] if "would migrate:" in e and "commit" in e
+        ]
+        assert len(would_migrate) >= 1
+
+    def test_manifest_excludes_predecessor_names_from_custom(
+        self, initialized_repo: Path
+    ) -> None:
+        """Predecessor names are excluded from custom_skills in manifest."""
+        skills_dir = initialized_repo / ".claude" / "skills"
+        # Create predecessor dir so _get_custom_names would classify it as custom
+        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
+
+        # Write manifest directly and check filtering
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _write_manifest(initialized_repo, result)
+
+        manifest = _read_manifest(initialized_repo)
+        assert manifest is not None
+        # "commit" should NOT appear in custom_skills
+        assert "commit" not in manifest.get("custom_skills", [])
+
+    def test_migrate_prefix_predecessors_direct_call(
+        self, tmp_path: Path
+    ) -> None:
+        """Direct call removes both skill dirs and agent files."""
+        target = tmp_path
+        skills_dir = target / ".claude" / "skills"
+        agents_dir = target / ".claude" / "agents"
+        skills_dir.mkdir(parents=True)
+        agents_dir.mkdir(parents=True)
+
+        # Skill predecessor + successor
+        (skills_dir / "simplify").mkdir()
+        (skills_dir / "simplify" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "trw-simplify").mkdir()
+        (skills_dir / "trw-simplify" / "SKILL.md").write_text("new", encoding="utf-8")
+
+        # Agent predecessor + successor
+        (agents_dir / "lead.md").write_text("old", encoding="utf-8")
+        (agents_dir / "trw-lead.md").write_text("new", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _migrate_prefix_predecessors(target, result)
+
+        assert not (skills_dir / "simplify").exists()
+        assert not (agents_dir / "lead.md").exists()
+        assert (skills_dir / "trw-simplify").exists()
+        assert (agents_dir / "trw-lead.md").exists()
+        migrated = [e for e in result["updated"] if "migrated:" in e]
+        assert len(migrated) == 2
+
+    def test_migrate_no_skills_dir_no_error(self, tmp_path: Path) -> None:
+        """No error when .claude/skills/ directory does not exist."""
+        target = tmp_path
+        # Only create agents dir, not skills
+        (target / ".claude" / "agents").mkdir(parents=True)
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _migrate_prefix_predecessors(target, result)
+
+        assert not result["errors"]
+        assert result["updated"] == []
+
+    def test_migrate_no_agents_dir_no_error(self, tmp_path: Path) -> None:
+        """No error when .claude/agents/ directory does not exist."""
+        target = tmp_path
+        # Only create skills dir, not agents
+        (target / ".claude" / "skills").mkdir(parents=True)
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _migrate_prefix_predecessors(target, result)
+
+        assert not result["errors"]
+        assert result["updated"] == []
+
+    def test_predecessor_map_keys_not_in_bundled(self) -> None:
+        """No PREDECESSOR_MAP key appears in _get_bundled_names() output."""
+        bundled = _get_bundled_names()
+        bundled_skills = set(bundled["skills"])
+        bundled_agents = set(bundled["agents"])
+
+        for old_skill in PREDECESSOR_MAP["skills"]:
+            assert old_skill not in bundled_skills, (
+                f"Predecessor skill '{old_skill}' found in bundled names"
+            )
+        for old_agent in PREDECESSOR_MAP["agents"]:
+            assert old_agent not in bundled_agents, (
+                f"Predecessor agent '{old_agent}' found in bundled names"
+            )

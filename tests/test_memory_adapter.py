@@ -6,13 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.models.config import get_config
 from trw_mcp.state import memory_adapter
 from trw_mcp.state.memory_adapter import (
     count_entries,
     ensure_migrated,
     find_entry_by_id,
+    find_yaml_path_for_entry,
     get_backend,
     list_active_learnings,
+    list_entries_by_status,
     recall_learnings,
     reset_backend,
     store_learning,
@@ -356,3 +359,108 @@ class TestUtilities:
 
     def test_find_entry_by_id_not_found(self, trw_dir: Path) -> None:
         assert find_entry_by_id(trw_dir, "L-nope") is None
+
+
+# ===========================================================================
+# PRD-FIX-033: Deliver Performance — SQLite Migration Tests
+# ===========================================================================
+
+
+class TestListEntriesByStatus:
+    """PRD-FIX-033-FR01: list_entries_by_status returns entries as dicts."""
+
+    def test_active_filter(self, trw_dir: Path) -> None:
+        """Returns only active entries by default."""
+        store_learning(trw_dir, "L-les1", "Summary1", "Detail1", impact=0.8)
+        store_learning(trw_dir, "L-les2", "Summary2", "Detail2", impact=0.5)
+        update_learning(trw_dir, "L-les2", status="obsolete")
+
+        result = list_entries_by_status(trw_dir, status="active")
+        ids = [str(e["id"]) for e in result]
+        assert "L-les1" in ids
+        assert "L-les2" not in ids
+
+    def test_min_impact_filter(self, trw_dir: Path) -> None:
+        """Filters by minimum impact score."""
+        store_learning(trw_dir, "L-mi1", "High", "d", impact=0.9)
+        store_learning(trw_dir, "L-mi2", "Low", "d", impact=0.1)
+
+        result = list_entries_by_status(trw_dir, min_impact=0.5)
+        ids = [str(e["id"]) for e in result]
+        assert "L-mi1" in ids
+        assert "L-mi2" not in ids
+
+    def test_invalid_status_returns_empty(self, trw_dir: Path) -> None:
+        """Invalid status string returns empty list."""
+        result = list_entries_by_status(trw_dir, status="bogus_status")
+        assert result == []
+
+    def test_dict_fields_present(self, trw_dir: Path) -> None:
+        """Returned dicts contain expected learning fields."""
+        store_learning(trw_dir, "L-df1", "Summary", "Detail", impact=0.5)
+        result = list_entries_by_status(trw_dir)
+        assert len(result) >= 1
+        entry = result[0]
+        assert "id" in entry
+        assert "summary" in entry
+        assert "impact" in entry
+        assert "status" in entry
+
+    def test_resolved_status(self, trw_dir: Path) -> None:
+        """Can filter by resolved status."""
+        store_learning(trw_dir, "L-rs1", "Will resolve", "d", impact=0.5)
+        update_learning(trw_dir, "L-rs1", status="resolved")
+
+        result = list_entries_by_status(trw_dir, status="resolved")
+        ids = [str(e["id"]) for e in result]
+        assert "L-rs1" in ids
+
+
+class TestFindYamlPathForEntry:
+    """PRD-FIX-033-FR05: find_yaml_path_for_entry resolves YAML paths."""
+
+    def test_finds_existing_yaml(self, trw_dir: Path) -> None:
+        """Finds YAML file when it exists with sanitized name."""
+        from trw_mcp.state.persistence import FileStateWriter
+
+        cfg_obj = get_config()
+        entries_dir = trw_dir / cfg_obj.learnings_dir / cfg_obj.entries_dir
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        writer = FileStateWriter()
+        yaml_path = entries_dir / "L-test1.yaml"
+        writer.write_yaml(yaml_path, {"id": "L-test1", "summary": "test"})
+
+        result = find_yaml_path_for_entry(trw_dir, "L-test1")
+        assert result is not None
+        assert result.name == "L-test1.yaml"
+
+    def test_missing_entry_returns_none(self, trw_dir: Path) -> None:
+        """Returns None when entry does not exist."""
+        cfg_obj = get_config()
+        entries_dir = trw_dir / cfg_obj.learnings_dir / cfg_obj.entries_dir
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        result = find_yaml_path_for_entry(trw_dir, "L-nonexistent")
+        assert result is None
+
+    def test_no_entries_dir_returns_none(self, trw_dir: Path) -> None:
+        """Returns None when entries directory does not exist."""
+        result = find_yaml_path_for_entry(trw_dir, "L-any")
+        assert result is None
+
+    def test_date_prefixed_filename(self, trw_dir: Path) -> None:
+        """Finds YAML file with date-prefixed filename containing entry ID."""
+        from trw_mcp.state.persistence import FileStateWriter
+
+        cfg_obj = get_config()
+        entries_dir = trw_dir / cfg_obj.learnings_dir / cfg_obj.entries_dir
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        writer = FileStateWriter()
+        yaml_path = entries_dir / "2026-02-01-L-dated1-summary-words.yaml"
+        writer.write_yaml(yaml_path, {"id": "L-dated1", "summary": "test"})
+
+        result = find_yaml_path_for_entry(trw_dir, "L-dated1")
+        assert result is not None
+        assert "L-dated1" in result.stem

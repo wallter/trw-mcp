@@ -657,6 +657,63 @@ def list_active_learnings(
     return results
 
 
+def list_entries_by_status(
+    trw_dir: Path,
+    *,
+    status: str = "active",
+    min_impact: float = 0.0,
+    limit: int = 10_000,
+) -> list[dict[str, object]]:
+    """Return all entries with the given status as learning dicts.
+
+    PRD-FIX-033-FR01: Single SQLite query for bulk entry retrieval.
+    """
+    try:
+        mem_status = MemoryStatus(status)
+    except ValueError:
+        return []
+    backend = get_backend(trw_dir)
+    entries = backend.list_entries(
+        status=mem_status,
+        namespace=_NAMESPACE,
+        limit=limit,
+    )
+    results: list[dict[str, object]] = []
+    for entry in entries:
+        if entry.importance >= min_impact:
+            results.append(_memory_to_learning_dict(entry))
+    return results
+
+
+def find_yaml_path_for_entry(trw_dir: Path, entry_id: str) -> Path | None:
+    """Resolve the YAML file path for a given entry_id.
+
+    PRD-FIX-033-FR05: YAML path resolution for cold archive calls.
+    """
+    import re as _re
+
+    cfg = get_config()
+    entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
+    if not entries_dir.exists():
+        return None
+
+    sanitized = _re.sub(r"[^a-zA-Z0-9_\-]", "-", entry_id)
+
+    # Try exact match first
+    candidate = entries_dir / f"{sanitized}.yaml"
+    if candidate.exists():
+        return candidate
+
+    # Fall back to partial match
+    for yaml_file in entries_dir.glob("*.yaml"):
+        if yaml_file.name == "index.yaml":
+            continue
+        if sanitized in yaml_file.stem or entry_id in yaml_file.stem:
+            return yaml_file
+
+    return None
+
+
 def count_entries(trw_dir: Path) -> int:
     """Return total number of entries in the SQLite store."""
     backend = get_backend(trw_dir)

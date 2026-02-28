@@ -937,6 +937,8 @@ def compute_jaccard_similarity(a: str, b: str) -> float:
 def find_duplicate_learnings(
     entries_dir: Path,
     threshold: float = 0.8,
+    *,
+    entries: list[dict[str, object]] | None = None,
 ) -> list[tuple[str, str, float]]:
     """Find duplicate learning entries by Jaccard similarity on summaries.
 
@@ -944,20 +946,32 @@ def find_duplicate_learnings(
     overlap above the threshold. The older entry in each pair is the
     candidate for dedup (pruning).
 
+    PRD-FIX-033-FR03: When *entries* is provided (pre-loaded from SQLite),
+    skip ``_iter_entry_files()`` and compute Jaccard directly on the list.
+
     Args:
         entries_dir: Path to entries directory.
         threshold: Minimum Jaccard similarity to flag as duplicate.
+        entries: Optional pre-loaded list of entry dicts. When provided,
+            the YAML scan is skipped entirely.
 
     Returns:
         List of (older_id, newer_id, similarity) tuples.
     """
-    if not entries_dir.is_dir():
-        return []
-
-    active_entries: list[dict[str, object]] = []
-    for _path, data in _iter_entry_files(entries_dir, sorted_order=True):
-        if str(data.get("status", "active")) == "active":
-            active_entries.append(data)
+    if entries is not None:
+        # PRD-FIX-033-FR03: Use pre-loaded entries (from SQLite)
+        active_entries = [
+            e for e in entries
+            if str(e.get("status", "active")) == "active"
+        ]
+    else:
+        # Backward-compatible YAML scan path
+        if not entries_dir.is_dir():
+            return []
+        active_entries = []
+        for _path, data in _iter_entry_files(entries_dir, sorted_order=True):
+            if str(data.get("status", "active")) == "active":
+                active_entries.append(data)
 
     duplicates: list[tuple[str, str, float]] = []
     for i, entry_a in enumerate(active_entries):
@@ -986,6 +1000,9 @@ def auto_prune_excess_entries(
     2. Marks older duplicates as obsolete
     3. If still over limit, prunes lowest-utility entries
 
+    PRD-FIX-033-FR02: Uses SQLite via ``list_entries_by_status`` for entry
+    loading instead of YAML glob.  Falls back to YAML on SQLite error.
+
     Args:
         trw_dir: Path to .trw directory.
         max_entries: Trigger threshold for auto-pruning.
@@ -1001,6 +1018,71 @@ def auto_prune_excess_entries(
     if not entries_dir.is_dir():
         return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0}
 
+    # PRD-FIX-033-FR02: Try SQLite first, fall back to YAML
+    sqlite_entries: list[dict[str, object]] | None = None
+    try:
+        from trw_mcp.state.memory_adapter import list_entries_by_status
+        sqlite_entries = list_entries_by_status(trw_dir, status="active")
+    except Exception:  # noqa: BLE001
+        logger.warning("sqlite_read_fallback", step="auto_prune", reason="get_backend failed")
+
+    if sqlite_entries is not None:
+        # SQLite path: use pre-loaded entries
+        active_count = len(sqlite_entries)
+
+        if active_count <= max_entries:
+            return {
+                "dedup_candidates": [],
+                "utility_candidates": [],
+                "actions_taken": 0,
+                "active_count": active_count,
+                "threshold": max_entries,
+            }
+
+        # Step 1: Jaccard dedup using pre-loaded entries (FR03)
+        duplicates = find_duplicate_learnings(
+            entries_dir, jaccard_threshold, entries=sqlite_entries,
+        )
+        dedup_ids = {older_id for older_id, _newer_id, _sim in duplicates}
+
+        actions = 0
+        if not dry_run:
+            for dup_id in dedup_ids:
+                apply_status_update(trw_dir, dup_id, "obsolete")
+                actions += 1
+
+        # Step 2: Utility-based pruning — build (Path, dict) tuples
+        # Path is unused by utility_based_prune_candidates (verified in Phase 1)
+        dummy_path = entries_dir / "_dummy.yaml"
+        all_entries_tuples: list[tuple[Path, dict[str, object]]] = [
+            (dummy_path, e) for e in sqlite_entries
+        ]
+        utility_candidates = utility_based_prune_candidates(all_entries_tuples)
+
+        if not dry_run:
+            for candidate in utility_candidates:
+                cid = str(candidate.get("id", ""))
+                if cid and cid not in dedup_ids:
+                    suggested = str(candidate.get("suggested_status", ""))
+                    if suggested in ("resolved", "obsolete"):
+                        apply_status_update(trw_dir, cid, suggested)
+                        actions += 1
+
+            if actions > 0:
+                resync_learning_index(trw_dir)
+
+        return {
+            "dedup_candidates": [
+                {"older_id": o, "newer_id": n, "similarity": s}
+                for o, n, s in duplicates
+            ],
+            "utility_candidates": utility_candidates,
+            "actions_taken": actions,
+            "active_count": active_count,
+            "threshold": max_entries,
+        }
+
+    # YAML fallback path (original implementation)
     all_entries: list[tuple[Path, dict[str, object]]] = []
     active_count = 0
     for entry_file, data in _iter_entry_files(entries_dir, sorted_order=True):

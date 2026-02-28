@@ -177,10 +177,66 @@ _NEVER_OVERWRITE = {
 # which caused the trw server entry to be lost if removed by the user.
 _MERGE_FILES = {".mcp.json"}
 
+# Files in .trw/context/ that are always preserved during cleanup.
+_CONTEXT_ALLOWLIST: frozenset[str] = frozenset({
+    "analytics.yaml",
+    "behavioral_protocol.yaml",
+    "build-status.yaml",
+    "messages.yaml",
+    "pre_compact_state.json",
+    "hooks-reference.yaml",
+})
+
 # CLAUDE.md markers for the auto-generated section.
 _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
+
+
+def _cleanup_context_transients(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool = False,
+) -> None:
+    """Remove transient artifacts from .trw/context/ during update-project.
+
+    Preserves files in ``_CONTEXT_ALLOWLIST``.  Deletes everything else that
+    is a regular file (not a directory, not a symlink).
+
+    Args:
+        target_dir: Root of the target git repository.
+        result: Mutable result dict — cleaned paths appended to ``result["cleaned"]``.
+        dry_run: When ``True``, report what would be removed without deleting.
+    """
+    context_dir = target_dir / ".trw" / "context"
+    if not context_dir.is_dir():
+        return
+
+    cleaned: list[str] = []
+    for path in sorted(context_dir.iterdir()):
+        # Skip symlinks first — is_file() returns True for symlinks to files
+        if path.is_symlink():
+            continue
+        if not path.is_file():
+            continue
+        if path.name in _CONTEXT_ALLOWLIST:
+            continue
+        if dry_run:
+            result["cleaned"].append(f"would remove: {path}")
+        else:
+            try:
+                path.unlink()
+                result["cleaned"].append(str(path))
+                cleaned.append(path.name)
+            except OSError as exc:
+                result["errors"].append(f"Failed to remove {path}: {exc}")
+
+    logger.info(
+        "context_cleanup",
+        target=str(target_dir),
+        cleaned_count=len(cleaned),
+        dry_run=dry_run,
+    )
 
 
 def update_project(
@@ -221,6 +277,7 @@ def update_project(
         "preserved": [],
         "errors": [],
         "warnings": [],
+        "cleaned": [],
     }
 
     if dry_run:
@@ -384,9 +441,15 @@ def update_project(
             except OSError as exc:
                 result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
 
-    # 9. Remove stale hooks/skills/agents no longer in bundled data
+    # 9a. PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
+    _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run)
+
+    # 9b. Remove stale hooks/skills/agents no longer in bundled data
     if not dry_run:
         _remove_stale_artifacts(target_dir, result, data_dir)
+
+    # 9c. Clean transient artifacts from .trw/context/
+    _cleanup_context_transients(target_dir, result, dry_run=dry_run)
 
     # 10. Check installed package version
     _check_package_version(result)
@@ -535,6 +598,47 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
 
 _MANIFEST_FILE = "managed-artifacts.yaml"
 
+# PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
+# Used by _migrate_prefix_predecessors() to remove stale predecessors during
+# update-project when the trw- prefixed successor is already installed.
+PREDECESSOR_MAP: dict[str, dict[str, str]] = {
+    "skills": {
+        "audit": "trw-audit",
+        "commit": "trw-commit",
+        "deliver": "trw-deliver",
+        "exec-plan": "trw-exec-plan",
+        "framework-check": "trw-framework-check",
+        "learn": "trw-learn",
+        "memory-audit": "trw-memory-audit",
+        "memory-optimize": "trw-memory-optimize",
+        "prd-groom": "trw-prd-groom",
+        "prd-new": "trw-prd-new",
+        "prd-review": "trw-prd-review",
+        "project-health": "trw-project-health",
+        "review-pr": "trw-review-pr",
+        "security-check": "trw-security-check",
+        "simplify": "trw-simplify",
+        "sprint-finish": "trw-sprint-finish",
+        "sprint-init": "trw-sprint-init",
+        "sprint-team": "trw-sprint-team",
+        "team-playbook": "trw-team-playbook",
+        "test-strategy": "trw-test-strategy",
+    },
+    "agents": {
+        "code-simplifier.md": "trw-code-simplifier.md",
+        "implementer.md": "trw-implementer.md",
+        "lead.md": "trw-lead.md",
+        "researcher.md": "trw-researcher.md",
+        "reviewer.md": "trw-reviewer.md",
+        "tester.md": "trw-tester.md",
+        "adversarial-auditor.md": "trw-adversarial-auditor.md",
+        "prd-groomer.md": "trw-prd-groomer.md",
+        "requirement-reviewer.md": "trw-requirement-reviewer.md",
+        "requirement-writer.md": "trw-requirement-writer.md",
+        "traceability-checker.md": "trw-traceability-checker.md",
+    },
+}
+
 
 def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
     """Read the managed-artifacts manifest from a target project.
@@ -583,13 +687,17 @@ def _write_manifest(
     """
     bundled = _get_bundled_names(data_dir)
     custom = _get_custom_names(target_dir, data_dir)
+    # PRD-FIX-032-FR05: Exclude predecessor names from custom lists so they
+    # are not permanently protected as false-custom entries.
+    predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
+    predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
     manifest = {
         "version": 1,
         "skills": bundled["skills"],
         "agents": bundled["agents"],
         "hooks": bundled["hooks"],
-        "custom_skills": custom["skills"],
-        "custom_agents": custom["agents"],
+        "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
+        "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],
         "custom_hooks": custom["hooks"],
     }
     manifest_path = target_dir / ".trw" / _MANIFEST_FILE
@@ -602,6 +710,58 @@ def _write_manifest(
         result[key].append(str(manifest_path))
     except OSError as exc:
         result["errors"].append(f"Failed to write manifest: {exc}")
+
+
+def _migrate_prefix_predecessors(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool = False,
+) -> None:
+    """Remove non-prefixed predecessor skills/agents when trw- successor is installed.
+
+    PRD-FIX-032: Projects initialized before the trw- prefix migration
+    (PRD-INFRA-013) still have old non-prefixed skill directories and agent
+    files.  This function removes them only when the trw- prefixed successor
+    is already present, ensuring no data loss.
+
+    This function is intended for ``update_project()`` only.  It is called
+    before ``_remove_stale_artifacts()`` so the manifest written afterwards
+    is already clean of predecessor entries.
+    """
+    skills_dir = target_dir / ".claude" / "skills"
+    agents_dir = target_dir / ".claude" / "agents"
+
+    for old_name, new_name in PREDECESSOR_MAP["skills"].items():
+        predecessor = skills_dir / old_name
+        successor = skills_dir / new_name
+        if not predecessor.is_dir():
+            continue
+        if not successor.is_dir():
+            continue  # successor absent — keep old version
+        if dry_run:
+            result["updated"].append(f"would migrate:{predecessor}")
+            continue
+        try:
+            shutil.rmtree(predecessor)
+            result["updated"].append(f"migrated:{predecessor}")
+        except OSError:
+            pass
+
+    for old_name, new_name in PREDECESSOR_MAP["agents"].items():
+        predecessor = agents_dir / old_name
+        successor = agents_dir / new_name
+        if not predecessor.is_file():
+            continue
+        if not successor.is_file():
+            continue  # successor absent — keep old version
+        if dry_run:
+            result["updated"].append(f"would migrate:{predecessor}")
+            continue
+        try:
+            predecessor.unlink()
+            result["updated"].append(f"migrated:{predecessor}")
+        except OSError:
+            pass
 
 
 def _remove_stale_artifacts(

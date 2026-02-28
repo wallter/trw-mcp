@@ -78,26 +78,53 @@ def find_clusters(
     if not entries_dir.exists():
         return []
 
-    # Load active entries (capped)
+    # PRD-FIX-033-FR04: Load active entries from SQLite when available,
+    # falling back to YAML glob on error.
     entries: list[dict[str, object]] = []
-    for yaml_file in sorted(entries_dir.glob("*.yaml")):
-        if yaml_file.name == "index.yaml":
-            continue
-        if len(entries) >= max_entries:
-            break
-        try:
-            data = reader.read_yaml(yaml_file)
-        except Exception:  # noqa: BLE001
-            continue
-        if str(data.get("status", "active")) != "active":
-            continue
-        # Skip already-consolidated entries
-        if str(data.get("source_type", "")) == "consolidated":
-            continue
-        # Skip entries already archived into another consolidation
-        if data.get("consolidated_into") is not None:
-            continue
-        entries.append(data)
+    _used_sqlite = False
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings
+        # Derive trw_dir from entries_dir (entries_dir = trw_dir/learnings/entries)
+        trw_dir = entries_dir.parent.parent
+        all_active = list_active_learnings(trw_dir, limit=max_entries)
+        for data in all_active:
+            if len(entries) >= max_entries:
+                break
+            # Skip already-consolidated entries
+            if str(data.get("source_type", "")) == "consolidated":
+                continue
+            # Skip entries already archived into another consolidation
+            if data.get("consolidated_into") is not None:
+                continue
+            entries.append(data)
+        _used_sqlite = True
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "sqlite_read_fallback",
+            step="find_clusters",
+            reason="list_active_learnings failed",
+        )
+
+    if not _used_sqlite:
+        # YAML fallback path (original implementation)
+        for yaml_file in sorted(entries_dir.glob("*.yaml")):
+            if yaml_file.name == "index.yaml":
+                continue
+            if len(entries) >= max_entries:
+                break
+            try:
+                data = reader.read_yaml(yaml_file)
+            except Exception:  # noqa: BLE001
+                continue
+            if str(data.get("status", "active")) != "active":
+                continue
+            # Skip already-consolidated entries
+            if str(data.get("source_type", "")) == "consolidated":
+                continue
+            # Skip entries already archived into another consolidation
+            if data.get("consolidated_into") is not None:
+                continue
+            entries.append(data)
 
     if len(entries) < min_cluster_size:
         return []

@@ -1961,3 +1961,121 @@ class TestPathRedaction:
         result = _redact_paths(text)
         assert result.startswith("before ")
         assert result.endswith(" after")
+
+
+# ---------------------------------------------------------------------------
+# PRD-FIX-033-FR04: SQLite-backed find_clusters
+# ---------------------------------------------------------------------------
+
+
+class TestFindClustersSQLite:
+    """PRD-FIX-033-FR04: find_clusters loads entries from SQLite when available."""
+
+    def test_find_clusters_uses_sqlite(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """find_clusters calls list_active_learnings instead of glob when available."""
+        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        # Pre-built entries that would come from SQLite
+        fake_entries: list[dict[str, object]] = [
+            {
+                "id": f"L-sql{i:02d}",
+                "summary": f"similar topic about testing {i}",
+                "detail": f"detail {i}",
+                "status": "active",
+                "impact": 0.5,
+                "tags": ["testing"],
+                "source_type": "agent",
+            }
+            for i in range(5)
+        ]
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=fake_entries,
+        ) as mock_sqlite, patch(
+            "trw_mcp.telemetry.embeddings.embedding_available",
+            return_value=True,
+        ), patch(
+            "trw_mcp.telemetry.embeddings.embed_batch",
+            return_value=[make_vec(1.0, 0.0)] * 5,
+        ):
+            result = find_clusters(
+                entries_dir, reader,
+                similarity_threshold=0.9,
+                min_cluster_size=3,
+            )
+
+        mock_sqlite.assert_called_once()
+        # All 5 entries have identical vectors → 1 cluster of 5
+        assert len(result) >= 1
+
+    def test_find_clusters_fallback_to_yaml(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """Falls back to YAML glob when SQLite raises."""
+        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        # Write YAML entries for fallback
+        for i in range(4):
+            write_entry(
+                entries_dir, writer, f"L-fb{i:02d}",
+                summary=f"yaml fallback testing {i}",
+            )
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            side_effect=RuntimeError("SQLite unavailable"),
+        ), patch(
+            "trw_mcp.telemetry.embeddings.embedding_available",
+            return_value=True,
+        ), patch(
+            "trw_mcp.telemetry.embeddings.embed_batch",
+            return_value=[make_vec(1.0, 0.0)] * 4,
+        ):
+            result = find_clusters(
+                entries_dir, reader,
+                similarity_threshold=0.9,
+                min_cluster_size=3,
+            )
+
+        # YAML fallback should still load entries and find clusters
+        assert len(result) >= 1
+
+    def test_find_clusters_sqlite_filters_consolidated(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """SQLite path filters out consolidated and archived entries."""
+        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        fake_entries: list[dict[str, object]] = [
+            {"id": "L-active1", "summary": "test", "detail": "d", "status": "active",
+             "impact": 0.5, "tags": [], "source_type": "agent"},
+            {"id": "L-consolidated", "summary": "test", "detail": "d", "status": "active",
+             "impact": 0.5, "tags": [], "source_type": "consolidated"},
+            {"id": "L-archived", "summary": "test", "detail": "d", "status": "active",
+             "impact": 0.5, "tags": [], "source_type": "agent", "consolidated_into": "L-xyz"},
+        ]
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=fake_entries,
+        ), patch(
+            "trw_mcp.telemetry.embeddings.embedding_available",
+            return_value=True,
+        ), patch(
+            "trw_mcp.telemetry.embeddings.embed_batch",
+            return_value=[make_vec(1.0, 0.0)],  # Only 1 entry passes filters
+        ):
+            result = find_clusters(
+                entries_dir, reader,
+                similarity_threshold=0.5,
+                min_cluster_size=2,
+            )
+
+        # Only 1 entry passes filters (< min_cluster_size=2), so no clusters
+        assert result == []
