@@ -1,3 +1,4 @@
-sessions_tracked: 4
+sessions_tracked: 6
 total_learnings: 4
-avg_learnings_per_session: 1.0
+avg_learnings_per_session: 0.67
+claude_md_syncs: 235

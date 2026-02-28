@@ -36,6 +36,87 @@ _writer = FileStateWriter()
 # Constants
 _SLUG_MAX_LEN = 40
 _ERROR_KEYWORDS = ("error", "fail", "exception", "crash", "timeout")
+
+# ---------------------------------------------------------------------------
+# QUAL-018 FR03: Topic tag inference from summary keywords
+# ---------------------------------------------------------------------------
+
+_TOPIC_KEYWORD_MAP: dict[str, str] = {
+    # Testing
+    "test": "testing", "tests": "testing", "pytest": "testing",
+    "coverage": "testing", "fixture": "testing", "mock": "testing",
+    # Architecture
+    "architecture": "architecture", "design": "architecture",
+    "pattern": "architecture", "refactor": "architecture",
+    # Configuration
+    "config": "configuration", "settings": "configuration",
+    "env": "configuration", "environment": "configuration",
+    # Deployment
+    "deploy": "deployment", "bootstrap": "deployment",
+    "install": "deployment", "package": "deployment",
+    # Performance
+    "performance": "performance", "cache": "performance",
+    "latency": "performance", "timeout": "performance",
+    # Security
+    "security": "security", "auth": "security",
+    "token": "security", "jwt": "security", "rbac": "security",
+    # Database
+    "database": "database", "sqlite": "database",
+    "migration": "database", "sql": "database", "query": "database",
+    # API
+    "api": "api", "endpoint": "api", "route": "api",
+    "rest": "api", "mcp": "api",
+    # Documentation
+    "docs": "documentation", "readme": "documentation",
+    "prd": "documentation", "changelog": "documentation",
+    # Debugging
+    "debug": "debugging", "error": "debugging",
+    "bug": "debugging", "fix": "debugging", "trace": "debugging",
+    # Pricing / Cost
+    "cost": "pricing", "price": "pricing", "pricing": "pricing",
+    "billing": "pricing", "budget": "pricing",
+    # Rate limiting
+    "rate": "rate-limiting", "limit": "rate-limiting",
+    "throttle": "rate-limiting", "ratelimit": "rate-limiting",
+}
+
+_TOPIC_TAG_MAX = 3
+
+
+def infer_topic_tags(
+    summary: str,
+    existing_tags: list[str] | None = None,
+) -> list[str]:
+    """Infer topic tags from a learning summary using keyword matching.
+
+    Scans ``summary`` tokens against ``_TOPIC_KEYWORD_MAP`` and returns
+    0-3 new tags not already present in ``existing_tags`` (case-insensitive
+    dedup).  Never raises -- returns empty list on any error.
+
+    Args:
+        summary: Learning summary text to scan for topic keywords.
+        existing_tags: Tags already associated with the entry (used for dedup).
+
+    Returns:
+        List of 0-3 inferred tag strings.
+    """
+    try:
+        if not summary:
+            return []
+        existing_lower = {t.lower() for t in (existing_tags or [])}
+        tokens = re.split(r"[\s_\-/:]+", summary.lower())
+        inferred: dict[str, str] = {}  # lower(tag) -> canonical tag
+        for token in tokens:
+            tag = _TOPIC_KEYWORD_MAP.get(token)
+            if tag and tag.lower() not in existing_lower and tag.lower() not in inferred:
+                inferred[tag.lower()] = tag
+                if len(inferred) >= _TOPIC_TAG_MAX:
+                    break
+        return list(inferred.values())
+    except Exception:
+        return []
+
+
 _SUCCESS_KEYWORDS = (
     "complete", "success", "pass", "done", "finish",
     "delivered", "approved", "resolved", "merged",
@@ -442,6 +523,8 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     via memory_adapter.store_learning().  This function writes the YAML
     backup for rollback safety during the migration period.
 
+    QUAL-018 FR03: Infers topic tags from the summary before writing.
+
     Args:
         trw_dir: Path to .trw directory.
         entry: Learning entry to save.
@@ -449,6 +532,11 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     Returns:
         Path to the saved YAML entry file.
     """
+    # QUAL-018 FR03/FR05: Infer topic tags and append (no duplicates)
+    inferred = infer_topic_tags(entry.summary, entry.tags)
+    if inferred:
+        entry = entry.model_copy(update={"tags": list(entry.tags) + inferred})
+
     raw = entry.summary[:_SLUG_MAX_LEN].lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     filename = f"{entry.created.isoformat()}-{slug}.yaml"

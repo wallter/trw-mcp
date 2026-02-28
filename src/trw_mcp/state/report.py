@@ -19,6 +19,7 @@ from trw_mcp.models.report import (
     PhaseEntry,
     RunReport,
 )
+from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
@@ -131,38 +132,34 @@ def compute_learning_yield(
     run_start: str | None = None,
     run_end: str | None = None,
 ) -> LearningSummary:
-    """Compute learning yield from .trw/learnings/entries/.
+    """Compute learning yield from SQLite via memory_adapter.
 
-    Filters by date range when run_start/run_end are provided.
-    Falls back to all active learnings when dates cannot be parsed.
+    Queries active learnings and filters by date range when
+    run_start/run_end are provided.
 
     Args:
         trw_dir: Path to the .trw directory.
-        reader: File state reader for YAML parsing.
+        reader: File state reader (unused, kept for API compatibility).
         run_start: ISO timestamp of run start (for date filtering).
         run_end: ISO timestamp of run end (for date filtering).
 
     Returns:
         LearningSummary with counts, average impact, and tags.
     """
-    entries_dir = trw_dir / "learnings" / "entries"
-    if not entries_dir.exists():
-        return LearningSummary()
-
     start_date = _parse_date(run_start)
     end_date = _parse_date(run_end)
+
+    try:
+        entries = list_active_learnings(trw_dir, min_impact=0.0, limit=10000)
+    except Exception:
+        logger.warning("learning_yield_sqlite_failed", trw_dir=str(trw_dir))
+        return LearningSummary()
 
     impacts: list[float] = []
     tags_set: set[str] = set()
     high_count = 0
 
-    for entry_path in sorted(entries_dir.glob("*.yaml")):
-        try:
-            data = reader.read_yaml(entry_path)
-        except Exception:
-            logger.warning("learning_read_failed", path=str(entry_path))
-            continue
-
+    for data in entries:
         # Date filter: match entries created within the run window
         if start_date and end_date:
             created = str(data.get("created", ""))

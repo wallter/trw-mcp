@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -80,26 +81,6 @@ def report_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
         "coverage_pct": 92.5,
         "test_count": 45,
         "duration_secs": 12.3,
-    })
-
-    # learnings in .trw/learnings/entries/
-    entries_dir = trw_dir / "learnings" / "entries"
-    entries_dir.mkdir(parents=True)
-    writer.write_yaml(entries_dir / "2026-02-19-learning-a.yaml", {
-        "id": "L-aaa",
-        "summary": "Test learning A",
-        "detail": "Detail A",
-        "impact": 0.9,
-        "tags": ["testing", "report"],
-        "created": "2026-02-19",
-    })
-    writer.write_yaml(entries_dir / "2026-02-19-learning-b.yaml", {
-        "id": "L-bbb",
-        "summary": "Test learning B",
-        "detail": "Detail B",
-        "impact": 0.4,
-        "tags": ["report"],
-        "created": "2026-02-19",
     })
 
     return run_dir
@@ -343,27 +324,25 @@ class TestEventParsing:
 class TestLearningYield:
     """Tests for compute_learning_yield function."""
 
-    def test_mixed_impact_learnings(self, tmp_path: Path, writer: FileStateWriter) -> None:
+    def test_mixed_impact_learnings(self, tmp_path: Path) -> None:
         """Learning yield computes correct averages with mixed impacts."""
+        mock_entries: list[dict[str, object]] = [
+            {"id": "L-1", "summary": "High", "detail": "d",
+             "impact": 0.9, "tags": ["arch"], "created": "2026-02-19",
+             "status": "active"},
+            {"id": "L-2", "summary": "Med", "detail": "d",
+             "impact": 0.5, "tags": ["testing"], "created": "2026-02-19",
+             "status": "active"},
+            {"id": "L-3", "summary": "Low", "detail": "d",
+             "impact": 0.2, "tags": ["arch", "testing"], "created": "2026-02-19",
+             "status": "active"},
+        ]
         trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer.write_yaml(entries_dir / "a.yaml", {
-            "id": "L-1", "summary": "High", "detail": "d",
-            "impact": 0.9, "tags": ["arch"], "created": "2026-02-19",
-        })
-        writer.write_yaml(entries_dir / "b.yaml", {
-            "id": "L-2", "summary": "Med", "detail": "d",
-            "impact": 0.5, "tags": ["testing"], "created": "2026-02-19",
-        })
-        writer.write_yaml(entries_dir / "c.yaml", {
-            "id": "L-3", "summary": "Low", "detail": "d",
-            "impact": 0.2, "tags": ["arch", "testing"], "created": "2026-02-19",
-        })
+        trw_dir.mkdir()
 
         reader = FileStateReader()
-        result = compute_learning_yield(trw_dir, reader)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=mock_entries):
+            result = compute_learning_yield(trw_dir, reader)
 
         assert result.total_produced == 3
         assert result.avg_impact == pytest.approx(0.533, abs=0.01)
@@ -372,51 +351,53 @@ class TestLearningYield:
         assert "testing" in result.tags_used
 
     def test_no_learnings(self, tmp_path: Path) -> None:
-        """Learning yield returns zeros when no learnings exist."""
+        """Learning yield returns zeros when list_active_learnings returns empty."""
         trw_dir = tmp_path / ".trw"
-        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        trw_dir.mkdir()
 
         reader = FileStateReader()
-        result = compute_learning_yield(trw_dir, reader)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            result = compute_learning_yield(trw_dir, reader)
 
         assert result.total_produced == 0
         assert result.avg_impact == 0.0
         assert result.high_impact_count == 0
         assert result.tags_used == []
 
-    def test_missing_entries_dir(self, tmp_path: Path) -> None:
-        """Learning yield handles missing entries directory."""
+    def test_sqlite_error_returns_empty(self, tmp_path: Path) -> None:
+        """Learning yield returns empty summary when SQLite raises."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
 
         reader = FileStateReader()
-        result = compute_learning_yield(trw_dir, reader)
+        with patch(
+            "trw_mcp.state.report.list_active_learnings",
+            side_effect=RuntimeError("db error"),
+        ):
+            result = compute_learning_yield(trw_dir, reader)
 
         assert result.total_produced == 0
 
-    def test_date_range_filter(self, tmp_path: Path, writer: FileStateWriter) -> None:
+    def test_date_range_filter(self, tmp_path: Path) -> None:
         """Learning yield filters by date range when provided."""
+        mock_entries: list[dict[str, object]] = [
+            {"id": "L-in", "summary": "In range", "detail": "d",
+             "impact": 0.8, "tags": [], "created": "2026-02-19",
+             "status": "active"},
+            {"id": "L-out", "summary": "Out range", "detail": "d",
+             "impact": 0.8, "tags": [], "created": "2026-02-10",
+             "status": "active"},
+        ]
         trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        # In-range
-        writer.write_yaml(entries_dir / "in-range.yaml", {
-            "id": "L-in", "summary": "In range", "detail": "d",
-            "impact": 0.8, "tags": [], "created": "2026-02-19",
-        })
-        # Out-of-range
-        writer.write_yaml(entries_dir / "out-range.yaml", {
-            "id": "L-out", "summary": "Out range", "detail": "d",
-            "impact": 0.8, "tags": [], "created": "2026-02-10",
-        })
+        trw_dir.mkdir()
 
         reader = FileStateReader()
-        result = compute_learning_yield(
-            trw_dir, reader,
-            run_start="2026-02-19T10:00:00Z",
-            run_end="2026-02-19T13:00:00Z",
-        )
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=mock_entries):
+            result = compute_learning_yield(
+                trw_dir, reader,
+                run_start="2026-02-19T10:00:00Z",
+                run_end="2026-02-19T13:00:00Z",
+            )
 
         assert result.total_produced == 1  # Only in-range entry
 
@@ -435,9 +416,18 @@ class TestToolIntegration:
         tmp_path: Path,
     ) -> None:
         """Full report with all data sources populated."""
+        mock_learnings: list[dict[str, object]] = [
+            {"id": "L-aaa", "summary": "Test learning A", "detail": "Detail A",
+             "impact": 0.9, "tags": ["testing", "report"], "created": "2026-02-19",
+             "status": "active"},
+            {"id": "L-bbb", "summary": "Test learning B", "detail": "Detail B",
+             "impact": 0.4, "tags": ["report"], "created": "2026-02-19",
+             "status": "active"},
+        ]
         reader = FileStateReader()
         trw_dir = tmp_path / ".trw"
-        report = assemble_report(report_run_dir, reader, trw_dir)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=mock_learnings):
+            report = assemble_report(report_run_dir, reader, trw_dir)
 
         assert report.run_id == "20260219T100000Z-aaaa1111"
         assert report.task == "analytics-task"
@@ -488,7 +478,8 @@ class TestToolIntegration:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        report = assemble_report(minimal_run_dir, reader, trw_dir)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(minimal_run_dir, reader, trw_dir)
 
         assert report.run_id == "20260219T080000Z-bbbb2222"
         assert report.event_summary.total_count == 0
@@ -505,7 +496,8 @@ class TestToolIntegration:
         """Report model_dump() produces JSON-serializable dict."""
         reader = FileStateReader()
         trw_dir = tmp_path / ".trw"
-        report = assemble_report(report_run_dir, reader, trw_dir)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(report_run_dir, reader, trw_dir)
 
         dumped = report.model_dump()
         json_str = json.dumps(dumped)
@@ -529,7 +521,8 @@ class TestGracefulDegradation:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        report = assemble_report(minimal_run_dir, reader, trw_dir)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(minimal_run_dir, reader, trw_dir)
 
         assert report.build is None
 
@@ -542,7 +535,8 @@ class TestGracefulDegradation:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        report = assemble_report(minimal_run_dir, reader, trw_dir)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(minimal_run_dir, reader, trw_dir)
 
         assert report.event_summary.total_count == 0
         assert report.event_summary.by_type == {}
@@ -556,7 +550,8 @@ class TestGracefulDegradation:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        report = assemble_report(minimal_run_dir, reader, trw_dir)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(minimal_run_dir, reader, trw_dir)
 
         assert report.checkpoint_count == 0
 
@@ -565,11 +560,12 @@ class TestGracefulDegradation:
         minimal_run_dir: Path,
         tmp_path: Path,
     ) -> None:
-        """Missing .trw/learnings/entries/ results in zero learning yield."""
+        """Missing learnings in SQLite results in zero learning yield."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        report = assemble_report(minimal_run_dir, reader, trw_dir)
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(minimal_run_dir, reader, trw_dir)
 
         assert report.learning_summary.total_produced == 0
 
@@ -662,7 +658,8 @@ class TestReportToolLayer:
         srv = FastMCP("run-report-valid-test")
         register_report_tools(srv)
         tools = {t.name: t for t in srv._tool_manager._tools.values()}
-        result = tools["trw_run_report"].fn()
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            result = tools["trw_run_report"].fn()
         assert isinstance(result, dict)
         assert result.get("run_id") == "20260101T000000Z-aaaa1111"
         assert result.get("task") == "t"

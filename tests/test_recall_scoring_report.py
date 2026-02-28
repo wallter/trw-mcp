@@ -286,32 +286,25 @@ class TestTsDiffSecondsException:
         assert result == 3600.0
 
 
-class TestComputeLearningYieldReadFailure:
-    """Cover lines 162-164: exception handling when reader.read_yaml raises."""
+class TestComputeLearningYieldSQLiteFailure:
+    """Cover exception handling when list_active_learnings raises."""
 
-    def test_corrupt_entry_is_skipped_with_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_sqlite_error_returns_empty_summary(
+        self, tmp_path: Path,
     ) -> None:
-        """When a YAML read raises, the entry is skipped and a warning is logged (lines 162-164)."""
+        """When list_active_learnings raises, return empty LearningSummary."""
         trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
-        # Write a good entry and a bad entry
-        writer.write_yaml(entries_dir / "good.yaml", {
-            "id": "L-good", "summary": "good", "detail": "", "impact": 0.8,
-            "tags": ["test"], "created": "2026-02-19",
-        })
-        # Write raw invalid YAML that will cause read failure
-        (entries_dir / "bad.yaml").write_text("{invalid yaml[", encoding="utf-8")
+        trw_dir.mkdir()
 
         reader = FileStateReader()
-        result = compute_learning_yield(trw_dir, reader)
+        with patch(
+            "trw_mcp.state.report.list_active_learnings",
+            side_effect=RuntimeError("db corrupt"),
+        ):
+            result = compute_learning_yield(trw_dir, reader)
 
-        # Only good entry processed
-        assert result.total_produced == 1
-        assert result.avg_impact == pytest.approx(0.8)
+        assert result.total_produced == 0
+        assert result.avg_impact == 0.0
 
 
 class TestParseDateInvalid:

@@ -741,3 +741,156 @@ class TestBuildConfigWiring:
         cwd = mock_run.call_args.kwargs["cwd"]
         assert cmd[-1] == "src/trw_mcp/"
         assert cwd == str(tmp_path / "trw-mcp")
+
+
+# ---------------------------------------------------------------------------
+# min_coverage threshold enforcement — sprint-finish anti-regression
+# ---------------------------------------------------------------------------
+
+
+class TestMinCoverageThreshold:
+    """Tests for the min_coverage parameter on trw_build_check tool."""
+
+    @patch("trw_mcp.tools.build._config")
+    @patch("trw_mcp.tools.build.resolve_project_root")
+    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build.run_build_check")
+    def test_coverage_below_threshold_fails(
+        self,
+        mock_run: MagicMock,
+        mock_trw_dir: MagicMock,
+        mock_proj_root: MagicMock,
+        mock_config: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """min_coverage=80 with 75% actual → tests_passed=False."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "context").mkdir()
+        mock_trw_dir.return_value = trw_dir
+        mock_proj_root.return_value = tmp_path
+        mock_config.build_check_enabled = True
+        mock_config.build_check_timeout_secs = 300
+        mock_config.build_check_pytest_args = ""
+        mock_config.build_check_mypy_args = "--strict"
+
+        mock_run.return_value = BuildStatus(
+            tests_passed=True,
+            mypy_clean=True,
+            coverage_pct=75.0,
+            test_count=100,
+        )
+
+        from trw_mcp.tools.build import register_build_tools
+        from fastmcp import FastMCP
+
+        server = FastMCP("test")
+        register_build_tools(server)
+
+        # Get the registered tool function
+        tool_fn = None
+        for tool in server._tool_manager._tools.values():
+            if tool.name == "trw_build_check":
+                tool_fn = tool.fn
+                break
+        assert tool_fn is not None
+
+        result = tool_fn(scope="pytest", min_coverage=80.0)
+        assert result["tests_passed"] is False
+        assert result["coverage_threshold_failed"] is True
+        assert result["coverage_threshold"] == 80.0
+        assert "75.0%" in str(result["coverage_threshold_message"])
+
+    @patch("trw_mcp.tools.build._config")
+    @patch("trw_mcp.tools.build.resolve_project_root")
+    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build.run_build_check")
+    def test_coverage_meets_threshold_passes(
+        self,
+        mock_run: MagicMock,
+        mock_trw_dir: MagicMock,
+        mock_proj_root: MagicMock,
+        mock_config: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """min_coverage=80 with 90% actual → tests_passed stays True."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "context").mkdir()
+        mock_trw_dir.return_value = trw_dir
+        mock_proj_root.return_value = tmp_path
+        mock_config.build_check_enabled = True
+        mock_config.build_check_timeout_secs = 300
+        mock_config.build_check_pytest_args = ""
+        mock_config.build_check_mypy_args = "--strict"
+
+        mock_run.return_value = BuildStatus(
+            tests_passed=True,
+            mypy_clean=True,
+            coverage_pct=90.0,
+            test_count=100,
+        )
+
+        from trw_mcp.tools.build import register_build_tools
+        from fastmcp import FastMCP
+
+        server = FastMCP("test")
+        register_build_tools(server)
+
+        tool_fn = None
+        for tool in server._tool_manager._tools.values():
+            if tool.name == "trw_build_check":
+                tool_fn = tool.fn
+                break
+        assert tool_fn is not None
+
+        result = tool_fn(scope="pytest", min_coverage=80.0)
+        assert result["tests_passed"] is True
+        assert "coverage_threshold_failed" not in result
+
+    @patch("trw_mcp.tools.build._config")
+    @patch("trw_mcp.tools.build.resolve_project_root")
+    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build.run_build_check")
+    def test_no_min_coverage_skips_check(
+        self,
+        mock_run: MagicMock,
+        mock_trw_dir: MagicMock,
+        mock_proj_root: MagicMock,
+        mock_config: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """min_coverage=None → no threshold enforcement."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "context").mkdir()
+        mock_trw_dir.return_value = trw_dir
+        mock_proj_root.return_value = tmp_path
+        mock_config.build_check_enabled = True
+        mock_config.build_check_timeout_secs = 300
+        mock_config.build_check_pytest_args = ""
+        mock_config.build_check_mypy_args = "--strict"
+
+        mock_run.return_value = BuildStatus(
+            tests_passed=True,
+            mypy_clean=True,
+            coverage_pct=50.0,
+            test_count=100,
+        )
+
+        from trw_mcp.tools.build import register_build_tools
+        from fastmcp import FastMCP
+
+        server = FastMCP("test")
+        register_build_tools(server)
+
+        tool_fn = None
+        for tool in server._tool_manager._tools.values():
+            if tool.name == "trw_build_check":
+                tool_fn = tool.fn
+                break
+        assert tool_fn is not None
+
+        result = tool_fn(scope="pytest")
+        assert result["tests_passed"] is True
+        assert "coverage_threshold_failed" not in result

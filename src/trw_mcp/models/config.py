@@ -61,6 +61,7 @@ class TRWConfig(BaseSettings):
     35. Learning auto-prune ........... learning_auto_prune_on_deliver
     36. Debug & telemetry ............. debug
     37. Platform & update channel ..... platform_telemetry_enabled
+    38. Knowledge topology (CORE-021) . knowledge_sync_threshold
     """
 
     model_config = SettingsConfigDict(
@@ -429,6 +430,14 @@ class TRWConfig(BaseSettings):
     platform_api_key: str = ""                # API key for platform backend authentication
     installation_id: str = ""                 # anonymized installation identifier
     auto_upgrade: bool = False                # auto-install updates on session start (PRD-INFRA-014)
+
+    # ── 38. Knowledge topology (CORE-021) ─────────────────────────────────
+    # Tag-based clustering for auto-generated topic documents
+
+    knowledge_sync_threshold: int = 50
+    knowledge_jaccard_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    knowledge_min_cluster_size: int = Field(default=3, ge=1)
+    knowledge_output_dir: str = "knowledge"
 
     @property
     def effective_platform_urls(self) -> list[str]:

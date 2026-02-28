@@ -344,13 +344,23 @@ def store_learning(
 ) -> dict[str, object]:
     """Store a learning entry in SQLite and return the tool result dict.
 
+    QUAL-018 FR03: Infers topic tags from the summary before storing.
+
     Return shape matches ``trw_learn`` output:
     ``{"learning_id", "path", "status", "distribution_warning"}``.
     """
+    # QUAL-018 FR03/FR05: Infer topic tags and append (no duplicates)
+    from trw_mcp.state.analytics import infer_topic_tags
+
+    enriched_tags = list(tags) if tags else []
+    inferred = infer_topic_tags(summary, enriched_tags)
+    if inferred:
+        enriched_tags.extend(inferred)
+
     backend = get_backend(trw_dir)
     entry = _learning_to_memory_entry(
         learning_id, summary, detail,
-        tags=tags, evidence=evidence, impact=impact,
+        tags=enriched_tags, evidence=evidence, impact=impact,
         shard_id=shard_id, source_type=source_type,
         source_identity=source_identity,
     )

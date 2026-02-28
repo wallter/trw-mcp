@@ -8,6 +8,7 @@ behavior for several tools (better summaries, relevance classification).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import structlog
@@ -355,6 +356,7 @@ def register_learning_tools(server: FastMCP) -> None:
         shard_id: str | None = None,
         max_results: int = _config.recall_max_results,
         compact: bool | None = None,
+        topic: str | None = None,
     ) -> dict[str, object]:
         """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
 
@@ -372,6 +374,8 @@ def register_learning_tools(server: FastMCP) -> None:
             max_results: Maximum learnings to return (default 25, 0 = unlimited).
             compact: When True, return only essential fields per learning.
                 When None (default), auto-enables for wildcard queries.
+            topic: Optional topic slug from knowledge topology. When provided,
+                only returns learnings belonging to that topic cluster.
         """
         trw_dir = resolve_trw_dir()
         is_wildcard = query.strip() in ("*", "")
@@ -383,6 +387,26 @@ def register_learning_tools(server: FastMCP) -> None:
             trw_dir, query=query, tags=tags, min_impact=min_impact,
             status=status, max_results=0, compact=False,  # get all, we rank locally
         )
+
+        # Topic-scoped pre-filter (PRD-CORE-021-FR07)
+        topic_filter_ignored = False
+        if topic is not None:
+            clusters_path = trw_dir / _config.knowledge_output_dir / "clusters.json"
+            try:
+                if clusters_path.exists():
+                    clusters_data = json.loads(clusters_path.read_text(encoding="utf-8"))
+                    if topic in clusters_data:
+                        allowed_ids = set(clusters_data[topic])
+                        matching_learnings = [
+                            e for e in matching_learnings
+                            if str(e.get("id", "")) in allowed_ids
+                        ]
+                    else:
+                        topic_filter_ignored = True
+                else:
+                    topic_filter_ignored = True
+            except (json.JSONDecodeError, OSError):
+                topic_filter_ignored = True
 
         # Update access tracking for recalled IDs
         matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
@@ -451,6 +475,7 @@ def register_learning_tools(server: FastMCP) -> None:
             "total_available": total_available,
             "compact": use_compact,
             "max_results": max_results,
+            "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
         }
 
     @server.tool()

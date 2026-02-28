@@ -380,6 +380,7 @@ def register_build_tools(server: FastMCP) -> None:
         scope: str = "full",
         run_path: str | None = None,
         timeout_secs: int | None = None,
+        min_coverage: float | None = None,
     ) -> dict[str, object]:
         """Verify your code passes tests and type checking — the gate between implementation and delivery.
 
@@ -392,6 +393,9 @@ def register_build_tools(server: FastMCP) -> None:
             scope: Check scope — 'full' (pytest + mypy), 'pytest', 'mypy'.
             run_path: Optional run directory for event logging.
             timeout_secs: Override timeout (default: config value, max 600).
+            min_coverage: Optional minimum coverage percentage. If set and
+                coverage falls below this threshold, tests_passed is set to
+                False and a coverage_threshold_failed flag is added to the result.
         """
         if not _config.build_check_enabled:
             return {
@@ -447,7 +451,7 @@ def register_build_tools(server: FastMCP) -> None:
             duration_secs=status.duration_secs,
         )
 
-        return {
+        result: dict[str, object] = {
             "tests_passed": status.tests_passed,
             "mypy_clean": status.mypy_clean,
             "coverage_pct": status.coverage_pct,
@@ -458,3 +462,15 @@ def register_build_tools(server: FastMCP) -> None:
             "duration_secs": status.duration_secs,
             "cache_path": str(cache_path),
         }
+
+        # Coverage threshold enforcement (sprint-finish anti-regression)
+        if min_coverage is not None and status.coverage_pct < min_coverage:
+            result["tests_passed"] = False
+            result["coverage_threshold_failed"] = True
+            result["coverage_threshold"] = min_coverage
+            result["coverage_threshold_message"] = (
+                f"Coverage {status.coverage_pct:.1f}% is below "
+                f"required threshold {min_coverage:.1f}%"
+            )
+
+        return result

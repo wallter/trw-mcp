@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.bootstrap import init_project, update_project
+from trw_mcp.bootstrap import _DATA_DIR, init_project, update_project
 
 
 @pytest.fixture()
@@ -230,25 +230,25 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
-        "commit",
-        "deliver",
-        "exec-plan",
-        "framework-check",
-        "learn",
-        "memory-audit",
-        "memory-optimize",
-        "prd-groom",
-        "prd-new",
-        "prd-review",
-        "project-health",
-        "review-pr",
-        "security-check",
-        "simplify",
-        "sprint-finish",
-        "sprint-init",
-        "sprint-team",
-        "team-playbook",
-        "test-strategy",
+        "trw-commit",
+        "trw-deliver",
+        "trw-exec-plan",
+        "trw-framework-check",
+        "trw-learn",
+        "trw-memory-audit",
+        "trw-memory-optimize",
+        "trw-prd-groom",
+        "trw-prd-new",
+        "trw-prd-review",
+        "trw-project-health",
+        "trw-review-pr",
+        "trw-security-check",
+        "trw-simplify",
+        "trw-sprint-finish",
+        "trw-sprint-init",
+        "trw-sprint-team",
+        "trw-team-playbook",
+        "trw-test-strategy",
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
@@ -270,7 +270,7 @@ class TestSkills:
         init_project(fake_git_repo)
 
         # Write dummy content to one skill
-        dummy_path = fake_git_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
+        dummy_path = fake_git_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
         dummy_path.write_text("dummy content", encoding="utf-8")
 
         result = init_project(fake_git_repo, force=True)
@@ -293,6 +293,40 @@ class TestSkills:
         assert deployed == self.EXPECTED_SKILLS
 
 
+# ── Simplify Skill Content Tests ────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestSimplifySkillContent:
+    """Test that bundled simplify skill contains only generic, portable content."""
+
+    BUNDLED_SKILL_DIR = _DATA_DIR / "skills" / "trw-simplify"
+    BUNDLED_SKILL = BUNDLED_SKILL_DIR / "SKILL.md"
+    TRW_SPECIFIC_TERMS = ["lock_for_rmw", "TRWConfig", "trw://config", "FastMCP"]
+
+    def test_bundled_simplify_skill_exists(self) -> None:
+        """Bundled simplify SKILL.md exists at the expected path."""
+        assert self.BUNDLED_SKILL.exists()
+
+    def test_bundled_simplify_skill_is_generic(self) -> None:
+        """Bundled simplify SKILL.md contains no trw-mcp-specific terms."""
+        content = self.BUNDLED_SKILL.read_text(encoding="utf-8")
+        for term in self.TRW_SPECIFIC_TERMS:
+            assert term not in content, f"Found trw-mcp-specific term '{term}' in bundled skill"
+
+    def test_bundled_simplify_has_preservation_rules(self) -> None:
+        """Bundled simplify SKILL.md contains all 10 Preservation Rules."""
+        content = self.BUNDLED_SKILL.read_text(encoding="utf-8")
+        assert "Preservation Rules" in content
+        for i in range(1, 11):
+            assert f"{i}. **DO NOT" in content, f"Missing preservation rule {i}"
+
+    def test_bundled_simplify_no_conventions_file(self) -> None:
+        """Bundled simplify skill directory contains no conventions.md."""
+        conventions_path = self.BUNDLED_SKILL_DIR / "conventions.md"
+        assert not conventions_path.exists(), "conventions.md should not be bundled"
+
+
 # ── Agents Tests ────────────────────────────────────────────────────────
 
 
@@ -305,16 +339,16 @@ class TestAgents:
     """
 
     EXPECTED_AGENTS = [
-        "code-simplifier.md",
-        "prd-groomer.md",
-        "requirement-reviewer.md",
-        "requirement-writer.md",
-        "traceability-checker.md",
+        "trw-code-simplifier.md",
         "trw-implementer.md",
         "trw-lead.md",
+        "trw-prd-groomer.md",
+        "trw-requirement-reviewer.md",
+        "trw-requirement-writer.md",
         "trw-researcher.md",
         "trw-reviewer.md",
         "trw-tester.md",
+        "trw-traceability-checker.md",
     ]
 
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
@@ -469,7 +503,7 @@ class TestUpdateOverwritesFrameworkFiles:
 
     def test_updates_skills(self, initialized_repo: Path) -> None:
         """Skill files are overwritten with latest versions."""
-        skill_path = initialized_repo / ".claude" / "skills" / "deliver" / "SKILL.md"
+        skill_path = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
         skill_path.write_text("old skill", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -480,7 +514,7 @@ class TestUpdateOverwritesFrameworkFiles:
     def test_updates_agents(self, initialized_repo: Path) -> None:
         """Agent files are overwritten with latest versions."""
         agent_path = (
-            initialized_repo / ".claude" / "agents" / "code-simplifier.md"
+            initialized_repo / ".claude" / "agents" / "trw-code-simplifier.md"
         )
         agent_path.write_text("old agent", encoding="utf-8")
 
@@ -578,11 +612,11 @@ class TestUpdateRemovesStaleArtifacts:
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
         skills_list = list(manifest.get("skills", []))
-        skills_list.append("old-skill")
+        skills_list.append("trw-old-skill")
         manifest["skills"] = skills_list
         FileStateWriter().write_yaml(manifest_path, manifest)
 
-        stale_skill = initialized_repo / ".claude" / "skills" / "old-skill"
+        stale_skill = initialized_repo / ".claude" / "skills" / "trw-old-skill"
         stale_skill.mkdir(parents=True, exist_ok=True)
         (stale_skill / "SKILL.md").write_text("old", encoding="utf-8")
 
@@ -598,11 +632,11 @@ class TestUpdateRemovesStaleArtifacts:
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
         agents_list = list(manifest.get("agents", []))
-        agents_list.append("old-agent.md")
+        agents_list.append("trw-old-agent.md")
         manifest["agents"] = agents_list
         FileStateWriter().write_yaml(manifest_path, manifest)
 
-        stale_agent = initialized_repo / ".claude" / "agents" / "old-agent.md"
+        stale_agent = initialized_repo / ".claude" / "agents" / "trw-old-agent.md"
         stale_agent.write_text("old agent", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -673,9 +707,9 @@ class TestUpdateCreatesNewArtifacts:
         skills_dir = initialized_repo / ".claude" / "skills"
         deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
         # Should have all expected skills
-        assert "deliver" in deployed
-        assert "learn" in deployed
-        assert "project-health" in deployed
+        assert "trw-deliver" in deployed
+        assert "trw-learn" in deployed
+        assert "trw-project-health" in deployed
 
     def test_creates_new_agent(self, initialized_repo: Path) -> None:
         """New agents in bundled data are deployed."""
@@ -924,8 +958,8 @@ class TestManagedArtifactsManifest:
         assert data["version"] == 1
         skills = data.get("skills", [])
         assert isinstance(skills, list)
-        assert "deliver" in skills
-        assert "learn" in skills
+        assert "trw-deliver" in skills
+        assert "trw-learn" in skills
 
     def test_manifest_written_on_update(self, initialized_repo: Path) -> None:
         """update_project refreshes the managed-artifacts manifest."""
@@ -938,7 +972,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(data, dict)
         agents = data.get("agents", [])
         assert isinstance(agents, list)
-        assert "code-simplifier.md" in agents
+        assert "trw-code-simplifier.md" in agents
         assert "trw-implementer.md" in agents
 
     def test_manifest_lists_all_bundled_artifacts(self, fake_git_repo: Path) -> None:
@@ -1004,3 +1038,94 @@ class TestRootFrameworkMd:
         root_fw = initialized_repo / "FRAMEWORK.md"
         cached_fw = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
         assert root_fw.read_text(encoding="utf-8") == cached_fw.read_text(encoding="utf-8")
+
+
+# ── Prefix-Scoped Cleanup Tests (PRD-INFRA-013) ────────────────────────
+
+
+@pytest.mark.unit
+class TestUpdatePrefixScopedCleanup:
+    """Test that _remove_stale_artifacts only removes trw- prefixed items."""
+
+    def test_custom_skill_without_trw_prefix_survives(self, initialized_repo: Path) -> None:
+        """Custom skill without trw- prefix survives update_project()."""
+        # Add a non-trw-prefixed skill to the manifest (simulate pre-migration)
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        reader = FileStateReader()
+        manifest = reader.read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        skills_list = list(manifest.get("skills", []))
+        skills_list.append("my-custom-skill")
+        manifest["skills"] = skills_list
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+        custom_skill = initialized_repo / ".claude" / "skills" / "my-custom-skill"
+        custom_skill.mkdir(parents=True, exist_ok=True)
+        (custom_skill / "SKILL.md").write_text("custom content", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        # Non-trw-prefixed skill should survive even if not in current bundle
+        assert custom_skill.exists()
+        assert (custom_skill / "SKILL.md").read_text(encoding="utf-8") == "custom content"
+
+    def test_custom_agent_without_trw_prefix_survives(self, initialized_repo: Path) -> None:
+        """Custom agent without trw- prefix survives update_project()."""
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        reader = FileStateReader()
+        manifest = reader.read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        agents_list = list(manifest.get("agents", []))
+        agents_list.append("my-custom-agent.md")
+        manifest["agents"] = agents_list
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+        custom_agent = initialized_repo / ".claude" / "agents" / "my-custom-agent.md"
+        custom_agent.write_text("custom agent content", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        # Non-trw-prefixed agent should survive even if not in current bundle
+        assert custom_agent.exists()
+        assert custom_agent.read_text(encoding="utf-8") == "custom agent content"
+
+    def test_stale_trw_skill_is_removed(self, initialized_repo: Path) -> None:
+        """Stale trw-prefixed skill IS removed by update_project()."""
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        reader = FileStateReader()
+        manifest = reader.read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        skills_list = list(manifest.get("skills", []))
+        skills_list.append("trw-deprecated-skill")
+        manifest["skills"] = skills_list
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+        stale_skill = initialized_repo / ".claude" / "skills" / "trw-deprecated-skill"
+        stale_skill.mkdir(parents=True, exist_ok=True)
+        (stale_skill / "SKILL.md").write_text("deprecated", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        assert not stale_skill.exists()
+
+    def test_stale_trw_agent_is_removed(self, initialized_repo: Path) -> None:
+        """Stale trw-prefixed agent IS removed by update_project()."""
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        reader = FileStateReader()
+        manifest = reader.read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        agents_list = list(manifest.get("agents", []))
+        agents_list.append("trw-deprecated-agent.md")
+        manifest["agents"] = agents_list
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+        stale_agent = initialized_repo / ".claude" / "agents" / "trw-deprecated-agent.md"
+        stale_agent.write_text("deprecated agent", encoding="utf-8")
+
+        update_project(initialized_repo)
+
+        assert not stale_agent.exists()
