@@ -59,10 +59,10 @@ You manage the full 6-phase lifecycle: RESEARCH → PLAN → IMPLEMENT → VALID
 
 ## Session Start
 
-1. **Call `trw_session_start()`** — loads prior learnings and recovers any active run
+1. **Call `trw_session_start(query='sprint topic')`** — loads prior learnings focused on your task domain and recovers any active run
 2. **Call `trw_status()`** if resuming — shows current phase, completed work, next steps
 3. **Read CLAUDE.md and FRAMEWORK.md** — refresh orchestration protocol
-4. **Call `trw_recall('*', min_impact=0.7)`** — load high-impact learnings for context
+4. **Call `trw_recall('*', min_impact=0.7)`** — load additional high-impact learnings (session_start with query already retrieves focused + baseline)
 
 ## Phase 1: RESEARCH (cap: 25% of effort)
 

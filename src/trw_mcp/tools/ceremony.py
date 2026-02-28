@@ -255,7 +255,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_session_start() -> dict[str, object]:
+    def trw_session_start(query: str = "") -> dict[str, object]:
         """Load your prior learnings and any active run — gives you full context before writing code.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
@@ -263,26 +263,56 @@ def register_ceremony_tools(server: FastMCP) -> None:
         you risk re-implementing solved problems or repeating mistakes from prior sessions.
 
         Partial-failure resilient: if recall fails, run status is still returned and vice versa.
+
+        Args:
+            query: Search query for focused hybrid recall (keywords matched against
+                summaries/details). When provided, performs two recalls — one focused
+                on your query domain and one baseline high-impact — then merges and
+                deduplicates. Empty string or "*" uses default wildcard behavior.
         """
         results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
+        is_focused = query.strip() not in ("", "*")
 
-        # Step 1: Recall high-impact learnings via SQLite adapter (compact mode)
+        # Step 1: Recall learnings via SQLite adapter (compact mode)
         try:
             from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
             from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
             trw_dir = resolve_trw_dir()
 
-            # adapter_recall returns list[dict] directly
-            learnings = adapter_recall(
-                trw_dir, query="*", min_impact=0.7,
-                max_results=_config.recall_max_results, compact=True,
-            )
+            if is_focused:
+                # Focused recall: hybrid retrieval at lower threshold
+                focused = adapter_recall(
+                    trw_dir, query=query, min_impact=0.3,
+                    max_results=_config.recall_max_results, compact=True,
+                )
+                # Baseline recall: high-impact wildcard
+                baseline = adapter_recall(
+                    trw_dir, query="*", min_impact=0.7,
+                    max_results=_config.recall_max_results, compact=True,
+                )
+                # Merge: dedup by ID, focused first, fill with baseline
+                seen_ids: set[str] = set()
+                learnings: list[dict[str, object]] = []
+                for entry in focused + baseline:
+                    lid = str(entry.get("id", ""))
+                    if lid and lid not in seen_ids:
+                        seen_ids.add(lid)
+                        learnings.append(entry)
+                learnings = learnings[:_config.recall_max_results]
+                results["query"] = query
+                results["query_matched"] = len([e for e in focused if str(e.get("id", "")) in seen_ids])
+            else:
+                # Default wildcard behavior (unchanged)
+                learnings = adapter_recall(
+                    trw_dir, query="*", min_impact=0.7,
+                    max_results=_config.recall_max_results, compact=True,
+                )
 
             # Update access tracking for recalled IDs
             matched_ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
             adapter_update_access(trw_dir, matched_ids)
-            log_recall_receipt(trw_dir, "*", matched_ids)
+            log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
 
             results["learnings"] = learnings
             results["learnings_count"] = len(learnings)
@@ -312,6 +342,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             event_data: dict[str, object] = {
                 "learnings_recalled": int(str(results.get("learnings_count", 0))),
                 "run_detected": run_dir is not None,
+                "query": query if is_focused else "*",
             }
             if run_dir is not None:
                 events_path = run_dir / "meta" / "events.jsonl"
@@ -363,8 +394,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
                 trw_dir_ar = resolve_trw_dir()
 
-                # Build context query from active run
+                # Build context query from active run + user query
                 query_tokens: list[str] = []
+                if is_focused:
+                    query_tokens.extend(query.strip().split())
                 phase_tags: list[str] | None = None
                 if run_dir is not None:
                     run_status = results.get("run", {})

@@ -16,7 +16,7 @@ _run_dir=$(find_active_run) || true
 _phase=""
 
 echo "TRW SUB-AGENT CONTEXT:"
-echo "- Call trw_recall for relevant prior learnings before starting work"
+echo "- Call trw_recall(query='your domain') for relevant prior learnings before starting work"
 echo "- Call trw_learn to record discoveries and gotchas for future sessions"
 echo "- Call trw_checkpoint after each milestone with a summary of what you completed"
 

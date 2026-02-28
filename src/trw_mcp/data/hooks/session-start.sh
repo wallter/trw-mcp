@@ -34,7 +34,7 @@ _emit_protocol() {
     grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
   else
     echo "TRW PROTOCOL — tools that help you build effectively:"
-    echo "- trw_session_start(): loads learnings + recovers active run"
+    echo "- trw_session_start(query?): loads learnings + recovers active run (pass query for focused recall)"
     echo "- trw_checkpoint(): saves progress so you resume after compaction"
     echo "- trw_learn(): records discoveries for future sessions"
     echo "- trw_deliver(): persists everything in one call when done"
@@ -56,7 +56,7 @@ case "$_source" in
     echo ""
     echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, completion artifacts."
     echo ""
-    echo "Call trw_session_start() to load your learnings and any active run state."
+    echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;
 
   resume)
@@ -93,7 +93,7 @@ case "$_source" in
 
   clear)
     # FR04: Minimal clear protocol
-    echo "TRW: Call trw_recall('*', min_impact=0.7) to load relevant learnings from prior sessions."
+    echo "TRW: Call trw_session_start(query='your task domain') or trw_recall('*', min_impact=0.7) to load relevant learnings from prior sessions."
     ;;
 
   *)

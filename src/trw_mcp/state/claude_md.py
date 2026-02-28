@@ -49,7 +49,7 @@ PHASE_DESCRIPTIONS: list[tuple[str, str]] = [
 
 # 11 lifecycle-critical tools in execution order
 CEREMONY_TOOLS: list[CeremonyTool] = [
-    CeremonyTool("Start", "trw_session_start", "At session start — loads learnings + run state", "Recall learnings + check run status", "trw_session_start()"),
+    CeremonyTool("Start", "trw_session_start", "At session start — loads learnings + run state (pass query for focused recall)", "Recall learnings + check run status", "trw_session_start(query='task domain')"),
     CeremonyTool("Start", "trw_recall", "Quick tasks — retrieves relevant prior learnings", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
     CeremonyTool("Start", "trw_status", "When resuming — shows phase, progress, next steps", "Show run state and phase", "trw_status()"),
     CeremonyTool("RESEARCH", "trw_init", "New tasks — creates run directory for tracking", "Bootstrap run directory + events", "trw_init(task_name='...')"),
