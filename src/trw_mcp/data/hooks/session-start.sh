@@ -24,7 +24,7 @@ if [ -z "$_source" ]; then
   _source=$(printf '%s' "$_payload" | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"source"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
 fi
 
-_project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+_project_root="$(get_repo_root)" || exit 0
 
 # --- Value-oriented protocol summary ---
 _emit_protocol() {
@@ -92,8 +92,13 @@ case "$_source" in
     ;;
 
   clear)
-    # FR04: Minimal clear protocol
-    echo "TRW: Call trw_session_start(query='your task domain') or trw_recall('*', min_impact=0.7) to load relevant learnings from prior sessions."
+    # FR01: Clear — full protocol injection (same as startup)
+    _emit_protocol
+    echo ""
+    echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
+    echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
+    echo ""
+    echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;
 
   *)

@@ -390,6 +390,69 @@ class TestPublishAnonymization:
 
 
 # ===========================================================================
+# Parallel fan-out
+# ===========================================================================
+
+
+class TestPublishParallelFanout:
+    def test_publish_fanout_both_urls_attempted(self, tmp_path: Path) -> None:
+        """Both platform URLs are attempted in parallel."""
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig(
+            platform_urls=["https://url-a.example.com", "https://url-b.example.com"],
+            platform_telemetry_enabled=True,
+        )
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        _write_learning(entries_dir, "learning.yaml", _make_learning(impact=0.9))
+
+        attempted_urls: list[str] = []
+
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+            attempted_urls.append(url)
+            return True
+
+        with (
+            patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
+            patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", side_effect=_fake_post),
+        ):
+            result = publish_learnings()
+
+        assert result["published"] == 1
+        assert len(attempted_urls) == 2
+        url_hosts = {u.split("/")[2] for u in attempted_urls}
+        assert "url-a.example.com" in url_hosts
+        assert "url-b.example.com" in url_hosts
+
+    def test_publish_fanout_one_fails_still_publishes(self, tmp_path: Path) -> None:
+        """One URL failing does not prevent success via the other."""
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig(
+            platform_urls=["https://dead.example.com", "https://live.example.com"],
+            platform_telemetry_enabled=True,
+        )
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        _write_learning(entries_dir, "learning.yaml", _make_learning(impact=0.9))
+
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+            return "live" in url
+
+        with (
+            patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
+            patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", side_effect=_fake_post),
+        ):
+            result = publish_learnings()
+
+        assert result["published"] == 1
+        assert result["errors"] == 0
+
+
+# ===========================================================================
 # _post_learning unit tests
 # ===========================================================================
 

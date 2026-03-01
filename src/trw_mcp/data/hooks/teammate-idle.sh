@@ -80,7 +80,7 @@ if [ -n "$_teammate_name" ] && [ -n "$_team_name" ]; then
 fi
 
 # --- Team context: conditional hard gate (ceremony check) ---
-_project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+_project_root="$(get_repo_root)" || exit 0
 _context_dir="$_project_root/.trw/context"
 [ -d "$_context_dir" ] || mkdir -p "$_context_dir" 2>/dev/null || exit 0
 

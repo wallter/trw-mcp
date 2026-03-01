@@ -390,6 +390,97 @@ class TestFromConfig:
 
 
 # ===========================================================================
+# Parallel fan-out
+# ===========================================================================
+
+
+class TestParallelFanout:
+    def test_fanout_both_urls_attempted_when_first_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """Both URLs are attempted even when the first one fails."""
+        input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
+        sender = BatchSender(
+            platform_urls=["https://url-a.example.com", "https://url-b.example.com"],
+            input_path=input_path,
+            batch_size=100,
+            max_retries=1,
+            backoff_base=0.0,
+        )
+        _write_events(input_path, [{"event_type": "test"}])
+
+        attempted_urls: list[str] = []
+
+        def _post(url: str, payload: list[dict[str, object]]) -> bool:
+            attempted_urls.append(url)
+            # First URL fails, second succeeds
+            return "url-b" in url
+
+        with patch.object(sender, "_http_post", side_effect=_post):
+            result = sender.send()
+
+        assert result["sent"] == 1
+        assert result["failed"] == 0
+        assert len(attempted_urls) == 2
+        assert "https://url-a.example.com/v1/telemetry" in attempted_urls
+        assert "https://url-b.example.com/v1/telemetry" in attempted_urls
+
+    def test_fanout_both_urls_attempted_when_second_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """Both URLs are attempted even when the second one fails."""
+        input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
+        sender = BatchSender(
+            platform_urls=["https://url-a.example.com", "https://url-b.example.com"],
+            input_path=input_path,
+            batch_size=100,
+            max_retries=1,
+            backoff_base=0.0,
+        )
+        _write_events(input_path, [{"event_type": "test"}])
+
+        attempted_urls: list[str] = []
+
+        def _post(url: str, payload: list[dict[str, object]]) -> bool:
+            attempted_urls.append(url)
+            return "url-a" in url
+
+        with patch.object(sender, "_http_post", side_effect=_post):
+            result = sender.send()
+
+        assert result["sent"] == 1
+        assert len(attempted_urls) == 2
+
+    def test_fanout_all_fail_returns_failed(self, tmp_path: Path) -> None:
+        """When all URLs fail, result shows failed count."""
+        input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
+        sender = BatchSender(
+            platform_urls=["https://url-a.example.com", "https://url-b.example.com"],
+            input_path=input_path,
+            batch_size=100,
+            max_retries=1,
+            backoff_base=0.0,
+        )
+        _write_events(input_path, [{"event_type": "test"}])
+
+        with patch.object(sender, "_http_post", return_value=False):
+            result = sender.send()
+
+        assert result["sent"] == 0
+        assert result["failed"] == 1
+
+    def test_fanout_single_url_uses_fast_path(self, tmp_path: Path) -> None:
+        """Single URL avoids ThreadPoolExecutor overhead."""
+        sender, input_path = _make_sender(tmp_path)
+        _write_events(input_path, [{"k": "v"}])
+
+        with patch.object(sender, "_http_post", return_value=True):
+            result = sender.send()
+
+        assert result["sent"] == 1
+
+
+# ===========================================================================
 # URL construction
 # ===========================================================================
 

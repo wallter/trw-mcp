@@ -12,6 +12,8 @@ from pathlib import Path
 
 from trw_mcp.clients.llm import LLMClient
 
+__all__ = ["LLMClient"]
+
 # Named caps for list truncation (not user-tunable)
 LLM_BATCH_CAP = 20
 LLM_EVENT_CAP = 30

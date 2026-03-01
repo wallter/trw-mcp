@@ -101,12 +101,33 @@ class BatchSender:
         }
 
     def _send_batch_fanout(self, batch: list[dict[str, Any]]) -> bool:
-        """Send a batch to all configured URLs. Returns True if any succeeded."""
-        any_success = False
-        for base_url in self._platform_urls:
-            if self._send_batch_to(base_url, batch):
-                any_success = True
-        return any_success
+        """Send a batch to all configured URLs in parallel.
+
+        Each URL is attempted independently via ThreadPoolExecutor so that
+        a slow or failing backend never blocks delivery to the others.
+        Returns True if at least one backend accepted the batch.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if len(self._platform_urls) <= 1:
+            # Fast path: no parallelism overhead for single URL
+            return any(
+                self._send_batch_to(url, batch) for url in self._platform_urls
+            )
+
+        with ThreadPoolExecutor(max_workers=len(self._platform_urls)) as pool:
+            futures = {
+                pool.submit(self._send_batch_to, url, batch): url
+                for url in self._platform_urls
+            }
+            any_success = False
+            for fut in as_completed(futures):
+                try:
+                    if fut.result():
+                        any_success = True
+                except Exception:
+                    pass
+            return any_success
 
     def _send_batch_to(self, base_url: str, batch: list[dict[str, Any]]) -> bool:
         """Attempt to send a batch to one URL with exponential backoff retry."""

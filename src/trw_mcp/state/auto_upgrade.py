@@ -279,7 +279,8 @@ def _fetch_artifact_info(version: str) -> dict[str, object] | None:
             req = urllib.request.Request(url, method="GET", headers=headers)
             with urllib.request.urlopen(req, timeout=5) as response:
                 if 200 <= response.status < 300:
-                    return json.loads(response.read().decode("utf-8"))
+                    result: dict[str, object] = json.loads(response.read().decode("utf-8"))
+                    return result
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
             continue
 

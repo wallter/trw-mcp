@@ -4,9 +4,16 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
+# get_repo_root: Resolve the main repository root (worktree-safe).
+# In a worktree, git rev-parse --show-toplevel returns the worktree root,
+# but --git-common-dir always points to the main repo's .git directory.
+get_repo_root() {
+  dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" 2>/dev/null
+}
+
 # get_task_root: Read task_root from .trw/config.yaml or default to "docs".
 get_task_root() {
-  _gtr_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { printf 'docs'; return; }
+  _gtr_root="$(get_repo_root)" || { printf 'docs'; return; }
   _gtr_config="$_gtr_root/.trw/config.yaml"
   if [ -f "$_gtr_config" ]; then
     _gtr_val=$(grep '^task_root:' "$_gtr_config" | head -1 | sed 's/^task_root:[[:space:]]*//' | tr -d "'" | tr -d '"')
@@ -20,7 +27,7 @@ get_task_root() {
 # Returns 0 if found, 1 if not.
 find_active_run() {
   _task_root="${1:-$(get_task_root)}"
-  _project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  _project_root="$(get_repo_root)" || return 1
   _latest=""
   _latest_name=""
 
@@ -74,6 +81,35 @@ has_event() {
   grep -q "\"event\":[[:space:]]*\"$_type\"" "$_path" 2>/dev/null
 }
 
+# infer_phase: Determine current execution phase from events.jsonl patterns.
+# Prints one of: none, early, plan, implement, validate, deliver, done.
+# Used by UserPromptSubmit hook for phase-calibrated output.
+infer_phase() {
+  _ip_run_dir=$(find_active_run) || { printf 'none'; return; }
+  [ -n "$_ip_run_dir" ] || { printf 'none'; return; }
+
+  _ip_events="${_ip_run_dir}meta/events.jsonl"
+  [ -f "$_ip_events" ] || { printf 'none'; return; }
+
+  # Check from most-advanced phase backwards
+  if has_event "$_ip_events" "trw_deliver_complete"; then
+    printf 'done'; return
+  fi
+  if has_event "$_ip_events" "reflection_complete" || has_event "$_ip_events" "trw_reflect_complete"; then
+    printf 'deliver'; return
+  fi
+  if has_event "$_ip_events" "build_check_complete"; then
+    printf 'validate'; return
+  fi
+  if has_event "$_ip_events" "file_modified"; then
+    printf 'implement'; return
+  fi
+  if grep -q '"tool_name"[[:space:]]*:[[:space:]]*"trw_prd_validate"' "$_ip_events" 2>/dev/null; then
+    printf 'plan'; return
+  fi
+  printf 'early'
+}
+
 # init_hook_timer: Capture start time for duration measurement.
 # Call near the top of each hook script.
 init_hook_timer() {
@@ -91,7 +127,7 @@ log_hook_execution() {
   _le_end=$(date +%s 2>/dev/null) || _le_end=0
   _le_duration=$((_le_end - ${_hook_start_epoch:-0})) 2>/dev/null || _le_duration=0
 
-  _le_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  _le_root="$(get_repo_root)" || return 0
   _le_log="$_le_root/.trw/context/hook-executions.log"
   _le_dir="$(dirname "$_le_log")"
   [ -d "$_le_dir" ] || mkdir -p "$_le_dir" 2>/dev/null || return 0

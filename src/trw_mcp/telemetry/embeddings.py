@@ -31,7 +31,7 @@ def _load_model() -> object | None:
     if _model is not None:
         return _model
     try:
-        from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+        from sentence_transformers import SentenceTransformer
 
         _model = SentenceTransformer(_MODEL_NAME)
         return _model

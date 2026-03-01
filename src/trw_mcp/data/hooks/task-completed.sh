@@ -43,7 +43,7 @@ if [ -z "$_teammate_name" ]; then
 fi
 
 # FR01: Hard gate — check build status for teammate completions
-_project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+_project_root="$(get_repo_root)" || exit 0
 _build_status="$_project_root/.trw/context/build-status.yaml"
 _tests_passed=""
 if [ -f "$_build_status" ]; then

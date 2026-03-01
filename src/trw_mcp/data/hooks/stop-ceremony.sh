@@ -14,7 +14,7 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
-_project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+_project_root="$(get_repo_root)" || exit 0
 _context_dir="$_project_root/.trw/context"
 _block_file="$_context_dir/stop_block_count"
 _lock_dir="$_context_dir/stop_hook.lock"

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/session-start.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/session-start.sh\"",
             "timeout": 5000
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/session-start.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/session-start.sh\"",
             "timeout": 5000
           }
         ]
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/session-start.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/session-start.sh\"",
             "timeout": 5000
           }
         ]
@@ -36,8 +36,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/session-start.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/session-start.sh\"",
             "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/user-prompt-submit.sh\"",
+            "timeout": 3000
           }
         ]
       }
@@ -48,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/pre-compact.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/pre-compact.sh\"",
             "timeout": 5000
           }
         ]
@@ -60,7 +72,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/session-end.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/session-end.sh\"",
             "timeout": 10000
           }
         ]
@@ -72,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/stop-ceremony.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/stop-ceremony.sh\"",
             "timeout": 10000
           }
         ]
@@ -84,7 +96,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/subagent-start.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/subagent-start.sh\"",
             "timeout": 5000
           }
         ]
@@ -96,7 +108,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/teammate-idle.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/teammate-idle.sh\"",
             "timeout": 3000
           }
         ]
@@ -108,7 +120,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/task-completed.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/task-completed.sh\"",
             "timeout": 3000
           }
         ]
@@ -120,7 +132,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/post-tool-event.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/post-tool-event.sh\"",
             "timeout": 3000
           }
         ]
@@ -130,7 +142,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$(git rev-parse --show-toplevel)/.claude/hooks/post-tool-event.sh\"",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/post-tool-event.sh\"",
             "timeout": 3000
           }
         ]
