@@ -14,6 +14,7 @@ set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────
 WHEEL_FILENAME="{{WHEEL_FILENAME}}"
+MEMORY_WHEEL_FILENAME="{{MEMORY_WHEEL_FILENAME}}"
 TRW_VERSION="{{VERSION}}"
 MIN_PYTHON_VERSION="3.10"
 
@@ -56,7 +57,22 @@ find_python() {
     echo "$py"
 }
 
-# ── Extract embedded wheel ────────────────────────────────────────────
+# ── Extract embedded wheels ───────────────────────────────────────────
+extract_memory_wheel() {
+    local python_cmd="$1"
+    local dest="$2"
+
+    # Extract base64 data between __MEMORY_WHEEL_DATA__ and __WHEEL_DATA__ markers
+    sed -n '/^__MEMORY_WHEEL_DATA__$/,/^__WHEEL_DATA__$/ p' "$0" \
+        | tail -n +2 \
+        | head -n -1 \
+        | "$python_cmd" -c "
+import sys, base64
+data = sys.stdin.read().strip()
+sys.stdout.buffer.write(base64.b64decode(data))
+" > "$dest"
+}
+
 extract_wheel() {
     local python_cmd="$1"
     local dest="$2"
@@ -115,74 +131,108 @@ main() {
     local python_cmd
     python_cmd=$(find_python)
 
-    # 2. Extract embedded wheel
-    local tmpdir
+    # 2. Extract embedded wheels
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
 
-    info "Extracting embedded package..."
+    info "Extracting embedded packages..."
+    local memory_wheel_path="${tmpdir}/${MEMORY_WHEEL_FILENAME}"
+    extract_memory_wheel "$python_cmd" "$memory_wheel_path"
+
+    if [ ! -s "$memory_wheel_path" ]; then
+        error "Failed to extract trw-memory wheel data"
+        exit 1
+    fi
+
     local wheel_path="${tmpdir}/${WHEEL_FILENAME}"
     extract_wheel "$python_cmd" "$wheel_path"
 
     if [ ! -s "$wheel_path" ]; then
-        error "Failed to extract wheel data"
+        error "Failed to extract trw-mcp wheel data"
         exit 1
     fi
 
-    # 3. Install the wheel (try normal, then --user, then --break-system-packages)
-    info "Installing trw-mcp v${TRW_VERSION}..."
-    if "$python_cmd" -m pip install --upgrade "$wheel_path" --quiet 2>/dev/null; then
+    # 3. Install trw-memory first (dependency of trw-mcp)
+    info "Installing trw-memory..."
+    if "$python_cmd" -m pip install --upgrade "$memory_wheel_path" --quiet 2>/dev/null; then
         :
-    elif "$python_cmd" -m pip install --upgrade --user "$wheel_path" --quiet 2>/dev/null; then
-        info "Installed with --user (PEP 668 managed environment)"
-    elif "$python_cmd" -m pip install --upgrade --break-system-packages "$wheel_path" --quiet 2>/dev/null; then
-        warn "Installed with --break-system-packages (consider using a venv)"
+    elif "$python_cmd" -m pip install --upgrade --user "$memory_wheel_path" --quiet 2>/dev/null; then
+        info "Installed trw-memory with --user (PEP 668 managed environment)"
+    elif "$python_cmd" -m pip install --upgrade --break-system-packages "$memory_wheel_path" --quiet 2>/dev/null; then
+        warn "Installed trw-memory with --break-system-packages (consider using a venv)"
     else
-        error "pip install failed — try installing in a virtual environment:"
+        error "pip install failed for trw-memory — try installing in a virtual environment:"
         error "  python3 -m venv .venv && source .venv/bin/activate"
         error "  bash install-trw.sh"
         exit 1
     fi
 
-    # Verify
+    # 4. Install trw-mcp (try normal, then --user, then --break-system-packages)
+    info "Installing trw-mcp v${TRW_VERSION}..."
+    if "$python_cmd" -m pip install --upgrade "$wheel_path" --quiet 2>/dev/null; then
+        :
+    elif "$python_cmd" -m pip install --upgrade --user "$wheel_path" --quiet 2>/dev/null; then
+        info "Installed trw-mcp with --user (PEP 668 managed environment)"
+    elif "$python_cmd" -m pip install --upgrade --break-system-packages "$wheel_path" --quiet 2>/dev/null; then
+        warn "Installed trw-mcp with --break-system-packages (consider using a venv)"
+    else
+        error "pip install failed for trw-mcp — try installing in a virtual environment:"
+        error "  python3 -m venv .venv && source .venv/bin/activate"
+        error "  bash install-trw.sh"
+        exit 1
+    fi
+
+    # Verify both packages
+    if ! "$python_cmd" -c "import trw_memory" 2>/dev/null; then
+        error "Installation failed — trw_memory module not importable"
+        exit 1
+    fi
     if ! "$python_cmd" -c "import trw_mcp" 2>/dev/null; then
         error "Installation failed — trw_mcp module not importable"
         exit 1
     fi
-    info "Package installed successfully"
+    info "Both packages installed successfully"
 
-    # 4. Run init-project (unless --upgrade)
+    # 5. Auto-detect install vs upgrade, run appropriate bootstrap
     if [ "$upgrade_only" = true ]; then
         info "Upgrade complete (--upgrade flag: skipping project setup)"
-    elif [ -d "${target_dir}/.git" ]; then
+    elif [ ! -d "${target_dir}/.git" ]; then
+        warn "Not a git repository — skipping project setup."
+        warn "After initializing git, run: trw-mcp init-project ."
+    elif [ -d "${target_dir}/.trw" ]; then
+        # Existing installation → update
+        info "Existing TRW installation detected — upgrading..."
+        if command -v trw-mcp &>/dev/null; then
+            trw-mcp update-project "${target_dir}"
+        else
+            "$python_cmd" -m trw_mcp.server update-project "${target_dir}"
+        fi
+    else
+        # Fresh install
         info "Setting up TRW in ${target_dir}..."
-
-        # Prefer the CLI entry point, fall back to python -m
         if command -v trw-mcp &>/dev/null; then
             trw-mcp init-project "${target_dir}"
         else
             "$python_cmd" -m trw_mcp.server init-project "${target_dir}"
         fi
-    else
-        warn "Not a git repository — skipping project setup."
-        warn "After initializing git, run: trw-mcp init-project ."
     fi
 
-    # 5. Success
+    # 6. Success
     echo ""
     echo -e "${GREEN}${BOLD}TRW Framework v${TRW_VERSION} — ready${NC}"
     echo ""
     info "Next steps:"
-    info "  1. Edit CLAUDE.md with your project details"
-    info "  2. Start Claude Code:  claude"
-    info "  3. TRW tools are automatically available"
+    info "  1. Start Claude Code:  claude"
+    info "  2. TRW tools are automatically available"
     echo ""
-    info "To upgrade later, re-run this script with a newer version."
+    info "Re-run this script anytime to upgrade."
 }
 
 main "$@"
 exit 0
 
 # ── Embedded wheel data (do not edit below this line) ─────────────────
+__MEMORY_WHEEL_DATA__
+{{MEMORY_WHEEL_BASE64}}
 __WHEEL_DATA__
 {{WHEEL_BASE64}}
