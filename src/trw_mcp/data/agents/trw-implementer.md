@@ -4,7 +4,7 @@ description: >
   Code implementation specialist for Agent Teams. Writes production code
   following TDD, honors interface contracts, respects file ownership
   boundaries. Use as a teammate for implementation tasks.
-model: opus
+model: claude-sonnet-4-6
 maxTurns: 100
 memory: project
 allowedTools:

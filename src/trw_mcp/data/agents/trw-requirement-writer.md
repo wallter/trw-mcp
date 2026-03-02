@@ -5,7 +5,7 @@ description: >
   in a PRD. Writes EARS-compliant requirements with confidence scores
   and Given/When/Then acceptance criteria. Typically invoked after
   grooming identifies requirement gaps.
-model: sonnet
+model: claude-sonnet-4-6
 maxTurns: 30
 memory: project
 allowedTools:

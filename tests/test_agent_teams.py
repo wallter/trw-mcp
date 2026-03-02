@@ -129,7 +129,11 @@ class TestAgentTeamsTemplateIntegration:
         assert "{{agent_teams_section}}" in content
 
     def test_full_sync_includes_agent_teams(self, tmp_path: Path) -> None:
-        """trw_claude_md_sync includes Agent Teams section when enabled."""
+        """trw_claude_md_sync completes successfully when agent_teams_enabled=True.
+
+        PRD-CORE-061: Agent Teams content is suppressed from CLAUDE.md (moved to
+        /trw-ceremony-guide skill), but the sync should still succeed.
+        """
         trw_dir = tmp_path / _CFG.trw_dir
         trw_dir.mkdir(parents=True, exist_ok=True)
         (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
@@ -143,8 +147,7 @@ class TestAgentTeamsTemplateIntegration:
         claude_md = tmp_path / "CLAUDE.md"
         assert claude_md.exists()
         content = claude_md.read_text(encoding="utf-8")
-        assert "Agent Teams Protocol" in content
-        assert "Dual-Mode Orchestration" in content
+        assert "trw:start" in content
 
     def test_full_sync_excludes_agent_teams_when_disabled(self, tmp_path: Path) -> None:
         """trw_claude_md_sync omits Agent Teams section when disabled."""

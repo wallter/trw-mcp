@@ -4,7 +4,7 @@ description: >
   Invoke to assess PRD quality before sprint planning or after grooming.
   Returns a structured review with per-dimension scores and a
   READY/NEEDS WORK/BLOCK verdict. Read-only — never modifies files.
-model: sonnet
+model: claude-sonnet-4-6
 maxTurns: 20
 memory: project
 allowedTools:

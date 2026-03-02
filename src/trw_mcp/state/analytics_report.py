@@ -223,7 +223,7 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
             "build_passed": None,
         }
 
-    return {
+    result: dict[str, object] = {
         "run_id": run_id,
         "started_at": started_at,
         "task": str(state_data.get("task", "")),
@@ -231,6 +231,11 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
         "phase": str(state_data.get("phase", "")),
         **ceremony,
     }
+    # PRD-CORE-060-FR07: Include complexity_class for tier-based aggregation
+    cc = state_data.get("complexity_class")
+    if cc is not None:
+        result["complexity_class"] = str(cc)
+    return result
 
 
 def _parse_run_id_timestamp(run_id: str) -> str:
@@ -258,12 +263,16 @@ def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
             "build_pass_rate": 0.0,
             "avg_learnings_per_run": 0.0,
             "ceremony_trend": [],
+            "ceremony_by_tier": {},
         }
 
     scores: list[int] = []
     build_results: list[bool] = []
     total_learnings = 0
     ceremony_trend: list[dict[str, object]] = []
+
+    # PRD-CORE-060-FR07: Tier-grouped ceremony scores
+    tier_scores: dict[str, list[int]] = {}
 
     for run in runs:
         score = run.get("score")
@@ -274,6 +283,10 @@ def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
                 "score": score,
                 "started_at": run.get("started_at", ""),
             })
+
+            # FR07: Group by complexity_class
+            tier = str(run.get("complexity_class") or "unclassified")
+            tier_scores.setdefault(tier, []).append(score)
 
         bp = run.get("build_passed")
         if bp is not None:
@@ -290,12 +303,27 @@ def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
     )
     avg_learnings = total_learnings / len(runs) if runs else 0.0
 
+    # FR07: Build ceremony_by_tier breakdown
+    ceremony_by_tier: dict[str, dict[str, object]] = {}
+    for tier_name, tier_score_list in tier_scores.items():
+        count = len(tier_score_list)
+        avg = round(sum(tier_score_list) / count, 1) if count else 0.0
+        pass_rate = round(
+            sum(1 for s in tier_score_list if s >= 70) / count, 2,
+        ) if count else 0.0
+        ceremony_by_tier[tier_name] = {
+            "count": count,
+            "avg_score": avg,
+            "pass_rate": pass_rate,
+        }
+
     return {
         "total_runs": len(runs),
         "avg_ceremony_score": round(avg_score, 2),
         "build_pass_rate": round(build_pass_rate, 4),
         "avg_learnings_per_run": round(avg_learnings, 2),
         "ceremony_trend": ceremony_trend,
+        "ceremony_by_tier": ceremony_by_tier,
     }
 
 
@@ -540,6 +568,7 @@ def _empty_report(parse_errors: list[str]) -> dict[str, object]:
             "build_pass_rate": 0.0,
             "avg_learnings_per_run": 0.0,
             "ceremony_trend": [],
+            "ceremony_by_tier": {},
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runs_scanned": 0,

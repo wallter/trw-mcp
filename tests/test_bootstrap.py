@@ -198,6 +198,7 @@ class TestHooks:
         "subagent-start.sh",
         "task-completed.sh",
         "teammate-idle.sh",
+        "user-prompt-submit.sh",
         "validate-prd-write.sh",
     ]
 
@@ -230,6 +231,8 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
+        "trw-audit",
+        "trw-ceremony-guide",
         "trw-commit",
         "trw-deliver",
         "trw-exec-plan",
@@ -252,7 +255,7 @@ class TestSkills:
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 15 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 21 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -339,6 +342,7 @@ class TestAgents:
     """
 
     EXPECTED_AGENTS = [
+        "trw-adversarial-auditor.md",
         "trw-code-simplifier.md",
         "trw-implementer.md",
         "trw-lead.md",
@@ -989,8 +993,8 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
-        assert len(skills) == 19
-        assert len(agents) == 10
+        assert len(skills) == 21
+        assert len(agents) == 11
         assert len(hooks) > 0
 
 

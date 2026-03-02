@@ -2,6 +2,80 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.7.0] — 2026-03-02
+
+### Added — Sprint 42: Adaptive Ceremony & Context Optimization (PRD-CORE-060, 061, 062, 063)
+
+- **Adaptive ceremony depth** (PRD-CORE-060) — `scoring.py`:
+  - `classify_complexity()` — 3-tier scoring (MINIMAL/STANDARD/COMPREHENSIVE) using 6 core signals + 3 high-risk override signals
+  - `get_phase_requirements()` — tier-appropriate mandatory/optional/skipped phase lists
+  - `compute_tier_ceremony_score()` — weighted scoring against tier expectations
+  - New Pydantic models: `ComplexityClass`, `ComplexitySignals`, `ComplexityOverride`, `PhaseRequirements`
+  - 9 config fields (Section 39): tier thresholds, signal weights, hard override threshold
+  - `trw_init` wiring: accepts `complexity_signals` dict, validates via `ComplexitySignals.model_validate()`
+
+- **Progressive disclosure** (PRD-CORE-061) — `claude_md.py`:
+  - 12 template sections suppressed from auto-generated CLAUDE.md (saves ~2,500 tokens)
+  - `render_ceremony_quick_ref()` — compact 4-tool reference replaces full ceremony table
+  - `max_auto_lines` gate with `StateError` on overflow (config field in Section 11)
+  - New `/trw-ceremony-guide` skill — on-demand full ceremony reference
+
+- **Context engineering** (PRD-CORE-062) — instruction saturation reduction:
+  - `render_closing_reminder()` DRY fix — removed duplicate "orchestrate" paragraph
+  - `trw_deliver` instructions trimmed to essentials
+
+- **Model tier assignment** (PRD-CORE-063):
+  - FRAMEWORK.md tier table with canonical model IDs
+  - 11 `.claude/agents/trw-*.md` files updated to canonical IDs (`claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`)
+
+### Changed
+
+- **`_TierExpectation` class** replaces `dict[str, dict[str, object]]` — typed attributes with `__slots__`, eliminates 5 `type: ignore` comments
+- **Analytics report** — `_compute_aggregates()` adds `ceremony_by_tier` breakdown; `_analyze_single_run()` reads `complexity_class` from run state
+- **Session-start hook** — new `_emit_tier_guidance()` function reads complexity class from `run.yaml`
+
+### Stats
+- 2902 tests passing, mypy --strict clean
+- 4 PRDs delivered (CORE-060, 061, 062, 063)
+
+---
+
+## [0.6.0] — 2026-03-02
+
+### Added — Shared HTTP MCP Server with Auto-Start (PRD-CORE-070)
+
+- **Shared HTTP server** — multiple Claude Code instances connect to a single `trw-mcp` process per project:
+  - `_ensure_http_server()` auto-starts a shared HTTP daemon on first launch with file-lock race prevention
+  - `_run_stdio_proxy()` bridges stdio to HTTP using MCP SDK primitives (`streamable_http_client` + `ClientSession` + `Server`)
+  - `.mcp.json` stays stdio format — Claude Code spawns `trw-mcp`, which internally proxies to the shared server
+  - Three-path transport resolution in `main()`: explicit `--transport` (server mode), stdio config (standalone), HTTP config (auto-start + proxy)
+  - Graceful fallback to standalone stdio if HTTP server fails to start (FR06)
+  - PID file management at `.trw/mcp-server.pid` with stale detection
+
+- **TRWConfig transport fields** — `mcp_transport`, `mcp_host`, `mcp_port`:
+  - Configurable via `.trw/config.yaml` or env vars (`TRW_MCP_TRANSPORT`, etc.)
+  - Default `stdio` preserves existing behavior — opt-in via `mcp_transport: streamable-http`
+
+- **SQLiteBackend thread safety** (`trw-memory`):
+  - `threading.Lock` on all public methods for concurrent HTTP client access
+  - `check_same_thread=False` and `timeout=30.0` on `sqlite3.connect()`
+
+- **Makefile targets** — `mcp-server`, `mcp-server-stop`, `mcp-server-status` for manual control
+
+- **Bootstrap stdio preservation** (FR04) — `_trw_mcp_server_entry()` always emits stdio format;
+  HTTP transport is an internal optimization transparent to Claude Code
+
+### Changed
+
+- `_merge_mcp_json()` no longer reads transport config from target project — always generates stdio entries
+- CLI `--transport` choices: `stdio`, `sse`, `streamable-http` (replaces broken `host`/`port` kwargs on `mcp.run()`)
+
+### Stats
+- 30 new transport tests (`test_server_transport.py`), 2 cross-thread SQLite tests
+- 2912 tests passing, 95% coverage, 0 regressions
+
+---
+
 ## [0.5.1] — 2026-02-26
 
 ### Added — Config-Driven Embeddings & Cross-Project Updates

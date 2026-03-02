@@ -5,7 +5,7 @@ description: >
   (RESEARCH through DELIVER), delegates to focused teammates, enforces
   quality gates, preserves institutional knowledge. Does NOT write
   production code — stays in delegate mode during IMPLEMENT.
-model: opus
+model: claude-opus-4-6
 maxTurns: 200
 memory: project
 allowedTools:
@@ -166,10 +166,10 @@ You manage the full 6-phase lifecycle: RESEARCH → PLAN → IMPLEMENT → VALID
 
 | Role | Agent Type | Model | When to Include |
 |------|-----------|-------|-----------------|
-| Implementer | trw-implementer | Sonnet | Always (1 per module/layer) |
-| Tester | trw-tester | Sonnet | Always (1 per sprint) |
-| Reviewer | trw-reviewer | Opus | VALIDATE+ phase (adversarial) |
-| Researcher | trw-researcher | Sonnet | RESEARCH phase (read-only) |
+| Implementer | trw-implementer | `claude-sonnet-4-6` | Always (1 per module/layer) |
+| Tester | trw-tester | `claude-sonnet-4-6` | Always (1 per sprint) |
+| Reviewer | trw-reviewer | `claude-sonnet-4-6` | VALIDATE+ phase (adversarial) |
+| Researcher | trw-researcher | `claude-sonnet-4-6` | RESEARCH phase (read-only) |
 
 Optimal team size: 2-5 teammates. Better decomposition beats more headcount.
 </delegation>

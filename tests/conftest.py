@@ -49,6 +49,15 @@ def _reset_config_singleton() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_run_pin() -> Iterator[None]:
+    """Reset active run pin for test isolation."""
+    from trw_mcp.state._paths import unpin_active_run
+    unpin_active_run()
+    yield
+    unpin_active_run()
+
+
+@pytest.fixture(autouse=True)
 def _reset_memory_backend() -> Iterator[None]:
     """Reset memory adapter singleton for test isolation."""
     from trw_mcp.state.memory_adapter import reset_backend

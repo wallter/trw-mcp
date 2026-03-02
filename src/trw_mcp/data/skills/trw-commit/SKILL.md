@@ -24,9 +24,15 @@ Create a git commit following TRW project conventions: `type(scope): message` fo
 
 3. **Check recent commits**: Run `git log --oneline -5` to match the repository's commit style.
 
-4. **Find PRD context**: Search changed files for PRD references (grep for `PRD-` in modified files and in any active sprint docs). If a PRD is being implemented, include it in the commit.
+4. **Check for new dependencies**: Run `git diff --cached` and scan for `+` lines in `requirements.txt`, `pyproject.toml`, and `package.json`. If any new package names are found, output:
+   ```
+   New dependencies detected: [{package_names}]. Confirm these have been scanned by `trw_build_check(scope='deps')` before committing.
+   ```
+   This is advisory only — do not block the commit on this warning. If no new dependencies found, skip silently.
 
-5. **Generate commit message**: Following the format:
+5. **Find PRD context**: Search changed files for PRD references (grep for `PRD-` in modified files and in any active sprint docs). If a PRD is being implemented, include it in the commit.
+
+6. **Generate commit message**: Following the format:
    ```
    type(scope): concise description of WHAT changed
 
@@ -40,17 +46,17 @@ Create a git commit following TRW project conventions: `type(scope): message` fo
    - Keep the first line under 72 characters
    - The WHY line explains the motivation, not the mechanics
 
-6. **Stage files**: Run `git add` for the relevant files. Exclude:
+7. **Stage files**: Run `git add` for the relevant files. Exclude:
    - `.env`, credentials, secrets
    - Large binary files
    - `.trw/logs/` debug logs
    - Run artifacts (`docs/*/runs/`)
 
-7. **Confirm with user**: Show the proposed commit message and staged files. Ask for confirmation before committing.
+8. **Confirm with user**: Show the proposed commit message and staged files. Ask for confirmation before committing.
 
-8. **Execute commit**: Run `git commit` with the message via HEREDOC format.
+9. **Execute commit**: Run `git commit` with the message via HEREDOC format.
 
-9. **Report**: Show commit hash, files committed, and branch name.
+10. **Report**: Show commit hash, files committed, and branch name.
 
 ## Commit Type Reference
 

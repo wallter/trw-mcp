@@ -187,6 +187,11 @@ class RunState(BaseModel):
     variables: dict[str, str] = Field(default_factory=dict)
     prd_scope: list[str] = Field(default_factory=list)
     run_type: str = "implementation"
+    # PRD-CORE-060: Adaptive ceremony depth fields
+    complexity_class: ComplexityClass | None = None
+    complexity_signals: ComplexitySignals | None = None
+    complexity_override: ComplexityOverride | None = None
+    phase_requirements: PhaseRequirements | None = None
 
 
 class EventType(str, Enum):
@@ -264,6 +269,62 @@ class EventType(str, Enum):
             return EventType(event_str)
         except ValueError:
             return None
+
+
+class ComplexityClass(str, Enum):
+    """Task complexity tier for adaptive ceremony depth (PRD-CORE-060-FR02).
+
+    Determines which ceremony phases are mandatory, optional, or skipped.
+    """
+
+    MINIMAL = "MINIMAL"
+    STANDARD = "STANDARD"
+    COMPREHENSIVE = "COMPREHENSIVE"
+
+
+class ComplexitySignals(BaseModel):
+    """Input signals for complexity classification (PRD-CORE-060-FR02).
+
+    The 6 core signals (files_affected through large_refactoring) feed the
+    point formula. The 3 risk signals (security_change, data_migration,
+    unknown_codebase) trigger hard overrides per FR05.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    files_affected: int = Field(default=1, ge=0, le=100)
+    novel_patterns: bool = False
+    cross_cutting: bool = False
+    architecture_change: bool = False
+    external_integration: bool = False
+    large_refactoring: bool = False
+    # High-risk signals — trigger hard override when >= 2 are True (FR05)
+    security_change: bool = False
+    data_migration: bool = False
+    unknown_codebase: bool = False
+
+
+class ComplexityOverride(BaseModel):
+    """Override record when hard-override logic fires (PRD-CORE-060-FR09).
+
+    Persisted on RunState when high-risk signals force tier escalation.
+    """
+
+    reason: str
+    signals: list[str]
+    raw_score: int
+
+
+class PhaseRequirements(BaseModel):
+    """Phase classification per complexity tier (PRD-CORE-060-FR04).
+
+    Written to run.yaml to indicate which phases are mandatory, optional,
+    or skipped for the assigned tier.
+    """
+
+    mandatory: list[str]
+    optional: list[str]
+    skipped: list[str]
 
 
 class ReviewFinding(BaseModel):

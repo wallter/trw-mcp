@@ -6,3 +6,4 @@ logs/
 *.jsonl
 *.lock
 knowledge.db
+mcp-server.pid

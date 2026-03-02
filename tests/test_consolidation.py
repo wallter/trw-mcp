@@ -214,9 +214,10 @@ class TestFindClusters:
             write_entry(entries_dir, writer, f"e{i:03d}", summary=f"s{i}", detail=f"d{i}")
 
         mock_batch = MagicMock(return_value=[make_vec(1.0, 0.0, 0.0)] * 5)
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
-                find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
+                with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
+                    find_clusters(entries_dir, reader, min_cluster_size=3)
 
         assert mock_batch.call_count == 1
         # Verify all 5 texts passed to the one call
@@ -237,7 +238,6 @@ class TestFindClusters:
         # 4 similar entries, 3 unrelated
         # similar: [1,0,0], [0.99,0.1,0], [0.98,0.2,0], [0.97,0.25,0]
         # unrelated: orthogonal vectors
-        import math
         similar_vecs = [
             make_vec(1.0, 0.0, 0.0),
             make_vec(0.99, 0.14, 0.0),
@@ -251,13 +251,14 @@ class TestFindClusters:
         ]
         all_vecs = similar_vecs + unrelated_vecs
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=all_vecs):
-                result = find_clusters(
-                    entries_dir, reader,
-                    similarity_threshold=0.9,
-                    min_cluster_size=3,
-                )
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
+                with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=all_vecs):
+                    result = find_clusters(
+                        entries_dir, reader,
+                        similarity_threshold=0.9,
+                        min_cluster_size=3,
+                    )
 
         # Should have at least one cluster with the similar entries
         assert len(result) >= 1
@@ -308,9 +309,10 @@ class TestFindClusters:
             write_entry(entries_dir, writer, f"e{i:03d}")
 
         mock_batch = MagicMock(return_value=[make_vec(1.0, 0.0, 0.0)] * 3)
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
-                find_clusters(entries_dir, reader, max_entries=3, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
+                with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
+                    find_clusters(entries_dir, reader, max_entries=3, min_cluster_size=3)
 
         # embed_batch should be called with at most 3 texts
         call_args = mock_batch.call_args[0][0]

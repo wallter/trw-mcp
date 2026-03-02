@@ -4,7 +4,7 @@ description: >
   Simplifies and refines code for clarity, consistency, and maintainability
   while preserving all functionality. Focuses on recently modified code
   unless instructed otherwise.
-model: sonnet
+model: claude-haiku-4-5-20251001
 maxTurns: 50
 memory: project
 skills:

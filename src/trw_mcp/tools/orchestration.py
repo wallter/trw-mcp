@@ -16,11 +16,13 @@ from fastmcp import FastMCP
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.run import (
+    ComplexitySignals,
     Confidence,
     Phase,
     RunState,
     RunStatus,
 )
+from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
 from trw_mcp.state.analytics_report import count_stale_runs
 from trw_mcp.state.persistence import (
@@ -56,6 +58,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         run_type: str = "implementation",
         task_root: str | None = None,
         wave_manifest: list[dict[str, object]] | None = None,
+        complexity_signals: dict[str, object] | None = None,
     ) -> dict[str, str]:
         """Create your run directory so checkpoints and progress tracking work — required for structured tasks.
 
@@ -72,6 +75,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
             task_root: Optional task directory root (default: config field or "docs").
             wave_manifest: Optional wave plan definitions. When provided, delegates to
                 trw_wave_plan after run scaffolding for one-step initialization.
+            complexity_signals: Optional complexity signals dict for adaptive ceremony depth.
+                When provided, classifies task complexity into MINIMAL/STANDARD/COMPREHENSIVE tier.
         """
         project_root = resolve_project_root()
         trw_dir = project_root / _config.trw_dir
@@ -145,6 +150,19 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "TASK_ROOT": resolved_task_root,
         }
 
+        # PRD-CORE-060: Classify complexity if signals provided
+        parsed_signals = None
+        complexity_class_val = None
+        complexity_override_val = None
+        phase_reqs_val = None
+        if complexity_signals is not None:
+            # Parse dict[str, object] via model_validate for type safety
+            parsed_signals = ComplexitySignals.model_validate(complexity_signals)
+            tier, _raw, override = classify_complexity(parsed_signals)
+            complexity_class_val = tier
+            complexity_override_val = override
+            phase_reqs_val = get_phase_requirements(tier)
+
         run_state = RunState(
             run_id=run_id,
             task=task_name,
@@ -156,6 +174,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             variables=variables,
             prd_scope=prd_scope or [],
             run_type=run_type,
+            complexity_class=complexity_class_val,
+            complexity_signals=parsed_signals,
+            complexity_override=complexity_override_val,
+            phase_requirements=phase_reqs_val,
         )
         _writer.write_yaml(
             run_root / "meta" / "run.yaml",
@@ -191,6 +213,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "status": "initialized",
             "phase": initial_phase.value,
         }
+
+        if complexity_class_val is not None:
+            result["complexity_class"] = complexity_class_val.value
 
         return result
 

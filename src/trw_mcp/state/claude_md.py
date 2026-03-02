@@ -102,19 +102,14 @@ def load_claude_md_template(trw_dir: Path) -> str:
         f"{TRW_MARKER_START}\n"
         "\n"
         "{{imperative_opener}}"
+        "{{ceremony_quick_ref}}"
         "{{delegation_section}}"
         "{{agent_teams_section}}"
-        "## TRW Behavioral Protocol (Auto-Generated)\n"
-        "\n"
         "{{behavioral_protocol}}"
         "{{rationalization_watchlist}}"
-        "## TRW Ceremony Tools (Auto-Generated)\n"
-        "\n"
         "{{ceremony_phases}}"
         "{{ceremony_table}}"
         "{{ceremony_flows}}"
-        "## TRW Learnings (Auto-Generated)\n"
-        "\n"
         "{{architecture_section}}"
         "{{conventions_section}}"
         "{{categorized_learnings}}"
@@ -357,6 +352,33 @@ def render_imperative_opener() -> str:
     )
 
 
+def render_ceremony_quick_ref() -> str:
+    """Render compact ceremony quick-reference card for CLAUDE.md.
+
+    Lists only the 4 ceremony-critical tools with a pointer to the
+    full ceremony guide skill for on-demand loading.
+
+    Returns:
+        Markdown string with quick-reference card.
+    """
+    return (
+        "## TRW Behavioral Protocol (Auto-Generated)\n"
+        "\n"
+        "- `trw_session_start()` — loads your prior learnings and recovers any active run\n"
+        "- `trw_checkpoint(message)` — saves progress so you can resume after context compaction\n"
+        "- `trw_learn(summary, detail)` — records discoveries for all future sessions\n"
+        "- `trw_deliver()` — persists everything in one call when done\n"
+        "\n"
+        "For full tool guide: invoke `/trw-ceremony-guide`\n"
+        "\n"
+        "Sessions where you orchestrate (delegate, verify, learn) "
+        "rather than implement directly produce higher quality and "
+        "fewer rework cycles — your strategic oversight is more "
+        "valuable than your keystrokes.\n"
+        "\n"
+    )
+
+
 def render_behavioral_protocol() -> str:
     """Render behavioral directives from .trw/context/behavioral_protocol.yaml.
 
@@ -550,13 +572,8 @@ def render_closing_reminder() -> str:
         "### Session Boundaries\n"
         "\n"
         "Every session that loads learnings via `trw_session_start()` "
-        "should persist them via `trw_deliver()` — this is how "
+        "should persist them at session end — this is how "
         "your work compounds across sessions instead of being lost.\n"
-        "\n"
-        "Sessions where you orchestrate (delegate, verify, learn) "
-        "rather than implement directly produce higher quality and "
-        "fewer rework cycles — your strategic oversight is more "
-        "valuable than your keystrokes.\n"
         "\n"
     )
 
@@ -842,38 +859,42 @@ def execute_claude_md_sync(
 
     template = load_claude_md_template(trw_dir)
 
-    # Shared ceremony sections (identical regardless of LLM path)
+    # PRD-CORE-061: Progressive disclosure — suppress ceremony/behavioral/learnings
+    # sections from CLAUDE.md. These are now delivered via:
+    # - /trw-ceremony-guide skill (on-demand)
+    # - session-start.sh hook (behavioral protocol, one-time)
+    # - trw_session_start() recall (learnings)
     tpl_context: dict[str, str] = {
         "imperative_opener": render_imperative_opener(),
-        "behavioral_protocol": render_behavioral_protocol(),
-        "rationalization_watchlist": render_rationalization_watchlist(),
-        "ceremony_phases": render_phase_descriptions(),
-        "ceremony_table": render_ceremony_table(),
-        "ceremony_flows": render_ceremony_flows(),
-        "delegation_section": render_delegation_protocol(),
-        "agent_teams_section": render_agent_teams_protocol(),
+        "ceremony_quick_ref": render_ceremony_quick_ref(),
         "closing_reminder": render_closing_reminder(),
+        # Suppressed — moved to /trw-ceremony-guide skill
+        "behavioral_protocol": "",
+        "delegation_section": "",
+        "agent_teams_section": "",
+        "rationalization_watchlist": "",
+        "ceremony_phases": "",
+        "ceremony_table": "",
+        "ceremony_flows": "",
+        # Suppressed — learnings delivered via trw_session_start() recall
+        "architecture_section": "",
+        "conventions_section": "",
+        "categorized_learnings": "",
+        "patterns_section": "",
+        "adherence_section": "",
     }
 
-    # Content sections: LLM summary replaces manual rendering when available
-    if llm_summary is not None:
-        tpl_context.update({
-            "architecture_section": "",
-            "conventions_section": "",
-            "categorized_learnings": llm_summary + "\n",
-            "patterns_section": "",
-            "adherence_section": "",
-        })
-    else:
-        tpl_context.update({
-            "architecture_section": render_architecture(arch_data),
-            "conventions_section": render_conventions(conv_data),
-            "categorized_learnings": render_categorized_learnings(high_impact),
-            "patterns_section": render_patterns(patterns),
-            "adherence_section": render_adherence(high_impact),
-        })
-
     trw_section = render_template(template, tpl_context)
+
+    # PRD-CORE-061-FR04: Enforce max_auto_lines gate before writing
+    auto_gen_lines = trw_section.count("\n")
+    if auto_gen_lines > config.max_auto_lines:
+        msg = (
+            f"Auto-gen section is {auto_gen_lines} lines, "
+            f"exceeds max_auto_lines={config.max_auto_lines}. "
+            f"Refactor rendering before syncing."
+        )
+        raise StateError(msg)
 
     if scope == "sub" and target_dir:
         target = Path(target_dir).resolve() / "CLAUDE.md"

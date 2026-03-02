@@ -4,7 +4,7 @@ description: >
   Invoke when a PRD has content density < 0.25 or fails validation
   quality gates. Researches, drafts, validates, and iterates until
   the PRD reaches sprint-ready completeness (>= 0.85).
-model: sonnet
+model: claude-opus-4-6
 maxTurns: 100
 memory: project
 allowedTools:

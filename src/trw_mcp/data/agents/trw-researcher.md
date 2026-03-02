@@ -4,7 +4,7 @@ description: >
   Research specialist for Agent Teams. Explores codebases, gathers
   evidence, produces structured findings. Use as a teammate for
   research and investigation tasks.
-model: sonnet
+model: claude-sonnet-4-6
 maxTurns: 50
 memory: project
 allowedTools:

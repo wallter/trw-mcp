@@ -62,6 +62,13 @@ class TRWConfig(BaseSettings):
     36. Debug & telemetry ............. debug
     37. Platform & update channel ..... platform_telemetry_enabled
     38. Knowledge topology (CORE-021) . knowledge_sync_threshold
+    39. Complexity classification ...... complexity_tier_minimal
+    40. MCP transport .................. mcp_transport
+    41. Mutation testing (QUAL-025) .... mutation_enabled
+    42. Cross-model review (QUAL-026) .. cross_model_review_enabled
+    43. Multi-agent review (QUAL-027) .. review_confidence_threshold
+    44. Dependency audit (QUAL-028) .... dep_audit_enabled
+    45. API fuzz & comment check (029) . comment_check_enabled
     """
 
     model_config = SettingsConfigDict(
@@ -176,6 +183,7 @@ class TRWConfig(BaseSettings):
 
     claude_md_max_lines: int = 500
     sub_claude_md_max_lines: int = 50
+    max_auto_lines: int = 80
     agents_md_enabled: bool = True
     agent_teams_enabled: bool = True
 
@@ -438,6 +446,67 @@ class TRWConfig(BaseSettings):
     knowledge_jaccard_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
     knowledge_min_cluster_size: int = Field(default=3, ge=1)
     knowledge_output_dir: str = "knowledge"
+
+    # ── 39. Complexity classification (CORE-060) ──────────────────────────
+    # Tier boundaries and signal weights for classify_complexity()
+
+    complexity_tier_minimal: int = 3        # raw_score <= this -> MINIMAL
+    complexity_tier_comprehensive: int = 7   # raw_score >= this+1 -> COMPREHENSIVE
+    complexity_weight_novel_patterns: int = 3
+    complexity_weight_cross_cutting: int = 2
+    complexity_weight_architecture_change: int = 3
+    complexity_weight_external_integration: int = 2
+    complexity_weight_large_refactoring: int = 1
+    complexity_weight_files_affected_max: int = 5
+    complexity_hard_override_threshold: int = 2  # min high-risk signals to force COMPREHENSIVE
+
+    # ── 40. MCP transport ──────────────────────────────────────────────────
+    # Shared HTTP server: multiple Claude Code instances connect to one process
+
+    mcp_transport: str = "stdio"        # stdio | sse | streamable-http
+    mcp_host: str = "127.0.0.1"         # bind address for HTTP transport
+    mcp_port: int = 8100                # port for HTTP transport
+
+    # ── 41. Mutation testing (QUAL-025) ───────────────────────────────────
+    # Optional VALIDATE phase gate — runs mutmut on changed files
+
+    mutation_enabled: bool = False
+    mutation_threshold: float = 0.50                   # standard feature threshold
+    mutation_threshold_critical: float = 0.70          # critical path threshold
+    mutation_threshold_experimental: float = 0.30      # experimental code threshold
+    mutation_critical_paths: tuple[str, ...] = ("tools/", "state/", "models/")
+    mutation_experimental_paths: tuple[str, ...] = ("scratch/",)
+    mutation_timeout_secs: int = 300
+
+    # ── 42. Cross-model review (QUAL-026) ─────────────────────────────────
+    # Route git diff to external model family for independent review
+
+    cross_model_review_enabled: bool = False
+    cross_model_provider: str = "gemini-2.5-pro"
+    cross_model_review_timeout_secs: int = 30
+    cross_model_review_block_on_critical: bool = True
+
+    # ── 43. Multi-agent review (QUAL-027) ─────────────────────────────────
+    # Confidence-scored parallel review with threshold filtering
+
+    review_confidence_threshold: int = 80              # 0-100; findings below are in review-all.yaml only
+
+    # ── 44. Dependency audit (QUAL-028) ───────────────────────────────────
+    # pip-audit / npm audit gate for agent dependency changes
+
+    dep_audit_enabled: bool = True
+    dep_audit_level: str = "high"                      # critical | high | medium | low
+    dep_audit_timeout_secs: int = 30
+    dep_audit_block_on_patchable_only: bool = True     # only block when fix_versions available
+
+    # ── 45. API fuzz & comment check (QUAL-029) ──────────────────────────
+    # Schemathesis API fuzzing + placeholder comment detection hook
+
+    comment_check_enabled: bool = True
+    api_fuzz_enabled: bool = False
+    api_fuzz_base_url: str = "http://localhost:8000"
+    api_fuzz_level: str = "strict"                     # strict | lenient
+    api_fuzz_timeout_secs: int = 120
 
     @property
     def effective_platform_urls(self) -> list[str]:

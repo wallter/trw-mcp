@@ -327,7 +327,7 @@ class TestCeremonyWarningText:
         """Warning explains what the agent gains, not what it loses."""
         lower = CEREMONY_WARNING.lower()
         assert "learnings" in lower
-        assert "context" in lower
+        assert "run state" in lower
 
     def test_warning_avoids_threat_framing(self) -> None:
         """No CRITICAL/MUST/WILL threat language."""

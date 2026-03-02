@@ -26,18 +26,64 @@ fi
 
 _project_root="$(get_repo_root)" || exit 0
 
+# --- PRD-CORE-060-FR06: Tier-calibrated ceremony guidance ---
+_emit_tier_guidance() {
+  # Find the most recent active run.yaml
+  _run_yaml=""
+  _task_root="$_project_root/docs"
+  if [ -f "$_project_root/.trw/config.yaml" ] && command -v grep >/dev/null 2>&1; then
+    _custom_root=$(grep -m1 'task_root:' "$_project_root/.trw/config.yaml" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
+    [ -n "$_custom_root" ] && _task_root="$_project_root/$_custom_root"
+  fi
+  if [ -d "$_task_root" ]; then
+    _run_yaml=$(find "$_task_root" -name "run.yaml" -path "*/meta/run.yaml" 2>/dev/null | sort -r | head -1) || true
+  fi
+
+  if [ -z "$_run_yaml" ] || [ ! -f "$_run_yaml" ]; then
+    echo "CEREMONY: No active run — classify task complexity before calling trw_init."
+    return
+  fi
+
+  _tier=""
+  if command -v grep >/dev/null 2>&1; then
+    _tier=$(grep -m1 'complexity_class:' "$_run_yaml" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
+  fi
+
+  case "$_tier" in
+    MINIMAL)
+      echo "CEREMONY — Tier: MINIMAL | trw_recall only | No trw_init required"
+      echo "  Mandatory phases: IMPLEMENT, DELIVER"
+      echo "  Skip: RESEARCH, PLAN, VALIDATE, REVIEW"
+      ;;
+    STANDARD)
+      echo "CEREMONY — Tier: STANDARD"
+      echo "  Mandatory phases: Plan, Implement, Validate, Deliver"
+      echo "  1 checkpoint minimum"
+      echo "  Review: optional (+10 bonus)"
+      ;;
+    COMPREHENSIVE)
+      echo "CEREMONY — Tier: COMPREHENSIVE"
+      echo "  Mandatory phases: Research, Plan, Implement, Validate, Review, Deliver"
+      echo "  Multiple checkpoints, shard self-review required, adversarial audit recommended"
+      ;;
+    *)
+      # No complexity_class or unknown — emit no tier guidance
+      ;;
+  esac
+}
+
 # --- Value-oriented protocol summary ---
 _emit_protocol() {
+  echo "## TRW Behavioral Protocol"
+  echo ""
   _protocol_file="$_project_root/.trw/context/behavioral_protocol.yaml"
   if [ -f "$_protocol_file" ]; then
-    echo "TRW PROTOCOL — tools that help you build effectively:"
     grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
   else
-    echo "TRW PROTOCOL — tools that help you build effectively:"
-    echo "- trw_session_start(query?): loads learnings + recovers active run (pass query for focused recall)"
-    echo "- trw_checkpoint(): saves progress so you resume after compaction"
-    echo "- trw_learn(): records discoveries for future sessions"
-    echo "- trw_deliver(): persists everything in one call when done"
+    echo "- Start: call trw_session_start() to load prior learnings and active run state"
+    echo "- During: call trw_checkpoint(message) after milestones"
+    echo "- Finish: call trw_deliver() to persist learnings for future sessions"
+    echo "- On errors or >2 retries: call trw_learn() to record the discovery"
   fi
 }
 
@@ -45,6 +91,8 @@ case "$_source" in
   startup)
     # FR01: Fresh startup — explain what's available and why
     _emit_protocol
+    echo ""
+    _emit_tier_guidance
     echo ""
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
@@ -62,6 +110,8 @@ case "$_source" in
   resume)
     # FR02: Resume — brief, goal-oriented
     _emit_protocol
+    echo ""
+    _emit_tier_guidance
     echo ""
     echo "SESSION RESUMED — your run state and learnings are preserved."
     echo "Call trw_status() to see where you left off and what to work on next."

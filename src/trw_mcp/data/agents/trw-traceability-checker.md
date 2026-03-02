@@ -4,7 +4,7 @@ description: >
   Invoke at VALIDATE or DELIVER phase to verify bidirectional traceability
   between PRDs, source code, and tests. Returns a structured coverage
   report with PASS/FAIL gate status. Read-only — no file modifications.
-model: haiku
+model: claude-haiku-4-5-20251001
 maxTurns: 30
 memory: project
 allowedTools:

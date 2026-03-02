@@ -28,6 +28,7 @@ from trw_mcp.state.claude_md import (
     render_adherence,
     render_behavioral_protocol,
     render_ceremony_flows,
+    render_ceremony_quick_ref,
     render_ceremony_table,
     render_closing_reminder,
     render_delegation_protocol,
@@ -381,7 +382,8 @@ class TestTrwClaudeMdSync:
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         assert "trw:end" in content
-        assert "Critical pattern" in content
+        # PRD-CORE-061: learnings suppressed from CLAUDE.md, delivered via trw_session_start
+        assert "Critical pattern" not in content
 
     def test_preserves_existing_content(self, tmp_path: Path) -> None:
         # Create existing CLAUDE.md
@@ -420,7 +422,8 @@ class TestTrwClaudeMdSync:
 
         content = claude_md.read_text(encoding="utf-8")
         assert "Old content" not in content
-        assert "Replacement learning" in content
+        # PRD-CORE-061: learnings suppressed from CLAUDE.md
+        assert "Replacement learning" not in content
         assert "Other section" in content  # Preserved
 
     def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path) -> None:
@@ -562,9 +565,11 @@ class TestClaudeMdTemplate:
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         assert "trw:end" in content
-        assert "Template sync test learning" in content
-        # Should be categorized under Gotchas
-        assert "### Gotchas" in content
+        # PRD-CORE-061: learnings suppressed from CLAUDE.md
+        assert "Template sync test learning" not in content
+        assert "### Gotchas" not in content
+        # Quick ref card present instead
+        assert "/trw-ceremony-guide" in content
 
     def test_custom_template_with_extra_sections(self, tmp_path: Path) -> None:
         """Custom templates can add static content alongside placeholders."""
@@ -577,11 +582,11 @@ class TestClaudeMdTemplate:
             "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->\n"
             "<!-- trw:start -->\n"
             "\n"
-            "## TRW Learnings (Auto-Generated)\n"
-            "\n"
             "### Project-Specific Notes\n"
             "- This project uses React 19\n"
             "\n"
+            "{{imperative_opener}}"
+            "{{ceremony_quick_ref}}"
             "{{categorized_learnings}}"
             "{{adherence_section}}"
             "<!-- trw:end -->\n"
@@ -602,7 +607,9 @@ class TestClaudeMdTemplate:
         content = claude_md.read_text(encoding="utf-8")
         assert "Project-Specific Notes" in content
         assert "React 19" in content
-        assert "Custom template learning" in content
+        # PRD-CORE-061: learnings suppressed, quick ref present
+        assert "Custom template learning" not in content
+        assert "/trw-ceremony-guide" in content
 
 
 class TestCeremonyRendering:
@@ -655,7 +662,8 @@ class TestCeremonyRendering:
         result = render_closing_reminder()
         assert "### Session Boundaries" in result
         assert "trw_session_start()" in result
-        assert "trw_deliver()" in result
+        # PRD-CORE-062-FR01: trw_deliver removed from closing reminder (redundant with opener)
+        assert "trw_deliver()" not in result
         assert "compounds" in result
         # Frame 3: orchestration bookend (position bias — end gets elevated attention)
         assert "orchestrate" in result.lower()
@@ -689,7 +697,7 @@ class TestCeremonyRendering:
         assert "{{closing_reminder}}" in template
 
     def test_sync_includes_ceremony_sections(self, tmp_path: Path) -> None:
-        """Full sync produces CLAUDE.md with ceremony table content."""
+        """Full sync produces CLAUDE.md with progressive disclosure (PRD-CORE-061)."""
         tools = _get_tools()
 
         tools["trw_learn"].fn(
@@ -703,24 +711,16 @@ class TestCeremonyRendering:
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        # Ceremony section header
-        assert "## TRW Ceremony Tools (Auto-Generated)" in content
-        # Phase descriptions
-        assert "### Execution Phases" in content
-        assert "RESEARCH → PLAN → IMPLEMENT" in content
-        # Tool table
-        assert "### Tool Lifecycle" in content
-        assert "`trw_session_start`" in content
-        assert "`trw_deliver`" in content
-        # Flows
-        assert "### Example Flows" in content
-        assert "**Quick Task**" in content
-        assert "**Full Run**" in content
+        # PRD-CORE-061: ceremony sections suppressed, moved to /trw-ceremony-guide
+        assert "## TRW Ceremony Tools (Auto-Generated)" not in content
+        assert "### Execution Phases" not in content
+        assert "### Tool Lifecycle" not in content
+        assert "### Example Flows" not in content
+        assert "## TRW Delegation & Orchestration" not in content
+        # Quick ref card present with skill pointer
+        assert "/trw-ceremony-guide" in content
         # Value-oriented opener at top of auto-generated section
         assert "TRW tools help you build effectively" in content
-        # Delegation protocol section
-        assert "## TRW Delegation & Orchestration" in content
-        assert "When to Delegate" in content
         assert "trw_session_start()" in content
         # Closing reminder bookends the section
         assert "Session Boundaries" in content
@@ -730,6 +730,221 @@ class TestCeremonyRendering:
         assert "{{ceremony_table}}" not in content
         assert "{{ceremony_flows}}" not in content
         assert "{{closing_reminder}}" not in content
+        assert "{{ceremony_quick_ref}}" not in content
+
+
+class TestProgressiveDisclosure:
+    """Tests for PRD-CORE-061 progressive disclosure and PRD-CORE-062 context optimization."""
+
+    def test_auto_gen_line_count_within_limit(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR02: rendered auto-gen block <=80 lines."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Line count test", detail="Testing line count", impact=0.9,
+        )
+        tools["trw_claude_md_sync"].fn(scope="root")
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        # Count lines between markers
+        start = content.index("<!-- trw:start -->")
+        end = content.index("<!-- trw:end -->") + len("<!-- trw:end -->")
+        auto_gen = content[start:end]
+        line_count = auto_gen.count("\n")
+        assert line_count <= 80, f"Auto-gen section is {line_count} lines, exceeds 80"
+
+    def test_auto_gen_no_learnings(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR05: no learning summaries in rendered output."""
+        tools = _get_tools()
+        for i in range(5):
+            tools["trw_learn"].fn(
+                summary=f"High impact learning {i}",
+                detail=f"Detail for learning {i}",
+                impact=0.9,
+            )
+        tools["trw_claude_md_sync"].fn(scope="root")
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        for i in range(5):
+            assert f"High impact learning {i}" not in content
+
+    def test_auto_gen_contains_skill_reference(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR02: rendered output contains /trw-ceremony-guide."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Skill ref test", detail="Testing", impact=0.9,
+        )
+        tools["trw_claude_md_sync"].fn(scope="root")
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        assert "/trw-ceremony-guide" in content
+
+    def test_auto_gen_no_tool_lifecycle_table(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR02: rendered output does NOT contain tool table."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Table test", detail="Testing", impact=0.9,
+        )
+        tools["trw_claude_md_sync"].fn(scope="root")
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        assert "| Phase | Tool |" not in content
+
+    def test_auto_gen_no_rationalization_watchlist(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR02: rendered output does NOT contain rationalization."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Watchlist test", detail="Testing", impact=0.9,
+        )
+        tools["trw_claude_md_sync"].fn(scope="root")
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        assert "Rationalization Watchlist" not in content
+        assert "rationalization" not in content.lower()
+
+    def test_auto_gen_no_orphan_headers(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR01: no orphan ## TRW ... (Auto-Generated) headers."""
+        import re
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Header test", detail="Testing", impact=0.9,
+        )
+        tools["trw_claude_md_sync"].fn(scope="root")
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        start = content.index("<!-- trw:start -->")
+        end = content.index("<!-- trw:end -->")
+        auto_gen = content[start:end]
+        # Check for orphan headers: ## TRW Ceremony Tools (Auto-Generated) etc
+        orphan_pattern = r"## TRW (Ceremony Tools|Learnings|Delegation) \(Auto-Generated\)"
+        matches = re.findall(orphan_pattern, auto_gen)
+        assert len(matches) == 0, f"Found orphan headers: {matches}"
+
+    def test_max_auto_lines_gate_raises_error(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR04: StateError raised when auto-gen exceeds limit."""
+        from trw_mcp.exceptions import StateError
+        from trw_mcp.state.claude_md import execute_claude_md_sync
+        from trw_mcp.clients.llm import LLMClient
+
+        config = TRWConfig(max_auto_lines=5)  # Very low limit
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        llm = LLMClient()
+        with pytest.raises(StateError, match="exceeds max_auto_lines=5"):
+            execute_claude_md_sync("root", None, config, reader, writer, llm)
+
+    def test_max_auto_lines_gate_passes_at_limit(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR04: exactly max_auto_lines succeeds."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Gate pass test", detail="Testing", impact=0.9,
+        )
+        # Default max_auto_lines=80, our output should be well under
+        result = tools["trw_claude_md_sync"].fn(scope="root")
+        assert result["status"] == "synced"
+
+    def test_max_auto_lines_config_default(self) -> None:
+        """PRD-CORE-061-FR04: TRWConfig().max_auto_lines == 80."""
+        config = TRWConfig()
+        assert config.max_auto_lines == 80
+
+    def test_max_auto_lines_config_override(self) -> None:
+        """PRD-CORE-061-FR04: TRWConfig(max_auto_lines=100) works."""
+        config = TRWConfig(max_auto_lines=100)
+        assert config.max_auto_lines == 100
+
+    def test_render_ceremony_quick_ref(self) -> None:
+        """PRD-CORE-061-FR02: quick ref card contains 4 ceremony-critical tools."""
+        result = render_ceremony_quick_ref()
+        assert "## TRW Behavioral Protocol (Auto-Generated)" in result
+        assert "trw_session_start()" in result
+        assert "trw_checkpoint(message)" in result
+        assert "trw_learn(summary, detail)" in result
+        assert "trw_deliver()" in result
+        assert "/trw-ceremony-guide" in result
+
+    def test_closing_reminder_no_trw_deliver(self) -> None:
+        """PRD-CORE-062-FR01: render_closing_reminder has no trw_deliver."""
+        result = render_closing_reminder()
+        assert "trw_deliver" not in result
+        assert "compounds across sessions" in result
+
+    def test_session_start_hook_contains_behavioral_protocol_header(self) -> None:
+        """PRD-CORE-061-FR03: session-start.sh has formal protocol header."""
+        hook_path = (
+            Path(__file__).parent.parent
+            / "src" / "trw_mcp" / "data" / "hooks" / "session-start.sh"
+        )
+        content = hook_path.read_text(encoding="utf-8")
+        assert "## TRW Behavioral Protocol" in content
+
+    def test_session_start_rigid_line_count(self) -> None:
+        """PRD-CORE-062-FR04: session-start.sh RIGID line count is 1."""
+        hook_path = (
+            Path(__file__).parent.parent
+            / "src" / "trw_mcp" / "data" / "hooks" / "session-start.sh"
+        )
+        content = hook_path.read_text(encoding="utf-8")
+        rigid_count = content.count("RIGID")
+        assert rigid_count == 1, f"RIGID appears {rigid_count} times, expected 1"
+
+    def test_skill_exists_in_data_directory(self) -> None:
+        """PRD-CORE-061-FR01: trw-ceremony-guide skill exists."""
+        skill_path = (
+            Path(__file__).parent.parent
+            / "src" / "trw_mcp" / "data" / "skills"
+            / "trw-ceremony-guide" / "SKILL.md"
+        )
+        assert skill_path.exists()
+
+    def test_skill_has_minimum_table_rows(self) -> None:
+        """PRD-CORE-061-FR01: skill contains >= 12 table rows."""
+        skill_path = (
+            Path(__file__).parent.parent
+            / "src" / "trw_mcp" / "data" / "skills"
+            / "trw-ceremony-guide" / "SKILL.md"
+        )
+        content = skill_path.read_text(encoding="utf-8")
+        # Count table rows (lines starting with | that aren't headers/separators)
+        table_rows = [
+            line for line in content.split("\n")
+            if line.startswith("| ") and "---" not in line
+            and "Phase | Tool" not in line
+        ]
+        assert len(table_rows) >= 12, f"Only {len(table_rows)} table rows, expected >= 12"
+
+    def test_skill_frontmatter_user_invocable(self) -> None:
+        """PRD-CORE-061-FR01: skill has user-invocable: true frontmatter."""
+        skill_path = (
+            Path(__file__).parent.parent
+            / "src" / "trw_mcp" / "data" / "skills"
+            / "trw-ceremony-guide" / "SKILL.md"
+        )
+        content = skill_path.read_text(encoding="utf-8")
+        assert "user-invocable: true" in content
+
+    def test_behavioral_protocol_yaml_no_watchlist(self) -> None:
+        """PRD-CORE-062-FR05: runtime behavioral_protocol.yaml has no unused sections."""
+        bp_path = Path(__file__).parent.parent.parent / ".trw" / "context" / "behavioral_protocol.yaml"
+        if bp_path.exists():
+            content = bp_path.read_text(encoding="utf-8")
+            assert "rationalization_watchlist:" not in content
+            assert "rigid_tools:" not in content
+            assert "flexible_tools:" not in content
+
+    def test_mark_promoted_still_fires(self, tmp_path: Path) -> None:
+        """PRD-CORE-061-FR05: learnings collected for analytics but not rendered."""
+        tools = _get_tools()
+        result = tools["trw_learn"].fn(
+            summary="Promotion analytics test",
+            detail="Should be promoted for analytics",
+            impact=0.9,
+        )
+        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        assert sync_result["learnings_promoted"] >= 1
+        # But not in the rendered output
+        claude_md = tmp_path / "CLAUDE.md"
+        content = claude_md.read_text(encoding="utf-8")
+        assert "Promotion analytics test" not in content
 
 
 class TestTrwClaudeMdSyncLLM:
@@ -750,10 +965,12 @@ class TestTrwClaudeMdSyncLLM:
         assert result["llm_used"] is False
         assert result["learnings_promoted"] >= 1
 
-        # Verify bullet-point format (not LLM summary)
+        # PRD-CORE-061: learnings suppressed from CLAUDE.md
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Sync no LLM test learning" in content
+        assert "Sync no LLM test learning" not in content
+        # Quick ref card present
+        assert "/trw-ceremony-guide" in content
 
     def test_sync_llm_flag_present(self, tmp_path: Path) -> None:
         """Verify llm_used field is in return value."""
@@ -1536,11 +1753,12 @@ class TestClaudeMdSyncQValuePromotion:
         backend.update(learning_id, q_value=0.9, q_observations=5)
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        # PRD-CORE-061-FR05: learnings still collected for analytics
         assert sync_result["learnings_promoted"] >= 1
-
+        # PRD-CORE-061: learnings suppressed from rendered output
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Mature q promotion test" in content
+        assert "Mature q promotion test" not in content
 
     def test_immature_entry_uses_impact(self, tmp_path: Path) -> None:
         """Entry with q_observations < threshold uses impact for promotion."""
@@ -1663,7 +1881,7 @@ class TestBehavioralProtocol:
         assert "short detail" not in result
 
     def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path) -> None:
-        """Full trw_claude_md_sync includes behavioral protocol section."""
+        """Full trw_claude_md_sync includes quick ref header but not full directives."""
         writer = FileStateWriter()
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
@@ -1685,9 +1903,11 @@ class TestBehavioralProtocol:
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
+        # PRD-CORE-061: behavioral protocol header from quick ref card
         assert "TRW Behavioral Protocol" in content
-        assert "Execute trw_recall at session start" in content
-        assert "Execute trw_reflect after tasks" in content
+        # PRD-CORE-061: full directives suppressed from CLAUDE.md (moved to session-start hook)
+        assert "Execute trw_recall at session start" not in content
+        assert "Execute trw_reflect after tasks" not in content
 
 
 # ---------------------------------------------------------------------------

@@ -1014,10 +1014,12 @@ def _files_identical(a: Path, b: Path) -> bool:
 def _trw_mcp_server_entry() -> dict[str, object]:
     """Build the ``trw`` MCP server entry for .mcp.json.
 
-    Prefers the venv-local ``trw-mcp`` (same Python that has all deps)
-    over a system-wide install which may lack trw_memory.
+    Always returns a stdio entry (command/args format). The HTTP transport
+    is an internal optimization handled by auto-start + proxy logic in
+    server.py — Claude Code always spawns trw-mcp via stdio
+    (PRD-CORE-070-FR04).
     """
-    # Check for venv-local trw-mcp first (same Python with all deps)
+    # Prefer venv-local trw-mcp (same Python with all deps)
     venv_bin = Path(sys.executable).parent / "trw-mcp"
     if venv_bin.exists():
         cmd = str(venv_bin)
@@ -1036,6 +1038,9 @@ def _merge_mcp_json(
     Reads existing .mcp.json, merges the ``trw`` key into ``mcpServers``
     while preserving all other user-configured servers, and writes back.
     Creates the file from scratch if it doesn't exist.
+
+    Always generates stdio format entries (PRD-CORE-070-FR04). HTTP
+    transport is handled internally by the server's auto-start + proxy.
     """
     mcp_path = target_dir / ".mcp.json"
     trw_entry = _trw_mcp_server_entry()

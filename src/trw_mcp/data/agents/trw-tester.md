@@ -4,7 +4,7 @@ description: >
   Test specialist for Agent Teams. Writes comprehensive tests verifying
   PRD acceptance criteria, targets >=90% diff coverage, parametrizes
   edge cases. Use as a teammate for testing tasks.
-model: sonnet
+model: claude-sonnet-4-6
 maxTurns: 100
 memory: project
 allowedTools:

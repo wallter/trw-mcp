@@ -4,7 +4,7 @@ description: >
   Code review and security audit specialist for Agent Teams. Read-only
   access, rubric-scored reviews, adversarial security auditing. Use
   as a teammate for review and audit tasks.
-model: opus
+model: claude-sonnet-4-6
 maxTurns: 50
 memory: project
 allowedTools:

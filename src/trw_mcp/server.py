@@ -369,6 +369,171 @@ def _get_framework_version() -> str:
     return "unknown"
 
 
+def _is_port_open(host: str, port: int) -> bool:
+    """Check if a TCP port is accepting connections."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1.0)
+        return sock.connect_ex((host, port)) == 0
+
+
+def _ensure_http_server(
+    config: TRWConfig,
+    log: structlog.stdlib.BoundLogger,
+    *,
+    debug: bool = False,
+) -> str | None:
+    """Ensure the shared HTTP MCP server is running.
+
+    Auto-starts the server daemon if not already running, using file lock
+    to prevent race conditions between concurrent Claude Code instances.
+
+    Returns the server URL on success, None on failure (caller should
+    fall back to standalone stdio).
+    """
+    import fcntl
+    import subprocess
+    import time
+
+    host = config.mcp_host
+    port = config.mcp_port
+    transport = config.mcp_transport
+    path = "/sse" if transport == "sse" else "/mcp"
+    url = f"http://{host}:{port}{path}"
+
+    # Already running — fast path
+    if _is_port_open(host, port):
+        log.info("mcp_server_already_running", host=host, port=port)
+        return url
+
+    trw_dir = Path.cwd() / config.trw_dir
+    trw_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = trw_dir / "mcp-server.lock"
+    pid_path = trw_dir / "mcp-server.pid"
+
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
+    try:
+        # Non-blocking lock attempt
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        # Another process holds the lock — wait, then re-check port
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+        if _is_port_open(host, port):
+            return url
+
+    try:
+        cmd = [
+            sys.executable, "-m", "trw_mcp.server",
+            "--transport", transport,
+            "--host", host,
+            "--port", str(port),
+        ]
+        if debug:
+            cmd.append("--debug")
+
+        logs_dir = trw_dir / config.logs_dir
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = logs_dir / "mcp-server.log"
+
+        with open(log_file, "a") as log_out:  # noqa: SIM115
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_out,
+                stderr=log_out,
+                start_new_session=True,
+            )
+
+        pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+        # Poll for port availability (0.5s intervals, 15s max)
+        for _ in range(30):
+            time.sleep(0.5)
+            if _is_port_open(host, port):
+                log.info("mcp_server_started", pid=proc.pid, url=url)
+                return url
+
+        log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=15)
+        return None
+    except Exception:
+        log.warning("mcp_server_start_failed", exc_info=True)
+        return None
+    finally:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+async def _run_stdio_proxy(url: str) -> None:
+    """Bridge stdio transport to a shared HTTP MCP server.
+
+    Creates a lightweight proxy that forwards all MCP operations (tools,
+    resources, prompts) from Claude Code (via stdio) to the shared HTTP
+    server. Uses MCP SDK primitives — no external dependencies.
+    """
+    from typing import Any
+
+    from mcp import types
+    from mcp.client.session import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.server import Server
+    from mcp.server.stdio import stdio_server
+
+    async with streamable_http_client(url) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Discover remote capabilities once at startup
+            tools_result = await session.list_tools()
+            resources_result = await session.list_resources()
+            prompts_result = await session.list_prompts()
+
+            proxy = Server("trw-proxy")
+
+            @proxy.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
+            async def handle_list_tools() -> list[types.Tool]:
+                return tools_result.tools
+
+            @proxy.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
+            async def handle_call_tool(
+                name: str, arguments: dict[str, Any] | None = None,
+            ) -> types.CallToolResult:
+                return await session.call_tool(name, arguments)
+
+            @proxy.list_resources()  # type: ignore[no-untyped-call, untyped-decorator]
+            async def handle_list_resources() -> list[types.Resource]:
+                return resources_result.resources
+
+            @proxy.read_resource()  # type: ignore[no-untyped-call, untyped-decorator]
+            async def handle_read_resource(uri: Any) -> str:
+                result = await session.read_resource(uri)
+                if result.contents:
+                    c = result.contents[0]
+                    text = getattr(c, "text", None)
+                    if text is not None:
+                        return str(text)
+                    blob = getattr(c, "blob", None)
+                    if blob is not None:
+                        return str(blob)
+                return ""
+
+            @proxy.list_prompts()  # type: ignore[no-untyped-call, untyped-decorator]
+            async def handle_list_prompts() -> list[types.Prompt]:
+                return prompts_result.prompts
+
+            @proxy.get_prompt()  # type: ignore[no-untyped-call, untyped-decorator]
+            async def handle_get_prompt(
+                name: str, arguments: dict[str, str] | None = None,
+            ) -> types.GetPromptResult:
+                return await session.get_prompt(name, arguments)
+
+            # Run the proxy on stdio — Claude Code communicates here
+            async with stdio_server() as (stdio_read, stdio_write):
+                await proxy.run(
+                    stdio_read, stdio_write,
+                    proxy.create_initialization_options(),
+                )
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command."""
     parser = argparse.ArgumentParser(
@@ -379,6 +544,23 @@ def main() -> None:
         "--debug",
         action="store_true",
         help="Enable debug logging to .trw/logs/ and stderr",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "streamable-http"],
+        default=None,
+        help="MCP transport (default: from config or stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Bind address for HTTP transport (default: from config or 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port for HTTP transport (default: from config or 8100)",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -589,13 +771,73 @@ def main() -> None:
 
     _configure_logging(debug=debug, config=config)
 
-    structlog.get_logger().info(
-        "trw_server_initialized",
-        tools_registered=True,
-        debug_mode=debug,
-    )
+    log = structlog.get_logger()
 
-    mcp.run()
+    # ── Transport resolution (PRD-CORE-070-FR03) ────────────────────────
+    # Path 1: Explicit --transport → run as that transport directly (server mode)
+    # Path 2: No flag + config stdio → run stdio normally (default)
+    # Path 3: No flag + config HTTP → auto-start shared server + stdio proxy
+    if args.transport is not None:
+        # Path 1: Direct server mode (e.g., spawned by _ensure_http_server)
+        transport: str = args.transport
+        host: str = args.host or config.mcp_host
+        port: int = args.port or config.mcp_port
+
+        log.info(
+            "trw_server_initialized",
+            tools_registered=True,
+            debug_mode=debug,
+            transport=transport,
+            host=host,
+            port=port,
+            mode="direct",
+        )
+
+        if transport == "stdio":
+            mcp.run()
+        else:
+            mcp.settings.host = host
+            mcp.settings.port = port
+            mcp.run(transport=transport)  # type: ignore[arg-type]
+
+    elif config.mcp_transport == "stdio":
+        # Path 2: Default stdio — unchanged behavior
+        log.info(
+            "trw_server_initialized",
+            tools_registered=True,
+            debug_mode=debug,
+            transport="stdio",
+            mode="standalone",
+        )
+        mcp.run()
+
+    else:
+        # Path 3: Auto-start shared HTTP server + run as stdio proxy
+        log.info(
+            "trw_proxy_starting",
+            target_transport=config.mcp_transport,
+            target_host=config.mcp_host,
+            target_port=config.mcp_port,
+        )
+
+        url = _ensure_http_server(config, log, debug=debug)
+
+        if url is not None:
+            # Run stdio proxy bridging to the shared server
+            import asyncio
+
+            try:
+                asyncio.run(_run_stdio_proxy(url))
+            except (KeyboardInterrupt, EOFError):
+                pass  # Clean exit when Claude Code disconnects
+        else:
+            # FR06: Fallback to standalone stdio on failure
+            log.warning(
+                "trw_proxy_fallback",
+                reason="http_server_start_failed",
+                fallback="standalone_stdio",
+            )
+            mcp.run()
 
 
 if __name__ == "__main__":

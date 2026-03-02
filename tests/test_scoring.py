@@ -1,4 +1,4 @@
-"""Tests for scoring module — compute_utility_score and update_q_value."""
+"""Tests for scoring module — compute_utility_score, update_q_value, and complexity scoring."""
 
 from __future__ import annotations
 
@@ -6,7 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.scoring import compute_impact_distribution, compute_utility_score, update_q_value
+from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.run import (
+    ComplexityClass,
+    ComplexityOverride,
+    ComplexitySignals,
+    PhaseRequirements,
+    RunState,
+)
+from trw_mcp.scoring import (
+    classify_complexity,
+    compute_impact_distribution,
+    compute_tier_ceremony_score,
+    compute_utility_score,
+    get_phase_requirements,
+    update_q_value,
+)
 
 
 class TestUpdateQValue:
@@ -230,3 +245,362 @@ class TestComputeImpactDistribution:
         critical = result["critical"]
         assert isinstance(critical, dict)
         assert critical["count"] == 1
+
+
+# --- PRD-CORE-060: Complexity Classification Tests ---
+
+
+class TestComplexitySignals:
+    """Tests for ComplexitySignals model (FR02)."""
+
+    def test_defaults(self) -> None:
+        signals = ComplexitySignals()
+        assert signals.files_affected == 1
+        assert signals.novel_patterns is False
+        assert signals.cross_cutting is False
+        assert signals.architecture_change is False
+        assert signals.external_integration is False
+        assert signals.large_refactoring is False
+        assert signals.security_change is False
+        assert signals.data_migration is False
+        assert signals.unknown_codebase is False
+
+    def test_files_affected_negative_raises(self) -> None:
+        with pytest.raises(Exception):  # ValidationError
+            ComplexitySignals(files_affected=-1)
+
+    def test_files_affected_capped_at_100(self) -> None:
+        with pytest.raises(Exception):  # ValidationError
+            ComplexitySignals(files_affected=101)
+
+    def test_frozen_model(self) -> None:
+        signals = ComplexitySignals()
+        with pytest.raises(Exception):  # ValidationError
+            signals.files_affected = 5  # type: ignore[misc]
+
+
+class TestComplexityOverride:
+    """Tests for ComplexityOverride model (FR09)."""
+
+    def test_basic_creation(self) -> None:
+        override = ComplexityOverride(
+            reason="hard override",
+            signals=["security_change", "data_migration"],
+            raw_score=2,
+        )
+        assert override.reason == "hard override"
+        assert len(override.signals) == 2
+        assert override.raw_score == 2
+
+
+class TestRunStateComplexityFields:
+    """Tests for RunState complexity fields (FR02, FR09)."""
+
+    def test_runstate_defaults_none(self) -> None:
+        rs = RunState(run_id="test-1", task="test")
+        assert rs.complexity_class is None
+        assert rs.complexity_signals is None
+        assert rs.complexity_override is None
+        assert rs.phase_requirements is None
+
+    def test_runstate_with_complexity(self) -> None:
+        rs = RunState(
+            run_id="test-2",
+            task="test",
+            complexity_class=ComplexityClass.COMPREHENSIVE,
+            complexity_signals=ComplexitySignals(
+                files_affected=5, architecture_change=True,
+            ),
+        )
+        assert rs.complexity_class == "COMPREHENSIVE"  # use_enum_values=True
+        assert rs.complexity_signals is not None
+        assert rs.complexity_signals.files_affected == 5
+
+    def test_runstate_yaml_roundtrip(self) -> None:
+        """Ensure enum values survive JSON/YAML serialization."""
+        import json
+
+        rs = RunState(
+            run_id="rt-1",
+            task="roundtrip",
+            complexity_class=ComplexityClass.COMPREHENSIVE,
+            complexity_override=ComplexityOverride(
+                reason="test",
+                signals=["security_change"],
+                raw_score=3,
+            ),
+            phase_requirements=PhaseRequirements(
+                mandatory=["IMPLEMENT", "DELIVER"],
+                optional=[],
+                skipped=["RESEARCH"],
+            ),
+        )
+        data = json.loads(rs.model_dump_json())
+        assert data["complexity_class"] == "COMPREHENSIVE"
+        assert data["complexity_override"]["reason"] == "test"
+        assert data["phase_requirements"]["mandatory"] == ["IMPLEMENT", "DELIVER"]
+
+        # Deserialize back
+        rs2 = RunState(**data)
+        assert rs2.complexity_class == "COMPREHENSIVE"
+        assert rs2.complexity_override is not None
+        assert rs2.complexity_override.raw_score == 3
+
+
+class TestClassifyComplexity:
+    """Tests for classify_complexity function (FR01, FR05)."""
+
+    def test_minimal_all_defaults(self) -> None:
+        """FR01: all signals False, files_affected=1 -> MINIMAL, raw_score=1."""
+        signals = ComplexitySignals()
+        tier, raw_score, override = classify_complexity(signals)
+        assert raw_score == 1
+        assert tier == ComplexityClass.MINIMAL
+        assert override is None
+
+    def test_comprehensive_high_score(self) -> None:
+        """FR01: high signals -> COMPREHENSIVE."""
+        signals = ComplexitySignals(
+            files_affected=5, novel_patterns=True, cross_cutting=True,
+        )
+        tier, raw_score, override = classify_complexity(signals)
+        # 5 + 3 + 2 = 10
+        assert raw_score == 10
+        assert tier == ComplexityClass.COMPREHENSIVE
+        assert override is None
+
+    def test_standard_mid_score(self) -> None:
+        """FR01: mid-range score -> STANDARD."""
+        signals = ComplexitySignals(
+            files_affected=2, novel_patterns=True,
+        )
+        tier, raw_score, override = classify_complexity(signals)
+        # 2 + 3 = 5
+        assert raw_score == 5
+        assert tier == ComplexityClass.STANDARD
+        assert override is None
+
+    def test_boundary_minimal_upper(self) -> None:
+        """FR01: raw_score=3 exactly -> MINIMAL (default boundary is 3)."""
+        signals = ComplexitySignals(files_affected=3)
+        tier, raw_score, _ = classify_complexity(signals)
+        assert raw_score == 3
+        assert tier == ComplexityClass.MINIMAL
+
+    def test_boundary_standard_lower(self) -> None:
+        """FR01: raw_score=4 -> STANDARD."""
+        signals = ComplexitySignals(files_affected=4)
+        tier, raw_score, _ = classify_complexity(signals)
+        assert raw_score == 4
+        assert tier == ComplexityClass.STANDARD
+
+    def test_boundary_comprehensive_lower(self) -> None:
+        """FR01: raw_score=8 (comprehensive_tier=7, need >=8) -> COMPREHENSIVE."""
+        signals = ComplexitySignals(
+            files_affected=5, novel_patterns=True,
+        )
+        tier, raw_score, _ = classify_complexity(signals)
+        # 5 + 3 = 8
+        assert raw_score == 8
+        assert tier == ComplexityClass.COMPREHENSIVE
+
+    def test_boundary_standard_upper(self) -> None:
+        """FR01: raw_score=7 -> STANDARD (not yet COMPREHENSIVE)."""
+        signals = ComplexitySignals(
+            files_affected=5, cross_cutting=True,
+        )
+        tier, raw_score, _ = classify_complexity(signals)
+        # 5 + 2 = 7
+        assert raw_score == 7
+        assert tier == ComplexityClass.STANDARD
+
+    def test_files_affected_capped(self) -> None:
+        """FR01: files_affected > max is capped at config max."""
+        signals = ComplexitySignals(files_affected=50)
+        tier, raw_score, _ = classify_complexity(signals)
+        # Capped at 5
+        assert raw_score == 5
+        assert tier == ComplexityClass.STANDARD
+
+    def test_hard_override_two_risk_signals(self) -> None:
+        """FR05: 2 high-risk signals -> COMPREHENSIVE regardless of score."""
+        signals = ComplexitySignals(
+            files_affected=1,
+            security_change=True,
+            data_migration=True,
+        )
+        tier, raw_score, override = classify_complexity(signals)
+        assert raw_score == 1  # Low score
+        assert tier == ComplexityClass.COMPREHENSIVE  # Overridden
+        assert override is not None
+        assert "hard override" in override.reason
+        assert "security_change" in override.signals
+        assert "data_migration" in override.signals
+        assert override.raw_score == 1
+
+    def test_hard_override_three_risk_signals(self) -> None:
+        """FR05: 3 high-risk signals -> COMPREHENSIVE."""
+        signals = ComplexitySignals(
+            files_affected=1,
+            security_change=True,
+            data_migration=True,
+            unknown_codebase=True,
+        )
+        tier, _, override = classify_complexity(signals)
+        assert tier == ComplexityClass.COMPREHENSIVE
+        assert override is not None
+        assert len(override.signals) == 3
+
+    def test_single_risk_signal_escalates_minimal(self) -> None:
+        """FR05: 1 risk signal escalates MINIMAL -> STANDARD."""
+        signals = ComplexitySignals(
+            files_affected=1,
+            unknown_codebase=True,
+        )
+        tier, raw_score, override = classify_complexity(signals)
+        assert raw_score == 1  # Would be MINIMAL by score alone
+        assert tier == ComplexityClass.STANDARD
+        assert override is not None
+        assert "escalation" in override.reason
+
+    def test_single_risk_signal_no_escalate_standard(self) -> None:
+        """FR05: 1 risk signal on a STANDARD task does NOT escalate further."""
+        signals = ComplexitySignals(
+            files_affected=4,
+            unknown_codebase=True,
+        )
+        tier, raw_score, override = classify_complexity(signals)
+        assert raw_score == 4  # Already STANDARD
+        assert tier == ComplexityClass.STANDARD
+        assert override is None  # No escalation needed
+
+    def test_config_override_boundaries(self) -> None:
+        """FR08: custom config changes tier boundaries."""
+        cfg = TRWConfig(complexity_tier_minimal=5, complexity_tier_comprehensive=10)
+        signals = ComplexitySignals(files_affected=3)  # raw_score=3
+        tier, _, _ = classify_complexity(signals, config=cfg)
+        assert tier == ComplexityClass.MINIMAL  # 3 <= 5
+
+    def test_config_override_weights(self) -> None:
+        """FR08: custom config changes signal weights."""
+        cfg = TRWConfig(complexity_weight_novel_patterns=5)
+        signals = ComplexitySignals(files_affected=1, novel_patterns=True)
+        _, raw_score, _ = classify_complexity(signals, config=cfg)
+        assert raw_score == 6  # 1 + 5
+
+
+class TestPhaseRequirements:
+    """Tests for get_phase_requirements function (FR04)."""
+
+    def test_minimal_phases(self) -> None:
+        reqs = get_phase_requirements(ComplexityClass.MINIMAL)
+        assert "IMPLEMENT" in reqs.mandatory
+        assert "DELIVER" in reqs.mandatory
+        assert "RESEARCH" in reqs.skipped
+        assert "PLAN" in reqs.skipped
+        assert "VALIDATE" in reqs.skipped
+        assert "REVIEW" in reqs.skipped
+
+    def test_standard_phases(self) -> None:
+        reqs = get_phase_requirements(ComplexityClass.STANDARD)
+        assert "PLAN" in reqs.mandatory
+        assert "IMPLEMENT" in reqs.mandatory
+        assert "VALIDATE" in reqs.mandatory
+        assert "DELIVER" in reqs.mandatory
+        assert "REVIEW" in reqs.optional
+        assert "RESEARCH" in reqs.skipped
+
+    def test_comprehensive_phases(self) -> None:
+        reqs = get_phase_requirements(ComplexityClass.COMPREHENSIVE)
+        assert len(reqs.mandatory) == 6
+        assert "RESEARCH" in reqs.mandatory
+        assert "REVIEW" in reqs.mandatory
+        assert reqs.optional == []
+        assert reqs.skipped == []
+
+    def test_implement_and_deliver_never_skipped(self) -> None:
+        """FR04: IMPLEMENT and DELIVER never in skipped."""
+        for tier in ComplexityClass:
+            reqs = get_phase_requirements(tier)
+            assert "IMPLEMENT" not in reqs.skipped
+            assert "DELIVER" not in reqs.skipped
+
+
+class TestTierCeremonyScore:
+    """Tests for compute_tier_ceremony_score function (FR03)."""
+
+    def _make_events(self, event_types: list[str]) -> list[dict[str, object]]:
+        """Helper to create minimal event dicts."""
+        return [{"event": "tool_invocation", "tool_name": t} for t in event_types]
+
+    def test_minimal_recall_and_deliver_high_score(self) -> None:
+        """FR03: MINIMAL with trw_recall + trw_deliver -> score >= 80."""
+        events = self._make_events(["trw_session_start", "trw_deliver"])
+        result = compute_tier_ceremony_score(events, ComplexityClass.MINIMAL)
+        assert result["score"] >= 60  # 2/3 expected events matched
+        assert result["tier"] == "MINIMAL"
+
+    def test_minimal_all_events_perfect(self) -> None:
+        """FR03: MINIMAL with all 3 expected events -> 100."""
+        events = self._make_events(["trw_session_start", "trw_learn", "trw_deliver"])
+        result = compute_tier_ceremony_score(events, ComplexityClass.MINIMAL)
+        assert result["score"] == 100
+
+    def test_comprehensive_missing_review_penalized(self) -> None:
+        """FR03: COMPREHENSIVE missing trw_review -> score <= 60."""
+        events = self._make_events([
+            "trw_session_start", "trw_init", "trw_checkpoint",
+            "trw_build_check", "trw_deliver",
+        ])
+        result = compute_tier_ceremony_score(events, ComplexityClass.COMPREHENSIVE)
+        # 5/7 matched = ~71, minus 25 penalty = ~46
+        assert result["score"] <= 60
+
+    def test_standard_with_review_bonus(self) -> None:
+        """FR03: STANDARD with review gets +10 bonus."""
+        events = self._make_events([
+            "trw_session_start", "trw_init", "trw_checkpoint",
+            "trw_build_check", "trw_deliver", "trw_review",
+        ])
+        result = compute_tier_ceremony_score(events, ComplexityClass.STANDARD)
+        # 5/5 expected = 100, + 10 bonus capped at 100
+        assert result["score"] == 100
+
+    def test_standard_without_review_no_penalty(self) -> None:
+        """FR03: STANDARD without review has no penalty (review is optional)."""
+        events = self._make_events([
+            "trw_session_start", "trw_init", "trw_checkpoint",
+            "trw_build_check", "trw_deliver",
+        ])
+        result = compute_tier_ceremony_score(events, ComplexityClass.STANDARD)
+        assert result["score"] == 100
+
+    def test_none_defaults_to_standard(self) -> None:
+        """FR03: None complexity_class defaults to STANDARD."""
+        events = self._make_events([
+            "trw_session_start", "trw_init", "trw_checkpoint",
+            "trw_build_check", "trw_deliver",
+        ])
+        result = compute_tier_ceremony_score(events, None)
+        assert result["tier"] == "STANDARD"
+        assert result["score"] == 100
+
+    def test_string_tier_accepted(self) -> None:
+        """FR03: String tier values are accepted."""
+        events = self._make_events(["trw_session_start", "trw_deliver"])
+        result = compute_tier_ceremony_score(events, "MINIMAL")
+        assert result["tier"] == "MINIMAL"
+
+    def test_empty_events_zero_score(self) -> None:
+        """FR03: No events -> score 0."""
+        result = compute_tier_ceremony_score([], ComplexityClass.STANDARD)
+        assert result["score"] == 0
+
+    def test_comprehensive_all_events_perfect(self) -> None:
+        """FR03: COMPREHENSIVE with all events -> 100."""
+        events = self._make_events([
+            "trw_session_start", "trw_init", "trw_checkpoint",
+            "trw_learn", "trw_build_check", "trw_deliver", "trw_review",
+        ])
+        result = compute_tier_ceremony_score(events, ComplexityClass.COMPREHENSIVE)
+        assert result["score"] == 100

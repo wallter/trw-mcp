@@ -1,12 +1,16 @@
-"""TRW build verification gate tool — PRD-CORE-023.
+"""TRW build verification gate tool — PRD-CORE-023, PRD-QUAL-025/028/029.
 
 Runs pytest and mypy via subprocess, caches results to
 .trw/context/build-status.yaml, and returns BuildStatus.
 Phase gates consume cached status — they never run subprocesses.
+
+Extended with mutation testing (QUAL-025), dependency audit (QUAL-028),
+and API fuzz (QUAL-029) scopes.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -18,7 +22,7 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.models.build import BuildStatus
-from trw_mcp.models.config import get_config
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.tools.telemetry import log_tool_call
@@ -287,6 +291,489 @@ def _run_mypy(
     return {"mypy_clean": mypy_clean, "failures": failures}
 
 
+def _run_pip_audit(
+    project_root: Path,
+    config: TRWConfig,
+) -> dict[str, object]:
+    """Run pip-audit and parse vulnerability results.
+
+    Executes ``pip-audit --json`` and filters vulnerabilities by the
+    configured severity level. Only counts as blocking when fix versions
+    are available and ``dep_audit_block_on_patchable_only`` is set.
+
+    Args:
+        project_root: Project root directory.
+        config: TRW configuration with audit settings.
+
+    Returns:
+        Dict with pip_audit_passed, vulnerability count, and details.
+        Includes pip_audit_skipped=True when pip-audit is not installed.
+    """
+    pip_audit_path = _find_executable("pip-audit", project_root)
+    if pip_audit_path is None:
+        return {
+            "pip_audit_skipped": True,
+            "pip_audit_skip_reason": "pip-audit not installed",
+        }
+
+    result = _run_subprocess(
+        [pip_audit_path, "--json"],
+        project_root,
+        config.dep_audit_timeout_secs,
+    )
+
+    if isinstance(result, str):
+        return {
+            "pip_audit_skipped": True,
+            "pip_audit_skip_reason": result,
+        }
+
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return {
+            "pip_audit_skipped": True,
+            "pip_audit_skip_reason": "invalid JSON from pip-audit",
+        }
+
+    # Severity ranking for filtering
+    severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    min_rank = severity_rank.get(config.dep_audit_level, 3)
+
+    vulnerabilities: list[dict[str, object]] = []
+    blocking_count = 0
+
+    deps = data if isinstance(data, list) else data.get("dependencies", [])
+    for dep in deps:
+        if not isinstance(dep, dict):
+            continue
+        vulns = dep.get("vulns", [])
+        if not isinstance(vulns, list):
+            continue
+        for vuln in vulns:
+            if not isinstance(vuln, dict):
+                continue
+            # Extract severity — pip-audit may report it differently
+            severity = str(vuln.get("severity", "unknown")).lower()
+            vuln_rank = severity_rank.get(severity, 0)
+
+            # Also check CVSS score as fallback for severity
+            cvss = vuln.get("cvss_score")
+            if cvss is not None and vuln_rank == 0:
+                cvss_val = float(str(cvss))
+                if cvss_val >= 9.0:
+                    vuln_rank = 4
+                elif cvss_val >= 7.0:
+                    vuln_rank = 3
+                elif cvss_val >= 4.0:
+                    vuln_rank = 2
+                else:
+                    vuln_rank = 1
+
+            if vuln_rank < min_rank:
+                continue
+
+            fix_versions = vuln.get("fix_versions", [])
+            has_fix = bool(fix_versions)
+
+            entry: dict[str, object] = {
+                "package": str(dep.get("name", "")),
+                "version": str(dep.get("version", "")),
+                "cve_id": str(vuln.get("id", "")),
+                "severity": severity,
+                "fix_versions": fix_versions if isinstance(fix_versions, list) else [],
+            }
+            if cvss is not None:
+                entry["cvss_score"] = float(str(cvss))
+
+            vulnerabilities.append(entry)
+
+            # Blocking logic
+            if config.dep_audit_block_on_patchable_only:
+                if has_fix:
+                    blocking_count += 1
+            else:
+                blocking_count += 1
+
+    return {
+        "pip_audit_passed": blocking_count == 0,
+        "pip_audit_vulnerability_count": len(vulnerabilities),
+        "pip_audit_blocking_count": blocking_count,
+        "pip_audit_vulnerabilities": vulnerabilities[:_MAX_FAILURES],
+    }
+
+
+def _run_npm_audit(
+    project_root: Path,
+    config: TRWConfig,
+    changed_files: list[str],
+) -> dict[str, object]:
+    """Run npm audit when platform/package.json is in the changeset.
+
+    Only executes when ``platform/package.json`` appears in changed_files.
+    Runs ``npm audit --audit-level=high --json`` in the platform/ directory.
+
+    Args:
+        project_root: Project root directory.
+        config: TRW configuration with audit settings.
+        changed_files: List of changed file paths from git diff.
+
+    Returns:
+        Dict with npm_audit results. Includes npm_audit_skipped=True
+        when skipping (no platform changes, npm not found, etc.).
+    """
+    # Only run when platform/package.json is changed
+    has_platform_changes = any(
+        "platform/package.json" in f for f in changed_files
+    )
+    if not has_platform_changes:
+        return {
+            "npm_audit_skipped": True,
+            "npm_audit_skip_reason": "no platform/package.json changes",
+        }
+
+    platform_dir = project_root / "platform"
+    if not platform_dir.exists():
+        return {
+            "npm_audit_skipped": True,
+            "npm_audit_skip_reason": "platform/ directory not found",
+        }
+
+    npm_path = shutil.which("npm")
+    if npm_path is None:
+        return {
+            "npm_audit_skipped": True,
+            "npm_audit_skip_reason": "npm not installed",
+        }
+
+    result = _run_subprocess(
+        [npm_path, "audit", "--audit-level=high", "--json"],
+        platform_dir,
+        config.dep_audit_timeout_secs,
+    )
+
+    if isinstance(result, str):
+        return {
+            "npm_audit_skipped": True,
+            "npm_audit_skip_reason": result,
+        }
+
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return {
+            "npm_audit_skipped": True,
+            "npm_audit_skip_reason": "invalid JSON from npm audit",
+        }
+
+    # npm audit returns non-zero when vulnerabilities found — that's expected
+    vulnerabilities = data.get("vulnerabilities", {})
+    high_plus = 0
+    vuln_details: list[dict[str, object]] = []
+
+    if isinstance(vulnerabilities, dict):
+        for pkg_name, info in vulnerabilities.items():
+            if not isinstance(info, dict):
+                continue
+            severity = str(info.get("severity", "")).lower()
+            if severity in ("high", "critical"):
+                high_plus += 1
+                vuln_details.append({
+                    "package": pkg_name,
+                    "severity": severity,
+                    "via": str(info.get("via", ""))[:200],
+                })
+
+    return {
+        "npm_audit_passed": high_plus == 0,
+        "npm_audit_high_plus_count": high_plus,
+        "npm_audit_vulnerabilities": vuln_details[:_MAX_FAILURES],
+    }
+
+
+def _detect_unlisted_imports(
+    project_root: Path,
+    changed_files: list[str],
+) -> list[str]:
+    """Detect imports in changed files not listed in pyproject.toml dependencies.
+
+    Scans added lines in changed ``.py`` files for import statements and
+    cross-references against ``[project.dependencies]`` in pyproject.toml.
+
+    Args:
+        project_root: Project root directory.
+        changed_files: List of changed file paths.
+
+    Returns:
+        List of package names that appear in imports but not in
+        pyproject.toml dependencies.
+    """
+    # Read pyproject.toml dependencies
+    listed_deps: set[str] = set()
+
+    # Check multiple possible pyproject.toml locations
+    for toml_path in [
+        project_root / "pyproject.toml",
+        project_root / "trw-mcp" / "pyproject.toml",
+    ]:
+        if toml_path.exists():
+            try:
+                content = toml_path.read_text(encoding="utf-8")
+                # Simple parser: find lines under [project.dependencies]
+                in_deps = False
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if stripped == "[project.dependencies]" or stripped.startswith("dependencies"):
+                        in_deps = True
+                        continue
+                    if in_deps and stripped.startswith("["):
+                        in_deps = False
+                        continue
+                    if in_deps and stripped and not stripped.startswith("#"):
+                        # Extract package name (before version specifier)
+                        dep_name = stripped.strip('"').strip("'").strip(",")
+                        dep_name = dep_name.split(">=")[0].split("<=")[0]
+                        dep_name = dep_name.split("==")[0].split("~=")[0]
+                        dep_name = dep_name.split(">")[0].split("<")[0]
+                        dep_name = dep_name.split("[")[0].strip()
+                        if dep_name:
+                            # Normalize: pip uses - and _, Python uses _
+                            listed_deps.add(dep_name.lower().replace("-", "_"))
+            except OSError:
+                continue
+
+    # Standard library modules to exclude from detection
+    stdlib_prefixes = {
+        "os", "sys", "re", "json", "time", "datetime", "pathlib",
+        "subprocess", "shutil", "typing", "collections", "functools",
+        "itertools", "contextlib", "abc", "io", "math", "hashlib",
+        "logging", "unittest", "tempfile", "copy", "enum", "dataclasses",
+        "importlib", "inspect", "textwrap", "string", "operator",
+        "warnings", "traceback", "threading", "multiprocessing",
+        "socket", "http", "urllib", "email", "html", "xml",
+        "csv", "configparser", "argparse", "getpass", "uuid",
+        "secrets", "hmac", "base64", "binascii", "struct",
+        "asyncio", "concurrent", "signal", "fcntl", "stat",
+        "__future__",
+    }
+
+    # Scan changed Python files for imports
+    imported_packages: set[str] = set()
+    py_files = [f for f in changed_files if f.endswith(".py")]
+
+    for fpath in py_files:
+        full_path = project_root / fpath
+        if not full_path.exists():
+            continue
+        try:
+            for line in full_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("import "):
+                    # import foo / import foo.bar
+                    parts = stripped[7:].split(",")
+                    for part in parts:
+                        pkg = part.strip().split(".")[0].split(" ")[0]
+                        if pkg:
+                            imported_packages.add(pkg.lower().replace("-", "_"))
+                elif stripped.startswith("from ") and " import " in stripped:
+                    # from foo import bar / from foo.bar import baz
+                    pkg = stripped[5:].split(" import ")[0].strip().split(".")[0]
+                    if pkg:
+                        imported_packages.add(pkg.lower().replace("-", "_"))
+        except OSError:
+            continue
+
+    # Filter out stdlib and already-listed deps
+    unlisted = sorted(
+        pkg for pkg in imported_packages
+        if pkg not in stdlib_prefixes
+        and pkg not in listed_deps
+        and not pkg.startswith("_")
+    )
+    return unlisted
+
+
+def _run_dep_audit(
+    project_root: Path,
+    config: TRWConfig,
+) -> dict[str, object]:
+    """Orchestrate dependency audit: pip-audit + npm audit + unlisted imports.
+
+    Combines results from all three checks into a unified result dict
+    and caches to ``.trw/context/dep-audit.yaml``.
+
+    Args:
+        project_root: Project root directory.
+        config: TRW configuration with audit settings.
+
+    Returns:
+        Combined result dict with dep_audit_passed and sub-results.
+    """
+    source_path = config.source_package_path or "trw-mcp/src"
+
+    # Get changed files for npm audit and unlisted import detection
+    try:
+        git_result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(project_root),
+        )
+        changed_files = [
+            line.strip() for line in git_result.stdout.strip().splitlines()
+            if line.strip()
+        ] if git_result.returncode == 0 else []
+    except (subprocess.TimeoutExpired, OSError):
+        changed_files = []
+
+    pip_result = _run_pip_audit(project_root, config)
+    npm_result = _run_npm_audit(project_root, config, changed_files)
+
+    py_changed = [f for f in changed_files if f.endswith(".py")]
+    unlisted = _detect_unlisted_imports(project_root, py_changed)
+
+    # Overall pass: pip must pass (if run), npm must pass (if run)
+    pip_passed = bool(pip_result.get("pip_audit_passed", True))
+    npm_passed = bool(npm_result.get("npm_audit_passed", True))
+    dep_audit_passed = pip_passed and npm_passed
+
+    result: dict[str, object] = {
+        "dep_audit_passed": dep_audit_passed,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Merge sub-results
+    for key, value in pip_result.items():
+        result[key] = value
+    for key, value in npm_result.items():
+        result[key] = value
+
+    if unlisted:
+        result["unlisted_imports"] = unlisted
+        result["unlisted_import_count"] = len(unlisted)
+
+    return result
+
+
+def _cache_dep_audit(
+    trw_dir: Path,
+    result: dict[str, object],
+) -> Path:
+    """Write dependency audit results to .trw/context/dep-audit.yaml.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        result: Dependency audit result dict.
+
+    Returns:
+        Path to the cached YAML file.
+    """
+    context_dir = trw_dir / "context"
+    _writer.ensure_dir(context_dir)
+    cache_path = context_dir / "dep-audit.yaml"
+    _writer.write_yaml(cache_path, result)
+    return cache_path
+
+
+def _run_api_fuzz(
+    project_root: Path,
+    config: TRWConfig,
+) -> dict[str, object]:
+    """Run schemathesis API fuzzing against the backend.
+
+    Executes ``schemathesis run --checks all`` against the configured
+    base URL's OpenAPI spec. Gracefully skips when schemathesis is not
+    installed, the backend is unreachable, or execution times out.
+
+    Args:
+        project_root: Project root directory.
+        config: TRW configuration with API fuzz settings.
+
+    Returns:
+        Dict with api_fuzz_passed and details. Includes
+        api_fuzz_skipped=True when skipping.
+    """
+    schemathesis_path = _find_executable("schemathesis", project_root)
+    if schemathesis_path is None:
+        schemathesis_path = _find_executable("st", project_root)
+    if schemathesis_path is None:
+        return {
+            "api_fuzz_skipped": True,
+            "api_fuzz_skip_reason": "schemathesis not installed",
+        }
+
+    base_url = config.api_fuzz_base_url
+    openapi_url = f"{base_url}/openapi.json"
+
+    # Check if backend is reachable
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"{base_url}/",
+            method="HEAD",
+        )
+        urllib.request.urlopen(req, timeout=5)  # noqa: S310
+    except Exception:
+        return {
+            "api_fuzz_skipped": True,
+            "api_fuzz_skip_reason": f"backend unreachable at {base_url}",
+        }
+
+    result = _run_subprocess(
+        [schemathesis_path, "run", "--checks", "all",
+         f"--base-url={base_url}", openapi_url],
+        project_root,
+        config.api_fuzz_timeout_secs,
+    )
+
+    if isinstance(result, str):
+        return {
+            "api_fuzz_skipped": True,
+            "api_fuzz_skip_reason": result,
+        }
+
+    output = _strip_ansi(result.stdout + "\n" + result.stderr)
+    passed = result.returncode == 0
+
+    # Extract failure/defect counts from output
+    failures: list[str] = _extract_failures(
+        output,
+        ("FAILED", "ERROR", "Failure", "Defect"),
+    )
+
+    fuzz_result: dict[str, object] = {
+        "api_fuzz_passed": passed,
+        "api_fuzz_base_url": base_url,
+    }
+    if failures:
+        fuzz_result["api_fuzz_failures"] = failures
+        fuzz_result["api_fuzz_failure_count"] = len(failures)
+
+    return fuzz_result
+
+
+def _cache_api_fuzz(
+    trw_dir: Path,
+    result: dict[str, object],
+) -> Path:
+    """Write API fuzz results to .trw/context/api-fuzz-status.yaml.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        result: API fuzz result dict.
+
+    Returns:
+        Path to the cached YAML file.
+    """
+    context_dir = trw_dir / "context"
+    _writer.ensure_dir(context_dir)
+    cache_path = context_dir / "api-fuzz-status.yaml"
+    _writer.write_yaml(cache_path, result)
+    return cache_path
+
+
 def _collect_failures(result: dict[str, object]) -> list[str]:
     """Safely extract the failures list from a subprocess result dict.
 
@@ -308,9 +795,14 @@ def run_build_check(
 ) -> BuildStatus:
     """Execute build verification and return BuildStatus.
 
+    Supports scopes: 'full' (pytest + mypy), 'pytest', 'mypy', 'quick',
+    'mutations', 'deps', 'api'. The mutations/deps/api scopes skip
+    pytest and mypy and only run their respective checks.
+
     Args:
         project_root: Project root directory.
-        scope: Check scope — 'full', 'pytest', 'mypy'.
+        scope: Check scope — 'full', 'pytest', 'mypy', 'quick',
+            'mutations', 'deps', 'api'.
         timeout_secs: Maximum seconds per subprocess.
         pytest_args: Extra pytest CLI arguments.
         mypy_args: Extra mypy CLI arguments.
@@ -391,6 +883,8 @@ def register_build_tools(server: FastMCP) -> None:
 
         Args:
             scope: Check scope — 'full' (pytest + mypy), 'pytest', 'mypy'.
+                Also supports 'mutations' (mutation testing only),
+                'deps' (dependency audit only), 'api' (API fuzz only).
             run_path: Optional run directory for event logging.
             timeout_secs: Override timeout (default: config value, max 600).
             min_coverage: Optional minimum coverage percentage. If set and
@@ -409,6 +903,30 @@ def register_build_tools(server: FastMCP) -> None:
             timeout_secs or _config.build_check_timeout_secs,
             600,
         )
+
+        # --- Standalone scopes (no pytest/mypy) ---
+
+        if scope == "mutations":
+            from trw_mcp.tools.mutations import (
+                cache_mutation_status,
+                run_mutation_check,
+            )
+
+            mut_result = run_mutation_check(project_root, _config)
+            cache_mutation_status(trw_dir, mut_result)
+            return mut_result
+
+        if scope == "deps":
+            dep_result = _run_dep_audit(project_root, _config)
+            _cache_dep_audit(trw_dir, dep_result)
+            return dep_result
+
+        if scope == "api":
+            fuzz_result = _run_api_fuzz(project_root, _config)
+            _cache_api_fuzz(trw_dir, fuzz_result)
+            return fuzz_result
+
+        # --- Standard scopes (pytest/mypy) ---
 
         status = run_build_check(
             project_root,
@@ -472,5 +990,13 @@ def register_build_tools(server: FastMCP) -> None:
                 f"Coverage {status.coverage_pct:.1f}% is below "
                 f"required threshold {min_coverage:.1f}%"
             )
+
+        # Dep audit on full scope (if enabled)
+        if scope == "full" and _config.dep_audit_enabled:
+            dep_result = _run_dep_audit(project_root, _config)
+            _cache_dep_audit(trw_dir, dep_result)
+            result["dep_audit"] = dep_result
+            if not bool(dep_result.get("dep_audit_passed", True)):
+                result["dep_audit_blocking"] = True
 
         return result

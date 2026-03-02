@@ -74,14 +74,15 @@ class TestFullWorkflow:
         # Step 5: Sync to CLAUDE.md
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         assert sync_result["status"] == "synced"
-        assert sync_result["learnings_promoted"] >= 1
 
-        # Verify CLAUDE.md was created with content
+        # Verify CLAUDE.md was created with auto-generated markers
         claude_md = tmp_path / "CLAUDE.md"
         assert claude_md.exists()
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
-        assert "Integration test convention" in content
+        # PRD-CORE-061: learnings are now delivered via trw_session_start
+        # recall, not embedded in CLAUDE.md. Verify sync completed
+        # successfully without requiring learning content in the output.
 
     def test_init_checkpoint(self, tmp_path: Path) -> None:
         tools = _get_all_tools()

@@ -5,7 +5,7 @@ description: >
   verifies implementation against PRD acceptance criteria, mandatory NFR
   checklist, test quality assessment. Use as a teammate for audit tasks
   or invoke via /trw-audit skill.
-model: opus
+model: claude-sonnet-4-6
 maxTurns: 50
 memory: project
 allowedTools:
