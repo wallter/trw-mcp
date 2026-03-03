@@ -258,6 +258,31 @@ def check_delivery_gates(
             "Consider running trw_review for quality assurance."
         )
 
+    # Integration review gate (PRD-INFRA-027-FR06)
+    integration_path = run_path / "meta" / "integration-review.yaml"
+    if integration_path.exists():
+        try:
+            int_data = reader.read_yaml(integration_path)
+            int_verdict = str(int_data.get("verdict", ""))
+            if int_verdict == "block":
+                raw_findings = int_data.get("findings", [])
+                int_findings = raw_findings if isinstance(raw_findings, list) else []
+                critical_list = [
+                    f for f in int_findings
+                    if isinstance(f, dict) and f.get("severity") == "critical"
+                ]
+                result["integration_review_block"] = (
+                    f"Integration review verdict is 'block' with {len(critical_list)} critical finding(s). "
+                    f"Delivery blocked. Fix critical integration issues before delivering."
+                )
+            elif int_verdict == "warn":
+                result["integration_review_warning"] = (
+                    "Integration review has warnings. Review findings before merging."
+                )
+        except Exception:
+            pass  # Fail-open
+    # No integration-review.yaml is fine for single-shard sprints
+
     # Step 0b: Build gate + premature delivery guard (single events.jsonl read)
     try:
         events_path = run_path / "meta" / "events.jsonl"
@@ -322,3 +347,45 @@ def finalize_run(
     Future expansion: close run.yaml status, archive run, etc.
     """
     return {}
+
+
+def copy_compliance_artifacts(
+    run_path: Path | None,
+    trw_dir: Path,
+    config: TRWConfig,
+    reader: FileStateReader,
+    writer: FileStateWriter,
+) -> dict[str, object]:
+    """Copy review artifacts to compliance retention directory (INFRA-027-FR05)."""
+    result: dict[str, object] = {}
+    if run_path is None:
+        return result
+
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    run_id = run_path.name
+
+    compliance_dir = (
+        trw_dir / config.compliance_dir / "reviews"
+        / str(now.year) / f"{now.month:02d}" / run_id
+    )
+
+    artifacts = ["review.yaml", "review-all.yaml", "integration-review.yaml"]
+    copied = []
+    for artifact_name in artifacts:
+        src = run_path / "meta" / artifact_name
+        if reader.exists(src):
+            try:
+                data = reader.read_yaml(src)
+                writer.ensure_dir(compliance_dir)
+                writer.write_yaml(compliance_dir / artifact_name, data)
+                copied.append(artifact_name)
+            except Exception:
+                pass  # Fail-open
+
+    if copied:
+        result["compliance_artifacts_copied"] = copied
+        result["compliance_dir"] = str(compliance_dir)
+
+    return result

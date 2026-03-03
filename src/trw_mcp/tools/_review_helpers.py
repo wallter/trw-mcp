@@ -34,7 +34,7 @@ def validate_manual_findings(
     validated: list[dict[str, str]] = []
     for f in raw_findings:
         try:
-            ReviewFinding(**f)
+            ReviewFinding(**f)  # type: ignore[arg-type]  # dict[str,str] coerced by Pydantic
             validated.append(f)
             if f.get("severity") not in ("critical", "warning", "info"):
                 validated[-1] = {**f, "severity": "info"}
@@ -208,7 +208,9 @@ def handle_auto_mode(
     if not isinstance(all_auto_findings, list):
         all_auto_findings = []
 
-    confidence_threshold = config.review_confidence_threshold
+    # Use float 0.0-1.0 confidence threshold (INFRA-028-FR06)
+    # config.confidence_threshold is 0.0-1.0 (new field)
+    confidence_threshold = config.confidence_threshold
 
     # Filter findings by confidence threshold
     surfaced: list[dict[str, object]] = []
@@ -238,6 +240,20 @@ def handle_auto_mode(
         "run_path": str(resolved_run) if resolved_run else None,
     }
 
+    # SOC 2 fields (INFRA-027-FR04) — compute from available context
+    import hashlib
+    from datetime import datetime, timedelta
+
+    diff_hash = hashlib.sha256((diff or "").encode()).hexdigest() if diff else ""
+    roles_run = analysis.get("reviewer_roles_run", [])
+    reviewer_role_str = ", ".join(str(r) for r in roles_run) if isinstance(roles_run, list) else ""
+    try:
+        ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        retention_dt = ts_dt + timedelta(days=config.compliance_review_retention_days)
+        retention_expires = retention_dt.isoformat()
+    except (ValueError, AttributeError):
+        retention_expires = ""
+
     result["review_yaml"] = _persist_review(
         resolved_run,
         {
@@ -245,12 +261,18 @@ def handle_auto_mode(
             "timestamp": ts,
             "verdict": verdict,
             "mode": "auto",
-            "reviewer_roles_run": analysis.get("reviewer_roles_run", []),
+            "reviewer_roles_run": roles_run,
             "reviewer_errors": analysis.get("reviewer_errors", []),
             "surfaced_findings_count": len(surfaced),
             "total_findings_count": len(all_auto_findings),
             "confidence_threshold": confidence_threshold,
             "findings": surfaced,
+            # SOC 2 fields (INFRA-027-FR04)
+            "reviewer_id": f"trw-auto-{review_id}",
+            "reviewer_role": reviewer_role_str,
+            "git_diff_hash": diff_hash,
+            "human_escalation_path": "Escalate to team lead via GitHub PR comment",
+            "retention_expires": retention_expires,
         },
         {
             "review_id": review_id,
@@ -276,18 +298,38 @@ def handle_auto_mode(
         }
         writer.write_yaml(review_all_path, review_all_data)
 
-        # integration-review.yaml — integration findings only
+        # integration-review.yaml — integration findings only (INFRA-027-FR03)
         integration_findings = [
             f for f in all_auto_findings
             if isinstance(f, dict) and f.get("reviewer_role") == "integration"
         ]
         if integration_findings:
+            # Compute verdict from integration findings
+            int_critical = sum(
+                1 for f in integration_findings
+                if isinstance(f, dict) and f.get("severity") == "critical"
+            )
+            int_verdict = "block" if int_critical > 0 else ("warn" if integration_findings else "pass")
+
             integration_path = resolved_run / "meta" / "integration-review.yaml"
             integration_data: dict[str, object] = {
                 "review_id": review_id,
                 "timestamp": ts,
                 "mode": "auto",
+                "run_id": "",  # Populated by caller
+                "reviewer_id": "",
+                "reviewer_role": "integration",
+                "git_diff_hash": "",
+                "shards_reviewed": [],
+                "checks_performed": [
+                    "duplicate_functions",
+                    "inconsistent_types",
+                    "unresolved_imports",
+                    "api_contract_mismatch",
+                ],
                 "findings": integration_findings,
+                "verdict": int_verdict,
+                "human_escalation_path": "Escalate to team lead via GitHub PR comment",
             }
             writer.write_yaml(integration_path, integration_data)
 

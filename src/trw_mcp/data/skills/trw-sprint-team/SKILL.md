@@ -48,7 +48,6 @@ For each PRD listed in the sprint:
   - Dependencies / Traceability section (cross-PRD dependencies)
 - Estimate complexity: Low (1-3 FRs), Medium (4-7 FRs), High (8+ FRs)
 - If an execution plan exists for a PRD (check `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`), use its wave plan and file ownership mapping instead of estimating from the PRD alone. Execution plans provide pre-computed micro-task decompositions that reduce self-decomposition variance.
-- If an execution plan exists for a PRD (check `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`), use its wave plan and file ownership mapping instead of estimating from the PRD alone. Execution plans provide pre-computed micro-task decompositions that reduce self-decomposition variance.
 - List key files likely to be created or modified (from Technical Approach)
 - Note which PRDs are prerequisites for others
 
@@ -125,7 +124,7 @@ Verify playbook artifacts exist before continuing:
 - Confirm `scratch/team-playbooks/file_ownership.yaml` exists
 - Confirm each `scratch/team-playbooks/playbooks/tm-{name}.md` exists for every proposed teammate
 
-### Step 7: Create Team
+### Step 7: Create Team and Worktrees
 
 Call `TeamCreate` with:
 - `team_name`: derived team name (kebab-case from sprint doc filename)
@@ -134,12 +133,35 @@ Call `TeamCreate` with:
 If a team with the same name already exists (TeamCreate fails), abort with:
 "A team named '{team-name}' already exists. Clean up the previous team first (send shutdown_request to each teammate, then TeamDelete), then re-run /sprint-team."
 
+After TeamCreate succeeds, create worktrees for each non-lead teammate:
+
+1. **Read worktree config**: Check `.trw/config.yaml` for `worktree_dir` (default: `.trees`).
+
+2. **Add `.trees/` to .gitignore**: Run `grep -q "^\.trees/$" .gitignore 2>/dev/null || echo ".trees/" >> .gitignore`
+
+3. **Determine base branch**: Check if `sprint-{N}-integration` branch exists (`git branch --list sprint-*-integration`). If yes, use it as base. If no, use current HEAD of `main` and log: `[INFO] No sprint integration branch found. Creating worktree branches from main.`
+
+4. **For each non-lead teammate** (lead stays in main worktree):
+   a. Derive branch name: `trw-{prd-id-lowercase}-{role}` (e.g., `trw-prd-infra-025-impl`). For multi-PRD assignments, use the primary (first-listed) PRD.
+   b. Run: `git worktree add {worktree_dir}/{branch-name} -b {branch-name} {base_branch}`
+   c. On success: copy config files to worktree:
+      - `cp .env {worktree_dir}/{branch-name}/.env` (if .env exists)
+      - `mkdir -p {worktree_dir}/{branch-name}/.trw && cp .trw/config.yaml {worktree_dir}/{branch-name}/.trw/config.yaml` (if config exists)
+   d. On failure (`git worktree add` exits non-zero): log `[WARN] Worktree creation failed for {teammate}: {error}`. Spawn teammate in main worktree instead. Add warning to playbook: `[WARN] Worktree creation failed — operating in shared directory. File ownership enforcement applies.`
+
+5. **Record worktree paths** for use in Step 8 playbook generation.
+
 ### Step 8: Spawn Teammates
 
 For each approved teammate (in this order: implementers first, then testers, then reviewers):
 
 1. Read the generated playbook from `scratch/team-playbooks/playbooks/tm-{name}.md`
-2. Spawn via the `Task` tool with:
+2. If a worktree was created for this teammate, prepend to the playbook content:
+   ```
+   **Working Directory**: {absolute_worktree_path}
+   Verify `pwd` matches this path before beginning any file edits.
+   ```
+3. Spawn via the `Task` tool with:
    - `team_name`: the created team name
    - `name`: the teammate name (e.g., "implementer-1")
    - `subagent_type`: matching agent type:
@@ -223,11 +245,39 @@ See: scratch/team-playbooks/file_ownership.yaml
 ## Shutdown Protocol
 
 When all tasks are complete:
-1. Verify all tasks show `completed` status via `TaskList`
-2. Run `trw_build_check(scope="full")` to validate integration
-3. Send `shutdown_request` to each teammate via `SendMessage`
-4. After all teammates confirm shutdown, call `TeamDelete`
-5. Run `/trw-deliver` for full ceremony
+
+1. **Verify all tasks** show `completed` status via `TaskList`
+
+2. **Run build check**: `trw_build_check(scope="full")` to validate integration
+
+3. **Spawn integration reviewer** (INFRA-027-FR01): Before shutting down teammates, spawn an Explore agent to perform integration review:
+   - Get the full merged diff: `git diff main...HEAD` (or `git diff sprint-{N}-integration...HEAD`)
+   - Read `scratch/team-playbooks/file_ownership.yaml` for per-shard file assignments
+   - Spawn via Agent tool with subagent_type "Explore":
+     ```
+     prompt: "Review the following merged diff for cross-shard integration issues:
+     1. Duplicate functions defined in 2+ shard diffs (non-test functions only)
+     2. Inconsistent shared types (same class/TypedDict defined differently)
+     3. Unresolved imports (import names not exported by their module)
+     4. API contract mismatches (caller args don't match callee signature)
+
+     Produce findings as YAML with: check_name, severity (critical/warning/info), description, file_path, line_number.
+     Write results to integration-review.yaml in the run directory."
+     ```
+   - Wait up to 120 seconds for the integration reviewer to complete
+   - If timeout: log `[WARN] Integration reviewer timed out. Proceeding without integration review.`
+
+4. **Send shutdown_request** to each teammate via `SendMessage`
+
+5. **After all teammates confirm shutdown**, clean up worktrees:
+   a. For each `.trees/` subdirectory: `rm -rf {worktree_dir}/{branch-name}/`
+   b. Run: `git worktree prune`
+   c. Run: `git branch -d trw-*` (safe delete — refuses unmerged branches)
+   d. Log any unmerged branches as warnings
+
+6. **Call TeamDelete** to remove team infrastructure
+
+7. **Run `/trw-deliver`** for full ceremony
 
 ## Rationalization Watchlist
 

@@ -69,6 +69,10 @@ class TRWConfig(BaseSettings):
     43. Multi-agent review (QUAL-027) .. review_confidence_threshold
     44. Dependency audit (QUAL-028) .... dep_audit_enabled
     45. API fuzz & comment check (029) . comment_check_enabled
+    46. ATDD (CORE-064) ............. atdd_enabled
+    47. Completion hooks (CORE-065) .. completion_hooks_blocking
+    48. PostToolUse validation (030) . incremental_validation_enabled
+    49. Compaction (CORE-066) ........ compact_instructions_template
     """
 
     model_config = SettingsConfigDict(
@@ -201,6 +205,7 @@ class TRWConfig(BaseSettings):
 
     task_root: str = "docs"
     trw_dir: str = ".trw"
+    worktree_dir: str = ".trees"  # INFRA-025-FR06
     learnings_dir: str = "learnings"
     entries_dir: str = "entries"
     receipts_dir: str = "receipts"
@@ -320,6 +325,13 @@ class TRWConfig(BaseSettings):
     compliance_dir: str = "compliance"
     compliance_history_file: str = "history.jsonl"
     compliance_changelog_filename: str = "CHANGELOG.md"
+
+    # ── Sprint 44: Git Workflow & Enterprise Compliance ─────────────────
+    commit_fr_trailer_enabled: bool = True  # INFRA-026-FR07
+    sprint_integration_branch_pattern: str = "sprint-{N}-integration"  # INFRA-026-FR07
+    compliance_review_retention_days: int = 365  # INFRA-027-FR05
+    provenance_enabled: bool = True  # INFRA-028-FR06
+    confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)  # INFRA-028-FR06
 
     # ── 25. Wave adaptation ──────────────────────────────────────────────
     # PRD-CORE-006
@@ -507,6 +519,30 @@ class TRWConfig(BaseSettings):
     api_fuzz_base_url: str = "http://localhost:8000"
     api_fuzz_level: str = "strict"                     # strict | lenient
     api_fuzz_timeout_secs: int = 120
+
+    # ── 46. ATDD (CORE-064) ──────────────────────────────────────────────
+    # Acceptance Test-Driven Development — test skeletons before implementation
+
+    atdd_enabled: bool = True
+    test_skeleton_dir: str = ""  # empty = auto-detect from pyproject.toml testpaths
+
+    # ── 47. Completion hooks (CORE-065) ──────────────────────────────────
+    # Agent completion enforcement — warn-not-block by default
+
+    completion_hooks_blocking: bool = False
+    self_review_blocking: bool = False
+
+    # ── 48. PostToolUse validation (QUAL-030) ────────────────────────────
+    # Incremental type checking and security pattern detection after Edit/Write
+
+    incremental_validation_enabled: bool = True
+    security_check_enabled: bool = True
+
+    # ── 49. Compaction (CORE-066) ────────────────────────────────────────
+    # Custom compaction instructions and context preservation
+
+    compact_instructions_template: str = ""  # empty = use built-in TRW template
+    pause_after_compaction: bool = False
 
     @property
     def effective_platform_urls(self) -> list[str]:

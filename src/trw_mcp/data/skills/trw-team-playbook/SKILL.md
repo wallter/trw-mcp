@@ -61,8 +61,6 @@ For each assigned PRD, read the PRD file and extract:
 
 If an execution plan exists at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`, read it and use its micro-task decomposition, wave plan, and file ownership mapping as the primary source for task and file assignments. This eliminates the need to re-derive file ownership from the PRD's Technical Approach section.
 
-If an execution plan exists at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`, read it and use its micro-task decomposition, wave plan, and file ownership mapping as the primary source for task and file assignments. This eliminates the need to re-derive file ownership from the PRD's Technical Approach section.
-
 Group the extracted FRs by teammate based on the sprint doc's PRD assignments.
 
 ### Step 4: Determine File Ownership
@@ -176,6 +174,9 @@ Each playbook has exactly these sections, in order:
 
 **Role**: {role} | **Sprint**: {sprint name}
 **Model recommendation**: {Opus for reviewer, Sonnet for implementer/tester}
+**Working Directory**: {absolute_worktree_path_or_"main worktree (repo root)"}
+
+Verify `pwd` matches your Working Directory before beginning any file edits. If your working directory does not match, run `cd {working_directory}` first.
 
 ## Mission
 
@@ -242,6 +243,27 @@ If the teammate is a reviewer or researcher with no contracts, write: "No interf
 
 List tasks in priority order (P0 first). Each task maps to exactly one FR ID.
 
+**For tester teammates, prepend this to Section 4:**
+
+```markdown
+## CONTEXT ISOLATION
+
+Do NOT read implementation files (*.py source files in src/ or app/) before writing your tests. Read ONLY:
+1. PRD FR acceptance criteria from the execution plan
+2. Test skeleton functions from the test skeleton files
+
+Your tests must verify the specification, not the implementation. Write tests that would pass for ANY correct implementation, not just the one your teammate wrote.
+```
+
+**For implementer teammates, add to Section 7 (Coordination):**
+
+```markdown
+### Test Integration
+- Implement against the failing tests in the test skeleton files
+- Do NOT modify test files — make the tests pass by implementing correct behavior
+- If a test seems wrong, message the tester before modifying it
+```
+
 **Section 5: Quality Standards**
 
 ```markdown
@@ -303,6 +325,16 @@ STOP. Message the team lead immediately with: which file, which teammate you thi
 ### Reporting completion:
 
 When all your tasks are done, call `TaskUpdate` to mark each task `completed`, then message the team lead: "All tasks complete. Build check passed. Ready for shutdown."
+
+### Completion Promise
+
+As your FINAL action before completing, output this exact text:
+
+```
+SHARD_COMPLETE: {your-teammate-name} — all acceptance criteria verified
+```
+
+This is a machine-readable completion signal that the TaskCompleted hook verifies. Missing this signal triggers a warning (or block, if `completion_hooks_blocking=true`).
 ```
 
 ---

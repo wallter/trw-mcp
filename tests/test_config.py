@@ -266,3 +266,79 @@ class TestConfigYamlLoading:
             assert cfg.debug is True
         finally:
             _reset_config()
+
+
+# --- Sprint 45: Agent Efficiency config fields ---
+
+
+def test_atdd_enabled_default_true() -> None:
+    config = TRWConfig()
+    assert config.atdd_enabled is True
+
+
+# --- Sprint 44: Git Workflow & Enterprise Compliance config fields ---
+
+
+def test_config_worktree_dir_default() -> None:
+    config = TRWConfig()
+    assert config.worktree_dir == ".trees"
+
+
+def test_config_commit_fr_trailer_default() -> None:
+    config = TRWConfig()
+    assert config.commit_fr_trailer_enabled is True
+
+
+def test_config_sprint_integration_branch_default() -> None:
+    config = TRWConfig()
+    assert config.sprint_integration_branch_pattern == "sprint-{N}-integration"
+
+
+def test_config_compliance_retention_default() -> None:
+    config = TRWConfig()
+    assert config.compliance_review_retention_days == 365
+
+
+def test_config_provenance_default() -> None:
+    config = TRWConfig()
+    assert config.provenance_enabled is True
+
+
+def test_config_confidence_threshold_default() -> None:
+    config = TRWConfig()
+    assert config.confidence_threshold == 0.8
+
+
+def test_test_skeleton_dir_default_empty() -> None:
+    config = TRWConfig()
+    assert config.test_skeleton_dir == ""
+
+
+def test_completion_hooks_blocking_default_false() -> None:
+    config = TRWConfig()
+    assert config.completion_hooks_blocking is False
+
+
+def test_self_review_blocking_default_false() -> None:
+    config = TRWConfig()
+    assert config.self_review_blocking is False
+
+
+def test_incremental_validation_enabled_default_true() -> None:
+    config = TRWConfig()
+    assert config.incremental_validation_enabled is True
+
+
+def test_security_check_enabled_default_true() -> None:
+    config = TRWConfig()
+    assert config.security_check_enabled is True
+
+
+def test_compact_instructions_template_default_empty() -> None:
+    config = TRWConfig()
+    assert config.compact_instructions_template == ""
+
+
+def test_pause_after_compaction_default_false() -> None:
+    config = TRWConfig()
+    assert config.pause_after_compaction is False

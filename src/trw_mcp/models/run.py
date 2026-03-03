@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -328,7 +329,7 @@ class PhaseRequirements(BaseModel):
 
 
 class ReviewFinding(BaseModel):
-    """Structured code review finding (PRD-QUAL-022).
+    """Structured code review finding (PRD-QUAL-022, PRD-INFRA-028).
 
     Immutable value object for findings produced by trw_review.
     """
@@ -340,6 +341,26 @@ class ReviewFinding(BaseModel):
     description: str
     file_path: str = ""
     suggestion: str = ""
+    confidence: float = Field(ge=0.0, le=1.0, default=1.0)  # INFRA-028-FR03
+    reviewer_role: str = ""  # INFRA-028-FR04
+    evidence: str = ""  # INFRA-028-FR04
+
+
+class IntegrationReviewArtifact(BaseModel):
+    """SOC 2 CC8 compliant integration review artifact (PRD-INFRA-027-FR03)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    reviewer_id: str
+    reviewer_role: str
+    timestamp: str  # ISO 8601
+    git_diff_hash: str  # SHA-256
+    shards_reviewed: list[str]
+    checks_performed: list[str]
+    findings: list[ReviewFinding]
+    verdict: Literal["pass", "warn", "block"]
+    human_escalation_path: str
 
 
 class Event(BaseModel):
