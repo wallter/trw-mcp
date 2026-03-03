@@ -164,18 +164,18 @@ def get_phase_requirements(tier: ComplexityClass) -> PhaseRequirements:
             optional=[],
             skipped=["RESEARCH", "PLAN", "VALIDATE", "REVIEW"],
         )
-    elif tier == ComplexityClass.STANDARD:
+    if tier == ComplexityClass.STANDARD:
         return PhaseRequirements(
             mandatory=["PLAN", "IMPLEMENT", "VALIDATE", "DELIVER"],
             optional=["REVIEW"],
             skipped=["RESEARCH"],
         )
-    else:  # COMPREHENSIVE
-        return PhaseRequirements(
-            mandatory=["RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"],
-            optional=[],
-            skipped=[],
-        )
+    # COMPREHENSIVE
+    return PhaseRequirements(
+        mandatory=["RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"],
+        optional=[],
+        skipped=[],
+    )
 
 
 # --- Tier-Aware Ceremony Score (PRD-CORE-060-FR03) ---
@@ -185,8 +185,8 @@ class _TierExpectation:
     """Expected ceremony events and scoring rules for a complexity tier."""
 
     __slots__ = (
-        "events", "checkpoint_min", "review_mandatory",
-        "review_bonus", "missing_review_penalty",
+        "checkpoint_min", "events", "missing_review_penalty",
+        "review_bonus", "review_mandatory",
     )
 
     def __init__(
@@ -304,9 +304,8 @@ def compute_tier_ceremony_score(
         matched += 1
     if "trw_init" in expected and has_init:
         matched += 1
-    if "trw_checkpoint" in expected:
-        if checkpoint_count >= max(tier_exp.checkpoint_min, 1):
-            matched += 1
+    if "trw_checkpoint" in expected and checkpoint_count >= max(tier_exp.checkpoint_min, 1):
+        matched += 1
     if "trw_learn" in expected and has_learn:
         matched += 1
     if "trw_build_check" in expected and has_build_check:
@@ -561,7 +560,7 @@ def compute_impact_distribution(
     for yaml_file in entries_dir.glob("*.yaml"):
         try:
             data = _reader.read_yaml(yaml_file)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
         if str(data.get("status", "active")) != "active":
             continue
@@ -645,12 +644,11 @@ def compute_calibration_accuracy(recall_stats: dict[str, object]) -> float:
     ratio = positive / total
     if ratio >= 0.75:
         return 2.0
-    elif ratio >= 0.50:
+    if ratio >= 0.50:
         return 1.5
-    elif ratio >= 0.25:
+    if ratio >= 0.25:
         return 1.0
-    else:
-        return 0.5
+    return 0.5
 
 
 # --- Forced distribution enforcement (PRD-CORE-034) ---

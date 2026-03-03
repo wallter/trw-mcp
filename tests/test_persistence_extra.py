@@ -19,7 +19,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -33,7 +32,6 @@ from trw_mcp.state.persistence import (
     json_serializer,
     lock_for_rmw,
 )
-
 
 # ---------------------------------------------------------------------------
 # Lines 84-85: json_serializer TypeError

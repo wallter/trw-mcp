@@ -14,8 +14,6 @@ Coverage targets:
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -26,8 +24,7 @@ from trw_mcp.exceptions import StateError, ValidationError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
 from trw_mcp.models.run import Phase
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.state.reflection import persist_reflection, ReflectionInputs, create_reflection_record
+from trw_mcp.state.reflection import ReflectionInputs, create_reflection_record, persist_reflection
 from trw_mcp.state.validation import (
     _check_prd_enforcement,
     _is_substantive_line,
@@ -38,8 +35,7 @@ from trw_mcp.state.validation import (
 from trw_mcp.tools.ceremony import register_ceremony_tools
 from trw_mcp.tools.learning import register_learning_tools
 from trw_mcp.tools.requirements import register_requirements_tools
-from trw_mcp.tools.telemetry import _write_tool_event, _write_telemetry_record
-
+from trw_mcp.tools.telemetry import _write_telemetry_record, _write_tool_event
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -331,7 +327,6 @@ class TestLearningExceptionPaths:
 
     def test_trw_claude_md_sync_failure_propagates(self, tmp_path: Path) -> None:
         """Lines 301-302: claude_md_sync failure path in trw_claude_md_sync tool."""
-        import trw_mcp.tools.learning as mod
 
         tool = self._register_and_get("trw_claude_md_sync")
 
@@ -538,7 +533,6 @@ class TestTelemetryExceptionPaths:
 
     def test_write_tool_event_fallback_exception_suppressed(self, tmp_path: Path) -> None:
         """Lines 135-136: fallback resolve_trw_dir raises, exception suppressed."""
-        import trw_mcp.tools.telemetry as tel_mod
 
         with patch(
             "trw_mcp.tools.telemetry._get_cached_run_dir",
@@ -1162,8 +1156,8 @@ class TestCeremonyGetRunStatus:
 
     def test_get_run_status_read_error_returns_error_status(self, tmp_path: Path) -> None:
         """Lines 74-75: When read_yaml raises StateError, result includes error_reading."""
-        from trw_mcp.tools.ceremony import _get_run_status
         import trw_mcp.tools.ceremony as cer_mod
+        from trw_mcp.tools.ceremony import _get_run_status
 
         run_dir = tmp_path / "run"
         meta = run_dir / "meta"
@@ -1182,8 +1176,8 @@ class TestCeremonyGetRunStatus:
 
     def test_get_run_status_oserror_caught(self, tmp_path: Path) -> None:
         """Lines 74-75: OSError variant also sets error_reading status."""
-        from trw_mcp.tools.ceremony import _get_run_status
         import trw_mcp.tools.ceremony as cer_mod
+        from trw_mcp.tools.ceremony import _get_run_status
 
         run_dir = tmp_path / "run"
         meta = run_dir / "meta"

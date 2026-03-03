@@ -12,10 +12,6 @@ as a module-level singleton. Subsequent calls reuse the loaded model.
 from __future__ import annotations
 
 import structlog
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger()
 
@@ -27,7 +23,7 @@ _MODEL_NAME = "all-MiniLM-L6-v2"
 
 def _load_model() -> object | None:
     """Load the sentence-transformers model, returning None on failure."""
-    global _model  # noqa: PLW0603
+    global _model
     if _model is not None:
         return _model
     try:
@@ -38,7 +34,7 @@ def _load_model() -> object | None:
     except ImportError:
         logger.debug("sentence_transformers_not_installed")
         return None
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("embedding_model_load_failed", model_name=_MODEL_NAME)
         return None
 
@@ -66,7 +62,7 @@ def embed(text: str) -> list[float] | None:
     try:
         vector = model.encode(text, normalize_embeddings=True)  # type: ignore[attr-defined]
         return [float(v) for v in vector]
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("embedding_generation_failed", text_length=len(text))
         return None
 
@@ -104,7 +100,7 @@ def embed_batch(texts: list[str]) -> list[list[float] | None]:
             else:
                 results.append([float(v) for v in vectors[vec_idx]])
                 vec_idx += 1
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("batch_embedding_failed", text_count=len(texts))
         return [None] * len(texts)
 

@@ -10,16 +10,14 @@ Verifies that:
 
 from __future__ import annotations
 
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.validation import validate_prd_quality_v2
-
 
 # A well-formed PRD with all 12 sections and proper frontmatter
 _GOOD_PRD = """\
@@ -154,6 +152,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
+
     from trw_mcp.tools.requirements import register_requirements_tools
 
     srv = FastMCP("test-fix-011")

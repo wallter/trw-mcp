@@ -146,7 +146,7 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                     try:
                         evt = json.loads(line)
                         last_5_events.append(str(evt.get("event_type", "")))
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
 
             # Failing tests from build-status.yaml

@@ -12,7 +12,6 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools.usage import _compute_cost
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -43,8 +42,9 @@ def _write_usage_record(
 
 async def _get_report_tool_fn() -> Callable[..., Any]:
     """Extract the trw_usage_report fn from the FastMCP server."""
-    from fastmcp import FastMCP  # noqa: PLC0415
-    from trw_mcp.tools.usage import register_usage_tools  # noqa: PLC0415
+    from fastmcp import FastMCP
+
+    from trw_mcp.tools.usage import register_usage_tools
 
     server = FastMCP("test")
     register_usage_tools(server)

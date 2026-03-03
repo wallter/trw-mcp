@@ -18,6 +18,7 @@ def make_ceremony_server(
     Sets TRW_PROJECT_ROOT to tmp_path.
     """
     from fastmcp import FastMCP
+
     from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.review import register_review_tools

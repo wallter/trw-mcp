@@ -128,7 +128,7 @@ class FileStateReader:
             if data is None:
                 return {}
             if not isinstance(data, dict):
-                raise StateError(
+                raise StateError(  # noqa: TRY301
                     f"YAML root must be a mapping, got {type(data).__name__}",
                     path=str(path),
                 )
@@ -238,10 +238,8 @@ class FileStateWriter:
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:
-                try:
+                with contextlib.suppress(OSError):
                     os.close(fd)
-                except OSError:
-                    pass
             logger.debug("yaml_written", path=str(path))
         except StateError:
             raise
@@ -303,14 +301,12 @@ class FileStateWriter:
                     fh.write(content)
                     fh.flush()
                 tmp_path.rename(path)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:
-                try:
+                with contextlib.suppress(OSError):
                     os.close(fd)
-                except OSError:
-                    pass
         except StateError:
             raise
         except Exception as exc:

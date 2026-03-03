@@ -12,8 +12,8 @@ from typing import NamedTuple
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
-from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.models.learning import Reflection
+from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.analytics import (
     detect_tool_sequences,
     extract_learnings_from_llm,

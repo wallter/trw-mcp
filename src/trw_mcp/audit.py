@@ -83,7 +83,7 @@ def _audit_learnings(
         source_counts[source] += 1
 
         summary = str(entry.get("summary", ""))
-        if summary.startswith("Repeated operation:") or summary.startswith("Success:"):
+        if summary.startswith(("Repeated operation:", "Success:")):
             bloat_count += 1
 
     total = len(entries)
@@ -302,7 +302,7 @@ def _retire_telemetry_bloat(
         status = str(entry.get("status", "active"))
         if status != "active":
             continue
-        if summary.startswith("Repeated operation:") or summary.startswith("Success:"):
+        if summary.startswith(("Repeated operation:", "Success:")):
             entry_id = str(entry.get("id", ""))
             if entry_id:
                 apply_status_update(trw_dir, entry_id, "obsolete")

@@ -7,6 +7,7 @@ manifest. Implements PRD-CORE-021 (FR01-FR05, FR08, FR10).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import tempfile
@@ -16,8 +17,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import structlog
-
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.memory_adapter import count_entries, get_backend
 from trw_mcp.state.persistence import FileStateWriter
@@ -262,7 +263,7 @@ def preserve_manual_markers(existing_content: str, new_content: str) -> str:
             manual_block = normalized[start_idx : end_idx + len(end_marker)]
 
         return new_content.rstrip("\n") + "\n\n" + manual_block + "\n"
-    except Exception:  # noqa: BLE001
+    except Exception:
         return existing_content
 
 
@@ -274,9 +275,9 @@ def preserve_manual_markers(existing_content: str, new_content: str) -> str:
 def render_topic_document(cluster: dict[str, object]) -> str:
     """Render a Markdown topic document for a cluster."""
     slug = str(cluster.get("slug", "topic"))
-    entry_list: list[MemoryEntry] = cast(list[MemoryEntry], cluster.get("entries", []))
+    entry_list: list[MemoryEntry] = cast("list[MemoryEntry]", cluster.get("entries", []))
     avg_importance = float(str(cluster.get("avg_importance", 0.0)))
-    tags: list[str] = cast(list[str], cluster.get("tags", []))
+    tags: list[str] = cast("list[str]", cluster.get("tags", []))
     now_iso = datetime.now(timezone.utc).isoformat()
 
     lines: list[str] = [
@@ -333,7 +334,7 @@ def _render_cluster_documents(
         slug = str(cluster.get("slug", "topic"))
         try:
             rendered = render_topic_document(cluster)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(f"Cluster '{slug}': {exc}")
             logger.warning(
                 "knowledge_cluster_render_failed",
@@ -382,7 +383,7 @@ def _write_knowledge_files(
             writer.write_text(topic_path, rendered)
             topics_generated += 1
             slugs_written.append(slug)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(f"Cluster '{slug}': {exc}")
             logger.warning(
                 "knowledge_cluster_render_failed",
@@ -417,7 +418,7 @@ def execute_knowledge_sync(
     # Step 1: threshold check (NFR02: fail-open on StorageError)
     try:
         total_count = count_entries(trw_dir)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("knowledge_sync_count_failed", error=str(exc))
         result = _base_result(0, config, trw_dir, threshold_met=False, dry_run=dry_run)
         result["errors"] = [f"count_entries failed: {exc}"]
@@ -476,7 +477,7 @@ def execute_knowledge_sync(
     written_set = set(slugs_written)
     for cluster in clusters:
         slug = str(cluster.get("slug", "topic"))
-        entry_ids: list[str] = cast(list[str], cluster.get("entry_ids", []))
+        entry_ids: list[str] = cast("list[str]", cluster.get("entry_ids", []))
         if slug in written_set:
             entries_clustered += len(entry_ids)
             cluster_map[slug] = entry_ids
@@ -502,11 +503,9 @@ def execute_knowledge_sync(
             with open(fd, "w", encoding="utf-8") as f:
                 json.dump(clusters_data, f, indent=2)
             Path(tmp_path_str).replace(clusters_path)
-        except Exception:  # noqa: BLE001
-            try:
+        except Exception:
+            with contextlib.suppress(OSError):
                 Path(tmp_path_str).unlink(missing_ok=True)
-            except OSError:
-                pass
             raise
 
         logger.info(
@@ -514,7 +513,7 @@ def execute_knowledge_sync(
             cluster_count=len(cluster_map),
             total_entries=entries_clustered,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         errors.append(f"clusters.json write failed: {exc}")
         logger.warning("knowledge_clusters_json_failed", error=str(exc))
 

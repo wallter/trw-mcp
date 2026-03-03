@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from pathlib import Path
-
 import pytest
-
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +26,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
+
     from trw_mcp.tools.requirements import register_requirements_tools
 
     srv = FastMCP("test")
@@ -473,10 +472,10 @@ class TestPrefillApplication:
 
     def test_input_text_in_background(self) -> None:
         from trw_mcp.tools.requirements import (
-            _load_template_body,
-            _substitute_template,
             _apply_prefill,
             _extract_prefill,
+            _load_template_body,
+            _substitute_template,
         )
 
         body = _load_template_body()
@@ -487,9 +486,9 @@ class TestPrefillApplication:
 
     def test_file_refs_in_section6(self) -> None:
         from trw_mcp.tools.requirements import (
+            _apply_prefill,
             _load_template_body,
             _substitute_template,
-            _apply_prefill,
         )
 
         body = _load_template_body()
@@ -500,9 +499,9 @@ class TestPrefillApplication:
 
     def test_prd_deps_in_section10(self) -> None:
         from trw_mcp.tools.requirements import (
+            _apply_prefill,
             _load_template_body,
             _substitute_template,
-            _apply_prefill,
         )
 
         body = _load_template_body()

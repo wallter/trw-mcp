@@ -162,7 +162,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         fm_text = match.group(1)
         data = yaml.load(fm_text)
         if not isinstance(data, dict):
-            raise StateError(
+            raise StateError(  # noqa: TRY301
                 f"Frontmatter is not a mapping in: {path}", path=str(path)
             )
 
@@ -248,7 +248,7 @@ def check_transition_guards(
     current: PRDStatus,
     target: PRDStatus,
     prd_content: str,
-    config: "TRWConfig | None" = None,
+    config: TRWConfig | None = None,
 ) -> TransitionResult:
     """Run guard checks for a PRD status transition.
 

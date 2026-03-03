@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_paths, strip_pii
-
 
 # ---------------------------------------------------------------------------
 # anonymize_installation_id

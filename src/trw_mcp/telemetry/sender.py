@@ -49,7 +49,7 @@ class BatchSender:
         self._writer = FileStateWriter()
 
     @classmethod
-    def from_config(cls) -> "BatchSender":
+    def from_config(cls) -> BatchSender:
         """Construct a sender from the active TRWConfig singleton."""
         cfg = get_config()
         trw_dir = resolve_trw_dir()
@@ -125,7 +125,7 @@ class BatchSender:
                 try:
                     if fut.result():
                         any_success = True
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.debug("batch_future_failed", exc_type=type(exc).__name__)
             return any_success
 

@@ -24,7 +24,6 @@ from trw_mcp.tools.build import (
     run_build_check,
 )
 
-
 # ---------------------------------------------------------------------------
 # Lines 112-113: _run_subprocess OSError path
 # ---------------------------------------------------------------------------
@@ -235,6 +234,7 @@ class TestTrwBuildCheckTool:
     def _get_tool(self) -> object:
         """Import and register tools to get the closure."""
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -249,8 +249,9 @@ class TestTrwBuildCheckTool:
         config = TRWConfig(build_check_enabled=False)
         monkeypatch.setattr("trw_mcp.tools.build._config", config)
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -278,8 +279,9 @@ class TestTrwBuildCheckTool:
         config = TRWConfig(build_check_enabled=True)
         monkeypatch.setattr("trw_mcp.tools.build._config", config)
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -328,8 +330,9 @@ class TestTrwBuildCheckTool:
         config = TRWConfig(build_check_enabled=True)
         monkeypatch.setattr("trw_mcp.tools.build._config", config)
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -384,8 +387,9 @@ class TestTrwBuildCheckTool:
         config = TRWConfig(build_check_enabled=True)
         monkeypatch.setattr("trw_mcp.tools.build._config", config)
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -430,8 +434,9 @@ class TestTrwBuildCheckTool:
         config = TRWConfig(build_check_enabled=True)
         monkeypatch.setattr("trw_mcp.tools.build._config", config)
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -474,8 +479,9 @@ class TestTrwBuildCheckTool:
         config = TRWConfig(build_check_enabled=True, build_check_timeout_secs=120)
         monkeypatch.setattr("trw_mcp.tools.build._config", config)
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)

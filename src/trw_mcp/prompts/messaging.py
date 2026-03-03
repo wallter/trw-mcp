@@ -15,7 +15,6 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-
 _DATA_DIR = Path(__file__).parent.parent / "data" / "messages"
 
 

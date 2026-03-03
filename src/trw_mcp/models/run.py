@@ -48,7 +48,7 @@ class ReversionTrigger(str, Enum):
     OTHER = "other"
 
     @staticmethod
-    def classify(trigger_str: str) -> "ReversionTrigger":
+    def classify(trigger_str: str) -> ReversionTrigger:
         """Return the matching ReversionTrigger, or OTHER if unrecognized."""
         try:
             return ReversionTrigger(trigger_str)
@@ -64,8 +64,8 @@ class Confidence(str, Enum):
     LOW = "low"
 
     @staticmethod
-    def from_score(score: float) -> "Confidence":
-        """Map a 0.0–1.0 score to a level: >=0.85 → HIGH, >=0.70 → MEDIUM, else LOW."""
+    def from_score(score: float) -> Confidence:
+        """Map a 0.0-1.0 score to a level: >=0.85 -> HIGH, >=0.70 -> MEDIUM, else LOW."""
         if score >= 0.85:
             return Confidence.HIGH
         if score >= 0.70:
@@ -264,7 +264,7 @@ class EventType(str, Enum):
     TASK_COMPLETE = "task_complete"
 
     @staticmethod
-    def resolve(event_str: str) -> "EventType | None":
+    def resolve(event_str: str) -> EventType | None:
         """Return the matching EventType member, or None if unrecognized."""
         try:
             return EventType(event_str)

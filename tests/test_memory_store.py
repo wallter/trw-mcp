@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
-
+from unittest.mock import patch
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_store(tmp_path: Path, dim: int = 4) -> "MemoryStore":  # type: ignore[name-defined]  # noqa: F821
+def _make_store(tmp_path: Path, dim: int = 4) -> MemoryStore:  # type: ignore[name-defined]  # noqa: F821
     from trw_mcp.state.memory_store import MemoryStore
     return MemoryStore(tmp_path / "vectors.db", dim=dim)
 
@@ -31,7 +28,6 @@ class TestAvailability:
     def test_unavailable_when_sqlite_vec_missing(self) -> None:
         with patch.dict(sys.modules, {"sqlite_vec": None}):
             # Re-import to trigger fresh availability check
-            import importlib
             import trw_mcp.state.memory_store as ms_mod
             # Directly test the function that uses the module-level flag
             # We patch the module-level flag
@@ -234,9 +230,8 @@ class TestSearchErrorPath:
         sqlite3.Connection.execute is read-only, so we replace the whole
         connection object with a MagicMock that raises on MATCH queries.
         """
-        from unittest.mock import MagicMock
         import sqlite3
-        import struct
+        from unittest.mock import MagicMock
 
         store = _make_store(tmp_path, dim=4)
         try:

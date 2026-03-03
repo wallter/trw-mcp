@@ -22,10 +22,10 @@ import pytest
 import trw_mcp.state.analytics_report as analytics_mod
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics_report import (
-    auto_close_stale_runs,
-    count_stale_runs,
     _get_last_activity_timestamp,
     _write_archive_summary,
+    auto_close_stale_runs,
+    count_stale_runs,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -119,7 +119,7 @@ class TestStaleRunHourLevelTTL:
             result = auto_close_stale_runs(ttl_hours=48)
 
         assert result["count"] == 1
-        assert run_id in cast(list[str], result["runs_closed"])
+        assert run_id in cast("list[str]", result["runs_closed"])
 
         # Verify run.yaml was updated with abandon metadata
         updated = _reader.read_yaml(run_dir / "meta" / "run.yaml")
@@ -186,7 +186,7 @@ class TestStaleRunCheckpointExtendsTTL:
             result = auto_close_stale_runs(ttl_hours=48)
 
         assert result["count"] == 1
-        assert run_id in cast(list[str], result["runs_closed"])
+        assert run_id in cast("list[str]", result["runs_closed"])
 
         updated = _reader.read_yaml(run_dir / "meta" / "run.yaml")
         assert updated["status"] == "abandoned"
@@ -370,8 +370,9 @@ class TestStaleCountInStatus:
         self, tmp_path: Path, sample_run_dir: Path,
     ) -> None:
         """trw_status response includes stale_count field."""
-        from trw_mcp.tools.orchestration import register_orchestration_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.orchestration import register_orchestration_tools
 
         server = FastMCP("test")
         register_orchestration_tools(server)
@@ -404,8 +405,9 @@ class TestStaleCountInStatus:
         self, tmp_path: Path, sample_run_dir: Path,
     ) -> None:
         """When stale count is 0, no advisory is shown."""
-        from trw_mcp.tools.orchestration import register_orchestration_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.orchestration import register_orchestration_tools
 
         server = FastMCP("test")
         register_orchestration_tools(server)
@@ -434,8 +436,9 @@ class TestStaleCountInStatus:
         self, tmp_path: Path, sample_run_dir: Path,
     ) -> None:
         """When count_stale_runs raises, trw_status still returns normally."""
-        from trw_mcp.tools.orchestration import register_orchestration_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.orchestration import register_orchestration_tools
 
         server = FastMCP("test")
         register_orchestration_tools(server)

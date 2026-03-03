@@ -6,10 +6,11 @@ which learnings are recalled and whether they lead to successful outcomes.
 
 from __future__ import annotations
 
-import structlog
 import time
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter

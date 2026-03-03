@@ -15,8 +15,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import statistics
 import time
 from pathlib import Path
 from typing import Any
@@ -29,7 +27,6 @@ from fastmcp import FastMCP
 import trw_mcp.tools.telemetry as telemetry
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.telemetry import log_tool_call
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

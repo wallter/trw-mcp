@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._paths import (
     detect_current_phase,
     find_active_run,
@@ -18,7 +17,6 @@ from trw_mcp.state._paths import (
     unpin_active_run,
 )
 from trw_mcp.state.persistence import FileStateWriter
-
 
 # ---------------------------------------------------------------------------
 # Helpers

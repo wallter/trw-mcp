@@ -13,6 +13,7 @@ PRD lineage:
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,7 +70,7 @@ def calibrate_impact(impact: float, config: TRWConfig) -> float:
             user_impact=impact,
             user_weight=user_weight,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         return impact  # Fail-open: calibration failure falls back to raw impact
 
 
@@ -119,7 +120,7 @@ def check_soft_cap(
                     f"{threshold_pct}% threshold."
                 )
                 return round(adjusted, 4), warning
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass  # Fail-open: distribution check must not block learning recording
 
     return impact, None
@@ -211,9 +212,9 @@ def check_and_handle_dedup(
                             "similarity": str(round(dedup_result.similarity, 3)),
                             "message": f"Merged into existing entry: {dedup_result.existing_id}",
                         }
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("dedup_check_failed", error=str(exc))
 
     return None
@@ -267,10 +268,8 @@ def enforce_distribution(
         demotions = enforce_tier_distribution(all_entries)
         for demoted_id, new_score in demotions:
             demoted_ids.append(demoted_id)
-            try:
+            with contextlib.suppress(Exception):
                 adapter_update(trw_dir, demoted_id, impact=new_score)
-            except Exception:  # noqa: BLE001
-                pass
 
         if demotions:
             tier_name = "critical" if impact >= 0.9 else "high"
@@ -280,7 +279,7 @@ def enforce_distribution(
                 f"{'y' if len(demotions) == 1 else 'ies'} to maintain tier caps. "
                 f"IDs: {[d[0] for d in demotions]}"
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass  # Fail-open: distribution enforcement must not block learning recording
 
     return distribution_warning, demoted_ids

@@ -561,7 +561,6 @@ class TestPerformUpgrade:
 
     def test_lock_contention_returns_not_applied(self, tmp_path: Path) -> None:
         """When flock raises OSError, returns 'Another upgrade is in progress'."""
-        import fcntl
 
         self._setup_config(tmp_path)
         update_info: dict[str, object] = {"latest": "2.0.0"}
@@ -577,7 +576,6 @@ class TestPerformUpgrade:
 
     def test_artifact_info_none_returns_not_applied(self, tmp_path: Path) -> None:
         """When _fetch_artifact_info returns None."""
-        import fcntl
 
         self._setup_config(tmp_path)
         update_info: dict[str, object] = {"latest": "2.0.0"}

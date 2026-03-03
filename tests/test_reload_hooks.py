@@ -8,8 +8,6 @@ instances, enabling mcp-hmr hot-reload without restarting the MCP server.
 from __future__ import annotations
 
 import importlib
-import types
-from typing import Any
 
 import pytest
 

@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._ceremony_helpers import make_ceremony_server
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.review import (
@@ -32,9 +33,6 @@ from trw_mcp.tools.review import (
     _normalize_severity,
     _run_multi_reviewer_analysis,
 )
-
-from tests._ceremony_helpers import make_ceremony_server
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

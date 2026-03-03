@@ -7,15 +7,13 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.state.dedup import (
-    DedupResult,
     batch_dedup,
     check_duplicate,
     cosine_similarity,
@@ -23,7 +21,6 @@ from trw_mcp.state.dedup import (
     merge_entries,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -564,6 +561,7 @@ class TestTrwLearnDedup:
     ) -> None:
         """When a duplicate exists, trw_learn returns 'skipped_duplicate'."""
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
 
         entries_dir = self._make_entries_dir(tmp_path)
@@ -648,6 +646,7 @@ class TestTrwLearnDedup:
         )
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
 
         server = FastMCP("test")
@@ -720,6 +719,7 @@ class TestTrwLearnDedup:
         monkeypatch.setattr("trw_mcp.state.dedup.embed", merge_zone_embed)
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
 
         server = FastMCP("test")
@@ -1216,6 +1216,7 @@ class TestSkipUpdatesAccessCount:
     ) -> None:
         """When dedup action=skip, existing entry's access_count is incremented."""
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
 
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
@@ -1450,6 +1451,7 @@ class TestTrwLearnGracefulDegradation:
     ) -> object:
         """Common setup for trw_learn integration tests."""
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
 
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
@@ -1544,6 +1546,7 @@ class TestTrwLearnReturnDictKeys:
         dedup_enabled: bool = True,
     ) -> object:
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
 
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"

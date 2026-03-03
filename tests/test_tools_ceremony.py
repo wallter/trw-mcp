@@ -11,10 +11,9 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Any
-
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -28,7 +27,6 @@ from trw_mcp.tools.ceremony import (
     _do_reflect,
     _get_run_status,
 )
-
 
 # --- Fixtures ---
 
@@ -821,7 +819,6 @@ class TestDeliverTelemetryIntegration:
         assert result["telemetry"]["status"] == "success"
         assert mock_client.record_event.call_count >= 2
         # Verify SessionEndEvent was among the calls
-        from trw_mcp.telemetry.models import SessionEndEvent
         call_args_list = mock_client.record_event.call_args_list
         event_types = [type(c.args[0]).__name__ for c in call_args_list if c.args]
         assert "SessionEndEvent" in event_types
@@ -841,7 +838,6 @@ class TestDeliverTelemetryIntegration:
             result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
 
         assert result["telemetry"]["status"] == "success"
-        from trw_mcp.telemetry.models import CeremonyComplianceEvent
         call_args_list = mock_client.record_event.call_args_list
         event_types = [type(c.args[0]).__name__ for c in call_args_list if c.args]
         assert "CeremonyComplianceEvent" in event_types
@@ -866,7 +862,6 @@ class TestDeliverTelemetryIntegration:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Step 6.6: record_outcome is called for tracked recalls with positive outcome."""
-        from unittest.mock import MagicMock
         tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
 
         # Set up a recall_tracking.jsonl with an unresolved record

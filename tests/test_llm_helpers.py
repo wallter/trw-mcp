@@ -20,7 +20,6 @@ from trw_mcp.state.llm_helpers import (
     llm_summarize_learnings,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper: mock LLMClient factory
 # ---------------------------------------------------------------------------

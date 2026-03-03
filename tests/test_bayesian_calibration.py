@@ -6,7 +6,6 @@ import pytest
 
 from trw_mcp.scoring import bayesian_calibrate, compute_calibration_accuracy
 
-
 # ---------------------------------------------------------------------------
 # bayesian_calibrate
 # ---------------------------------------------------------------------------

@@ -24,7 +24,6 @@ from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.tiers import TierManager, TierSweepResult, compute_importance_score
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

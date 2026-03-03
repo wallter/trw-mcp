@@ -8,11 +8,9 @@ Targets uncovered lines in:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -32,7 +30,6 @@ from trw_mcp.state.report import (
     assemble_report,
     compute_learning_yield,
 )
-
 
 # ===========================================================================
 # recall_search.py tests
@@ -515,12 +512,11 @@ class TestUtilityBasedPruneCandidatesTier3:
 
     def test_tier3_medium_impact_older_entry_prune_range(self) -> None:
         """Verify tier 3 path (not tier 2) executes by using moderate impact, old entry."""
-        from trw_mcp.models.config import TRWConfig, _reset_config
-        from trw_mcp.scoring import utility_based_prune_candidates
-
         # Force moderate prune/delete thresholds so an old medium-utility entry
         # falls precisely in tier 3 (below prune but above delete)
         import trw_mcp.scoring as scoring_mod
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.scoring import utility_based_prune_candidates
         old_config = scoring_mod._config
 
         try:
@@ -544,10 +540,9 @@ class TestUtilityBasedPruneCandidatesTier3:
 
     def test_tier3_reason_contains_prune_threshold(self) -> None:
         """Tier 3 candidate reason mentions 'prune threshold'."""
+        import trw_mcp.scoring as scoring_mod
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import utility_based_prune_candidates
-
-        import trw_mcp.scoring as scoring_mod
         old_config = scoring_mod._config
 
         try:
@@ -902,9 +897,8 @@ class TestProcessOutcome:
         self, tmp_path: Path, writer: FileStateWriter
     ) -> None:
         """When entries_dir doesn't exist after correlation, returns [] (line 857)."""
-        from trw_mcp.scoring import process_outcome
-
         import trw_mcp.scoring as scoring_mod
+        from trw_mcp.scoring import process_outcome
 
         trw_dir = self._setup_trw_dir(tmp_path, writer)
 
@@ -926,9 +920,8 @@ class TestProcessOutcome:
         self, tmp_path: Path, writer: FileStateWriter
     ) -> None:
         """Learning ID in receipt but not found in entries is skipped (line 866)."""
-        from trw_mcp.scoring import process_outcome
-
         import trw_mcp.scoring as scoring_mod
+        from trw_mcp.scoring import process_outcome
 
         trw_dir = self._setup_trw_dir(tmp_path, writer)
 
@@ -954,9 +947,8 @@ class TestProcessOutcome:
         self, tmp_path: Path, writer: FileStateWriter
     ) -> None:
         """When outcome_history is not a list, it is reset to [] (line 890)."""
-        from trw_mcp.scoring import process_outcome
-
         import trw_mcp.scoring as scoring_mod
+        from trw_mcp.scoring import process_outcome
 
         trw_dir = self._setup_trw_dir(tmp_path, writer)
 
@@ -1162,8 +1154,14 @@ class TestSearchEntriesTagFilter:
 class TestSearchEntriesHyphenatedTagExpansion:
     """Cover lines 77-80: hyphenated tag expansion during query matching."""
 
-    def test_hyphenated_tag_expanded_for_query_match(self, tmp_path: Path) -> None:
+    def test_hyphenated_tag_expanded_for_query_match(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Query 'pydantic' matches entry with tag 'pydantic-v2' (lines 77-80)."""
+        import sys
+        import types
+        mock_retrieval = types.ModuleType("trw_mcp.state.retrieval")
+        mock_retrieval.hybrid_search = lambda *a, **kw: []  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "trw_mcp.state.retrieval", mock_retrieval)
+
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         writer = FileStateWriter()
@@ -1491,9 +1489,8 @@ class TestProcessOutcomeHistoryCap:
         self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When outcome_history exceeds history_cap, it is trimmed (line 893)."""
-        from trw_mcp.scoring import process_outcome
-
         import trw_mcp.scoring as scoring_mod
+        from trw_mcp.scoring import process_outcome
 
         trw_dir = tmp_path / ".trw"
         receipts_dir = (

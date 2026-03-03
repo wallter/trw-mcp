@@ -703,7 +703,7 @@ def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
 
 def collect_promotable_learnings(
     trw_dir: Path,
-    config: "TRWConfig",
+    config: TRWConfig,
     reader: FileStateReader,
 ) -> list[dict[str, object]]:
     """Collect active learnings eligible for CLAUDE.md promotion.
@@ -744,6 +744,7 @@ def collect_promotable_learnings(
             if created_at_raw:
                 try:
                     from datetime import datetime as _dt
+
                     from trw_mcp.scoring import apply_time_decay
                     created_dt = _dt.fromisoformat(created_at_raw)
                     score = apply_time_decay(score, created_dt)
@@ -760,7 +761,7 @@ def collect_promotable_learnings(
 
 def collect_patterns(
     trw_dir: Path,
-    config: "TRWConfig",
+    config: TRWConfig,
     reader: FileStateReader,
 ) -> list[dict[str, object]]:
     """Collect pattern entries for CLAUDE.md sync.
@@ -791,7 +792,7 @@ def collect_patterns(
 
 def collect_context_data(
     trw_dir: Path,
-    config: "TRWConfig",
+    config: TRWConfig,
     reader: FileStateReader,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Collect architecture and conventions context data.
@@ -823,7 +824,7 @@ def execute_claude_md_sync(
     config: TRWConfig,
     reader: FileStateReader,
     writer: FileStateWriter,
-    llm: "LLMClient",
+    llm: LLMClient,
 ) -> dict[str, object]:
     """Execute the CLAUDE.md sync operation.
 
@@ -849,7 +850,7 @@ def execute_claude_md_sync(
 
     high_impact = collect_promotable_learnings(trw_dir, config, reader)
     patterns = collect_patterns(trw_dir, config, reader)
-    arch_data, conv_data = collect_context_data(trw_dir, config, reader)
+    _arch_data, _conv_data = collect_context_data(trw_dir, config, reader)
 
     llm_summary: str | None = None
     if (high_impact or patterns) and config.llm_enabled and llm.available:  # pragma: no cover

@@ -11,7 +11,6 @@ import pytest
 from trw_mcp import release_builder as rb_mod
 from trw_mcp.release_builder import _read_version, _sha256, build_release_bundle
 
-
 # ---------------------------------------------------------------------------
 # _sha256 tests
 # ---------------------------------------------------------------------------

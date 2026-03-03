@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +18,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_prompts() -> dict[str, Any]:
     """Create server and return prompt map."""
     from fastmcp import FastMCP
+
     from trw_mcp.prompts.aaref import register_aaref_prompts
 
     srv = FastMCP("test")

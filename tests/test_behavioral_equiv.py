@@ -6,9 +6,8 @@ structures with expected field presence, types, and key values.
 
 from __future__ import annotations
 
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -28,6 +27,7 @@ def _set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
+
     from trw_mcp.tools.learning import register_learning_tools
 
     srv = FastMCP("test")

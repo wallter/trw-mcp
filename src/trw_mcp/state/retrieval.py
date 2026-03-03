@@ -178,7 +178,7 @@ def hybrid_search(
             if entry_id:
                 all_entries.append(data)
                 entry_map[entry_id] = data
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("entry_load_skipped", exc_type=type(exc).__name__, path=str(entry_file))
             continue
 
@@ -197,8 +197,8 @@ def hybrid_search(
     from trw_mcp.state.memory_store import MemoryStore
     if MemoryStore.available():
         try:
-            from trw_mcp.telemetry.embeddings import embed
             from trw_mcp.state._paths import resolve_memory_store_path
+            from trw_mcp.telemetry.embeddings import embed
             query_embedding = embed(query)
             if query_embedding is not None:
                 store_path = resolve_memory_store_path()
@@ -215,7 +215,7 @@ def hybrid_search(
                             rankings.append(dense_results)
                 finally:
                     store.close()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("vector_store_unavailable", exc_type=type(exc).__name__)
 
     if not rankings:

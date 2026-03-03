@@ -62,7 +62,7 @@ def _configure_logging(*, debug: bool, config: TRWConfig) -> None:
         class _JsonOnlyFilter(logging.Filter):
             def filter(self, record: logging.LogRecord) -> bool:
                 msg = str(record.getMessage())
-                return msg.startswith("{") or msg.startswith("[")
+                return msg.startswith(("{", "["))
 
         for handler in handlers:
             if isinstance(handler, logging.FileHandler):
@@ -101,10 +101,32 @@ def _load_server_instructions() -> str:
     return get_message_or_default("server_instructions", _DEFAULT_INSTRUCTIONS)
 
 
+def _build_middleware() -> list[object]:
+    """Build the middleware list, conditionally including progressive disclosure."""
+    from trw_mcp.models.config import get_config
+
+    middleware: list[object] = [CeremonyMiddleware()]
+
+    config = get_config()
+    if config.progressive_disclosure:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
+        from trw_mcp.state.usage_profiler import TOOL_GROUPS, compute_hot_set
+
+        trw_dir = resolve_trw_dir()
+        hot_set = set(compute_hot_set(trw_dir))
+        pd_mw = ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
+        middleware.append(pd_mw)
+
+    return middleware
+
+
+_middleware_list = _build_middleware()
+
 mcp = FastMCP(
     "trw",
     instructions=_load_server_instructions(),
-    middleware=[CeremonyMiddleware()],
+    middleware=_middleware_list,  # type: ignore[arg-type]
 )
 
 
@@ -123,7 +145,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.report import register_report_tools
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
-    from trw_mcp.tools.usage import register_usage_tools
+    from trw_mcp.tools.usage import register_usage_tools, set_progressive_middleware
 
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
@@ -141,6 +163,14 @@ def _register_tools() -> None:
     register_template_resources(mcp)
 
     register_aaref_prompts(mcp)
+
+    # Wire progressive disclosure middleware reference for expand tool (CORE-067)
+    from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
+
+    for mw in _middleware_list:
+        if isinstance(mw, ProgressiveDisclosureMiddleware):
+            set_progressive_middleware(mw)
+            break
 
 
 # Eager registration so tools are available via `fastmcp run` and test imports.
@@ -457,7 +487,7 @@ def _ensure_http_server(
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_file = logs_dir / "mcp-server.log"
 
-        with open(log_file, "a") as log_out:  # noqa: SIM115
+        with open(log_file, "a") as log_out:
             proc = subprocess.Popen(
                 cmd,
                 stdout=log_out,
@@ -498,11 +528,11 @@ async def _run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     import asyncio as _asyncio
 
     from mcp import types
-    from pydantic import AnyUrl
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
+    from pydantic import AnyUrl
 
     log = structlog.get_logger()
 
@@ -510,8 +540,7 @@ async def _run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
-            async with streamable_http_client(url) as (read, write, _):
-                async with ClientSession(read, write) as session:
+            async with streamable_http_client(url) as (read, write, _), ClientSession(read, write) as session:
                     await session.initialize()
 
                     # Discover remote capabilities once at startup
@@ -529,8 +558,10 @@ async def _run_stdio_proxy(url: str, max_retries: int = 3) -> None:
                     proxy = Server("trw-proxy")
 
                     @proxy.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_list_tools() -> list[types.Tool]:
-                        return tools_result.tools
+                    async def handle_list_tools(
+                        _tr: object = tools_result,
+                    ) -> list[types.Tool]:
+                        return _tr.tools  # type: ignore[attr-defined, no-any-return]
 
                     @proxy.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
                     async def handle_call_tool(
@@ -539,8 +570,10 @@ async def _run_stdio_proxy(url: str, max_retries: int = 3) -> None:
                         return await session.call_tool(name, arguments)
 
                     @proxy.list_resources()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_list_resources() -> list[types.Resource]:
-                        return resources_result.resources
+                    async def handle_list_resources(
+                        _rr: object = resources_result,
+                    ) -> list[types.Resource]:
+                        return _rr.resources  # type: ignore[attr-defined, no-any-return]
 
                     @proxy.read_resource()  # type: ignore[no-untyped-call, untyped-decorator]
                     async def handle_read_resource(uri: AnyUrl) -> str:
@@ -556,8 +589,10 @@ async def _run_stdio_proxy(url: str, max_retries: int = 3) -> None:
                         return ""
 
                     @proxy.list_prompts()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_list_prompts() -> list[types.Prompt]:
-                        return prompts_result.prompts
+                    async def handle_list_prompts(
+                        _pr: object = prompts_result,
+                    ) -> list[types.Prompt]:
+                        return _pr.prompts  # type: ignore[attr-defined, no-any-return]
 
                     @proxy.get_prompt()  # type: ignore[no-untyped-call, untyped-decorator]
                     async def handle_get_prompt(

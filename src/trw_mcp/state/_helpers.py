@@ -9,8 +9,9 @@ avoid circular dependencies. It only depends on models/ and persistence.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -121,7 +122,7 @@ def is_active_entry(data: dict[str, object]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def load_project_config(trw_dir: Path) -> "TRWConfig":
+def load_project_config(trw_dir: Path) -> TRWConfig:
     """Load a target project's config.yaml into a TRWConfig instance.
 
     This is the canonical way to load project config. Consolidates the

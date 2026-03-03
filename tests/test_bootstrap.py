@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.bootstrap import PREDECESSOR_MAP, _DATA_DIR, init_project, update_project
+from trw_mcp.bootstrap import _DATA_DIR, init_project, update_project
 
 
 @pytest.fixture()

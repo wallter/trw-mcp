@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.models.config import get_config
-from trw_mcp.state import memory_adapter
 from trw_mcp.state.memory_adapter import (
     count_entries,
     ensure_migrated,

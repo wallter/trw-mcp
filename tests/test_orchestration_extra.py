@@ -708,8 +708,8 @@ class TestCheckFrameworkVersionStaleness:
         """Returns None when StateError raised during read (line 598-599)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
 
-        from trw_mcp.exceptions import StateError as TRWStateError
         import trw_mcp.tools.orchestration as _orch_mod
+        from trw_mcp.exceptions import StateError as TRWStateError
 
         cfg = TRWConfig()
         frameworks_dir = tmp_path / cfg.trw_dir / cfg.frameworks_dir

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -158,7 +156,6 @@ def test_get_recall_stats_neutral_outcome(trw_dir: Path) -> None:
 
 def test_record_recall_fail_open(trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """record_recall must not raise on write error."""
-    from trw_mcp.state import recall_tracking
 
     monkeypatch.setattr(
         "trw_mcp.state.recall_tracking.resolve_trw_dir",

@@ -9,14 +9,10 @@ Each test maps to one root cause:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from trw_mcp.state.persistence import FileStateWriter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -66,8 +62,9 @@ class TestDeliverBuildGate:
             {"event": "tool_invocation", "ts": "2026-02-27T11:30:00Z"},
         ], writer)
 
-        from trw_mcp.tools.ceremony import register_ceremony_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.ceremony import register_ceremony_tools
 
         server = FastMCP("test")
         register_ceremony_tools(server)
@@ -97,8 +94,9 @@ class TestDeliverBuildGate:
              "data": {"tests_passed": True, "mypy_clean": True}},
         ], writer)
 
-        from trw_mcp.tools.ceremony import register_ceremony_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.ceremony import register_ceremony_tools
 
         server = FastMCP("test")
         register_ceremony_tools(server)
@@ -178,8 +176,9 @@ class TestStatusLastActivity:
                 "message": "milestone 1",
             }) + "\n")
 
-        from trw_mcp.tools.orchestration import register_orchestration_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.orchestration import register_orchestration_tools
 
         server = FastMCP("test")
         register_orchestration_tools(server)

@@ -14,17 +14,15 @@ import importlib.metadata
 import json
 import os
 import shutil
-import stat
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from trw_mcp.bootstrap import (
-    PREDECESSOR_MAP,
     _CONTEXT_ALLOWLIST,
+    PREDECESSOR_MAP,
     _check_package_version,
     _cleanup_context_transients,
     _copy_file,
@@ -33,7 +31,6 @@ from trw_mcp.bootstrap import (
     _get_bundled_names,
     _merge_mcp_json,
     _migrate_prefix_predecessors,
-    _minimal_claude_md,
     _minimal_claude_md_trw_block,
     _pip_install_package,
     _read_manifest,

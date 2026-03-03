@@ -117,7 +117,7 @@ def find_clusters(
                 break
             try:
                 data = reader.read_yaml(yaml_file)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             if str(data.get("status", "active")) != "active":
                 continue
@@ -320,13 +320,13 @@ def _create_consolidated_entry(
     tags = sorted({
         str(t)
         for e in cluster
-        for t in cast(list[object], e.get("tags") or [])
+        for t in cast("list[object]", e.get("tags") or [])
     })
 
     all_evidence: list[str] = list(dict.fromkeys(
         str(ev)
         for e in cluster
-        for ev in cast(list[object], e.get("evidence") or [])
+        for ev in cast("list[object]", e.get("evidence") or [])
     ))
 
     recurrence = sum(int(str(e.get("recurrence", 1))) for e in cluster)
@@ -375,7 +375,7 @@ def _archive_originals(
     entries_dir: Path,
     reader: FileStateReader,
     writer: FileStateWriter,
-    tier_manager: "TierManager | None" = None,
+    tier_manager: TierManager | None = None,
 ) -> None:
     """Archive original cluster entries after consolidation.
 
@@ -426,7 +426,7 @@ def _archive_originals(
             if tier_manager is not None and hasattr(tier_manager, "cold_archive"):
                 try:
                     tier_manager.cold_archive(entry_id, entry_path)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     # Cold archive failed — mark as archived instead
                     data["status"] = "archived"
                     writer.write_yaml(entry_path, data)
@@ -434,9 +434,9 @@ def _archive_originals(
                 data["status"] = "archived"
                 writer.write_yaml(entry_path, data)
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Archive failed — rollback all processed entries
-            logger.error(
+            logger.exception(
                 "consolidation_archive_failed",
                 entry_id=entry_id,
                 consolidated_id=consolidated_id,
@@ -462,8 +462,8 @@ def _rollback_archive(
     for entry_path, original_data in processed:
         try:
             writer.write_yaml(entry_path, original_data)
-        except Exception:  # noqa: BLE001
-            logger.error(
+        except Exception:
+            logger.exception(
                 "consolidation_rollback_failed",
                 path=str(entry_path),
                 consolidated_id=consolidated_id,
@@ -475,8 +475,8 @@ def _rollback_archive(
     try:
         if consolidated_path.exists():
             consolidated_path.unlink()
-    except Exception:  # noqa: BLE001
-        logger.error(
+    except Exception:
+        logger.exception(
             "consolidation_rollback_delete_failed",
             consolidated_id=consolidated_id,
         )
@@ -591,7 +591,7 @@ def consolidate_cycle(
     try:
         from trw_mcp.state.tiers import TierManager as _TierManager
         tier_manager = _TierManager(trw_dir, reader=reader, writer=writer, config=cfg)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass  # Graceful degradation — cold archival falls back to status="archived"
 
     # Instantiate LLM client once for all clusters
@@ -600,7 +600,7 @@ def consolidate_cycle(
         candidate = LLMClient(model="haiku")
         if candidate.available:
             llm = candidate
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass  # LLM is optional — consolidation works without AI summaries
 
     consolidated_count = 0
@@ -636,8 +636,8 @@ def consolidate_cycle(
             )
             consolidated_count += 1
 
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
+        except Exception as exc:
+            logger.exception(
                 "consolidation_cluster_failed",
                 cluster_ids=cluster_ids,
                 error=str(exc),

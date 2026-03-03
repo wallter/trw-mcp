@@ -8,6 +8,7 @@ behavior for several tools (better summaries, relevance classification).
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -26,17 +27,18 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     list_active_learnings,
-    recall_learnings as adapter_recall,
-    store_learning as adapter_store,
-    update_access_tracking as adapter_update_access,
-    update_learning as adapter_update,
 )
-from trw_mcp.tools._learning_helpers import (
-    LearningParams,
-    calibrate_impact,
-    check_and_handle_dedup,
-    check_soft_cap,
-    enforce_distribution,
+from trw_mcp.state.memory_adapter import (
+    recall_learnings as adapter_recall,
+)
+from trw_mcp.state.memory_adapter import (
+    store_learning as adapter_store,
+)
+from trw_mcp.state.memory_adapter import (
+    update_access_tracking as adapter_update_access,
+)
+from trw_mcp.state.memory_adapter import (
+    update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import (
@@ -44,6 +46,13 @@ from trw_mcp.state.recall_search import (
     search_patterns,
 )
 from trw_mcp.state.receipts import log_recall_receipt
+from trw_mcp.tools._learning_helpers import (
+    LearningParams,
+    calibrate_impact,
+    check_and_handle_dedup,
+    check_soft_cap,
+    enforce_distribution,
+)
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -100,7 +109,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 from trw_mcp.state.dedup import batch_dedup, is_migration_needed
                 if is_migration_needed(trw_dir):
                     batch_dedup(trw_dir, _reader, _writer, config=_config)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass  # Migration is best-effort
 
         # Bayesian calibration of impact score (PRD-CORE-034)
@@ -108,10 +117,9 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Fetch active learnings once — reused by soft-cap and distribution
         all_active: list[dict[str, object]] = []
-        try:
+        # Fail-open: listing failure must not block learning recording
+        with contextlib.suppress(Exception):
             all_active = list_active_learnings(trw_dir)
-        except Exception:  # noqa: BLE001
-            pass  # Fail-open: listing failure must not block learning recording
 
         # Forced distribution soft-cap check (PRD-CORE-034-FR01)
         calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
@@ -170,7 +178,7 @@ def register_learning_tools(server: FastMCP) -> None:
             )
             entry_path = save_learning_entry(trw_dir, entry)
             update_analytics(trw_dir, 1)
-        except Exception:  # noqa: BLE001
+        except Exception:
             entry_path = entries_dir / f"{learning_id}.yaml"
 
         # Forced distribution enforcement (PRD-CORE-034)
@@ -226,6 +234,7 @@ def register_learning_tools(server: FastMCP) -> None:
         if result.get("status") == "updated":
             try:
                 from datetime import date as date_type
+
                 from trw_mcp.state.analytics import find_entry_by_id, resync_learning_index
                 entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
                 found = find_entry_by_id(entries_dir, learning_id)
@@ -244,7 +253,7 @@ def register_learning_tools(server: FastMCP) -> None:
                     data["updated"] = date_type.today().isoformat()
                     _writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass  # Fail-open: YAML backup update is best-effort
 
         return result

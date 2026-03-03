@@ -6,12 +6,14 @@ installs them. Fail-open: network errors never block session start.
 
 from __future__ import annotations
 
+import contextlib
 import json
-import structlog
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from trw_mcp.models.config import get_config
 
@@ -182,77 +184,73 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
     try:
         # Acquire exclusive lock
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_fd = open(lock_path, "w")
-        try:
-            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            lock_fd.close()
-            return {
-                "applied": False,
-                "version": str(update_info.get("latest", "")),
-                "details": "Another upgrade is in progress",
-            }
-
-        try:
-            # Get artifact info from backend
-            artifact_info = _fetch_artifact_info(str(update_info.get("latest", "")))
-            if artifact_info is None:
-                return {
-                    "applied": False,
-                    "version": str(update_info.get("latest", "")),
-                    "details": "Could not fetch artifact info",
-                }
-
-            artifact_url = str(artifact_info.get("artifact_url", ""))
-            checksum = artifact_info.get("artifact_checksum")
-            min_version = str(artifact_info.get("min_compatible_version", "0.0.0") or "0.0.0")
-
-            # Check compatibility
-            current = get_installed_version()
-            if not _is_compatible(current, min_version):
-                return {
-                    "applied": False,
-                    "version": str(update_info.get("latest", "")),
-                    "details": f"Current v{current} below min compatible v{min_version}",
-                }
-
-            # Download and verify
-            data_dir = download_release_artifact(
-                artifact_url,
-                expected_checksum=str(checksum) if checksum else None,
-            )
-            if data_dir is None:
-                return {
-                    "applied": False,
-                    "version": str(update_info.get("latest", "")),
-                    "details": "Download or verification failed",
-                }
-
-            # Apply update
-            from trw_mcp.bootstrap import update_project
-
-            result = update_project(target_dir, data_dir=data_dir)
-            errors = result.get("errors", [])
-            if errors:
-                return {
-                    "applied": False,
-                    "version": str(update_info.get("latest", "")),
-                    "details": f"Update errors: {'; '.join(str(e) for e in errors)}",
-                }
-
-            total = len(result.get("updated", [])) + len(result.get("created", []))
-            return {
-                "applied": True,
-                "version": str(update_info.get("latest", "")),
-                "details": f"Updated {total} files",
-            }
-        finally:
-            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-            lock_fd.close()
+        with open(lock_path, "w") as lock_fd:
             try:
-                lock_path.unlink(missing_ok=True)
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
-                pass
+                return {
+                    "applied": False,
+                    "version": str(update_info.get("latest", "")),
+                    "details": "Another upgrade is in progress",
+                }
+
+            try:
+                # Get artifact info from backend
+                artifact_info = _fetch_artifact_info(str(update_info.get("latest", "")))
+                if artifact_info is None:
+                    return {
+                        "applied": False,
+                        "version": str(update_info.get("latest", "")),
+                        "details": "Could not fetch artifact info",
+                    }
+
+                artifact_url = str(artifact_info.get("artifact_url", ""))
+                checksum = artifact_info.get("artifact_checksum")
+                min_version = str(artifact_info.get("min_compatible_version", "0.0.0") or "0.0.0")
+
+                # Check compatibility
+                current = get_installed_version()
+                if not _is_compatible(current, min_version):
+                    return {
+                        "applied": False,
+                        "version": str(update_info.get("latest", "")),
+                        "details": f"Current v{current} below min compatible v{min_version}",
+                    }
+
+                # Download and verify
+                data_dir = download_release_artifact(
+                    artifact_url,
+                    expected_checksum=str(checksum) if checksum else None,
+                )
+                if data_dir is None:
+                    return {
+                        "applied": False,
+                        "version": str(update_info.get("latest", "")),
+                        "details": "Download or verification failed",
+                    }
+
+                # Apply update
+                from trw_mcp.bootstrap import update_project
+
+                result = update_project(target_dir, data_dir=data_dir)
+                errors = result.get("errors", [])
+                if errors:
+                    return {
+                        "applied": False,
+                        "version": str(update_info.get("latest", "")),
+                        "details": f"Update errors: {'; '.join(str(e) for e in errors)}",
+                    }
+
+                total = len(result.get("updated", [])) + len(result.get("created", []))
+                return {
+                    "applied": True,
+                    "version": str(update_info.get("latest", "")),
+                    "details": f"Updated {total} files",
+                }
+            finally:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                with contextlib.suppress(OSError):
+                    lock_path.unlink(missing_ok=True)
 
     except Exception:
         logger.debug("auto_upgrade_failed", exc_info=True)

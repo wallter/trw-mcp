@@ -7,19 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.models.config import TRWConfig, PhaseTimeCaps, get_config, _reset_config
-from trw_mcp.models.run import (
-    Confidence,
-    Event,
-    OutputContract,
-    Phase,
-    RunState,
-    RunStatus,
-    ShardCard,
-    WaveEntry,
-    WaveManifest,
-    WaveStatus,
-)
+from trw_mcp.models.config import PhaseTimeCaps, TRWConfig, _reset_config, get_config
 from trw_mcp.models.learning import (
     Analytics,
     LearningEntry,
@@ -33,6 +21,18 @@ from trw_mcp.models.requirements import (
     TraceabilityResult,
     ValidationFailure,
     ValidationResult,
+)
+from trw_mcp.models.run import (
+    Confidence,
+    Event,
+    OutputContract,
+    Phase,
+    RunState,
+    RunStatus,
+    ShardCard,
+    WaveEntry,
+    WaveManifest,
+    WaveStatus,
 )
 
 

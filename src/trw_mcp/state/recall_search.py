@@ -69,9 +69,8 @@ def search_entries(
                         entry_status = str(data.get("status", "active"))
                         if entry_status != status:
                             continue
-                    if tags and isinstance(entry_tags, list):
-                        if not any(t in entry_tags for t in tags):
-                            continue
+                    if tags and isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
+                        continue
                     matching.append(data)
                     entry_id = str(data.get("id", ""))
                     # Resolve file path for access tracking
@@ -89,7 +88,7 @@ def search_entries(
                     results=len(matching),
                 )
                 return matching, matched_files
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass  # Fall through to keyword search
 
     # --- Keyword scan fallback ---
@@ -113,9 +112,8 @@ def search_entries(
                     continue
 
             # Check tag filter
-            if tags and isinstance(entry_tags, list):
-                if not any(t in entry_tags for t in tags):
-                    continue
+            if tags and isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
+                continue
 
             # Check query match — all tokens must appear in summary, detail, or tags
             # Expand hyphenated tags so "pydantic-v2" also matches query "pydantic"

@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from trw_mcp.models.config import TRWConfig, _reset_config
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.consolidation import (
     _archive_originals,
     _create_consolidated_entry,
@@ -32,7 +32,6 @@ from trw_mcp.state.consolidation import (
     find_clusters,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1378,6 +1377,7 @@ class TestMeanPairwiseSimilarity:
 def _patch_trw_deliver_deps(trw_dir: Path) -> Any:
     """Return a context manager that patches all trw_deliver sub-operations."""
     from contextlib import ExitStack
+
     import trw_mcp.tools.ceremony as ceremony_mod
 
     stack = ExitStack()
@@ -1398,7 +1398,6 @@ def _patch_trw_deliver_deps(trw_dir: Path) -> Any:
 def _call_trw_deliver(trw_dir: Path, cfg: TRWConfig) -> dict[str, Any]:
     """Call trw_deliver with the given config by patching the module-level _config."""
     import trw_mcp.tools.ceremony as ceremony_mod
-    from trw_mcp.server import mcp as server
 
     old_config = ceremony_mod._config
     # Also disable auto-prune to avoid extra mocking

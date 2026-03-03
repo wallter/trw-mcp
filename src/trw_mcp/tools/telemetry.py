@@ -13,8 +13,9 @@ from __future__ import annotations
 import functools
 import hashlib
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, ParamSpec, TypeVar
+from typing import ParamSpec, TypeVar
 
 import structlog
 
@@ -39,7 +40,7 @@ _RUN_DIR_CACHE_TTL: float = 5.0
 
 def _get_cached_run_dir() -> Path | None:
     """Return cached active run directory, refreshing if TTL expired."""
-    global _cached_run_dir  # noqa: PLW0603
+    global _cached_run_dir
     now = time.monotonic()
     ts, run_dir = _cached_run_dir
     if now - ts < _RUN_DIR_CACHE_TTL:
@@ -98,7 +99,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                         func.__name__, args, kwargs, duration_ms,
                         result_val if success else None, success,
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
     return wrapper
@@ -133,7 +134,7 @@ def _write_tool_event(
         _writer.ensure_dir(context_dir)
         fallback = context_dir / "session-events.jsonl"
         _events.log_event(fallback, "tool_invocation", event_data)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
 

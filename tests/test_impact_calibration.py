@@ -21,7 +21,6 @@ import pytest
 
 from trw_mcp.scoring import apply_impact_decay, apply_time_decay, enforce_tier_distribution
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -293,7 +292,6 @@ class TestApplyTimeDecay:
     def test_aware_datetime_in_other_tz(self) -> None:
         """Timezone-aware datetimes in non-UTC zones are handled correctly."""
         from datetime import timezone as _tz
-        import datetime as dt_mod
         est = _tz(timedelta(hours=-5))
         past = datetime(2025, 2, 22, 8, 0, 0, tzinfo=est)
         result = apply_time_decay(0.8, past)
@@ -320,6 +318,7 @@ class TestTrwLearnForcedDistributionWiring:
 
     def _get_tools(self) -> dict[str, Any]:
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
         srv = FastMCP("test")
         register_learning_tools(srv)

@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # BM25 search
 # ---------------------------------------------------------------------------
@@ -72,7 +71,6 @@ class TestBM25Search:
     def test_returns_empty_when_rank_bm25_unavailable(self) -> None:
         import sys
         with patch.dict(sys.modules, {"rank_bm25": None}):
-            import importlib
             import trw_mcp.state.retrieval as ret_mod
             original = ret_mod._BM25_AVAILABLE
             try:
@@ -231,8 +229,8 @@ class TestHybridSearch:
         assert isinstance(results, list)
 
     def test_bm25_only_when_memory_store_unavailable(self, tmp_path: Path) -> None:
-        from trw_mcp.state.persistence import FileStateReader
         from trw_mcp.state import memory_store as ms_mod
+        from trw_mcp.state.persistence import FileStateReader
 
         original = ms_mod._SQLITE_VEC_AVAILABLE
         try:
@@ -250,9 +248,9 @@ class TestHybridSearch:
             ms_mod._SQLITE_VEC_AVAILABLE = original
 
     def test_accepts_config_parameter(self, tmp_path: Path) -> None:
+        from trw_mcp.models.config import TRWConfig
         from trw_mcp.state.persistence import FileStateReader
         from trw_mcp.state.retrieval import hybrid_search
-        from trw_mcp.models.config import TRWConfig
 
         entries_dir = self._make_entries_dir(tmp_path, [
             {"id": "L-cfg", "summary": "config test entry", "detail": "some detail",
@@ -491,10 +489,9 @@ class TestHybridSearchEdgeCases:
         We must patch both MemoryStore (to return available=True) and embed (to return
         non-None vector) so the guard 'if query_embedding is not None' passes.
         """
+        from trw_mcp.models.config import TRWConfig
         from trw_mcp.state.persistence import FileStateReader
         from trw_mcp.state.retrieval import hybrid_search
-        from trw_mcp.state.memory_store import MemoryStore
-        from trw_mcp.models.config import TRWConfig
 
         entries_dir = self._make_entries_dir(tmp_path, [
             {"id": "L-vec-a", "summary": "ebbinghaus unique-vec-term scoring decay",

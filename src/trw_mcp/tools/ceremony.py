@@ -37,8 +37,8 @@ from trw_mcp.state.claude_md import (
     render_categorized_learnings,
     render_ceremony_flows,
     render_ceremony_table,
-    render_conventions,
     render_closing_reminder,
+    render_conventions,
     render_imperative_opener,
     render_patterns,
     render_phase_descriptions,
@@ -66,7 +66,7 @@ from trw_mcp.tools.checkpoint import (  # noqa: E402
 )
 
 # Suppress unused import warnings — these are re-exports
-__all__ = ["_maybe_auto_checkpoint", "_reset_tool_call_counter", "_do_checkpoint"]
+__all__ = ["_do_checkpoint", "_maybe_auto_checkpoint", "_reset_tool_call_counter"]
 
 
 def _get_run_status(run_dir: Path) -> dict[str, object]:
@@ -263,7 +263,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # Step 1: Recall learnings via SQLite adapter (compact mode)
         try:
             trw_dir = resolve_trw_dir()
-            learnings, auto_recalled, extra = perform_session_recalls(
+            learnings, _auto_recalled, extra = perform_session_recalls(
                 trw_dir, query, _config, _reader,
             )
             results["learnings"] = learnings
@@ -497,13 +497,12 @@ def _do_reflect(
     # Success patterns are analytics data only — do NOT create learning entries
     # (PRD-FIX-021: suppress telemetry noise from "Success: X (Nx)" entries).
 
-    if run_dir:
-        if (run_dir / "meta").exists():
-            _events.log_event(run_dir / "meta" / "events.jsonl", "reflection_complete", {
-                "reflection_id": "delivery",
-                "scope": "delivery",
-                "learnings_produced": len(new_learnings),
-            })
+    if run_dir and (run_dir / "meta").exists():
+        _events.log_event(run_dir / "meta" / "events.jsonl", "reflection_complete", {
+            "reflection_id": "delivery",
+            "scope": "delivery",
+            "learnings_produced": len(new_learnings),
+        })
 
     update_analytics(trw_dir, len(new_learnings))
 

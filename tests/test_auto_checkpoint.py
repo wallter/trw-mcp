@@ -23,7 +23,6 @@ from trw_mcp.tools.checkpoint import (
     _reset_tool_call_counter,
 )
 
-
 # --- Fixtures ---
 
 

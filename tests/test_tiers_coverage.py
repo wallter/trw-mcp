@@ -31,7 +31,6 @@ from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.tiers import TierManager
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -155,7 +154,6 @@ class TestWarmAddWithMemoryStore:
 
         with patch("trw_mcp.state.tiers.MemoryStore", mock_store_cls, create=True):
             # Patch the local import
-            import trw_mcp.state.tiers as tiers_mod
             original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
 
             # Use a simpler approach — patch at the module function level

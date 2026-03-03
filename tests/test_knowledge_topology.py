@@ -19,8 +19,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.knowledge_topology import (
     build_cooccurrence_matrix,
@@ -30,7 +30,6 @@ from trw_mcp.state.knowledge_topology import (
     render_topic_document,
     sanitize_slug,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -861,6 +860,7 @@ class TestToolRegistration:
 
     def test_knowledge_sync_dry_run_parameter(self, tmp_path: Path) -> None:
         import inspect
+
         from trw_mcp.server import mcp
 
         tool = next(
@@ -871,9 +871,8 @@ class TestToolRegistration:
         assert "dry_run" in sig.parameters
 
     def test_knowledge_sync_returns_elapsed_seconds(self, tmp_path: Path) -> None:
-        from trw_mcp.models.config import _reset_config
-        from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.server import mcp
+        from trw_mcp.state._paths import resolve_trw_dir
 
         trw_dir = resolve_trw_dir()
         tool = next(
@@ -1304,7 +1303,6 @@ class TestEdgeCases:
                 raise RuntimeError("Simulated internal error")
             return original_find(self, sub, *args)  # type: ignore[arg-type]
 
-        import builtins
         # Instead, we directly test the exception catch by overriding normalized.find
         # The easiest way: call with a broken 'existing_content' object that fails .replace()
 

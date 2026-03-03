@@ -27,6 +27,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
+
     from trw_mcp.tools.learning import register_learning_tools
 
     srv = FastMCP("test")

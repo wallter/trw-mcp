@@ -13,7 +13,6 @@ from pydantic import ValidationError
 
 from trw_mcp.models.llm_usage import LLMUsageRecord
 
-
 # ---------------------------------------------------------------------------
 # Model Tests
 # ---------------------------------------------------------------------------
@@ -372,7 +371,7 @@ class TestLLMClientUnavailable:
         # Remove anthropic from sys.modules to simulate missing SDK
         saved = sys.modules.pop("anthropic", None)
         try:
-            from trw_mcp.clients.llm import LLMClient  # noqa: PLC0415
+            from trw_mcp.clients.llm import LLMClient
             client = LLMClient()
             # Can't reliably test this without actually missing the package,
             # but we can verify the property exists and returns a bool
@@ -478,7 +477,7 @@ class TestLLMClientEdgeCases:
         # Despite bad token values, ask() returns the response
         assert result == "response"
         # Record is still written with 0 tokens (fallback)
-        import json  # noqa: PLC0415
+        import json
         record = json.loads(log_path.read_text().strip())
         assert record["input_tokens"] == 0
         assert record["output_tokens"] == 0
@@ -501,7 +500,7 @@ class TestLLMClientEdgeCases:
         result = await client.ask("test")
         assert result == "no-usage-response"
         # Record written with 0 tokens
-        import json  # noqa: PLC0415
+        import json
         record = json.loads(log_path.read_text().strip())
         assert record["input_tokens"] == 0
         assert record["output_tokens"] == 0

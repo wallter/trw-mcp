@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.receipts import log_recall_receipt, prune_recall_receipts
-
 
 # ---------------------------------------------------------------------------
 # Helpers

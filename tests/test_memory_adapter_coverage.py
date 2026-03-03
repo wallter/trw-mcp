@@ -12,6 +12,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from trw_memory.models.memory import MemoryEntry, MemoryStatus
+from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.state import memory_adapter
 from trw_mcp.state.memory_adapter import (
@@ -31,8 +33,6 @@ from trw_mcp.state.memory_adapter import (
     update_access_tracking,
     update_learning,
 )
-from trw_memory.models.memory import MemoryEntry, MemoryStatus
-from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 
 @pytest.fixture(autouse=True)

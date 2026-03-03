@@ -6,7 +6,6 @@ Covers the tool registration and execution paths that were previously at 56% cov
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 from fastmcp import FastMCP
@@ -14,7 +13,6 @@ from fastmcp import FastMCP
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools.report import register_report_tools
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

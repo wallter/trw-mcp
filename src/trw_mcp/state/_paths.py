@@ -35,13 +35,13 @@ def pin_active_run(run_dir: Path) -> None:
     Args:
         run_dir: Absolute path to the run directory to pin.
     """
-    global _pinned_run_dir  # noqa: PLW0603
+    global _pinned_run_dir
     _pinned_run_dir = run_dir.resolve()
 
 
 def unpin_active_run() -> None:
     """Remove the process-local run pin, reverting to filesystem scan."""
-    global _pinned_run_dir  # noqa: PLW0603
+    global _pinned_run_dir
     _pinned_run_dir = None
 
 

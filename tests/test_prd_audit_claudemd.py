@@ -17,7 +17,8 @@ import pytest
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, _reset_config
-from trw_mcp.models.requirements import PRDStatus, QualityTier
+from trw_mcp.models.requirements import PRDStatus
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.prd_utils import (
     _deep_merge,
     check_transition_guards,
@@ -25,10 +26,8 @@ from trw_mcp.state.prd_utils import (
     discover_governing_prds,
     is_valid_transition,
     next_prd_sequence,
-    parse_frontmatter,
     update_frontmatter,
 )
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 _writer = FileStateWriter()
 _reader = FileStateReader()
@@ -809,7 +808,7 @@ class TestLoadClaudeMdTemplateInlineFallback:
     """Cover line 99: inline fallback when no project-local or bundled template."""
 
     def test_inline_fallback_when_no_templates(self, tmp_path: Path) -> None:
-        from trw_mcp.state.claude_md import TRW_MARKER_END, TRW_MARKER_START, load_claude_md_template
+        from trw_mcp.state.claude_md import TRW_MARKER_START, load_claude_md_template
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -1077,7 +1076,6 @@ class TestRenderBehavioralProtocol:
         })
 
         # Reload _config to pick up new env
-        import importlib
         import trw_mcp.state.claude_md as cmd_module
         with patch.object(cmd_module, "_config", TRWConfig()):
             result = render_behavioral_protocol()
@@ -1691,6 +1689,7 @@ class TestCollectPromotableLearningsExceptionContinue:
     def test_read_error_on_entry_file_is_skipped(self, tmp_path: Path) -> None:
         """Entry with unparseable q_observations raises ValueError and is skipped."""
         from unittest.mock import patch
+
         from trw_mcp.state.claude_md import collect_promotable_learnings
 
         config = TRWConfig()

@@ -19,16 +19,16 @@ from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
 from trw_mcp.telemetry.sender import BatchSender
 
 __all__ = [
-    "anonymize_installation_id",
-    "redact_paths",
-    "strip_pii",
-    "TelemetryClient",
     "BatchSender",
     "CeremonyComplianceEvent",
     "SessionEndEvent",
     "SessionStartEvent",
+    "TelemetryClient",
     "TelemetryEvent",
     "ToolInvocationEvent",
-    "publish_learnings",
+    "anonymize_installation_id",
     "fetch_shared_learnings",
+    "publish_learnings",
+    "redact_paths",
+    "strip_pii",
 ]

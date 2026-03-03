@@ -17,6 +17,16 @@ from trw_mcp.models.learning import (
     ScriptIndex,
 )
 
+# report
+from trw_mcp.models.report import (
+    BuildSummary,
+    DurationInfo,
+    EventSummary,
+    LearningSummary,
+    PhaseEntry,
+    RunReport,
+)
+
 # requirements
 from trw_mcp.models.requirements import (
     ComplexityFactor,
@@ -34,25 +44,15 @@ from trw_mcp.models.requirements import (
     ValidationResult,
 )
 
-# report
-from trw_mcp.models.report import (
-    BuildSummary,
-    DurationInfo,
-    EventSummary,
-    LearningSummary,
-    PhaseEntry,
-    RunReport,
-)
-
 # run
 from trw_mcp.models.run import (
+    PHASE_ORDER,
     Event,
     EventType,
     OutputContract,
-    PHASE_ORDER,
     Phase,
-    ReviewFinding,
     ReversionTrigger,
+    ReviewFinding,
     RunState,
     ShardCard,
     WaveEntry,
@@ -60,22 +60,20 @@ from trw_mcp.models.run import (
 )
 
 __all__ = [
-    # config
-    "PhaseTimeCaps",
-    "TRWConfig",
-    # learning
+    "PHASE_ORDER",
+    "BuildSummary",
+    "ComplexityFactor",
     "ContextArchitecture",
     "ContextConventions",
+    "DurationInfo",
+    "Event",
+    "EventSummary",
+    "EventType",
     "LearningEntry",
     "LearningIndex",
     "LearningStatus",
-    "Pattern",
-    "PatternIndex",
-    "Reflection",
-    "Script",
-    "ScriptIndex",
-    # requirements
-    "ComplexityFactor",
+    "LearningSummary",
+    "OutputContract",
     "PRDConfidence",
     "PRDDates",
     "PRDEvidence",
@@ -83,29 +81,25 @@ __all__ = [
     "PRDMetrics",
     "PRDQualityGates",
     "PRDTraceability",
+    "Pattern",
+    "PatternIndex",
+    "Phase",
+    "PhaseEntry",
+    "PhaseTimeCaps",
+    "Reflection",
     "Requirement",
+    "ReversionTrigger",
+    "ReviewFinding",
     "RiskLevel",
+    "RunReport",
+    "RunState",
+    "Script",
+    "ScriptIndex",
+    "ShardCard",
+    "TRWConfig",
     "TraceabilityResult",
     "ValidationFailure",
     "ValidationResult",
-    # report
-    "BuildSummary",
-    "DurationInfo",
-    "EventSummary",
-    "LearningSummary",
-    "PhaseEntry",
-    "RunReport",
-    # run
-    "Event",
-    "EventType",
-    "OutputContract",
-    "PHASE_ORDER",
-    "Phase",
-    "PhaseTimeCaps",
-    "ReviewFinding",
-    "ReversionTrigger",
-    "RunState",
-    "ShardCard",
     "WaveEntry",
     "WaveManifest",
 ]

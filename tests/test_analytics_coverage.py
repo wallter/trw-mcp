@@ -8,9 +8,8 @@ Covers the missing lines identified in the coverage gap analysis:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

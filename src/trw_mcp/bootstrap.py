@@ -520,13 +520,13 @@ def update_project(
         for rel_dir in _TRW_DIRS:
             _ensure_dir(target_dir / rel_dir, result)
 
-    # 2–6. Copy/update framework files, hooks, skills, agents
+    # 2-6. Copy/update framework files, hooks, skills, agents
     _update_framework_files(target_dir, effective_data, result, dry_run)
 
-    # 7–8. Update .mcp.json and CLAUDE.md configuration
+    # 7-8. Update .mcp.json and CLAUDE.md configuration
     _update_mcp_config(target_dir, result, dry_run)
 
-    # 9a–9c. Remove stale and transient artifacts
+    # 9a-9c. Remove stale and transient artifacts
     _cleanup_stale_artifacts(target_dir, result, data_dir, dry_run)
 
     # 10. Check installed package version
@@ -604,7 +604,7 @@ def _update_claude_md_trw_section(
             result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
     else:
         result["errors"].append(
-            f"CLAUDE.md has malformed TRW markers — found start but not end"
+            "CLAUDE.md has malformed TRW markers — found start but not end"
         )
 
 
@@ -989,7 +989,7 @@ def _pip_install_package(
             check=False,
         )
         if proc.returncode == 0:
-            result["updated"].append(f"pip install trw-mcp (reinstalled)")
+            result["updated"].append("pip install trw-mcp (reinstalled)")
         else:
             result["errors"].append(
                 f"pip install failed (exit {proc.returncode}): {proc.stderr[:200]}"
@@ -1254,10 +1254,10 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
     try:
         os.chdir(target_dir)
 
+        from trw_mcp.models.config import _reset_config, get_config
         from trw_mcp.state.claude_md import execute_claude_md_sync
-        from trw_mcp.models.config import get_config, _reset_config
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
         from trw_mcp.state.llm_helpers import LLMClient
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
         # Reset config so it picks up the target project's .trw/config.yaml
         _reset_config()

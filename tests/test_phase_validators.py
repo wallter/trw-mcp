@@ -29,7 +29,6 @@ from trw_mcp.state._phase_validators import (
 )
 from trw_mcp.state.persistence import FileStateWriter
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

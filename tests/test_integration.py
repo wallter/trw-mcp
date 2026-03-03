@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,10 +20,11 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_all_tools() -> dict[str, Any]:
     """Create server with all tools registered."""
     from fastmcp import FastMCP
-    from trw_mcp.tools.orchestration import register_orchestration_tools
-    from trw_mcp.tools.learning import register_learning_tools
-    from trw_mcp.tools.requirements import register_requirements_tools
+
     from trw_mcp.tools.ceremony import register_ceremony_tools
+    from trw_mcp.tools.learning import register_learning_tools
+    from trw_mcp.tools.orchestration import register_orchestration_tools
+    from trw_mcp.tools.requirements import register_requirements_tools
 
     srv = FastMCP("test")
     register_orchestration_tools(srv)

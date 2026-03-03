@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -52,6 +51,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     from fastmcp import FastMCP
+
     from trw_mcp.tools.learning import register_learning_tools
 
     srv = FastMCP("test")
@@ -819,9 +819,9 @@ class TestProgressiveDisclosure:
 
     def test_max_auto_lines_gate_raises_error(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR04: StateError raised when auto-gen exceeds limit."""
+        from trw_mcp.clients.llm import LLMClient
         from trw_mcp.exceptions import StateError
         from trw_mcp.state.claude_md import execute_claude_md_sync
-        from trw_mcp.clients.llm import LLMClient
 
         config = TRWConfig(max_auto_lines=5)  # Very low limit
         reader = FileStateReader()
@@ -2130,6 +2130,7 @@ class TestToolDelegationIntact:
     def test_all_learning_tools_registered(self) -> None:
         """All 4 learning tools should be registered on a test server."""
         from fastmcp import FastMCP
+
         from trw_mcp.tools.learning import register_learning_tools
         srv = FastMCP("test-learning")
         register_learning_tools(srv)

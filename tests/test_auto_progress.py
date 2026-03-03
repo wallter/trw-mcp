@@ -17,11 +17,10 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
 from trw_mcp.state.validation import (
-    PHASE_STATUS_MAPPING,
     _TERMINAL_STATUSES,
+    PHASE_STATUS_MAPPING,
     auto_progress_prds,
 )
-
 
 # --- Fixtures ---
 

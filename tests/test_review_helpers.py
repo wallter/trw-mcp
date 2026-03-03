@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from trw_mcp.models.config import TRWConfig, _reset_config
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._review_helpers import (
     count_by_severity,
@@ -26,7 +26,6 @@ from trw_mcp.tools._review_helpers import (
     handle_manual_mode,
     validate_manual_findings,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

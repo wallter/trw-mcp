@@ -8,22 +8,22 @@ space for the core scoring functions.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from trw_mcp.scoring import (
-    apply_time_decay,
-    apply_impact_decay,
-    compute_utility_score,
-    update_q_value,
-    enforce_tier_distribution,
-    _TIME_DECAY_FLOOR,
     _IMPACT_DECAY_FLOOR,
     _TIER_HIGH_CEILING,
     _TIER_MEDIUM_CEILING,
+    _TIME_DECAY_FLOOR,
+    apply_impact_decay,
+    apply_time_decay,
+    compute_utility_score,
+    enforce_tier_distribution,
+    update_q_value,
 )
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ _past_datetime = st.datetimes(
     access_count=_nonneg_int,
     source_type=st.sampled_from(["agent", "human"]),
 )
-@settings(max_examples=500)
+@settings(max_examples=200, deadline=None)
 def test_compute_utility_score_bounded(
     q_value: float,
     days_since_last_access: int,

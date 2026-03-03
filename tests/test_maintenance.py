@@ -82,7 +82,7 @@ class TestAutoCloseStaleRuns:
             result = auto_close_stale_runs()
 
         assert result["count"] == 1
-        assert run_id in cast(list[str], result["runs_closed"])
+        assert run_id in cast("list[str]", result["runs_closed"])
         assert result["errors"] == []
 
         # Verify run.yaml was updated
@@ -174,7 +174,7 @@ class TestAutoCloseStaleRuns:
             result = auto_close_stale_runs(age_days=3)
 
         assert result["count"] == 1
-        assert run_id in cast(list[str], result["runs_closed"])
+        assert run_id in cast("list[str]", result["runs_closed"])
 
     def test_custom_age_days_keeps_run_if_not_old_enough(self, tmp_path: Path) -> None:
         """age_days=30 keeps a 10-day-old run open."""
@@ -212,7 +212,7 @@ class TestAutoCloseStaleRuns:
 
         assert result["count"] == 3
         for rid in run_ids:
-            assert rid in cast(list[str], result["runs_closed"])
+            assert rid in cast("list[str]", result["runs_closed"])
 
     def test_unparseable_run_id_timestamp_is_skipped(self, tmp_path: Path) -> None:
         """Run whose run_id has an unparseable timestamp is skipped, not closed."""
@@ -269,7 +269,7 @@ class TestAutoCloseStaleRuns:
             result = auto_close_stale_runs()
 
         assert result["count"] == 1
-        closed = cast(list[str], result["runs_closed"])
+        closed = cast("list[str]", result["runs_closed"])
         assert stale_id in closed
         assert recent_id not in closed
 
@@ -308,7 +308,7 @@ class TestAutoCloseStaleRuns:
             result = auto_close_stale_runs()
 
         assert result["count"] == 0
-        assert len(cast(list[str], result["errors"])) == 1
+        assert len(cast("list[str]", result["errors"])) == 1
 
     def test_returns_correct_keys(self, tmp_path: Path) -> None:
         """Result always contains runs_closed, count, and errors keys."""
@@ -405,6 +405,7 @@ class TestSessionStartAutoClose:
     def _get_session_start_fn() -> object:
         """Register ceremony tools on a minimal FastMCP server and return the tool."""
         from fastmcp import FastMCP
+
         from trw_mcp.tools.ceremony import register_ceremony_tools
 
         server = FastMCP("test")
@@ -520,6 +521,7 @@ class TestDeliverAutoPrune:
     def _make_deliver_fn(self) -> object:
         """Register ceremony tools and return the trw_deliver callable."""
         from fastmcp import FastMCP
+
         from trw_mcp.tools.ceremony import register_ceremony_tools
 
         server = FastMCP("test")
@@ -528,7 +530,6 @@ class TestDeliverAutoPrune:
 
     def _base_patches(self, tmp_path: Path, cfg: TRWConfig) -> dict[str, object]:
         """Return a dict of common patch targets for trw_deliver tests."""
-        import trw_mcp.tools.ceremony as ceremony_mod
         return {
             "trw_mcp.tools.ceremony._config": cfg,
             "trw_mcp.tools.ceremony.resolve_trw_dir": lambda: tmp_path / ".trw",

@@ -34,7 +34,6 @@ from trw_mcp.tools.orchestration import (
     register_orchestration_tools,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------
@@ -854,8 +853,9 @@ class TestGetPackageVersion:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When importlib.metadata raises an exception, returns 'unknown' (lines 475-476)."""
-        from trw_mcp.tools.orchestration import _get_package_version
         import importlib.metadata as im
+
+        from trw_mcp.tools.orchestration import _get_package_version
 
         def broken_version(distribution_name: str) -> str:
             raise Exception("simulated failure")

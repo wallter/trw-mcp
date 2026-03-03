@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
-
 
 # ===========================================================================
 # Offline / config guard

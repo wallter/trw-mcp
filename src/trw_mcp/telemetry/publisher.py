@@ -110,7 +110,7 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
                 else:
                     errors += 1
 
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.debug("learning_file_processing_failed", file=yaml_file.name)
                 errors += 1
     finally:

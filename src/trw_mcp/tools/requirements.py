@@ -6,6 +6,7 @@ process as executable MCP tools.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from datetime import date
 from io import StringIO
@@ -33,11 +34,15 @@ from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
     _FRONTMATTER_RE,
     extract_prd_refs,
-    extract_sections as _extract_sections,
     next_prd_sequence,
+)
+from trw_mcp.state.prd_utils import (
+    extract_sections as _extract_sections,
 )
 from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
+)
+from trw_mcp.state.validation import (
     validate_prd_quality_v2,
 )
 from trw_mcp.tools.telemetry import log_tool_call
@@ -87,12 +92,12 @@ def register_requirements_tools(server: FastMCP) -> None:
         # Validate priority
         try:
             prd_priority = Priority(priority)
-        except ValueError:
+        except ValueError as err:
             valid = [p.value for p in Priority]
             raise ValidationError(
                 f"Invalid priority: {priority!r}. Valid: {valid}",
                 priority=priority,
-            )
+            ) from err
 
         # Auto-increment sequence when using default value (1)
         if sequence == 1:
@@ -121,12 +126,12 @@ def register_requirements_tools(server: FastMCP) -> None:
         if risk_level:
             try:
                 prd_risk = RiskLevel(risk_level.lower())
-            except ValueError:
+            except ValueError as err:
                 valid_risks = [r.value for r in RiskLevel]
                 raise ValidationError(
                     f"Invalid risk_level: {risk_level!r}. Valid: {valid_risks}",
                     risk_level=risk_level,
-                )
+                ) from err
 
         # Build frontmatter
         frontmatter = PRDFrontmatter(
@@ -311,7 +316,7 @@ def _load_template_body() -> str:
     Returns:
         Template body as a string (markdown after frontmatter).
     """
-    global _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION  # noqa: PLW0603
+    global _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION
 
     if _CACHED_TEMPLATE_BODY is not None:
         return _CACHED_TEMPLATE_BODY
@@ -414,15 +419,11 @@ def _extract_prefill(input_text: str) -> dict[str, list[str]]:
         "slos": [],
     }
 
-    try:
+    with contextlib.suppress(re.error, TypeError):
         prefill["file_refs"] = sorted(set(_FILE_REF_RE.findall(input_text)))
-    except (re.error, TypeError):
-        pass
 
-    try:
+    with contextlib.suppress(re.error, TypeError, ValueError):
         prefill["prd_deps"] = extract_prd_refs(input_text)
-    except (re.error, TypeError, ValueError):
-        pass
 
     # Extract goal-like and SLO sentences
     try:

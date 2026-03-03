@@ -12,21 +12,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter, FileEventLogger
+from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools._ceremony_helpers import (
-    _phase_to_tags,
     _phase_contextual_recall,
+    _phase_to_tags,
     check_delivery_gates,
+    finalize_run,
     perform_session_recalls,
     run_auto_maintenance,
-    finalize_run,
 )
-
 
 # --- Fixtures ---
 

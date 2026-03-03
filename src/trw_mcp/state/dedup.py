@@ -51,7 +51,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     """
     if not a or not b:
         return 0.0
-    return sum(ai * bi for ai, bi in zip(a, b))
+    return sum(ai * bi for ai, bi in zip(a, b, strict=False))
 
 
 def check_duplicate(
@@ -122,7 +122,7 @@ def check_duplicate(
             continue
         try:
             data = reader.read_yaml(yaml_file)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
 
         # Only compare against active entries
@@ -190,16 +190,16 @@ def merge_entries(
     # Tags: union
     raw_existing_tags = existing.get("tags") or []
     raw_new_tags = new_entry_data.get("tags") or []
-    existing_tags = [str(t) for t in cast(list[object], raw_existing_tags)]
-    new_tags = [str(t) for t in cast(list[object], raw_new_tags)]
+    existing_tags = [str(t) for t in cast("list[object]", raw_existing_tags)]
+    new_tags = [str(t) for t in cast("list[object]", raw_new_tags)]
     merged_tags = list(dict.fromkeys(existing_tags + [t for t in new_tags if t not in existing_tags]))
     existing["tags"] = merged_tags
 
     # Evidence: union
     raw_existing_ev = existing.get("evidence") or []
     raw_new_ev = new_entry_data.get("evidence") or []
-    existing_evidence = [str(e) for e in cast(list[object], raw_existing_ev)]
-    new_evidence = [str(e) for e in cast(list[object], raw_new_ev)]
+    existing_evidence = [str(e) for e in cast("list[object]", raw_existing_ev)]
+    new_evidence = [str(e) for e in cast("list[object]", raw_new_ev)]
     merged_evidence = list(dict.fromkeys(existing_evidence + [e for e in new_evidence if e not in existing_evidence]))
     existing["evidence"] = merged_evidence
 
@@ -226,7 +226,7 @@ def merge_entries(
 
     # merged_from: append new entry ID
     raw_merged_from = existing.get("merged_from") or []
-    existing_merged_from = [str(x) for x in cast(list[object], raw_merged_from)]
+    existing_merged_from = [str(x) for x in cast("list[object]", raw_merged_from)]
     if new_id and new_id not in existing_merged_from:
         existing_merged_from.append(new_id)
     existing["merged_from"] = existing_merged_from
@@ -244,8 +244,8 @@ def merge_entries(
 
     # FR03: Re-compute embedding for merged entry and update sqlite-vec if available
     try:
-        from trw_mcp.telemetry.embeddings import embed as _embed
         from trw_mcp.state.memory_store import MemoryStore
+        from trw_mcp.telemetry.embeddings import embed as _embed
         if MemoryStore.available():
             merged_text = str(existing.get("summary", "")) + " " + str(existing.get("detail", ""))
             new_embedding = _embed(merged_text)
@@ -257,7 +257,7 @@ def merge_entries(
                     store.upsert(str(existing.get("id", "")), new_embedding, {})
                 finally:
                     store.close()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass  # Best-effort re-indexing
 
     return existing_path
@@ -325,7 +325,7 @@ def batch_dedup(
             text = str(data.get("summary", "")) + " " + str(data.get("detail", ""))
             vec = embed(text)
             active_entries.append((yaml_file, data, vec))
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
 
     merged_count = 0
@@ -369,7 +369,7 @@ def batch_dedup(
                 try:
                     data_i = reader.read_yaml(path_i)
                     active_entries[i] = (path_i, data_i, vec_i)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
                 merged_count += 1
 

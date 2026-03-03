@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,6 @@ from trw_mcp.state.analytics_report import (
     scan_all_runs,
 )
 from trw_mcp.state.persistence import FileStateWriter
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -27,7 +27,6 @@ from trw_mcp.state.report import (
     parse_run_events,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -596,10 +595,9 @@ class TestReportToolLayer:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """trw_run_report returns error dict when run path cannot be resolved."""
-        import trw_mcp.tools.report as report_mod
-
         from fastmcp import FastMCP
 
+        import trw_mcp.tools.report as report_mod
         from trw_mcp.exceptions import StateError
         from trw_mcp.tools.report import register_report_tools
 
@@ -622,10 +620,9 @@ class TestReportToolLayer:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """trw_run_report returns a populated report dict for a valid run directory."""
-        import trw_mcp.tools.report as report_mod
-
         from fastmcp import FastMCP
 
+        import trw_mcp.tools.report as report_mod
         from trw_mcp.state.persistence import FileStateWriter
         from trw_mcp.tools.report import register_report_tools
 

@@ -7,6 +7,7 @@ CLI entry points:
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import json
@@ -126,10 +127,8 @@ def _collect_analytics(
     # Load analytics.yaml
     analytics_path = trw_dir / config.context_dir / "analytics.yaml"
     if analytics_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             analytics["session_analytics"] = _reader.read_yaml(analytics_path)
-        except Exception:
-            pass
 
     # Reflection quality
     try:

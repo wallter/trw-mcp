@@ -8,18 +8,17 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from trw_mcp.models.run import EventType
-from trw_mcp.scoring import REWARD_MAP, EVENT_ALIASES, apply_time_decay
-from trw_mcp.state.claude_md import collect_promotable_learnings
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.run import EventType
+from trw_mcp.scoring import EVENT_ALIASES, REWARD_MAP, apply_time_decay
+from trw_mcp.state.claude_md import collect_promotable_learnings
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
 
 # ============================================================================
 # Bug 1: EventType.DELIVER_COMPLETE exists and is wired into scoring
@@ -122,9 +121,10 @@ class TestBuildCheckQLearningWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> object:
         """Register build tools with mocked dependencies, return the tool fn."""
+        from fastmcp import FastMCP
+
         import trw_mcp.tools.build as build_mod
         from trw_mcp.models.config import TRWConfig
-        from fastmcp import FastMCP
 
         mock_status = self._make_mock_status(passed)
         mock_config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
@@ -716,6 +716,7 @@ class TestApplyTimeDecayPurity:
         stored impact values would be permanently mutated at query time — a correctness bug.
         """
         import inspect
+
         from trw_mcp.scoring import apply_time_decay as atd
         source = inspect.getsource(atd)
         assert "_writer" not in source, (
@@ -754,7 +755,6 @@ class TestApplyTimeDecayPurity:
         Given a learning entry with impact=0.75, created 400 days ago,
         after calling trw_recall 3 times the YAML still has impact=0.75.
         """
-        import trw_mcp.scoring as scoring_mod
 
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -777,6 +777,15 @@ class TestApplyTimeDecayPurity:
         }
         entry_path = entries_dir / "L-immut01.yaml"
         writer.write_yaml(entry_path, entry)
+
+        # Force keyword-scan fallback by mocking retrieval module.
+        # The real hybrid_search imports sentence-transformers which is slow.
+        import sys
+        import types
+
+        mock_retrieval = types.ModuleType("trw_mcp.state.retrieval")
+        mock_retrieval.hybrid_search = lambda *a, **kw: []  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "trw_mcp.state.retrieval", mock_retrieval)
 
         # Call search_entries 3 times — simulates repeated recall queries
         # FR06/NFR03: search_entries applies decay in-memory only; stored impact must be unchanged
@@ -869,8 +878,8 @@ class TestBuildCheckMypyOnlyScope:
         This test captures current behavior. If PRD compliance is required, add scope guard
         in build.py: only fire Q-learning for scope in ('full', 'pytest').
         """
+
         import trw_mcp.tools.build as build_mod
-        from fastmcp import FastMCP
 
         called_events: list[str] = []
         mock_status = self._make_mypy_status(mypy_clean=True)
@@ -912,9 +921,10 @@ class TestBuildCheckMypyOnlyScope:
         Full integration: write entry + receipt, patch scoring module, run build_check,
         verify q_observations > 0.
         """
+        from fastmcp import FastMCP
+
         import trw_mcp.scoring as scoring_mod
         import trw_mcp.tools.build as build_mod
-        from fastmcp import FastMCP
 
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"

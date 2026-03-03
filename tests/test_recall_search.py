@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import search_entries
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

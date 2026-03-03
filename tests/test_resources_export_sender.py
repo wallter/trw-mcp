@@ -49,6 +49,7 @@ def _write_learning(entries_dir: Path, name: str, data: dict[str, object]) -> No
 def _get_learnings_resource() -> Any:
     """Return the trw://learnings/summary resource function."""
     from fastmcp import FastMCP
+
     from trw_mcp.resources.config import register_config_resources
 
     srv = FastMCP("test")
@@ -363,6 +364,7 @@ class TestCollectRunsEnvRestore:
         self, tmp_path: Path
     ) -> None:
         import os
+
         from trw_mcp.export import export_data
 
         project = _setup_project(tmp_path)
@@ -450,6 +452,7 @@ class TestCollectAnalyticsEdgeCases:
     ) -> None:
         """Line 143 — TRW_PROJECT_ROOT restored in analytics env block."""
         import os
+
         from trw_mcp.export import export_data
 
         project = _setup_project(tmp_path)
@@ -663,6 +666,7 @@ class TestImportResyncEnvRestore:
         self, tmp_path: Path
     ) -> None:
         import os
+
         from trw_mcp.export import import_learnings
 
         target = _setup_project(tmp_path / "target")

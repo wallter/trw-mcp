@@ -10,16 +10,12 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import structlog
 
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter, json_serializer
 from trw_mcp.telemetry.models import TelemetryEvent
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger()
 
@@ -55,7 +51,7 @@ class TelemetryClient:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_config(cls) -> "TelemetryClient":
+    def from_config(cls) -> TelemetryClient:
         """Construct a client from the active TRWConfig singleton.
 
         Resolves the output path as::

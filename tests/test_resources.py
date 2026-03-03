@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,9 +20,10 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _get_resources() -> dict[str, Any]:
     """Create server and return resource map."""
     from fastmcp import FastMCP
+
     from trw_mcp.resources.config import register_config_resources
-    from trw_mcp.resources.templates import register_template_resources
     from trw_mcp.resources.run_state import register_run_state_resources
+    from trw_mcp.resources.templates import register_template_resources
 
     srv = FastMCP("test")
     register_config_resources(srv)

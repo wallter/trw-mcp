@@ -7,10 +7,11 @@ Fail-open: returns empty list on any failure — never blocks local operation.
 from __future__ import annotations
 
 import json
-import structlog
 import urllib.error
 import urllib.request
 from typing import Any
+
+import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.telemetry.embeddings import embed

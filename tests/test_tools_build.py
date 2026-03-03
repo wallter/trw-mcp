@@ -25,7 +25,6 @@ from trw_mcp.tools.build import (
     run_build_check,
 )
 
-
 # ---------------------------------------------------------------------------
 # BuildStatus model tests (FR02)
 # ---------------------------------------------------------------------------
@@ -781,8 +780,9 @@ class TestMinCoverageThreshold:
             test_count=100,
         )
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -831,8 +831,9 @@ class TestMinCoverageThreshold:
             test_count=100,
         )
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -878,8 +879,9 @@ class TestMinCoverageThreshold:
             test_count=100,
         )
 
-        from trw_mcp.tools.build import register_build_tools
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
         register_build_tools(server)

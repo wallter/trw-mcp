@@ -11,8 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trw_mcp.telemetry.client import TelemetryClient, _event_to_record
 from trw_mcp.telemetry.models import (
     CeremonyComplianceEvent,
@@ -21,7 +19,6 @@ from trw_mcp.telemetry.models import (
     TelemetryEvent,
     ToolInvocationEvent,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

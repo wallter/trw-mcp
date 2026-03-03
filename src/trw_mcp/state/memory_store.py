@@ -145,7 +145,7 @@ class MemoryStore:
                 (query_bytes, top_k),
             ).fetchall()
             return [(str(row[0]), float(row[1])) for row in rows]
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug("memory_store_search_error", exc_info=True)
             return []
 
@@ -182,7 +182,7 @@ class MemoryStore:
     def migrate(
         self,
         entries_dir: Path,
-        reader: "FileStateReader",
+        reader: FileStateReader,
     ) -> dict[str, int]:
         """Batch-embed existing YAML learnings into the vector store.
 
@@ -211,7 +211,7 @@ class MemoryStore:
                 detail = str(data.get("detail", ""))
                 if entry_id and (summary or detail):
                     entries.append((entry_id, summary + " " + detail))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
 
         if not entries:
@@ -222,7 +222,7 @@ class MemoryStore:
 
         migrated = 0
         skipped = 0
-        for (entry_id, _), embedding in zip(entries, embeddings):
+        for (entry_id, _), embedding in zip(entries, embeddings, strict=False):
             if embedding is not None:
                 self.upsert(entry_id, embedding, {"source": "migration"})
                 migrated += 1

@@ -17,9 +17,9 @@ import pytest
 from trw_mcp.state.index_sync import (
     INDEX_CATALOGUE_END,
     INDEX_CATALOGUE_START,
-    PRDEntry,
     ROADMAP_CATALOGUE_END,
     ROADMAP_CATALOGUE_START,
+    PRDEntry,
     _group_by_status,
     _merge_section,
     render_index_catalogue,
@@ -28,7 +28,6 @@ from trw_mcp.state.index_sync import (
     sync_index_md,
     sync_roadmap_md,
 )
-
 
 # --- Fixtures ---
 

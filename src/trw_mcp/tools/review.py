@@ -63,7 +63,7 @@ def _normalize_severity(severity: str) -> str:
 
 def _invoke_cross_model_review(
     diff: str,
-    config: object,  # noqa: ARG001
+    config: object,
 ) -> list[dict[str, str]]:
     """Invoke cross-model review via external provider.
 
@@ -91,7 +91,7 @@ def _invoke_cross_model_review(
 
 def _run_multi_reviewer_analysis(
     diff: str,
-    config: object,  # noqa: ARG001
+    config: object,
 ) -> dict[str, object]:
     """Run structured multi-perspective code review analysis.
 

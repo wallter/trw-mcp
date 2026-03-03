@@ -15,13 +15,9 @@ from unittest.mock import patch
 
 import pytest
 
-from trw_mcp.tools._ceremony_helpers import _phase_to_tags
-
-
 # --- Fixtures ---
-
-
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
+from trw_mcp.tools._ceremony_helpers import _phase_to_tags
 
 
 def _setup_trw_dir(tmp_path: Path) -> Path:

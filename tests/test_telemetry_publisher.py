@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trw_mcp.telemetry.publisher import _post_learning, publish_learnings
-
 
 # ---------------------------------------------------------------------------
 # Helpers

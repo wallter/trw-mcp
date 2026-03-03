@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._ceremony_helpers import check_delivery_gates, copy_compliance_artifacts

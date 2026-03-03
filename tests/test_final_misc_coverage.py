@@ -15,15 +15,12 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import shutil
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # bootstrap.py coverage
@@ -699,7 +696,7 @@ class TestAutoUpgradeCoverage:
         """Lines 29-30: AttributeError on __version__ → returns '0.0.0'."""
         import sys
         import types
-        from trw_mcp.state import auto_upgrade
+
 
         # Create a fake trw_mcp module without __version__
         fake_module = types.ModuleType("trw_mcp")
@@ -733,12 +730,11 @@ class TestAutoUpgradeCoverage:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Lines 29-30: Directly test exception branches in get_installed_version."""
-        import sys
-        from trw_mcp.state import auto_upgrade
-
         # We need to make the `from trw_mcp import __version__` fail
         # Save and remove the module from sys.modules
-        import importlib
+        import sys
+
+        from trw_mcp.state import auto_upgrade
 
         # Patch the function implementation directly by replacing module temporarily
         original_trw_mcp = sys.modules.get("trw_mcp")
@@ -775,7 +771,7 @@ class TestAarefPromptFallback:
 
     def test_load_prompt_template_existing_file_returns_content(self) -> None:
         """Line 26-27: existing template file returns its content."""
-        from trw_mcp.prompts.aaref import _load_prompt_template, _DATA_DIR
+        from trw_mcp.prompts.aaref import _DATA_DIR, _load_prompt_template
 
         # Find any actual template file in the data dir
         templates = list(_DATA_DIR.glob("*.md"))

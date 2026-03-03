@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.prd_utils import (
     compute_content_density,
     extract_prd_refs,
@@ -21,8 +22,6 @@ from trw_mcp.state.prd_utils import (
     parse_frontmatter,
     update_frontmatter,
 )
-from trw_mcp.exceptions import StateError
-
 
 # ---------- parse_frontmatter ----------
 

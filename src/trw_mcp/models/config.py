@@ -73,6 +73,7 @@ class TRWConfig(BaseSettings):
     47. Completion hooks (CORE-065) .. completion_hooks_blocking
     48. PostToolUse validation (030) . incremental_validation_enabled
     49. Compaction (CORE-066) ........ compact_instructions_template
+    50. Progressive disclosure (067) .. progressive_disclosure
     """
 
     model_config = SettingsConfigDict(
@@ -544,6 +545,11 @@ class TRWConfig(BaseSettings):
     compact_instructions_template: str = ""  # empty = use built-in TRW template
     pause_after_compaction: bool = False
 
+    # ── 50. Progressive disclosure (CORE-067) ─────────────────────────────
+    # Compact capability cards for non-hot-set tools in tools/list
+
+    progressive_disclosure: bool = False
+
     @property
     def effective_platform_urls(self) -> list[str]:
         """Merged list of all configured platform URLs (deduped, non-empty)."""
@@ -574,7 +580,7 @@ def get_config() -> TRWConfig:
     Subsequent calls return the same object.
     Use ``_reset_config()`` in tests to clear cached state.
     """
-    global _singleton  # noqa: PLW0603
+    global _singleton
     if _singleton is None:
         _singleton = _build_config()
     return _singleton
@@ -619,7 +625,7 @@ def _build_config() -> TRWConfig:
                 }
                 if filtered:
                     return TRWConfig(**filtered)  # type: ignore[arg-type]
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass  # Fall back to defaults if project root not found
     return TRWConfig()
 
@@ -631,7 +637,7 @@ def _reset_config(config: TRWConfig | None = None) -> None:
         config: Optional replacement config. If *None*, the next
             ``get_config()`` call creates a fresh default instance.
     """
-    global _singleton  # noqa: PLW0603
+    global _singleton
     _singleton = config
 
 

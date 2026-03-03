@@ -12,13 +12,13 @@ When ``embeddings_enabled=True`` in config, the adapter:
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import structlog
-
 from trw_memory.migration.from_trw import migrate_entries_dir
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
@@ -56,7 +56,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
     Returns:
         Shared :class:`SQLiteBackend` instance.
     """
-    global _backend  # noqa: PLW0603
+    global _backend
     if _backend is not None:
         return _backend
 
@@ -81,7 +81,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
 
 def reset_backend() -> None:
     """Close and discard the singleton backend (for tests)."""
-    global _backend  # noqa: PLW0603
+    global _backend
     with _backend_lock:
         if _backend is not None:
             _backend.close()
@@ -99,7 +99,7 @@ def get_embedder() -> Any:
     Only attempts initialization when ``embeddings_enabled=True`` in config.
     The result is cached — repeated calls are cheap.
     """
-    global _embedder, _embedder_checked  # noqa: PLW0603
+    global _embedder, _embedder_checked
     if _embedder_checked:
         return _embedder
 
@@ -130,7 +130,7 @@ def get_embedder() -> Any:
                     "embeddings_enabled_but_deps_missing",
                     hint="pip install trw-memory[embeddings]",
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug("embedder_init_failed")
 
         _embedder_checked = True
@@ -139,7 +139,7 @@ def get_embedder() -> Any:
 
 def reset_embedder() -> None:
     """Reset the embedder singleton (for tests)."""
-    global _embedder, _embedder_checked  # noqa: PLW0603
+    global _embedder, _embedder_checked
     with _embedder_lock:
         _embedder = None
         _embedder_checked = False
@@ -180,7 +180,7 @@ def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
         vector = embedder.embed(text)
         if vector is not None:
             backend.upsert_vector(entry_id, vector)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.debug("embed_and_store_failed", entry_id=entry_id)
 
 
@@ -434,9 +434,8 @@ def _search_entries(
                         continue
                     if mem_status is not None and entry.status != mem_status:
                         continue
-                    if tags:
-                        if not set(tags).issubset(set(entry.tags)):
-                            continue
+                    if tags and not set(tags).issubset(set(entry.tags)):
+                        continue
                     entry_map[eid] = entry
 
         results: list[MemoryEntry] = []
@@ -452,7 +451,7 @@ def _search_entries(
         )
         return results
 
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.debug("vector_search_failed_fallback_to_keyword", query=query[:80])
         return keyword_results
 
@@ -528,10 +527,8 @@ def recall_learnings(
 
     mem_status: MemoryStatus | None = None
     if status is not None:
-        try:
+        with contextlib.suppress(ValueError):
             mem_status = MemoryStatus(status)
-        except ValueError:
-            pass
 
     if is_wildcard:
         entries = backend.list_entries(
@@ -555,9 +552,8 @@ def recall_learnings(
         # Tag filter for list_entries (search already filters)
         if tags and is_wildcard:
             entry_tags = d.get("tags", [])
-            if isinstance(entry_tags, list):
-                if not any(t in entry_tags for t in tags):
-                    continue
+            if isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
+                continue
         results.append(d)
 
     return results
@@ -773,7 +769,7 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
 
             backend.upsert_vector(entry.id, vector)
             embedded += 1
-        except Exception:  # noqa: BLE001
+        except Exception:
             failed += 1
 
     logger.info(

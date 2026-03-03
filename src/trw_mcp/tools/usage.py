@@ -12,12 +12,14 @@ from fastmcp import FastMCP
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
 _config = get_config()
 _reader = FileStateReader()
+_progressive_middleware: ProgressiveDisclosureMiddleware | None = None
 
 _COST_RATES: dict[str, dict[str, float]] = {
     "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.00},
@@ -150,9 +152,45 @@ def register_usage_tools(server: FastMCP) -> None:
             "by_caller": by_caller,
         }
 
+    @server.tool()
+    @log_tool_call
+    def trw_progressive_expand(group: str) -> dict[str, object]:
+        """Expand a capability group so its tools show full schemas.
+
+        When progressive disclosure is enabled, non-hot-set tools only show
+        compact capability cards. Call this to expand a whole group at once.
+
+        Args:
+            group: Group name (ceremony, learning, orchestration,
+                requirements, build).
+        """
+        from trw_mcp.state.usage_profiler import TOOL_GROUPS
+
+        if _progressive_middleware is None:
+            tools = TOOL_GROUPS.get(group, [])
+            return {
+                "group": group,
+                "expanded_tools": [],
+                "already_expanded": tools,
+            }
+
+        newly, already = _progressive_middleware.expand_group(group)
+        return {
+            "group": group,
+            "expanded_tools": newly,
+            "already_expanded": already,
+        }
+
+
+def set_progressive_middleware(mw: ProgressiveDisclosureMiddleware | None) -> None:
+    """Set the progressive disclosure middleware reference for expand tool."""
+    global _progressive_middleware
+    _progressive_middleware = mw
+
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
-    global _config, _reader
+    global _config, _reader, _progressive_middleware
     _config = get_config()
     _reader = FileStateReader()
+    _progressive_middleware = None
