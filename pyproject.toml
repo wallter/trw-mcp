@@ -76,8 +76,45 @@ target-version = "py310"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]
-ignore = ["E501"]
+select = [
+    "E",        # pycodestyle errors
+    "W",        # pycodestyle warnings
+    "F",        # Pyflakes: unused imports, undefined names, unused vars
+    "I",        # isort: consistent import ordering
+    "B",        # flake8-bugbear: B014 duplicate exception, B006 mutable defaults
+    "UP",       # pyupgrade: modernize to Python 3.10+ syntax
+    "SIM",      # flake8-simplify: nested-if, contextlib.suppress
+    "RET",      # flake8-return: assign-then-return, superfluous else
+    "PIE",      # flake8-pie: unnecessary pass, duplicate class field
+    "TRY",      # tryceratops: verbose raise, raise-in-try
+    "ASYNC",    # flake8-async: blocking I/O in async functions
+    "PT",       # flake8-pytest-style: fixture/assert/exception style
+    "TC",       # flake8-type-checking: move type-only imports to TYPE_CHECKING
+    "RUF",      # Ruff-native: mutable ClassVar, unused noqa
+]
+ignore = [
+    "E501",     # line too long — handled by line-length setting
+    "TRY003",   # long exception messages inline are fine
+    "TRY002",   # raising ValueError/TypeError directly is idiomatic
+    "TRY300",   # return-in-try is standard handler pattern
+    "SIM108",   # ternary not always more readable
+    "RET504",   # assign-then-return is often clearer
+    "TC001",    # typing imports used at runtime via Pydantic — not type-checking-only
+    "TC002",    # third-party imports used at runtime — not type-checking-only
+    "TC003",    # stdlib imports used at runtime — not type-checking-only
+    "B008",     # function calls in defaults — FastMCP/Pydantic patterns use this idiomatically
+]
+fixable = ["F401", "B007", "B013", "B014", "UP", "I", "PIE790", "TC", "RUF100"]
+unfixable = ["F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["PT", "TRY", "SIM", "B018", "RUF012"]
+"**/__init__.py" = ["F401"]
+"**/conftest.py" = ["PT"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trw_mcp"]
+split-on-trailing-comma = true
 
 [tool.mypy]
 strict = true

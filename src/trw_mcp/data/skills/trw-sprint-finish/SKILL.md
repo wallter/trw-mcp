@@ -40,7 +40,11 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    - If build **fails**: Report failures, do NOT proceed. The sprint cannot be completed with a failing build.
    - If build **passes** and coverage meets threshold: Continue.
 
-6. **Archive sprint doc**: Move the sprint doc to the `archive/sprints/` subdirectory. Update its status to "Completed" with the completion date.
+6. **Move sprint doc to completed**: Move the sprint doc from its current location (`sprints/planned/` or `sprints/active/`) to the `sprints/completed/` subdirectory. Update the sprint doc's `**Status**:` line to `Done` with the completion date. This step is REQUIRED — sprint docs left in `planned/` or `active/` after completion cause confusion in future sprint planning.
+   ```bash
+   # Example (adjust filename):
+   mv "sprints/planned/sprint-39-name.md" "sprints/completed/sprint-39-name.md"
+   ```
 
 7. **Delivery ceremony**: Call `trw_deliver()` for full delivery (reflect, checkpoint, claude_md_sync, index_sync).
 
@@ -65,6 +69,7 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "The exit criteria checkboxes are just formatting, not contracts" | Each checkbox represents a stakeholder commitment — checking them without verification is the #1 cause of false sprint completions | Sprint 29 was falsely reported complete because an agent checked boxes without verifying the work was actually done |
 | "I can check the boxes because the work was 'partially' done" | Partial completion is not completion — a checkbox means 100% done, verified | Checking a box for partial work hides gaps that compound across sprints |
 | "Coverage is close enough to the threshold, rounding is fine" | The threshold exists precisely to prevent gradual erosion — 79.9% is not 80% | Each sprint that ships below threshold normalizes the gap until coverage is meaningfully degraded |
+| "I'll skip moving the sprint doc, it's just housekeeping" | Sprint docs in `planned/` signal unfinished work to future agents — leaving a completed sprint there wastes planning time and causes confusion | Sprint 39 was completed but left in `planned/`, requiring a manual cleanup pass |
 
 ## Notes
 
