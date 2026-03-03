@@ -1,4 +1,21 @@
-"""Shared test fixtures for TRW MCP test suite."""
+"""Shared test fixtures for TRW MCP test suite.
+
+Test Tiering Philosophy
+-----------------------
+Tests are auto-assigned markers based on their filename:
+
+- **unit**: Pure logic tests — no filesystem I/O, no multi-tool interaction,
+  no ``tmp_path`` usage.  Target: <30s for the full unit tier.
+- **integration**: Tests that write files, call multiple tools, or use
+  ``tmp_path`` / ``tmp_project`` fixtures.
+- **e2e**: End-to-end workflows covering full phase sequences.
+- **slow**: Tests that individually take >5s (model loading, bootstrap).
+
+To classify a new test file:
+  1. If it uses ``tmp_path``/``tmp_project`` → integration (default).
+  2. If it only patches/mocks and tests pure functions → add to ``_UNIT_FILES``.
+  3. If it loads heavy models or creates 100+ files → add to ``_SLOW_FILES``.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +31,22 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter, FileEven
 _UNIT_FILES: frozenset[str] = frozenset({
     "test_models.py",
     "test_scoring.py",
+    "test_scoring_extra.py",
+    "test_scoring_properties.py",
+    "test_bayesian_calibration.py",
+    "test_clients_llm.py",
+    "test_llm_helpers.py",
+    "test_middleware_ceremony.py",
+    "test_prompts_messaging.py",
+    "test_telemetry_embeddings.py",
+    "test_telemetry_remote_recall.py",
+    "test_validation_v2.py",
+})
+
+_SLOW_FILES: frozenset[str] = frozenset({
+    "test_consolidation.py",
+    "test_bootstrap.py",
+    "test_bootstrap_extra.py",
 })
 
 _E2E_FILES: frozenset[str] = frozenset()
@@ -22,7 +55,7 @@ _E2E_FILES: frozenset[str] = frozenset()
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item],
 ) -> None:
-    """Auto-assign unit/integration/e2e markers to tests without explicit markers."""
+    """Auto-assign unit/integration/e2e/slow markers to tests without explicit markers."""
     for item in items:
         has_tier = any(
             m.name in ("unit", "integration", "e2e")
@@ -32,6 +65,11 @@ def pytest_collection_modifyitems(
             continue
 
         filename = Path(item.fspath).name
+
+        # Assign slow marker (additive — a test can be both integration and slow)
+        if filename in _SLOW_FILES:
+            item.add_marker(pytest.mark.slow)
+
         if filename in _UNIT_FILES:
             item.add_marker(pytest.mark.unit)
         elif filename in _E2E_FILES:
@@ -118,11 +156,8 @@ def sample_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     (run_dir / "reports").mkdir()
-    (run_dir / "artifacts").mkdir()
     (run_dir / "scratch" / "_orchestrator").mkdir(parents=True)
-    (run_dir / "scratch" / "_blackboard").mkdir(parents=True)
     (run_dir / "shards").mkdir()
-    (run_dir / "validation").mkdir()
 
     # Write run.yaml
     writer.write_yaml(meta / "run.yaml", {

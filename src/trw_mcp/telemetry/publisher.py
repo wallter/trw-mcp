@@ -7,10 +7,11 @@ Fail-open: never raises exceptions — all errors are counted and returned.
 from __future__ import annotations
 
 import json
-import logging
 import urllib.error
 import urllib.request
 from typing import Any
+
+import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_trw_dir
@@ -18,7 +19,7 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import strip_pii
 from trw_mcp.telemetry.embeddings import embed
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
@@ -109,8 +110,8 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
                 else:
                     errors += 1
 
-            except Exception:
-                logger.debug("Failed to process learning file %s", yaml_file.name)
+            except Exception:  # noqa: BLE001
+                logger.debug("learning_file_processing_failed", file=yaml_file.name)
                 errors += 1
     finally:
         if executor:
@@ -148,17 +149,20 @@ def _post_learning(platform_url: str, payload: dict[str, Any], api_key: str = ""
             if e.code == 429 and attempt < max_attempts - 1:
                 retry_after = int(e.headers.get("Retry-After", "2"))
                 logger.debug(
-                    "Rate limited (429) by %s, retrying after %ds",
-                    platform_url, retry_after,
+                    "learning_post_rate_limited",
+                    url=platform_url,
+                    retry_after=retry_after,
                 )
                 _time.sleep(min(retry_after, 5))
                 continue
             logger.warning(
-                "Learning POST failed: %s returned HTTP %d: %s",
-                platform_url, e.code, e.reason,
+                "learning_post_failed",
+                url=platform_url,
+                status_code=e.code,
+                reason=e.reason,
             )
             return False
         except (urllib.error.URLError, OSError) as e:
-            logger.warning("Learning POST failed: %s — %s", platform_url, e)
+            logger.warning("learning_post_failed", url=platform_url, error=str(e))
             return False
     return False

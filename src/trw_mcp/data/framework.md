@@ -236,7 +236,7 @@ If a skill fails, ORC MAY fall back to raw MCP tools. Skills encapsulate best-pr
 ## BOOTSTRAP
 
 1. Call `trw_init(task_name=TASK, objective=...)`.
-2. Success → `MCP_MODE: tool`. Init complete (dirs, run.yaml, events.jsonl, FRAMEWORK_SNAPSHOT created).
+2. Success → `MCP_MODE: tool`. Init complete (dirs, run.yaml, events.jsonl created).
 3. Failure → `MCP_MODE: manual`. Run manual fallback (see CLAUDE.md).
 
 <bootstrap-rules>

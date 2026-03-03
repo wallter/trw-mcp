@@ -1336,3 +1336,227 @@ class TestPrefixMigrationExtra:
             assert old_agent not in bundled_agents, (
                 f"Predecessor agent '{old_agent}' found in bundled names"
             )
+
+
+# ---------------------------------------------------------------------------
+# _migrate_prefix_predecessors — successor absent keeps old version (lines 817-818, 833-834)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMigratePredecessorSuccessorAbsent:
+    """When the trw- successor is absent, the predecessor must NOT be removed."""
+
+    def test_skill_predecessor_kept_when_successor_missing(self, tmp_path: Path) -> None:
+        """Skill predecessor dir is left in place when trw- successor dir is absent."""
+        skills_dir = tmp_path / ".claude" / "skills"
+        skills_dir.mkdir(parents=True)
+
+        # Create only the predecessor, no successor
+        predecessor = skills_dir / "simplify"
+        predecessor.mkdir()
+        (predecessor / "SKILL.md").write_text("old", encoding="utf-8")
+        # Successor (trw-simplify) intentionally absent
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _migrate_prefix_predecessors(tmp_path, result)
+
+        # Predecessor must still exist — no successor, so keep old version
+        assert predecessor.exists()
+        assert result["updated"] == []
+
+    def test_agent_predecessor_kept_when_successor_missing(self, tmp_path: Path) -> None:
+        """Agent predecessor file is left in place when trw- successor file is absent."""
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+
+        # Create only the predecessor, no successor
+        predecessor = agents_dir / "lead.md"
+        predecessor.write_text("old lead", encoding="utf-8")
+        # Successor (trw-lead.md) intentionally absent
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _migrate_prefix_predecessors(tmp_path, result)
+
+        # Predecessor must still exist
+        assert predecessor.exists()
+        assert result["updated"] == []
+
+    def test_both_skill_and_agent_predecessors_kept_when_successors_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """Both skill and agent predecessors are preserved when successors are absent."""
+        skills_dir = tmp_path / ".claude" / "skills"
+        agents_dir = tmp_path / ".claude" / "agents"
+        skills_dir.mkdir(parents=True)
+        agents_dir.mkdir(parents=True)
+
+        skill_pred = skills_dir / "commit"
+        skill_pred.mkdir()
+        (skill_pred / "SKILL.md").write_text("old", encoding="utf-8")
+
+        agent_pred = agents_dir / "implementer.md"
+        agent_pred.write_text("old implementer", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _migrate_prefix_predecessors(tmp_path, result)
+
+        assert skill_pred.exists()
+        assert agent_pred.exists()
+        assert result["updated"] == []
+
+
+# ---------------------------------------------------------------------------
+# _remove_stale_artifacts — custom artifact preservation (lines 884-885, 902-903, 919-920)
+# Custom skills/agents/hooks in prev_custom_* lists are NEVER removed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestRemoveStaleArtifactsCustomPreservation:
+    """Custom artifacts listed in prev_custom_* must not be removed during stale cleanup."""
+
+    def _setup_manifest_with_custom(
+        self,
+        target_dir: Path,
+        extra_skills: list[str] | None = None,
+        extra_agents: list[str] | None = None,
+        extra_hooks: list[str] | None = None,
+        custom_skills: list[str] | None = None,
+        custom_agents: list[str] | None = None,
+        custom_hooks: list[str] | None = None,
+    ) -> None:
+        from trw_mcp.state.persistence import FileStateWriter
+
+        bundled = _get_bundled_names()
+        manifest = {
+            "version": 1,
+            "skills": bundled["skills"] + (extra_skills or []),
+            "agents": bundled["agents"] + (extra_agents or []),
+            "hooks": bundled["hooks"] + (extra_hooks or []),
+            "custom_skills": custom_skills or [],
+            "custom_agents": custom_agents or [],
+            "custom_hooks": custom_hooks or [],
+        }
+        manifest_path = target_dir / ".trw" / "managed-artifacts.yaml"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+    def test_custom_skill_not_removed(self, initialized_repo: Path) -> None:
+        """A skill listed in prev_custom_skills is NOT removed even if it's stale."""
+        # Add "trw-my-custom" as both a previously-managed skill AND a custom skill
+        self._setup_manifest_with_custom(
+            initialized_repo,
+            extra_skills=["trw-my-custom"],
+            custom_skills=["trw-my-custom"],
+        )
+        custom_skill = initialized_repo / ".claude" / "skills" / "trw-my-custom"
+        custom_skill.mkdir(parents=True, exist_ok=True)
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result)
+
+        # Custom skill must be preserved
+        assert custom_skill.exists()
+        assert not any("trw-my-custom" in u for u in result["updated"])
+
+    def test_custom_agent_not_removed(self, initialized_repo: Path) -> None:
+        """A trw- agent in prev_custom_agents is NOT removed even if it's stale."""
+        self._setup_manifest_with_custom(
+            initialized_repo,
+            extra_agents=["trw-my-agent.md"],
+            custom_agents=["trw-my-agent.md"],
+        )
+        custom_agent = initialized_repo / ".claude" / "agents" / "trw-my-agent.md"
+        custom_agent.write_text("custom agent", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result)
+
+        assert custom_agent.exists()
+        assert not any("trw-my-agent" in u for u in result["updated"])
+
+    def test_custom_hook_not_removed(self, initialized_repo: Path) -> None:
+        """A hook listed in prev_custom_hooks is NOT removed even if stale."""
+        self._setup_manifest_with_custom(
+            initialized_repo,
+            extra_hooks=["my-custom-hook.sh"],
+            custom_hooks=["my-custom-hook.sh"],
+        )
+        custom_hook = initialized_repo / ".claude" / "hooks" / "my-custom-hook.sh"
+        custom_hook.write_text("#!/bin/sh", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result)
+
+        assert custom_hook.exists()
+        assert not any("my-custom-hook" in u for u in result["updated"])
+
+    def test_non_trw_prefixed_stale_skill_not_removed(self, initialized_repo: Path) -> None:
+        """Stale skills without trw- prefix are skipped (defense-in-depth guard)."""
+        # "stale-no-prefix" has no trw- prefix — must not be removed
+        self._setup_manifest_with_custom(
+            initialized_repo,
+            extra_skills=["stale-no-prefix"],
+        )
+        stale_skill = initialized_repo / ".claude" / "skills" / "stale-no-prefix"
+        stale_skill.mkdir(parents=True, exist_ok=True)
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result)
+
+        assert stale_skill.exists()
+        assert not any("stale-no-prefix" in u for u in result["updated"])
+
+    def test_non_trw_prefixed_stale_agent_not_removed(self, initialized_repo: Path) -> None:
+        """Stale agents without trw- prefix are skipped (defense-in-depth guard)."""
+        self._setup_manifest_with_custom(
+            initialized_repo,
+            extra_agents=["my-old-agent.md"],
+        )
+        stale_agent = initialized_repo / ".claude" / "agents" / "my-old-agent.md"
+        stale_agent.write_text("old", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result)
+
+        assert stale_agent.exists()
+        assert not any("my-old-agent" in u for u in result["updated"])
+
+
+# ---------------------------------------------------------------------------
+# _trw_mcp_server_entry — system trw-mcp found via shutil.which (lines 1105-1106)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestTrwMcpServerEntrySystemCmd:
+    """System trw-mcp command found via shutil.which when venv binary is absent."""
+
+    def test_uses_system_trw_mcp_when_venv_absent(self) -> None:
+        """When venv binary doesn't exist but shutil.which finds trw-mcp, use it."""
+        fake_system_path = "/usr/local/bin/trw-mcp"
+
+        # Make venv_bin not exist, but shutil.which returns a path
+        with (
+            patch.object(Path, "exists", return_value=False),
+            patch("shutil.which", return_value=fake_system_path),
+        ):
+            entry = _trw_mcp_server_entry()
+
+        assert entry["command"] == fake_system_path
+
+    def test_system_cmd_used_over_python_m_fallback(self) -> None:
+        """System trw-mcp takes priority over python -m fallback."""
+        fake_system_path = "/opt/homebrew/bin/trw-mcp"
+
+        with (
+            patch.object(Path, "exists", return_value=False),
+            patch("shutil.which", return_value=fake_system_path),
+        ):
+            entry = _trw_mcp_server_entry()
+
+        # Must use the system path directly, not the python -m module fallback
+        assert entry["command"] == fake_system_path
+        # The command must NOT be the python -m module invocation
+        assert "trw_mcp.server" not in str(entry["command"])

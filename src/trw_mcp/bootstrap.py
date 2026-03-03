@@ -239,6 +239,230 @@ def _cleanup_context_transients(
     )
 
 
+def _update_framework_files(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Copy/update all framework-managed files from bundled data.
+
+    Handles:
+    - Framework files in ``_ALWAYS_UPDATE`` (always overwritten).
+    - Never-overwrite files in ``_NEVER_OVERWRITE`` (preserved reporting).
+    - Hook ``.sh`` files (always overwritten, made executable).
+    - Skill directories (always overwritten).
+    - Agent ``.md`` files (always overwritten).
+
+    Args:
+        target_dir: Root of the target git repository.
+        effective_data: Resolved bundled data directory (may be overridden by
+            the caller for testing).
+        result: Mutable result dict accumulating ``updated``, ``created``,
+            ``preserved``, and ``errors`` entries.
+        dry_run: When ``True``, report what would change without writing files.
+    """
+    # Always-overwrite framework files
+    for data_name, dest_rel in _ALWAYS_UPDATE:
+        src = effective_data / data_name
+        dest = target_dir / dest_rel
+        if dry_run:
+            if dest.exists():
+                if not _files_identical(src, dest):
+                    result["updated"].append(f"would update: {dest}")
+            else:
+                result["created"].append(f"would create: {dest}")
+        else:
+            existed = dest.exists()
+            try:
+                shutil.copy2(src, dest)
+                if existed:
+                    result["updated"].append(str(dest))
+                else:
+                    result["created"].append(str(dest))
+            except OSError as exc:
+                result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+
+    # Create-only files (never overwrite existing)
+    for rel_path in _NEVER_OVERWRITE:
+        dest = target_dir / rel_path
+        if dest.exists():
+            result["preserved"].append(str(dest))
+
+    # Update hooks (always overwrite)
+    hooks_source = effective_data / "hooks"
+    if hooks_source.is_dir():
+        for hook_file in sorted(hooks_source.iterdir()):
+            if hook_file.suffix == ".sh":
+                dest = target_dir / ".claude" / "hooks" / hook_file.name
+                if dry_run:
+                    if dest.exists():
+                        if not _files_identical(hook_file, dest):
+                            result["updated"].append(f"would update: {dest}")
+                    else:
+                        result["created"].append(f"would create: {dest}")
+                else:
+                    existed = dest.exists()
+                    try:
+                        shutil.copy2(hook_file, dest)
+                        if dest.suffix == ".sh":
+                            executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                            os.chmod(dest, os.stat(dest).st_mode | executable)
+                        if existed:
+                            result["updated"].append(str(dest))
+                        else:
+                            result["created"].append(str(dest))
+                    except OSError as exc:
+                        result["errors"].append(
+                            f"Failed to copy {hook_file} -> {dest}: {exc}"
+                        )
+
+    # Update skills (always overwrite)
+    skills_source = effective_data / "skills"
+    if skills_source.is_dir():
+        for skill_dir in sorted(skills_source.iterdir()):
+            if skill_dir.is_dir():
+                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
+                if not dry_run:
+                    _ensure_dir(dest_skill, result)
+                for skill_file in sorted(skill_dir.iterdir()):
+                    if skill_file.is_file():
+                        dest = dest_skill / skill_file.name
+                        if dry_run:
+                            if dest.exists():
+                                if not _files_identical(skill_file, dest):
+                                    result["updated"].append(f"would update: {dest}")
+                            else:
+                                result["created"].append(f"would create: {dest}")
+                        else:
+                            existed = dest.exists()
+                            try:
+                                shutil.copy2(skill_file, dest)
+                                if existed:
+                                    result["updated"].append(str(dest))
+                                else:
+                                    result["created"].append(str(dest))
+                            except OSError as exc:
+                                result["errors"].append(
+                                    f"Failed to copy {skill_file} -> {dest}: {exc}"
+                                )
+
+    # Update agents (always overwrite)
+    agents_source = effective_data / "agents"
+    if agents_source.is_dir():
+        for agent_file in sorted(agents_source.iterdir()):
+            if agent_file.suffix == ".md":
+                dest = target_dir / ".claude" / "agents" / agent_file.name
+                if dry_run:
+                    if dest.exists():
+                        if not _files_identical(agent_file, dest):
+                            result["updated"].append(f"would update: {dest}")
+                    else:
+                        result["created"].append(f"would create: {dest}")
+                else:
+                    existed = dest.exists()
+                    try:
+                        shutil.copy2(agent_file, dest)
+                        if existed:
+                            result["updated"].append(str(dest))
+                        else:
+                            result["created"].append(str(dest))
+                    except OSError as exc:
+                        result["errors"].append(
+                            f"Failed to copy {agent_file} -> {dest}: {exc}"
+                        )
+
+
+def _update_mcp_config(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update ``.mcp.json`` and ``CLAUDE.md`` configuration files.
+
+    Handles the smart-merge of ``.mcp.json`` (ensures the ``trw`` server entry
+    is present while preserving all other user-configured MCP servers) and the
+    smart-update of ``CLAUDE.md`` (replaces the TRW auto-generated section while
+    preserving all user-written content outside the markers).
+
+    Args:
+        target_dir: Root of the target git repository.
+        result: Mutable result dict accumulating ``updated``, ``created``,
+            ``preserved``, and ``errors`` entries.
+        dry_run: When ``True``, report what would change without writing files.
+    """
+    # Smart-merge .mcp.json (ensure trw entry, preserve user entries)
+    if not dry_run:
+        _merge_mcp_json(target_dir, result)
+    else:
+        mcp_path = target_dir / ".mcp.json"
+        if mcp_path.exists():
+            try:
+                data = json.loads(mcp_path.read_text(encoding="utf-8"))
+                servers = data.get("mcpServers", {})
+                if "trw" not in servers:
+                    result["updated"].append(f"would merge: {mcp_path} (add trw entry)")
+                else:
+                    result["preserved"].append(str(mcp_path))
+            except (json.JSONDecodeError, OSError):
+                result["updated"].append(f"would merge: {mcp_path}")
+        else:
+            result["created"].append(f"would create: {mcp_path}")
+
+    # Smart-update CLAUDE.md (preserve user sections, update trw block)
+    claude_md_path = target_dir / "CLAUDE.md"
+    if dry_run:
+        if claude_md_path.exists():
+            result["updated"].append(f"would update: {claude_md_path} (TRW section)")
+        else:
+            result["created"].append(f"would create: {claude_md_path}")
+    else:
+        if claude_md_path.exists():
+            _update_claude_md_trw_section(claude_md_path, result)
+        else:
+            try:
+                claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+                result["created"].append(str(claude_md_path))
+            except OSError as exc:
+                result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
+
+
+def _cleanup_stale_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    data_dir: Path | None,
+    dry_run: bool,
+) -> None:
+    """Remove stale and transient artifacts after a framework update.
+
+    Runs three cleanup passes in order:
+
+    1. PRD-FIX-032: Migrate non-prefixed predecessor skills/agents to their
+       ``trw-`` successors (safe: only removes old name when new name exists).
+    2. Remove stale bundled artifacts (hooks/skills/agents that were previously
+       managed by TRW but are no longer in the current bundle).
+    3. Remove transient files from ``.trw/context/`` (cache/session files that
+       should not persist across updates).
+
+    Args:
+        target_dir: Root of the target git repository.
+        result: Mutable result dict accumulating ``updated``, ``cleaned``,
+            and ``errors`` entries.
+        data_dir: Optional override for the bundled data directory; passed
+            through to ``_remove_stale_artifacts``.
+        dry_run: When ``True``, report what would change without deleting files.
+    """
+    # PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
+    _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run)
+
+    # Remove stale hooks/skills/agents no longer in bundled data
+    if not dry_run:
+        _remove_stale_artifacts(target_dir, result, data_dir)
+
+    # Clean transient artifacts from .trw/context/
+    _cleanup_context_transients(target_dir, result, dry_run=dry_run)
+
+
 def update_project(
     target_dir: Path,
     *,
@@ -296,160 +520,14 @@ def update_project(
         for rel_dir in _TRW_DIRS:
             _ensure_dir(target_dir / rel_dir, result)
 
-    # 2. Update framework files (always overwrite)
-    for data_name, dest_rel in _ALWAYS_UPDATE:
-        src = effective_data / data_name
-        dest = target_dir / dest_rel
-        if dry_run:
-            if dest.exists():
-                if not _files_identical(src, dest):
-                    result["updated"].append(f"would update: {dest}")
-            else:
-                result["created"].append(f"would create: {dest}")
-        else:
-            existed = dest.exists()
-            try:
-                shutil.copy2(src, dest)
-                if existed:
-                    result["updated"].append(str(dest))
-                else:
-                    result["created"].append(str(dest))
-            except OSError as exc:
-                result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+    # 2–6. Copy/update framework files, hooks, skills, agents
+    _update_framework_files(target_dir, effective_data, result, dry_run)
 
-    # 3. Create-only files (never overwrite existing)
-    for rel_path in _NEVER_OVERWRITE:
-        dest = target_dir / rel_path
-        if dest.exists():
-            result["preserved"].append(str(dest))
+    # 7–8. Update .mcp.json and CLAUDE.md configuration
+    _update_mcp_config(target_dir, result, dry_run)
 
-    # 4. Update hooks (always overwrite)
-    hooks_source = effective_data / "hooks"
-    if hooks_source.is_dir():
-        for hook_file in sorted(hooks_source.iterdir()):
-            if hook_file.suffix == ".sh":
-                dest = target_dir / ".claude" / "hooks" / hook_file.name
-                if dry_run:
-                    if dest.exists():
-                        if not _files_identical(hook_file, dest):
-                            result["updated"].append(f"would update: {dest}")
-                    else:
-                        result["created"].append(f"would create: {dest}")
-                else:
-                    existed = dest.exists()
-                    try:
-                        shutil.copy2(hook_file, dest)
-                        if dest.suffix == ".sh":
-                            executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-                            os.chmod(dest, os.stat(dest).st_mode | executable)
-                        if existed:
-                            result["updated"].append(str(dest))
-                        else:
-                            result["created"].append(str(dest))
-                    except OSError as exc:
-                        result["errors"].append(
-                            f"Failed to copy {hook_file} -> {dest}: {exc}"
-                        )
-
-    # 5. Update skills (always overwrite)
-    skills_source = effective_data / "skills"
-    if skills_source.is_dir():
-        for skill_dir in sorted(skills_source.iterdir()):
-            if skill_dir.is_dir():
-                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
-                if not dry_run:
-                    _ensure_dir(dest_skill, result)
-                for skill_file in sorted(skill_dir.iterdir()):
-                    if skill_file.is_file():
-                        dest = dest_skill / skill_file.name
-                        if dry_run:
-                            if dest.exists():
-                                if not _files_identical(skill_file, dest):
-                                    result["updated"].append(f"would update: {dest}")
-                            else:
-                                result["created"].append(f"would create: {dest}")
-                        else:
-                            existed = dest.exists()
-                            try:
-                                shutil.copy2(skill_file, dest)
-                                if existed:
-                                    result["updated"].append(str(dest))
-                                else:
-                                    result["created"].append(str(dest))
-                            except OSError as exc:
-                                result["errors"].append(
-                                    f"Failed to copy {skill_file} -> {dest}: {exc}"
-                                )
-
-    # 6. Update agents (always overwrite)
-    agents_source = effective_data / "agents"
-    if agents_source.is_dir():
-        for agent_file in sorted(agents_source.iterdir()):
-            if agent_file.suffix == ".md":
-                dest = target_dir / ".claude" / "agents" / agent_file.name
-                if dry_run:
-                    if dest.exists():
-                        if not _files_identical(agent_file, dest):
-                            result["updated"].append(f"would update: {dest}")
-                    else:
-                        result["created"].append(f"would create: {dest}")
-                else:
-                    existed = dest.exists()
-                    try:
-                        shutil.copy2(agent_file, dest)
-                        if existed:
-                            result["updated"].append(str(dest))
-                        else:
-                            result["created"].append(str(dest))
-                    except OSError as exc:
-                        result["errors"].append(
-                            f"Failed to copy {agent_file} -> {dest}: {exc}"
-                        )
-
-    # 7. Smart-merge .mcp.json (ensure trw entry, preserve user entries)
-    if not dry_run:
-        _merge_mcp_json(target_dir, result)
-    else:
-        mcp_path = target_dir / ".mcp.json"
-        if mcp_path.exists():
-            try:
-                data = json.loads(mcp_path.read_text(encoding="utf-8"))
-                servers = data.get("mcpServers", {})
-                if "trw" not in servers:
-                    result["updated"].append(f"would merge: {mcp_path} (add trw entry)")
-                else:
-                    result["preserved"].append(str(mcp_path))
-            except (json.JSONDecodeError, OSError):
-                result["updated"].append(f"would merge: {mcp_path}")
-        else:
-            result["created"].append(f"would create: {mcp_path}")
-
-    # 8. Smart-update CLAUDE.md (preserve user sections, update trw block)
-    claude_md_path = target_dir / "CLAUDE.md"
-    if dry_run:
-        if claude_md_path.exists():
-            result["updated"].append(f"would update: {claude_md_path} (TRW section)")
-        else:
-            result["created"].append(f"would create: {claude_md_path}")
-    else:
-        if claude_md_path.exists():
-            _update_claude_md_trw_section(claude_md_path, result)
-        else:
-            try:
-                claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
-                result["created"].append(str(claude_md_path))
-            except OSError as exc:
-                result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
-
-    # 9a. PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
-    _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run)
-
-    # 9b. Remove stale hooks/skills/agents no longer in bundled data
-    if not dry_run:
-        _remove_stale_artifacts(target_dir, result, data_dir)
-
-    # 9c. Clean transient artifacts from .trw/context/
-    _cleanup_context_transients(target_dir, result, dry_run=dry_run)
+    # 9a–9c. Remove stale and transient artifacts
+    _cleanup_stale_artifacts(target_dir, result, data_dir, dry_run)
 
     # 10. Check installed package version
     _check_package_version(result)

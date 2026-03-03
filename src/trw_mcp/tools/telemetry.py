@@ -13,7 +13,8 @@ from __future__ import annotations
 import functools
 import hashlib
 import time
-from typing import Any, Callable, ParamSpec, TypeVar
+from pathlib import Path
+from typing import Callable, ParamSpec, TypeVar
 
 import structlog
 
@@ -32,11 +33,11 @@ T = TypeVar("T")
 
 # --- Run directory cache (RISK-002: avoid N+1 disk reads) ---
 
-_cached_run_dir: tuple[float, Any] = (0.0, None)
+_cached_run_dir: tuple[float, Path | None] = (0.0, None)
 _RUN_DIR_CACHE_TTL: float = 5.0
 
 
-def _get_cached_run_dir() -> Any:
+def _get_cached_run_dir() -> Path | None:
     """Return cached active run directory, refreshing if TTL expired."""
     global _cached_run_dir  # noqa: PLW0603
     now = time.monotonic()
@@ -97,8 +98,8 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                         func.__name__, args, kwargs, duration_ms,
                         result_val if success else None, success,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
     return wrapper
 
@@ -132,16 +133,16 @@ def _write_tool_event(
         _writer.ensure_dir(context_dir)
         fallback = context_dir / "session-events.jsonl"
         _events.log_event(fallback, "tool_invocation", event_data)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
 
 def _write_telemetry_record(
     tool_name: str,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
     duration_ms: float,
-    result: Any,
+    result: object,
     success: bool,
 ) -> None:
     """Write detailed telemetry record to .trw/logs/tool-telemetry.jsonl (FR04)."""

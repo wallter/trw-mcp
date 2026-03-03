@@ -656,24 +656,34 @@ def _run_dep_audit(
     return result
 
 
+def _cache_to_context(
+    trw_dir: Path,
+    filename: str,
+    data: dict[str, object],
+) -> Path:
+    """Write a result dict to .trw/context/<filename>.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        filename: YAML filename within context/.
+        data: Dict to serialize.
+
+    Returns:
+        Path to the written file.
+    """
+    context_dir = trw_dir / "context"
+    _writer.ensure_dir(context_dir)
+    cache_path = context_dir / filename
+    _writer.write_yaml(cache_path, data)
+    return cache_path
+
+
 def _cache_dep_audit(
     trw_dir: Path,
     result: dict[str, object],
 ) -> Path:
-    """Write dependency audit results to .trw/context/dep-audit.yaml.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        result: Dependency audit result dict.
-
-    Returns:
-        Path to the cached YAML file.
-    """
-    context_dir = trw_dir / "context"
-    _writer.ensure_dir(context_dir)
-    cache_path = context_dir / "dep-audit.yaml"
-    _writer.write_yaml(cache_path, result)
-    return cache_path
+    """Write dependency audit results to .trw/context/dep-audit.yaml."""
+    return _cache_to_context(trw_dir, "dep-audit.yaml", result)
 
 
 def _run_api_fuzz(
@@ -758,20 +768,8 @@ def _cache_api_fuzz(
     trw_dir: Path,
     result: dict[str, object],
 ) -> Path:
-    """Write API fuzz results to .trw/context/api-fuzz-status.yaml.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        result: API fuzz result dict.
-
-    Returns:
-        Path to the cached YAML file.
-    """
-    context_dir = trw_dir / "context"
-    _writer.ensure_dir(context_dir)
-    cache_path = context_dir / "api-fuzz-status.yaml"
-    _writer.write_yaml(cache_path, result)
-    return cache_path
+    """Write API fuzz results to .trw/context/api-fuzz-status.yaml."""
+    return _cache_to_context(trw_dir, "api-fuzz-status.yaml", result)
 
 
 def _collect_failures(result: dict[str, object]) -> list[str]:
@@ -904,9 +902,18 @@ def register_build_tools(server: FastMCP) -> None:
             600,
         )
 
+        _VALID_SCOPES = {"full", "pytest", "mypy", "quick", "mutations", "deps", "api"}
+        if scope not in _VALID_SCOPES:
+            return {
+                "status": "error",
+                "reason": f"Invalid scope '{scope}'. Valid scopes: {sorted(_VALID_SCOPES)}",
+            }
+
         # --- Standalone scopes (no pytest/mypy) ---
 
         if scope == "mutations":
+            if not _config.mutation_enabled:
+                return {"status": "skipped", "reason": "mutation_enabled is False"}
             from trw_mcp.tools.mutations import (
                 cache_mutation_status,
                 run_mutation_check,
@@ -917,11 +924,15 @@ def register_build_tools(server: FastMCP) -> None:
             return mut_result
 
         if scope == "deps":
+            if not _config.dep_audit_enabled:
+                return {"status": "skipped", "reason": "dep_audit_enabled is False"}
             dep_result = _run_dep_audit(project_root, _config)
             _cache_dep_audit(trw_dir, dep_result)
             return dep_result
 
         if scope == "api":
+            if not _config.api_fuzz_enabled:
+                return {"status": "skipped", "reason": "api_fuzz_enabled is False"}
             fuzz_result = _run_api_fuzz(project_root, _config)
             _cache_api_fuzz(trw_dir, fuzz_result)
             return fuzz_result

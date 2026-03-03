@@ -7,6 +7,7 @@ Gracefully degrades to no-op when embeddings are unavailable.
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -81,6 +82,7 @@ def check_duplicate(
         DedupResult with action ("skip", "merge", or "store"), existing_id,
         and similarity score.
     """
+    _t0 = time.monotonic()
     cfg = config or TRWConfig()
 
     # Respect embeddings_enabled config — dedup requires embeddings
@@ -142,10 +144,19 @@ def check_duplicate(
 
     # Determine action based on thresholds
     if best_id is not None and best_similarity >= skip_threshold:
-        return DedupResult("skip", best_id, best_similarity)
-    if best_id is not None and best_similarity >= merge_threshold:
-        return DedupResult("merge", best_id, best_similarity)
-    return DedupResult("store", None, best_similarity)
+        result = DedupResult("skip", best_id, best_similarity)
+    elif best_id is not None and best_similarity >= merge_threshold:
+        result = DedupResult("merge", best_id, best_similarity)
+    else:
+        result = DedupResult("store", None, best_similarity)
+
+    logger.debug(
+        "dedup_check_complete",
+        duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+        action=result.action,
+        similarity=round(result.similarity, 4),
+    )
+    return result
 
 
 def merge_entries(
@@ -288,6 +299,7 @@ def batch_dedup(
     Returns:
         Dict with status, entries_scanned, entries_merged, entries_skipped.
     """
+    _t0 = time.monotonic()
     cfg = config or get_config()
 
     # Respect embeddings_enabled config — batch dedup requires embeddings
@@ -371,6 +383,13 @@ def batch_dedup(
         "entries_unchanged": len(active_entries) - len(skipped_ids),
     }
     writer.write_yaml(marker, marker_data)
+
+    logger.debug(
+        "batch_dedup_complete",
+        duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+        merged=merged_count,
+        skipped=len(skipped_ids),
+    )
 
     return {
         "status": "completed",

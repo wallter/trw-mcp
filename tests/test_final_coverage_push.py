@@ -106,11 +106,6 @@ class TestCeremonySessionStartFailurePaths:
             "trw_mcp.state.memory_adapter.recall_learnings",
             return_value=[],
         ), patch(
-            "trw_mcp.tools.ceremony.log_recall_receipt",
-        ), patch(
-            "trw_mcp.tools.ceremony.rank_by_utility",
-            return_value=[],
-        ), patch(
             "trw_mcp.tools.ceremony.find_active_run",
             side_effect=OSError("permission denied"),
         ):
@@ -305,7 +300,7 @@ class TestLearningExceptionPaths:
                 "trw_mcp.tools.learning.list_active_learnings",
                 return_value=[{"id": "L-abc", "impact": 0.8}],
             ), patch(
-                "trw_mcp.tools.learning.enforce_tier_distribution",
+                "trw_mcp.scoring.enforce_tier_distribution",
                 side_effect=RuntimeError("distribution exploded"),
             ):
                 result = tool(
@@ -1243,7 +1238,7 @@ class TestLearningDistributionSkipsInactiveEntries:
                 "trw_mcp.tools.learning.list_active_learnings",
                 return_value=[{"id": "L-active", "impact": 0.5}],  # resolved excluded
             ), patch(
-                "trw_mcp.tools.learning.enforce_tier_distribution",
+                "trw_mcp.scoring.enforce_tier_distribution",
                 return_value=[],  # No demotions
             ):
                 result = tool(

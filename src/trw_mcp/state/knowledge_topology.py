@@ -101,21 +101,20 @@ def build_cooccurrence_matrix(
     return matrix
 
 
-def form_jaccard_clusters(
+def _assign_entries_to_clusters(
     entries: list[MemoryEntry],
-    threshold: float,
-    min_size: int,
-) -> list[dict[str, object]]:
-    """Cluster entries by Jaccard similarity on their tag sets.
+    similarity_threshold: float,
+) -> list[dict[str, Any]]:
+    """Assign each entry to its closest existing cluster or create a new one.
 
-    For each entry, computes Jaccard similarity of its tag set against
-    existing cluster representative tag sets and assigns it to the highest-
-    similarity cluster above *threshold*. Creates a new seed cluster when
-    no match is found.
+    Iterates over *entries* and computes Jaccard similarity against each
+    existing cluster's representative tag set. Entries with no tags are
+    skipped. When the best similarity meets *similarity_threshold* the entry
+    is added to that cluster (and the cluster's tag set is widened). Otherwise
+    a new seed cluster is created.
 
-    After assignment, clusters smaller than *min_size* are merged into the
-    closest cluster by Jaccard. Clusters that still do not meet *min_size*
-    after the merge attempt are dropped.
+    Returns the raw internal cluster list (each element has ``tag_set`` and
+    ``entry_list`` keys).
     """
     clusters: list[dict[str, Any]] = []
 
@@ -134,7 +133,7 @@ def form_jaccard_clusters(
                 best_sim = sim
                 best_idx = idx
 
-        if best_sim >= threshold and best_idx >= 0:
+        if best_sim >= similarity_threshold and best_idx >= 0:
             clusters[best_idx]["entry_list"].append(entry)
             clusters[best_idx]["tag_set"] |= entry_tags
         else:
@@ -143,7 +142,20 @@ def form_jaccard_clusters(
                 "entry_list": [entry],
             })
 
-    # Merge undersized clusters into closest neighbour
+    return clusters
+
+
+def _merge_small_clusters(
+    clusters: list[dict[str, Any]],
+    min_size: int,
+) -> list[dict[str, Any]]:
+    """Merge undersized clusters into their closest neighbour, then drop stragglers.
+
+    Repeatedly scans *clusters* in reverse order. When a cluster has fewer
+    than *min_size* entries it is merged into the cluster with the highest
+    Jaccard similarity and the scan restarts. After no more merges are
+    possible, clusters that still fall below *min_size* are removed.
+    """
     merged = True
     while merged:
         merged = False
@@ -167,7 +179,27 @@ def form_jaccard_clusters(
                 break  # Restart after structural change
 
     # Drop clusters that still don't meet min_size
-    clusters = [c for c in clusters if len(c["entry_list"]) >= min_size]
+    return [c for c in clusters if len(c["entry_list"]) >= min_size]
+
+
+def form_jaccard_clusters(
+    entries: list[MemoryEntry],
+    threshold: float,
+    min_size: int,
+) -> list[dict[str, object]]:
+    """Cluster entries by Jaccard similarity on their tag sets.
+
+    For each entry, computes Jaccard similarity of its tag set against
+    existing cluster representative tag sets and assigns it to the highest-
+    similarity cluster above *threshold*. Creates a new seed cluster when
+    no match is found.
+
+    After assignment, clusters smaller than *min_size* are merged into the
+    closest cluster by Jaccard. Clusters that still do not meet *min_size*
+    after the merge attempt are dropped.
+    """
+    clusters = _assign_entries_to_clusters(entries, threshold)
+    clusters = _merge_small_clusters(clusters, min_size)
 
     # Build output format
     result: list[dict[str, object]] = []
@@ -281,6 +313,87 @@ def render_topic_document(cluster: dict[str, object]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Orchestrator helpers
+# ---------------------------------------------------------------------------
+
+
+def _render_cluster_documents(
+    clusters: list[dict[str, object]],
+    entries_map: dict[str, object],  # unused — reserved for future lookup use
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Render a Markdown document for each cluster.
+
+    Returns ``(documents, errors)`` where *documents* is a list of dicts with
+    ``slug`` and ``content`` keys, and *errors* is a list of error strings for
+    any clusters that raised during rendering.
+    """
+    documents: list[dict[str, str]] = []
+    errors: list[str] = []
+    for cluster in clusters:
+        slug = str(cluster.get("slug", "topic"))
+        try:
+            rendered = render_topic_document(cluster)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Cluster '{slug}': {exc}")
+            logger.warning(
+                "knowledge_cluster_render_failed",
+                cluster_slug=slug,
+                error=str(exc),
+            )
+            continue
+        documents.append({"slug": slug, "content": rendered})
+    return documents, errors
+
+
+def _write_knowledge_files(
+    documents: list[dict[str, str]],
+    knowledge_dir: Path,
+    writer: FileStateWriter,
+) -> tuple[list[str], int, int, list[str]]:
+    """Write rendered topic documents to *knowledge_dir* atomically.
+
+    For each document, reads any existing file to preserve manual markers
+    before writing. Accumulates per-cluster errors without aborting the loop.
+
+    Returns ``(cluster_slugs, topics_generated, entries_clustered, errors)``
+    where ``cluster_slugs`` is the list of slug keys written (used later for
+    ``clusters.json``).
+
+    Note: ``entries_clustered`` is not computable here because the document
+    dicts do not carry entry counts. Callers should derive it from the original
+    cluster list.
+    """
+    topics_generated = 0
+    errors: list[str] = []
+    slugs_written: list[str] = []
+
+    for doc in documents:
+        slug = doc["slug"]
+        rendered = doc["content"]
+        try:
+            topic_path = knowledge_dir / f"{slug}.md"
+            if topic_path.exists():
+                try:
+                    existing = topic_path.read_text(encoding="utf-8")
+                    rendered = preserve_manual_markers(existing, rendered)
+                except OSError:
+                    pass  # Best-effort: continue with fresh render
+
+            writer.write_text(topic_path, rendered)
+            topics_generated += 1
+            slugs_written.append(slug)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Cluster '{slug}': {exc}")
+            logger.warning(
+                "knowledge_cluster_render_failed",
+                cluster_slug=slug,
+                error=str(exc),
+            )
+
+    return slugs_written, topics_generated, 0, errors
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -346,44 +459,35 @@ def execute_knowledge_sync(
     output_dir = trw_dir / config.knowledge_output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    topics_generated = 0
-    entries_clustered = 0
-    errors: list[str] = []
-    cluster_map: dict[str, list[str]] = {}
+    # Build entry-id lookup before rendering (passed to renderer for future use)
+    entries_map: dict[str, object] = {
+        str(c.get("slug", "")): c.get("entry_ids", []) for c in clusters
+    }
 
+    documents, render_errors = _render_cluster_documents(clusters, entries_map)
+    slugs_written, topics_generated, _, write_errors = _write_knowledge_files(
+        documents, output_dir, writer
+    )
+
+    # Tally entries clustered and build cluster_map from original cluster list
+    entries_clustered = 0
+    errors: list[str] = list(render_errors)
+    cluster_map: dict[str, list[str]] = {}
+    written_set = set(slugs_written)
     for cluster in clusters:
         slug = str(cluster.get("slug", "topic"))
         entry_ids: list[str] = cast(list[str], cluster.get("entry_ids", []))
-
-        try:
-            rendered = render_topic_document(cluster)
-
-            topic_path = output_dir / f"{slug}.md"
-            if topic_path.exists():
-                try:
-                    existing = topic_path.read_text(encoding="utf-8")
-                    rendered = preserve_manual_markers(existing, rendered)
-                except OSError:
-                    pass  # Best-effort: continue with fresh render
-
-            writer.write_text(topic_path, rendered)
-            topics_generated += 1
+        if slug in written_set:
             entries_clustered += len(entry_ids)
             cluster_map[slug] = entry_ids
-
             logger.info(
                 "knowledge_topic_written",
                 slug=slug,
                 entry_count=len(entry_ids),
                 avg_importance=cluster.get("avg_importance", 0.0),
             )
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"Cluster '{slug}': {exc}")
-            logger.warning(
-                "knowledge_cluster_render_failed",
-                cluster_slug=slug,
-                error=str(exc),
-            )
+
+    errors.extend(write_errors)
 
     # Step 5: write clusters.json atomically
     clusters_data: dict[str, object] = {
@@ -398,7 +502,7 @@ def execute_knowledge_sync(
             with open(fd, "w", encoding="utf-8") as f:
                 json.dump(clusters_data, f, indent=2)
             Path(tmp_path_str).replace(clusters_path)
-        except BaseException:
+        except Exception:  # noqa: BLE001
             try:
                 Path(tmp_path_str).unlink(missing_ok=True)
             except OSError:

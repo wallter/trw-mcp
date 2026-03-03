@@ -2,6 +2,47 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.8.0] — 2026-03-02
+
+### Added — Codebase Health & Architecture Improvements
+
+- **7 new source modules** extracted for single-responsibility:
+  - `state/phase.py` — phase validation and transition logic
+  - `state/_phase_validators.py` — per-phase validation rules
+  - `state/_helpers.py` — shared state utilities
+  - `tools/_ceremony_helpers.py` — ceremony tool pure functions
+  - `tools/_learning_helpers.py` — learning tool pure functions with `LearningParams` dataclass
+  - `tools/_review_helpers.py` — review tool pure functions
+  - `tools/mutations.py` — mutation testing, dependency audit, and API fuzz scopes
+
+- **15 new test files** (+470 tests) covering extracted modules and edge paths:
+  - `test_phase.py`, `test_phase_validators.py`, `test_state_helpers.py`
+  - `test_ceremony_helpers.py`, `test_learning_helpers.py`, `test_review_helpers.py`
+  - `test_mutations.py`, `test_build_edge_paths.py`, `test_review_modes.py`
+  - `test_analytics_coverage_v2.py`, `test_tiers_coverage.py`, `test_recall_search.py`
+  - `test_scoring_properties.py` (property-based Hypothesis tests)
+  - `test_memory_adapter_coverage.py`, `test_release_builder.py`
+
+- **Scope validation in `trw_build_check`** — rejects invalid scope strings early with `_VALID_SCOPES` set
+- **Feature flag guards** — standalone scopes (`mutations`, `deps`, `api`) check config enablement before importing
+- **`_cache_to_context` DRY helper** — consolidates 3 identical cache-write patterns in `build.py`
+
+### Changed
+
+- **`LearningParams` dataclass** — reduces `check_and_handle_dedup` signature from 13 to 5 parameters
+- **`slots=True`** added to 4 dataclasses: `LearningParams`, `RiskProfile`, `PRDEntry`, `_CheckpointState`
+- **`build_passed` None preservation** — `analytics_report.py` guards `if "tests_passed" in evt:` to avoid converting absent data to `False`
+- **Structured logging** — replaced 6 silent `except: pass` blocks with `logger.debug()` calls in `phase.py`, `analytics_report.py`, `consolidation.py`
+- **Python 3.14 prep** — `tarfile.extractall(filter="data")` in `auto_upgrade.py`
+- **Test import cleanup** — removed unused imports from 7 test files
+
+### Stats
+- 3553 tests passing (up from ~2912), mypy --strict clean on 77 files
+- 98.93% coverage (105 uncovered lines / 9791 statements)
+- 47 files changed, +2509 / -1368 lines (source + tests only)
+
+---
+
 ## [0.7.0] — 2026-03-02
 
 ### Added — Sprint 42: Adaptive Ceremony & Context Optimization (PRD-CORE-060, 061, 062, 063)

@@ -7,7 +7,7 @@ installs them. Fail-open: network errors never block session start.
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -15,7 +15,7 @@ from typing import Any
 
 from trw_mcp.models.config import get_config
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Cache duration: check at most once per 24h
 _VERSION_CACHE_HOURS = 24
@@ -75,7 +75,7 @@ def check_for_update() -> dict[str, object]:
                         "advisory": advisory,
                     }
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError, KeyError):
-            logger.debug("Version check failed for %s — trying next", base_url)
+            logger.debug("version_check_failed", base_url=base_url)
 
     return {
         "available": False,
@@ -136,9 +136,9 @@ def download_release_artifact(
             actual = h.hexdigest()
             if actual != expected_checksum:
                 logger.warning(
-                    "Checksum mismatch: expected %s, got %s",
-                    expected_checksum,
-                    actual,
+                    "checksum_mismatch",
+                    expected=expected_checksum,
+                    actual=actual,
                 )
                 return None
 
@@ -147,19 +147,19 @@ def download_release_artifact(
             # Security: prevent path traversal
             for member in tar.getmembers():
                 if member.name.startswith("/") or ".." in member.name:
-                    logger.warning("Suspicious archive member: %s", member.name)
+                    logger.warning("suspicious_archive_member", member_name=member.name)
                     return None
-            tar.extractall(tmp_dir)
+            tar.extractall(tmp_dir, filter="data")
 
         data_dir = tmp_dir / "data"
         if data_dir.is_dir():
             return data_dir
 
-        logger.warning("Extracted archive does not contain data/ directory")
+        logger.warning("archive_missing_data_dir")
         return None
 
     except Exception:
-        logger.debug("Failed to download/verify release artifact", exc_info=True)
+        logger.debug("artifact_download_failed", exc_info=True)
         return None
 
 
@@ -255,7 +255,7 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
                 pass
 
     except Exception:
-        logger.debug("Auto-upgrade failed", exc_info=True)
+        logger.debug("auto_upgrade_failed", exc_info=True)
         return {
             "applied": False,
             "version": str(update_info.get("latest", "")),

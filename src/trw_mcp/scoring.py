@@ -36,6 +36,18 @@ _config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 
+# --- Scoring constants ---
+
+_LN2: float = math.log(2)  # ≈0.693 — Ebbinghaus decay exponent
+_DAYS_PER_YEAR: int = 365
+_TIME_DECAY_FLOOR: float = 0.3  # Minimum retention for time decay
+_TIME_DECAY_SLOPE: float = 0.3  # Linear decay factor per year
+_IMPACT_DECAY_FLOOR: float = 0.1  # Minimum impact after exponential decay
+
+# Tier boundary thresholds for enforce_tier_distribution
+_TIER_HIGH_CEILING: float = 0.89  # Top of high tier (demotion target)
+_TIER_MEDIUM_CEILING: float = 0.69  # Top of medium tier (demotion target)
+
 # --- Field extraction helpers ---
 
 
@@ -442,7 +454,7 @@ def compute_utility_score(
         effective_q = q_value
 
     # Ebbinghaus decay rate from half-life: lambda = ln(2) / half_life
-    decay_rate = math.log(2) / max(half_life_days, 0.1)
+    decay_rate = _LN2 / max(half_life_days, 0.1)
 
     # Sub-linear recurrence strength: n^beta (minimum 1)
     recurrence_strength = max(1.0, recurrence_count) ** use_exponent
@@ -724,8 +736,8 @@ def enforce_tier_distribution(
         # Sort ascending by score to find lowest
         critical_sorted = sorted(critical, key=lambda x: x[1])
         victim_id, victim_score = critical_sorted[0]
-        # Demote to top of high tier (0.89)
-        new_score = round(min(0.89, max(0.7, victim_score - 0.1)), 4)
+        # Demote to top of high tier
+        new_score = round(min(_TIER_HIGH_CEILING, max(0.7, victim_score - 0.1)), 4)
         demotions.append((victim_id, new_score))
         logger.info(
             "tier_demotion",
@@ -750,7 +762,7 @@ def enforce_tier_distribution(
         )
         if high_sorted:
             victim_id, victim_score = high_sorted[0]
-            new_score = round(min(0.69, max(0.4, victim_score - 0.1)), 4)
+            new_score = round(min(_TIER_MEDIUM_CEILING, max(0.4, victim_score - 0.1)), 4)
             demotions.append((victim_id, new_score))
             logger.info(
                 "tier_demotion",
@@ -788,7 +800,7 @@ def apply_time_decay(impact: float, created_at: datetime) -> float:
     now = datetime.now(timezone.utc)
     created_utc = _ensure_utc(created_at)
     days = max(0, (now - created_utc).days)
-    decay_factor = max(0.3, 1.0 - (days / 365) * 0.3)
+    decay_factor = max(_TIME_DECAY_FLOOR, 1.0 - (days / _DAYS_PER_YEAR) * _TIME_DECAY_SLOPE)
     return _clamp01(impact * decay_factor)
 
 
@@ -802,7 +814,7 @@ def apply_impact_decay(
     days since that date.  If days_since exceeds ``half_life_days``, the impact
     is decayed using an exponential formula:
 
-        new_impact = impact * exp(-0.693 * (days_since - half_life_days) / half_life_days)
+        new_impact = impact * exp(-ln(2) * (days_since - half_life_days) / half_life_days)
 
     The result is clamped to [0.1, 1.0].  This is a batch operation intended
     to be called during ``trw_deliver``.
@@ -844,11 +856,11 @@ def apply_impact_decay(
 
         # Exponential decay: exp(-ln(2) * excess_days / half_life)
         excess = days_since - effective_half_life
-        decay_factor = math.exp(-0.693 * excess / max(effective_half_life, 1))
+        decay_factor = math.exp(-_LN2 * excess / max(effective_half_life, 1))
         new_impact = impact * decay_factor
 
-        # Clamp to [0.1, 1.0]
-        new_impact = max(0.1, min(1.0, new_impact))
+        # Clamp to [_IMPACT_DECAY_FLOOR, 1.0]
+        new_impact = max(_IMPACT_DECAY_FLOOR, min(1.0, new_impact))
         entry["impact"] = round(new_impact, 4)
 
     return entries

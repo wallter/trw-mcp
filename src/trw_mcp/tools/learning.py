@@ -16,7 +16,7 @@ from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
-from trw_mcp.scoring import enforce_tier_distribution, rank_by_utility
+from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.analytics import (
     generate_learning_id,
@@ -30,6 +30,13 @@ from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
     update_access_tracking as adapter_update_access,
     update_learning as adapter_update,
+)
+from trw_mcp.tools._learning_helpers import (
+    LearningParams,
+    calibrate_impact,
+    check_and_handle_dedup,
+    check_soft_cap,
+    enforce_distribution,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import (
@@ -96,119 +103,42 @@ def register_learning_tools(server: FastMCP) -> None:
             except Exception:  # noqa: BLE001
                 pass  # Migration is best-effort
 
-        # Bayesian calibration of impact score using recall tracking stats (PRD-CORE-034)
-        calibrated_impact = impact
-        try:
-            from trw_mcp.scoring import bayesian_calibrate, compute_calibration_accuracy
-            from trw_mcp.state.recall_tracking import get_recall_stats
-            recall_stats = get_recall_stats()
-            user_weight = compute_calibration_accuracy(recall_stats)
-            calibrated_impact = bayesian_calibrate(
-                user_impact=impact,
-                user_weight=user_weight,
-            )
-        except Exception:
-            pass  # Fail-open: calibration failure falls back to raw impact
+        # Bayesian calibration of impact score (PRD-CORE-034)
+        calibrated_impact = calibrate_impact(impact, _config)
 
-        # Fetch active learnings once — reused by soft-cap check and forced distribution
+        # Fetch active learnings once — reused by soft-cap and distribution
         all_active: list[dict[str, object]] = []
         try:
             all_active = list_active_learnings(trw_dir)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fail-open: listing failure must not block learning recording
 
         # Forced distribution soft-cap check (PRD-CORE-034-FR01)
-        distribution_soft_cap_warning: str | None = None
-        try:
-            high_count = sum(1 for e in all_active if float(str(e.get("impact", 0.5))) >= 0.8)
-            total = len(all_active)
-            new_total = total + 1
-            new_high = high_count + (1 if calibrated_impact >= 0.8 else 0)
-            threshold_pct = _config.impact_high_threshold_pct
-            threshold_frac = threshold_pct / 100.0
-
-            if new_total >= 5 and new_total > 0 and (new_high / new_total) > threshold_frac:
-                adjusted = calibrated_impact
-                while adjusted >= 0.8 and new_total > 0 and (new_high / new_total) > threshold_frac:
-                    adjusted *= 0.9
-                    if adjusted < 0.8:
-                        new_high = high_count
-                    if adjusted < 0.5:
-                        adjusted = 0.5
-                        break
-                if adjusted != calibrated_impact:
-                    distribution_soft_cap_warning = (
-                        f"Impact soft-capped from {calibrated_impact:.2f} to {adjusted:.2f}: "
-                        f"high-impact entries ({high_count}/{total} active) would exceed "
-                        f"{threshold_pct}% threshold."
-                    )
-                    calibrated_impact = round(adjusted, 4)
-        except Exception:
-            pass  # Fail-open: distribution check must not block learning recording
+        calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
+            calibrated_impact, all_active, _config,
+        )
 
         learning_id = generate_learning_id()
 
         # Semantic dedup check (PRD-CORE-042) — must run BEFORE storing
-        if _config.dedup_enabled:
-            try:
-                from trw_mcp.state.dedup import check_duplicate, merge_entries
-                dedup_result = check_duplicate(
-                    summary, detail, entries_dir, _reader, config=_config,
-                )
-
-                if dedup_result.action == "skip":
-                    logger.info(
-                        "learning_dedup_skipped",
-                        new_id=learning_id,
-                        existing_id=dedup_result.existing_id,
-                        similarity=dedup_result.similarity,
-                    )
-                    return {
-                        "status": "skipped",
-                        "learning_id": learning_id,
-                        "duplicate_of": dedup_result.existing_id or "",
-                        "similarity": round(dedup_result.similarity, 3),
-                        "message": f"Near-identical entry already exists: {dedup_result.existing_id}",
-                    }
-                elif dedup_result.action == "merge":
-                    # Find existing file and merge
-                    for yaml_file in sorted(entries_dir.glob("*.yaml")):
-                        if yaml_file.name == "index.yaml":
-                            continue
-                        try:
-                            data = _reader.read_yaml(yaml_file)
-                            if str(data.get("id", "")) == dedup_result.existing_id:
-                                from trw_mcp.state.persistence import model_to_dict
-                                from trw_mcp.models.learning import LearningEntry
-                                entry = LearningEntry(
-                                    id=learning_id,
-                                    summary=summary,
-                                    detail=detail,
-                                    tags=tags or [],
-                                    evidence=evidence or [],
-                                    impact=calibrated_impact,
-                                    shard_id=shard_id,
-                                    source_type=source_type,
-                                    source_identity=source_identity,
-                                )
-                                merge_entries(yaml_file, model_to_dict(entry), _reader, _writer)
-                                logger.info(
-                                    "learning_dedup_merged",
-                                    new_id=learning_id,
-                                    existing_id=dedup_result.existing_id,
-                                    similarity=dedup_result.similarity,
-                                )
-                                return {
-                                    "status": "merged",
-                                    "merged_into": dedup_result.existing_id or "",
-                                    "new_id": learning_id,
-                                    "similarity": str(round(dedup_result.similarity, 3)),
-                                    "message": f"Merged into existing entry: {dedup_result.existing_id}",
-                                }
-                        except Exception:  # noqa: BLE001
-                            continue
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("dedup_check_failed", error=str(exc))
+        safe_tags = tags or []
+        safe_evidence = evidence or []
+        dedup_result = check_and_handle_dedup(
+            LearningParams(
+                summary=summary,
+                detail=detail,
+                learning_id=learning_id,
+                tags=safe_tags,
+                evidence=safe_evidence,
+                impact=calibrated_impact,
+                shard_id=shard_id,
+                source_type=source_type,
+                source_identity=source_identity,
+            ),
+            entries_dir, _reader, _writer, _config,
+        )
+        if dedup_result is not None:
+            return dedup_result
 
         # Store via SQLite adapter (primary path) — after dedup to avoid orphans
         adapter_store(
@@ -216,8 +146,8 @@ def register_learning_tools(server: FastMCP) -> None:
             learning_id=learning_id,
             summary=summary,
             detail=detail,
-            tags=tags or [],
-            evidence=evidence or [],
+            tags=safe_tags,
+            evidence=safe_evidence,
             impact=calibrated_impact,
             shard_id=shard_id,
             source_type=source_type,
@@ -231,8 +161,8 @@ def register_learning_tools(server: FastMCP) -> None:
                 id=learning_id,
                 summary=summary,
                 detail=detail,
-                tags=tags or [],
-                evidence=evidence or [],
+                tags=safe_tags,
+                evidence=safe_evidence,
                 impact=calibrated_impact,
                 shard_id=shard_id,
                 source_type=source_type,
@@ -244,37 +174,10 @@ def register_learning_tools(server: FastMCP) -> None:
             entry_path = entries_dir / f"{learning_id}.yaml"
 
         # Forced distribution enforcement (PRD-CORE-034)
-        distribution_warning = ""
-        demoted_ids: list[str] = []
-        if _config.impact_forced_distribution_enabled and impact >= 0.7:
-            try:
-                # Append newly stored entry so forced distribution sees it
-                all_active.append({"id": learning_id, "impact": calibrated_impact})
-                all_entries: list[tuple[str, float]] = []
-                for e in all_active:
-                    lid = str(e.get("id", ""))
-                    sc = float(str(e.get("impact", 0.5)))
-                    if lid:
-                        all_entries.append((lid, sc))
-
-                demotions = enforce_tier_distribution(all_entries)
-                for demoted_id, new_score in demotions:
-                    demoted_ids.append(demoted_id)
-                    try:
-                        adapter_update(trw_dir, demoted_id, impact=new_score)
-                    except Exception:
-                        pass
-
-                if demotions:
-                    tier_name = "critical" if impact >= 0.9 else "high"
-                    distribution_warning = (
-                        f"Impact tier '{tier_name}' exceeded cap. "
-                        f"Forced distribution: demoted {len(demotions)} entr"
-                        f"{'y' if len(demotions) == 1 else 'ies'} to maintain tier caps. "
-                        f"IDs: {[d[0] for d in demotions]}"
-                    )
-            except Exception:
-                pass  # Fail-open: distribution enforcement must not block learning recording
+        distribution_warning, _demoted_ids = enforce_distribution(
+            impact, calibrated_impact, learning_id,
+            all_active, trw_dir, _config,
+        )
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
         result_dict: dict[str, object] = {

@@ -42,29 +42,45 @@ def _new_yaml() -> YAML:
 class StateReader(Protocol):
     """Read framework state from persistent storage."""
 
-    def read_yaml(self, path: Path) -> dict[str, object]: ...
+    def read_yaml(self, path: Path) -> dict[str, object]:
+        """Read and parse a YAML file, returning its top-level mapping."""
+        ...
 
-    def read_jsonl(self, path: Path) -> list[dict[str, object]]: ...
+    def read_jsonl(self, path: Path) -> list[dict[str, object]]:
+        """Read a JSONL file, returning a list of parsed records."""
+        ...
 
-    def exists(self, path: Path) -> bool: ...
+    def exists(self, path: Path) -> bool:
+        """Check whether a file exists at the given path."""
+        ...
 
 
 class StateWriter(Protocol):
     """Write framework state to persistent storage."""
 
-    def write_yaml(self, path: Path, data: dict[str, object]) -> None: ...
+    def write_yaml(self, path: Path, data: dict[str, object]) -> None:
+        """Atomically write *data* as YAML to *path*."""
+        ...
 
-    def append_jsonl(self, path: Path, record: dict[str, object]) -> None: ...
+    def append_jsonl(self, path: Path, record: dict[str, object]) -> None:
+        """Append a single JSON record as a new line in *path*."""
+        ...
 
-    def write_text(self, path: Path, content: str) -> None: ...
+    def write_text(self, path: Path, content: str) -> None:
+        """Atomically write *content* as UTF-8 text to *path*."""
+        ...
 
-    def ensure_dir(self, path: Path) -> None: ...
+    def ensure_dir(self, path: Path) -> None:
+        """Create *path* and any missing parents if they do not exist."""
+        ...
 
 
 class EventLogger(Protocol):
     """Append structured events to event stream."""
 
-    def log_event(self, events_path: Path, event_type: str, data: dict[str, object]) -> None: ...
+    def log_event(self, events_path: Path, event_type: str, data: dict[str, object]) -> None:
+        """Append a timestamped event record to the JSONL stream at *events_path*."""
+        ...
 
 
 def json_serializer(obj: object) -> str:
@@ -287,7 +303,7 @@ class FileStateWriter:
                     fh.write(content)
                     fh.flush()
                 tmp_path.rename(path)
-            except BaseException:
+            except Exception:  # noqa: BLE001
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:

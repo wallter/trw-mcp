@@ -658,15 +658,13 @@ class TestCeremonyRendering:
         assert "trw_deliver()" in result
 
     def test_render_closing_reminder(self) -> None:
-        """Closing reminder bookends with session boundaries + orchestration reinforcement."""
+        """Closing reminder bookends with session boundaries."""
         result = render_closing_reminder()
         assert "### Session Boundaries" in result
         assert "trw_session_start()" in result
         # PRD-CORE-062-FR01: trw_deliver removed from closing reminder (redundant with opener)
         assert "trw_deliver()" not in result
         assert "compounds" in result
-        # Frame 3: orchestration bookend (position bias — end gets elevated attention)
-        assert "orchestrate" in result.lower()
 
     def test_render_delegation_protocol(self) -> None:
         """Delegation protocol contains orchestrator role, decision tree, and value framing."""
@@ -1016,9 +1014,12 @@ class TestTrwRecallAccessTracking:
 
     def test_recall_updates_last_accessed_at(self, tmp_path: Path) -> None:
         """trw_recall sets last_accessed_at on returned entries."""
-        from datetime import date
+        from datetime import datetime, timezone
 
         from trw_mcp.state.memory_adapter import find_entry_by_id as adapter_find
+
+        # Capture UTC date before and after to handle midnight boundary
+        utc_date_before = datetime.now(timezone.utc).date().isoformat()
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1031,11 +1032,16 @@ class TestTrwRecallAccessTracking:
         # Recall should update access tracking
         tools["trw_recall"].fn(query="access tracking date")
 
-        # Verify via SQLite that last_accessed_at was set
+        utc_date_after = datetime.now(timezone.utc).date().isoformat()
+
+        # Verify via SQLite that last_accessed_at was set (adapter uses UTC)
         trw_dir = tmp_path / _CFG.trw_dir
         data = adapter_find(trw_dir, lid)
         assert data is not None, "Entry not found in SQLite"
-        assert data.get("last_accessed_at") == date.today().isoformat()
+        accessed = data.get("last_accessed_at")
+        assert accessed in (utc_date_before, utc_date_after), (
+            f"last_accessed_at={accessed} not in [{utc_date_before}, {utc_date_after}]"
+        )
 
     def test_recall_increments_access_count(self, tmp_path: Path) -> None:
         """trw_recall increments access_count on each matching recall."""

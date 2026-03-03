@@ -437,8 +437,6 @@ class TestSessionStartAutoClose:
                 patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
                 patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
                 patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-                patch("trw_mcp.tools.ceremony.log_recall_receipt"),
-                patch("trw_mcp.tools.ceremony.rank_by_utility", return_value=[]),
                 patch("trw_mcp.tools.ceremony._writer"),
                 patch("trw_mcp.tools.ceremony._events"),
             ):
@@ -464,8 +462,6 @@ class TestSessionStartAutoClose:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-            patch("trw_mcp.tools.ceremony.log_recall_receipt"),
-            patch("trw_mcp.tools.ceremony.rank_by_utility", return_value=[]),
             patch("trw_mcp.tools.ceremony._writer"),
             patch("trw_mcp.tools.ceremony._events"),
         ):
@@ -492,8 +488,6 @@ class TestSessionStartAutoClose:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-            patch("trw_mcp.tools.ceremony.log_recall_receipt"),
-            patch("trw_mcp.tools.ceremony.rank_by_utility", return_value=[]),
             patch("trw_mcp.tools.ceremony._writer"),
             patch("trw_mcp.tools.ceremony._events"),
         ):

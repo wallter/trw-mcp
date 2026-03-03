@@ -1,0 +1,324 @@
+"""Extracted helper functions for ceremony.py — trw_session_start and trw_deliver.
+
+Modularizes the two longest tool functions into focused, testable helpers:
+- perform_session_recalls: execute focused + baseline recalls, return merged results
+- run_auto_maintenance: auto-upgrade, stale run close, embeddings backfill
+- check_delivery_gates: review/build gates, premature delivery guard
+- finalize_run: checkpoint + run status update (placeholder for future expansion)
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import structlog
+
+from trw_mcp.models.config import TRWConfig
+from trw_mcp.scoring import rank_by_utility
+from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state.persistence import (
+    FileEventLogger,
+    FileStateReader,
+    FileStateWriter,
+)
+from trw_mcp.state.receipts import log_recall_receipt
+
+logger = structlog.get_logger()
+
+
+# ── Phase-contextual tag map (PRD-CORE-049) ──────────────────────────────
+
+_PHASE_TAG_MAP: dict[str, list[str]] = {
+    "research": ["architecture", "gotcha", "codebase"],
+    "plan": ["architecture", "pattern", "dependency"],
+    "implement": ["gotcha", "testing", "pattern"],
+    "validate": ["testing", "build", "coverage"],
+    "review": ["security", "performance", "maintainability"],
+    "deliver": ["ceremony", "deployment", "integration"],
+}
+
+
+def _phase_to_tags(phase: str) -> list[str]:
+    """Map a framework phase to relevant learning tags (PRD-CORE-049 FR02)."""
+    return _PHASE_TAG_MAP.get(phase.lower(), [])
+
+
+# ── Session-start helpers ────────────────────────────────────────────────
+
+
+def perform_session_recalls(
+    trw_dir: Path,
+    query: str,
+    config: TRWConfig,
+    reader: FileStateReader,
+    run_dir: Path | None = None,
+    run_status: dict[str, object] | None = None,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+    """Execute focused + baseline recalls, return merged results.
+
+    Returns:
+        Tuple of (main_learnings, auto_recalled, extra_fields):
+          - main_learnings: merged + deduped list from focused/baseline recall
+          - auto_recalled: phase-contextual auto-recall results (empty if disabled)
+          - extra_fields: dict with query_matched, total_available, etc.
+    """
+    from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
+    from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
+
+    is_focused = query.strip() not in ("", "*")
+    extra: dict[str, object] = {}
+    learnings: list[dict[str, object]] = []
+
+    # Step 1: Core recall
+    if is_focused:
+        focused = adapter_recall(
+            trw_dir, query=query, min_impact=0.3,
+            max_results=config.recall_max_results, compact=True,
+        )
+        baseline = adapter_recall(
+            trw_dir, query="*", min_impact=0.7,
+            max_results=config.recall_max_results, compact=True,
+        )
+        seen_ids: set[str] = set()
+        for entry in focused + baseline:
+            lid = str(entry.get("id", ""))
+            if lid and lid not in seen_ids:
+                seen_ids.add(lid)
+                learnings.append(entry)
+        learnings = learnings[:config.recall_max_results]
+        extra["query"] = query
+        extra["query_matched"] = len([
+            e for e in focused if str(e.get("id", "")) in seen_ids
+        ])
+    else:
+        learnings = adapter_recall(
+            trw_dir, query="*", min_impact=0.7,
+            max_results=config.recall_max_results, compact=True,
+        )
+
+    # Update access tracking
+    matched_ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
+    adapter_update_access(trw_dir, matched_ids)
+    log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
+
+    extra["total_available"] = len(learnings)
+
+    # Phase-contextual auto-recall (PRD-CORE-049) — only when caller passes run context
+    auto_recalled: list[dict[str, object]] = []
+
+    return learnings, auto_recalled, extra
+
+
+def _phase_contextual_recall(
+    trw_dir: Path,
+    query: str,
+    config: TRWConfig,
+    run_dir: Path | None,
+    run_status: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    """Execute phase-contextual auto-recall (PRD-CORE-049).
+
+    Returns a list of auto-recalled learning summaries.
+    """
+    from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall_ar
+
+    is_focused = query.strip() not in ("", "*")
+    query_tokens: list[str] = []
+    if is_focused:
+        query_tokens.extend(query.strip().split())
+
+    phase_tags: list[str] | None = None
+    if run_dir is not None and run_status is not None:
+        task_name = str(run_status.get("task_name", ""))
+        phase = str(run_status.get("phase", ""))
+        if task_name:
+            query_tokens.append(task_name)
+        if phase:
+            query_tokens.append(phase)
+            phase_tag_list = _phase_to_tags(phase)
+            if phase_tag_list:
+                phase_tags = phase_tag_list
+
+    ar_query = " ".join(query_tokens) if query_tokens else "*"
+    ar_entries = adapter_recall_ar(
+        trw_dir, query=ar_query,
+        tags=phase_tags, min_impact=0.5,
+        max_results=0, compact=False,
+    )
+    if not ar_entries:
+        return []
+
+    ranked = rank_by_utility(
+        ar_entries, query_tokens,
+        lambda_weight=config.recall_utility_lambda,
+    )
+    capped = ranked[:config.auto_recall_max_results]
+    return [
+        {"id": e.get("id"), "summary": e.get("summary"), "impact": e.get("impact")}
+        for e in capped
+    ]
+
+
+def run_auto_maintenance(
+    trw_dir: Path,
+    config: TRWConfig,
+    run_dir: Path | None = None,
+) -> dict[str, object]:
+    """Run auto-upgrade check, stale run close, and embeddings backfill.
+
+    Returns a dict with keys for each maintenance operation that produced results.
+    All operations are fail-open — individual failures do not affect others.
+    """
+    maintenance: dict[str, object] = {}
+
+    # Auto-upgrade check (PRD-INFRA-014)
+    try:
+        from trw_mcp.state.auto_upgrade import check_for_update
+        update_info = check_for_update()
+        if update_info.get("available"):
+            maintenance["update_advisory"] = update_info.get("advisory")
+            if config.auto_upgrade:
+                from trw_mcp.state.auto_upgrade import perform_upgrade
+                upgrade_result = perform_upgrade(update_info)
+                if upgrade_result.get("applied"):
+                    parts: list[str] = []
+                    parts.append(
+                        f"Auto-upgraded to v{upgrade_result.get('version', '?')}: "
+                        f"{upgrade_result.get('details', '')}"
+                    )
+                    maintenance["auto_upgrade"] = upgrade_result
+    except Exception:
+        pass  # Fail-open
+
+    # Auto-close stale runs
+    try:
+        if config.run_auto_close_enabled:
+            from trw_mcp.state.analytics_report import auto_close_stale_runs
+            close_result = auto_close_stale_runs()
+            closed_count = int(str(close_result.get("count", 0)))
+            if closed_count > 0:
+                maintenance["stale_runs_closed"] = close_result
+    except Exception:
+        pass  # Fail-open
+
+    # Embeddings status check + backfill
+    try:
+        from trw_mcp.state.memory_adapter import check_embeddings_status
+        emb_status = check_embeddings_status()
+        if emb_status.get("advisory"):
+            maintenance["embeddings_advisory"] = emb_status["advisory"]
+        elif emb_status.get("enabled") and emb_status.get("available"):
+            from trw_mcp.state.memory_adapter import backfill_embeddings
+            backfill = backfill_embeddings(resolve_trw_dir())
+            if backfill.get("embedded", 0) > 0:
+                maintenance["embeddings_backfill"] = backfill
+    except Exception:
+        pass  # Fail-open
+
+    return maintenance
+
+
+# ── Deliver helpers ──────────────────────────────────────────────────────
+
+
+def check_delivery_gates(
+    run_path: Path | None,
+    reader: FileStateReader,
+) -> dict[str, object]:
+    """Check review/build gates and premature delivery guard.
+
+    Returns a dict with any warnings/advisories found:
+      - review_warning: critical review findings present
+      - review_advisory: no review was run
+      - build_gate_warning: no successful build check found
+      - warning: premature delivery (only ceremony events)
+    """
+    result: dict[str, object] = {}
+
+    if run_path is None:
+        return result
+
+    # Step 0: Review soft gate (PRD-QUAL-022)
+    review_path = run_path / "meta" / "review.yaml"
+    if review_path.exists():
+        try:
+            review_data = reader.read_yaml(review_path)
+            rv_verdict = str(review_data.get("verdict", ""))
+            rv_critical = int(str(review_data.get("critical_count", 0)))
+            if rv_verdict == "block" and rv_critical > 0:
+                result["review_warning"] = (
+                    f"Review has {rv_critical} critical findings. "
+                    f"Delivery proceeding but review issues should be addressed."
+                )
+        except Exception:
+            pass  # Fail-open
+    else:
+        result["review_advisory"] = (
+            "No trw_review was run before delivery. "
+            "Consider running trw_review for quality assurance."
+        )
+
+    # Step 0b: Build gate + premature delivery guard (single events.jsonl read)
+    try:
+        events_path = run_path / "meta" / "events.jsonl"
+        if reader.exists(events_path):
+            all_events = reader.read_jsonl(events_path)
+
+            # Build gate (RC-003 + RC-006)
+            def _build_passed(ev: dict[str, object]) -> bool:
+                if str(ev.get("event", "")) != "build_check_complete":
+                    return False
+                data = ev.get("data")
+                if isinstance(data, dict):
+                    val = data.get("tests_passed")
+                    return val is True or (isinstance(val, str) and val.lower() == "true")
+                return False
+
+            if not any(_build_passed(e) for e in all_events):
+                result["build_gate_warning"] = (
+                    "No successful build check found before delivery. "
+                    "Run trw_build_check() to verify tests pass and mypy is clean."
+                )
+
+            # Premature delivery guard
+            ceremony_only = {
+                "run_init", "checkpoint", "reflection_complete",
+                "trw_reflect_complete", "trw_deliver_complete",
+                "trw_session_start_complete",
+            }
+            work_events = [
+                e for e in all_events
+                if str(e.get("event", "")) not in ceremony_only
+            ]
+            if len(work_events) == 0 and len(all_events) > 0:
+                result["warning"] = (
+                    "Premature delivery — no work events found beyond ceremony. "
+                    "This run has only init/checkpoint events. Proceeding anyway, "
+                    "but consider whether work was actually completed."
+                )
+                logger.warning(
+                    "premature_delivery",
+                    total_events=len(all_events),
+                    work_events=0,
+                )
+    except Exception:
+        pass  # Fail-open
+
+    return result
+
+
+def finalize_run(
+    run_path: Path | None,
+    trw_dir: Path,
+    config: TRWConfig,
+    reader: FileStateReader,
+    writer: FileStateWriter,
+    events: FileEventLogger,
+) -> dict[str, object]:
+    """Post-delivery finalization — placeholder for future run status updates.
+
+    Currently a no-op pass-through. Checkpoint and reflect are handled inline
+    in ceremony.py to preserve patch-point compatibility with existing tests.
+    Future expansion: close run.yaml status, archive run, etc.
+    """
+    return {}

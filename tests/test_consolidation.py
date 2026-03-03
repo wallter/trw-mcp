@@ -127,7 +127,8 @@ class TestFindClusters:
         self, tmp_path: Path, reader: FileStateReader
     ) -> None:
         """When entries_dir does not exist, returns []."""
-        result = find_clusters(tmp_path / "nonexistent", reader)
+        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=False):
+            result = find_clusters(tmp_path / "nonexistent", reader)
         assert result == []
 
     def test_skips_index_yaml(

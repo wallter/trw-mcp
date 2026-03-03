@@ -45,6 +45,7 @@ def _get_git_diff() -> str:
             text=True,
             timeout=30,
         )
+        logger.debug("review_git_diff", length=len(result.stdout))
         return result.stdout
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return ""
@@ -144,12 +145,48 @@ def _compute_verdict(findings: list[dict[str, str]]) -> str:
     """Compute review verdict from worst severity across findings."""
     critical_count = sum(1 for f in findings if f.get("severity") == "critical")
     warning_count = sum(1 for f in findings if f.get("severity") == "warning")
+    logger.debug(
+        "review_findings_count",
+        count=len(findings),
+        critical=critical_count,
+        warnings=warning_count,
+    )
 
     if critical_count > 0:
         return "block"
     if warning_count > 0:
         return "warn"
     return "pass"
+
+
+def _persist_review(
+    resolved_run: Path | None,
+    review_data: dict[str, object],
+    event_fields: dict[str, object],
+) -> str:
+    """Write review.yaml and log review_complete event.
+
+    Shared helper for all three review modes (manual, cross_model, auto).
+
+    Args:
+        resolved_run: Run directory path, or None if no run active.
+        review_data: Full review data dict to write to review.yaml.
+        event_fields: Fields to include in the review_complete event.
+
+    Returns:
+        Path string to review.yaml, or empty string if no run.
+    """
+    if resolved_run is None:
+        return ""
+
+    review_path = resolved_run / "meta" / "review.yaml"
+    _writer.write_yaml(review_path, review_data)
+
+    events_path = resolved_run / "meta" / "events.jsonl"
+    if events_path.parent.exists():
+        _events.log_event(events_path, "review_complete", event_fields)
+
+    return str(review_path)
 
 
 def register_review_tools(server: FastMCP) -> None:
@@ -180,7 +217,11 @@ def register_review_tools(server: FastMCP) -> None:
             reviewer_findings: Pre-collected findings from subagent layer (QUAL-027).
         """
         from trw_mcp.models.config import get_config
-        from trw_mcp.models.run import ReviewFinding
+        from trw_mcp.tools._review_helpers import (
+            handle_auto_mode,
+            handle_cross_model_mode,
+            handle_manual_mode,
+        )
 
         config = get_config()
 
@@ -205,233 +246,26 @@ def register_review_tools(server: FastMCP) -> None:
         else:
             resolved_run = find_active_run()
 
+        # Auto-update phase to REVIEW
+        from trw_mcp.models.run import Phase
+        from trw_mcp.state.phase import try_update_phase
+
+        try_update_phase(resolved_run, Phase.REVIEW)
+
         ts = datetime.now(timezone.utc).isoformat()
         review_id = "review-" + secrets.token_hex(4)
 
-        # ── Manual mode (backward compatible) ──────────────────────────
         if effective_mode == "manual":
-            all_findings = findings or []
+            return handle_manual_mode(
+                findings or [], resolved_run, review_id, ts,
+            )
 
-            # Validate findings through ReviewFinding model
-            validated: list[dict[str, str]] = []
-            for f in all_findings:
-                try:
-                    ReviewFinding(**f)
-                    validated.append(f)
-                    if f.get("severity") not in ("critical", "warning", "info"):
-                        validated[-1] = {**f, "severity": "info"}
-                except Exception:
-                    validated.append(f)
-
-            critical_count = sum(1 for f in validated if f.get("severity") == "critical")
-            warning_count = sum(1 for f in validated if f.get("severity") == "warning")
-            info_count = sum(1 for f in validated if f.get("severity") == "info")
-
-            verdict = _compute_verdict(validated)
-
-            result: dict[str, object] = {
-                "review_id": review_id,
-                "verdict": verdict,
-                "total_findings": len(validated),
-                "critical_count": critical_count,
-                "warning_count": warning_count,
-                "info_count": info_count,
-                "run_path": str(resolved_run) if resolved_run else None,
-            }
-
-            if resolved_run is not None:
-                review_path = resolved_run / "meta" / "review.yaml"
-                review_data: dict[str, object] = {
-                    "review_id": review_id,
-                    "timestamp": ts,
-                    "verdict": verdict,
-                    "critical_count": critical_count,
-                    "warning_count": warning_count,
-                    "info_count": info_count,
-                    "findings": validated,
-                }
-                _writer.write_yaml(review_path, review_data)
-                result["review_yaml"] = str(review_path)
-
-                events_path = resolved_run / "meta" / "events.jsonl"
-                if events_path.parent.exists():
-                    _events.log_event(events_path, "review_complete", {
-                        "review_id": review_id,
-                        "verdict": verdict,
-                        "critical_count": critical_count,
-                        "warning_count": warning_count,
-                    })
-            else:
-                result["review_yaml"] = ""
-
-            return result
-
-        # ── Cross-model mode (QUAL-026) ────────────────────────────────
         if effective_mode == "cross_model":
-            diff = _get_git_diff()
-            cross_model_skipped = False
-            cross_model_findings: list[dict[str, str]] = []
+            return handle_cross_model_mode(
+                config, resolved_run, review_id, ts,
+            )
 
-            if not config.cross_model_review_enabled:
-                cross_model_skipped = True
-                logger.info("cross_model_review_disabled")
-            elif not diff:
-                cross_model_skipped = True
-                logger.info("cross_model_review_no_diff")
-            else:
-                raw_findings = _invoke_cross_model_review(diff, config)
-                if not raw_findings:
-                    cross_model_skipped = True
-                else:
-                    for rf in raw_findings:
-                        cross_model_findings.append({
-                            "category": rf.get("category", "general"),
-                            "severity": _normalize_severity(rf.get("severity", "info")),
-                            "description": rf.get("description", ""),
-                            "source": "cross_model",
-                            "provider": config.cross_model_provider,
-                        })
-
-            verdict = _compute_verdict(cross_model_findings)
-
-            result = {
-                "review_id": review_id,
-                "verdict": verdict,
-                "mode": "cross_model",
-                "cross_model_skipped": cross_model_skipped,
-                "cross_model_provider": config.cross_model_provider,
-                "total_findings": len(cross_model_findings),
-                "run_path": str(resolved_run) if resolved_run else None,
-            }
-
-            if resolved_run is not None:
-                review_path = resolved_run / "meta" / "review.yaml"
-                review_data = {
-                    "review_id": review_id,
-                    "timestamp": ts,
-                    "verdict": verdict,
-                    "mode": "cross_model",
-                    "cross_model_skipped": cross_model_skipped,
-                    "cross_model_provider": config.cross_model_provider,
-                    "cross_model_findings": cross_model_findings,
-                }
-                _writer.write_yaml(review_path, review_data)
-                result["review_yaml"] = str(review_path)
-
-                events_path = resolved_run / "meta" / "events.jsonl"
-                if events_path.parent.exists():
-                    _events.log_event(events_path, "review_complete", {
-                        "review_id": review_id,
-                        "verdict": verdict,
-                        "mode": "cross_model",
-                        "cross_model_skipped": cross_model_skipped,
-                    })
-            else:
-                result["review_yaml"] = ""
-
-            return result
-
-        # ── Auto mode (QUAL-027) ───────────────────────────────────────
-        diff = _get_git_diff()
-
-        # Use pre-collected reviewer_findings if provided, else run basic analysis
-        if reviewer_findings is not None:
-            analysis: dict[str, object] = {
-                "reviewer_roles_run": list(REVIEWER_ROLES),
-                "reviewer_errors": [],
-                "findings": reviewer_findings,
-            }
-        else:
-            analysis = _run_multi_reviewer_analysis(diff, config)
-
-        all_auto_findings = analysis.get("findings", [])
-        if not isinstance(all_auto_findings, list):
-            all_auto_findings = []
-
-        confidence_threshold = config.review_confidence_threshold
-
-        # Filter findings by confidence threshold
-        surfaced: list[dict[str, object]] = []
-        for f in all_auto_findings:
-            if not isinstance(f, dict):
-                continue
-            confidence = f.get("confidence", 0)
-            if isinstance(confidence, (int, float)) and confidence >= confidence_threshold:
-                surfaced.append(f)  # type: ignore[arg-type]  # dict variance
-
-        # Compute verdict from surfaced findings only
-        surfaced_for_verdict: list[dict[str, str]] = [
-            {"severity": str(f.get("severity", "info"))} for f in surfaced
-        ]
-        verdict = _compute_verdict(surfaced_for_verdict)
-
-        result = {
-            "review_id": review_id,
-            "verdict": verdict,
-            "mode": "auto",
-            "reviewer_roles_run": analysis.get("reviewer_roles_run", []),
-            "reviewer_errors": analysis.get("reviewer_errors", []),
-            "surfaced_findings_count": len(surfaced),
-            "total_findings_count": len(all_auto_findings),
-            "confidence_threshold": confidence_threshold,
-            "total_findings": len(surfaced),
-            "run_path": str(resolved_run) if resolved_run else None,
-        }
-
-        if resolved_run is not None:
-            # Write review.yaml — surfaced findings only
-            review_path = resolved_run / "meta" / "review.yaml"
-            review_data = {
-                "review_id": review_id,
-                "timestamp": ts,
-                "verdict": verdict,
-                "mode": "auto",
-                "reviewer_roles_run": analysis.get("reviewer_roles_run", []),
-                "reviewer_errors": analysis.get("reviewer_errors", []),
-                "surfaced_findings_count": len(surfaced),
-                "total_findings_count": len(all_auto_findings),
-                "confidence_threshold": confidence_threshold,
-                "findings": surfaced,
-            }
-            _writer.write_yaml(review_path, review_data)
-            result["review_yaml"] = str(review_path)
-
-            # Write review-all.yaml — ALL findings unfiltered
-            review_all_path = resolved_run / "meta" / "review-all.yaml"
-            review_all_data: dict[str, object] = {
-                "review_id": review_id,
-                "timestamp": ts,
-                "mode": "auto",
-                "total_findings_count": len(all_auto_findings),
-                "findings": all_auto_findings,
-            }
-            _writer.write_yaml(review_all_path, review_all_data)
-
-            # Write integration-review.yaml — integration findings only
-            integration_findings = [
-                f for f in all_auto_findings
-                if isinstance(f, dict) and f.get("reviewer_role") == "integration"
-            ]
-            if integration_findings:
-                integration_path = resolved_run / "meta" / "integration-review.yaml"
-                integration_data: dict[str, object] = {
-                    "review_id": review_id,
-                    "timestamp": ts,
-                    "mode": "auto",
-                    "findings": integration_findings,
-                }
-                _writer.write_yaml(integration_path, integration_data)
-
-            events_path = resolved_run / "meta" / "events.jsonl"
-            if events_path.parent.exists():
-                _events.log_event(events_path, "review_complete", {
-                    "review_id": review_id,
-                    "verdict": verdict,
-                    "mode": "auto",
-                    "surfaced_findings": len(surfaced),
-                    "total_findings": len(all_auto_findings),
-                })
-        else:
-            result["review_yaml"] = ""
-
-        return result
+        # Auto mode (QUAL-027)
+        return handle_auto_mode(
+            config, resolved_run, review_id, ts, reviewer_findings,
+        )

@@ -6,7 +6,7 @@ which learnings are recalled and whether they lead to successful outcomes.
 
 from __future__ import annotations
 
-import logging
+import structlog
 import time
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,7 @@ from typing import Any
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 _TRACKING_FILE = "logs/recall_tracking.jsonl"
 
@@ -39,7 +39,7 @@ def record_recall(learning_id: str, query: str) -> bool:
         writer.append_jsonl(tracking_path, entry)
         return True
     except Exception:
-        logger.debug("Failed to record recall for %s", learning_id)
+        logger.debug("recall_record_failed", learning_id=learning_id)
         return False
 
 
@@ -64,7 +64,7 @@ def record_outcome(learning_id: str, outcome: str) -> bool:
         writer.append_jsonl(tracking_path, entry)
         return True
     except Exception:
-        logger.debug("Failed to record outcome for %s", learning_id)
+        logger.debug("outcome_record_failed", learning_id=learning_id)
         return False
 
 

@@ -7,6 +7,7 @@ unavailable.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import structlog
@@ -155,6 +156,8 @@ def hybrid_search(
     if not entries_dir.exists():
         return []
 
+    _t0 = time.monotonic()
+
     # Resolve config params
     bm25_candidates = 50
     vector_candidates = 50
@@ -175,7 +178,8 @@ def hybrid_search(
             if entry_id:
                 all_entries.append(data)
                 entry_map[entry_id] = data
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("entry_load_skipped", exc_type=type(exc).__name__, path=str(entry_file))
             continue
 
     if not all_entries:
@@ -189,6 +193,7 @@ def hybrid_search(
         rankings.append(bm25_results)
 
     # --- Dense vector retrieval (optional) ---
+    _vector_count = 0
     from trw_mcp.state.memory_store import MemoryStore
     if MemoryStore.available():
         try:
@@ -206,11 +211,12 @@ def hybrid_search(
                             (entry_id, 1.0 / (1.0 + dist)) for entry_id, dist in raw_results
                         ]
                         if dense_results:
+                            _vector_count = len(dense_results)
                             rankings.append(dense_results)
                 finally:
                     store.close()
-        except Exception:  # noqa: BLE001
-            pass  # Vector store not critical — BM25 covers it
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("vector_store_unavailable", exc_type=type(exc).__name__)
 
     if not rankings:
         return []
@@ -226,9 +232,9 @@ def hybrid_search(
 
     logger.debug(
         "hybrid_search_complete",
-        query=query,
-        bm25_candidates=len(bm25_results),
-        fused_total=len(fused),
-        returned=len(results),
+        duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+        results=len(results),
+        bm25_count=len(bm25_results),
+        vector_count=_vector_count,
     )
     return results

@@ -1356,3 +1356,179 @@ class TestEdgeCases:
 
         # Sync still succeeds; topic is written with fresh render
         assert result["topics_generated"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Targeted coverage: _jaccard both-empty, atomic write double-failure,
+# and execute_knowledge_sync clusters.json write failure error capture
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestJaccardBothEmpty:
+    """Line 46: _jaccard with both sets empty returns 0.0 without ZeroDivisionError."""
+
+    def test_both_sets_empty_returns_zero(self) -> None:
+        """_jaccard(set(), set()) must return 0.0 (union=0 guard, line 45-46)."""
+        from trw_mcp.state.knowledge_topology import _jaccard
+
+        result = _jaccard(set(), set())
+        assert result == 0.0
+
+    def test_one_empty_one_nonempty(self) -> None:
+        """_jaccard({}, {'a'}) returns 0.0 — intersection is empty."""
+        from trw_mcp.state.knowledge_topology import _jaccard
+
+        assert _jaccard(set(), {"a"}) == 0.0
+
+    def test_identical_nonempty_sets_return_one(self) -> None:
+        """_jaccard({'x'}, {'x'}) returns 1.0 — sanity check."""
+        from trw_mcp.state.knowledge_topology import _jaccard
+
+        assert _jaccard({"x"}, {"x"}) == 1.0
+
+
+@pytest.mark.unit
+class TestAtomicWriteDoubleFault:
+    """Lines 401-406: atomic write fails AND temp file cleanup also fails.
+
+    The inner OSError on json.dump/replace should cause the outer except to
+    attempt cleanup via Path.unlink. If cleanup itself raises OSError, it
+    is silently swallowed (pass), and the original exception is re-raised
+    to be caught by the outer except on line 413.
+    """
+
+    def _make_entries(self, n: int = 6) -> list[MemoryEntry]:
+        return [_make_entry(f"L-{i:03d}", tags=["testing", "python"]) for i in range(n)]
+
+    def test_double_failure_captured_in_errors(self, tmp_path: Path) -> None:
+        """When replace() fails AND unlink() also fails, error is captured in result."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        config = _make_config(
+            tmp_path,
+            knowledge_sync_threshold=5,
+            knowledge_min_cluster_size=2,
+        )
+        entries = self._make_entries(6)
+        mock_backend = MagicMock()
+        mock_backend.list_entries.return_value = entries
+
+        replace_error = OSError("replace failed")
+        unlink_error = OSError("unlink also failed")
+
+        original_replace = Path.replace
+
+        def fail_on_tmp_replace(self_path: Path, target: object) -> None:
+            if str(self_path).endswith(".tmp"):
+                raise replace_error
+            return original_replace(self_path, target)  # type: ignore[arg-type]
+
+        original_unlink = Path.unlink
+
+        def fail_on_tmp_unlink(self_path: Path, missing_ok: bool = False) -> None:
+            if str(self_path).endswith(".tmp"):
+                raise unlink_error
+            return original_unlink(self_path, missing_ok=missing_ok)
+
+        with (
+            patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
+            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch.object(Path, "replace", fail_on_tmp_replace),
+            patch.object(Path, "unlink", fail_on_tmp_unlink),
+        ):
+            result = execute_knowledge_sync(trw_dir, config)
+
+        # The clusters.json write failure must be captured as an error, not raised
+        assert any("clusters.json write failed" in e for e in result["errors"])
+
+    def test_replace_fails_cleanup_succeeds(self, tmp_path: Path) -> None:
+        """When replace() fails but unlink succeeds, error is still captured."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        config = _make_config(
+            tmp_path,
+            knowledge_sync_threshold=5,
+            knowledge_min_cluster_size=2,
+        )
+        entries = self._make_entries(6)
+        mock_backend = MagicMock()
+        mock_backend.list_entries.return_value = entries
+
+        original_replace = Path.replace
+
+        def fail_on_tmp_replace(self_path: Path, target: object) -> None:
+            if str(self_path).endswith(".tmp"):
+                raise OSError("replace failed")
+            return original_replace(self_path, target)  # type: ignore[arg-type]
+
+        with (
+            patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
+            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch.object(Path, "replace", fail_on_tmp_replace),
+        ):
+            result = execute_knowledge_sync(trw_dir, config)
+
+        assert any("clusters.json write failed" in e for e in result["errors"])
+
+
+@pytest.mark.unit
+class TestExecuteSyncClustersJsonWriteFailure:
+    """Lines 413-415: execute_knowledge_sync clusters.json write exception captured."""
+
+    def test_clusters_json_write_error_in_result_errors(self, tmp_path: Path) -> None:
+        """A completely failed clusters.json write adds error message to result."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        config = _make_config(
+            tmp_path,
+            knowledge_sync_threshold=3,
+            knowledge_min_cluster_size=2,
+        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["api", "python"]) for i in range(5)]
+        mock_backend = MagicMock()
+        mock_backend.list_entries.return_value = entries
+
+        # Make mkstemp itself fail so the entire try block raises immediately
+        with (
+            patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
+            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch(
+                "trw_mcp.state.knowledge_topology.tempfile.mkstemp",
+                side_effect=OSError("no space left on device"),
+            ),
+        ):
+            result = execute_knowledge_sync(trw_dir, config)
+
+        # Error message captured, result still returned (fail-open)
+        assert any("clusters.json write failed" in e for e in result["errors"])
+        # Topics themselves may still have been generated before clusters.json step
+        assert isinstance(result["topics_generated"], int)
+
+    def test_clusters_json_write_failure_does_not_affect_topics(self, tmp_path: Path) -> None:
+        """Topics are written even when clusters.json atomic write fails."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        config = _make_config(
+            tmp_path,
+            knowledge_sync_threshold=3,
+            knowledge_min_cluster_size=2,
+        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["api", "python"]) for i in range(5)]
+        mock_backend = MagicMock()
+        mock_backend.list_entries.return_value = entries
+
+        with (
+            patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
+            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch(
+                "trw_mcp.state.knowledge_topology.tempfile.mkstemp",
+                side_effect=OSError("disk full"),
+            ),
+        ):
+            result = execute_knowledge_sync(trw_dir, config)
+
+        # Topic docs are written before clusters.json step
+        knowledge_dir = trw_dir / "knowledge"
+        md_files = list(knowledge_dir.glob("*.md")) if knowledge_dir.exists() else []
+        assert result["topics_generated"] == len(md_files)

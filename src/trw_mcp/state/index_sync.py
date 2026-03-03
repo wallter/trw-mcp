@@ -37,7 +37,7 @@ _DONE_STATUSES = frozenset({"done", "implemented"})
 _REVIEW_STATUSES = frozenset({"review", "approved"})
 
 
-@dataclass
+@dataclass(slots=True)
 class PRDEntry:
     """Parsed PRD metadata for catalogue rendering."""
 

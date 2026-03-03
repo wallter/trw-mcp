@@ -18,7 +18,6 @@ from fastmcp import FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
-from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
@@ -50,7 +49,6 @@ from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
 )
-from trw_mcp.state.receipts import log_recall_receipt
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -59,23 +57,6 @@ _config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
 _events = FileEventLogger(_writer)
-
-# --- Phase-contextual auto-recall (PRD-CORE-049) ---
-
-_PHASE_TAG_MAP: dict[str, list[str]] = {
-    "research": ["architecture", "gotcha", "codebase"],
-    "plan": ["architecture", "pattern", "dependency"],
-    "implement": ["gotcha", "testing", "pattern"],
-    "validate": ["testing", "build", "coverage"],
-    "review": ["security", "performance", "maintainability"],
-    "deliver": ["ceremony", "deployment", "integration"],
-}
-
-
-def _phase_to_tags(phase: str) -> list[str]:
-    """Map a framework phase to relevant learning tags (PRD-CORE-049 FR02)."""
-    return _PHASE_TAG_MAP.get(phase.lower(), [])
-
 
 # Re-export checkpoint helpers for backward compatibility with tests/hooks
 from trw_mcp.tools.checkpoint import (  # noqa: E402
@@ -270,53 +251,24 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 on your query domain and one baseline high-impact — then merges and
                 deduplicates. Empty string or "*" uses default wildcard behavior.
         """
+        from trw_mcp.tools._ceremony_helpers import (
+            perform_session_recalls,
+            run_auto_maintenance,
+        )
+
         results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
 
         # Step 1: Recall learnings via SQLite adapter (compact mode)
         try:
-            from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
-            from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
             trw_dir = resolve_trw_dir()
-
-            if is_focused:
-                # Focused recall: hybrid retrieval at lower threshold
-                focused = adapter_recall(
-                    trw_dir, query=query, min_impact=0.3,
-                    max_results=_config.recall_max_results, compact=True,
-                )
-                # Baseline recall: high-impact wildcard
-                baseline = adapter_recall(
-                    trw_dir, query="*", min_impact=0.7,
-                    max_results=_config.recall_max_results, compact=True,
-                )
-                # Merge: dedup by ID, focused first, fill with baseline
-                seen_ids: set[str] = set()
-                learnings: list[dict[str, object]] = []
-                for entry in focused + baseline:
-                    lid = str(entry.get("id", ""))
-                    if lid and lid not in seen_ids:
-                        seen_ids.add(lid)
-                        learnings.append(entry)
-                learnings = learnings[:_config.recall_max_results]
-                results["query"] = query
-                results["query_matched"] = len([e for e in focused if str(e.get("id", "")) in seen_ids])
-            else:
-                # Default wildcard behavior (unchanged)
-                learnings = adapter_recall(
-                    trw_dir, query="*", min_impact=0.7,
-                    max_results=_config.recall_max_results, compact=True,
-                )
-
-            # Update access tracking for recalled IDs
-            matched_ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
-            adapter_update_access(trw_dir, matched_ids)
-            log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
-
+            learnings, auto_recalled, extra = perform_session_recalls(
+                trw_dir, query, _config, _reader,
+            )
             results["learnings"] = learnings
             results["learnings_count"] = len(learnings)
-            results["total_available"] = len(learnings)
+            results.update(extra)
         except Exception as exc:
             errors.append(f"recall: {exc}")
             results["learnings"] = []
@@ -327,8 +279,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
         try:
             run_dir = find_active_run()
             if run_dir is not None:
-                # Pin the discovered run so subsequent calls in this process
-                # use it, preventing telemetry hijack from parallel instances.
                 pin_active_run(run_dir)
                 results["run"] = _get_run_status(run_dir)
             else:
@@ -357,95 +307,31 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:
             pass  # Fail-open: event write failure must not affect tool result
 
-        # Step 4: Check for available updates (PRD-INFRA-014)
+        # Steps 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings)
         try:
-            from trw_mcp.state.auto_upgrade import check_for_update
-            update_info = check_for_update()
-            if update_info.get("available"):
-                results["update_advisory"] = update_info.get("advisory")
-
-            # Auto-apply if configured
-            cfg = get_config()
-            if update_info.get("available") and cfg.auto_upgrade:
-                from trw_mcp.state.auto_upgrade import perform_upgrade
-                upgrade_result = perform_upgrade(update_info)
-                if upgrade_result.get("applied"):
-                    parts: list[str] = []
-                    parts.append(f"Auto-upgraded to v{upgrade_result.get('version', '?')}: {upgrade_result.get('details', '')}")
-                    results["auto_upgrade"] = upgrade_result
-        except Exception:
-            pass  # Fail-open: update check failure must not affect tool result
-
-        # Step 5: Auto-close stale runs (orphaned run prevention)
-        try:
-            if _config.run_auto_close_enabled:
-                from trw_mcp.state.analytics_report import auto_close_stale_runs
-                close_result = auto_close_stale_runs()
-                closed_count = int(str(close_result.get("count", 0)))
-                if closed_count > 0:
-                    results["stale_runs_closed"] = close_result
+            maintenance = run_auto_maintenance(
+                resolve_trw_dir(), _config, run_dir,
+            )
+            results.update(maintenance)
         except Exception:
             pass  # Fail-open: maintenance must not break session start
 
         # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
         try:
             if _config.auto_recall_enabled:
-                from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall_step6
+                from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
 
                 trw_dir_ar = resolve_trw_dir()
-
-                # Build context query from active run + user query
-                query_tokens: list[str] = []
-                if is_focused:
-                    query_tokens.extend(query.strip().split())
-                phase_tags: list[str] | None = None
-                if run_dir is not None:
-                    run_status = results.get("run", {})
-                    if isinstance(run_status, dict):
-                        task_name = str(run_status.get("task_name", ""))
-                        phase = str(run_status.get("phase", ""))
-                        if task_name:
-                            query_tokens.append(task_name)
-                        if phase:
-                            query_tokens.append(phase)
-                            phase_tag_list = _phase_to_tags(phase)
-                            if phase_tag_list:
-                                phase_tags = phase_tag_list
-
-                ar_query = " ".join(query_tokens) if query_tokens else "*"
-                ar_entries = adapter_recall_step6(
-                    trw_dir_ar, query=ar_query,
-                    tags=phase_tags, min_impact=0.5,
-                    max_results=0, compact=False,
+                run_status_obj = results.get("run", {})
+                rs = run_status_obj if isinstance(run_status_obj, dict) else None
+                phase_recalled = _phase_contextual_recall(
+                    trw_dir_ar, query, _config, run_dir, rs,
                 )
-                if ar_entries:
-                    ranked = rank_by_utility(
-                        ar_entries, query_tokens,
-                        lambda_weight=_config.recall_utility_lambda,
-                    )
-                    capped = ranked[:_config.auto_recall_max_results]
-                    results["auto_recalled"] = [
-                        {"id": e.get("id"), "summary": e.get("summary"), "impact": e.get("impact")}
-                        for e in capped
-                    ]
-                    results["auto_recall_count"] = len(capped)
+                if phase_recalled:
+                    results["auto_recalled"] = phase_recalled
+                    results["auto_recall_count"] = len(phase_recalled)
         except Exception:
             pass  # Fail-open: auto-recall must not break session start
-
-        # Step 7: Embeddings status check + backfill
-        try:
-            from trw_mcp.state.memory_adapter import check_embeddings_status
-            emb_status = check_embeddings_status()
-            if emb_status.get("advisory"):
-                results["embeddings_advisory"] = emb_status["advisory"]
-            elif emb_status.get("enabled") and emb_status.get("available"):
-                # First-time backfill: generate embeddings for existing entries
-                from trw_mcp.state.memory_adapter import backfill_embeddings
-                backfill = backfill_embeddings(resolve_trw_dir())
-                if backfill.get("embedded", 0) > 0:
-                    results["embeddings_backfill"] = backfill
-        except Exception:
-            pass  # Fail-open: embedding setup must not break session start
 
         results["errors"] = errors
         results["success"] = len(errors) == 0
@@ -489,73 +375,17 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         results["run_path"] = str(resolved_run) if resolved_run else None
 
-        # Step 0: Review soft gate (PRD-QUAL-022)
-        if resolved_run is not None:
-            review_path = resolved_run / "meta" / "review.yaml"
-            if review_path.exists():
-                try:
-                    review_data = _reader.read_yaml(review_path)
-                    rv_verdict = str(review_data.get("verdict", ""))
-                    rv_critical = int(str(review_data.get("critical_count", 0)))
-                    if rv_verdict == "block" and rv_critical > 0:
-                        results["review_warning"] = (
-                            f"Review has {rv_critical} critical findings. "
-                            f"Delivery proceeding but review issues should be addressed."
-                        )
-                except Exception:
-                    pass  # Fail-open: review gate should not block delivery
-            else:
-                results["review_advisory"] = (
-                    "No trw_review was run before delivery. "
-                    "Consider running trw_review for quality assurance."
-                )
+        # Auto-update phase to DELIVER
+        from trw_mcp.models.run import Phase
+        from trw_mcp.state.phase import try_update_phase
 
-        # Step 0b: Build gate — warn if no successful build check (RC-003 + RC-006)
-        if resolved_run is not None:
-            try:
-                bg_events_path = resolved_run / "meta" / "events.jsonl"
-                if _reader.exists(bg_events_path):
-                    bg_events = _reader.read_jsonl(bg_events_path)
-                    def _build_passed(ev: dict[str, object]) -> bool:
-                        if str(ev.get("event", "")) != "build_check_complete":
-                            return False
-                        data = ev.get("data")
-                        if isinstance(data, dict):
-                            return data.get("tests_passed") is True
-                        return False
+        try_update_phase(resolved_run, Phase.DELIVER)
 
-                    build_passed = any(_build_passed(e) for e in bg_events)
-                    if not build_passed:
-                        results["build_gate_warning"] = (
-                            "No successful build check found before delivery. "
-                            "Run trw_build_check() to verify tests pass and mypy is clean."
-                        )
-            except Exception:
-                pass  # Fail-open: build gate check should not block delivery
+        # Steps 0, 0b, premature guard: extracted to helper
+        from trw_mcp.tools._ceremony_helpers import check_delivery_gates
 
-        # Premature delivery guard: warn if run has only init/ceremony events
-        if resolved_run is not None:
-            events_path = resolved_run / "meta" / "events.jsonl"
-            if _reader.exists(events_path):
-                all_events = _reader.read_jsonl(events_path)
-                ceremony_only = {"run_init", "checkpoint", "reflection_complete",
-                                 "trw_reflect_complete", "trw_deliver_complete",
-                                 "trw_session_start_complete"}
-                work_events = [
-                    e for e in all_events
-                    if str(e.get("event", "")) not in ceremony_only
-                ]
-                if len(work_events) == 0 and len(all_events) > 0:
-                    results["warning"] = (
-                        "Premature delivery — no work events found beyond ceremony. "
-                        "This run has only init/checkpoint events. Proceeding anyway, "
-                        "but consider whether work was actually completed."
-                    )
-                    logger.warning(
-                        "premature_delivery",
-                        total_events=len(all_events),
-                        work_events=0,
-                    )
+        gate_result = check_delivery_gates(resolved_run, _reader)
+        results.update(gate_result)
 
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:

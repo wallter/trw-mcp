@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -378,6 +379,15 @@ def _is_port_open(host: str, port: int) -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)  # Signal 0: check existence without sending a signal
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
 def _ensure_http_server(
     config: TRWConfig,
     log: structlog.stdlib.BoundLogger,
@@ -388,6 +398,7 @@ def _ensure_http_server(
 
     Auto-starts the server daemon if not already running, using file lock
     to prevent race conditions between concurrent Claude Code instances.
+    Cleans up stale PID files from dead processes before attempting start.
 
     Returns the server URL on success, None on failure (caller should
     fall back to standalone stdio).
@@ -411,6 +422,16 @@ def _ensure_http_server(
     trw_dir.mkdir(parents=True, exist_ok=True)
     lock_path = trw_dir / "mcp-server.lock"
     pid_path = trw_dir / "mcp-server.pid"
+
+    # Clean up stale PID file from dead processes
+    if pid_path.exists():
+        try:
+            old_pid = int(pid_path.read_text(encoding="utf-8").strip())
+            if not _is_pid_alive(old_pid):
+                log.info("mcp_server_stale_pid_cleaned", stale_pid=old_pid)
+                pid_path.unlink(missing_ok=True)
+        except (ValueError, OSError):
+            pid_path.unlink(missing_ok=True)
 
     lock_fd = open(lock_path, "w")  # noqa: SIM115
     try:
@@ -446,14 +467,15 @@ def _ensure_http_server(
 
         pid_path.write_text(str(proc.pid), encoding="utf-8")
 
-        # Poll for port availability (0.5s intervals, 15s max)
-        for _ in range(30):
+        # Poll for port availability (0.5s intervals, 30s max — WSL2 cold starts
+        # can take 15-20s due to filesystem I/O latency)
+        for _ in range(60):
             time.sleep(0.5)
             if _is_port_open(host, port):
                 log.info("mcp_server_started", pid=proc.pid, url=url)
                 return url
 
-        log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=15)
+        log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=30)
         return None
     except Exception:
         log.warning("mcp_server_start_failed", exc_info=True)
@@ -463,75 +485,116 @@ def _ensure_http_server(
         lock_fd.close()
 
 
-async def _run_stdio_proxy(url: str) -> None:
+async def _run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     """Bridge stdio transport to a shared HTTP MCP server.
 
     Creates a lightweight proxy that forwards all MCP operations (tools,
     resources, prompts) from Claude Code (via stdio) to the shared HTTP
     server. Uses MCP SDK primitives — no external dependencies.
+
+    Retries initial connection up to ``max_retries`` times with exponential
+    backoff to handle race conditions where the server is still starting.
     """
-    from typing import Any
+    import asyncio as _asyncio
 
     from mcp import types
+    from pydantic import AnyUrl
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
 
-    async with streamable_http_client(url) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+    log = structlog.get_logger()
 
-            # Discover remote capabilities once at startup
-            tools_result = await session.list_tools()
-            resources_result = await session.list_resources()
-            prompts_result = await session.list_prompts()
+    # Retry loop for initial connection (server may still be starting)
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            async with streamable_http_client(url) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
 
-            proxy = Server("trw-proxy")
+                    # Discover remote capabilities once at startup
+                    tools_result = await session.list_tools()
+                    resources_result = await session.list_resources()
+                    prompts_result = await session.list_prompts()
 
-            @proxy.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
-            async def handle_list_tools() -> list[types.Tool]:
-                return tools_result.tools
+                    log.info(
+                        "stdio_proxy_connected",
+                        url=url,
+                        tools=len(tools_result.tools),
+                        attempt=attempt + 1,
+                    )
 
-            @proxy.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
-            async def handle_call_tool(
-                name: str, arguments: dict[str, Any] | None = None,
-            ) -> types.CallToolResult:
-                return await session.call_tool(name, arguments)
+                    proxy = Server("trw-proxy")
 
-            @proxy.list_resources()  # type: ignore[no-untyped-call, untyped-decorator]
-            async def handle_list_resources() -> list[types.Resource]:
-                return resources_result.resources
+                    @proxy.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
+                    async def handle_list_tools() -> list[types.Tool]:
+                        return tools_result.tools
 
-            @proxy.read_resource()  # type: ignore[no-untyped-call, untyped-decorator]
-            async def handle_read_resource(uri: Any) -> str:
-                result = await session.read_resource(uri)
-                if result.contents:
-                    c = result.contents[0]
-                    text = getattr(c, "text", None)
-                    if text is not None:
-                        return str(text)
-                    blob = getattr(c, "blob", None)
-                    if blob is not None:
-                        return str(blob)
-                return ""
+                    @proxy.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
+                    async def handle_call_tool(
+                        name: str, arguments: dict[str, object] | None = None,
+                    ) -> types.CallToolResult:
+                        return await session.call_tool(name, arguments)
 
-            @proxy.list_prompts()  # type: ignore[no-untyped-call, untyped-decorator]
-            async def handle_list_prompts() -> list[types.Prompt]:
-                return prompts_result.prompts
+                    @proxy.list_resources()  # type: ignore[no-untyped-call, untyped-decorator]
+                    async def handle_list_resources() -> list[types.Resource]:
+                        return resources_result.resources
 
-            @proxy.get_prompt()  # type: ignore[no-untyped-call, untyped-decorator]
-            async def handle_get_prompt(
-                name: str, arguments: dict[str, str] | None = None,
-            ) -> types.GetPromptResult:
-                return await session.get_prompt(name, arguments)
+                    @proxy.read_resource()  # type: ignore[no-untyped-call, untyped-decorator]
+                    async def handle_read_resource(uri: AnyUrl) -> str:
+                        result = await session.read_resource(uri)
+                        if result.contents:
+                            c = result.contents[0]
+                            text = getattr(c, "text", None)
+                            if text is not None:
+                                return str(text)
+                            blob = getattr(c, "blob", None)
+                            if blob is not None:
+                                return str(blob)
+                        return ""
 
-            # Run the proxy on stdio — Claude Code communicates here
-            async with stdio_server() as (stdio_read, stdio_write):
-                await proxy.run(
-                    stdio_read, stdio_write,
-                    proxy.create_initialization_options(),
+                    @proxy.list_prompts()  # type: ignore[no-untyped-call, untyped-decorator]
+                    async def handle_list_prompts() -> list[types.Prompt]:
+                        return prompts_result.prompts
+
+                    @proxy.get_prompt()  # type: ignore[no-untyped-call, untyped-decorator]
+                    async def handle_get_prompt(
+                        name: str, arguments: dict[str, str] | None = None,
+                    ) -> types.GetPromptResult:
+                        return await session.get_prompt(name, arguments)
+
+                    # Run the proxy on stdio — Claude Code communicates here
+                    async with stdio_server() as (stdio_read, stdio_write):
+                        await proxy.run(
+                            stdio_read, stdio_write,
+                            proxy.create_initialization_options(),
+                        )
+                    return  # Clean exit
+        except (ConnectionError, OSError, Exception) as exc:
+            last_error = exc
+            if attempt < max_retries - 1:
+                delay = 2 ** attempt  # 1s, 2s, 4s
+                log.warning(
+                    "stdio_proxy_connect_retry",
+                    url=url,
+                    attempt=attempt + 1,
+                    delay_secs=delay,
+                    error=str(exc),
                 )
+                await _asyncio.sleep(delay)
+
+    # All retries exhausted
+    log.error(
+        "stdio_proxy_connect_failed",
+        url=url,
+        attempts=max_retries,
+        last_error=str(last_error),
+    )
+    raise ConnectionError(
+        f"Failed to connect to MCP server at {url} after {max_retries} attempts"
+    ) from last_error
 
 
 def main() -> None:
@@ -796,9 +859,9 @@ def main() -> None:
         if transport == "stdio":
             mcp.run()
         else:
-            mcp.settings.host = host
-            mcp.settings.port = port
-            mcp.run(transport=transport)  # type: ignore[arg-type]
+            # Pass host/port via transport_kwargs — mcp.settings is deprecated
+            # in FastMCP 2.14+ and silently ignored.
+            mcp.run(transport=transport, host=host, port=port)  # type: ignore[arg-type]
 
     elif config.mcp_transport == "stdio":
         # Path 2: Default stdio — unchanged behavior
@@ -830,6 +893,14 @@ def main() -> None:
                 asyncio.run(_run_stdio_proxy(url))
             except (KeyboardInterrupt, EOFError):
                 pass  # Clean exit when Claude Code disconnects
+            except ConnectionError:
+                # Proxy exhausted retries — fall back to standalone
+                log.warning(
+                    "trw_proxy_fallback",
+                    reason="proxy_connect_failed",
+                    fallback="standalone_stdio",
+                )
+                mcp.run()
         else:
             # FR06: Fallback to standalone stdio on failure
             log.warning(

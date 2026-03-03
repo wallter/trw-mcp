@@ -27,7 +27,7 @@ _events = FileEventLogger(_writer)
 # --- Auto-checkpoint state (PRD-CORE-053, Item 3 of PRD-FIX-030) ---
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class _CheckpointState:
     """Mutable state for auto-checkpoint counter. Single-process only."""
 
@@ -67,8 +67,10 @@ def _maybe_auto_checkpoint() -> dict[str, object] | None:
         count = _checkpoint_state.counter
         msg = f"auto-checkpoint after {count} tool calls"
         _do_checkpoint(run_dir, msg)
+        logger.debug("checkpoint_created", tool_calls=count, run_dir=str(run_dir))
         return {"auto_checkpoint": True, "tool_calls": count}
     except Exception:
+        logger.debug("auto_checkpoint_failed", exc_info=True)
         return None
 
 

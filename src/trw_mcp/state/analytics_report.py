@@ -83,8 +83,8 @@ def compute_ceremony_score(
             is_tool_invocation and tool_name == "trw_build_check"
         ):
             has_build_check = True
-            tests_passed_str = str(evt.get("tests_passed", ""))
-            build_passed = tests_passed_str.lower() == "true"
+            if "tests_passed" in evt:
+                build_passed = str(evt["tests_passed"]).lower() == "true"
 
     score = 0
     if has_session_start:
@@ -178,7 +178,7 @@ def scan_all_runs(
         cache_path = cache_dir / "analytics-report.yaml"
         _writer.write_yaml(cache_path, report)
     except Exception:
-        pass
+        logger.debug("analytics_report_cache_write_failed")
 
     return report
 
@@ -207,7 +207,7 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
         try:
             events = _reader.read_jsonl(events_path)
         except Exception:
-            pass
+            logger.debug("events_read_failed", path=str(events_path))
 
     # Compute ceremony score
     try:
@@ -377,7 +377,7 @@ def _write_archive_summary(
         try:
             events_count = len(_reader.read_jsonl(events_path))
         except Exception:
-            pass
+            logger.debug("run_events_read_failed", path=str(events_path))
 
     # Count checkpoints
     checkpoints_count = 0
@@ -386,7 +386,7 @@ def _write_archive_summary(
         try:
             checkpoints_count = len(_reader.read_jsonl(cp_path))
         except Exception:
-            pass
+            logger.debug("run_checkpoints_read_failed", path=str(cp_path))
 
     # Determine started_at from run_id
     run_id = str(run_data.get("run_id", run_dir.name))

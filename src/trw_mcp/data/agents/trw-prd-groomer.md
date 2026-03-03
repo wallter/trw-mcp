@@ -129,9 +129,9 @@ After grooming, the PRD file MUST:
 - Have acceptance criteria on all user stories
 
 Audit artifacts written to the planning run:
-- `artifacts/PRD-{ID}-diff.yaml` with per-section change records
-- `artifacts/PRD-{ID}-research.yaml` with research query log
-- `validation/iteration-{N}.yaml` for each validation cycle
+- `reports/PRD-{ID}-diff.yaml` with per-section change records
+- `reports/PRD-{ID}-research.yaml` with research query log
+- `reports/iteration-{N}.yaml` for each validation cycle
 </output_contract>
 
 <constraints>

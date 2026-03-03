@@ -222,6 +222,13 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         sections = _extract_sections(content)
 
+        # Auto-update phase to PLAN
+        from trw_mcp.models.run import Phase
+        from trw_mcp.state._paths import find_active_run
+        from trw_mcp.state.phase import try_update_phase
+
+        try_update_phase(find_active_run(), Phase.PLAN)
+
         logger.info(
             "trw_prd_validated",
             path=str(path),

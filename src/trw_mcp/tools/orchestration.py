@@ -129,14 +129,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         run_subdirs = [
             "meta",
             "reports",
-            "artifacts",
-            "artifacts/logs",
-            "artifacts/legacy",
-            "scratch",
             "scratch/_orchestrator",
-            "scratch/_blackboard",
             "shards",
-            "validation",
         ]
         for subdir in run_subdirs:
             _writer.ensure_dir(run_root / subdir)
@@ -194,10 +188,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
             {"task": task_name, "framework": _config.framework_version},
         )
 
-        snapshot_content = _get_bundled_file("framework.md")
-        if snapshot_content:
-            snapshot_path = run_root / "meta" / "FRAMEWORK_SNAPSHOT.md"
-            snapshot_path.write_text(snapshot_content, encoding="utf-8")
+        # Framework version captured in run.yaml `framework` field.
+        # Full snapshot removed — saves ~20 KB per run, reconstruct from git if needed.
 
         logger.info(
             "trw_init_complete",

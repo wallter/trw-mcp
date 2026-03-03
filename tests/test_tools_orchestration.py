@@ -66,10 +66,8 @@ class TestTrwInit:
         assert (run_path / "meta" / "run.yaml").exists()
         assert (run_path / "meta" / "events.jsonl").exists()
         assert (run_path / "reports").exists()
-        assert (run_path / "artifacts").exists()
-        assert (run_path / "scratch").exists()
+        assert (run_path / "scratch" / "_orchestrator").exists()
         assert (run_path / "shards").exists()
-        assert (run_path / "validation").exists()
 
     def test_run_yaml_content(self, orch_tools: dict[str, Any]) -> None:
         result = orch_tools["trw_init"].fn(task_name="check-task")

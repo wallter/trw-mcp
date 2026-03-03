@@ -239,17 +239,6 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "Playbook generation is slow, I'll spawn teammates with inline prompts" | Inline prompts skip file ownership validation — the #1 Agent Teams failure mode | Two teammates editing the same file creates merge conflicts and unreviewed code |
 | "I know the file ownership, I don't need to validate zero overlap" | File ownership violations cause silent overwrites that are discovered only at REVIEW | One file conflict can cascade into 3-4 re-implementation tasks |
 
-
-## Rationalization Watchlist
-
-If you catch yourself thinking any of these, stop and follow the process:
-
-| Thought | Why it's wrong | Consequence |
-|---------|---------------|-------------|
-| "The team structure is obvious, I'll skip user approval" | User approval prevents misaligned team structures that waste entire sprint budgets | Past sprints without approval had teammate assignments that required full re-spawning |
-| "Playbook generation is slow, I'll spawn teammates with inline prompts" | Inline prompts skip file ownership validation — the #1 Agent Teams failure mode | Two teammates editing the same file creates merge conflicts and unreviewed code |
-| "I know the file ownership, I don't need to validate zero overlap" | File ownership violations cause silent overwrites that are discovered only at REVIEW | One file conflict can cascade into 3-4 re-implementation tasks |
-
 ## Notes
 
 - This skill composites `/trw-team-playbook` (step 6) — it does not duplicate playbook generation logic.

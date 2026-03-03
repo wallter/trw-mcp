@@ -125,8 +125,8 @@ class BatchSender:
                 try:
                     if fut.result():
                         any_success = True
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("batch_future_failed", exc_type=type(exc).__name__)
             return any_success
 
     def _send_batch_to(self, base_url: str, batch: list[dict[str, Any]]) -> bool:

@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from trw_mcp.tools.ceremony import _phase_to_tags
+from trw_mcp.tools._ceremony_helpers import _phase_to_tags
 
 
 # --- Fixtures ---

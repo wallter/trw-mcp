@@ -331,19 +331,22 @@ class TestAgentDefinitions:
     @pytest.mark.parametrize(
         ("agent_name", "expected_model"),
         [
-            ("trw-lead.md", "opus"),
-            ("trw-implementer.md", "opus"),
-            ("trw-tester.md", "sonnet"),
-            ("trw-reviewer.md", "opus"),
-            ("trw-researcher.md", "sonnet"),
+            ("trw-lead.md", "claude-opus-4-6"),
+            ("trw-implementer.md", "claude-sonnet-4-6"),
+            ("trw-tester.md", "claude-sonnet-4-6"),
+            ("trw-reviewer.md", "claude-sonnet-4-6"),
+            ("trw-researcher.md", "claude-sonnet-4-6"),
         ],
     )
     def test_agent_model_assignment(
         self, agents_dir: Path, agent_name: str, expected_model: str
     ) -> None:
         """Agent definition specifies correct model."""
+        import yaml
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
-        assert expected_model in content.lower()
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        assert meta["model"] == expected_model
 
     @pytest.mark.parametrize(
         "agent_name",
@@ -457,6 +460,10 @@ class TestAgentDefinitions:
         assert "name" in meta, f"{agent_name}: missing 'name'"
         assert "description" in meta, f"{agent_name}: missing 'description'"
         assert "model" in meta, f"{agent_name}: missing 'model'"
-        assert meta["model"] in ("opus", "sonnet", "haiku"), (
-            f"{agent_name}: model must be opus/sonnet/haiku, got {meta['model']}"
+        valid_models = (
+            "opus", "sonnet", "haiku",
+            "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
+        )
+        assert meta["model"] in valid_models, (
+            f"{agent_name}: model must be one of {valid_models}, got {meta['model']}"
         )

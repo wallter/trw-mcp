@@ -71,7 +71,7 @@ _STATUS_ORDER: dict[str, int] = {
 # PRD-QUAL-013: Risk-Based Validation Scaling
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RiskProfile:
     """Risk-scaled thresholds and dimension weights for PRD validation.
 

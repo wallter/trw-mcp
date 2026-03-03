@@ -574,33 +574,25 @@ class TierManager:
     # Sweep — FR04 / FR06
     # -----------------------------------------------------------------------
 
-    def sweep(self) -> TierSweepResult:
-        """Execute lifecycle sweep across all tiers.
+    def _sweep_hot_to_warm(
+        self, cfg: TRWConfig, today: date,
+    ) -> tuple[int, int]:
+        """Phase 1: evict stale hot-tier entries into warm tier.
 
-        Performs four transition checks in order:
-        1. Hot → Warm: entries whose last_accessed_at exceeds memory_hot_ttl_days.
-        2. Warm → Cold: entries idle > memory_cold_threshold_days with impact < 0.5.
-        3. Cold → Purge: entries idle > memory_retention_days with impact < 0.3.
-        4. Cold → Warm is handled on-demand by cold_promote().
+        Identifies entries whose last_accessed_at exceeds
+        ``memory_hot_ttl_days``, moves them to the warm tier,
+        and flushes last_accessed_at to disk.
 
-        All thresholds are read from get_config() at call time (FR06).
-        Per-entry failures are logged and counted in ``errors``; the sweep
-        continues with remaining entries.
+        Args:
+            cfg: Resolved TRWConfig for threshold values.
+            today: Reference date for staleness checks.
 
         Returns:
-            TierSweepResult with counts of promoted, demoted, purged, and errors.
+            Tuple of (demoted, errors) counts.
         """
-        cfg = get_config()
-        today = date.today()
-        promoted = 0
         demoted = 0
-        purged = 0
         errors = 0
 
-        entries_dir = self._trw_dir / cfg.learnings_dir / cfg.entries_dir
-        purge_audit_path = self._trw_dir / "memory" / "purge_audit.jsonl"
-
-        # 1. Hot → Warm: evict stale hot entries
         stale_hot_ids: list[str] = []
         for entry_id, entry in list(self._hot.items()):
             days = _days_since_access(entry.model_dump(), today)
@@ -618,11 +610,29 @@ class TierManager:
                 logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
                 errors += 1
 
-        # 2. Warm → Cold: scan entries for idle low-importance entries
-        #    PRD-FIX-033-FR05: Uses SQLite via list_active_learnings when
-        #    available, falling back to YAML glob on error.
-        #    Uses compute_importance_score (Stanford Generative Agents formula)
-        #    instead of raw impact for more nuanced tier transition decisions.
+        return demoted, errors
+
+    def _sweep_warm_to_cold(
+        self, cfg: TRWConfig, today: date, entries_dir: Path,
+    ) -> tuple[int, int]:
+        """Phase 2: demote idle low-importance warm entries to cold archive.
+
+        PRD-FIX-033-FR05: Uses SQLite via ``list_active_learnings`` when
+        available, falling back to YAML glob on error.
+        Uses ``compute_importance_score`` (Stanford Generative Agents formula)
+        instead of raw impact for more nuanced tier transition decisions.
+
+        Args:
+            cfg: Resolved TRWConfig for threshold values.
+            today: Reference date for staleness checks.
+            entries_dir: Path to the warm-tier YAML entries directory.
+
+        Returns:
+            Tuple of (demoted, errors) counts.
+        """
+        demoted = 0
+        errors = 0
+
         _used_sqlite = False
         try:
             from trw_mcp.state.memory_adapter import (
@@ -701,8 +711,30 @@ class TierManager:
                     )
                     errors += 1
 
-        # 3. Cold → Purge: scan cold archive for expired entries
-        #    Uses compute_importance_score for purge decisions.
+        return demoted, errors
+
+    def _sweep_cold_to_purge(
+        self, cfg: TRWConfig, today: date, purge_audit_path: Path,
+    ) -> tuple[int, int]:
+        """Phase 3: purge expired cold-tier entries past retention.
+
+        Scans the cold archive for entries idle longer than
+        ``memory_retention_days`` with importance below 0.1. Writes
+        an audit record to ``purge_audit_path`` before deletion.
+
+        Uses ``compute_importance_score`` for purge decisions.
+
+        Args:
+            cfg: Resolved TRWConfig for threshold values.
+            today: Reference date for staleness checks.
+            purge_audit_path: JSONL file for purge audit records.
+
+        Returns:
+            Tuple of (purged, errors) counts.
+        """
+        purged = 0
+        errors = 0
+
         cold_base = self._cold_dir()
         if cold_base.exists():
             for yaml_file in sorted(cold_base.rglob("*.yaml")):
@@ -739,6 +771,47 @@ class TierManager:
                         exc_info=True,
                     )
                     errors += 1
+
+        return purged, errors
+
+    def sweep(self) -> TierSweepResult:
+        """Execute lifecycle sweep across all tiers.
+
+        Performs four transition checks in order:
+        1. Hot → Warm: entries whose last_accessed_at exceeds memory_hot_ttl_days.
+        2. Warm → Cold: entries idle > memory_cold_threshold_days with impact < 0.5.
+        3. Cold → Purge: entries idle > memory_retention_days with impact < 0.3.
+        4. Cold → Warm is handled on-demand by cold_promote().
+
+        All thresholds are read from get_config() at call time (FR06).
+        Per-entry failures are logged and counted in ``errors``; the sweep
+        continues with remaining entries.
+
+        Returns:
+            TierSweepResult with counts of promoted, demoted, purged, and errors.
+        """
+        cfg = get_config()
+        today = date.today()
+
+        entries_dir = self._trw_dir / cfg.learnings_dir / cfg.entries_dir
+        purge_audit_path = self._trw_dir / "memory" / "purge_audit.jsonl"
+
+        # Phase 1: Hot → Warm
+        hot_demoted, hot_errors = self._sweep_hot_to_warm(cfg, today)
+
+        # Phase 2: Warm → Cold
+        warm_demoted, warm_errors = self._sweep_warm_to_cold(
+            cfg, today, entries_dir,
+        )
+
+        # Phase 3: Cold → Purge
+        purged, purge_errors = self._sweep_cold_to_purge(
+            cfg, today, purge_audit_path,
+        )
+
+        demoted = hot_demoted + warm_demoted
+        errors = hot_errors + warm_errors + purge_errors
+        promoted = 0
 
         logger.info(
             "tier_sweep_complete",

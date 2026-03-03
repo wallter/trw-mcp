@@ -11,10 +11,13 @@ import csv
 import io
 import json
 import os
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig, _reset_config
+from trw_mcp.state._helpers import load_project_config as _load_project_config
 from trw_mcp.state.analytics import (
     compute_jaccard_similarity,
     compute_reflection_quality,
@@ -28,13 +31,20 @@ _reader = FileStateReader()
 _writer = FileStateWriter()
 
 
-def _load_project_config(trw_dir: Path) -> TRWConfig:
-    """Load a target project's config.yaml into a TRWConfig instance."""
-    config_path = trw_dir / "config.yaml"
-    if config_path.exists():
-        data = _reader.read_yaml(config_path)
-        return TRWConfig(**{k: v for k, v in data.items() if v is not None})  # type: ignore[arg-type]
-    return TRWConfig()
+@contextmanager
+def temp_project_root(target_dir: Path) -> Generator[None, None, None]:
+    """Temporarily override TRW_PROJECT_ROOT and reset config on exit."""
+    old_root = os.environ.get("TRW_PROJECT_ROOT")
+    try:
+        os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
+        _reset_config()
+        yield
+    finally:
+        if old_root is not None:
+            os.environ["TRW_PROJECT_ROOT"] = old_root
+        else:
+            os.environ.pop("TRW_PROJECT_ROOT", None)
+        _reset_config()
 
 
 def _collect_learnings(
@@ -101,17 +111,8 @@ def _learnings_to_csv(entries: list[dict[str, object]]) -> str:
 
 def _collect_runs(target_dir: Path) -> dict[str, object]:
     """Collect all run analytics via scan_all_runs (with env override)."""
-    old_root = os.environ.get("TRW_PROJECT_ROOT")
-    try:
-        os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-        _reset_config()
+    with temp_project_root(target_dir):
         return scan_all_runs()
-    finally:
-        if old_root is not None:
-            os.environ["TRW_PROJECT_ROOT"] = old_root
-        else:
-            os.environ.pop("TRW_PROJECT_ROOT", None)
-        _reset_config()
 
 
 def _collect_analytics(
@@ -131,19 +132,11 @@ def _collect_analytics(
             pass
 
     # Reflection quality
-    old_root = os.environ.get("TRW_PROJECT_ROOT")
     try:
-        os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-        _reset_config()
-        analytics["reflection_quality"] = compute_reflection_quality(trw_dir)
+        with temp_project_root(target_dir):
+            analytics["reflection_quality"] = compute_reflection_quality(trw_dir)
     except Exception:
         pass
-    finally:
-        if old_root is not None:
-            os.environ["TRW_PROJECT_ROOT"] = old_root
-        else:
-            os.environ.pop("TRW_PROJECT_ROOT", None)
-        _reset_config()
 
     # Ceremony aggregates (from cached report or fresh scan)
     report_path = trw_dir / config.context_dir / "analytics-report.yaml"
@@ -337,17 +330,8 @@ def import_learnings(
 
     # Resync index after imports
     if not dry_run and imported > 0:
-        old_root = os.environ.get("TRW_PROJECT_ROOT")
-        try:
-            os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-            _reset_config()
+        with temp_project_root(target_dir):
             resync_learning_index(trw_dir)
-        finally:
-            if old_root is not None:
-                os.environ["TRW_PROJECT_ROOT"] = old_root
-            else:
-                os.environ.pop("TRW_PROJECT_ROOT", None)
-            _reset_config()
 
     return {
         "imported": imported,

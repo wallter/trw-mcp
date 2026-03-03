@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import socket
-import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -371,8 +370,6 @@ class TestTransportResolution:
 
     def test_explicit_transport_uses_direct_mode(self) -> None:
         """Path 1: --transport flag → run as that transport directly."""
-        from unittest.mock import call
-
         with (
             patch("trw_mcp.server.mcp") as mock_mcp,
             patch("trw_mcp.server.TRWConfig") as mock_config_cls,
@@ -401,7 +398,9 @@ class TestTransportResolution:
             main()
 
             mock_mcp.settings.__setattr__  # accessed
-            mock_mcp.run.assert_called_once_with(transport="streamable-http")
+            mock_mcp.run.assert_called_once_with(
+                transport="streamable-http", host="0.0.0.0", port=9000,
+            )
 
     def test_no_flag_stdio_config_uses_standalone(self) -> None:
         """Path 2: No flag + stdio config → standalone stdio."""

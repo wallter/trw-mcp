@@ -342,6 +342,13 @@ class TestAgents:
     """
 
     EXPECTED_AGENTS = [
+        "reviewer-correctness.md",
+        "reviewer-integration.md",
+        "reviewer-performance.md",
+        "reviewer-security.md",
+        "reviewer-spec-compliance.md",
+        "reviewer-style.md",
+        "reviewer-test-quality.md",
         "trw-adversarial-auditor.md",
         "trw-code-simplifier.md",
         "trw-implementer.md",
@@ -994,7 +1001,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
         assert len(skills) == 21
-        assert len(agents) == 11
+        assert len(agents) == 18
         assert len(hooks) > 0
 
 

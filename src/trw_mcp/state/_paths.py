@@ -7,6 +7,7 @@ or an active run path MUST use these functions instead of inline logic.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 from trw_mcp.exceptions import StateError
@@ -86,6 +87,35 @@ def resolve_trw_dir() -> Path:
     return resolve_project_root() / _config.trw_dir
 
 
+def iter_run_dirs(task_root: Path) -> Iterator[tuple[Path, Path]]:
+    """Yield ``(run_dir, run_yaml_path)`` for all valid runs under *task_root*.
+
+    Scans ``task_root/*/runs/*/meta/run.yaml`` in sorted order and yields
+    each run directory paired with its ``run.yaml`` path.  Directories
+    without a ``run.yaml`` are silently skipped.
+
+    This is the **single source of truth** for run-directory iteration.
+    All modules that need to walk run directories MUST use this generator
+    instead of reimplementing the triple-nested loop.
+
+    Args:
+        task_root: Base directory containing task subdirectories.
+
+    Yields:
+        Tuples of ``(run_dir, run_yaml_path)``.
+    """
+    if not task_root.is_dir():
+        return
+    for task_dir in sorted(task_root.iterdir()):
+        runs_dir = task_dir / "runs"
+        if not runs_dir.is_dir():
+            continue
+        for run_dir in sorted(runs_dir.iterdir()):
+            run_yaml = run_dir / "meta" / "run.yaml"
+            if run_yaml.exists():
+                yield run_dir, run_yaml
+
+
 def _find_latest_run_dir(base_dir: Path) -> Path | None:
     """Scan ``base_dir/*/runs/*/meta/run.yaml`` and return the run dir with the newest mtime.
 
@@ -96,18 +126,11 @@ def _find_latest_run_dir(base_dir: Path) -> Path | None:
     latest_run = None
     latest_mtime = 0.0
 
-    for task_dir in base_dir.iterdir():
-        runs_dir = task_dir / "runs"
-        if not runs_dir.is_dir():
-            continue
-        for run_dir in runs_dir.iterdir():
-            run_yaml = run_dir / "meta" / "run.yaml"
-            if not run_yaml.exists():
-                continue
-            mtime = run_yaml.stat().st_mtime
-            if mtime > latest_mtime:
-                latest_mtime = mtime
-                latest_run = run_dir
+    for run_dir, run_yaml in iter_run_dirs(base_dir):
+        mtime = run_yaml.stat().st_mtime
+        if mtime > latest_mtime:
+            latest_mtime = mtime
+            latest_run = run_dir
 
     return latest_run
 
@@ -138,15 +161,10 @@ def find_active_run() -> Path | None:
 
         latest_name = ""
         latest_dir: Path | None = None
-        for task_dir in task_root.iterdir():
-            runs_dir = task_dir / "runs"
-            if not runs_dir.is_dir():
-                continue
-            for run_dir in runs_dir.iterdir():
-                run_yaml = run_dir / "meta" / "run.yaml"
-                if run_yaml.exists() and run_dir.name > latest_name:
-                    latest_name = run_dir.name
-                    latest_dir = run_dir
+        for run_dir, _run_yaml in iter_run_dirs(task_root):
+            if run_dir.name > latest_name:
+                latest_name = run_dir.name
+                latest_dir = run_dir
 
         return latest_dir
     except (StateError, OSError):
@@ -230,15 +248,10 @@ def detect_current_phase() -> str | None:
 
         latest_name = ""
         latest_yaml: Path | None = None
-        for task_dir in task_root.iterdir():
-            runs_dir = task_dir / "runs"
-            if not runs_dir.is_dir():
-                continue
-            for run_dir in runs_dir.iterdir():
-                run_yaml = run_dir / "meta" / "run.yaml"
-                if run_yaml.exists() and run_dir.name > latest_name:
-                    latest_name = run_dir.name
-                    latest_yaml = run_yaml
+        for run_dir, run_yaml in iter_run_dirs(task_root):
+            if run_dir.name > latest_name:
+                latest_name = run_dir.name
+                latest_yaml = run_yaml
 
         if latest_yaml is None:
             return None

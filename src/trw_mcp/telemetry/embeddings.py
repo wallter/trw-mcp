@@ -11,13 +11,13 @@ as a module-level singleton. Subsequent calls reuse the loaded model.
 
 from __future__ import annotations
 
-import logging
+import structlog
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Module-level model cache
 _model: object | None = None
@@ -36,13 +36,10 @@ def _load_model() -> object | None:
         _model = SentenceTransformer(_MODEL_NAME)
         return _model
     except ImportError:
-        logger.debug(
-            "sentence-transformers not installed — embeddings unavailable. "
-            "Install with: pip install sentence-transformers"
-        )
+        logger.debug("sentence_transformers_not_installed")
         return None
     except Exception:  # noqa: BLE001
-        logger.warning("Failed to load embedding model %s", _MODEL_NAME)
+        logger.warning("embedding_model_load_failed", model_name=_MODEL_NAME)
         return None
 
 
@@ -70,7 +67,7 @@ def embed(text: str) -> list[float] | None:
         vector = model.encode(text, normalize_embeddings=True)  # type: ignore[attr-defined]
         return [float(v) for v in vector]
     except Exception:  # noqa: BLE001
-        logger.warning("Embedding generation failed for text of length %d", len(text))
+        logger.warning("embedding_generation_failed", text_length=len(text))
         return None
 
 
@@ -108,7 +105,7 @@ def embed_batch(texts: list[str]) -> list[list[float] | None]:
                 results.append([float(v) for v in vectors[vec_idx]])
                 vec_idx += 1
     except Exception:  # noqa: BLE001
-        logger.warning("Batch embedding failed for %d texts", len(texts))
+        logger.warning("batch_embedding_failed", text_count=len(texts))
         return [None] * len(texts)
 
     return results

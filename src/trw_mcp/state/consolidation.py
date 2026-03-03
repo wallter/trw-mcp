@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -71,6 +72,8 @@ def find_clusters(
     """
     from trw_mcp.telemetry.embeddings import embed_batch, embedding_available
 
+    _t0 = time.monotonic()
+
     if not embedding_available():
         logger.debug("consolidation_embed_unavailable")
         return []
@@ -98,11 +101,11 @@ def find_clusters(
                 continue
             entries.append(data)
         _used_sqlite = True
-    except Exception:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(
             "sqlite_read_fallback",
             step="find_clusters",
-            reason="list_active_learnings failed",
+            reason=str(exc),
         )
 
     if not _used_sqlite:
@@ -177,11 +180,20 @@ def find_clusters(
     for idx, cid in enumerate(cluster_id):
         clusters_map.setdefault(cid, []).append(indexed[idx][0])
 
-    return [
+    result = [
         cluster
         for cluster in clusters_map.values()
         if len(cluster) >= min_cluster_size
     ]
+
+    logger.debug(
+        "find_clusters_complete",
+        duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+        cluster_count=len(result),
+        entry_count=len(entries),
+    )
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -589,7 +601,7 @@ def consolidate_cycle(
         if candidate.available:
             llm = candidate
     except Exception:  # noqa: BLE001
-        pass
+        pass  # LLM is optional — consolidation works without AI summaries
 
     consolidated_count = 0
     errors: list[str] = []

@@ -7,7 +7,7 @@ Fail-open: returns empty list on any failure — never blocks local operation.
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 import urllib.error
 import urllib.request
 from typing import Any
@@ -15,7 +15,7 @@ from typing import Any
 from trw_mcp.models.config import get_config
 from trw_mcp.telemetry.embeddings import embed
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 REMOTE_RECALL_TIMEOUT = 3  # seconds
 
@@ -65,6 +65,6 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[dict[str, An
                         r["summary"] = f"[shared] {r.get('summary', '')}"
                     return items
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
-            logger.debug("Remote recall failed for %s — trying next", base_url)
+            logger.debug("remote_recall_failed", base_url=base_url)
 
     return []
