@@ -14,12 +14,13 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import get_config
-from trw_mcp.state._paths import find_active_run
-from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+from trw_mcp.state._paths import find_active_run, resolve_project_root
+from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
+_reader = FileStateReader()
 _writer = FileStateWriter()
 _events = FileEventLogger(_writer)
 
@@ -110,6 +111,109 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 return {"status": "skipped", "reason": "no_active_run"}
 
             _do_checkpoint(run_dir, "pre-compaction safety checkpoint")
-            return {"status": "success", "run_path": str(run_dir)}
+
+            # Enhanced state capture (PRD-CORE-066-FR05)
+            import json
+
+            result: dict[str, object] = {
+                "status": "success",
+                "run_path": str(run_dir),
+            }
+
+            # Read prd_scope from run.yaml
+            run_yaml = run_dir / "meta" / "run.yaml"
+            prd_scope: list[str] = []
+            phase = ""
+            if run_yaml.exists():
+                run_data = _reader.read_yaml(run_yaml)
+                if isinstance(run_data, dict):
+                    raw_scope = run_data.get("prd_scope", [])
+                    if isinstance(raw_scope, list):
+                        prd_scope = [str(s) for s in raw_scope]
+                    phase = str(run_data.get("phase", ""))
+
+            # Check file_ownership.yaml
+            project_root = resolve_project_root()
+            ownership_path = project_root / ".trw" / "context" / "file_ownership.yaml"
+            file_ownership_path = str(ownership_path) if ownership_path.exists() else ""
+
+            # Last 5 events
+            events_path = run_dir / "meta" / "events.jsonl"
+            last_5_events: list[str] = []
+            if events_path.exists():
+                lines = events_path.read_text().strip().split("\n")
+                for line in lines[-5:]:
+                    try:
+                        evt = json.loads(line)
+                        last_5_events.append(str(evt.get("event_type", "")))
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            # Failing tests from build-status.yaml
+            build_status_path = project_root / ".trw" / "context" / "build-status.yaml"
+            failing_tests: list[str] = []
+            if build_status_path.exists():
+                bs_data = _reader.read_yaml(build_status_path)
+                if isinstance(bs_data, dict):
+                    raw_ft = bs_data.get("failing_tests", [])
+                    if isinstance(raw_ft, list):
+                        failing_tests = [str(t) for t in raw_ft]
+
+            # Write enhanced pre_compact_state.json
+            state_file = project_root / ".trw" / "context" / "pre_compact_state.json"
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+            _evt_text = events_path.read_text().strip() if events_path.exists() else ""
+            state_data = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "trigger": "mcp_tool",
+                "run_path": str(run_dir),
+                "phase": phase,
+                "events_logged": len(_evt_text.split("\n")) if _evt_text else 0,
+                "last_checkpoint": "pre-compaction safety checkpoint",
+                "prd_scope": prd_scope,
+                "file_ownership_path": file_ownership_path,
+                "last_5_events": last_5_events,
+                "failing_tests": failing_tests,
+            }
+            state_file.write_text(json.dumps(state_data, indent=2))
+
+            # Write compact_instructions.txt (PRD-CORE-066-FR02)
+            template = cfg.compact_instructions_template
+            if not template:
+                template = (
+                    "Preserve exactly:\n"
+                    "- TRW phase: {phase}\n"
+                    "- TRW run_id: {run_id}\n"
+                    "- TRW PRD scope: {prd_scope}\n"
+                    "- Last checkpoint: {last_checkpoint}\n"
+                    "- File ownership: {file_ownership_path}\n"
+                    "- Failing tests: {failing_tests}\n"
+                    "DO NOT summarize run artifacts — reference their file paths only.\n"
+                    "Reference .trw/context/pre_compact_state.json for full state."
+                )
+            instructions = template.format(
+                phase=phase,
+                run_id=str(run_dir.name),
+                prd_scope=", ".join(prd_scope) if prd_scope else "none",
+                last_checkpoint="pre-compaction safety checkpoint",
+                file_ownership_path=file_ownership_path or "not set",
+                failing_tests=", ".join(failing_tests) if failing_tests else "none",
+            )
+            instructions_path = project_root / ".trw" / "context" / "compact_instructions.txt"
+            instructions_path.write_text(instructions)
+
+            result["compact_instructions_path"] = str(instructions_path)
+            result["prd_scope"] = prd_scope
+            result["failing_tests"] = failing_tests
+            return result
         except Exception as exc:
             return {"status": "failed", "error": str(exc)}
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _reader, _writer, _events
+    _reader = FileStateReader()
+    _writer = FileStateWriter()
+    _events = FileEventLogger(_writer)
+    _checkpoint_state.counter = 0

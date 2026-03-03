@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "trw-mcp"
 version = "0.3.0"
-description = "Engineering memory layer for AI coding agents — session lifecycle, knowledge persistence, and build verification"
+description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "CC-BY-NC-SA-4.0"
 requires-python = ">=3.10"
 authors = [
     { name = "TRW Framework", email = "noreply@trwframework.com" },
 ]
-keywords = ["mcp", "claude", "orchestration", "requirements", "framework"]
+keywords = ["mcp", "claude", "agent", "orchestration", "developer-tools", "engineering-memory", "knowledge-management"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -22,9 +22,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
 ]
 dependencies = [
-    "fastmcp>=2.0.0",
+    "fastmcp>=3.0.0,<4.0.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "ruamel.yaml>=0.18.0",
@@ -42,12 +43,22 @@ dev = [
     "pytest-cov>=5.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-benchmark>=4.0.0",
+    "pytest-xdist>=3.5.0",
+    "pytest-timeout>=2.3.0",
     "mypy>=1.11.0",
     "types-pyyaml>=6.0.0",
+    "mcp-hmr>=0.1.0",
 ]
 ai = [
     "anthropic>=0.40.0",
 ]
+
+[project.urls]
+Homepage = "https://trwframework.com"
+Documentation = "https://trwframework.com/docs"
+Repository = "https://github.com/trw-framework/trw-mcp"
+Issues = "https://github.com/trw-framework/trw-mcp/issues"
+Changelog = "https://github.com/trw-framework/trw-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 trw-mcp = "trw_mcp.server:main"
@@ -97,15 +108,20 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--strict-markers -v"
+norecursedirs = [".hypothesis", "__pycache__", ".git", ".venv", "dist", "build"]
+addopts = "--strict-markers --timeout=120 -p no:benchmark"
 markers = [
     "unit: Fast tests with no filesystem I/O or multi-tool interaction",
     "integration: Tests that write files or call multiple tools together",
     "e2e: End-to-end workflow tests covering full phase sequences",
+    "slow: Tests taking >5s individually (bootstrap, consolidation)",
+    "smoke: Minimal sanity check tests",
 ]
+timeout = 120
 
 [tool.coverage.run]
 source = ["trw_mcp"]
+core = "sysmon"
 
 [tool.coverage.report]
 fail_under = 80

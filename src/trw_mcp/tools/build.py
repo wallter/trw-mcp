@@ -1011,3 +1011,10 @@ def register_build_tools(server: FastMCP) -> None:
                 result["dep_audit_blocking"] = True
 
         return result
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _config, _writer
+    _config = get_config()
+    _writer = FileStateWriter()

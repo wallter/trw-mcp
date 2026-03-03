@@ -80,3 +80,9 @@ def register_report_tools(server: FastMCP) -> None:
             return report
         except Exception as exc:
             return {"error": str(exc), "status": "failed"}
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _reader
+    _reader = FileStateReader()

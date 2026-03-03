@@ -562,6 +562,15 @@ def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     return f"---\n{yaml_str}---\n\n{body}\n"
 
 
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _config, _writer, _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION
+    _config = get_config()
+    _writer = FileStateWriter()
+    _CACHED_TEMPLATE_BODY = None
+    _CACHED_TEMPLATE_VERSION = None
+
+
 def _auto_sync_index() -> bool:
     """Auto-sync INDEX.md and ROADMAP.md after PRD changes.
 

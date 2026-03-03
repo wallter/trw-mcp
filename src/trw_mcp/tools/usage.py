@@ -149,3 +149,10 @@ def register_usage_tools(server: FastMCP) -> None:
             "by_model": by_model,
             "by_caller": by_caller,
         }
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _config, _reader
+    _config = get_config()
+    _reader = FileStateReader()

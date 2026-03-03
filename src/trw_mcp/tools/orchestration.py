@@ -664,3 +664,12 @@ def _check_framework_version_staleness(run_framework: str) -> str | None:
         )
     except (StateError, ValueError, TypeError, OSError):
         return None
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _config, _reader, _writer, _events
+    _config = get_config()
+    _reader = FileStateReader()
+    _writer = FileStateWriter()
+    _events = FileEventLogger(_writer)

@@ -398,3 +398,16 @@ def register_learning_tools(server: FastMCP) -> None:
             target_dir: Target directory for sub-CLAUDE.md generation.
         """
         return execute_claude_md_sync(scope, target_dir, _config, _reader, _writer, _llm)
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _config, _reader, _writer, _llm, _llm_usage_path
+    _config = get_config()
+    _reader = FileStateReader()
+    _writer = FileStateWriter()
+    _llm_usage_path = None
+    if _config.llm_usage_log_enabled:
+        _trw_dir = resolve_trw_dir()
+        _llm_usage_path = _trw_dir / _config.logs_dir / _config.llm_usage_log_file
+    _llm = LLMClient(model=_config.llm_default_model, usage_log_path=_llm_usage_path)

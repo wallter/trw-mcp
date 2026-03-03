@@ -269,3 +269,10 @@ def register_review_tools(server: FastMCP) -> None:
         return handle_auto_mode(
             config, resolved_run, review_id, ts, reviewer_findings,
         )
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _writer, _events
+    _writer = FileStateWriter()
+    _events = FileEventLogger(_writer)

@@ -387,6 +387,20 @@ def register_ceremony_tools(server: FastMCP) -> None:
         gate_result = check_delivery_gates(resolved_run, _reader)
         results.update(gate_result)
 
+        # Step 0c: Copy compliance artifacts (INFRA-027-FR05)
+        from trw_mcp.models.config import get_config
+        from trw_mcp.tools._ceremony_helpers import copy_compliance_artifacts
+        config = get_config()
+        compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, _reader, _writer)
+        results.update(compliance_result)
+
+        # Block delivery if integration review has blocking verdict
+        if gate_result.get("integration_review_block"):
+            errors.append(str(gate_result["integration_review_block"]))
+            results["errors"] = errors
+            results["success"] = False
+            return results
+
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:
             _run_step("reflect", lambda: _do_reflect(trw_dir, resolved_run), results, errors)
@@ -585,3 +599,12 @@ def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
         "applied": sum(1 for p in progressions if p.get("applied")),
         "progressions": progressions,
     }
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches on mcp-hmr hot-reload."""
+    global _config, _reader, _writer, _events
+    _config = get_config()
+    _reader = FileStateReader()
+    _writer = FileStateWriter()
+    _events = FileEventLogger(_writer)
