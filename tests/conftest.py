@@ -21,10 +21,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+
 import pytest
 
 from trw_mcp.models.config import TRWConfig, _reset_config
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter, FileEventLogger
+from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
 # --- Marker auto-assignment ---
 
@@ -102,6 +103,29 @@ def _reset_memory_backend() -> Iterator[None]:
     reset_backend()
     yield
     reset_backend()
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_singletons() -> Iterator[None]:
+    """Reset module-level singletons for test isolation.
+
+    tools/learning.py and state/analytics.py cache config/reader/writer at
+    module scope.  Without this reset, tests see stale paths from earlier
+    test runs when TRW_PROJECT_ROOT is monkeypatched per-test.
+    """
+    yield
+    for mod_path in (
+        "trw_mcp.tools.learning",
+        "trw_mcp.state.analytics",
+    ):
+        try:
+            import importlib
+            mod = importlib.import_module(mod_path)
+            hook = getattr(mod, "__reload_hook__", None)
+            if hook is not None:
+                hook()
+        except ImportError:
+            pass
 
 
 @pytest.fixture

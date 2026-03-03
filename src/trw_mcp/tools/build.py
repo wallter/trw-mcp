@@ -47,6 +47,9 @@ _COVERAGE_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%")
 
 _MAX_FAILURES = 10
 
+_DEP_AUDIT_FILE = "dep-audit.yaml"
+_API_FUZZ_FILE = "api-fuzz-status.yaml"
+
 
 def _strip_ansi(text: str) -> str:
     """Remove ANSI escape codes from text."""
@@ -609,7 +612,7 @@ def _run_dep_audit(
     Returns:
         Combined result dict with dep_audit_passed and sub-results.
     """
-    source_path = config.source_package_path or "trw-mcp/src"
+    _source_path = config.source_package_path or "trw-mcp/src"
 
     # Get changed files for npm audit and unlisted import detection
     try:
@@ -678,14 +681,6 @@ def _cache_to_context(
     return cache_path
 
 
-def _cache_dep_audit(
-    trw_dir: Path,
-    result: dict[str, object],
-) -> Path:
-    """Write dependency audit results to .trw/context/dep-audit.yaml."""
-    return _cache_to_context(trw_dir, "dep-audit.yaml", result)
-
-
 def _run_api_fuzz(
     project_root: Path,
     config: TRWConfig,
@@ -724,7 +719,7 @@ def _run_api_fuzz(
             f"{base_url}/",
             method="HEAD",
         )
-        urllib.request.urlopen(req, timeout=5)  # noqa: S310
+        urllib.request.urlopen(req, timeout=5)
     except Exception:
         return {
             "api_fuzz_skipped": True,
@@ -762,14 +757,6 @@ def _run_api_fuzz(
         fuzz_result["api_fuzz_failure_count"] = len(failures)
 
     return fuzz_result
-
-
-def _cache_api_fuzz(
-    trw_dir: Path,
-    result: dict[str, object],
-) -> Path:
-    """Write API fuzz results to .trw/context/api-fuzz-status.yaml."""
-    return _cache_to_context(trw_dir, "api-fuzz-status.yaml", result)
 
 
 def _collect_failures(result: dict[str, object]) -> list[str]:
@@ -927,14 +914,14 @@ def register_build_tools(server: FastMCP) -> None:
             if not _config.dep_audit_enabled:
                 return {"status": "skipped", "reason": "dep_audit_enabled is False"}
             dep_result = _run_dep_audit(project_root, _config)
-            _cache_dep_audit(trw_dir, dep_result)
+            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, dep_result)
             return dep_result
 
         if scope == "api":
             if not _config.api_fuzz_enabled:
                 return {"status": "skipped", "reason": "api_fuzz_enabled is False"}
             fuzz_result = _run_api_fuzz(project_root, _config)
-            _cache_api_fuzz(trw_dir, fuzz_result)
+            _cache_to_context(trw_dir, _API_FUZZ_FILE, fuzz_result)
             return fuzz_result
 
         # --- Standard scopes (pytest/mypy) ---
@@ -1005,7 +992,7 @@ def register_build_tools(server: FastMCP) -> None:
         # Dep audit on full scope (if enabled)
         if scope == "full" and _config.dep_audit_enabled:
             dep_result = _run_dep_audit(project_root, _config)
-            _cache_dep_audit(trw_dir, dep_result)
+            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, dep_result)
             result["dep_audit"] = dep_result
             if not bool(dep_result.get("dep_audit_passed", True)):
                 result["dep_audit_blocking"] = True

@@ -11,9 +11,9 @@ from __future__ import annotations
 import re
 import secrets
 from collections import Counter
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
-from typing import Iterator
 
 import structlog
 
@@ -22,7 +22,7 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.learning import LearningEntry, LearningStatus
 
 logger = structlog.get_logger()
-from trw_mcp.state.persistence import (
+from trw_mcp.state.persistence import (  # noqa: E402
     FileStateReader,
     FileStateWriter,
     lock_for_rmw,
@@ -32,6 +32,15 @@ from trw_mcp.state.persistence import (
 _config = get_config()
 _reader = FileStateReader()
 _writer = FileStateWriter()
+
+
+def __reload_hook__() -> None:
+    """Reset module-level caches — called by conftest and mcp-hmr."""
+    global _config, _reader, _writer
+    _config = get_config()
+    _reader = FileStateReader()
+    _writer = FileStateWriter()
+
 
 # Constants
 _SLUG_MAX_LEN = 40
@@ -155,7 +164,6 @@ def _iter_entry_files(
 # Re-export from shared helpers for backward compatibility
 from trw_mcp.state._helpers import safe_float as _safe_float  # noqa: E402
 from trw_mcp.state._helpers import safe_int as _safe_int  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Event classification
@@ -337,7 +345,7 @@ def detect_tool_sequences(
             for j in range(start, i)
         ]
         current_type = _get_event_type(event) or "unknown"
-        seq = tuple(preceding + [current_type])
+        seq = tuple([*preceding, current_type])
         if len(seq) >= 2:
             sequence_counts[seq] = sequence_counts.get(seq, 0) + 1
 
@@ -459,10 +467,10 @@ def has_existing_success_learning(
     if not entries_dir.exists():
         return False
 
-    for _path, data in _iter_entry_files(entries_dir):
-        if str(data.get("summary", ""))[:50].lower() == target:
-            return True
-    return False
+    return any(
+        str(data.get("summary", ""))[:50].lower() == target
+        for _path, data in _iter_entry_files(entries_dir)
+    )
 
 
 def has_existing_mechanical_learning(
@@ -863,7 +871,7 @@ def _is_telemetry_noise(summary: str) -> bool:
     are analytics counters, not actionable learnings (PRD-FIX-021).
     """
     lower = summary.lower()
-    return lower.startswith("repeated operation:") or lower.startswith("success:")
+    return lower.startswith(("repeated operation:", "success:"))
 
 
 def extract_learnings_from_llm(
@@ -1103,7 +1111,7 @@ def auto_prune_excess_entries(
     try:
         from trw_mcp.state.memory_adapter import list_entries_by_status
         sqlite_entries = list_entries_by_status(trw_dir, status="active")
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("sqlite_read_fallback", step="auto_prune", reason="get_backend failed")
 
     if sqlite_entries is not None:
@@ -1305,7 +1313,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
 
     _used_sqlite = False
     try:
-        from trw_mcp.state.memory_adapter import list_active_learnings, count_entries
+        from trw_mcp.state.memory_adapter import count_entries, list_active_learnings
         total_entries = count_entries(trw_dir)
         entries_for_metrics = list_active_learnings(trw_dir)
         active_entries = len(entries_for_metrics)

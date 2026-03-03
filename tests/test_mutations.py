@@ -3,8 +3,8 @@
 Covers: mutations.py (_get_changed_files, _classify_threshold_tier,
 _parse_mutmut_results, run_mutation_check, cache_mutation_status),
 build.py extensions (_run_pip_audit, _run_npm_audit,
-_detect_unlisted_imports, _run_dep_audit, _cache_dep_audit,
-_run_api_fuzz, _cache_api_fuzz), and trw_build_check MCP tool
+_detect_unlisted_imports, _run_dep_audit, _cache_to_context,
+_run_api_fuzz), and trw_build_check MCP tool
 scope='mutations', scope='deps', scope='api', and full scope dep_audit.
 """
 
@@ -20,8 +20,9 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.build import (
-    _cache_api_fuzz,
-    _cache_dep_audit,
+    _API_FUZZ_FILE,
+    _DEP_AUDIT_FILE,
+    _cache_to_context,
     _detect_unlisted_imports,
     _run_api_fuzz,
     _run_dep_audit,
@@ -35,7 +36,6 @@ from trw_mcp.tools.mutations import (
     cache_mutation_status,
     run_mutation_check,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1188,19 +1188,19 @@ class TestRunDepAudit:
 
 
 # ---------------------------------------------------------------------------
-# _cache_dep_audit tests
+# _cache_to_context (dep-audit) tests
 # ---------------------------------------------------------------------------
 
 
 class TestCacheDepAudit:
-    """Tests for _cache_dep_audit."""
+    """Tests for _cache_to_context with _DEP_AUDIT_FILE."""
 
     def test_writes_yaml_to_correct_path(self, tmp_path: Path) -> None:
         """Writes dep-audit.yaml to .trw/context/."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         result = {"dep_audit_passed": True, "pip_audit_passed": True}
-        path = _cache_dep_audit(trw_dir, result)
+        path = _cache_to_context(trw_dir, _DEP_AUDIT_FILE, result)
         assert path.name == "dep-audit.yaml"
         assert path.parent.name == "context"
         assert path.exists()
@@ -1210,7 +1210,7 @@ class TestCacheDepAudit:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         result = {"dep_audit_passed": False, "pip_audit_blocking_count": 2}
-        path = _cache_dep_audit(trw_dir, result)
+        path = _cache_to_context(trw_dir, _DEP_AUDIT_FILE, result)
         data = FileStateReader().read_yaml(path)
         assert data["dep_audit_passed"] is False
         assert data["pip_audit_blocking_count"] == 2
@@ -1352,19 +1352,19 @@ class TestRunApiFuzz:
 
 
 # ---------------------------------------------------------------------------
-# _cache_api_fuzz tests
+# _cache_to_context (api-fuzz) tests
 # ---------------------------------------------------------------------------
 
 
 class TestCacheApiFuzz:
-    """Tests for _cache_api_fuzz."""
+    """Tests for _cache_to_context with _API_FUZZ_FILE."""
 
     def test_writes_yaml_to_correct_path(self, tmp_path: Path) -> None:
         """Writes api-fuzz-status.yaml to .trw/context/."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         result = {"api_fuzz_passed": True, "api_fuzz_base_url": "http://localhost:8000"}
-        path = _cache_api_fuzz(trw_dir, result)
+        path = _cache_to_context(trw_dir, _API_FUZZ_FILE, result)
         assert path.name == "api-fuzz-status.yaml"
         assert path.parent.name == "context"
         assert path.exists()
@@ -1374,7 +1374,7 @@ class TestCacheApiFuzz:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         result = {"api_fuzz_passed": False, "api_fuzz_failure_count": 3}
-        path = _cache_api_fuzz(trw_dir, result)
+        path = _cache_to_context(trw_dir, _API_FUZZ_FILE, result)
         data = FileStateReader().read_yaml(path)
         assert data["api_fuzz_passed"] is False
         assert data["api_fuzz_failure_count"] == 3
@@ -1442,6 +1442,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache.return_value = trw_dir / "context" / "mutation-status.yaml"
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -1457,7 +1458,7 @@ class TestBuildCheckScopeIntegration:
     @patch("trw_mcp.tools.build.resolve_project_root")
     @patch("trw_mcp.tools.build.resolve_trw_dir")
     @patch("trw_mcp.tools.build._run_dep_audit")
-    @patch("trw_mcp.tools.build._cache_dep_audit")
+    @patch("trw_mcp.tools.build._cache_to_context")
     def test_scope_deps_calls_dep_audit_and_caches(
         self,
         mock_cache: MagicMock,
@@ -1467,7 +1468,7 @@ class TestBuildCheckScopeIntegration:
         mock_config: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """scope='deps' → _run_dep_audit + _cache_dep_audit called."""
+        """scope='deps' → _run_dep_audit + _cache_to_context called."""
         trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
         mock_config.dep_audit_enabled = True
         mock_trw_dir.return_value = trw_dir
@@ -1481,6 +1482,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache.return_value = trw_dir / "context" / "dep-audit.yaml"
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -1496,7 +1498,7 @@ class TestBuildCheckScopeIntegration:
     @patch("trw_mcp.tools.build.resolve_project_root")
     @patch("trw_mcp.tools.build.resolve_trw_dir")
     @patch("trw_mcp.tools.build._run_api_fuzz")
-    @patch("trw_mcp.tools.build._cache_api_fuzz")
+    @patch("trw_mcp.tools.build._cache_to_context")
     def test_scope_api_calls_api_fuzz_and_caches(
         self,
         mock_cache: MagicMock,
@@ -1506,7 +1508,7 @@ class TestBuildCheckScopeIntegration:
         mock_config: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """scope='api' → _run_api_fuzz + _cache_api_fuzz called."""
+        """scope='api' → _run_api_fuzz + _cache_to_context called."""
         trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
         mock_config.api_fuzz_enabled = True
         mock_trw_dir.return_value = trw_dir
@@ -1520,6 +1522,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache.return_value = trw_dir / "context" / "api-fuzz-status.yaml"
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -1536,7 +1539,7 @@ class TestBuildCheckScopeIntegration:
     @patch("trw_mcp.tools.build.resolve_trw_dir")
     @patch("trw_mcp.tools.build.run_build_check")
     @patch("trw_mcp.tools.build._run_dep_audit")
-    @patch("trw_mcp.tools.build._cache_dep_audit")
+    @patch("trw_mcp.tools.build._cache_to_context")
     def test_scope_full_includes_dep_audit_when_enabled(
         self,
         mock_cache_dep: MagicMock,
@@ -1569,6 +1572,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache_dep.return_value = trw_dir / "context" / "dep-audit.yaml"
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -1608,6 +1612,7 @@ class TestBuildCheckScopeIntegration:
         )
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -1633,6 +1638,7 @@ class TestBuildCheckScopeIntegration:
         mock_proj_root.return_value = proj_root
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")

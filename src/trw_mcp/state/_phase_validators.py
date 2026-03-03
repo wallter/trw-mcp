@@ -10,13 +10,25 @@ This module is internal — import from trw_mcp.state.validation instead.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus, ValidationFailure
-from trw_mcp.models.run import Phase
-
+from trw_mcp.state.event_helpers import (
+    _REFLECTION_EVENTS,
+    _SYNC_EVENTS,
+    _events_contain,
+    _is_validate_pass,
+    _read_events,
+)
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_build_check,
+    _best_effort_integration_check,
+)
+from trw_mcp.state.phase_gates_prd import (
+    _check_prd_enforcement,
+)
 
 # Type alias for phase validator functions.
 # Each takes (run_path, config, failures) and mutates the failures list.
@@ -24,91 +36,6 @@ PhaseExitValidator = Callable[[Path, TRWConfig, list[ValidationFailure]], None]
 PhaseInputValidator = Callable[
     [Path, TRWConfig, list[ValidationFailure], str], None
 ]
-
-# ---------------------------------------------------------------------------
-# Shared helpers (imported lazily to avoid circular deps)
-# ---------------------------------------------------------------------------
-
-# Recognized event names — mirrors validation.py constants
-_REFLECTION_EVENTS: frozenset[str] = frozenset(
-    {"reflection_complete", "trw_reflect_complete"}
-)
-_SYNC_EVENTS: frozenset[str] = frozenset({"claude_md_sync", "claude_md_synced"})
-
-
-def _read_events(events_path: Path) -> list[dict[str, object]]:
-    """Read events.jsonl via FileStateReader (lazy import)."""
-    if not events_path.exists():
-        return []
-    from trw_mcp.state.persistence import FileStateReader
-
-    return FileStateReader().read_jsonl(events_path)
-
-
-def _events_contain(
-    events: list[dict[str, object]],
-    event_names: frozenset[str],
-) -> bool:
-    """Check whether any event matches one of the given event names."""
-    return any(e.get("event") in event_names for e in events)
-
-
-def _is_validate_pass(event: dict[str, object]) -> bool:
-    """Check if an event represents a passing validate phase gate.
-
-    Delegates to validation._is_validate_pass (single source of truth).
-    """
-    from trw_mcp.state.validation import (
-        _is_validate_pass as _impl,
-    )
-
-    return _impl(event)
-
-
-def _best_effort_build_check(
-    config: TRWConfig,
-    phase_name: str,
-    failures: list[ValidationFailure],
-) -> None:
-    """Append build-status failures (best-effort, never raises).
-
-    Delegates to validation._best_effort_build_check.
-    """
-    from trw_mcp.state.validation import (
-        _best_effort_build_check as _impl,
-    )
-
-    _impl(config, phase_name, failures)
-
-
-def _best_effort_integration_check(
-    failures: list[ValidationFailure],
-    *,
-    severity: str = "warning",
-) -> None:
-    """Append integration-check failures (best-effort, never raises).
-
-    Delegates to validation._best_effort_integration_check.
-    """
-    from trw_mcp.state.validation import (
-        _best_effort_integration_check as _impl,
-    )
-
-    _impl(failures, severity=severity)
-
-
-def _check_prd_enforcement(
-    run_path: Path,
-    config: TRWConfig,
-    required_status: PRDStatus,
-    phase_name: str,
-) -> list[ValidationFailure]:
-    """Delegate to validation._check_prd_enforcement (lazy import)."""
-    from trw_mcp.state.validation import (
-        _check_prd_enforcement as _enforcement,
-    )
-
-    return _enforcement(run_path, config, required_status, phase_name)
 
 
 # ===================================================================
@@ -290,7 +217,7 @@ def validate_review_exit(
                     severity="warning",
                 )
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass  # Best-effort advisory — never block on quality check failures
 
 

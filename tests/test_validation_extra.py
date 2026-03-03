@@ -16,16 +16,14 @@ Targets uncovered branches identified by coverage report:
 
 from __future__ import annotations
 
-import json
-import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.requirements import PRDStatus, ValidationFailure
+from trw_mcp.models.requirements import ValidationFailure
 from trw_mcp.models.run import OutputContract, Phase, ShardCard, ShardStatus, WaveEntry
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.validation import (
@@ -41,7 +39,6 @@ from trw_mcp.state.validation import (
     validate_prd_quality_v2,
     validate_wave_contracts,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -514,7 +511,7 @@ class TestBestEffortChecks:
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         failures: list[ValidationFailure] = []
         with patch(
-            "trw_mcp.state.validation._check_build_status",
+            "trw_mcp.state.phase_gates_build._check_build_status",
             side_effect=RuntimeError("unexpected"),
         ):
             _best_effort_build_check(config, "validate", failures)
@@ -524,7 +521,7 @@ class TestBestEffortChecks:
         """_best_effort_integration_check never raises even on total failure."""
         failures: list[ValidationFailure] = []
         with patch(
-            "trw_mcp.state.validation.check_integration",
+            "trw_mcp.state.integration_check.check_integration",
             side_effect=RuntimeError("scan failed"),
         ):
             _best_effort_integration_check(failures)
@@ -541,7 +538,7 @@ class TestBestEffortChecks:
         src_dir.mkdir(parents=True)
         with (
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.validation.check_integration", return_value=mock_result),
+            patch("trw_mcp.state.integration_check.check_integration", return_value=mock_result),
         ):
             _best_effort_integration_check(failures, severity="warning")
         assert any(f.rule == "tool_registration" for f in failures)
@@ -557,7 +554,7 @@ class TestBestEffortChecks:
         src_dir.mkdir(parents=True)
         with (
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.validation.check_integration", return_value=mock_result),
+            patch("trw_mcp.state.integration_check.check_integration", return_value=mock_result),
         ):
             _best_effort_integration_check(failures)
         assert any(f.rule == "test_coverage" for f in failures)
@@ -927,7 +924,6 @@ class TestValidatePrdQualityV2ExceptionBranches:
 
     def test_v1_result_precomputed_skips_v1_computation(self) -> None:
         """When v1_result is provided, it uses that instead of computing V1."""
-        from trw_mcp.models.requirements import ValidationFailure
 
         v1_precomputed: dict[str, object] = {
             "valid": True,
@@ -958,7 +954,7 @@ class TestValidatePrdQualityV2ExceptionBranches:
     def test_density_exception_produces_zero_score(self) -> None:
         """If score_content_density raises, dimension score defaults to 0."""
         with patch(
-            "trw_mcp.state.validation.score_content_density",
+            "trw_mcp.state.prd_quality.score_content_density",
             side_effect=RuntimeError("density error"),
         ):
             result = validate_prd_quality_v2(_MINIMAL_PRD_CONTENT)
@@ -968,7 +964,7 @@ class TestValidatePrdQualityV2ExceptionBranches:
     def test_structure_exception_produces_zero_score(self) -> None:
         """If score_structural_completeness raises, dimension score defaults to 0."""
         with patch(
-            "trw_mcp.state.validation.score_structural_completeness",
+            "trw_mcp.state.prd_quality.score_structural_completeness",
             side_effect=RuntimeError("structure error"),
         ):
             result = validate_prd_quality_v2(_MINIMAL_PRD_CONTENT)
@@ -978,7 +974,7 @@ class TestValidatePrdQualityV2ExceptionBranches:
     def test_traceability_exception_produces_zero_score(self) -> None:
         """If score_traceability_v2 raises, dimension score defaults to 0."""
         with patch(
-            "trw_mcp.state.validation.score_traceability_v2",
+            "trw_mcp.state.prd_quality.score_traceability_v2",
             side_effect=RuntimeError("trace error"),
         ):
             result = validate_prd_quality_v2(_MINIMAL_PRD_CONTENT)

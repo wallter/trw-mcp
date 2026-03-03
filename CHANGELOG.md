@@ -2,6 +2,42 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.9.0] — 2026-03-03
+
+### Architecture — God Module Decomposition
+
+- **`validation.py` split** (2089→146 lines) into 7 focused modules:
+  - `risk_profiles.py` — risk level derivation and scaling
+  - `event_helpers.py` — shared event I/O (single source of truth, eliminates duplication with `_phase_validators.py`)
+  - `contract_validation.py` — wave contract validation protocol
+  - `phase_gates.py` — phase exit/input criteria and enforcement
+  - `prd_quality.py` — PRD quality scoring (V1 + V2)
+  - `prd_progression.py` — auto-progression and status mapping
+  - `integration_check.py` — tool registration and test coverage checks
+  - `validation.py` retained as backward-compatible re-export facade
+
+- **`phase_gates.py` split** (801→491 lines) into 3 modules:
+  - `phase_gates_prd.py` — PRD enforcement gate (`_check_prd_enforcement`)
+  - `phase_gates_build.py` — build status and integration check wrappers
+  - `phase_gates.py` — main orchestrator with public API re-exports
+
+### Fixed
+
+- **Confidence threshold bug** — `handle_auto_mode` used `config.confidence_threshold` (float 0-1.0, INFRA-028) instead of `config.review_confidence_threshold` (int 0-100, QUAL-027), making auto-review filtering ineffective
+- **8 flaky learning tests** — module-level singleton caching in `analytics.py` and `tools/learning.py` caused order-dependent failures; added `__reload_hook__()` and conftest autouse fixture `_reset_module_singletons`
+- **`build.py` trivial wrappers** — removed `_cache_dep_audit` and `_cache_api_fuzz`, callers use `_cache_to_context` directly with `_DEP_AUDIT_FILE`/`_API_FUZZ_FILE` constants
+
+### Improved
+
+- **25 silent exception handlers** upgraded with `logger.debug("event_name", exc_info=True)` across 6 files: `analytics.py`, `orchestration.py`, `ceremony.py`, `_ceremony_helpers.py`, `learning.py`, `_phase_validators.py`
+- **trw-memory shared utilities** — `storage/_parsing.py` with `parse_dt`, `parse_json_list`, `parse_json_dict_str`, `parse_json_dict_int`; replaces duplicated parsing in `sqlite_backend.py` and `yaml_backend.py`; fixes subtle UTC normalization bug in yaml_backend
+
+### Stats
+- 3632+ tests passing, mypy --strict clean on 88 files (trw-mcp) + 75 files (trw-memory)
+- 11 new modules, 155 files changed, +1311 / -2455 lines
+
+---
+
 ## [0.8.0] — 2026-03-02
 
 ### Added — Codebase Health & Architecture Improvements

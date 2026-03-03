@@ -38,7 +38,7 @@ def validate_manual_findings(
             validated.append(f)
             if f.get("severity") not in ("critical", "warning", "info"):
                 validated[-1] = {**f, "severity": "info"}
-        except Exception:  # noqa: BLE001
+        except Exception:
             validated.append({
                 **f,
                 "severity": _normalize_severity(f.get("severity", "info")),
@@ -208,9 +208,8 @@ def handle_auto_mode(
     if not isinstance(all_auto_findings, list):
         all_auto_findings = []
 
-    # Use float 0.0-1.0 confidence threshold (INFRA-028-FR06)
-    # config.confidence_threshold is 0.0-1.0 (new field)
-    confidence_threshold = config.confidence_threshold
+    # Multi-agent review confidence threshold (QUAL-027): 0-100 scale
+    confidence_threshold = config.review_confidence_threshold
 
     # Filter findings by confidence threshold
     surfaced: list[dict[str, object]] = []
