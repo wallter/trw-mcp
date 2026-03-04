@@ -12,6 +12,7 @@ import argparse
 import logging
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -418,6 +419,99 @@ def _is_pid_alive(pid: int) -> bool:
         return False
 
 
+def _clean_stale_pid(
+    pid_path: Path,
+    log: structlog.stdlib.BoundLogger,
+) -> None:
+    """Remove PID file if the recorded process is no longer alive.
+
+    Args:
+        pid_path: Path to the PID file.
+        log: Structured logger for audit trail.
+    """
+    if not pid_path.exists():
+        return
+    try:
+        old_pid = int(pid_path.read_text(encoding="utf-8").strip())
+        if not _is_pid_alive(old_pid):
+            log.info("mcp_server_stale_pid_cleaned", stale_pid=old_pid)
+            pid_path.unlink(missing_ok=True)
+    except (ValueError, OSError):
+        pid_path.unlink(missing_ok=True)
+
+
+def _spawn_http_server(
+    config: TRWConfig,
+    trw_dir: Path,
+    *,
+    debug: bool,
+) -> int:
+    """Spawn the HTTP MCP server as a background process.
+
+    Args:
+        config: TRW configuration (transport, host, port, logs_dir).
+        trw_dir: Resolved ``.trw`` directory path.
+        debug: Whether to pass ``--debug`` to the spawned server.
+
+    Returns:
+        PID of the spawned server process.
+    """
+    import subprocess
+
+    cmd = [
+        sys.executable, "-m", "trw_mcp.server",
+        "--transport", config.mcp_transport,
+        "--host", config.mcp_host,
+        "--port", str(config.mcp_port),
+    ]
+    if debug:
+        cmd.append("--debug")
+
+    logs_dir = trw_dir / config.logs_dir
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_file = logs_dir / "mcp-server.log"
+
+    with open(log_file, "a") as log_out:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_out,
+            stderr=log_out,
+            start_new_session=True,
+        )
+
+    pid_path = trw_dir / "mcp-server.pid"
+    pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+    return proc.pid
+
+
+def _wait_for_port(
+    host: str,
+    port: int,
+    *,
+    poll_interval: float = 0.5,
+    max_polls: int = 60,
+) -> bool:
+    """Poll until a TCP port accepts connections or timeout is reached.
+
+    Args:
+        host: Host address to poll.
+        port: Port number to check.
+        poll_interval: Seconds between polls (default 0.5s).
+        max_polls: Maximum number of polls (default 60 = 30s total).
+
+    Returns:
+        True if the port became available, False on timeout.
+    """
+    import time
+
+    for _ in range(max_polls):
+        time.sleep(poll_interval)
+        if _is_port_open(host, port):
+            return True
+    return False
+
+
 def _ensure_http_server(
     config: TRWConfig,
     log: structlog.stdlib.BoundLogger,
@@ -434,8 +528,6 @@ def _ensure_http_server(
     fall back to standalone stdio).
     """
     import fcntl
-    import subprocess
-    import time
 
     host = config.mcp_host
     port = config.mcp_port
@@ -453,15 +545,7 @@ def _ensure_http_server(
     lock_path = trw_dir / "mcp-server.lock"
     pid_path = trw_dir / "mcp-server.pid"
 
-    # Clean up stale PID file from dead processes
-    if pid_path.exists():
-        try:
-            old_pid = int(pid_path.read_text(encoding="utf-8").strip())
-            if not _is_pid_alive(old_pid):
-                log.info("mcp_server_stale_pid_cleaned", stale_pid=old_pid)
-                pid_path.unlink(missing_ok=True)
-        except (ValueError, OSError):
-            pid_path.unlink(missing_ok=True)
+    _clean_stale_pid(pid_path, log)
 
     lock_fd = open(lock_path, "w")  # noqa: SIM115
     try:
@@ -474,36 +558,12 @@ def _ensure_http_server(
             return url
 
     try:
-        cmd = [
-            sys.executable, "-m", "trw_mcp.server",
-            "--transport", transport,
-            "--host", host,
-            "--port", str(port),
-        ]
-        if debug:
-            cmd.append("--debug")
+        pid = _spawn_http_server(config, trw_dir, debug=debug)
 
-        logs_dir = trw_dir / config.logs_dir
-        logs_dir.mkdir(parents=True, exist_ok=True)
-        log_file = logs_dir / "mcp-server.log"
-
-        with open(log_file, "a") as log_out:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=log_out,
-                stderr=log_out,
-                start_new_session=True,
-            )
-
-        pid_path.write_text(str(proc.pid), encoding="utf-8")
-
-        # Poll for port availability (0.5s intervals, 30s max — WSL2 cold starts
-        # can take 15-20s due to filesystem I/O latency)
-        for _ in range(60):
-            time.sleep(0.5)
-            if _is_port_open(host, port):
-                log.info("mcp_server_started", pid=proc.pid, url=url)
-                return url
+        # WSL2 cold starts can take 15-20s due to filesystem I/O latency
+        if _wait_for_port(host, port):
+            log.info("mcp_server_started", pid=pid, url=url)
+            return url
 
         log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=30)
         return None
@@ -632,8 +692,12 @@ async def _run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     ) from last_error
 
 
-def main() -> None:
-    """Entry point for the trw-mcp CLI command."""
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser with all subcommands.
+
+    Returns:
+        Configured ArgumentParser with global flags and subcommand parsers.
+    """
     parser = argparse.ArgumentParser(
         prog="trw-mcp",
         description="TRW Framework MCP Server",
@@ -837,44 +901,40 @@ def main() -> None:
         help="API key for backend authentication (required with --push)",
     )
 
-    args = parser.parse_args()
+    return parser
 
-    if args.command == "init-project":
-        _run_init_project(args)
-        return
 
-    if args.command == "update-project":
-        _run_update_project(args)
-        return
+_SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
+    "init-project": _run_init_project,
+    "update-project": _run_update_project,
+    "audit": _run_audit,
+    "export": _run_export,
+    "import-learnings": _run_import_learnings,
+    "build-release": _run_build_release,
+}
 
-    if args.command == "audit":
-        _run_audit(args)
-        return
 
-    if args.command == "export":
-        _run_export(args)
-        return
+def _resolve_and_run_transport(
+    args: argparse.Namespace,
+    config: TRWConfig,
+    *,
+    debug: bool,
+    log: structlog.stdlib.BoundLogger,
+) -> None:
+    """Resolve transport mode and start the MCP server.
 
-    if args.command == "import-learnings":
-        _run_import_learnings(args)
-        return
+    Handles three transport paths:
+      - Path 1: Explicit ``--transport`` flag — run as that transport directly.
+      - Path 2: No flag + config ``stdio`` — run stdio normally.
+      - Path 3: No flag + config HTTP — auto-start shared server + stdio proxy.
 
-    if args.command == "build-release":
-        _run_build_release(args)
-        return
-
-    # Default: run MCP server (no subcommand or "serve")
-    config = TRWConfig()
-    debug = args.debug or config.debug
-
-    _configure_logging(debug=debug, config=config)
-
-    log = structlog.get_logger()
-
+    Args:
+        args: Parsed CLI arguments (transport, host, port).
+        config: TRW configuration.
+        debug: Whether debug mode is active.
+        log: Structured logger.
+    """
     # ── Transport resolution (PRD-CORE-070-FR03) ────────────────────────
-    # Path 1: Explicit --transport → run as that transport directly (server mode)
-    # Path 2: No flag + config stdio → run stdio normally (default)
-    # Path 3: No flag + config HTTP → auto-start shared server + stdio proxy
     if args.transport is not None:
         # Path 1: Direct server mode (e.g., spawned by _ensure_http_server)
         transport: str = args.transport
@@ -911,39 +971,83 @@ def main() -> None:
 
     else:
         # Path 3: Auto-start shared HTTP server + run as stdio proxy
-        log.info(
-            "trw_proxy_starting",
-            target_transport=config.mcp_transport,
-            target_host=config.mcp_host,
-            target_port=config.mcp_port,
-        )
+        _run_http_proxy_transport(config, log, debug=debug)
 
-        url = _ensure_http_server(config, log, debug=debug)
 
-        if url is not None:
-            # Run stdio proxy bridging to the shared server
-            import asyncio
+def _run_http_proxy_transport(
+    config: TRWConfig,
+    log: structlog.stdlib.BoundLogger,
+    *,
+    debug: bool,
+) -> None:
+    """Start a shared HTTP server and bridge via stdio proxy.
 
-            try:
-                asyncio.run(_run_stdio_proxy(url))
-            except (KeyboardInterrupt, EOFError):
-                pass  # Clean exit when Claude Code disconnects
-            except ConnectionError:
-                # Proxy exhausted retries — fall back to standalone
-                log.warning(
-                    "trw_proxy_fallback",
-                    reason="proxy_connect_failed",
-                    fallback="standalone_stdio",
-                )
-                mcp.run()
-        else:
-            # FR06: Fallback to standalone stdio on failure
+    Falls back to standalone stdio if the HTTP server cannot be started
+    or the proxy fails to connect.
+
+    Args:
+        config: TRW configuration.
+        log: Structured logger.
+        debug: Whether debug mode is active.
+    """
+    log.info(
+        "trw_proxy_starting",
+        target_transport=config.mcp_transport,
+        target_host=config.mcp_host,
+        target_port=config.mcp_port,
+    )
+
+    url = _ensure_http_server(config, log, debug=debug)
+
+    if url is not None:
+        # Run stdio proxy bridging to the shared server
+        import asyncio
+
+        try:
+            asyncio.run(_run_stdio_proxy(url))
+        except (KeyboardInterrupt, EOFError):
+            pass  # Clean exit when Claude Code disconnects
+        except ConnectionError:
+            # Proxy exhausted retries — fall back to standalone
             log.warning(
                 "trw_proxy_fallback",
-                reason="http_server_start_failed",
+                reason="proxy_connect_failed",
                 fallback="standalone_stdio",
             )
             mcp.run()
+    else:
+        # FR06: Fallback to standalone stdio on failure
+        log.warning(
+            "trw_proxy_fallback",
+            reason="http_server_start_failed",
+            fallback="standalone_stdio",
+        )
+        mcp.run()
+
+
+def main() -> None:
+    """Entry point for the trw-mcp CLI command.
+
+    Parses arguments, dispatches to subcommand handlers, or starts the
+    MCP server with the appropriate transport.
+    """
+    parser = _build_arg_parser()
+    args = parser.parse_args()
+
+    # Dispatch subcommands
+    handler = _SUBCOMMAND_HANDLERS.get(str(args.command or ""))
+    if handler is not None:
+        handler(args)
+        return
+
+    # Default: run MCP server (no subcommand or "serve")
+    config = TRWConfig()
+    debug = args.debug or config.debug
+
+    _configure_logging(debug=debug, config=config)
+
+    log = structlog.get_logger()
+    _resolve_and_run_transport(args, config, debug=debug, log=log)
 
 
 if __name__ == "__main__":

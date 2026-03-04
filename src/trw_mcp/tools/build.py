@@ -294,6 +294,51 @@ def _run_mypy(
     return {"mypy_clean": mypy_clean, "failures": failures}
 
 
+def _run_audit_tool(
+    cmd: list[str],
+    cwd: Path,
+    timeout_secs: int,
+    tool_name: str,
+) -> dict[str, object] | object:
+    """Run an audit tool subprocess and parse its JSON output.
+
+    Shared helper for pip-audit and npm audit — handles subprocess
+    execution, error handling, and JSON parsing. Returns parsed JSON
+    data on success, or a skip dict on failure.
+
+    Args:
+        cmd: Command and arguments (e.g. ``["pip-audit", "--json"]``).
+        cwd: Working directory for the subprocess.
+        timeout_secs: Maximum seconds before timeout.
+        tool_name: Human-readable tool name for skip reasons
+            (e.g. ``"pip-audit"``, ``"npm audit"``).
+
+    Returns:
+        Parsed JSON data (any type) on success, or a dict with
+        ``{tool_name}_skipped=True`` and ``{tool_name}_skip_reason``
+        on failure. Callers distinguish success from failure by
+        checking for the ``_skipped`` key.
+    """
+    # Derive the key prefix from tool_name (e.g. "pip-audit" -> "pip_audit")
+    prefix = tool_name.replace("-", "_").replace(" ", "_")
+
+    result = _run_subprocess(cmd, cwd, timeout_secs)
+
+    if isinstance(result, str):
+        return {
+            f"{prefix}_skipped": True,
+            f"{prefix}_skip_reason": result,
+        }
+
+    try:
+        return json.loads(result.stdout)  # type: ignore[no-any-return]
+    except (json.JSONDecodeError, TypeError):
+        return {
+            f"{prefix}_skipped": True,
+            f"{prefix}_skip_reason": f"invalid JSON from {tool_name}",
+        }
+
+
 def _run_pip_audit(
     project_root: Path,
     config: TRWConfig,
@@ -319,25 +364,16 @@ def _run_pip_audit(
             "pip_audit_skip_reason": "pip-audit not installed",
         }
 
-    result = _run_subprocess(
+    data = _run_audit_tool(
         [pip_audit_path, "--json"],
         project_root,
         config.dep_audit_timeout_secs,
+        "pip-audit",
     )
 
-    if isinstance(result, str):
-        return {
-            "pip_audit_skipped": True,
-            "pip_audit_skip_reason": result,
-        }
-
-    try:
-        data = json.loads(result.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return {
-            "pip_audit_skipped": True,
-            "pip_audit_skip_reason": "invalid JSON from pip-audit",
-        }
+    # _run_audit_tool returns a skip dict on failure
+    if isinstance(data, dict) and data.get("pip_audit_skipped"):
+        return data
 
     # Severity ranking for filtering
     severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -346,7 +382,7 @@ def _run_pip_audit(
     vulnerabilities: list[dict[str, object]] = []
     blocking_count = 0
 
-    deps = data if isinstance(data, list) else data.get("dependencies", [])
+    deps = data if isinstance(data, list) else data.get("dependencies", []) if isinstance(data, dict) else []
     for dep in deps:
         if not isinstance(dep, dict):
             continue
@@ -449,28 +485,19 @@ def _run_npm_audit(
             "npm_audit_skip_reason": "npm not installed",
         }
 
-    result = _run_subprocess(
+    data = _run_audit_tool(
         [npm_path, "audit", "--audit-level=high", "--json"],
         platform_dir,
         config.dep_audit_timeout_secs,
+        "npm_audit",
     )
 
-    if isinstance(result, str):
-        return {
-            "npm_audit_skipped": True,
-            "npm_audit_skip_reason": result,
-        }
-
-    try:
-        data = json.loads(result.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return {
-            "npm_audit_skipped": True,
-            "npm_audit_skip_reason": "invalid JSON from npm audit",
-        }
+    # _run_audit_tool returns a skip dict on failure
+    if isinstance(data, dict) and data.get("npm_audit_skipped"):
+        return data
 
     # npm audit returns non-zero when vulnerabilities found — that's expected
-    vulnerabilities = data.get("vulnerabilities", {})
+    vulnerabilities = data.get("vulnerabilities", {}) if isinstance(data, dict) else {}
     high_plus = 0
     vuln_details: list[dict[str, object]] = []
 
@@ -612,8 +639,6 @@ def _run_dep_audit(
     Returns:
         Combined result dict with dep_audit_passed and sub-results.
     """
-    _source_path = config.source_package_path or "trw-mcp/src"
-
     # Get changed files for npm audit and unlisted import detection
     try:
         git_result = subprocess.run(
@@ -936,16 +961,32 @@ def register_build_tools(server: FastMCP) -> None:
 
         cache_path = cache_build_status(trw_dir, status)
 
+        # FIX-035-FR01: Auto-detect active run when not explicitly provided
+        from trw_mcp.state._paths import find_active_run
+
+        resolved_run: Path | None = None
         if run_path:
+            resolved_run = Path(run_path).resolve()
+        else:
+            resolved_run = find_active_run()
+
+        # FIX-035-FR05: Auto-update phase to VALIDATE
+        from trw_mcp.models.run import Phase
+        from trw_mcp.state.phase import try_update_phase
+
+        try_update_phase(resolved_run, Phase.VALIDATE)
+
+        # FIX-035-FR02: Log event with proper boolean types
+        if resolved_run is not None:
             from trw_mcp.state.persistence import FileEventLogger
 
-            events_path = Path(run_path).resolve() / "meta" / "events.jsonl"
+            events_path = resolved_run / "meta" / "events.jsonl"
             if events_path.parent.exists():
                 event_logger = FileEventLogger(_writer)
                 event_logger.log_event(events_path, "build_check_complete", {
                     "scope": scope,
-                    "tests_passed": str(status.tests_passed),
-                    "mypy_clean": str(status.mypy_clean),
+                    "tests_passed": status.tests_passed,
+                    "mypy_clean": status.mypy_clean,
                     "coverage_pct": str(status.coverage_pct),
                     "duration_secs": str(status.duration_secs),
                 })

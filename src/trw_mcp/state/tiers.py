@@ -13,9 +13,11 @@ import re
 from collections import OrderedDict
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import NamedTuple, cast
+from typing import cast
 
 import structlog
+
+from trw_memory.lifecycle.tiers import TierSweepResult as TierSweepResult
 
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry
@@ -27,28 +29,9 @@ logger = structlog.get_logger()
 
 
 # ---------------------------------------------------------------------------
-# Result types
-# ---------------------------------------------------------------------------
-
-
-class TierSweepResult(NamedTuple):
-    """Outcome of a single sweep() pass across all tiers.
-
-    Attributes:
-        promoted: Entries moved up a tier (Cold→Warm).
-        demoted: Entries moved down a tier (Hot→Warm, Warm→Cold).
-        purged: Entries deleted from Cold tier (retention expired).
-        errors: Per-entry failures that were logged and skipped.
-    """
-
-    promoted: int
-    demoted: int
-    purged: int
-    errors: int
-
-
-# ---------------------------------------------------------------------------
 # Importance scoring (FR05)
+# NOTE: parallel implementation exists in trw_memory.lifecycle.tiers —
+# field names differ (impact vs importance, TRWConfig vs MemoryConfig).
 # ---------------------------------------------------------------------------
 
 
@@ -123,6 +106,9 @@ def compute_importance_score(
 
 # ---------------------------------------------------------------------------
 # TierManager
+# NOTE: parallel implementation exists in trw_memory.lifecycle.tiers —
+# storage backends differ (FileStateReader/Writer vs SQLiteBackend).
+# TierSweepResult is imported from trw_memory (canonical definition).
 # ---------------------------------------------------------------------------
 
 

@@ -8,7 +8,6 @@ Original entries are archived to the cold tier after consolidation.
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from datetime import date
@@ -22,21 +21,16 @@ from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_memory.lifecycle.consolidation import (
+    _parse_consolidation_response,
+    _redact_paths,
+    complete_linkage_cluster,
+)
 
 if TYPE_CHECKING:
     from trw_mcp.state.tiers import TierManager
 
 logger = structlog.get_logger()
-
-# NFR06 — Path redaction pattern for LLM prompts
-_PATH_RE = re.compile(
-    r"(?:/home/|/Users/|/mnt/|/tmp/|/var/|[A-Z]:\\)[^\s,;\"')\]}>]*",
-)
-
-
-def _redact_paths(text: str) -> str:
-    """Replace filesystem paths with [REDACTED_PATH] before sending to LLM."""
-    return _PATH_RE.sub("[REDACTED_PATH]", text)
 
 
 # ---------------------------------------------------------------------------
@@ -148,43 +142,12 @@ def find_clusters(
     if len(indexed) < min_cluster_size:
         return []
 
-    # Complete-linkage agglomerative clustering
-    # Invariant: every pair within a cluster must be >= threshold
-    n = len(indexed)
-    cluster_id: list[int] = list(range(n))  # each entry starts in its own cluster
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            sim = cosine_similarity(indexed[i][1], indexed[j][1])
-            if sim >= similarity_threshold:
-                # Merge j's cluster into i's cluster if they can be merged
-                cid_i = cluster_id[i]
-                cid_j = cluster_id[j]
-                if cid_i == cid_j:
-                    continue
-                # Check that ALL pairs between the two clusters satisfy threshold
-                i_members = [k for k in range(n) if cluster_id[k] == cid_i]
-                j_members = [k for k in range(n) if cluster_id[k] == cid_j]
-                can_merge = all(
-                    cosine_similarity(indexed[a][1], indexed[b][1]) >= similarity_threshold
-                    for a in i_members
-                    for b in j_members
-                )
-                if can_merge:
-                    for k in range(n):
-                        if cluster_id[k] == cid_j:
-                            cluster_id[k] = cid_i
-
-    # Collect clusters by cluster_id
-    clusters_map: dict[int, list[dict[str, object]]] = {}
-    for idx, cid in enumerate(cluster_id):
-        clusters_map.setdefault(cid, []).append(indexed[idx][0])
-
-    result = [
-        cluster
-        for cluster in clusters_map.values()
-        if len(cluster) >= min_cluster_size
-    ]
+    result = complete_linkage_cluster(
+        indexed,
+        similarity_threshold,
+        min_cluster_size,
+        similarity_fn=cosine_similarity,
+    )
 
     logger.debug(
         "find_clusters_complete",
@@ -260,24 +223,6 @@ def _summarize_cluster_llm(
         return None
 
     return _parse_consolidation_response(retry_response)
-
-
-def _parse_consolidation_response(response: str) -> dict[str, str] | None:
-    """Extract {"summary": ..., "detail": ...} from an LLM response string."""
-    for line in response.strip().split("\n"):
-        line_s = line.strip()
-        if not line_s.startswith("{"):
-            continue
-        try:
-            parsed = json.loads(line_s)
-            if "summary" in parsed and "detail" in parsed:
-                return {
-                    "summary": str(parsed["summary"]),
-                    "detail": str(parsed["detail"]),
-                }
-        except ValueError:
-            continue
-    return None
 
 
 # ---------------------------------------------------------------------------

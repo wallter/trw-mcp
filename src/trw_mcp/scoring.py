@@ -18,6 +18,16 @@ from pathlib import Path
 
 import structlog
 
+from trw_memory.lifecycle.scoring import (
+    _clamp01 as _clamp01,
+    _ensure_utc as _ensure_utc,
+    apply_time_decay as apply_time_decay,
+    bayesian_calibrate as bayesian_calibrate,
+    compute_calibration_accuracy as compute_calibration_accuracy,
+    compute_utility_score as compute_utility_score,
+    update_q_value as update_q_value,
+)
+
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.run import (
@@ -27,6 +37,7 @@ from trw_mcp.models.run import (
     EventType,
     PhaseRequirements,
 )
+from trw_mcp.state._helpers import safe_float, safe_int
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -47,31 +58,6 @@ _IMPACT_DECAY_FLOOR: float = 0.1  # Minimum impact after exponential decay
 # Tier boundary thresholds for enforce_tier_distribution
 _TIER_HIGH_CEILING: float = 0.89  # Top of high tier (demotion target)
 _TIER_MEDIUM_CEILING: float = 0.69  # Top of medium tier (demotion target)
-
-# --- Field extraction helpers ---
-
-
-def _float_field(entry: dict[str, object], key: str, default: float) -> float:
-    """Extract a float from an entry dict, coercing through str for safety."""
-    return float(str(entry.get(key, default)))
-
-
-def _int_field(entry: dict[str, object], key: str, default: int) -> int:
-    """Extract an int from an entry dict, coercing through str for safety."""
-    return int(str(entry.get(key, default)))
-
-
-def _clamp01(value: float) -> float:
-    """Clamp a value to the [0.0, 1.0] range."""
-    return max(0.0, min(1.0, value))
-
-
-def _ensure_utc(ts: datetime) -> datetime:
-    """Return a timezone-aware datetime, assuming UTC if naive."""
-    if ts.tzinfo is None:
-        return ts.replace(tzinfo=timezone.utc)
-    return ts
-
 
 # --- Adaptive Ceremony Depth (PRD-CORE-060) ---
 
@@ -366,116 +352,6 @@ def _days_since_access(
     return fallback_days
 
 
-def update_q_value(
-    q_old: float,
-    reward: float,
-    alpha: float = 0.15,
-    recurrence_bonus: float = 0.0,
-) -> float:
-    """Update Q-value using MemRL exponential moving average.
-
-    Formula: Q_new = Q_old + alpha * (reward - Q_old) + recurrence_bonus
-
-    Under stationary rewards, convergence guarantee:
-    E[Q_t] = beta + (1-alpha)^t * (Q_0 - beta)
-    where beta is the true expected reward.
-
-    Args:
-        q_old: Current Q-value for the learning entry (0.0-1.0).
-        reward: Observed reward from outcome tracking (in [-1.0, 1.0]).
-        alpha: Learning rate. Default 0.15 balances responsiveness
-            with stability. Half-life of adaptation ~4.3 updates.
-        recurrence_bonus: Small additive bonus when recurrence increases.
-            Prevents Q-value from decaying for repeatedly-encountered issues.
-
-    Returns:
-        Updated Q-value, clamped to [0.0, 1.0].
-    """
-    q_new = q_old + alpha * (reward - q_old) + recurrence_bonus
-    return _clamp01(q_new)
-
-
-def compute_utility_score(
-    q_value: float,
-    days_since_last_access: int,
-    recurrence_count: int,
-    base_impact: float,
-    q_observations: int,
-    *,
-    half_life_days: float = 14.0,
-    use_exponent: float = 0.6,
-    cold_start_threshold: int = 3,
-    access_count: int = 0,
-    source_type: str = "agent",
-    access_count_boost_cap: float = 0.15,
-    source_human_boost: float = 0.1,
-) -> float:
-    """Compute composite utility score combining Q-value with Ebbinghaus decay.
-
-    The score determines both retrieval ranking and pruning eligibility.
-    Higher scores = more valuable, less likely to be pruned, ranked higher.
-
-    Formula:
-        retention = recurrence_strength * exp(-effective_decay * days)
-        effective_q = blend(impact, q_value, q_observations)
-        utility = effective_q * retention + access_boost + source_boost
-
-    PRD-CORE-026: Added access_count boost (sub-linear, capped) and
-    source_type boost (+0.1 for human-sourced learnings).
-
-    Args:
-        q_value: Current Q-value from outcome tracking (0.0-1.0).
-        days_since_last_access: Days since last trw_recall retrieval.
-            If never accessed, use days since creation.
-        recurrence_count: Number of times the learning has been recalled.
-            Minimum 1 (at creation).
-        base_impact: Original static impact score (0.0-1.0).
-        q_observations: Number of outcome observations for q_value.
-        half_life_days: Days until retention halves without reinforcement.
-            Default 14 (two weeks). Configurable via TRWConfig.
-        use_exponent: Sub-linear exponent for recurrence count.
-            Default 0.6 (from CortexGraph). Prevents over-reinforcement.
-        cold_start_threshold: Number of Q-observations before fully
-            trusting q_value over base_impact. Default 3.
-        access_count: Number of times this learning was recalled.
-        source_type: Learning provenance — 'human' or 'agent'.
-        access_count_boost_cap: Maximum boost from access_count.
-        source_human_boost: Utility boost for human-sourced learnings.
-
-    Returns:
-        Composite utility score in [0.0, 1.0].
-    """
-    # Cold-start blending: transition from impact to q_value
-    if q_observations < cold_start_threshold:
-        w = q_observations / max(cold_start_threshold, 1)
-        effective_q = (1.0 - w) * base_impact + w * q_value
-    else:
-        effective_q = q_value
-
-    # Ebbinghaus decay rate from half-life: lambda = ln(2) / half_life
-    decay_rate = _LN2 / max(half_life_days, 0.1)
-
-    # Sub-linear recurrence strength: n^beta (minimum 1)
-    recurrence_strength = max(1.0, recurrence_count) ** use_exponent
-
-    # Strength-modulated decay: higher recurrence = slower decay
-    effective_decay = decay_rate / recurrence_strength
-    retention = math.exp(-effective_decay * max(days_since_last_access, 0))
-
-    # Base composite score
-    utility = effective_q * retention
-
-    # PRD-CORE-026-FR05: access_count boost (sub-linear, capped)
-    if access_count > 0:
-        utility += min(access_count_boost_cap, 0.05 * math.log1p(access_count))
-
-    # PRD-CORE-026-FR06: source_type boost for human-sourced learnings
-    if source_type == "human":
-        utility += source_human_boost
-
-    return _clamp01(utility)
-
-
 def _entry_utility(
     entry: dict[str, object],
     today: date,
@@ -489,11 +365,11 @@ def _entry_utility(
     PRD-CORE-034: Applies time decay to base_impact before computing utility
     so that older learnings naturally sink in recall ranking results.
     """
-    q_value = _float_field(entry, "q_value", _float_field(entry, "impact", 0.5))
-    base_impact = _float_field(entry, "impact", 0.5)
-    q_observations = _int_field(entry, "q_observations", 0)
-    recurrence = _int_field(entry, "recurrence", 1)
-    access_count = _int_field(entry, "access_count", 0)
+    q_value = safe_float(entry, "q_value", safe_float(entry, "impact", 0.5))
+    base_impact = safe_float(entry, "impact", 0.5)
+    q_observations = safe_int(entry, "q_observations", 0)
+    recurrence = safe_int(entry, "recurrence", 1)
+    access_count = safe_int(entry, "access_count", 0)
     source_type = str(entry.get("source_type", "agent"))
     days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
 
@@ -564,7 +440,7 @@ def compute_impact_distribution(
             continue
         if str(data.get("status", "active")) != "active":
             continue
-        score = _float_field(data, "impact", 0.5)
+        score = safe_float(data, "impact", 0.5)
         total += 1
         if score >= 0.9:
             counts["critical"] += 1
@@ -585,70 +461,6 @@ def compute_impact_distribution(
         "medium": {"count": counts["medium"], "pct": _pct(counts["medium"])},
         "low": {"count": counts["low"], "pct": _pct(counts["low"])},
     }
-
-
-# --- Bayesian impact score calibration (PRD-CORE-034) ---
-
-
-def bayesian_calibrate(
-    user_impact: float,
-    org_mean: float = 0.5,
-    user_weight: float = 1.0,
-    org_weight: float = 0.5,
-) -> float:
-    """Compute Bayesian posterior impact score.
-
-    Combines user-assigned impact with org-wide mean using weighted average.
-    Higher user_weight = more trust in user's scoring accuracy.
-    Higher org_weight = stronger regression toward org mean.
-
-    Formula: (user_impact * user_weight + org_mean * org_weight) / (user_weight + org_weight)
-
-    Args:
-        user_impact: Score assigned by user (0.0-1.0)
-        org_mean: Average impact across all org learnings (default 0.5)
-        user_weight: User calibration accuracy weight (starts 1.0, increases with accuracy)
-        org_weight: Org evidence weight (starts 0.5, caps at 2.0)
-
-    Returns:
-        Calibrated impact score (0.0-1.0)
-    """
-    if user_weight + org_weight == 0:
-        return user_impact
-
-    # Cap org_weight at 2.0
-    org_weight = min(org_weight, 2.0)
-
-    posterior = (user_impact * user_weight + org_mean * org_weight) / (user_weight + org_weight)
-    return max(0.0, min(1.0, posterior))
-
-
-def compute_calibration_accuracy(recall_stats: dict[str, object]) -> float:
-    """Compute user calibration accuracy from recall tracking data.
-
-    Users whose high-impact learnings are frequently recalled get higher accuracy.
-
-    Returns:
-        Accuracy score 0.0-2.0 (used as user_weight in bayesian_calibrate)
-    """
-    total = int(str(recall_stats.get("total_recalls", 0)))
-    positive = int(str(recall_stats.get("positive_outcomes", 0)))
-
-    if total == 0:
-        return 1.0  # default weight
-
-    # Positive outcome ratio → weight mapping
-    # 50%+ positive → weight 1.5
-    # 75%+ positive → weight 2.0
-    # <25% positive → weight 0.5
-    ratio = positive / total
-    if ratio >= 0.75:
-        return 2.0
-    if ratio >= 0.50:
-        return 1.5
-    if ratio >= 0.25:
-        return 1.0
-    return 0.5
 
 
 # --- Forced distribution enforcement (PRD-CORE-034) ---
@@ -777,31 +589,6 @@ def enforce_tier_distribution(
 # --- Ebbinghaus decay for impact scores (PRD-CORE-034) ---
 
 
-def apply_time_decay(impact: float, created_at: datetime) -> float:
-    """Apply Ebbinghaus-inspired time decay to a raw impact score.
-
-    The decay factor is linear (not exponential) over a 1-year window,
-    floored at 0.3 to preserve minimum relevance for very old entries.
-
-    Formula:
-        days = (now - created_at).days
-        decay_factor = max(0.3, 1.0 - (days / 365) * 0.3)
-        effective_impact = impact * decay_factor
-
-    Args:
-        impact: Raw impact score (0.0-1.0).
-        created_at: When the learning was created (timezone-aware or naive UTC).
-
-    Returns:
-        Decayed impact score in [0.0, 1.0].
-    """
-    now = datetime.now(timezone.utc)
-    created_utc = _ensure_utc(created_at)
-    days = max(0, (now - created_utc).days)
-    decay_factor = max(_TIME_DECAY_FLOOR, 1.0 - (days / _DAYS_PER_YEAR) * _TIME_DECAY_SLOPE)
-    return _clamp01(impact * decay_factor)
-
-
 def apply_impact_decay(
     entries: list[dict[str, object]],
     half_life_days: int | None = None,
@@ -829,7 +616,7 @@ def apply_impact_decay(
     now = datetime.now(timezone.utc)
 
     for entry in entries:
-        impact = _float_field(entry, "impact", 0.5)
+        impact = safe_float(entry, "impact", 0.5)
 
         # Find the best date to measure staleness from
         ref_date_str = ""
@@ -954,7 +741,7 @@ def utility_based_prune_candidates(
             continue
 
         age_days = (today - created).days
-        recurrence = _int_field(data, "recurrence", 1)
+        recurrence = safe_int(data, "recurrence", 1)
         entry_status = str(data.get("status", "active"))
 
         # Tier 1: Status-based cleanup (resolved/obsolete stragglers)
@@ -1237,9 +1024,9 @@ def process_outcome(
             continue
 
         entry_path, data = found
-        q_old = _float_field(data, "q_value", _float_field(data, "impact", 0.5))
-        q_obs = _int_field(data, "q_observations", 0)
-        recurrence = _int_field(data, "recurrence", 1)
+        q_old = safe_float(data, "q_value", safe_float(data, "impact", 0.5))
+        q_obs = safe_int(data, "q_observations", 0)
+        recurrence = safe_int(data, "recurrence", 1)
 
         # Apply recency-discounted reward
         effective_reward = reward * discount

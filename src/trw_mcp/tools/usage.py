@@ -6,6 +6,8 @@ cost estimates, and call counts across sessions.
 
 from __future__ import annotations
 
+from typing import cast
+
 import structlog
 from fastmcp import FastMCP
 
@@ -112,11 +114,11 @@ def register_usage_tools(server: FastMCP) -> None:
                     "cost_estimate_usd": 0.0,
                 }
             model_entry = by_model[model]
-            model_entry["calls"] = int(str(model_entry["calls"])) + 1
-            model_entry["input_tokens"] = int(str(model_entry["input_tokens"])) + input_tokens
-            model_entry["output_tokens"] = int(str(model_entry["output_tokens"])) + output_tokens
+            model_entry["calls"] = cast(int, model_entry["calls"]) + 1
+            model_entry["input_tokens"] = cast(int, model_entry["input_tokens"]) + input_tokens
+            model_entry["output_tokens"] = cast(int, model_entry["output_tokens"]) + output_tokens
             model_entry["cost_estimate_usd"] = round(
-                float(str(model_entry["cost_estimate_usd"])) + cost, 6
+                cast(float, model_entry["cost_estimate_usd"]) + cost, 6
             )
 
             # Aggregate by caller
@@ -127,9 +129,9 @@ def register_usage_tools(server: FastMCP) -> None:
                     "output_tokens": 0,
                 }
             caller_entry = by_caller[caller]
-            caller_entry["calls"] = int(str(caller_entry["calls"])) + 1
-            caller_entry["input_tokens"] = int(str(caller_entry["input_tokens"])) + input_tokens
-            caller_entry["output_tokens"] = int(str(caller_entry["output_tokens"])) + output_tokens
+            caller_entry["calls"] = cast(int, caller_entry["calls"]) + 1
+            caller_entry["input_tokens"] = cast(int, caller_entry["input_tokens"]) + input_tokens
+            caller_entry["output_tokens"] = cast(int, caller_entry["output_tokens"]) + output_tokens
 
         total_cost_rounded = round(total_cost, 6)
 

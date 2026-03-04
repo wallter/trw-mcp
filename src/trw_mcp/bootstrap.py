@@ -51,6 +51,111 @@ _DATA_FILE_MAP: list[tuple[str, str]] = [
 ]
 
 
+def _create_directory_structure(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Create the TRW directory scaffold inside *target_dir*."""
+    for rel_dir in _TRW_DIRS:
+        _ensure_dir(target_dir / rel_dir, result)
+
+
+def _copy_bundled_data_files(
+    target_dir: Path,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Copy all bundled data files from ``_DATA_FILE_MAP`` to *target_dir*."""
+    for data_name, dest_rel in _DATA_FILE_MAP:
+        _copy_file(_DATA_DIR / data_name, target_dir / dest_rel, force, result)
+
+
+def _write_initial_config(
+    target_dir: Path,
+    force: bool,
+    result: dict[str, list[str]],
+    *,
+    source_package: str = "",
+    test_path: str = "",
+) -> None:
+    """Write generated config.yaml and learnings index seed files."""
+    _write_if_missing(
+        target_dir / ".trw" / "config.yaml",
+        _default_config(source_package=source_package, test_path=test_path),
+        force,
+        result,
+    )
+    _write_if_missing(
+        target_dir / ".trw" / "learnings" / "index.yaml",
+        "entries: []\n",
+        force,
+        result,
+    )
+
+
+def _install_hooks(
+    target_dir: Path,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Copy bundled hook scripts to ``.claude/hooks/``."""
+    hooks_source = _DATA_DIR / "hooks"
+    if hooks_source.is_dir():
+        for hook_file in sorted(hooks_source.iterdir()):
+            if hook_file.suffix == ".sh":
+                _copy_file(
+                    hook_file,
+                    target_dir / ".claude" / "hooks" / hook_file.name,
+                    force,
+                    result,
+                )
+
+
+def _install_skills(
+    target_dir: Path,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Copy bundled skill directories to ``.claude/skills/``."""
+    skills_source = _DATA_DIR / "skills"
+    if skills_source.is_dir():
+        for skill_dir in sorted(skills_source.iterdir()):
+            if skill_dir.is_dir():
+                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
+                _ensure_dir(dest_skill, result)
+                for skill_file in sorted(skill_dir.iterdir()):
+                    if skill_file.is_file():
+                        _copy_file(skill_file, dest_skill / skill_file.name, force, result)
+
+
+def _install_agents(
+    target_dir: Path,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Copy bundled agent markdown files to ``.claude/agents/``."""
+    agents_source = _DATA_DIR / "agents"
+    if agents_source.is_dir():
+        for agent_file in sorted(agents_source.iterdir()):
+            if agent_file.suffix == ".md":
+                _copy_file(
+                    agent_file,
+                    target_dir / ".claude" / "agents" / agent_file.name,
+                    force,
+                    result,
+                )
+
+
+def _generate_root_files(
+    target_dir: Path,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Generate root-level configuration files (``.mcp.json``, ``CLAUDE.md``)."""
+    _merge_mcp_json(target_dir, result)
+    _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result)
+
+
 def init_project(
     target_dir: Path,
     *,
@@ -79,65 +184,28 @@ def init_project(
         return result
 
     # 1. Create directory structure
-    for rel_dir in _TRW_DIRS:
-        _ensure_dir(target_dir / rel_dir, result)
+    _create_directory_structure(target_dir, result)
 
     # 2. Copy bundled data files
-    for data_name, dest_rel in _DATA_FILE_MAP:
-        _copy_file(_DATA_DIR / data_name, target_dir / dest_rel, force, result)
+    _copy_bundled_data_files(target_dir, force, result)
 
     # 3. Write generated config and seed files
-    _write_if_missing(
-        target_dir / ".trw" / "config.yaml",
-        _default_config(source_package=source_package, test_path=test_path),
-        force,
-        result,
-    )
-    _write_if_missing(
-        target_dir / ".trw" / "learnings" / "index.yaml",
-        "entries: []\n",
-        force,
-        result,
+    _write_initial_config(
+        target_dir, force, result,
+        source_package=source_package, test_path=test_path,
     )
 
     # 4. Copy hook scripts
-    hooks_source = _DATA_DIR / "hooks"
-    if hooks_source.is_dir():
-        for hook_file in sorted(hooks_source.iterdir()):
-            if hook_file.suffix == ".sh":
-                _copy_file(
-                    hook_file,
-                    target_dir / ".claude" / "hooks" / hook_file.name,
-                    force,
-                    result,
-                )
+    _install_hooks(target_dir, force, result)
 
     # 5. Copy skills
-    skills_source = _DATA_DIR / "skills"
-    if skills_source.is_dir():
-        for skill_dir in sorted(skills_source.iterdir()):
-            if skill_dir.is_dir():
-                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
-                _ensure_dir(dest_skill, result)
-                for skill_file in sorted(skill_dir.iterdir()):
-                    if skill_file.is_file():
-                        _copy_file(skill_file, dest_skill / skill_file.name, force, result)
+    _install_skills(target_dir, force, result)
 
     # 6. Copy agents
-    agents_source = _DATA_DIR / "agents"
-    if agents_source.is_dir():
-        for agent_file in sorted(agents_source.iterdir()):
-            if agent_file.suffix == ".md":
-                _copy_file(
-                    agent_file,
-                    target_dir / ".claude" / "agents" / agent_file.name,
-                    force,
-                    result,
-                )
+    _install_agents(target_dir, force, result)
 
     # 7. Generate root-level files
-    _merge_mcp_json(target_dir, result)
-    _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result)
+    _generate_root_files(target_dir, force, result)
 
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)
@@ -239,6 +307,121 @@ def _cleanup_context_transients(
     )
 
 
+def _update_or_report(
+    src: Path,
+    dest: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+    *,
+    make_executable: bool = False,
+) -> None:
+    """Copy *src* to *dest* (or report what would change in dry-run mode).
+
+    Args:
+        src: Source file to copy from.
+        dest: Destination path to copy to.
+        result: Mutable result dict.
+        dry_run: When ``True``, only report without writing.
+        make_executable: When ``True``, set executable bits on *dest* after copy.
+    """
+    if dry_run:
+        if dest.exists():
+            if not _files_identical(src, dest):
+                result["updated"].append(f"would update: {dest}")
+        else:
+            result["created"].append(f"would create: {dest}")
+    else:
+        existed = dest.exists()
+        try:
+            shutil.copy2(src, dest)
+            if make_executable:
+                executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                os.chmod(dest, os.stat(dest).st_mode | executable)
+            if existed:
+                result["updated"].append(str(dest))
+            else:
+                result["created"].append(str(dest))
+        except OSError as exc:
+            result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+
+
+def _update_always_overwrite_files(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update framework files in ``_ALWAYS_UPDATE`` (always overwritten)."""
+    for data_name, dest_rel in _ALWAYS_UPDATE:
+        src = effective_data / data_name
+        dest = target_dir / dest_rel
+        _update_or_report(src, dest, result, dry_run)
+
+
+def _report_preserved_files(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Report create-only files in ``_NEVER_OVERWRITE`` that already exist."""
+    for rel_path in _NEVER_OVERWRITE:
+        dest = target_dir / rel_path
+        if dest.exists():
+            result["preserved"].append(str(dest))
+
+
+def _update_hooks(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update hook ``.sh`` files (always overwritten, made executable)."""
+    hooks_source = effective_data / "hooks"
+    if hooks_source.is_dir():
+        for hook_file in sorted(hooks_source.iterdir()):
+            if hook_file.suffix == ".sh":
+                dest = target_dir / ".claude" / "hooks" / hook_file.name
+                _update_or_report(
+                    hook_file, dest, result, dry_run,
+                    make_executable=True,
+                )
+
+
+def _update_skills(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update skill directories (always overwritten)."""
+    skills_source = effective_data / "skills"
+    if skills_source.is_dir():
+        for skill_dir in sorted(skills_source.iterdir()):
+            if skill_dir.is_dir():
+                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
+                if not dry_run:
+                    _ensure_dir(dest_skill, result)
+                for skill_file in sorted(skill_dir.iterdir()):
+                    if skill_file.is_file():
+                        dest = dest_skill / skill_file.name
+                        _update_or_report(skill_file, dest, result, dry_run)
+
+
+def _update_agents(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update agent ``.md`` files (always overwritten)."""
+    agents_source = effective_data / "agents"
+    if agents_source.is_dir():
+        for agent_file in sorted(agents_source.iterdir()):
+            if agent_file.suffix == ".md":
+                dest = target_dir / ".claude" / "agents" / agent_file.name
+                _update_or_report(agent_file, dest, result, dry_run)
+
+
 def _update_framework_files(
     target_dir: Path,
     effective_data: Path,
@@ -262,115 +445,11 @@ def _update_framework_files(
             ``preserved``, and ``errors`` entries.
         dry_run: When ``True``, report what would change without writing files.
     """
-    # Always-overwrite framework files
-    for data_name, dest_rel in _ALWAYS_UPDATE:
-        src = effective_data / data_name
-        dest = target_dir / dest_rel
-        if dry_run:
-            if dest.exists():
-                if not _files_identical(src, dest):
-                    result["updated"].append(f"would update: {dest}")
-            else:
-                result["created"].append(f"would create: {dest}")
-        else:
-            existed = dest.exists()
-            try:
-                shutil.copy2(src, dest)
-                if existed:
-                    result["updated"].append(str(dest))
-                else:
-                    result["created"].append(str(dest))
-            except OSError as exc:
-                result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
-
-    # Create-only files (never overwrite existing)
-    for rel_path in _NEVER_OVERWRITE:
-        dest = target_dir / rel_path
-        if dest.exists():
-            result["preserved"].append(str(dest))
-
-    # Update hooks (always overwrite)
-    hooks_source = effective_data / "hooks"
-    if hooks_source.is_dir():
-        for hook_file in sorted(hooks_source.iterdir()):
-            if hook_file.suffix == ".sh":
-                dest = target_dir / ".claude" / "hooks" / hook_file.name
-                if dry_run:
-                    if dest.exists():
-                        if not _files_identical(hook_file, dest):
-                            result["updated"].append(f"would update: {dest}")
-                    else:
-                        result["created"].append(f"would create: {dest}")
-                else:
-                    existed = dest.exists()
-                    try:
-                        shutil.copy2(hook_file, dest)
-                        if dest.suffix == ".sh":
-                            executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-                            os.chmod(dest, os.stat(dest).st_mode | executable)
-                        if existed:
-                            result["updated"].append(str(dest))
-                        else:
-                            result["created"].append(str(dest))
-                    except OSError as exc:
-                        result["errors"].append(
-                            f"Failed to copy {hook_file} -> {dest}: {exc}"
-                        )
-
-    # Update skills (always overwrite)
-    skills_source = effective_data / "skills"
-    if skills_source.is_dir():
-        for skill_dir in sorted(skills_source.iterdir()):
-            if skill_dir.is_dir():
-                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
-                if not dry_run:
-                    _ensure_dir(dest_skill, result)
-                for skill_file in sorted(skill_dir.iterdir()):
-                    if skill_file.is_file():
-                        dest = dest_skill / skill_file.name
-                        if dry_run:
-                            if dest.exists():
-                                if not _files_identical(skill_file, dest):
-                                    result["updated"].append(f"would update: {dest}")
-                            else:
-                                result["created"].append(f"would create: {dest}")
-                        else:
-                            existed = dest.exists()
-                            try:
-                                shutil.copy2(skill_file, dest)
-                                if existed:
-                                    result["updated"].append(str(dest))
-                                else:
-                                    result["created"].append(str(dest))
-                            except OSError as exc:
-                                result["errors"].append(
-                                    f"Failed to copy {skill_file} -> {dest}: {exc}"
-                                )
-
-    # Update agents (always overwrite)
-    agents_source = effective_data / "agents"
-    if agents_source.is_dir():
-        for agent_file in sorted(agents_source.iterdir()):
-            if agent_file.suffix == ".md":
-                dest = target_dir / ".claude" / "agents" / agent_file.name
-                if dry_run:
-                    if dest.exists():
-                        if not _files_identical(agent_file, dest):
-                            result["updated"].append(f"would update: {dest}")
-                    else:
-                        result["created"].append(f"would create: {dest}")
-                else:
-                    existed = dest.exists()
-                    try:
-                        shutil.copy2(agent_file, dest)
-                        if existed:
-                            result["updated"].append(str(dest))
-                        else:
-                            result["created"].append(str(dest))
-                    except OSError as exc:
-                        result["errors"].append(
-                            f"Failed to copy {agent_file} -> {dest}: {exc}"
-                        )
+    _update_always_overwrite_files(target_dir, effective_data, result, dry_run)
+    _report_preserved_files(target_dir, result)
+    _update_hooks(target_dir, effective_data, result, dry_run)
+    _update_skills(target_dir, effective_data, result, dry_run)
+    _update_agents(target_dir, effective_data, result, dry_run)
 
 
 def _update_mcp_config(

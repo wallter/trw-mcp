@@ -10,6 +10,7 @@ Checkpoint tools: trw_mcp.tools.checkpoint (PRD-CORE-053)
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -86,7 +87,7 @@ def _get_run_status(run_dir: Path) -> dict[str, object]:
 
 def _run_step(
     name: str,
-    fn: object,  # Callable[[], dict[str, object] | None]
+    fn: Callable[[], dict[str, object] | None],
     results: dict[str, object],
     errors: list[str],
 ) -> None:
@@ -96,10 +97,8 @@ def _run_step(
     If ``fn`` returns None, nothing is stored (used for conditional steps).
     Exceptions are appended to ``errors`` and a failure dict is stored.
     """
-    from collections.abc import Callable
-    assert isinstance(fn, Callable)  # type: ignore[arg-type]
     try:
-        step_result = fn()  # type: ignore[operator]
+        step_result = fn()
         if step_result is not None:
             results[name] = step_result
     except Exception as exc:
@@ -526,7 +525,11 @@ def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
 
     tpl_context: dict[str, str] = {
         "imperative_opener": render_imperative_opener(),
+        "ceremony_quick_ref": "",
         "behavioral_protocol": behavioral_protocol,
+        "delegation_section": "",
+        "agent_teams_section": "",
+        "rationalization_watchlist": "",
         "ceremony_phases": render_phase_descriptions(),
         "ceremony_table": render_ceremony_table(),
         "ceremony_flows": render_ceremony_flows(),

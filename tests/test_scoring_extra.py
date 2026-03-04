@@ -341,25 +341,25 @@ class TestEnsureUtc:
 
 
 class TestFieldExtractors:
-    """Tests for _float_field and _int_field helpers."""
+    """Tests for safe_float and safe_int helpers (canonical dict extractors)."""
 
     def test_float_field_present(self) -> None:
-        assert scoring_mod._float_field({"impact": 0.75}, "impact", 0.5) == pytest.approx(0.75)
+        assert scoring_mod.safe_float({"impact": 0.75}, "impact", 0.5) == pytest.approx(0.75)
 
     def test_float_field_missing_uses_default(self) -> None:
-        assert scoring_mod._float_field({}, "impact", 0.5) == pytest.approx(0.5)
+        assert scoring_mod.safe_float({}, "impact", 0.5) == pytest.approx(0.5)
 
     def test_float_field_string_coercion(self) -> None:
-        assert scoring_mod._float_field({"impact": "0.9"}, "impact", 0.0) == pytest.approx(0.9)
+        assert scoring_mod.safe_float({"impact": "0.9"}, "impact", 0.0) == pytest.approx(0.9)
 
     def test_int_field_present(self) -> None:
-        assert scoring_mod._int_field({"recurrence": 5}, "recurrence", 1) == 5
+        assert scoring_mod.safe_int({"recurrence": 5}, "recurrence", 1) == 5
 
     def test_int_field_missing_uses_default(self) -> None:
-        assert scoring_mod._int_field({}, "recurrence", 1) == 1
+        assert scoring_mod.safe_int({}, "recurrence", 1) == 1
 
     def test_int_field_string_coercion(self) -> None:
-        assert scoring_mod._int_field({"recurrence": "3"}, "recurrence", 0) == 3
+        assert scoring_mod.safe_int({"recurrence": "3"}, "recurrence", 0) == 3
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from ruamel.yaml import YAML
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root
+from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
 _config = get_config()
@@ -86,25 +87,14 @@ def register_config_resources(server: FastMCP) -> None:
 
         lines: list[str] = ["# TRW Learnings Summary\n"]
 
-        # High-impact learnings
-        entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-        if entries_dir.exists():
-            high_impact: list[dict[str, object]] = []
-            for entry_file in sorted(entries_dir.glob("*.yaml")):
-                try:
-                    data = _reader.read_yaml(entry_file)
-                    impact = data.get("impact", 0.0)
-                    if isinstance(impact, (int, float)) and impact >= 0.7:
-                        high_impact.append(data)
-                except (StateError, ValueError, TypeError):
-                    continue
-
-            if high_impact:
-                lines.append("## High-Impact Learnings\n")
-                for entry in high_impact[:10]:
-                    summary = entry.get("summary", "")
-                    detail = entry.get("detail", "")
-                    lines.append(f"- **{summary}**: {detail}\n")
+        # High-impact learnings (SQLite-backed via memory_adapter)
+        high_impact = list_active_learnings(trw_dir, min_impact=0.7, limit=10)
+        if high_impact:
+            lines.append("## High-Impact Learnings\n")
+            for entry in high_impact:
+                summary = entry.get("summary", "")
+                detail = entry.get("detail", "")
+                lines.append(f"- **{summary}**: {detail}\n")
 
         # Patterns
         patterns_dir = trw_dir / _config.patterns_dir

@@ -16,6 +16,7 @@ import pytest
 import trw_mcp.state.analytics_report as analytics_mod
 from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state import analytics as analytics_state
+from trw_mcp.state import analytics_core as analytics_core_mod
 from trw_mcp.state.analytics import (
     _iter_entry_files,
     apply_status_update,
@@ -474,8 +475,8 @@ class TestUpdateLearningIndexOverflow:
             learning_max_entries=2,
         )
 
-        # Patch the module-level _config
-        with patch.object(analytics_state, "_config", config_with_low_max):
+        # Patch the module-level _config (in analytics_core where it lives)
+        with patch.object(analytics_core_mod, "_config", config_with_low_max):
             # Create entries via LearningEntry objects
             from datetime import date
             entries = [

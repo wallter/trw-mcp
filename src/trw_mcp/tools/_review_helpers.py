@@ -9,6 +9,8 @@ test patchability (patching review._get_git_diff must affect these helpers).
 
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,16 +35,12 @@ def validate_manual_findings(
 
     validated: list[dict[str, str]] = []
     for f in raw_findings:
+        normalized = {**f, "severity": _normalize_severity(f.get("severity", "info"))}
         try:
-            ReviewFinding(**f)  # type: ignore[arg-type]  # dict[str,str] coerced by Pydantic
-            validated.append(f)
-            if f.get("severity") not in ("critical", "warning", "info"):
-                validated[-1] = {**f, "severity": "info"}
+            ReviewFinding(**normalized)  # type: ignore[arg-type]  # dict[str,str] coerced by Pydantic
         except Exception:
-            validated.append({
-                **f,
-                "severity": _normalize_severity(f.get("severity", "info")),
-            })
+            pass  # Still include even if other fields fail validation
+        validated.append(normalized)
     return validated
 
 
@@ -235,14 +233,10 @@ def handle_auto_mode(
         "surfaced_findings_count": len(surfaced),
         "total_findings_count": len(all_auto_findings),
         "confidence_threshold": confidence_threshold,
-        "total_findings": len(surfaced),
         "run_path": str(resolved_run) if resolved_run else None,
     }
 
     # SOC 2 fields (INFRA-027-FR04) — compute from available context
-    import hashlib
-    from datetime import datetime, timedelta
-
     diff_hash = hashlib.sha256((diff or "").encode()).hexdigest() if diff else ""
     roles_run = analysis.get("reviewer_roles_run", [])
     reviewer_role_str = ", ".join(str(r) for r in roles_run) if isinstance(roles_run, list) else ""
@@ -315,10 +309,10 @@ def handle_auto_mode(
                 "review_id": review_id,
                 "timestamp": ts,
                 "mode": "auto",
-                "run_id": "",  # Populated by caller
-                "reviewer_id": "",
+                "run_id": resolved_run.name if resolved_run else "",
+                "reviewer_id": f"trw-auto-{review_id}",
                 "reviewer_role": "integration",
-                "git_diff_hash": "",
+                "git_diff_hash": diff_hash,
                 "shards_reviewed": [],
                 "checks_performed": [
                     "duplicate_functions",

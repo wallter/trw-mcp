@@ -14,11 +14,16 @@ from typing import NamedTuple, cast
 
 import structlog
 
+from trw_memory.retrieval.dense import cosine_similarity
+
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.telemetry.embeddings import embed, embedding_available
 
 logger = structlog.get_logger()
+
+# Re-export so existing importers (tiers.py, consolidation.py) keep working.
+__all__ = ["cosine_similarity", "DedupResult", "check_duplicate", "merge_entries", "batch_dedup", "is_migration_needed"]
 
 
 class DedupResult(NamedTuple):
@@ -33,25 +38,6 @@ class DedupResult(NamedTuple):
     action: str  # "skip" | "merge" | "store"
     existing_id: str | None
     similarity: float
-
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Compute cosine similarity between two pre-normalized vectors.
-
-    The embeddings from telemetry/embeddings.py are L2-normalized
-    (normalize_embeddings=True), so cosine similarity reduces to the
-    dot product: sum(ai * bi).
-
-    Args:
-        a: First embedding vector (should be L2-normalized).
-        b: Second embedding vector (should be L2-normalized).
-
-    Returns:
-        Cosine similarity in [-1.0, 1.0]. Returns 0.0 for empty vectors.
-    """
-    if not a or not b:
-        return 0.0
-    return sum(ai * bi for ai, bi in zip(a, b, strict=False))
 
 
 def check_duplicate(

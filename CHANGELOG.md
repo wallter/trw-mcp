@@ -2,6 +2,46 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.10.0] — 2026-03-04
+
+### Architecture — DRY Consolidation & God Module Decomposition (Sprint 54)
+
+#### P0 — Cross-Package DRY Elimination
+
+- **`scoring.py` consolidated** — 9 pure math functions (`update_q_value`, `compute_utility_score`,
+  `apply_time_decay`, `bayesian_calibrate`, `compute_calibration_accuracy`, `_clamp01`, `_ensure_utc`,
+  `_float_field`, `_int_field`) now imported from `trw_memory.lifecycle.scoring` instead of duplicated
+  locally. Remaining trw-mcp-specific functions (different field names/signatures) kept local.
+  `_float_field`/`_int_field` replaced by `safe_float`/`safe_int` from `_helpers.py` in local code.
+
+- **`cosine_similarity` unified** — 3 copies → 1. `trw-mcp/state/dedup.py` now imports from
+  `trw_memory.retrieval.dense`. Backend copy kept with TODO (no trw-memory dependency yet).
+
+- **`analytics.py` decomposed** (1451→150 lines) into 4 focused modules:
+  - `analytics_core.py` — singletons, constants, shared helpers, `__reload_hook__()`
+  - `analytics_entries.py` — entry persistence, index management, extraction
+  - `analytics_counters.py` — analytics.yaml counter updates, event pattern detection
+  - `analytics_dedup.py` — deduplication, pruning, reflection quality scoring
+  - `analytics.py` retained as backward-compatible re-export facade
+
+#### P1 — Structural Consolidation
+
+- **`tiers.py`** — `TierSweepResult` now imported from `trw_memory.lifecycle.tiers` (canonical source)
+- **`consolidation.py`** — `_redact_paths`, `_parse_consolidation_response`, and clustering algorithm
+  (`complete_linkage_cluster`) extracted to trw-memory, imported by trw-mcp (-55 lines)
+- **`server.py:main()` split** (315→23 lines) into 7 extracted functions:
+  `_build_arg_parser()`, `_SUBCOMMAND_HANDLERS` dispatch table, `_resolve_and_run_transport()`,
+  `_run_http_proxy_transport()`, `_clean_stale_pid()`, `_spawn_http_server()`, `_wait_for_port()`
+
+#### P2 — Quality of Life
+
+- **`build.py` audit DRY** — extracted `_run_audit_tool()` shared helper from `_run_pip_audit`/`_run_npm_audit`
+- **`scoring.py` helpers** — replaced `_float_field`/`_int_field` with `safe_float`/`safe_int` from `_helpers.py`
+- **`bootstrap.py` decomposed** — `init_project()` (142→40 lines) with 7 extracted helpers,
+  `_update_framework_files()` with 6 extracted helpers and shared `_update_or_report()` DRY function
+
+---
+
 ## [0.9.0] — 2026-03-03
 
 ### Architecture — God Module Decomposition

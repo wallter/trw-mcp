@@ -1,7 +1,7 @@
 """Tests for Sprint 44 review changes — confidence filtering, SOC 2 fields, integration review.
 
 Coverage:
-- Confidence threshold filtering uses float 0.0-1.0 scale (INFRA-028-FR06)
+- Confidence threshold filtering uses 0-100 integer scale (INFRA-028-FR06)
 - review-all.yaml gets all findings, review.yaml gets only high-confidence ones
 - integration-review.yaml verdict computation (block/warn/pass)
 """
@@ -15,19 +15,19 @@ from trw_mcp.models.config import TRWConfig
 
 
 class TestConfidenceThresholdFiltering:
-    """Tests for float-scale confidence threshold filtering in handle_auto_mode."""
+    """Tests for 0-100 scale confidence threshold filtering in handle_auto_mode."""
 
-    def _make_config(self, threshold: float = 0.8) -> TRWConfig:
+    def _make_config(self, threshold: int = 80) -> TRWConfig:
         cfg = TRWConfig()
-        object.__setattr__(cfg, "confidence_threshold", threshold)
+        object.__setattr__(cfg, "review_confidence_threshold", threshold)
         return cfg
 
     def _make_findings(self) -> list[dict[str, object]]:
         return [
-            {"category": "quality", "severity": "info", "description": "low conf", "confidence": 0.5, "reviewer_role": "quality"},
-            {"category": "security", "severity": "warning", "description": "mid conf", "confidence": 0.75, "reviewer_role": "security"},
-            {"category": "security", "severity": "critical", "description": "high conf", "confidence": 0.9, "reviewer_role": "security"},
-            {"category": "quality", "severity": "info", "description": "exact threshold", "confidence": 0.8, "reviewer_role": "quality"},
+            {"category": "quality", "severity": "info", "description": "low conf", "confidence": 50, "reviewer_role": "quality"},
+            {"category": "security", "severity": "warning", "description": "mid conf", "confidence": 75, "reviewer_role": "security"},
+            {"category": "security", "severity": "critical", "description": "high conf", "confidence": 90, "reviewer_role": "security"},
+            {"category": "quality", "severity": "info", "description": "exact threshold", "confidence": 80, "reviewer_role": "quality"},
         ]
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff content")
@@ -50,14 +50,14 @@ class TestConfidenceThresholdFiltering:
         }
         mock_persist.return_value = str(tmp_path / "meta" / "review.yaml")
 
-        config = self._make_config(threshold=0.8)
+        config = self._make_config(threshold=80)
         run_path = tmp_path
         (run_path / "meta").mkdir(parents=True, exist_ok=True)
 
         result = handle_auto_mode(config, run_path, "rev-001", "2026-03-03T00:00:00Z", None)
 
-        # Only findings with confidence >= 0.8 should be surfaced
-        assert result["surfaced_findings_count"] == 2  # 0.9 and 0.8
+        # Only findings with confidence >= 80 should be surfaced (90 and 80)
+        assert result["surfaced_findings_count"] == 2
         assert result["total_findings_count"] == 4
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff content")
@@ -80,13 +80,13 @@ class TestConfidenceThresholdFiltering:
         }
         mock_persist.return_value = str(tmp_path / "meta" / "review.yaml")
 
-        config = self._make_config(threshold=0.0)
+        config = self._make_config(threshold=0)
         run_path = tmp_path
         (run_path / "meta").mkdir(parents=True, exist_ok=True)
 
         result = handle_auto_mode(config, run_path, "rev-002", "2026-03-03T00:00:00Z", None)
 
-        # All 4 findings pass threshold of 0.0
+        # All 4 findings pass threshold of 0
         assert result["surfaced_findings_count"] == 4
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
@@ -110,7 +110,7 @@ class TestConfidenceThresholdFiltering:
         }
         mock_persist.return_value = str(tmp_path / "meta" / "review.yaml")
 
-        config = self._make_config(threshold=0.9)  # Only 1 passes
+        config = self._make_config(threshold=90)  # Only 1 passes (confidence 90)
         run_path = tmp_path
         (run_path / "meta").mkdir(parents=True, exist_ok=True)
 

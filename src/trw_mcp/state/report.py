@@ -19,6 +19,7 @@ from trw_mcp.models.report import (
     PhaseEntry,
     RunReport,
 )
+from trw_mcp.state._helpers import safe_float
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader
 
@@ -166,7 +167,7 @@ def compute_learning_yield(
             if not _date_in_range(created, start_date, end_date):
                 continue
 
-        impact = _safe_float(data.get("impact", 0.5))
+        impact = safe_float(data, "impact", 0.5)
         impacts.append(impact)
         if impact >= HIGH_IMPACT_THRESHOLD:
             high_count += 1
@@ -202,14 +203,6 @@ def _date_in_range(created: str, start_date: str, end_date: str) -> bool:
     # Handle date-only strings (YYYY-MM-DD) and full ISO timestamps
     created_date = created[:10]
     return start_date <= created_date <= end_date
-
-
-def _safe_float(val: object) -> float:
-    """Safely convert a value to float, defaulting to 0.0."""
-    try:
-        return float(val)  # type: ignore[arg-type]
-    except (ValueError, TypeError):
-        return 0.0
 
 
 def assemble_report(
@@ -261,9 +254,9 @@ def assemble_report(
             build = BuildSummary(
                 tests_passed=bool(build_data.get("tests_passed", False)),
                 mypy_clean=bool(build_data.get("mypy_clean", False)),
-                coverage_pct=_safe_float(build_data.get("coverage_pct", 0.0)),
+                coverage_pct=safe_float(build_data, "coverage_pct", 0.0),
                 test_count=int(str(build_data.get("test_count", 0))),
-                duration_secs=_safe_float(build_data.get("duration_secs", 0.0)),
+                duration_secs=safe_float(build_data, "duration_secs", 0.0),
             )
         except Exception:
             logger.warning("build_status_read_failed", path=str(build_path))
