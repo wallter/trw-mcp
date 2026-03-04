@@ -17,6 +17,58 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 logger = structlog.get_logger()
 
 
+def _matches_filters(
+    data: dict[str, object],
+    *,
+    tags: list[str] | None = None,
+    min_impact: float = 0.0,
+    status: str | None = None,
+) -> bool:
+    """Check whether a learning entry matches tag, impact, and status filters.
+
+    Shared by both the hybrid search path and keyword scan fallback to
+    eliminate duplicated filter logic.
+
+    Args:
+        data: Learning entry dictionary.
+        tags: Optional tag filter — entry must have at least one matching tag.
+        min_impact: Minimum impact score threshold.
+        status: Optional status filter (e.g. 'active').
+
+    Returns:
+        True if the entry passes all filters.
+    """
+    raw_impact = data.get("impact", 0.0)
+    entry_impact = float(str(raw_impact))
+    if entry_impact < min_impact:
+        return False
+    if status is not None:
+        entry_status = str(data.get("status", "active"))
+        if entry_status != status:
+            return False
+    if tags:
+        entry_tags = data.get("tags", [])
+        if isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
+            return False
+    return True
+
+
+def _resolve_entry_file(entries_dir: Path, entry_id: str) -> Path:
+    """Resolve the file path for a learning entry by ID.
+
+    Args:
+        entries_dir: Path to the entries directory.
+        entry_id: Learning entry ID to resolve.
+
+    Returns:
+        Path to the matching YAML file.
+    """
+    for fname in entries_dir.glob("*.yaml"):
+        if entry_id in fname.name:
+            return fname
+    return entries_dir / f"{entry_id}.yaml"
+
+
 def search_entries(
     entries_dir: Path,
     query_tokens: list[str],
@@ -58,29 +110,13 @@ def search_entries(
             query = " ".join(query_tokens)
             hybrid_results = hybrid_search(query, entries_dir, reader, config=config)
             if hybrid_results:
-                # Apply tag, impact, status filters to hybrid results
                 for data in hybrid_results:
-                    entry_tags = data.get("tags", [])
-                    raw_impact = data.get("impact", 0.0)
-                    entry_impact = float(str(raw_impact))
-                    if entry_impact < min_impact:
-                        continue
-                    if status is not None:
-                        entry_status = str(data.get("status", "active"))
-                        if entry_status != status:
-                            continue
-                    if tags and isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
+                    if not _matches_filters(data, tags=tags, min_impact=min_impact, status=status):
                         continue
                     matching.append(data)
                     entry_id = str(data.get("id", ""))
-                    # Resolve file path for access tracking
                     if entry_id:
-                        for fname in entries_dir.glob("*.yaml"):
-                            if entry_id in fname.name:
-                                matched_files.append(fname)
-                                break
-                        else:
-                            matched_files.append(entries_dir / f"{entry_id}.yaml")
+                        matched_files.append(_resolve_entry_file(entries_dir, entry_id))
 
                 logger.debug(
                     "recall_search_hybrid_complete",
@@ -95,28 +131,13 @@ def search_entries(
     for entry_file in sorted(entries_dir.glob("*.yaml")):
         try:
             data = reader.read_yaml(entry_file)
-            summary = str(data.get("summary", "")).lower()
-            detail = str(data.get("detail", "")).lower()
-            entry_tags = data.get("tags", [])
-            raw_impact = data.get("impact", 0.0)
-            entry_impact = float(str(raw_impact))
-
-            # Check impact threshold
-            if entry_impact < min_impact:
-                continue
-
-            # Check status filter
-            if status is not None:
-                entry_status = str(data.get("status", "active"))
-                if entry_status != status:
-                    continue
-
-            # Check tag filter
-            if tags and isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
+            if not _matches_filters(data, tags=tags, min_impact=min_impact, status=status):
                 continue
 
             # Check query match — all tokens must appear in summary, detail, or tags
-            # Expand hyphenated tags so "pydantic-v2" also matches query "pydantic"
+            summary = str(data.get("summary", "")).lower()
+            detail = str(data.get("detail", "")).lower()
+            entry_tags = data.get("tags", [])
             tag_tokens: list[str] = []
             if isinstance(entry_tags, list):
                 for t in entry_tags:

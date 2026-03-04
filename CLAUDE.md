@@ -9,12 +9,7 @@ TRW tools help you build effectively and preserve your work across sessions:
 - **During**: call `trw_checkpoint(message)` after milestones so you resume here if context compacts
 - **Finish**: call `trw_deliver()` to persist your learnings for future sessions
 
-{{delegation_section}}
-{{agent_teams_section}}
-## TRW Behavioral Protocol (Auto-Generated)
-
-{{rationalization_watchlist}}
-## TRW Ceremony Tools (Auto-Generated)
+When spawning agents, pass `model=` with canonical IDs: `claude-opus-4-6` (Tier 1: architecture, planning), `claude-sonnet-4-6` (Tier 2: implementation, review, testing), `claude-haiku-4-5-20251001` (Tier 3: lightweight checks).
 
 ### Execution Phases
 
@@ -33,7 +28,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 
 | Phase | Tool | When to Use | What It Does | Example |
 |-------|------|-------------|--------------|---------|
-| Start | `trw_session_start` | At session start — loads learnings + run state | Recall learnings + check run status | `trw_session_start()` |
+| Start | `trw_session_start` | At session start — loads learnings + run state (pass query for focused recall) | Recall learnings + check run status | `trw_session_start(query='task domain')` |
 | Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings | Search learnings by query | `trw_recall('*', min_impact=0.7)` |
 | Start | `trw_status` | When resuming — shows phase, progress, next steps | Show run state and phase | `trw_status()` |
 | RESEARCH | `trw_init` | New tasks — creates run directory for tracking | Bootstrap run directory + events | `trw_init(task_name='...')` |
@@ -62,17 +57,13 @@ trw_session_start -> trw_init(task_name, prd_scope)
   -> trw_deliver()
 ```
 
-## TRW Learnings (Auto-Generated)
-
 ### Key Learnings
 - Critical
 - New critical learning
 
 ### Session Boundaries
 
-Every session that loads learnings via `trw_session_start()` should persist them via `trw_deliver()` — this is how your work compounds across sessions instead of being lost.
-
-Sessions where you orchestrate (delegate, verify, learn) rather than implement directly produce higher quality and fewer rework cycles — your strategic oversight is more valuable than your keystrokes.
+Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.
 
 <!-- trw:end -->
 

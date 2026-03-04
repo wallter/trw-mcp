@@ -608,37 +608,21 @@ def validate_prd_quality_v2(
     _config = get_risk_scaled_config(_config, effective_risk)
     is_risk_scaled = effective_risk != "medium" and _config.risk_scaling_enabled
 
-    # Score 3 active dimensions (Phase 2a)
+    # Score 3 active dimensions (Phase 2a) + 3 placeholders
+    # Each active dimension: (name, scorer_callable, max_score_from_config)
+    _active_dims: list[tuple[str, object, float]] = [
+        ("content_density", lambda: score_content_density(content, _config), _config.validation_density_weight),
+        ("structural_completeness", lambda: score_structural_completeness(frontmatter, sections, _config), _config.validation_structure_weight),
+        ("traceability", lambda: score_traceability_v2(frontmatter, content, _config), _config.validation_traceability_weight),
+    ]
     dimensions: list[DimensionScore] = []
+    for dim_name, scorer, max_score in _active_dims:
+        try:
+            dimensions.append(scorer())  # type: ignore[operator]
+        except Exception:
+            dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 
-    # 1. Content Density (25 pts)
-    try:
-        density_dim = score_content_density(content, _config)
-    except Exception:
-        density_dim = DimensionScore(
-            name="content_density", score=0.0, max_score=_config.validation_density_weight
-        )
-    dimensions.append(density_dim)
-
-    # 2. Structural Completeness (15 pts)
-    try:
-        structure_dim = score_structural_completeness(frontmatter, sections, _config)
-    except Exception:
-        structure_dim = DimensionScore(
-            name="structural_completeness", score=0.0, max_score=_config.validation_structure_weight
-        )
-    dimensions.append(structure_dim)
-
-    # 3. Traceability (20 pts)
-    try:
-        trace_dim = score_traceability_v2(frontmatter, content, _config)
-    except Exception:
-        trace_dim = DimensionScore(
-            name="traceability", score=0.0, max_score=_config.validation_traceability_weight
-        )
-    dimensions.append(trace_dim)
-
-    # 4-6. Placeholder dimensions (modules removed in strip-down; 0-weight)
+    # Placeholder dimensions (modules removed in strip-down; 0-weight)
     smell_findings: list[SmellFinding] = []
     readability_metrics: dict[str, float] = {}
     ears_classifications: list[dict[str, object]] = []

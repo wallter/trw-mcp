@@ -38,6 +38,72 @@ logger = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 
+def _is_clusterable(data: dict[str, object]) -> bool:
+    """Check if an entry is eligible for clustering (not consolidated/archived)."""
+    if str(data.get("source_type", "")) == "consolidated":
+        return False
+    if data.get("consolidated_into") is not None:
+        return False
+    return True
+
+
+def _load_active_entries(
+    entries_dir: Path,
+    reader: FileStateReader,
+    max_entries: int,
+) -> list[dict[str, object]]:
+    """Load active learning entries for clustering, preferring SQLite.
+
+    PRD-FIX-033-FR04: Attempts SQLite first, falls back to YAML glob.
+    Filters out consolidated and archived entries in both paths.
+
+    Args:
+        entries_dir: Path to the learnings/entries/ directory.
+        reader: FileStateReader for loading YAML entry files.
+        max_entries: Cap on number of entries loaded.
+
+    Returns:
+        List of active entry dicts.
+    """
+    entries: list[dict[str, object]] = []
+
+    # SQLite path
+    try:
+        from trw_mcp.state.memory_adapter import list_active_learnings
+
+        trw_dir = entries_dir.parent.parent
+        all_active = list_active_learnings(trw_dir, limit=max_entries)
+        for data in all_active:
+            if len(entries) >= max_entries:
+                break
+            if _is_clusterable(data):
+                entries.append(data)
+        return entries
+    except Exception as exc:
+        logger.warning(
+            "sqlite_read_fallback",
+            step="find_clusters",
+            reason=str(exc),
+        )
+
+    # YAML fallback path
+    for yaml_file in sorted(entries_dir.glob("*.yaml")):
+        if yaml_file.name == "index.yaml":
+            continue
+        if len(entries) >= max_entries:
+            break
+        try:
+            data = reader.read_yaml(yaml_file)
+        except Exception:
+            continue
+        if str(data.get("status", "active")) != "active":
+            continue
+        if _is_clusterable(data):
+            entries.append(data)
+
+    return entries
+
+
 def find_clusters(
     entries_dir: Path,
     reader: FileStateReader,
@@ -48,10 +114,10 @@ def find_clusters(
 ) -> list[list[dict[str, object]]]:
     """Detect clusters of semantically similar active learning entries.
 
-    Loads up to *max_entries* active entries from *entries_dir*, generates
-    embeddings in a single batch call, then applies complete-linkage
-    agglomerative clustering: two entries belong to the same cluster when
-    every pair in the group has cosine similarity >= *similarity_threshold*.
+    Loads up to *max_entries* active entries, generates embeddings in a
+    single batch call, then applies complete-linkage agglomerative
+    clustering: two entries belong to the same cluster when every pair
+    in the group has cosine similarity >= *similarity_threshold*.
 
     Args:
         entries_dir: Path to the learnings/entries/ directory.
@@ -75,54 +141,7 @@ def find_clusters(
     if not entries_dir.exists():
         return []
 
-    # PRD-FIX-033-FR04: Load active entries from SQLite when available,
-    # falling back to YAML glob on error.
-    entries: list[dict[str, object]] = []
-    _used_sqlite = False
-    try:
-        from trw_mcp.state.memory_adapter import list_active_learnings
-        # Derive trw_dir from entries_dir (entries_dir = trw_dir/learnings/entries)
-        trw_dir = entries_dir.parent.parent
-        all_active = list_active_learnings(trw_dir, limit=max_entries)
-        for data in all_active:
-            if len(entries) >= max_entries:
-                break
-            # Skip already-consolidated entries
-            if str(data.get("source_type", "")) == "consolidated":
-                continue
-            # Skip entries already archived into another consolidation
-            if data.get("consolidated_into") is not None:
-                continue
-            entries.append(data)
-        _used_sqlite = True
-    except Exception as exc:
-        logger.warning(
-            "sqlite_read_fallback",
-            step="find_clusters",
-            reason=str(exc),
-        )
-
-    if not _used_sqlite:
-        # YAML fallback path (original implementation)
-        for yaml_file in sorted(entries_dir.glob("*.yaml")):
-            if yaml_file.name == "index.yaml":
-                continue
-            if len(entries) >= max_entries:
-                break
-            try:
-                data = reader.read_yaml(yaml_file)
-            except Exception:
-                continue
-            if str(data.get("status", "active")) != "active":
-                continue
-            # Skip already-consolidated entries
-            if str(data.get("source_type", "")) == "consolidated":
-                continue
-            # Skip entries already archived into another consolidation
-            if data.get("consolidated_into") is not None:
-                continue
-            entries.append(data)
-
+    entries = _load_active_entries(entries_dir, reader, max_entries)
     if len(entries) < min_cluster_size:
         return []
 

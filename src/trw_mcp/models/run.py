@@ -263,6 +263,9 @@ class EventType(str, Enum):
     # --- Task lifecycle ---
     TASK_COMPLETE = "task_complete"
 
+    # --- Spec reconciliation ---
+    SPEC_RECONCILIATION = "spec_reconciliation"
+
     @staticmethod
     def resolve(event_str: str) -> EventType | None:
         """Return the matching EventType member, or None if unrecognized."""

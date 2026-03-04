@@ -26,7 +26,7 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    - Expected: `done` or `implemented`
    - If any PRD is still `draft`, `review`, or `approved`, report which PRDs are incomplete and ask the user whether to proceed anyway
 
-4. **Parse exit criteria checkboxes**: Extract all `- [ ]` and `- [x]` lines from the "Exit Criteria" section of the sprint doc.
+4. **Parse exit criteria checkboxes**: Spec reconciliation (`trw_review(mode='reconcile')`) should have been run during the REVIEW phase for each governing PRD. Extract all `- [ ]` and `- [x]` lines from the "Exit Criteria" section of the sprint doc.
    - For each **unchecked** (`- [ ]`) item, classify it:
      - **Auto-verifiable**: build passes, coverage >= N%, mypy clean, PRD status = done — verify these now and report pass/fail
      - **Manual**: pen testing completed, docs published, deployment verified — require explicit user waiver (`WAIVE: criterion text`)

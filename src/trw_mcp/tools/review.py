@@ -199,6 +199,7 @@ def register_review_tools(server: FastMCP) -> None:
         run_path: str | None = None,
         mode: str | None = None,
         reviewer_findings: list[dict[str, object]] | None = None,
+        prd_ids: list[str] | None = None,
     ) -> dict[str, object]:
         """Review code quality and produce structured findings artifact (PRD-QUAL-022).
 
@@ -209,28 +210,34 @@ def register_review_tools(server: FastMCP) -> None:
         - manual: findings=[...] provided directly (backward compatible)
         - auto: multi-reviewer analysis with confidence filtering (QUAL-027)
         - cross_model: routes diff to external model family (QUAL-026)
+        - reconcile: compare PRD FRs against git diff to detect spec drift
 
         Args:
             findings: List of dicts with category, severity, description keys.
             run_path: Explicit run path. Auto-detected if None.
-            mode: Review mode — 'manual', 'auto', or 'cross_model'. Auto-detected.
+            mode: Review mode — 'manual', 'auto', 'cross_model', or 'reconcile'. Auto-detected.
             reviewer_findings: Pre-collected findings from subagent layer (QUAL-027).
+            prd_ids: Explicit PRD IDs for reconcile mode. Auto-discovered if None.
         """
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._review_helpers import (
             handle_auto_mode,
             handle_cross_model_mode,
             handle_manual_mode,
+            handle_reconcile_mode,
         )
 
         config = get_config()
 
         # Mode detection:
+        # - mode="reconcile" explicitly set -> reconcile (check first)
         # - findings=[...] explicitly passed -> manual (backward compat)
         # - mode explicitly set -> use that mode
         # - reviewer_findings provided (no mode) -> auto
         # - nothing provided -> manual (backward compat with old callers)
-        if findings is not None:
+        if mode == "reconcile":
+            effective_mode = "reconcile"
+        elif findings is not None:
             effective_mode = "manual"
         elif mode is not None:
             effective_mode = mode
@@ -258,6 +265,11 @@ def register_review_tools(server: FastMCP) -> None:
         if effective_mode == "manual":
             return handle_manual_mode(
                 findings or [], resolved_run, review_id, ts,
+            )
+
+        if effective_mode == "reconcile":
+            return handle_reconcile_mode(
+                config, resolved_run, review_id, ts, prd_ids,
             )
 
         if effective_mode == "cross_model":

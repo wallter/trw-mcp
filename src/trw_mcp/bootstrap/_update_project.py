@@ -1,0 +1,919 @@
+"""update_project flow — selectively updates TRW framework files.
+
+``trw-mcp update-project`` selectively updates framework files (hooks,
+skills, agents, FRAMEWORK.md) while preserving user-customized files
+(config.yaml, learnings, CLAUDE.md user sections).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import stat
+from pathlib import Path
+
+import structlog
+
+from ._utils import (
+    _DATA_DIR,
+    _check_package_version,
+    _ensure_dir,
+    _files_identical,
+    _merge_mcp_json,
+    _minimal_claude_md,
+    _pip_install_package,
+    _verify_installation,
+    _write_installer_metadata,
+)
+
+logger = structlog.get_logger()
+
+# Files that are always overwritten during update (framework-managed).
+_ALWAYS_UPDATE: list[tuple[str, str]] = [
+    ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
+    ("framework.md", "FRAMEWORK.md"),
+    ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
+    ("messages/messages.yaml", ".trw/context/messages.yaml"),
+    ("templates/claude_md.md", ".trw/templates/claude_md.md"),
+    ("settings.json", ".claude/settings.json"),
+]
+
+# Files that are never overwritten during update (user-customized).
+# These are only created if missing.
+_NEVER_OVERWRITE = {
+    ".trw/config.yaml",
+    ".trw/learnings/index.yaml",
+}
+
+# Files that are smart-merged during update (preserve user content, ensure
+# framework entries exist).  .mcp.json was previously in _NEVER_OVERWRITE
+# which caused the trw server entry to be lost if removed by the user.
+_MERGE_FILES = {".mcp.json"}
+
+# Files in .trw/context/ that are always preserved during cleanup.
+_CONTEXT_ALLOWLIST: frozenset[str] = frozenset({
+    "analytics.yaml",
+    "behavioral_protocol.yaml",
+    "build-status.yaml",
+    "messages.yaml",
+    "pre_compact_state.json",
+    "hooks-reference.yaml",
+})
+
+# CLAUDE.md markers for the auto-generated section.
+_TRW_START_MARKER = "<!-- trw:start -->"
+_TRW_END_MARKER = "<!-- trw:end -->"
+_TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
+
+_MANIFEST_FILE = "managed-artifacts.yaml"
+
+# PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
+# Used by _migrate_prefix_predecessors() to remove stale predecessors during
+# update-project when the trw- prefixed successor is already installed.
+PREDECESSOR_MAP: dict[str, dict[str, str]] = {
+    "skills": {
+        "audit": "trw-audit",
+        "commit": "trw-commit",
+        "deliver": "trw-deliver",
+        "exec-plan": "trw-exec-plan",
+        "framework-check": "trw-framework-check",
+        "learn": "trw-learn",
+        "memory-audit": "trw-memory-audit",
+        "memory-optimize": "trw-memory-optimize",
+        "prd-groom": "trw-prd-groom",
+        "prd-new": "trw-prd-new",
+        "prd-review": "trw-prd-review",
+        "project-health": "trw-project-health",
+        "review-pr": "trw-review-pr",
+        "security-check": "trw-security-check",
+        "simplify": "trw-simplify",
+        "sprint-finish": "trw-sprint-finish",
+        "sprint-init": "trw-sprint-init",
+        "sprint-team": "trw-sprint-team",
+        "team-playbook": "trw-team-playbook",
+        "test-strategy": "trw-test-strategy",
+    },
+    "agents": {
+        "code-simplifier.md": "trw-code-simplifier.md",
+        "implementer.md": "trw-implementer.md",
+        "lead.md": "trw-lead.md",
+        "researcher.md": "trw-researcher.md",
+        "reviewer.md": "trw-reviewer.md",
+        "tester.md": "trw-tester.md",
+        "adversarial-auditor.md": "trw-adversarial-auditor.md",
+        "prd-groomer.md": "trw-prd-groomer.md",
+        "requirement-reviewer.md": "trw-requirement-reviewer.md",
+        "requirement-writer.md": "trw-requirement-writer.md",
+        "traceability-checker.md": "trw-traceability-checker.md",
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Context cleanup
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_context_transients(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool = False,
+) -> None:
+    """Remove transient artifacts from .trw/context/ during update-project.
+
+    Preserves files in ``_CONTEXT_ALLOWLIST``.  Deletes everything else that
+    is a regular file (not a directory, not a symlink).
+
+    Args:
+        target_dir: Root of the target git repository.
+        result: Mutable result dict -- cleaned paths appended to ``result["cleaned"]``.
+        dry_run: When ``True``, report what would be removed without deleting.
+    """
+    context_dir = target_dir / ".trw" / "context"
+    if not context_dir.is_dir():
+        return
+
+    cleaned: list[str] = []
+    for path in sorted(context_dir.iterdir()):
+        # Skip symlinks first -- is_file() returns True for symlinks to files
+        if path.is_symlink():
+            continue
+        if not path.is_file():
+            continue
+        if path.name in _CONTEXT_ALLOWLIST:
+            continue
+        if dry_run:
+            result["cleaned"].append(f"would remove: {path}")
+        else:
+            try:
+                path.unlink()
+                result["cleaned"].append(str(path))
+                cleaned.append(path.name)
+            except OSError as exc:
+                result["errors"].append(f"Failed to remove {path}: {exc}")
+
+    logger.info(
+        "context_cleanup",
+        target=str(target_dir),
+        cleaned_count=len(cleaned),
+        dry_run=dry_run,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Update helpers
+# ---------------------------------------------------------------------------
+
+
+def _update_or_report(
+    src: Path,
+    dest: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+    *,
+    make_executable: bool = False,
+) -> None:
+    """Copy *src* to *dest* (or report what would change in dry-run mode).
+
+    Args:
+        src: Source file to copy from.
+        dest: Destination path to copy to.
+        result: Mutable result dict.
+        dry_run: When ``True``, only report without writing.
+        make_executable: When ``True``, set executable bits on *dest* after copy.
+    """
+    if dry_run:
+        if dest.exists():
+            if not _files_identical(src, dest):
+                result["updated"].append(f"would update: {dest}")
+        else:
+            result["created"].append(f"would create: {dest}")
+    else:
+        existed = dest.exists()
+        try:
+            shutil.copy2(src, dest)
+            if make_executable:
+                executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                os.chmod(dest, os.stat(dest).st_mode | executable)
+            if existed:
+                result["updated"].append(str(dest))
+            else:
+                result["created"].append(str(dest))
+        except OSError as exc:
+            result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+
+
+def _update_always_overwrite_files(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update framework files in ``_ALWAYS_UPDATE`` (always overwritten)."""
+    for data_name, dest_rel in _ALWAYS_UPDATE:
+        src = effective_data / data_name
+        dest = target_dir / dest_rel
+        _update_or_report(src, dest, result, dry_run)
+
+
+def _report_preserved_files(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Report create-only files in ``_NEVER_OVERWRITE`` that already exist."""
+    for rel_path in _NEVER_OVERWRITE:
+        dest = target_dir / rel_path
+        if dest.exists():
+            result["preserved"].append(str(dest))
+
+
+def _update_hooks(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update hook ``.sh`` files (always overwritten, made executable)."""
+    hooks_source = effective_data / "hooks"
+    if hooks_source.is_dir():
+        for hook_file in sorted(hooks_source.iterdir()):
+            if hook_file.suffix == ".sh":
+                dest = target_dir / ".claude" / "hooks" / hook_file.name
+                _update_or_report(
+                    hook_file, dest, result, dry_run,
+                    make_executable=True,
+                )
+
+
+def _update_skills(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update skill directories (always overwritten)."""
+    skills_source = effective_data / "skills"
+    if skills_source.is_dir():
+        for skill_dir in sorted(skills_source.iterdir()):
+            if skill_dir.is_dir():
+                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
+                if not dry_run:
+                    _ensure_dir(dest_skill, result)
+                for skill_file in sorted(skill_dir.iterdir()):
+                    if skill_file.is_file():
+                        dest = dest_skill / skill_file.name
+                        _update_or_report(skill_file, dest, result, dry_run)
+
+
+def _update_agents(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update agent ``.md`` files (always overwritten)."""
+    agents_source = effective_data / "agents"
+    if agents_source.is_dir():
+        for agent_file in sorted(agents_source.iterdir()):
+            if agent_file.suffix == ".md":
+                dest = target_dir / ".claude" / "agents" / agent_file.name
+                _update_or_report(agent_file, dest, result, dry_run)
+
+
+def _update_framework_files(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Copy/update all framework-managed files from bundled data.
+
+    Handles:
+    - Framework files in ``_ALWAYS_UPDATE`` (always overwritten).
+    - Never-overwrite files in ``_NEVER_OVERWRITE`` (preserved reporting).
+    - Hook ``.sh`` files (always overwritten, made executable).
+    - Skill directories (always overwritten).
+    - Agent ``.md`` files (always overwritten).
+
+    Args:
+        target_dir: Root of the target git repository.
+        effective_data: Resolved bundled data directory (may be overridden by
+            the caller for testing).
+        result: Mutable result dict accumulating ``updated``, ``created``,
+            ``preserved``, and ``errors`` entries.
+        dry_run: When ``True``, report what would change without writing files.
+    """
+    _update_always_overwrite_files(target_dir, effective_data, result, dry_run)
+    _report_preserved_files(target_dir, result)
+    _update_hooks(target_dir, effective_data, result, dry_run)
+    _update_skills(target_dir, effective_data, result, dry_run)
+    _update_agents(target_dir, effective_data, result, dry_run)
+
+
+# ---------------------------------------------------------------------------
+# MCP config + CLAUDE.md update
+# ---------------------------------------------------------------------------
+
+
+def _update_mcp_config(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Update ``.mcp.json`` and ``CLAUDE.md`` configuration files.
+
+    Handles the smart-merge of ``.mcp.json`` (ensures the ``trw`` server entry
+    is present while preserving all other user-configured MCP servers) and the
+    smart-update of ``CLAUDE.md`` (replaces the TRW auto-generated section while
+    preserving all user-written content outside the markers).
+
+    Args:
+        target_dir: Root of the target git repository.
+        result: Mutable result dict accumulating ``updated``, ``created``,
+            ``preserved``, and ``errors`` entries.
+        dry_run: When ``True``, report what would change without writing files.
+    """
+    # Smart-merge .mcp.json (ensure trw entry, preserve user entries)
+    if not dry_run:
+        _merge_mcp_json(target_dir, result)
+    else:
+        mcp_path = target_dir / ".mcp.json"
+        if mcp_path.exists():
+            try:
+                data = json.loads(mcp_path.read_text(encoding="utf-8"))
+                servers = data.get("mcpServers", {})
+                if "trw" not in servers:
+                    result["updated"].append(f"would merge: {mcp_path} (add trw entry)")
+                else:
+                    result["preserved"].append(str(mcp_path))
+            except (json.JSONDecodeError, OSError):
+                result["updated"].append(f"would merge: {mcp_path}")
+        else:
+            result["created"].append(f"would create: {mcp_path}")
+
+    # Smart-update CLAUDE.md (preserve user sections, update trw block)
+    claude_md_path = target_dir / "CLAUDE.md"
+    if dry_run:
+        if claude_md_path.exists():
+            result["updated"].append(f"would update: {claude_md_path} (TRW section)")
+        else:
+            result["created"].append(f"would create: {claude_md_path}")
+    else:
+        if claude_md_path.exists():
+            _update_claude_md_trw_section(claude_md_path, result)
+        else:
+            try:
+                claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+                result["created"].append(str(claude_md_path))
+            except OSError as exc:
+                result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# CLAUDE.md section management
+# ---------------------------------------------------------------------------
+
+
+def _update_claude_md_trw_section(
+    claude_md_path: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Replace the auto-generated TRW section in CLAUDE.md.
+
+    Preserves all user-written content above and below the markers.
+    """
+    content = claude_md_path.read_text(encoding="utf-8")
+    new_block = _minimal_claude_md_trw_block()
+
+    start_idx = content.find(_TRW_START_MARKER)
+    end_idx = content.find(_TRW_END_MARKER)
+
+    if start_idx != -1 and end_idx != -1:
+        # Replace the existing auto-generated section
+        end_idx += len(_TRW_END_MARKER)
+        # Also capture the header marker line if present
+        header_idx = content.rfind(_TRW_HEADER_MARKER, 0, start_idx)
+        replace_start = header_idx if header_idx != -1 else start_idx
+        updated = content[:replace_start] + new_block + content[end_idx:]
+        try:
+            claude_md_path.write_text(updated, encoding="utf-8")
+            result["updated"].append(str(claude_md_path))
+        except OSError as exc:
+            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
+    elif _TRW_START_MARKER not in content:
+        # No TRW section -- append it
+        if not content.endswith("\n"):
+            content += "\n"
+        content += "\n" + new_block
+        try:
+            claude_md_path.write_text(content, encoding="utf-8")
+            result["updated"].append(str(claude_md_path))
+        except OSError as exc:
+            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
+    else:
+        result["errors"].append(
+            "CLAUDE.md has malformed TRW markers — found start but not end"
+        )
+
+
+def _minimal_claude_md_trw_block() -> str:
+    """Return just the auto-generated TRW section for CLAUDE.md updates."""
+    import sys
+
+    # Look up _minimal_claude_md via the package module so that
+    # patch("trw_mcp.bootstrap._minimal_claude_md", ...) in tests
+    # correctly intercepts the call.
+    bootstrap_pkg = sys.modules["trw_mcp.bootstrap"]
+    full: str = bootstrap_pkg._minimal_claude_md()
+    start_idx = full.find(_TRW_HEADER_MARKER)
+    end_idx = full.find(_TRW_END_MARKER)
+    if start_idx != -1 and end_idx != -1:
+        return str(full[start_idx : end_idx + len(_TRW_END_MARKER)]) + "\n"
+    # Fallback: return entire trw:start..trw:end
+    start_idx = full.find(_TRW_START_MARKER)
+    if start_idx != -1 and end_idx != -1:
+        return str(full[start_idx : end_idx + len(_TRW_END_MARKER)]) + "\n"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Artifact name discovery
+# ---------------------------------------------------------------------------
+
+
+def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
+    """Return sorted lists of bundled artifact names by category."""
+    effective = data_dir or _DATA_DIR
+    skills_source = effective / "skills"
+    agents_source = effective / "agents"
+    hooks_source = effective / "hooks"
+    return {
+        "skills": sorted(
+            d.name for d in skills_source.iterdir() if d.is_dir()
+        ) if skills_source.is_dir() else [],
+        "agents": sorted(
+            f.name for f in agents_source.iterdir() if f.suffix == ".md"
+        ) if agents_source.is_dir() else [],
+        "hooks": sorted(
+            f.name for f in hooks_source.iterdir() if f.suffix == ".sh"
+        ) if hooks_source.is_dir() else [],
+    }
+
+
+def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[str, list[str]]:
+    """Return sorted lists of user-created artifact names not in bundled data."""
+    bundled = _get_bundled_names(data_dir)
+    bundled_skills = set(bundled["skills"])
+    bundled_agents = set(bundled["agents"])
+    bundled_hooks = set(bundled["hooks"])
+    result: dict[str, list[str]] = {"skills": [], "agents": [], "hooks": []}
+
+    skills_dir = target_dir / ".claude" / "skills"
+    if skills_dir.is_dir():
+        result["skills"] = sorted(
+            d.name for d in skills_dir.iterdir()
+            if d.is_dir() and d.name not in bundled_skills
+        )
+
+    agents_dir = target_dir / ".claude" / "agents"
+    if agents_dir.is_dir():
+        result["agents"] = sorted(
+            f.name for f in agents_dir.iterdir()
+            if f.suffix == ".md" and f.name not in bundled_agents
+        )
+
+    hooks_dir = target_dir / ".claude" / "hooks"
+    if hooks_dir.is_dir():
+        result["hooks"] = sorted(
+            f.name for f in hooks_dir.iterdir()
+            if f.suffix == ".sh" and f.name not in bundled_hooks
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Manifest management
+# ---------------------------------------------------------------------------
+
+
+def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
+    """Read the managed-artifacts manifest from a target project.
+
+    Returns ``None`` if the manifest does not exist (first update after
+    manifest support was added).
+    """
+    manifest_path = target_dir / ".trw" / _MANIFEST_FILE
+    if not manifest_path.exists():
+        return None
+    try:
+        from trw_mcp.state.persistence import FileStateReader
+
+        reader = FileStateReader()
+        data = reader.read_yaml(manifest_path)
+        if not isinstance(data, dict):
+            return None
+        skills_raw = data.get("skills", [])
+        agents_raw = data.get("agents", [])
+        hooks_raw = data.get("hooks", [])
+        custom_skills_raw = data.get("custom_skills", [])
+        custom_agents_raw = data.get("custom_agents", [])
+        custom_hooks_raw = data.get("custom_hooks", [])
+        return {
+            "skills": [str(s) for s in skills_raw] if isinstance(skills_raw, list) else [],
+            "agents": [str(a) for a in agents_raw] if isinstance(agents_raw, list) else [],
+            "hooks": [str(h) for h in hooks_raw] if isinstance(hooks_raw, list) else [],
+            "custom_skills": [str(s) for s in custom_skills_raw] if isinstance(custom_skills_raw, list) else [],
+            "custom_agents": [str(a) for a in custom_agents_raw] if isinstance(custom_agents_raw, list) else [],
+            "custom_hooks": [str(h) for h in custom_hooks_raw] if isinstance(custom_hooks_raw, list) else [],
+        }
+    except OSError:
+        return None
+
+
+def _write_manifest(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    data_dir: Path | None = None,
+) -> None:
+    """Write the managed-artifacts manifest to the target project.
+
+    The manifest records which skills, agents, and hooks were installed
+    by TRW so that ``_remove_stale_artifacts`` can distinguish
+    TRW-managed artifacts from user-created custom ones.
+    """
+    bundled = _get_bundled_names(data_dir)
+    custom = _get_custom_names(target_dir, data_dir)
+    # PRD-FIX-032-FR05: Exclude predecessor names from custom lists so they
+    # are not permanently protected as false-custom entries.
+    predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
+    predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
+    manifest = {
+        "version": 1,
+        "skills": bundled["skills"],
+        "agents": bundled["agents"],
+        "hooks": bundled["hooks"],
+        "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
+        "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],
+        "custom_hooks": custom["hooks"],
+    }
+    manifest_path = target_dir / ".trw" / _MANIFEST_FILE
+    try:
+        from trw_mcp.state.persistence import FileStateWriter
+
+        writer = FileStateWriter()
+        writer.write_yaml(manifest_path, manifest)
+        key = "updated" if "updated" in result else "created"
+        result[key].append(str(manifest_path))
+    except OSError as exc:
+        result["errors"].append(f"Failed to write manifest: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Migration & stale artifact removal
+# ---------------------------------------------------------------------------
+
+
+def _migrate_prefix_predecessors(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool = False,
+) -> None:
+    """Remove non-prefixed predecessor skills/agents when trw- successor is installed.
+
+    PRD-FIX-032: Projects initialized before the trw- prefix migration
+    (PRD-INFRA-013) still have old non-prefixed skill directories and agent
+    files.  This function removes them only when the trw- prefixed successor
+    is already present, ensuring no data loss.
+
+    This function is intended for ``update_project()`` only.  It is called
+    before ``_remove_stale_artifacts()`` so the manifest written afterwards
+    is already clean of predecessor entries.
+    """
+    skills_dir = target_dir / ".claude" / "skills"
+    agents_dir = target_dir / ".claude" / "agents"
+
+    for old_name, new_name in PREDECESSOR_MAP["skills"].items():
+        predecessor = skills_dir / old_name
+        successor = skills_dir / new_name
+        if not predecessor.is_dir():
+            continue
+        if not successor.is_dir():
+            continue  # successor absent -- keep old version
+        if dry_run:
+            result["updated"].append(f"would migrate:{predecessor}")
+            continue
+        try:
+            shutil.rmtree(predecessor)
+            result["updated"].append(f"migrated:{predecessor}")
+        except OSError:
+            pass
+
+    for old_name, new_name in PREDECESSOR_MAP["agents"].items():
+        predecessor = agents_dir / old_name
+        successor = agents_dir / new_name
+        if not predecessor.is_file():
+            continue
+        if not successor.is_file():
+            continue  # successor absent -- keep old version
+        if dry_run:
+            result["updated"].append(f"would migrate:{predecessor}")
+            continue
+        try:
+            predecessor.unlink()
+            result["updated"].append(f"migrated:{predecessor}")
+        except OSError:
+            pass
+
+
+def _remove_stale_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    data_dir: Path | None = None,
+) -> None:
+    """Remove hooks/skills/agents that no longer exist in bundled data.
+
+    Uses a manifest file (``.trw/managed-artifacts.yaml``) to track which
+    artifacts were previously installed by TRW.  Only artifacts listed in
+    the manifest are candidates for removal -- custom user-created
+    artifacts are never touched.
+
+    On the first update after manifest support is added, no stale cleanup
+    is performed (the manifest is written for future updates).
+    """
+    prev_manifest = _read_manifest(target_dir)
+    bundled = _get_bundled_names(data_dir)
+    bundled_skills = set(bundled["skills"])
+    bundled_agents = set(bundled["agents"])
+    bundled_hooks = set(bundled["hooks"])
+
+    if prev_manifest is None:
+        # First run with manifest support -- write manifest, skip cleanup
+        _write_manifest(target_dir, result, data_dir)
+        return
+
+    prev_skills = set(prev_manifest.get("skills", []))
+    prev_agents = set(prev_manifest.get("agents", []))
+    prev_hooks = set(prev_manifest.get("hooks", []))
+    prev_custom_skills = set(prev_manifest.get("custom_skills", []))
+    prev_custom_agents = set(prev_manifest.get("custom_agents", []))
+    prev_custom_hooks = set(prev_manifest.get("custom_hooks", []))
+
+    # Stale skills: previously managed but no longer in current bundle
+    # Defense-in-depth: only remove trw-prefixed skills to protect custom artifacts
+    stale_skills = prev_skills - bundled_skills
+    target_skills = target_dir / ".claude" / "skills"
+    if target_skills.is_dir():
+        for skill_name in stale_skills:
+            if skill_name in prev_custom_skills:
+                continue
+            if not skill_name.startswith("trw-"):
+                continue
+            stale = target_skills / skill_name
+            if stale.is_dir():
+                try:
+                    shutil.rmtree(stale)
+                    result["updated"].append(f"removed:{stale}")
+                except OSError:
+                    pass
+
+    # Stale agents: previously managed but no longer in current bundle
+    # Defense-in-depth: only remove trw-prefixed agents to protect custom artifacts
+    stale_agents = prev_agents - bundled_agents
+    target_agents = target_dir / ".claude" / "agents"
+    if target_agents.is_dir():
+        for agent_name in stale_agents:
+            if agent_name in prev_custom_agents:
+                continue
+            if not agent_name.startswith("trw-"):
+                continue
+            stale = target_agents / agent_name
+            if stale.is_file():
+                try:
+                    stale.unlink()
+                    result["updated"].append(f"removed:{stale}")
+                except OSError:
+                    pass
+
+    # Stale hooks: previously managed but no longer in current bundle
+    stale_hooks = prev_hooks - bundled_hooks
+    target_hooks = target_dir / ".claude" / "hooks"
+    if target_hooks.is_dir():
+        for hook_name in stale_hooks:
+            if hook_name in prev_custom_hooks:
+                continue
+            stale = target_hooks / hook_name
+            if stale.is_file():
+                try:
+                    stale.unlink()
+                    result["updated"].append(f"removed:{stale}")
+                except OSError:
+                    pass
+
+    # Write updated manifest
+    _write_manifest(target_dir, result, data_dir)
+
+
+# ---------------------------------------------------------------------------
+# Stale artifact cleanup orchestrator
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_stale_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    data_dir: Path | None,
+    dry_run: bool,
+) -> None:
+    """Remove stale and transient artifacts after a framework update.
+
+    Runs three cleanup passes in order:
+
+    1. PRD-FIX-032: Migrate non-prefixed predecessor skills/agents to their
+       ``trw-`` successors (safe: only removes old name when new name exists).
+    2. Remove stale bundled artifacts (hooks/skills/agents that were previously
+       managed by TRW but are no longer in the current bundle).
+    3. Remove transient files from ``.trw/context/`` (cache/session files that
+       should not persist across updates).
+
+    Args:
+        target_dir: Root of the target git repository.
+        result: Mutable result dict accumulating ``updated``, ``cleaned``,
+            and ``errors`` entries.
+        data_dir: Optional override for the bundled data directory; passed
+            through to ``_remove_stale_artifacts``.
+        dry_run: When ``True``, report what would change without deleting files.
+    """
+    # PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
+    _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run)
+
+    # Remove stale hooks/skills/agents no longer in bundled data
+    if not dry_run:
+        _remove_stale_artifacts(target_dir, result, data_dir)
+
+    # Clean transient artifacts from .trw/context/
+    _cleanup_context_transients(target_dir, result, dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# CLAUDE.md sync
+# ---------------------------------------------------------------------------
+
+
+def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
+    """Run CLAUDE.md sync after update to resolve placeholders and promote learnings.
+
+    Temporarily changes cwd to the target project so that resolve_project_root()
+    finds the correct .trw/ directory and learnings database.
+    Fail-open: rendering errors are logged as warnings but never break the update.
+    """
+    import os
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(target_dir)
+
+        from trw_mcp.models.config import _reset_config, get_config
+        from trw_mcp.state.claude_md import execute_claude_md_sync
+        from trw_mcp.state.llm_helpers import LLMClient
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        # Reset config so it picks up the target project's .trw/config.yaml
+        _reset_config()
+        config = get_config()
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        llm = LLMClient()
+
+        sync_result = execute_claude_md_sync(
+            scope="root",
+            target_dir=None,
+            config=config,
+            reader=reader,
+            writer=writer,
+            llm=llm,
+        )
+        result["updated"].append(
+            f"CLAUDE.md synced (learnings promoted: {sync_result.get('learnings_promoted', 0)})"
+        )
+    except Exception as exc:
+        result["warnings"].append(f"CLAUDE.md sync skipped: {exc}")
+    finally:
+        os.chdir(original_cwd)
+        # Reset config back to original project
+        try:
+            from trw_mcp.models.config import _reset_config
+            _reset_config()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Main update_project entry point
+# ---------------------------------------------------------------------------
+
+
+def update_project(
+    target_dir: Path,
+    *,
+    pip_install: bool = False,
+    dry_run: bool = False,
+    data_dir: Path | None = None,
+) -> dict[str, list[str]]:
+    """Update TRW framework files in *target_dir* while preserving user config.
+
+    Always updates: hooks, skills, agents, FRAMEWORK.md, behavioral_protocol.yaml,
+    claude_md template, settings.json.
+
+    Never overwrites: config.yaml, learnings/.
+
+    Smart merge: .mcp.json -- ensures ``trw`` server entry exists while preserving
+    all other user-configured MCP servers.
+
+    Smart update: CLAUDE.md -- replaces content between ``trw:start``/``trw:end``
+    markers while preserving all user-written sections.
+
+    Args:
+        target_dir: Root of the target git repository.
+        pip_install: If True, reinstall the trw-mcp package after file updates.
+        dry_run: If True, report what would change without modifying files.
+        data_dir: Optional override for the bundled data directory. When provided,
+            artifact lookups use this path instead of the module-level ``_DATA_DIR``.
+
+    Returns:
+        Dict with ``updated``, ``created``, ``preserved``, ``errors``,
+        and ``warnings`` lists.
+    """
+    from . import _TRW_DIRS
+
+    effective_data = data_dir or _DATA_DIR
+    result: dict[str, list[str]] = {
+        "updated": [],
+        "created": [],
+        "preserved": [],
+        "errors": [],
+        "warnings": [],
+        "cleaned": [],
+    }
+
+    if dry_run:
+        result["warnings"].append("DRY RUN — no files will be modified.")
+
+    # Validate target has TRW installed
+    if not (target_dir / ".trw").exists():
+        result["errors"].append(
+            f"{target_dir} does not have TRW installed (.trw/ not found). "
+            "Run `trw-mcp init-project` first."
+        )
+        return result
+
+    # 1. Ensure directories exist
+    if not dry_run:
+        for rel_dir in _TRW_DIRS:
+            _ensure_dir(target_dir / rel_dir, result)
+
+    # 2-6. Copy/update framework files, hooks, skills, agents
+    _update_framework_files(target_dir, effective_data, result, dry_run)
+
+    # 7-8. Update .mcp.json and CLAUDE.md configuration
+    _update_mcp_config(target_dir, result, dry_run)
+
+    # 9a-9c. Remove stale and transient artifacts
+    _cleanup_stale_artifacts(target_dir, result, data_dir, dry_run)
+
+    # 10. Check installed package version
+    _check_package_version(result)
+
+    # 11. Reinstall package if requested
+    if pip_install and not dry_run:
+        _pip_install_package(target_dir, result)
+
+    # 12. Write installer metadata
+    if not dry_run:
+        _write_installer_metadata(target_dir, "update-project", result)
+
+    # 13. Post-update verification
+    if not dry_run:
+        _verify_installation(target_dir, result)
+
+    # 13b. Post-update CLAUDE.md sync (resolve placeholders, promote learnings)
+    if not dry_run:
+        _run_claude_md_sync(target_dir, result)
+
+    # 14. Remind about running sessions
+    result["warnings"].append(
+        "Running Claude Code sessions use cached hooks/settings. "
+        "Restart active sessions (or run /mcp) to pick up updates."
+    )
+
+    logger.info(
+        "update_complete",
+        target=str(target_dir),
+        updated=len(result["updated"]),
+        created=len(result["created"]),
+        preserved=len(result["preserved"]),
+        errors=len(result["errors"]),
+        dry_run=dry_run,
+    )
+    return result

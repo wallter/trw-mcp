@@ -7,7 +7,7 @@ description: >
   Use: /trw-audit PRD-CORE-055
 user-invocable: true
 argument-hint: "[PRD-ID or file path]"
-allowed-tools: Read, Grep, Glob, LSP, Write, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn
+allowed-tools: Read, Grep, Glob, LSP, Write, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn, mcp__trw__trw_review
 ---
 
 # Adversarial Spec-vs-Code Audit Skill
@@ -153,6 +153,12 @@ Overall verdict rules:
 - **PASS**: All FRs pass, no P0/P1 findings
 - **CONDITIONAL**: No P0, <=2 P1 findings (fixable without replan)
 - **FAIL**: Any P0 OR >2 P1 findings
+
+### Step 7.5: Spec Reconciliation
+
+1. Call `trw_review(mode="reconcile", prd_ids=["PRD-{ID}"])` with the audited PRD ID
+2. If mismatches found: include mismatched identifiers as P1 findings with `update_spec` recommendation, note as spec drift
+3. If clean: note "Spec reconciliation: clean" in the summary
 
 ### Step 8: Summary
 

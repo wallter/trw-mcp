@@ -10,6 +10,7 @@ test patchability (patching review._get_git_diff must affect these helpers).
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -171,6 +172,160 @@ def handle_cross_model_mode(
             "cross_model_skipped": cross_model_skipped,
         },
     )
+    return result
+
+
+def _extract_section(content: str, section_name: str) -> str:
+    """Extract content under a ## section heading."""
+    pattern = rf"^##\s+(?:\d+\.\s+)?{re.escape(section_name)}\s*$"
+    match = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
+    if not match:
+        return ""
+    start = match.end()
+    next_heading = re.search(r"^##\s+", content[start:], re.MULTILINE)
+    if next_heading:
+        return content[start : start + next_heading.start()].strip()
+    return content[start:].strip()
+
+
+def _extract_identifiers(text: str) -> list[str]:
+    """Extract code identifiers from FR text."""
+    identifiers: list[str] = []
+    # Backtick-wrapped identifiers
+    identifiers.extend(re.findall(r"`([^`]+)`", text))
+    # --flags
+    identifiers.extend(re.findall(r"(--[a-zA-Z][\w-]*)", text))
+    # PascalCase class names (2+ uppercase letters)
+    identifiers.extend(re.findall(r"\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b", text))
+    return list(dict.fromkeys(identifiers))  # deduplicate preserving order
+
+
+def _extract_fr_mismatches(
+    prd_content: str, prd_id: str, diff: str,
+) -> list[dict[str, str]]:
+    """Compare FR identifiers against diff, return mismatches."""
+    mismatches: list[dict[str, str]] = []
+    section = _extract_section(prd_content, "Functional Requirements")
+    if not section:
+        return mismatches
+    # Split into individual FRs
+    fr_pattern = re.compile(
+        r"(?:^|\n)(?:###?\s*)?FR(\d+)\s*[:\-\u2013]\s*(.+?)(?=\n(?:###?\s*)?FR\d|\Z)",
+        re.DOTALL,
+    )
+    for m in fr_pattern.finditer(section):
+        fr_num = m.group(1)
+        fr_text = m.group(2).strip()
+        identifiers = _extract_identifiers(fr_text)
+        for ident in identifiers:
+            if ident not in diff:
+                mismatches.append({
+                    "prd_id": prd_id,
+                    "fr": f"FR{fr_num}",
+                    "identifier": ident,
+                    "recommendation": "update_spec",
+                })
+    return mismatches
+
+
+def _count_frs_in_prd(prd_path: Path) -> int:
+    """Count FR entries in a PRD file."""
+    try:
+        content = prd_path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    section = _extract_section(content, "Functional Requirements")
+    return len(re.findall(r"(?:^|\n)(?:###?\s*)?FR\d+", section))
+
+
+def handle_reconcile_mode(
+    config: TRWConfig,
+    resolved_run: Path | None,
+    review_id: str,
+    ts: str,
+    prd_ids: list[str] | None,
+) -> dict[str, object]:
+    """Handle the reconcile review mode — compare PRD FRs against git diff."""
+    from trw_mcp.state._paths import resolve_project_root
+    from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+    from trw_mcp.tools.review import _get_git_diff
+
+    # Discover PRDs if not explicitly provided
+    effective_prd_ids = list(prd_ids) if prd_ids else []
+    if not effective_prd_ids and resolved_run is not None:
+        from trw_mcp.state.prd_utils import discover_governing_prds
+
+        effective_prd_ids = discover_governing_prds(resolved_run, config)
+
+    if not effective_prd_ids:
+        return {
+            "review_id": review_id,
+            "verdict": "clean",
+            "mismatches": [],
+            "message": "No governing PRDs found",
+        }
+
+    diff = _get_git_diff()
+
+    project_root = resolve_project_root()
+    prds_dir = project_root / config.prds_relative_path
+
+    all_mismatches: list[dict[str, str]] = []
+    total_frs = 0
+
+    for prd_id in effective_prd_ids:
+        prd_path = prds_dir / f"{prd_id}.md"
+        try:
+            prd_content = prd_path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("reconcile_prd_not_found", prd_id=prd_id, path=str(prd_path))
+            continue
+        # Count FRs from already-loaded content (avoids double file read)
+        fr_section = _extract_section(prd_content, "Functional Requirements")
+        total_frs += len(re.findall(r"(?:^|\n)(?:###?\s*)?FR\d+", fr_section))
+        mismatches = _extract_fr_mismatches(prd_content, prd_id, diff)
+        all_mismatches.extend(mismatches)
+
+    verdict = "drift_detected" if all_mismatches else "clean"
+
+    result: dict[str, object] = {
+        "review_id": review_id,
+        "verdict": verdict,
+        "mismatches": all_mismatches,
+        "prd_count": len(effective_prd_ids),
+        "total_frs": total_frs,
+        "mismatch_count": len(all_mismatches),
+    }
+
+    # Persist reconciliation artifact and log event
+    if resolved_run is not None:
+        writer = FileStateWriter()
+        reconciliation_path = resolved_run / "meta" / "reconciliation.yaml"
+        reconciliation_data: dict[str, object] = {
+            "review_id": review_id,
+            "timestamp": ts,
+            "verdict": verdict,
+            "prd_ids": effective_prd_ids,
+            "prd_count": len(effective_prd_ids),
+            "total_frs": total_frs,
+            "mismatch_count": len(all_mismatches),
+            "mismatches": all_mismatches,
+        }
+        writer.write_yaml(reconciliation_path, reconciliation_data)
+
+        # Log spec_reconciliation event
+        events_path = resolved_run / "meta" / "events.jsonl"
+        if events_path.parent.exists():
+            event_logger = FileEventLogger(writer)
+            event_logger.log_event(events_path, "spec_reconciliation", {
+                "review_id": review_id,
+                "verdict": verdict,
+                "mismatch_count": len(all_mismatches),
+                "prd_count": len(effective_prd_ids),
+            })
+
+        result["reconciliation_yaml"] = str(reconciliation_path)
+
     return result
 
 
