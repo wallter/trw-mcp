@@ -194,34 +194,58 @@ def _step_recall_outcome(resolved_run: Path | None) -> dict[str, object]:
     return {"status": "success", "recorded": recalled_count}
 
 
+def _resolve_installation_id() -> str:
+    """Resolve installation ID from config, never falling back to 'local'."""
+    from trw_mcp.models.config import get_config as _get_cfg
+    cfg = _get_cfg()
+    iid = cfg.installation_id.strip() if cfg.installation_id else ""
+    if iid:
+        return iid
+    # Generate a stable ID from the project root path
+    import hashlib
+    project_root = str(resolve_project_root())
+    return "inst-" + hashlib.sha256(project_root.encode()).hexdigest()[:12]
+
+
 def _step_telemetry(resolved_run: Path | None) -> dict[str, object]:
     """Step 7: Telemetry events (G3 + G4)."""
     from trw_mcp.models.config import get_config as _get_cfg
+    from trw_mcp.state.analytics_report import compute_ceremony_score
     from trw_mcp.telemetry.client import TelemetryClient
     from trw_mcp.telemetry.models import CeremonyComplianceEvent, SessionEndEvent
+
     cfg = _get_cfg()
+    inst_id = _resolve_installation_id()
     tel_client = TelemetryClient.from_config()
-    tools_invoked = 0
+
+    # Read events for tool count and ceremony score computation
+    events: list[dict[str, object]] = []
     if resolved_run is not None:
         ev_path = resolved_run / "meta" / "events.jsonl"
         if ev_path.exists():
             from trw_mcp.state.persistence import FileStateReader as _FSR2
             ev_reader = _FSR2()
-            tools_invoked = len(ev_reader.read_jsonl(ev_path))
+            events = ev_reader.read_jsonl(ev_path)
+
+    # Compute actual ceremony score from run events
+    ceremony = compute_ceremony_score(events)
+    ceremony_score = int(str(ceremony.get("score", 0)))
+
     tel_client.record_event(SessionEndEvent(
-        installation_id=cfg.installation_id or "local",
+        installation_id=inst_id,
         framework_version=cfg.framework_version,
-        tools_invoked=tools_invoked,
+        tools_invoked=len(events),
+        ceremony_score=ceremony_score,
     ))
     run_id_str = str(resolved_run.name) if resolved_run else "unknown"
     tel_client.record_event(CeremonyComplianceEvent(
-        installation_id=cfg.installation_id or "local",
+        installation_id=inst_id,
         framework_version=cfg.framework_version,
         run_id=run_id_str,
-        score=0,
+        score=ceremony_score,
     ))
     tel_client.flush()
-    return {"status": "success", "events": 2}
+    return {"status": "success", "events": 2, "ceremony_score": ceremony_score}
 
 
 def _step_batch_send() -> dict[str, object]:
@@ -305,6 +329,22 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 _events.log_event(fallback_path, "session_start", event_data)
         except Exception:
             pass  # Fail-open: event write failure must not affect tool result
+
+        # Step 3b: Queue SessionStartEvent for telemetry publishing
+        try:
+            from trw_mcp.telemetry.client import TelemetryClient
+            from trw_mcp.telemetry.models import SessionStartEvent
+            inst_id = _resolve_installation_id()
+            tel_client = TelemetryClient.from_config()
+            tel_client.record_event(SessionStartEvent(
+                installation_id=inst_id,
+                framework_version=_config.framework_version,
+                learnings_loaded=int(str(results.get("learnings_count", 0))),
+                run_id=str(run_dir.name) if run_dir else None,
+            ))
+            tel_client.flush()
+        except Exception:
+            pass  # Fail-open: telemetry must not break session start
 
         # Steps 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings)
         try:
