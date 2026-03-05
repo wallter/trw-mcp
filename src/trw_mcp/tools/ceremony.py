@@ -492,6 +492,17 @@ def register_ceremony_tools(server: FastMCP) -> None:
         results["success"] = len(errors) == 0
         results["steps_completed"] = 10 - len(errors)
 
+        # Log trw_deliver_complete to events.jsonl so hooks can detect it
+        if resolved_run is not None and (resolved_run / "meta").exists():
+            _events.log_event(
+                resolved_run / "meta" / "events.jsonl",
+                "trw_deliver_complete",
+                {
+                    "steps_completed": results.get("steps_completed"),
+                    "errors": len(errors),
+                },
+            )
+
         logger.info(
             "trw_deliver_complete",
             steps_completed=results.get("steps_completed"),
