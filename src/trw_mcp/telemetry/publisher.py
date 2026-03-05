@@ -2,13 +2,18 @@
 
 PRD-CORE-033: Cross-project knowledge sharing via backend API.
 Fail-open: never raises exceptions — all errors are counted and returned.
+
+Change tracking: maintains a content-hash sidecar so only new/modified
+entries are published on each run, avoiding redundant API calls.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -21,33 +26,91 @@ from trw_mcp.telemetry.embeddings import embed
 
 logger = structlog.get_logger()
 
+_HASH_FILE = ".publish_hashes.json"
 
-def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
+
+def _content_hash(data: dict[str, Any]) -> str:
+    """Deterministic hash of the publishable fields of a learning entry."""
+    canonical = json.dumps(
+        {
+            "summary": str(data.get("summary", "")),
+            "detail": str(data.get("detail", "")),
+            "tags": sorted(str(t) for t in (data.get("tags") or [])),
+            "impact": float(str(data.get("impact", 0.5))),
+            "status": str(data.get("status", "active")),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def _load_hashes(entries_dir: Path) -> dict[str, str]:
+    """Load the publish-hash sidecar file."""
+    path = entries_dir / _HASH_FILE
+    if path.exists():
+        try:
+            return dict(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_hashes(entries_dir: Path, hashes: dict[str, str]) -> None:
+    """Persist the publish-hash sidecar file."""
+    path = entries_dir / _HASH_FILE
+    try:
+        path.write_text(json.dumps(hashes, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        logger.debug("publish_hash_save_failed", path=str(path))
+
+
+def publish_learnings(
+    min_impact: float = 0.7, *, force: bool = False
+) -> dict[str, object]:
     """Publish high-impact learnings to the platform backend.
 
-    Returns dict with: published, skipped, errors, skipped_reason.
+    Returns dict with: published, skipped, unchanged, errors, skipped_reason.
+
+    Args:
+        min_impact: Minimum impact threshold for publishing.
+        force: If True, ignore content hashes and re-publish everything.
+
     Fail-open: never raises exceptions.
     """
     cfg = get_config()
     urls = cfg.effective_platform_urls
     if not urls or not cfg.platform_telemetry_enabled:
-        return {"published": 0, "skipped": 0, "errors": 0, "skipped_reason": "offline_mode"}
+        return {
+            "published": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "errors": 0,
+            "skipped_reason": "offline_mode",
+        }
 
     trw_dir = resolve_trw_dir()
     entries_dir = trw_dir / "learnings" / "entries"
     if not entries_dir.exists():
-        return {"published": 0, "skipped": 0, "errors": 0, "skipped_reason": "no_entries"}
+        return {
+            "published": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "errors": 0,
+            "skipped_reason": "no_entries",
+        }
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     reader = FileStateReader()
     published = 0
     skipped = 0
+    unchanged = 0
     errors = 0
 
-    # Create executor once; reuse for all entries.
-    # Each URL is attempted independently so a slow/failing backend
-    # never blocks delivery to the others.
+    # Load content hashes from previous runs
+    prev_hashes = _load_hashes(entries_dir) if not force else {}
+    new_hashes: dict[str, str] = dict(prev_hashes)
+
     use_parallel = len(urls) > 1
     executor = ThreadPoolExecutor(max_workers=len(urls)) if use_parallel else None
 
@@ -61,11 +124,22 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
                 status = str(data.get("status", "active"))
                 if status != "active":
                     skipped += 1
+                    # Remove hash for non-active entries so re-activation triggers publish
+                    entry_id = str(data.get("id", yaml_file.stem))
+                    new_hashes.pop(entry_id, None)
                     continue
 
                 impact = float(str(data.get("impact", 0.5)))
                 if impact < min_impact:
                     skipped += 1
+                    continue
+
+                entry_id = str(data.get("id", yaml_file.stem))
+                current_hash = _content_hash(data)
+
+                # Skip if content hasn't changed since last successful publish
+                if prev_hashes.get(entry_id) == current_hash:
+                    unchanged += 1
                     continue
 
                 # Anonymize content
@@ -87,7 +161,7 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
                     "impact": impact,
                     "embedding": embedding,
                     "source_project": cfg.installation_id or "unknown",
-                    "source_learning_id": str(data.get("id", "")),
+                    "source_learning_id": entry_id,
                 }
 
                 # Fan-out: publish to all configured backends in parallel
@@ -96,7 +170,6 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
                         executor.submit(_post_learning, url, payload, cfg.platform_api_key): url
                         for url in urls
                     }
-                    # Collect ALL results (don't short-circuit — every URL must be attempted)
                     results = [f.result() for f in as_completed(futs)]
                     any_success = any(results)
                 else:
@@ -107,6 +180,7 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
 
                 if any_success:
                     published += 1
+                    new_hashes[entry_id] = current_hash
                 else:
                     errors += 1
 
@@ -116,20 +190,28 @@ def publish_learnings(min_impact: float = 0.7) -> dict[str, object]:
     finally:
         if executor:
             executor.shutdown(wait=False)
+        # Persist hashes even on partial success
+        _save_hashes(entries_dir, new_hashes)
 
-    return {"published": published, "skipped": skipped, "errors": errors, "skipped_reason": None}
+    return {
+        "published": published,
+        "skipped": skipped,
+        "unchanged": unchanged,
+        "errors": errors,
+        "skipped_reason": None,
+    }
 
 
 def _post_learning(platform_url: str, payload: dict[str, Any], api_key: str = "") -> bool:
     """POST a learning to the backend. Returns True on 2xx.
 
-    Retries once on 429 (rate limit) after respecting the Retry-After header.
+    Retries up to 3 times on 429 (rate limit) with exponential backoff.
     Logs HTTP error details for observability.
     """
     import time as _time
 
     url = f"{platform_url.rstrip('/')}/v1/learnings"
-    max_attempts = 2
+    max_attempts = 4
 
     for attempt in range(max_attempts):
         try:
@@ -147,13 +229,14 @@ def _post_learning(platform_url: str, payload: dict[str, Any], api_key: str = ""
                 return bool(200 <= response.status < 300)
         except urllib.error.HTTPError as e:
             if e.code == 429 and attempt < max_attempts - 1:
-                retry_after = int(e.headers.get("Retry-After", "2"))
+                retry_after = int(e.headers.get("Retry-After", str(2 ** attempt)))
                 logger.debug(
                     "learning_post_rate_limited",
                     url=platform_url,
                     retry_after=retry_after,
+                    attempt=attempt + 1,
                 )
-                _time.sleep(min(retry_after, 5))
+                _time.sleep(min(retry_after, 10))
                 continue
             logger.warning(
                 "learning_post_failed",

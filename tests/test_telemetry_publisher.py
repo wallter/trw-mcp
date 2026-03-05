@@ -207,8 +207,8 @@ class TestPublishFiltering:
         assert len(captured_payloads) == 1
         assert captured_payloads[0]["source_learning_id"] == "L-abc12345"
 
-    def test_publish_resends_on_every_call(self, tmp_path: Path) -> None:
-        """Without published_to_platform guard, entries are sent every call (backend handles upsert)."""
+    def test_publish_skips_unchanged_on_second_call(self, tmp_path: Path) -> None:
+        """Content-hash tracking: unchanged entries are skipped on subsequent calls."""
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -228,7 +228,31 @@ class TestPublishFiltering:
             result2 = publish_learnings()
 
         assert result1["published"] == 1
-        assert result2["published"] == 1  # Re-sent, backend will upsert
+        assert result2["published"] == 0
+        assert result2["unchanged"] == 1  # Skipped due to matching content hash
+
+    def test_publish_force_resends_all(self, tmp_path: Path) -> None:
+        """force=True ignores content hashes and re-publishes everything."""
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig(
+            platform_url="https://api.example.com",
+            platform_telemetry_enabled=True,
+        )
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        _write_learning(entries_dir, "learning.yaml", _make_learning(impact=0.9))
+
+        with (
+            patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
+            patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", return_value=True),
+        ):
+            result1 = publish_learnings()
+            result2 = publish_learnings(force=True)
+
+        assert result1["published"] == 1
+        assert result2["published"] == 1  # Force re-publishes despite matching hash
 
 
 # ===========================================================================
