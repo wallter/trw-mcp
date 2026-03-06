@@ -197,7 +197,7 @@ class TestCheckMcpJsonPortability:
         mcp_path = tmp_path / ".mcp.json"
         mcp_path.write_text(json.dumps(mcp_data), encoding="utf-8")
 
-        with patch("trw_mcp.server.structlog") as mock_structlog:
+        with patch("trw_mcp.server._cli.structlog") as mock_structlog:
             mock_logger = mock_structlog.get_logger.return_value
             _check_mcp_json_portability(tmp_path)
             mock_logger.warning.assert_called_once()
@@ -219,7 +219,7 @@ class TestCheckMcpJsonPortability:
         mcp_path = tmp_path / ".mcp.json"
         mcp_path.write_text(json.dumps(mcp_data), encoding="utf-8")
 
-        with patch("trw_mcp.server.structlog") as mock_structlog:
+        with patch("trw_mcp.server._cli.structlog") as mock_structlog:
             mock_logger = mock_structlog.get_logger.return_value
             _check_mcp_json_portability(tmp_path)
             mock_logger.warning.assert_not_called()
@@ -228,7 +228,7 @@ class TestCheckMcpJsonPortability:
         """No warning when .mcp.json doesn't exist."""
         from trw_mcp.server import _check_mcp_json_portability
 
-        with patch("trw_mcp.server.structlog") as mock_structlog:
+        with patch("trw_mcp.server._cli.structlog") as mock_structlog:
             mock_logger = mock_structlog.get_logger.return_value
             _check_mcp_json_portability(tmp_path)
             mock_logger.warning.assert_not_called()
@@ -252,7 +252,7 @@ class TestCheckMcpJsonPortability:
         mcp_path = tmp_path / ".mcp.json"
         mcp_path.write_text(json.dumps(mcp_data), encoding="utf-8")
 
-        with patch("trw_mcp.server.structlog") as mock_structlog:
+        with patch("trw_mcp.server._cli.structlog") as mock_structlog:
             mock_logger = mock_structlog.get_logger.return_value
             _check_mcp_json_portability(tmp_path)
             mock_logger.warning.assert_not_called()
@@ -275,7 +275,7 @@ class TestCheckMcpJsonPortability:
         mcp_path = tmp_path / ".mcp.json"
         mcp_path.write_text(json.dumps(mcp_data), encoding="utf-8")
 
-        with patch("trw_mcp.server.structlog") as mock_structlog:
+        with patch("trw_mcp.server._cli.structlog") as mock_structlog:
             mock_logger = mock_structlog.get_logger.return_value
             _check_mcp_json_portability(tmp_path)
             mock_logger.warning.assert_not_called()

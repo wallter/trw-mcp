@@ -171,5 +171,7 @@ exclude_lines = [
     "if __name__",
 ]
 omit = [
-    "src/trw_mcp/server.py",
+    "src/trw_mcp/server/__main__.py",
+    "src/trw_mcp/server/_proxy.py",
+    "src/trw_mcp/server/_transport.py",
 ]

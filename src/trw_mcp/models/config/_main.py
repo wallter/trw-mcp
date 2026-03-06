@@ -1,144 +1,30 @@
-"""Framework configuration — single source of truth for all TRW defaults.
+"""TRWConfig -- single source of truth for all TRW defaults.
 
 All configuration values are centralized here. Both application code
-and test suites import from this module — no parallel constants.
+and test suites import from this module -- no parallel constants.
 
 PRD-CORE-071 Phase 1: Domain sub-configs provide type-narrowed access
 (e.g. ``config.build`` returns a ``BuildConfig``). Flat field access
-(``config.build_check_enabled``) is preserved — all flat fields remain.
+(``config.build_check_enabled``) is preserved -- all flat fields remain.
 """
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-# ── Domain Sub-Configs (PRD-CORE-071-FR01) ────────────────────────────────
-# Each groups related fields for type-narrowed function signatures.
-# TRWConfig composes these via @property accessors.
-
-
-class BuildConfig(BaseModel):
-    """Build verification and test execution configuration."""
-
-    model_config = ConfigDict(frozen=True)
-
-    build_check_enabled: bool = True
-    build_check_timeout_secs: int = 300
-    build_check_coverage_min: float = 85.0
-    build_gate_enforcement: str = "lenient"
-    build_check_pytest_args: str = ""
-    build_check_mypy_args: str = "--strict"
-    build_check_pytest_cmd: str | None = None
-    run_auto_close_enabled: bool = True
-    run_auto_close_age_days: int = 7
-    auto_checkpoint_enabled: bool = True
-    auto_checkpoint_tool_interval: int = 25
-    auto_checkpoint_pre_compact: bool = True
-    mutation_enabled: bool = False
-    mutation_threshold: float = 0.50
-    mutation_threshold_critical: float = 0.70
-    mutation_threshold_experimental: float = 0.30
-    mutation_timeout_secs: int = 300
-
-
-class MemoryConfig(BaseModel):
-    """Learning storage, retrieval, and lifecycle configuration."""
-
-    model_config = ConfigDict(frozen=True)
-
-    learning_max_entries: int = 500
-    recall_receipt_max_entries: int = 1000
-    recall_max_results: int = 25
-    memory_store_path: str = ".trw/memory/vectors.db"
-    dedup_enabled: bool = True
-    dedup_skip_threshold: float = 0.95
-    dedup_merge_threshold: float = 0.85
-    memory_consolidation_enabled: bool = True
-    memory_consolidation_max_per_cycle: int = 50
-    memory_hot_max_entries: int = 50
-    memory_score_w1: float = 0.4
-    memory_score_w2: float = 0.3
-    memory_score_w3: float = 0.3
-
-
-class TelemetryConfig(BaseModel):
-    """Telemetry, OTEL, and ceremony alerting configuration."""
-
-    model_config = ConfigDict(frozen=True)
-
-    debug: bool = False
-    platform_telemetry_enabled: bool = False
-    otel_enabled: bool = False
-    otel_endpoint: str = ""
-    ceremony_alert_threshold: int = 40
-    ceremony_alert_consecutive: int = 3
-
-
-class OrchestrationConfig(BaseModel):
-    """Wave/shard orchestration and agent settings."""
-
-    model_config = ConfigDict(frozen=True)
-
-    parallelism_max: int = 10
-    timebox_hours: int = 8
-    max_research_waves: int = 3
-    auto_recall_enabled: bool = True
-    auto_recall_max_results: int = 5
-    agent_teams_enabled: bool = True
-
-
-class ScoringConfig(BaseModel):
-    """Scoring weights, tier boundaries, and decay parameters."""
-
-    model_config = ConfigDict(frozen=True)
-
-    scoring_default_days_unused: int = 30
-    learning_decay_half_life_days: float = 14.0
-    impact_forced_distribution_enabled: bool = True
-    complexity_tier_minimal: int = 3
-    complexity_tier_comprehensive: int = 7
-
-
-class TrustConfig(BaseModel):
-    """Progressive trust model boundaries (PRD-CORE-068)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    trust_crawl_boundary: int = 50
-    trust_walk_boundary: int = 200
-    trust_walk_sample_rate: float = 0.3
-    trust_security_tags: tuple[str, ...] = (
-        "auth", "secrets", "permissions", "encryption", "oauth", "jwt",
-    )
-    trust_locked: bool = False
-
-
-class CeremonyFeedbackConfig(BaseModel):
-    """Self-improving ceremony feedback thresholds (PRD-CORE-069)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    ceremony_feedback_min_samples: int = 10
-    ceremony_feedback_score_threshold: float = 80.0
-    ceremony_feedback_quality_threshold: float = 0.9
-    ceremony_feedback_escalation_threshold: float = 60.0
-    ceremony_feedback_escalation_window: int = 5
-
-
-class PathsConfig(BaseModel):
-    """Directory structure and path defaults."""
-
-    model_config = ConfigDict(frozen=True)
-
-    task_root: str = "docs"
-    trw_dir: str = ".trw"
-    context_dir: str = "context"
-    logs_dir: str = "logs"
-    source_package_path: str = "src"
+from trw_mcp.models.config._sub_models import (
+    BuildConfig,
+    CeremonyFeedbackConfig,
+    MemoryConfig,
+    OrchestrationConfig,
+    PathsConfig,
+    ScoringConfig,
+    TelemetryConfig,
+    TrustConfig,
+)
 
 
 class TRWConfig(BaseSettings):
@@ -147,12 +33,12 @@ class TRWConfig(BaseSettings):
     Values come from (in priority order):
     1. Environment variables (prefixed TRW_)
     2. .trw/config.yaml overrides (loaded at runtime)
-    3. Defaults defined here (from FRAMEWORK.md §DEFAULTS)
+    3. Defaults defined here (from FRAMEWORK.md DEFAULTS)
 
     Unknown environment variables and config.yaml keys are silently ignored.
 
-    Table of Contents (section → first field):
-    ──────────────────────────────────────────────
+    Table of Contents (section -> first field):
+    ------------------------------------------------
      1. Orchestration .................. parallelism_max
      2. Phase time caps ............... phase_cap_research
      3. Learning storage & retrieval .. learning_max_entries
@@ -211,7 +97,7 @@ class TRWConfig(BaseSettings):
         extra="ignore",
     )
 
-    # ── 1. Orchestration ─────────────────────────────────────────────────
+    # -- 1. Orchestration --
 
     # Wave/shard execution limits
     parallelism_max: int = 10
@@ -219,16 +105,16 @@ class TRWConfig(BaseSettings):
     max_research_waves: int = 3
 
     # ORC-level consensus thresholds
-    # Not consumed by MCP tools — tracked at prompt level only
+    # Not consumed by MCP tools -- tracked at prompt level only
     min_shards_target: int = 3
     min_shards_floor: int = 2
     consensus_quorum: float = 0.67
     max_child_depth: int = 2
     checkpoint_secs: int = 600
 
-    # ── 2. Phase time caps ───────────────────────────────────────────────
+    # -- 2. Phase time caps --
     # Percentage of total timebox, ORC-level tracking.
-    # 6-phase model: RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
+    # 6-phase model: RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 
     phase_cap_research: float = 0.25
     phase_cap_plan: float = 0.15
@@ -237,7 +123,7 @@ class TRWConfig(BaseSettings):
     phase_cap_review: float = 0.10
     phase_cap_deliver: float = 0.05
 
-    # ── 3. Learning storage & retrieval ──────────────────────────────────
+    # -- 3. Learning storage & retrieval --
 
     learning_max_entries: int = 500
     learning_promotion_impact: float = 0.7
@@ -249,7 +135,7 @@ class TRWConfig(BaseSettings):
         {"id", "summary", "impact", "tags", "status"}
     )
 
-    # ── 4. Hybrid retrieval (CORE-041) ───────────────────────────────────
+    # -- 4. Hybrid retrieval (CORE-041) --
 
     memory_store_path: str = ".trw/memory/vectors.db"
     embeddings_enabled: bool = False  # Opt-in: requires `pip install trw-memory[embeddings]` (~2GB, PyTorch)
@@ -261,13 +147,13 @@ class TRWConfig(BaseSettings):
     hybrid_reranking_enabled: bool = False  # Future: cross-encoder reranking
     retrieval_fallback_enabled: bool = True  # Fall back to keyword search when hybrid unavailable
 
-    # ── 5. Semantic dedup (CORE-042) ─────────────────────────────────────
+    # -- 5. Semantic dedup (CORE-042) --
 
     dedup_enabled: bool = True
-    dedup_skip_threshold: float = 0.95  # cosine >= this → skip (exact duplicate)
-    dedup_merge_threshold: float = 0.85  # cosine >= this → merge (near duplicate)
+    dedup_skip_threshold: float = 0.95  # cosine >= this -> skip (exact duplicate)
+    dedup_merge_threshold: float = 0.85  # cosine >= this -> merge (near duplicate)
 
-    # ── 6. Memory consolidation (CORE-044) ───────────────────────────────
+    # -- 6. Memory consolidation (CORE-044) --
 
     memory_consolidation_enabled: bool = True
     memory_consolidation_interval_days: int = 7
@@ -275,7 +161,7 @@ class TRWConfig(BaseSettings):
     memory_consolidation_similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     memory_consolidation_max_per_cycle: int = Field(default=50, ge=1)
 
-    # ── 7. Tiered memory (CORE-043) ──────────────────────────────────────
+    # -- 7. Tiered memory (CORE-043) --
 
     memory_hot_max_entries: int = 50
     memory_hot_ttl_days: int = 7
@@ -285,7 +171,7 @@ class TRWConfig(BaseSettings):
     memory_score_w2: float = 0.3   # recency weight
     memory_score_w3: float = 0.3   # importance weight
 
-    # ── 8. Impact score distribution (CORE-034) ─────────────────────────
+    # -- 8. Impact score distribution (CORE-034) --
 
     impact_forced_distribution_enabled: bool = True
     impact_tier_critical_cap: float = 0.05   # max 5% at 0.9-1.0
@@ -293,7 +179,7 @@ class TRWConfig(BaseSettings):
     impact_high_threshold_pct: float = 20.0  # soft-cap: max % of learnings >= 0.8
     impact_decay_half_life_days: int = 90    # half-life for batch impact decay
 
-    # ── 9. Utility scoring & decay ───────────────────────────────────────
+    # -- 9. Utility scoring & decay --
     # Q-learning + Ebbinghaus decay (PRD-CORE-004, PRD-CORE-026)
 
     learning_decay_half_life_days: float = 14.0
@@ -306,14 +192,14 @@ class TRWConfig(BaseSettings):
     source_human_utility_boost: float = 0.1
     access_count_utility_boost_cap: float = 0.15
 
-    # ── 10. Outcome correlation ──────────────────────────────────────────
+    # -- 10. Outcome correlation --
 
     learning_outcome_correlation_window_minutes: int = 480
     learning_outcome_correlation_scope: str = "session"
     learning_outcome_history_cap: int = 20
     recall_utility_lambda: float = 0.3
 
-    # ── 11. Documentation generation ─────────────────────────────────────
+    # -- 11. Documentation generation --
 
     claude_md_max_lines: int = 500
     sub_claude_md_max_lines: int = 50
@@ -321,7 +207,7 @@ class TRWConfig(BaseSettings):
     agents_md_enabled: bool = True
     agent_teams_enabled: bool = True
 
-    # ── 12. Scoring subsystem ────────────────────────────────────────────
+    # -- 12. Scoring subsystem --
     # Outcome-based utility, Sprint 8 extraction
 
     scoring_default_days_unused: int = 30
@@ -331,7 +217,7 @@ class TRWConfig(BaseSettings):
         "error", "fail", "exception", "crash", "timeout",
     )
 
-    # ── 13. Directory structure & paths ──────────────────────────────────
+    # -- 13. Directory structure & paths --
 
     task_root: str = "docs"
     trw_dir: str = ".trw"
@@ -349,12 +235,12 @@ class TRWConfig(BaseSettings):
     frameworks_dir: str = "frameworks"
     templates_dir: str = "templates"
 
-    # ── 14. Framework version & AARE-F ───────────────────────────────────
+    # -- 14. Framework version & AARE-F --
 
     framework_version: str = "v24.0_TRW"
     aaref_version: str = "v1.1.0"
 
-    # ── 15. PRD quality gates ────────────────────────────────────────────
+    # -- 15. PRD quality gates --
     # AARE-F standard thresholds
 
     ambiguity_rate_max: float = 0.05
@@ -362,7 +248,7 @@ class TRWConfig(BaseSettings):
     traceability_coverage_min: float = 0.90
     consistency_validation_min: float = 0.95
 
-    # ── 16. Semantic validation ──────────────────────────────────────────
+    # -- 16. Semantic validation --
 
     # Quality dimension weights (must sum to 100)
     validation_density_weight: float = 25.0
@@ -381,12 +267,12 @@ class TRWConfig(BaseSettings):
     validation_fk_optimal_min: float = 8.0
     validation_fk_optimal_max: float = 12.0
 
-    # ── 17. Risk-based validation ────────────────────────────────────────
+    # -- 17. Risk-based validation --
     # Scaling per PRD-QUAL-013
 
     risk_scaling_enabled: bool = True
 
-    # ── 18. Phase gates & enforcement ────────────────────────────────────
+    # -- 18. Phase gates & enforcement --
     # PRD-CORE-009
 
     phase_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
@@ -399,7 +285,7 @@ class TRWConfig(BaseSettings):
     # When True, phase_check(direction="enter") reports errors instead of warnings
     strict_input_criteria: bool = False
 
-    # ── 19. PRD grooming ─────────────────────────────────────────────────
+    # -- 19. PRD grooming --
     # PRD-CORE-011
 
     grooming_max_iterations: int = 5
@@ -408,7 +294,7 @@ class TRWConfig(BaseSettings):
     grooming_placeholder_density_threshold: float = 0.10
     grooming_partial_density_threshold: float = 0.20
 
-    # ── 20. Research findings ────────────────────────────────────────────
+    # -- 20. Research findings --
     # PRD-CORE-010
 
     finding_dedup_threshold: float = 0.6
@@ -416,7 +302,7 @@ class TRWConfig(BaseSettings):
     findings_entries_dir: str = "entries"
     findings_registry_file: str = "registry.yaml"
 
-    # ── 21. Reflection & patterns ────────────────────────────────────────
+    # -- 21. Reflection & patterns --
     # PRD-QUAL-001
 
     reflect_sequence_lookback: int = 3
@@ -424,13 +310,13 @@ class TRWConfig(BaseSettings):
     reflect_max_success_patterns: int = 5
     reflect_q_value_threshold: float = 0.6
 
-    # ── 22. Phase reversion ──────────────────────────────────────────────
+    # -- 22. Phase reversion --
     # PRD-CORE-013-FR07
 
     reversion_rate_elevated: float = 0.15
     reversion_rate_concerning: float = 0.30
 
-    # ── 23. Technical debt ───────────────────────────────────────────────
+    # -- 23. Technical debt --
     # Registry and scoring (PRD-CORE-016)
 
     debt_registry_filename: str = "debt-registry.yaml"
@@ -445,7 +331,7 @@ class TRWConfig(BaseSettings):
     debt_budget_high_ratio: float = 0.15
     debt_default_wave_size: int = 5
 
-    # ── 24. Compliance ───────────────────────────────────────────────────
+    # -- 24. Compliance --
     # Auditing (PRD-QUAL-003)
 
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
@@ -456,14 +342,14 @@ class TRWConfig(BaseSettings):
     compliance_history_file: str = "history.jsonl"
     compliance_changelog_filename: str = "CHANGELOG.md"
 
-    # ── Sprint 44: Git Workflow & Enterprise Compliance ─────────────────
+    # -- Sprint 44: Git Workflow & Enterprise Compliance --
     commit_fr_trailer_enabled: bool = True  # INFRA-026-FR07
     sprint_integration_branch_pattern: str = "sprint-{N}-integration"  # INFRA-026-FR07
     compliance_review_retention_days: int = 365  # INFRA-027-FR05
     provenance_enabled: bool = True  # INFRA-028-FR06
     confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)  # INFRA-028-FR06
 
-    # ── 25. Wave adaptation ──────────────────────────────────────────────
+    # -- 25. Wave adaptation --
     # PRD-CORE-006
 
     adaptation_enabled: bool = True
@@ -472,7 +358,7 @@ class TRWConfig(BaseSettings):
     max_shards_added_per_adaptation: int = 3
     adaptation_auto_approve_threshold: int = 5
 
-    # ── 26. Velocity tracking ────────────────────────────────────────────
+    # -- 26. Velocity tracking --
     # Statistical analysis (PRD-CORE-015)
 
     velocity_alert_min_runs: int = 5
@@ -484,20 +370,20 @@ class TRWConfig(BaseSettings):
     velocity_sign_test_alpha: float = 0.1
     velocity_confounder_jump_ratio: float = 1.5
 
-    # ── 27. Project source paths ─────────────────────────────────────────
+    # -- 27. Project source paths --
 
     source_package_path: str = "trw-mcp/src"
     source_package_name: str = "trw_mcp"
     tests_relative_path: str = "trw-mcp/tests"
     test_map_filename: str = "test-map.yaml"
 
-    # ── 28. LLM augmentation ─────────────────────────────────────────────
-    # anthropic SDK — optional [ai] dependency
+    # -- 28. LLM augmentation --
+    # anthropic SDK -- optional [ai] dependency
 
     llm_enabled: bool = True
     llm_default_model: str = "haiku"
 
-    # ── 29. Adaptive gates ───────────────────────────────────────────────
+    # -- 29. Adaptive gates --
     # Shard evaluation (PRD-QUAL-005)
 
     gate_default_type: str = "FULL"
@@ -513,7 +399,7 @@ class TRWConfig(BaseSettings):
     gate_tokens_per_1k_chars: int = 500
     gate_architecture_score_penalty: float = 0.1
 
-    # ── 30. Code simplifier ──────────────────────────────────────────────
+    # -- 30. Code simplifier --
     # Sprint workflow (PRD-QUAL-010)
 
     auto_simplify_enabled: bool = False
@@ -523,7 +409,7 @@ class TRWConfig(BaseSettings):
     simplifier_verification_timeout_secs: int = 120
     simplifier_backup_dir: str = ".trw/simplifier-backups"
 
-    # ── 31. Build verification ───────────────────────────────────────────
+    # -- 31. Build verification --
     # PRD-CORE-023
 
     build_check_enabled: bool = True
@@ -534,33 +420,33 @@ class TRWConfig(BaseSettings):
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None  # Custom test command (e.g. "make test")
 
-    # ── 32. Run maintenance ──────────────────────────────────────────────
+    # -- 32. Run maintenance --
     # Auto-close orphaned runs (active > N days)
 
     run_auto_close_enabled: bool = True
     run_auto_close_age_days: int = 7
     run_stale_ttl_hours: int = 48  # hour-level TTL for stale run detection (PRD-FIX-028)
 
-    # ── 33. Auto-checkpoint (CORE-053) ───────────────────────────────────
+    # -- 33. Auto-checkpoint (CORE-053) --
     # Compaction safety
 
     auto_checkpoint_enabled: bool = True
     auto_checkpoint_tool_interval: int = 25
     auto_checkpoint_pre_compact: bool = True
 
-    # ── 34. Auto-recall (CORE-049) ───────────────────────────────────────
+    # -- 34. Auto-recall (CORE-049) --
     # Phase-contextual auto-recall
 
     auto_recall_enabled: bool = True
     auto_recall_max_results: int = 5
 
-    # ── 35. Learning auto-prune ──────────────────────────────────────────
+    # -- 35. Learning auto-prune --
     # Auto-prune learnings on deliver when active count exceeds cap
 
     learning_auto_prune_on_deliver: bool = True
     learning_auto_prune_cap: int = 150
 
-    # ── 36. Debug & telemetry ────────────────────────────────────────────
+    # -- 36. Debug & telemetry --
 
     debug: bool = False
     logs_dir: str = "logs"
@@ -570,7 +456,7 @@ class TRWConfig(BaseSettings):
     llm_usage_log_enabled: bool = True
     llm_usage_log_file: str = "llm_usage.jsonl"
 
-    # ── 37. Platform & update channel ────────────────────────────────────
+    # -- 37. Platform & update channel --
     # PRD-CORE-031, PRD-INFRA-014, PRD-INFRA-016
 
     platform_telemetry_enabled: bool = False  # opt-in; sends anonymized usage to trwframework.com
@@ -581,7 +467,7 @@ class TRWConfig(BaseSettings):
     installation_id: str = ""                 # anonymized installation identifier
     auto_upgrade: bool = False                # auto-install updates on session start (PRD-INFRA-014)
 
-    # ── 38. Knowledge topology (CORE-021) ─────────────────────────────────
+    # -- 38. Knowledge topology (CORE-021) --
     # Tag-based clustering for auto-generated topic documents
 
     knowledge_sync_threshold: int = 50
@@ -589,7 +475,7 @@ class TRWConfig(BaseSettings):
     knowledge_min_cluster_size: int = Field(default=3, ge=1)
     knowledge_output_dir: str = "knowledge"
 
-    # ── 39. Complexity classification (CORE-060) ──────────────────────────
+    # -- 39. Complexity classification (CORE-060) --
     # Tier boundaries and signal weights for classify_complexity()
 
     complexity_tier_minimal: int = 3        # raw_score <= this -> MINIMAL
@@ -602,15 +488,15 @@ class TRWConfig(BaseSettings):
     complexity_weight_files_affected_max: int = 5
     complexity_hard_override_threshold: int = 2  # min high-risk signals to force COMPREHENSIVE
 
-    # ── 40. MCP transport ──────────────────────────────────────────────────
+    # -- 40. MCP transport --
     # Shared HTTP server: multiple Claude Code instances connect to one process
 
     mcp_transport: str = "stdio"        # stdio | sse | streamable-http
     mcp_host: str = "127.0.0.1"         # bind address for HTTP transport
     mcp_port: int = 8100                # port for HTTP transport
 
-    # ── 41. Mutation testing (QUAL-025) ───────────────────────────────────
-    # Optional VALIDATE phase gate — runs mutmut on changed files
+    # -- 41. Mutation testing (QUAL-025) --
+    # Optional VALIDATE phase gate -- runs mutmut on changed files
 
     mutation_enabled: bool = False
     mutation_threshold: float = 0.50                   # standard feature threshold
@@ -620,7 +506,7 @@ class TRWConfig(BaseSettings):
     mutation_experimental_paths: tuple[str, ...] = ("scratch/",)
     mutation_timeout_secs: int = 300
 
-    # ── 42. Cross-model review (QUAL-026) ─────────────────────────────────
+    # -- 42. Cross-model review (QUAL-026) --
     # Route git diff to external model family for independent review
 
     cross_model_review_enabled: bool = False
@@ -628,12 +514,12 @@ class TRWConfig(BaseSettings):
     cross_model_review_timeout_secs: int = 30
     cross_model_review_block_on_critical: bool = True
 
-    # ── 43. Multi-agent review (QUAL-027) ─────────────────────────────────
+    # -- 43. Multi-agent review (QUAL-027) --
     # Confidence-scored parallel review with threshold filtering
 
     review_confidence_threshold: int = 80              # 0-100; findings below are in review-all.yaml only
 
-    # ── 44. Dependency audit (QUAL-028) ───────────────────────────────────
+    # -- 44. Dependency audit (QUAL-028) --
     # pip-audit / npm audit gate for agent dependency changes
 
     dep_audit_enabled: bool = True
@@ -641,7 +527,7 @@ class TRWConfig(BaseSettings):
     dep_audit_timeout_secs: int = 30
     dep_audit_block_on_patchable_only: bool = True     # only block when fix_versions available
 
-    # ── 45. API fuzz & comment check (QUAL-029) ──────────────────────────
+    # -- 45. API fuzz & comment check (QUAL-029) --
     # Schemathesis API fuzzing + placeholder comment detection hook
 
     comment_check_enabled: bool = True
@@ -650,48 +536,48 @@ class TRWConfig(BaseSettings):
     api_fuzz_level: str = "strict"                     # strict | lenient
     api_fuzz_timeout_secs: int = 120
 
-    # ── 46. ATDD (CORE-064) ──────────────────────────────────────────────
-    # Acceptance Test-Driven Development — test skeletons before implementation
+    # -- 46. ATDD (CORE-064) --
+    # Acceptance Test-Driven Development -- test skeletons before implementation
 
     atdd_enabled: bool = True
     test_skeleton_dir: str = ""  # empty = auto-detect from pyproject.toml testpaths
 
-    # ── 47. Completion hooks (CORE-065) ──────────────────────────────────
-    # Agent completion enforcement — warn-not-block by default
+    # -- 47. Completion hooks (CORE-065) --
+    # Agent completion enforcement -- warn-not-block by default
 
     completion_hooks_blocking: bool = False
     self_review_blocking: bool = False
 
-    # ── 48. PostToolUse validation (QUAL-030) ────────────────────────────
+    # -- 48. PostToolUse validation (QUAL-030) --
     # Incremental type checking and security pattern detection after Edit/Write
 
     incremental_validation_enabled: bool = True
     security_check_enabled: bool = True
 
-    # ── 49. Compaction (CORE-066) ────────────────────────────────────────
+    # -- 49. Compaction (CORE-066) --
     # Custom compaction instructions and context preservation
 
     compact_instructions_template: str = ""  # empty = use built-in TRW template
     pause_after_compaction: bool = False
 
-    # ── 50. Progressive disclosure (CORE-067) ─────────────────────────────
+    # -- 50. Progressive disclosure (CORE-067) --
     # Compact capability cards for non-hot-set tools in tools/list
 
     progressive_disclosure: bool = False
 
-    # ── 51. OTEL & cost attribution (INFRA-029) ────────────────────────────
-    # Optional OpenTelemetry integration — lazy import, fail-open
+    # -- 51. OTEL & cost attribution (INFRA-029) --
+    # Optional OpenTelemetry integration -- lazy import, fail-open
 
     otel_enabled: bool = False
     otel_endpoint: str = ""
 
-    # ── 52. Ceremony alerting (QUAL-031) ────────────────────────────────────
+    # -- 52. Ceremony alerting (QUAL-031) --
     # Quality dashboard degradation detection thresholds
 
     ceremony_alert_threshold: int = 40
     ceremony_alert_consecutive: int = 3
 
-    # ── 53. Progressive Trust Model (CORE-068-FR06) ──────────────────────
+    # -- 53. Progressive Trust Model (CORE-068-FR06) --
     # Crawl/Walk/Run graduated autonomy boundaries and security tags
 
     trust_crawl_boundary: int = 50
@@ -702,7 +588,7 @@ class TRWConfig(BaseSettings):
     )
     trust_locked: bool = False
 
-    # ── 54. Self-Improving Ceremony (CORE-069-FR07) ──────────────────────
+    # -- 54. Self-Improving Ceremony (CORE-069-FR07) --
     # Feedback loop thresholds for ceremony depth adjustments
 
     ceremony_feedback_min_samples: int = 10
@@ -711,7 +597,7 @@ class TRWConfig(BaseSettings):
     ceremony_feedback_escalation_threshold: float = 60.0
     ceremony_feedback_escalation_window: int = 5
 
-    # ── Domain Sub-Config Properties (PRD-CORE-071-FR01) ──────────────────
+    # -- Domain Sub-Config Properties (PRD-CORE-071-FR01) --
     # Type-narrowed access: ``config.build.build_check_enabled``
     # Flat access preserved: ``config.build_check_enabled``
 
@@ -803,121 +689,3 @@ class TRWConfig(BaseSettings):
                 seen.add(normalized)
                 result.append(normalized)
         return result
-
-
-# --- Singleton factory ---------------------------------------------------
-
-_singleton: TRWConfig | None = None
-
-
-def get_config() -> TRWConfig:
-    """Return the shared TRWConfig singleton.
-
-    First call creates the instance with config.yaml overrides merged.
-    Subsequent calls return the same object.
-    Use ``_reset_config()`` in tests to clear cached state.
-    """
-    global _singleton
-    if _singleton is None:
-        _singleton = _build_config()
-    return _singleton
-
-
-def _build_config() -> TRWConfig:
-    """Build TRWConfig with ``.trw/config.yaml`` overrides merged.
-
-    Precedence (highest wins):
-    1. Environment variables (``TRW_*``) — checked explicitly
-    2. ``.trw/config.yaml`` values — passed as init kwargs
-    3. Field defaults defined in TRWConfig
-
-    Pydantic BaseSettings gives init kwargs *highest* priority, so we
-    must exclude config.yaml keys that have a corresponding ``TRW_*``
-    env var set to preserve the documented precedence.
-
-    Gracefully falls back to defaults-only when:
-    - Running outside a git repository (e.g. during ``pip install``)
-    - config.yaml is missing or malformed
-    - Any import or filesystem error occurs
-    """
-    import os
-
-    try:
-        from trw_mcp.state._paths import resolve_project_root
-        from trw_mcp.state.persistence import FileStateReader
-
-        project_root = resolve_project_root()
-        config_path = project_root / ".trw" / "config.yaml"
-        if config_path.exists():
-            reader = FileStateReader()
-            overrides = reader.read_yaml(config_path)
-            if isinstance(overrides, dict):
-                # Filter to non-None values with string keys,
-                # excluding keys that have a TRW_ env var set
-                filtered = {
-                    str(k): v
-                    for k, v in overrides.items()
-                    if v is not None
-                    and f"TRW_{str(k).upper()}" not in os.environ
-                }
-                if filtered:
-                    return TRWConfig(**filtered)  # type: ignore[arg-type]
-    except Exception:
-        pass  # Fall back to defaults if project root not found
-    return TRWConfig()
-
-
-def _reset_config(config: TRWConfig | None = None) -> None:
-    """Reset the config singleton (test helper only).
-
-    Args:
-        config: Optional replacement config. If *None*, the next
-            ``get_config()`` call creates a fresh default instance.
-    """
-    global _singleton
-    _singleton = config
-
-
-class PhaseTimeCaps(BaseModel):
-    """Phase time cap percentages — ORC-level time tracking only.
-
-    Convenience accessor for mapping phase names to their target time fractions.
-    NOTE: Framework-documented defaults; not enforced by MCP tools.
-    ORC tracks wall-clock time against these caps at the prompt level.
-    6-phase model: RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    research: float = 0.25
-    plan: float = 0.15
-    implement: float = 0.35
-    validate_phase: float = 0.10
-    review: float = 0.10
-    deliver: float = 0.05
-
-    # Maps canonical phase name → field name; only "validate" differs to avoid
-    # the Pydantic BaseModel reserved-name conflict.
-    _PHASE_FIELDS: ClassVar[dict[str, str]] = {
-        "research": "research",
-        "plan": "plan",
-        "implement": "implement",
-        "validate": "validate_phase",  # field renamed to avoid BaseModel collision
-        "review": "review",
-        "deliver": "deliver",
-    }
-
-    def get_cap(self, phase: str) -> float:
-        """Return the time cap fraction for the given phase.
-
-        Args:
-            phase: Phase name (research, plan, implement, validate, review, deliver).
-
-        Raises:
-            ValueError: If phase is not recognized.
-        """
-        field = self._PHASE_FIELDS.get(phase)
-        if field is None:
-            msg = f"Unknown phase: {phase!r}. Valid: {list(self._PHASE_FIELDS)}"
-            raise ValueError(msg)
-        return float(getattr(self, field))
