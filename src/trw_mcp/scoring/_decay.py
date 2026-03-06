@@ -1,0 +1,351 @@
+"""Ebbinghaus decay, impact distribution, and tier enforcement.
+
+PRD-CORE-034: Impact scoring with exponential decay and forced distribution.
+
+Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
+"""
+
+from __future__ import annotations
+
+import math
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+import trw_mcp.scoring._utils as _su
+from trw_mcp.scoring._utils import (
+    _IMPACT_DECAY_FLOOR,
+    _LN2,
+    _TIER_HIGH_CEILING,
+    _TIER_MEDIUM_CEILING,
+    _ensure_utc,
+    apply_time_decay,
+    compute_utility_score,
+    safe_float,
+    safe_int,
+)
+
+
+# PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
+
+
+def _days_since_access(
+    entry: dict[str, object],
+    today: date,
+    fallback_days: int | None = None,
+) -> int:
+    """Compute days since last access, falling back to creation date.
+
+    Resolution order: last_accessed_at -> created -> fallback_days.
+    """
+    if fallback_days is None:
+        fallback_days = _su._config.scoring_default_days_unused
+
+    for field in ("last_accessed_at", "created"):
+        raw = str(entry.get(field, ""))
+        if not raw or raw == "None":
+            continue
+        try:
+            return (today - date.fromisoformat(raw)).days
+        except ValueError:
+            continue
+
+    return fallback_days
+
+
+def _entry_utility(
+    entry: dict[str, object],
+    today: date,
+    fallback_days: int | None = None,
+) -> float:
+    """Compute utility score for a learning entry using config defaults.
+
+    Extracts scoring fields from the entry dict and delegates to
+    compute_utility_score with TRWConfig parameters.
+
+    PRD-CORE-034: Applies time decay to base_impact before computing utility
+    so that older learnings naturally sink in recall ranking results.
+    """
+    q_value = safe_float(entry, "q_value", safe_float(entry, "impact", 0.5))
+    base_impact = safe_float(entry, "impact", 0.5)
+    q_observations = safe_int(entry, "q_observations", 0)
+    recurrence = safe_int(entry, "recurrence", 1)
+    access_count = safe_int(entry, "access_count", 0)
+    source_type = str(entry.get("source_type", "agent"))
+    days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
+
+    # Double-decay fix (PRD-QUAL-032-FR03): apply_time_decay was removed here
+    # because compute_utility_score() already applies Ebbinghaus exponential
+    # decay internally via retention = exp(-decay_rate * days).
+    cfg = _su._config
+
+    return compute_utility_score(
+        q_value=q_value,
+        days_since_last_access=days_unused,
+        recurrence_count=recurrence,
+        base_impact=base_impact,
+        q_observations=q_observations,
+        half_life_days=cfg.learning_decay_half_life_days,
+        use_exponent=cfg.learning_decay_use_exponent,
+        cold_start_threshold=cfg.q_cold_start_threshold,
+        access_count=access_count,
+        source_type=source_type,
+        access_count_boost_cap=cfg.access_count_utility_boost_cap,
+        source_human_boost=cfg.source_human_utility_boost,
+    )
+
+
+# --- Impact distribution analysis (PRD-CORE-034) ---
+
+
+def compute_impact_distribution(
+    entries_dir: Path,
+) -> dict[str, object]:
+    """Compute the current impact score distribution across active learnings.
+
+    Returns:
+        Dict with tier counts and percentages:
+        {
+            "total_active": int,
+            "critical": {"count": int, "pct": float},  # 0.9-1.0
+            "high": {"count": int, "pct": float},       # 0.7-0.89
+            "medium": {"count": int, "pct": float},     # 0.4-0.69
+            "low": {"count": int, "pct": float},        # 0.0-0.39
+        }
+    """
+    if not entries_dir.exists():
+        return {
+            "total_active": 0,
+            "critical": {"count": 0, "pct": 0.0},
+            "high": {"count": 0, "pct": 0.0},
+            "medium": {"count": 0, "pct": 0.0},
+            "low": {"count": 0, "pct": 0.0},
+        }
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    total = 0
+
+    for yaml_file in entries_dir.glob("*.yaml"):
+        try:
+            data = _su._reader.read_yaml(yaml_file)
+        except Exception:
+            continue
+        if str(data.get("status", "active")) != "active":
+            continue
+        score = safe_float(data, "impact", 0.5)
+        total += 1
+        if score >= 0.9:
+            counts["critical"] += 1
+        elif score >= 0.7:
+            counts["high"] += 1
+        elif score >= 0.4:
+            counts["medium"] += 1
+        else:
+            counts["low"] += 1
+
+    def _pct(n: int) -> float:
+        return round(n / total, 4) if total > 0 else 0.0
+
+    return {
+        "total_active": total,
+        "critical": {"count": counts["critical"], "pct": _pct(counts["critical"])},
+        "high": {"count": counts["high"], "pct": _pct(counts["high"])},
+        "medium": {"count": counts["medium"], "pct": _pct(counts["medium"])},
+        "low": {"count": counts["low"], "pct": _pct(counts["low"])},
+    }
+
+
+# --- Forced distribution enforcement (PRD-CORE-034) ---
+
+
+def enforce_tier_distribution(
+    entries: list[tuple[str, float]],
+    *,
+    critical_cap: float | None = None,
+    high_cap: float | None = None,
+    entry_dates: dict[str, str] | None = None,
+) -> list[tuple[str, float]]:
+    """Enforce forced distribution caps on impact tier percentages.
+
+    When a tier exceeds its cap (critical >5%, high >20%), demotes the
+    lowest-scored entry in that tier to the next tier down.  Only one
+    demotion per tier per call -- callers may iterate to convergence if
+    desired.
+
+    Args:
+        entries: List of (learning_id, impact_score) tuples.  Only active
+            learnings should be included; caller is responsible for filtering.
+        critical_cap: Maximum fraction allowed in critical tier (0.9-1.0).
+            Defaults to config value.
+        high_cap: Maximum fraction allowed in high tier (0.7-0.89).
+            Defaults to config value.
+        entry_dates: Optional mapping of learning_id -> ISO date string
+            (e.g. "2025-08-01T12:00:00"). When provided, time decay is
+            applied to each score before tier classification so that older
+            high-impact learnings are not kept in upper tiers indefinitely.
+            The demotion target scores (0.89, 0.69) remain absolute --
+            decay only affects which entries are classified into each tier.
+
+    Returns:
+        List of (learning_id, new_impact) tuples for entries whose scores
+        were changed.  Empty list if no demotions were needed.
+    """
+    cfg = _su._config
+    effective_critical_cap = critical_cap if critical_cap is not None else cfg.impact_tier_critical_cap
+    effective_high_cap = high_cap if high_cap is not None else cfg.impact_tier_high_cap
+
+    if not entries:
+        return []
+
+    total = len(entries)
+
+    # Don't enforce distribution on very small sets -- percentage caps are
+    # meaningless with fewer than 5 active learnings.
+    if total < 5:
+        return []
+
+    # Build decayed score lookup for tier classification only.
+    # When entry_dates is None, decayed == original (backward compat).
+    def _decayed_score(lid: str, score: float) -> float:
+        if entry_dates is None:
+            return score
+        date_str = entry_dates.get(lid, "")
+        if not date_str:
+            return score
+        try:
+            created_dt = datetime.fromisoformat(date_str)
+            # query-time only -- does not write to disk (PRD-FIX-027-FR06)
+            return apply_time_decay(score, created_dt)
+        except ValueError:
+            return score
+
+    # Separate into tiers using decayed scores for classification,
+    # but store original scores so demotions use absolute targets.
+    critical: list[tuple[str, float]] = []
+    high: list[tuple[str, float]] = []
+
+    for lid, score in entries:
+        tier_score = _decayed_score(lid, score)
+        if tier_score >= 0.9:
+            critical.append((lid, score))
+        elif tier_score >= 0.7:
+            high.append((lid, score))
+
+    demotions: list[tuple[str, float]] = []
+
+    # Enforce critical cap: demote lowest-scored critical -> high
+    if critical and len(critical) / total > effective_critical_cap:
+        # Sort ascending by score to find lowest
+        critical_sorted = sorted(critical, key=lambda x: x[1])
+        victim_id, victim_score = critical_sorted[0]
+        # Demote to top of high tier
+        new_score = round(min(_TIER_HIGH_CEILING, max(0.7, victim_score - 0.1)), 4)
+        demotions.append((victim_id, new_score))
+        _su.logger.info(
+            "tier_demotion",
+            learning_id=victim_id,
+            from_tier="critical",
+            to_tier="high",
+            old_score=victim_score,
+            new_score=new_score,
+        )
+
+    # Re-compute high count after potential demotion from critical
+    demoted_ids = {d[0] for d in demotions}
+    effective_high = [e for e in high if e[0] not in demoted_ids]
+    # Add demoted critical entries to high count
+    effective_high_count = len(effective_high) + len(demotions)
+
+    # Enforce high cap: demote lowest-scored high -> medium
+    if effective_high_count > 0 and effective_high_count / total > effective_high_cap:
+        high_sorted = sorted(
+            [(lid, s) for lid, s in high if lid not in demoted_ids],
+            key=lambda x: x[1],
+        )
+        if high_sorted:
+            victim_id, victim_score = high_sorted[0]
+            new_score = round(min(_TIER_MEDIUM_CEILING, max(0.4, victim_score - 0.1)), 4)
+            demotions.append((victim_id, new_score))
+            _su.logger.info(
+                "tier_demotion",
+                learning_id=victim_id,
+                from_tier="high",
+                to_tier="medium",
+                old_score=victim_score,
+                new_score=new_score,
+            )
+
+    return demotions
+
+
+# --- Ebbinghaus decay for impact scores (PRD-CORE-034) ---
+
+
+def apply_impact_decay(
+    entries: list[dict[str, object]],
+    half_life_days: int | None = None,
+) -> list[dict[str, object]]:
+    """Apply exponential impact decay to stale learnings (PRD-CORE-034-FR03).
+
+    For each entry, reads ``last_accessed`` (or ``created``) date and computes
+    days since that date.  If days_since exceeds ``half_life_days``, the impact
+    is decayed using an exponential formula:
+
+        new_impact = impact * exp(-ln(2) * (days_since - half_life_days) / half_life_days)
+
+    The result is clamped to [0.1, 1.0].  This is a batch operation intended
+    to be called during ``trw_deliver``.
+
+    Args:
+        entries: List of learning entry dicts.  Modified in-place *and* returned.
+        half_life_days: Days before decay starts.  Defaults to config value.
+
+    Returns:
+        The same list with ``impact`` fields updated where decay applied.
+    """
+    cfg = _su._config
+    effective_half_life = half_life_days if half_life_days is not None else cfg.impact_decay_half_life_days
+    now = datetime.now(timezone.utc)
+
+    for entry in entries:
+        impact = safe_float(entry, "impact", 0.5)
+
+        # Find the best date to measure staleness from
+        ref_date_str = ""
+        for field in ("last_accessed_at", "last_accessed", "created"):
+            raw = str(entry.get(field, ""))
+            if raw and raw != "None":
+                ref_date_str = raw
+                break
+
+        if not ref_date_str:
+            continue
+
+        try:
+            ref_dt = _ensure_utc(datetime.fromisoformat(ref_date_str))
+        except ValueError:
+            continue
+
+        days_since = max(0, (now - ref_dt).days)
+
+        if days_since <= effective_half_life:
+            continue  # Not stale yet
+
+        # Exponential decay: exp(-ln(2) * excess_days / half_life)
+        excess = days_since - effective_half_life
+        decay_factor = math.exp(-_LN2 * excess / max(effective_half_life, 1))
+        new_impact = impact * decay_factor
+
+        # Clamp to [_IMPACT_DECAY_FLOOR, 1.0]
+        new_impact = max(_IMPACT_DECAY_FLOOR, min(1.0, new_impact))
+        entry["impact"] = round(new_impact, 4)
+
+    return entries
+
+
+__all__ = [
+    "_days_since_access",
+    "_entry_utility",
+    "apply_impact_decay",
+    "compute_impact_distribution",
+    "enforce_tier_distribution",
+]
