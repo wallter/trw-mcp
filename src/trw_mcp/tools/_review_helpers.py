@@ -66,7 +66,7 @@ def handle_manual_mode(
     ts: str,
 ) -> dict[str, object]:
     """Handle the manual review mode — validate findings, compute verdict, persist."""
-    from trw_mcp.tools.review import _compute_verdict, _persist_review
+    from trw_mcp.tools.review import _compute_verdict, _persist_review_artifact
 
     validated = validate_manual_findings(raw_findings)
     critical_count, warning_count, info_count = count_by_severity(validated)
@@ -82,7 +82,7 @@ def handle_manual_mode(
         "run_path": str(resolved_run) if resolved_run else None,
     }
 
-    result["review_yaml"] = _persist_review(
+    result["review_yaml"] = _persist_review_artifact(
         resolved_run,
         {
             "review_id": review_id,
@@ -115,7 +115,7 @@ def handle_cross_model_mode(
         _get_git_diff,
         _invoke_cross_model_review,
         _normalize_severity,
-        _persist_review,
+        _persist_review_artifact,
     )
 
     diff = _get_git_diff()
@@ -154,7 +154,7 @@ def handle_cross_model_mode(
         "run_path": str(resolved_run) if resolved_run else None,
     }
 
-    result["review_yaml"] = _persist_review(
+    result["review_yaml"] = _persist_review_artifact(
         resolved_run,
         {
             "review_id": review_id,
@@ -200,6 +200,18 @@ def _extract_identifiers(text: str) -> list[str]:
     return list(dict.fromkeys(identifiers))  # deduplicate preserving order
 
 
+def _added_lines_only(diff: str) -> str:
+    """Extract only added (+) lines from a git diff.
+
+    Filters out removed (-) lines to prevent false negatives: an identifier
+    that was *deleted* from code should not count as "present in diff".
+    """
+    return "\n".join(
+        line for line in diff.splitlines()
+        if not line.startswith("-") or line.startswith("---")
+    )
+
+
 def _extract_fr_mismatches(
     prd_content: str, prd_id: str, diff: str,
 ) -> list[dict[str, str]]:
@@ -208,6 +220,10 @@ def _extract_fr_mismatches(
     section = _extract_section(prd_content, "Functional Requirements")
     if not section:
         return mismatches
+
+    # Only check added lines — removed lines should not mask drift
+    added_diff = _added_lines_only(diff)
+
     # Split into individual FRs
     fr_pattern = re.compile(
         r"(?:^|\n)(?:###?\s*)?FR(\d+)\s*[:\-\u2013]\s*(.+?)(?=\n(?:###?\s*)?FR\d|\Z)",
@@ -218,7 +234,7 @@ def _extract_fr_mismatches(
         fr_text = m.group(2).strip()
         identifiers = _extract_identifiers(fr_text)
         for ident in identifiers:
-            if ident not in diff:
+            if ident not in added_diff:
                 mismatches.append({
                     "prd_id": prd_id,
                     "fr": f"FR{fr_num}",
@@ -342,7 +358,7 @@ def handle_auto_mode(
         REVIEWER_ROLES,
         _compute_verdict,
         _get_git_diff,
-        _persist_review,
+        _persist_review_artifact,
         _run_multi_reviewer_analysis,
     )
 
@@ -402,7 +418,7 @@ def handle_auto_mode(
     except (ValueError, AttributeError):
         retention_expires = ""
 
-    result["review_yaml"] = _persist_review(
+    result["review_yaml"] = _persist_review_artifact(
         resolved_run,
         {
             "review_id": review_id,

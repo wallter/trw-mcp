@@ -302,7 +302,7 @@ _CACHED_TEMPLATE_BODY: str | None = None
 _CACHED_TEMPLATE_VERSION: str | None = None
 
 _TEMPLATE_VERSION_RE = re.compile(r"\*Template version:\s*([\d.]+)")
-_FILE_REF_RE = re.compile(r"[\w/]+\.py")
+_FILE_REF_RE = re.compile(r"[\w/]+\.\w+")
 _GOAL_KW_RE = re.compile(r"\b(goal|objective|achieve|deliver)\b", re.IGNORECASE)
 _SLO_KW_RE = re.compile(r"\b(slo|latency|availability|throughput)\b", re.IGNORECASE)
 

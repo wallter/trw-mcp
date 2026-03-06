@@ -930,7 +930,6 @@ class TestRecallTopicFilter:
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
             patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.log_recall_receipt"),
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),
@@ -1039,7 +1038,6 @@ class TestRecallTopicFilter:
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
             patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.log_recall_receipt"),
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),
@@ -1072,7 +1070,6 @@ class TestRecallTopicFilter:
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
             patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.log_recall_receipt"),
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),
@@ -1106,7 +1103,6 @@ class TestRecallTopicFilter:
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
             patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.log_recall_receipt"),
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),
@@ -1135,7 +1131,6 @@ class TestRecallTopicFilter:
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
             patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.log_recall_receipt"),
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),

@@ -1025,6 +1025,49 @@ def _run_http_proxy_transport(
         mcp.run()
 
 
+def _check_mcp_json_portability(cwd: Path | None = None) -> None:
+    """Warn if ``.mcp.json`` contains a stale absolute path for the trw server.
+
+    Reads ``.mcp.json`` from *cwd* (or ``Path.cwd()``) and checks whether the
+    ``mcpServers.trw.command`` value is an absolute path that no longer exists
+    on disk.  Logs a warning with remediation instructions if so.
+
+    Does NOT log full file contents (security: may contain API keys for
+    other servers).
+
+    Args:
+        cwd: Directory to look for ``.mcp.json``.  Defaults to current
+            working directory.  Accepts an explicit path for testability.
+    """
+    import json as _json
+
+    target = cwd or Path.cwd()
+    mcp_path = target / ".mcp.json"
+    if not mcp_path.exists():
+        return
+
+    try:
+        data = _json.loads(mcp_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return  # malformed or unreadable — not our problem here
+
+    servers = data.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        return
+    trw_entry = servers.get("trw")
+    if not isinstance(trw_entry, dict):
+        return
+
+    cmd = str(trw_entry.get("command", ""))
+    if cmd.startswith("/") and not Path(cmd).exists():
+        log = structlog.get_logger()
+        log.warning(
+            "Stale absolute path in .mcp.json",
+            command=cmd,
+            fix="run 'trw-mcp update-project .' to fix",
+        )
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command.
 
@@ -1045,6 +1088,9 @@ def main() -> None:
     debug = args.debug or config.debug
 
     _configure_logging(debug=debug, config=config)
+
+    # PRD-FIX-037: Warn if .mcp.json has a stale absolute path
+    _check_mcp_json_portability()
 
     log = structlog.get_logger()
     _resolve_and_run_transport(args, config, debug=debug, log=log)

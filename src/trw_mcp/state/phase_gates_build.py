@@ -1,8 +1,9 @@
-"""Build status and integration checks for phase gates.
+"""Build status, integration, and orphan-module checks for phase gates.
 
-Provides _check_build_status(), _best_effort_build_check(), and
-_best_effort_integration_check() which validate cached build results
-and tool registration before allowing phase transitions.
+Provides _check_build_status(), _best_effort_build_check(),
+_best_effort_integration_check(), and _best_effort_orphan_check()
+which validate cached build results, tool registration, and module
+reachability before allowing phase transitions.
 Extracted from phase_gates.py for module focus.
 """
 
@@ -135,9 +136,9 @@ def _check_build_status(
     if scope in ("full", "mypy") and not data.get("mypy_clean", False):
         failures.append(
             ValidationFailure(
-                field="build_mypy",
-                rule="mypy_clean",
-                message="mypy reported errors — run trw_build_check() for details",
+                field="build_type_check",
+                rule="type_check_clean",
+                message="Type checker reported errors — run trw_build_check() for details",
                 severity=severity,
             )
         )
@@ -216,6 +217,46 @@ def _best_effort_integration_check(
                     rule="test_coverage",
                     message=f"Missing test file: {test_name}",
                     severity="warning",
+                ))
+    except Exception:
+        pass  # Best-effort — scanner errors never block
+
+
+def _best_effort_orphan_check(
+    failures: list[ValidationFailure],
+    *,
+    severity: str = "warning",
+) -> None:
+    """Append orphan-module findings (best-effort, never raises).
+
+    Detects source modules not imported by any other production module.
+    Catches the "extraction without wiring" anti-pattern where a module
+    is created but never connected to the production call graph.
+
+    Args:
+        failures: Mutable list to append failures into.
+        severity: Severity for orphan findings.
+    """
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.state.integration_check import check_orphan_modules
+
+        src_dir = resolve_project_root() / "trw-mcp" / "src" / "trw_mcp"
+        if not src_dir.is_dir():
+            return
+        result = check_orphan_modules(src_dir)
+        orphans = result.get("orphans", [])
+        if isinstance(orphans, list):
+            for mod in orphans:
+                failures.append(ValidationFailure(
+                    field=f"orphan:{mod}",
+                    rule="module_reachability",
+                    message=(
+                        f"Module '{mod}' is not imported by any other "
+                        f"production source file — possible extraction "
+                        f"without wiring"
+                    ),
+                    severity=severity,
                 ))
     except Exception:
         pass  # Best-effort — scanner errors never block

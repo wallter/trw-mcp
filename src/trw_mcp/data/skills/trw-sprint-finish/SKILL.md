@@ -35,7 +35,7 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    - If the sprint doc has YAML frontmatter with `exit_criteria:` list, parse that instead (machine-readable format takes precedence over markdown checkboxes)
 
 5. **Build gate with coverage threshold**: Extract coverage target from exit criteria (pattern: `coverage >= X%` or `coverage_threshold: X` in YAML frontmatter). Default to 80% if not specified.
-   - Call `trw_build_check(scope="full")` to run pytest + mypy
+   - Call `trw_build_check(scope="full")` to run tests + type-check
    - If coverage is below the threshold: BLOCK with message showing actual vs required
    - If build **fails**: Report failures, do NOT proceed. The sprint cannot be completed with a failing build.
    - If build **passes** and coverage meets threshold: Continue.

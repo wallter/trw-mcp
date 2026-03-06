@@ -127,19 +127,14 @@ def _default_config(
 def _trw_mcp_server_entry() -> dict[str, object]:
     """Build the ``trw`` MCP server entry for .mcp.json.
 
-    Always returns a stdio entry (command/args format). The HTTP transport
-    is an internal optimization handled by auto-start + proxy logic in
-    server.py -- Claude Code always spawns trw-mcp via stdio
-    (PRD-CORE-070-FR04).
+    Always returns a portable command that resolves via $PATH.
+    No absolute paths are written — this ensures .mcp.json works
+    across machines and venvs (PRD-FIX-037).
     """
-    # Prefer venv-local trw-mcp (same Python with all deps)
-    venv_bin = Path(sys.executable).parent / "trw-mcp"
-    if venv_bin.exists():
-        cmd = str(venv_bin)
-    else:
-        system_cmd = shutil.which("trw-mcp")
-        cmd = system_cmd or f"{sys.executable} -m trw_mcp.server"
-    return {"command": cmd, "args": ["--debug"]}
+    if shutil.which("trw-mcp"):
+        return {"command": "trw-mcp", "args": ["--debug"]}
+    # Fallback: use bare python -m invocation (no absolute paths)
+    return {"command": "python", "args": ["-m", "trw_mcp.server", "--debug"]}
 
 
 def _merge_mcp_json(
@@ -282,8 +277,8 @@ def _verify_installation(
         result["warnings"].append(".mcp.json not found")
 
     # Check CLAUDE.md has TRW markers
-    _TRW_START_MARKER = "<!-- trw:start -->"
-    _TRW_END_MARKER = "<!-- trw:end -->"
+    from trw_mcp.bootstrap._update_project import _TRW_END_MARKER, _TRW_START_MARKER
+
     claude_md = target_dir / "CLAUDE.md"
     if claude_md.exists():
         content = claude_md.read_text(encoding="utf-8")
@@ -331,23 +326,19 @@ def _pip_install_package(
     Uses the trw-mcp directory that contains the bundled data, ensuring
     the installed package matches the source version.
     """
-    import sys as _sys
-
     # Look up _DATA_DIR through the package module so that
     # patch("trw_mcp.bootstrap._DATA_DIR", ...) in tests works.
-    _data_dir = _sys.modules["trw_mcp.bootstrap"]._DATA_DIR
+    _data_dir = sys.modules["trw_mcp.bootstrap"]._DATA_DIR
 
     # The package source is the parent of the data directory
-    package_dir = _data_dir.parent.parent.parent  # trw-mcp/src -> trw-mcp/
+    # _data_dir = .../trw-mcp/src/trw_mcp/data -> .parent x3 = trw-mcp/
+    package_dir = _data_dir.parent.parent.parent
     if not (package_dir / "pyproject.toml").exists():
-        # Fall back: try to find trw-mcp relative to data dir
-        package_dir = _data_dir.parent.parent.parent
-        if not (package_dir / "pyproject.toml").exists():
-            result["errors"].append(
-                "Cannot find trw-mcp pyproject.toml for pip install. "
-                "Manually run: pip install -e /path/to/trw-mcp[dev]"
-            )
-            return
+        result["errors"].append(
+            "Cannot find trw-mcp pyproject.toml for pip install. "
+            "Manually run: pip install -e /path/to/trw-mcp[dev]"
+        )
+        return
 
     try:
         proc = subprocess.run(
@@ -428,7 +419,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | RESEARCH | `trw_init` | New tasks — creates run directory for tracking |
 | Any | `trw_learn` | On errors/discoveries — saves for future sessions |
 | Any | `trw_checkpoint` | After milestones — preserves progress across compactions |
-| VALIDATE | `trw_build_check` | Before delivery — runs pytest + mypy |
+| VALIDATE | `trw_build_check` | Before delivery — runs tests + type-check |
 | DELIVER | `trw_claude_md_sync` | At delivery — promotes learnings to CLAUDE.md |
 | DELIVER | `trw_deliver` | At task completion — persists everything in one call |
 

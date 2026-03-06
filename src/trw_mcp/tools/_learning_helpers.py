@@ -44,6 +44,21 @@ class LearningParams:
     shard_id: str | None = None
 
 
+# Auto-generated noise prefixes that should never be persisted as learnings.
+# These are produced by ceremony/telemetry tools and add no institutional value.
+_NOISE_PREFIXES = ("Repeated operation:", "Success:")
+
+
+def is_noise_summary(summary: str) -> bool:
+    """Return True if summary matches a known auto-generated noise pattern.
+
+    PRD-QUAL-032-FR09: Reject entries whose summary starts with known
+    noise prefixes before they are persisted.
+    """
+    lower = summary.lower()
+    return any(lower.startswith(prefix.lower()) for prefix in _NOISE_PREFIXES)
+
+
 def calibrate_impact(impact: float, config: TRWConfig) -> float:
     """Apply Bayesian calibration to the raw impact score.
 

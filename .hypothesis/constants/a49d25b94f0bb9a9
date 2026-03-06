@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/models/config.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.01, 0.15, 0.3, 0.4, 0.6, 0.7, 0.75, 0.85, 0.95, 1.0, 3.0, 4.5, 14.0, 365, 384, '.memory', '.memory/audit.jsonl', 'AES-256-GCM', 'MEMORY_', 'MemoryConfig', 'after', 'all-MiniLM-L6-v2', 'env', 'file', 'ignore', 'keyring', 'memory.db', 'sqlite', 'warn', 'writer', 'yaml']

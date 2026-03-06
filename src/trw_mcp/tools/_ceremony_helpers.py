@@ -302,7 +302,7 @@ def check_delivery_gates(
             if not any(_build_passed(e) for e in all_events):
                 result["build_gate_warning"] = (
                     "No successful build check found before delivery. "
-                    "Run trw_build_check() to verify tests pass and mypy is clean."
+                    "Run trw_build_check() to verify tests pass and type-check is clean."
                 )
 
             # Premature delivery guard

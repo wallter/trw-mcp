@@ -21,6 +21,7 @@ import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import find_active_run, resolve_trw_dir
+from trw_mcp.state.otel_wrapper import emit_tool_span
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 
 logger = structlog.get_logger()
@@ -112,13 +113,42 @@ def _write_tool_event(
     error: str | None,
 ) -> None:
     """Write a tool_invocation event to events.jsonl or fallback."""
+    import os
+
+    agent_id = os.environ.get("TRW_AGENT_ID", "default")
+    agent_role = os.environ.get("TRW_AGENT_ROLE", "lead")
     event_data: dict[str, object] = {
         "tool_name": tool_name,
         "duration_ms": duration_ms,
         "success": success,
+        "agent_id": agent_id,
+        "agent_role": agent_role,
     }
+
+    # Include phase from active run state if available
+    run_dir = _get_cached_run_dir()
+    phase = "unknown"
+    if run_dir is not None:
+        run_yaml = run_dir / "meta" / "run.yaml"
+        if run_yaml.exists():
+            try:
+                from trw_mcp.state.persistence import FileStateReader
+
+                reader = FileStateReader()
+                run_data = reader.read_yaml(run_yaml)
+                phase = str(run_data.get("phase", "unknown"))
+            except Exception:
+                pass
+    event_data["phase"] = phase
+
     if error is not None:
         event_data["error"] = error
+
+    # OTEL span emission (fail-open, gated by config.otel_enabled)
+    emit_tool_span(tool_name, duration_ms, {
+        "agent_id": agent_id,
+        "phase": phase,
+    })
 
     run_dir = _get_cached_run_dir()
     if run_dir is not None:

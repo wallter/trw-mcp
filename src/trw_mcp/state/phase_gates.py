@@ -7,11 +7,13 @@ PRD statuses, build results, and integration checks.
 Sub-modules (extracted for focus):
 - phase_gates_prd: PRD enforcement (_STATUS_ORDER, _check_prd_enforcement)
 - phase_gates_build: Build checks (_BUILD_STALENESS_SECS, _check_build_status,
-    _best_effort_build_check, _best_effort_integration_check)
+    _best_effort_build_check, _best_effort_integration_check,
+    _best_effort_orphan_check)
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import structlog
@@ -34,6 +36,9 @@ from trw_mcp.state.phase_gates_build import (
 )
 from trw_mcp.state.phase_gates_build import (
     _best_effort_integration_check as _best_effort_integration_check,
+)
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_orphan_check as _best_effort_orphan_check,
 )
 from trw_mcp.state.phase_gates_build import (
     _check_build_status as _check_build_status,
@@ -137,7 +142,7 @@ def _build_phase_result(
     result = ValidationResult(
         valid=is_valid,
         failures=failures,
-        completeness_score=1.0 - (len(failures) / max(len(criteria), 1)),
+        completeness_score=max(0.0, 1.0 - (len(failures) / max(len(criteria), 1))),
     )
     logger.info(log_event, phase=phase_name, valid=is_valid, failures=len(failures))
     return result
@@ -229,12 +234,13 @@ def _check_validate_exit(
             rule="phase_test_advisory",
             message=(
                 "VALIDATE phase: run integration tests and full suite "
-                "(pytest tests/ -v -m 'not e2e' --cov)"
+                "with coverage (use trw_build_check for automated verification)"
             ),
             severity="info",
         )
     )
     _best_effort_integration_check(failures, severity="warning")
+    _best_effort_orphan_check(failures, severity="warning")
     _best_effort_build_check(config, "validate", failures)
 
 
@@ -328,21 +334,20 @@ def _check_review_exit(
         else:
             from trw_mcp.state.prd_utils import discover_governing_prds
 
-            if run_path is not None:
-                prds = discover_governing_prds(run_path)
-                if prds:
-                    failures.append(
-                        ValidationFailure(
-                            field="spec_reconciliation",
-                            rule="reconciliation_not_run",
-                            message=(
-                                "Spec reconciliation has not been run — "
-                                "consider calling trw_review(mode='reconcile') "
-                                f"for PRDs: {', '.join(prds)}"
-                            ),
-                            severity="info",
-                        )
+            prds = discover_governing_prds(run_path)
+            if prds:
+                failures.append(
+                    ValidationFailure(
+                        field="spec_reconciliation",
+                        rule="reconciliation_not_run",
+                        message=(
+                            "Spec reconciliation has not been run — "
+                            "consider calling trw_review(mode='reconcile') "
+                            f"for PRDs: {', '.join(prds)}"
+                        ),
+                        severity="info",
                     )
+                )
     except Exception:
         pass  # Best-effort advisory — never block
 
@@ -379,7 +384,7 @@ def _check_deliver_exit(
             rule="phase_test_advisory",
             message=(
                 "DELIVER phase: run full test suite with coverage "
-                "(pytest tests/ -v --cov --cov-fail-under=85)"
+                "(use trw_build_check for automated verification)"
             ),
             severity="info",
         )
@@ -397,22 +402,21 @@ def _check_deliver_exit(
         )
 
     _best_effort_integration_check(failures, severity="error")
+    _best_effort_orphan_check(failures, severity="error")
     _best_effort_build_check(config, "deliver", failures)
 
 
-def _get_exit_checkers() -> dict[
-    str,
-    object,
-]:
-    """Return the phase exit checker dispatch table."""
-    return {
-        "research": _check_research_exit,
-        "plan": _check_plan_exit,
-        "implement": _check_implement_exit,
-        "validate": _check_validate_exit,
-        "review": _check_review_exit,
-        "deliver": _check_deliver_exit,
-    }
+# Type alias for phase validator functions
+_PhaseChecker = Callable[[Path, TRWConfig, list[ValidationFailure]], None]
+
+_EXIT_CHECKERS: dict[str, _PhaseChecker] = {
+    "research": _check_research_exit,
+    "plan": _check_plan_exit,
+    "implement": _check_implement_exit,
+    "validate": _check_validate_exit,
+    "review": _check_review_exit,
+    "deliver": _check_deliver_exit,
+}
 
 
 def check_phase_exit(
@@ -437,15 +441,16 @@ def check_phase_exit(
     phase_name = phase.value
     criteria = PHASE_EXIT_CRITERIA.get(phase_name, [])
 
-    checker = _get_exit_checkers().get(phase_name)
+    checker = _EXIT_CHECKERS.get(phase_name)
     if checker is not None:
-        checker(run_path, config, failures)  # type: ignore[operator]
+        checker(run_path, config, failures)
 
     return _build_phase_result(failures, criteria, phase_name, "phase_exit_checked")
 
 
 def _check_plan_input(
     run_path: Path,
+    config: TRWConfig,
     severity: str,
     failures: list[ValidationFailure],
 ) -> None:
@@ -500,12 +505,17 @@ def _check_implement_input(
 
 def _check_validate_input(
     run_path: Path,
+    config: TRWConfig,
     severity: str,
     failures: list[ValidationFailure],
 ) -> None:
     """Check VALIDATE phase input prerequisites."""
     shards_path = run_path / "shards"
-    if not shards_path.exists() or not any(shards_path.iterdir()):
+    try:
+        shards_empty = not shards_path.exists() or not any(shards_path.iterdir())
+    except OSError:
+        shards_empty = True
+    if shards_empty:
         failures.append(
             ValidationFailure(
                 field="shards",
@@ -518,6 +528,7 @@ def _check_validate_input(
 
 def _check_review_input(
     run_path: Path,
+    config: TRWConfig,
     severity: str,
     failures: list[ValidationFailure],
 ) -> None:
@@ -537,6 +548,7 @@ def _check_review_input(
 
 def _check_deliver_input(
     run_path: Path,
+    config: TRWConfig,
     severity: str,
     failures: list[ValidationFailure],
 ) -> None:
@@ -562,6 +574,19 @@ def _check_deliver_input(
                 severity=severity,
             )
         )
+
+
+# Input checker type: (run_path, config, severity, failures) -> None
+_InputChecker = Callable[[Path, TRWConfig, str, list[ValidationFailure]], None]
+
+_INPUT_CHECKERS: dict[str, _InputChecker] = {
+    "plan": _check_plan_input,
+    "implement": _check_implement_input,
+    "validate": _check_validate_input,
+    "review": _check_review_input,
+    "deliver": _check_deliver_input,
+    # research: no per-phase prerequisites beyond run.yaml
+}
 
 
 def check_phase_input(
@@ -608,16 +633,8 @@ def check_phase_input(
         )
 
     # Dispatch to per-phase input checker
-    if phase_name == "plan":
-        _check_plan_input(run_path, severity, failures)
-    elif phase_name == "implement":
-        _check_implement_input(run_path, config, severity, failures)
-    elif phase_name == "validate":
-        _check_validate_input(run_path, severity, failures)
-    elif phase_name == "review":
-        _check_review_input(run_path, severity, failures)
-    elif phase_name == "deliver":
-        _check_deliver_input(run_path, severity, failures)
-    # research: no per-phase prerequisites beyond run.yaml (handled above)
+    checker = _INPUT_CHECKERS.get(phase_name)
+    if checker is not None:
+        checker(run_path, config, severity, failures)
 
     return _build_phase_result(failures, criteria, phase_name, "phase_input_checked")

@@ -33,9 +33,9 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
    - Identify branches with no coverage (if/else paths)
 
 5. **Convention check**:
-   - Verify test files use fixtures from `conftest.py` (not ad-hoc setup)
-   - Check for `@pytest.mark.unit` / `@pytest.mark.integration` markers
-   - Verify async tests use `async def` (asyncio_mode=auto handles the rest)
+   - Verify test files use shared fixtures or setup helpers (not ad-hoc setup)
+   - Check for tier markers (e.g., `@pytest.mark.unit` / `@pytest.mark.integration` for Python, or equivalent tags in other frameworks) — the project's tier convention is in its test runner config
+   - Verify async tests follow the framework's async test pattern (e.g., `async def` + asyncio_mode=auto for Python, `async it()` for Jest)
    - Check that PRD traceability comments exist in test files
 
 6. **Report**:
@@ -69,5 +69,5 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
 
 - This skill is read-only — it identifies gaps but does not write tests
 - Use the recommendations to guide test writing during IMPLEMENT phase
-- Coverage threshold is 80% (enforced in pyproject.toml)
+- Coverage threshold is 80% (enforced in the project's test configuration, e.g., pyproject.toml, jest.config.js, etc.)
 - Focus on testing edge cases and error paths, not just happy paths

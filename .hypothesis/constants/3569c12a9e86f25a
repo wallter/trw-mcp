@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/prd_utils.py
+# hypothesis_version: 6.151.9
+
+[0.0, '*.md', '.md.tmp', 'P2', 'PRD-[A-Z]+-\\d{3}', 'TRWConfig | None', '^##\\s+\\d+\\.\\s+(.+)$', '^---\\s*\\n(.*?)\\n---', '^\\s*#', '^\\s*$', '^\\s*---\\s*$', '^\\s*<!--.*?-->\\s*$', 'archive', 'density', 'frontmatter_updated', 'grade', 'meta', 'plan.md', 'plan_scan_failed', 'prd', 'prd_scope', 'prds', 'priority', 'quality_tier', 'reports', 'risk_level', 'run.yaml', 'threshold', 'total_score', 'utf-8']

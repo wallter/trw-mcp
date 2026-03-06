@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/tools/_review_helpers.py
+# hypothesis_version: 6.151.9
+
+['+00:00', ', ', 'Z', 'auto', 'block', 'category', 'checks_performed', 'confidence', 'confidence_threshold', 'critical', 'critical_count', 'cross_model', 'cross_model_findings', 'cross_model_provider', 'cross_model_skipped', 'description', 'duplicate_functions', 'findings', 'general', 'git_diff_hash', 'inconsistent_types', 'info', 'info_count', 'integration', 'meta', 'mode', 'pass', 'provider', 'retention_expires', 'review-all.yaml', 'review_id', 'review_yaml', 'reviewer_errors', 'reviewer_id', 'reviewer_role', 'reviewer_roles_run', 'run_id', 'run_path', 'severity', 'shards_reviewed', 'source', 'surfaced_findings', 'timestamp', 'total_findings', 'total_findings_count', 'unresolved_imports', 'verdict', 'warn', 'warning', 'warning_count']

@@ -52,7 +52,10 @@ def register_usage_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_usage_report(period: str = "all") -> dict[str, object]:
+    def trw_usage_report(
+        period: str = "all",
+        group_by: str = "none",
+    ) -> dict[str, object]:
         """Track your LLM API spend — total tokens, costs, and breakdowns by model and caller.
 
         Reads .trw/logs/llm_usage.jsonl and aggregates token usage, cost estimates,
@@ -61,7 +64,16 @@ def register_usage_tools(server: FastMCP) -> None:
 
         Args:
             period: Aggregation period — only "all" is supported currently.
+            group_by: Group results by field — "agent", "phase", "model",
+                "task", or "none" (default). When not "none", adds a
+                "grouped_by" breakdown dict to the response.
         """
+        _VALID_GROUP_BY = {"agent", "phase", "model", "task", "none"}
+        if group_by not in _VALID_GROUP_BY:
+            raise ValueError(
+                f"group_by must be one of: {', '.join(sorted(_VALID_GROUP_BY))}"
+            )
+
         trw_dir = resolve_trw_dir()
         log_path = trw_dir / _config.logs_dir / _config.llm_usage_log_file
 
@@ -143,7 +155,7 @@ def register_usage_tools(server: FastMCP) -> None:
             total_cost_estimate_usd=total_cost_rounded,
         )
 
-        return {
+        result: dict[str, object] = {
             "period": period,
             "log_path": str(log_path),
             "total_calls": total_calls,
@@ -153,6 +165,43 @@ def register_usage_tools(server: FastMCP) -> None:
             "by_model": by_model,
             "by_caller": by_caller,
         }
+
+        # Group-by breakdown (INFRA-029 FR02)
+        if group_by != "none":
+            # Map group_by value to the JSONL field name
+            field_map: dict[str, str] = {
+                "agent": "agent_id",
+                "phase": "phase",
+                "model": "model",
+                "task": "task",
+            }
+            field_key = field_map.get(group_by, group_by)
+            grouped: dict[str, dict[str, object]] = {}
+            for record in records:
+                bucket = str(record.get(field_key, "unknown"))
+                if bucket not in grouped:
+                    grouped[bucket] = {
+                        "calls": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost_estimate_usd": 0.0,
+                    }
+                entry = grouped[bucket]
+                rec_input = int(str(record.get("input_tokens", 0)))
+                rec_output = int(str(record.get("output_tokens", 0)))
+                rec_model = str(record.get("model", "unknown"))
+                entry["calls"] = cast(int, entry["calls"]) + 1
+                entry["input_tokens"] = cast(int, entry["input_tokens"]) + rec_input
+                entry["output_tokens"] = cast(int, entry["output_tokens"]) + rec_output
+                entry["cost_estimate_usd"] = round(
+                    cast(float, entry["cost_estimate_usd"])
+                    + _compute_cost(rec_model, rec_input, rec_output),
+                    6,
+                )
+            result["group_by"] = group_by
+            result["grouped_by"] = grouped
+
+        return result
 
     @server.tool()
     @log_tool_call

@@ -18,7 +18,7 @@ Perform an OWASP-focused security audit of the trw-mcp codebase. This skill is r
 
 1. **Determine scope**: Parse `$ARGUMENTS`:
    - If a specific module path, focus on that module
-   - If `all` or empty, audit the full `trw-mcp/src/trw_mcp/` codebase
+   - If `all` or empty, audit the full codebase (discover source directories via Glob)
 
 2. **Command Injection (OWASP A03)**: Search for unsafe subprocess usage:
    - Grep for `subprocess.run`, `subprocess.Popen`, `os.system`, `os.popen`
@@ -92,6 +92,6 @@ Perform an OWASP-focused security audit of the trw-mcp codebase. This skill is r
 ## Notes
 
 - This skill is read-only — it audits but does not fix issues
-- Focus on the trw-mcp Python codebase, not documentation or configs
+- Focus on source code, not documentation or configs
 - Pydantic v2 models provide built-in input validation for MCP tool parameters
 - The codebase runs locally (no network-facing service), so network-based attacks are lower priority

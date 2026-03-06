@@ -48,13 +48,18 @@ def _matches_filters(
             return False
     if tags:
         entry_tags = data.get("tags", [])
-        if isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
+        if not isinstance(entry_tags, list):
+            return False
+        if not any(t in entry_tags for t in tags):
             return False
     return True
 
 
 def _resolve_entry_file(entries_dir: Path, entry_id: str) -> Path:
     """Resolve the file path for a learning entry by ID.
+
+    Checks for an exact filename match first, then falls back to
+    substring matching for dated filenames (e.g. ``2026-01-01-L-abc.yaml``).
 
     Args:
         entries_dir: Path to the entries directory.
@@ -63,10 +68,15 @@ def _resolve_entry_file(entries_dir: Path, entry_id: str) -> Path:
     Returns:
         Path to the matching YAML file.
     """
-    for fname in entries_dir.glob("*.yaml"):
+    # Exact match first
+    exact = entries_dir / f"{entry_id}.yaml"
+    if exact.exists():
+        return exact
+    # Fallback: dated filenames where entry_id is embedded
+    for fname in sorted(entries_dir.glob("*.yaml")):
         if entry_id in fname.name:
             return fname
-    return entries_dir / f"{entry_id}.yaml"
+    return exact
 
 
 def search_entries(

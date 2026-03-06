@@ -20,6 +20,7 @@ from trw_mcp.tools._learning_helpers import (
     check_and_handle_dedup,
     check_soft_cap,
     enforce_distribution,
+    is_noise_summary,
 )
 
 _CFG = TRWConfig()
@@ -539,3 +540,28 @@ class TestEnforceDistribution:
             assert "L-000" in demoted_ids
             assert "L-001" in demoted_ids
             assert "critical" in warning
+
+
+class TestNoiseFilter:
+    """PRD-QUAL-032-FR09: Reject auto-generated noise summaries."""
+
+    @pytest.mark.unit
+    def test_rejects_repeated_operation_prefix(self) -> None:
+        assert is_noise_summary("Repeated operation: trw_checkpoint called 3 times") is True
+
+    @pytest.mark.unit
+    def test_rejects_success_prefix(self) -> None:
+        assert is_noise_summary("Success: build passed") is True
+
+    @pytest.mark.unit
+    def test_accepts_normal_summary(self) -> None:
+        assert is_noise_summary("Pydantic v2 requires use_enum_values=True") is False
+
+    @pytest.mark.unit
+    def test_accepts_empty_summary(self) -> None:
+        assert is_noise_summary("") is False
+
+    @pytest.mark.unit
+    def test_does_not_match_substring(self) -> None:
+        """Prefix match only — 'Success:' in the middle should pass."""
+        assert is_noise_summary("The operation was a Success: tests passed") is False

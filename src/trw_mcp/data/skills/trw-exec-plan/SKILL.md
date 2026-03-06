@@ -51,7 +51,7 @@ For each FR in the PRD:
 1. **Identify affected files** — source files to create/modify (from Technical Approach + Grep)
 2. **List function-level changes** — specific functions to add, modify, or wire
 3. **Define test cases** — test function names and what they assert
-4. **Write verification command** — the exact pytest/bash command to verify this FR
+4. **Write verification command** — the exact test/build command to verify this FR (e.g., pytest, jest, cargo test, or a bash script)
 5. **Map dependencies** — which other FRs or micro-tasks must complete first
 
 Target: each micro-task should be completable in <35 minutes (agent half-life threshold).
@@ -106,7 +106,8 @@ Write to `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`:
 
 **Verification:**
 ```bash
-.venv/bin/python -m pytest tests/test_{module}.py::test_{fr_id}_happy -v
+# Use the project's test runner (e.g., pytest, jest, cargo test):
+{test_runner} {test_path}::{test_name} -v
 ```
 
 **Dependencies:** None | FR02, FR03
@@ -181,7 +182,9 @@ For each FR in the execution plan:
 
 4. **Parametrize** similar cases where multiple inputs share the same assertion pattern
 
-Write test skeleton to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.py`:
+Write test skeleton to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.{ext}` where `{ext}` matches the project's test language (e.g., `.py`, `.ts`, `.rs`).
+
+**Example for Python projects (pytest):**
 
 ```python
 """
@@ -220,6 +223,8 @@ def test_fr01_parametrized(input_val, expected):
 # --- FR02: {FR title} ---
 # ... repeat for each FR
 ```
+
+Adapt the skeleton to the project's language and test framework (e.g., Jest `it()`/`expect()` for TypeScript, `#[test]` for Rust, `it do` blocks for Ruby).
 
 Write manifest to `docs/requirements-aare-f/test-skeletons/MANIFEST-{PRD-ID}.yaml`:
 

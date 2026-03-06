@@ -32,7 +32,7 @@ class TestConfidenceThresholdFiltering:
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff content")
     @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review")
+    @patch("trw_mcp.tools.review._persist_review_artifact")
     def test_confidence_threshold_filters_low_findings(
         self,
         mock_persist: MagicMock,
@@ -62,7 +62,7 @@ class TestConfidenceThresholdFiltering:
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff content")
     @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review")
+    @patch("trw_mcp.tools.review._persist_review_artifact")
     def test_confidence_threshold_zero_passes_all(
         self,
         mock_persist: MagicMock,
@@ -91,7 +91,7 @@ class TestConfidenceThresholdFiltering:
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
     @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review")
+    @patch("trw_mcp.tools.review._persist_review_artifact")
     def test_review_all_yaml_written_with_all_findings(
         self,
         mock_persist: MagicMock,
@@ -129,7 +129,7 @@ class TestIntegrationReviewVerdictComputation:
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
     @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review")
+    @patch("trw_mcp.tools.review._persist_review_artifact")
     def test_integration_review_block_when_critical(
         self,
         mock_persist: MagicMock,
@@ -168,7 +168,7 @@ class TestIntegrationReviewVerdictComputation:
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
     @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review")
+    @patch("trw_mcp.tools.review._persist_review_artifact")
     def test_integration_review_warn_when_no_critical(
         self,
         mock_persist: MagicMock,
@@ -207,7 +207,7 @@ class TestIntegrationReviewVerdictComputation:
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
     @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review")
+    @patch("trw_mcp.tools.review._persist_review_artifact")
     def test_no_integration_review_when_no_integration_findings(
         self,
         mock_persist: MagicMock,
@@ -244,7 +244,7 @@ class TestIntegrationReviewVerdictComputation:
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
     @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review")
+    @patch("trw_mcp.tools.review._persist_review_artifact")
     def test_soc2_fields_in_review_yaml(
         self,
         mock_persist: MagicMock,
@@ -267,7 +267,7 @@ class TestIntegrationReviewVerdictComputation:
 
         handle_auto_mode(config, run_path, "rev-007", "2026-03-03T00:00:00Z", None)
 
-        # Verify _persist_review was called with SOC 2 fields
+        # Verify _persist_review_artifact was called with SOC 2 fields
         call_args = mock_persist.call_args
         full_data = call_args[0][1]  # second positional arg
         assert "reviewer_id" in full_data

@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/tools/knowledge.py
+# hypothesis_version: 6.151.9
+
+['elapsed_seconds', 'entries_clustered', 'threshold_met', 'topics_generated']

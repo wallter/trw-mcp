@@ -6951,3 +6951,896 @@
 {"ts": "2026-02-28T18:13:45.737244+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 8.82, "success": true}
 {"ts": "2026-02-28T18:13:45.776724+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 11.12, "success": true}
 {"ts": "2026-02-28T18:13:45.813054+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 9.46, "success": true}
+{"ts": "2026-03-04T15:01:35.261153+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true}
+{"ts": "2026-03-04T15:01:35.346903+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true}
+{"ts": "2026-03-04T15:01:35.437617+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true}
+{"ts": "2026-03-04T15:01:35.577072+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 56.12, "success": true}
+{"ts": "2026-03-04T15:01:35.682625+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 20.52, "success": true}
+{"ts": "2026-03-04T15:01:35.757521+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.39, "success": true}
+{"ts": "2026-03-04T15:01:41.897392+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 22.33, "success": true}
+{"ts": "2026-03-04T15:01:41.979877+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 12.37, "success": true}
+{"ts": "2026-03-04T15:01:42.078268+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 32.78, "success": true}
+{"ts": "2026-03-04T16:12:55.164925+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 10.91, "success": true}
+{"ts": "2026-03-04T16:12:55.267673+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.06, "success": false, "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-203/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-04T16:28:47.768197+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 136697.89, "success": true}
+{"ts": "2026-03-04T17:08:28.924573+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 219.0, "success": true}
+{"ts": "2026-03-04T17:08:31.489720+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2461.06, "success": true}
+{"ts": "2026-03-04T17:08:31.797239+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 186.06, "success": true}
+{"ts": "2026-03-04T17:08:34.336675+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 183.56, "success": true}
+{"ts": "2026-03-04T17:08:37.995326+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2417.76, "success": true}
+{"ts": "2026-03-04T17:08:40.541033+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2435.46, "success": true}
+{"ts": "2026-03-04T17:08:43.367912+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2579.1, "success": true}
+{"ts": "2026-03-04T17:08:43.682677+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 201.65, "success": true}
+{"ts": "2026-03-04T17:08:46.430528+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2624.85, "success": true}
+{"ts": "2026-03-04T17:08:49.120649+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2594.8, "success": true}
+{"ts": "2026-03-04T17:12:06.635807+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 139.11, "success": true}
+{"ts": "2026-03-04T17:12:07.060000+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 174.79, "success": true}
+{"ts": "2026-03-04T17:12:07.906283+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 157.47, "success": true}
+{"ts": "2026-03-04T17:12:22.996503+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 8.43, "success": true}
+{"ts": "2026-03-04T17:12:23.141929+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 10.75, "success": true}
+{"ts": "2026-03-04T17:12:23.279024+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 10.65, "success": true}
+{"ts": "2026-03-04T17:19:36.885611+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true}
+{"ts": "2026-03-04T17:19:36.985579+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.07, "success": true}
+{"ts": "2026-03-04T17:19:37.083863+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true}
+{"ts": "2026-03-04T17:19:37.173195+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true}
+{"ts": "2026-03-04T17:19:37.316897+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true}
+{"ts": "2026-03-04T17:19:38.903973+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true}
+{"ts": "2026-03-04T17:19:39.083832+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 84.23, "success": true}
+{"ts": "2026-03-04T17:19:39.202749+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 13.88, "success": true}
+{"ts": "2026-03-04T17:19:39.381295+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 64.48, "success": true}
+{"ts": "2026-03-04T17:19:39.540787+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 66.92, "success": true}
+{"ts": "2026-03-04T17:19:39.706538+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 69.65, "success": true}
+{"ts": "2026-03-04T17:20:05.526235+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 195.16, "success": true}
+{"ts": "2026-03-04T17:20:08.178632+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2564.33, "success": true}
+{"ts": "2026-03-04T17:20:08.414962+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 149.39, "success": true}
+{"ts": "2026-03-04T17:20:10.278087+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 144.52, "success": true}
+{"ts": "2026-03-04T17:20:13.610142+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2389.8, "success": true}
+{"ts": "2026-03-04T17:20:16.307217+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2451.45, "success": true}
+{"ts": "2026-03-04T17:20:18.687648+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2297.9, "success": true}
+{"ts": "2026-03-04T17:20:18.959686+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 160.42, "success": true}
+{"ts": "2026-03-04T17:20:21.386844+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2330.83, "success": true}
+{"ts": "2026-03-04T17:20:23.793357+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2302.33, "success": true}
+{"ts": "2026-03-04T17:20:27.980272+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2690.94, "success": true}
+{"ts": "2026-03-04T17:20:30.524627+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2472.44, "success": true}
+{"ts": "2026-03-04T17:20:34.775758+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4159.13, "success": true}
+{"ts": "2026-03-04T17:20:38.934856+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4084.93, "success": true}
+{"ts": "2026-03-04T17:20:42.167045+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3157.57, "success": true}
+{"ts": "2026-03-04T17:20:42.286719+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 37.97, "success": true}
+{"ts": "2026-03-04T17:20:42.405328+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 34.24, "success": true}
+{"ts": "2026-03-04T17:20:42.473944+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.08, "success": true}
+{"ts": "2026-03-04T17:20:42.568986+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "error": "sync exploded"}
+{"ts": "2026-03-04T17:20:42.677213+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 17.84, "success": false, "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-04T17:20:42.792201+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 10.5, "success": true}
+{"ts": "2026-03-04T17:20:42.901908+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 8.05, "success": true}
+{"ts": "2026-03-04T17:20:42.995405+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 8.93, "success": true}
+{"ts": "2026-03-04T17:20:43.089103+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 6.8, "success": true}
+{"ts": "2026-03-04T17:20:43.188835+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 11.48, "success": true}
+{"ts": "2026-03-04T17:20:46.054937+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 31.58, "success": true}
+{"ts": "2026-03-04T17:20:46.799035+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 660.54, "success": true}
+{"ts": "2026-03-04T17:20:47.256633+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.18, "success": false, "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-216/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-04T17:20:57.039370+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 55.76, "success": true}
+{"ts": "2026-03-04T17:20:57.180749+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 55.33, "success": true}
+{"ts": "2026-03-04T17:20:57.331507+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 54.0, "success": true}
+{"ts": "2026-03-04T17:21:01.221295+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 4.82, "success": true}
+{"ts": "2026-03-04T17:21:01.397064+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 73.17, "success": true}
+{"ts": "2026-03-04T17:21:17.832084+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 15.07, "success": true}
+{"ts": "2026-03-04T17:21:18.961060+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 678.53, "success": true}
+{"ts": "2026-03-04T17:21:19.034227+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 6.45, "success": true}
+{"ts": "2026-03-04T17:21:19.746952+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 628.38, "success": true}
+{"ts": "2026-03-04T17:21:20.441845+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 626.95, "success": true}
+{"ts": "2026-03-04T17:21:38.158847+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2648.08, "success": true}
+{"ts": "2026-03-04T17:21:40.612117+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2375.86, "success": true}
+{"ts": "2026-03-04T17:21:43.177683+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2487.61, "success": true}
+{"ts": "2026-03-04T17:21:47.475139+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4089.98, "success": true}
+{"ts": "2026-03-04T17:21:51.621669+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4065.72, "success": true}
+{"ts": "2026-03-04T17:21:55.772886+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4078.44, "success": true}
+{"ts": "2026-03-04T17:22:00.955577+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 5068.84, "success": true}
+{"ts": "2026-03-04T17:23:38.734507+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true}
+{"ts": "2026-03-04T17:23:38.820279+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true}
+{"ts": "2026-03-04T17:23:38.914635+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.2, "success": true}
+{"ts": "2026-03-04T17:23:39.026854+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 21.99, "success": true}
+{"ts": "2026-03-04T17:23:39.144823+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 24.48, "success": true}
+{"ts": "2026-03-04T17:23:39.235973+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.3, "success": true}
+{"ts": "2026-03-04T17:24:24.547559+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4147.76, "success": true}
+{"ts": "2026-03-04T17:24:28.764622+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4130.58, "success": true}
+{"ts": "2026-03-04T17:24:28.972986+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 29.89, "success": true}
+{"ts": "2026-03-04T17:26:42.733361+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.15, "success": true}
+{"ts": "2026-03-04T18:52:52.451044+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 125.89, "success": true}
+{"ts": "2026-03-04T18:52:52.724592+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 114.62, "success": true}
+{"ts": "2026-03-04T18:52:53.307707+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 110.46, "success": true}
+{"ts": "2026-03-04T18:53:04.152005+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.79, "success": true}
+{"ts": "2026-03-04T18:53:04.243383+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.03, "success": true}
+{"ts": "2026-03-04T18:53:04.337545+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.74, "success": true}
+{"ts": "2026-03-04T18:59:46.352710+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true}
+{"ts": "2026-03-04T18:59:46.440588+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true}
+{"ts": "2026-03-04T18:59:46.523469+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true}
+{"ts": "2026-03-04T18:59:46.614625+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true}
+{"ts": "2026-03-04T18:59:46.714646+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true}
+{"ts": "2026-03-04T18:59:48.365872+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true}
+{"ts": "2026-03-04T18:59:48.545723+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 63.6, "success": true}
+{"ts": "2026-03-04T18:59:48.668180+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 10.97, "success": true}
+{"ts": "2026-03-04T18:59:48.815822+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 63.93, "success": true}
+{"ts": "2026-03-04T18:59:48.999498+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 91.28, "success": true}
+{"ts": "2026-03-04T18:59:49.171177+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 62.33, "success": true}
+{"ts": "2026-03-04T19:00:13.229414+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 165.61, "success": true}
+{"ts": "2026-03-04T19:00:14.832798+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1517.11, "success": true}
+{"ts": "2026-03-04T19:00:15.070018+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 148.0, "success": true}
+{"ts": "2026-03-04T19:00:16.970134+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 168.36, "success": true}
+{"ts": "2026-03-04T19:00:19.381607+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1485.34, "success": true}
+{"ts": "2026-03-04T19:00:20.935085+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1470.05, "success": true}
+{"ts": "2026-03-04T19:00:22.552976+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1542.7, "success": true}
+{"ts": "2026-03-04T19:00:22.795616+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 150.97, "success": true}
+{"ts": "2026-03-04T19:00:24.375366+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1493.93, "success": true}
+{"ts": "2026-03-04T19:00:25.934075+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1477.32, "success": true}
+{"ts": "2026-03-04T19:00:29.296049+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1908.63, "success": true}
+{"ts": "2026-03-04T19:00:31.008134+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1636.51, "success": true}
+{"ts": "2026-03-04T19:00:35.258313+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4087.38, "success": true}
+{"ts": "2026-03-04T19:00:39.409199+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4067.17, "success": true}
+{"ts": "2026-03-04T19:00:42.630421+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3154.01, "success": true}
+{"ts": "2026-03-04T19:00:42.742199+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 35.55, "success": true}
+{"ts": "2026-03-04T19:00:42.875494+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 35.85, "success": true}
+{"ts": "2026-03-04T19:00:42.961526+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.12, "success": true}
+{"ts": "2026-03-04T19:00:43.049464+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "error": "sync exploded"}
+{"ts": "2026-03-04T19:00:43.154374+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 16.53, "success": false, "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-04T19:00:43.251860+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 7.8, "success": true}
+{"ts": "2026-03-04T19:00:43.338020+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 6.57, "success": true}
+{"ts": "2026-03-04T19:00:43.432026+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 7.29, "success": true}
+{"ts": "2026-03-04T19:00:43.524909+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 7.58, "success": true}
+{"ts": "2026-03-04T19:00:43.625821+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 12.04, "success": true}
+{"ts": "2026-03-04T19:00:46.251495+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 38.94, "success": true}
+{"ts": "2026-03-04T19:00:47.006825+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 669.81, "success": true}
+{"ts": "2026-03-04T19:00:47.426354+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.06, "success": false, "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-218/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-04T19:00:55.324067+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 56.32, "success": true}
+{"ts": "2026-03-04T19:00:55.488182+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 58.74, "success": true}
+{"ts": "2026-03-04T19:00:55.654732+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 66.58, "success": true}
+{"ts": "2026-03-04T19:00:59.624535+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 4.26, "success": true}
+{"ts": "2026-03-04T19:00:59.821914+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 63.49, "success": true}
+{"ts": "2026-03-04T19:01:16.132071+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 15.22, "success": true}
+{"ts": "2026-03-04T19:01:19.796697+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 3118.14, "success": true}
+{"ts": "2026-03-04T19:01:19.893536+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 7.97, "success": true}
+{"ts": "2026-03-04T19:01:23.077949+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 3105.55, "success": true}
+{"ts": "2026-03-04T19:01:23.822575+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 666.23, "success": true}
+{"ts": "2026-03-04T19:01:39.624266+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1717.91, "success": true}
+{"ts": "2026-03-04T19:01:41.350461+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1654.7, "success": true}
+{"ts": "2026-03-04T19:01:43.058303+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1631.58, "success": true}
+{"ts": "2026-03-04T19:01:47.236991+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4097.72, "success": true}
+{"ts": "2026-03-04T19:01:51.443135+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4132.17, "success": true}
+{"ts": "2026-03-04T19:01:55.591392+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4070.27, "success": true}
+{"ts": "2026-03-04T19:01:59.730294+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4046.94, "success": true}
+{"ts": "2026-03-04T19:03:09.675246+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true}
+{"ts": "2026-03-04T19:03:09.765190+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true}
+{"ts": "2026-03-04T19:03:09.866290+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true}
+{"ts": "2026-03-04T19:03:09.993397+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 22.86, "success": true}
+{"ts": "2026-03-04T19:03:10.102537+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 21.91, "success": true}
+{"ts": "2026-03-04T19:03:10.199213+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.24, "success": true}
+{"ts": "2026-03-04T19:03:49.851881+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4205.2, "success": true}
+{"ts": "2026-03-04T19:03:54.067703+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4122.8, "success": true}
+{"ts": "2026-03-04T19:03:54.281123+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 30.35, "success": true}
+{"ts": "2026-03-04T19:05:56.811000+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.29, "success": true}
+{"ts": "2026-03-04T19:06:01.703067+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 26.92, "success": true}
+{"ts": "2026-03-04T19:06:01.823707+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 26.14, "success": true}
+{"ts": "2026-03-04T19:06:01.936795+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 23.31, "success": true}
+{"ts": "2026-03-04T19:06:50.740021+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 54.62, "success": true}
+{"ts": "2026-03-04T19:06:50.809978+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.05, "success": true}
+{"ts": "2026-03-04T19:06:51.030748+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 112.34, "success": true}
+{"ts": "2026-03-04T19:06:51.101611+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.01, "success": true}
+{"ts": "2026-03-04T19:06:51.202786+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.03, "success": true}
+{"ts": "2026-03-04T19:06:51.425889+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 115.54, "success": true}
+{"ts": "2026-03-04T19:06:51.593746+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 71.52, "success": true}
+{"ts": "2026-03-04T19:06:51.667942+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.13, "success": true}
+{"ts": "2026-03-04T19:06:51.764107+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.12, "success": true}
+{"ts": "2026-03-04T19:06:51.879043+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.0, "success": true}
+{"ts": "2026-03-04T19:06:52.009819+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 28.57, "success": true}
+{"ts": "2026-03-04T19:07:00.151502+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.15, "success": true}
+{"ts": "2026-03-04T19:07:00.237540+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true}
+{"ts": "2026-03-04T19:07:00.332431+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true}
+{"ts": "2026-03-04T19:07:00.434694+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true}
+{"ts": "2026-03-04T19:07:00.538142+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true}
+{"ts": "2026-03-04T19:07:00.646734+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true}
+{"ts": "2026-03-04T19:07:00.730496+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true}
+{"ts": "2026-03-04T19:07:00.832334+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true}
+{"ts": "2026-03-04T19:07:00.930571+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.31, "success": true}
+{"ts": "2026-03-04T19:07:01.030463+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true}
+{"ts": "2026-03-04T19:07:01.131101+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true}
+{"ts": "2026-03-04T20:37:04.247681+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 59977.8, "success": true}
+{"ts": "2026-03-04T20:37:05.978687+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 644.03, "success": true}
+{"ts": "2026-03-04T20:37:10.921887+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4844.25, "success": true}
+{"ts": "2026-03-04T20:37:15.844950+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4845.42, "success": true}
+{"ts": "2026-03-04T20:37:19.388805+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3449.57, "success": true}
+{"ts": "2026-03-04T20:37:19.523769+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 39.85, "success": true}
+{"ts": "2026-03-04T20:37:19.646684+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 36.48, "success": true}
+{"ts": "2026-03-04T20:37:19.727719+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.08, "success": true}
+{"ts": "2026-03-04T20:37:19.845610+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "error": "sync exploded"}
+{"ts": "2026-03-04T20:37:19.937344+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 3.09, "success": false, "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-04T20:37:20.058664+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 16.56, "success": true}
+{"ts": "2026-03-04T20:37:20.166361+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 9.12, "success": true}
+{"ts": "2026-03-04T20:37:20.283774+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 8.26, "success": true}
+{"ts": "2026-03-04T20:37:20.381192+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 8.3, "success": true}
+{"ts": "2026-03-04T20:37:20.508217+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 13.19, "success": true}
+{"ts": "2026-03-04T20:37:23.427712+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 33.44, "success": true}
+{"ts": "2026-03-04T20:37:24.254758+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 743.95, "success": true}
+{"ts": "2026-03-04T20:37:24.761939+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.06, "success": false, "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-229/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T00:17:06.865920+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:17:07.082162+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 107.7, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:17:07.196067+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 12.36, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:17:07.390485+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 71.07, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:17:07.578608+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 85.83, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:17:07.763370+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 83.38, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:19:21.737948+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.35, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:19:28.022029+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.32, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:19:28.122398+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:26.695169+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:26.831729+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:27.057832+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:27.321392+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.27, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:27.584530+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:27.878471+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.44, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:28.146139+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.23, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:28.427130+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:28.677933+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:28.949181+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:29.205441+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:30.466766+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.26, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:30.661877+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:23:30.821349+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:24:40.181842+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 119954.33, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:14.978653+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.074108+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.174943+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.273641+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.378470+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.476626+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.574258+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.686608+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.792127+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:15.894950+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:16.008714+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:16.634347+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:16.751590+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.26, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:16.858831+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:21.870696+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 51.25, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:22.011650+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 25.97, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:25:22.177809+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 40.38, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:27:53.206284+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 119969.82, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:28:44.171590+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:28:44.833389+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 97.69, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:28:44.950342+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 13.74, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:28:45.120681+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 67.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:28:45.301099+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 80.06, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:28:45.483782+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 83.73, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:29:41.877770+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:29:42.001375+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.26, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:29:42.121261+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:34.123517+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:34.280662+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:34.450176+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:34.618380+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.28, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:34.757096+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:34.913695+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.29, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:35.058292+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:35.195634+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:35.350824+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:35.509126+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.28, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:35.645666+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:36.366622+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.27, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:36.493240+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.38, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:38:36.626849+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:05.178274+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:05.331430+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:05.462544+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.29, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:05.598878+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:05.737351+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:05.875111+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:06.033116+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:06.179034+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:06.334272+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:06.469156+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:06.593659+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:07.397529+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:07.541325+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:40:07.684826+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:42:09.564108+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:42:09.792515+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 106.32, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:42:09.965661+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 17.5, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:42:10.189350+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 84.46, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:42:10.415565+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 94.23, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:42:10.617997+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 89.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:43:16.857427+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 138.55, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:43:17.236297+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 138.4, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:43:18.617331+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 253.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:43:32.353368+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 13.58, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:43:32.601087+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 29.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:43:32.966860+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 23.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:47:24.414870+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 159.43, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:47:24.754313+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 167.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:47:25.448741+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 220.73, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:47:36.018035+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 9.36, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:47:36.131282+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 8.24, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:47:36.240468+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 8.75, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:29.413084+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:29.604242+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 89.32, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:29.707382+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 10.81, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:29.848417+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 55.46, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:29.987292+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 56.34, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:30.154892+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 69.01, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:30.862695+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:30.946251+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:31.036705+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:31.147213+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:48:31.234269+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:07.187472+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:07.372213+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 70.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:07.499901+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 16.98, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:07.736233+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 132.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:07.914151+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 56.57, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:08.060779+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 63.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:08.793320+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:08.868326+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:08.953180+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:09.037414+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.1, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:09.124701+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:46.610731+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 4846.74, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:48.407086+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1721.93, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:52.629192+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4138.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:55:56.805288+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4088.6, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:00.468463+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3213.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:00.645192+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 69.74, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:00.775161+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 37.67, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:00.851424+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.08, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:00.947846+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "agent_id": "default", "phase": "unknown", "error": "sync exploded"}
+{"ts": "2026-03-05T00:56:01.053059+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 15.22, "success": false, "agent_id": "default", "phase": "unknown", "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-05T00:56:01.155215+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 9.14, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:01.253444+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 7.24, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:01.346959+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 9.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:01.449055+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 6.8, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:01.567798+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 11.64, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:04.249212+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 50.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:05.011547+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 687.72, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:05.420578+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.05, "success": false, "agent_id": "default", "phase": "unknown", "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-294/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T00:56:09.799060+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 253.94, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:11.454277+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1576.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:11.770691+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 231.81, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:13.678548+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 259.76, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:16.526035+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1523.84, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:18.255127+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1632.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:19.866940+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1527.89, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:20.182629+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 221.26, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:21.823196+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1535.1, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:23.405929+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1504.97, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:25.965800+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 63.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:26.109233+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 53.6, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:56:26.264572+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 59.26, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:59:45.903461+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 129.71, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:59:46.395041+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 306.81, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:59:47.088096+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 164.96, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:59:58.091666+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.32, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:59:58.209595+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.91, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T00:59:58.305240+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 8.08, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:04.230655+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:04.386628+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 63.58, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:04.483872+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 8.94, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:04.945561+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 60.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:05.089877+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 61.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:05.271151+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 65.73, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:06.108067+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:06.206244+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:06.305456+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:06.421154+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:06.505798+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:46.981938+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 5610.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:49.621111+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2537.71, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:53.786096+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4080.37, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:07:58.024117+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4160.54, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:01.338323+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3234.88, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:01.489551+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 62.22, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:01.618617+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 42.63, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:01.693516+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.08, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:01.789902+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "agent_id": "default", "phase": "unknown", "error": "sync exploded"}
+{"ts": "2026-03-05T01:08:01.909105+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 14.73, "success": false, "agent_id": "default", "phase": "unknown", "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-05T01:08:02.024453+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 8.39, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:02.136259+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 8.93, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:02.244472+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 9.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:02.344512+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 8.38, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:02.452257+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 13.83, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:05.183343+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 29.98, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:06.193481+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 702.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:07.477409+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.08, "success": false, "agent_id": "default", "phase": "unknown", "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-296/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T01:08:15.037018+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 846.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:17.622193+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2481.08, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:18.084418+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 273.39, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:20.851778+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 250.41, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:24.715741+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2543.27, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:27.355229+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2498.57, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:29.876589+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2402.1, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:30.274153+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 266.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:32.856080+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2473.5, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:36.047452+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2643.92, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:38.593976+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 84.92, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:38.739959+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 54.23, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:38.907142+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 54.1, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:43.799013+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 8.54, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:08:43.962055+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 66.59, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:03.455527+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 16.92, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:07.365298+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 3138.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:07.451823+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 9.96, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:10.710867+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 3120.63, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:11.489643+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 679.83, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:30.609192+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2574.48, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:33.087570+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2401.61, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:35.582852+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2422.64, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:39.971428+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4035.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:44.082121+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4022.08, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:48.252467+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4073.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:09:52.363706+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4037.33, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:11:31.874270+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.06, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:11:31.979718+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:11:32.071875+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:11:32.212405+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 36.55, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:11:32.329089+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 24.66, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:11:32.431701+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.26, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:12:14.989433+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4152.7, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:12:19.120514+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4051.01, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:12:19.308826+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 27.38, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:14:47.731545+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:14:52.655986+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 26.95, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:14:52.791205+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 26.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:14:52.909255+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 18.42, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:52.750820+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:52.839165+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:52.917279+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.015965+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.24, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.107841+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.199709+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.279979+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.363047+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.449249+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.541896+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:53.622794+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:54.111269+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:54.204538+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:15:54.282905+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:27:53.998917+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 137.96, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:27:54.287533+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 121.85, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:27:54.860343+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 117.69, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:28:04.171436+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 6.89, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:28:04.270551+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.39, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:28:04.390360+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 9.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:13.200361+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:13.759348+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 416.07, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:14.106650+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 217.9, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:14.545557+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 295.91, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:15.051937+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 396.08, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:15.487670+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 313.68, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:16.440922+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:16.545503+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:16.644546+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:16.753727+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:36:16.866981+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:04.043861+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 6145.53, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:07.079910+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2904.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:11.521438+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4331.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:15.900522+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4286.49, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:19.773020+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3592.97, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:19.933598+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 51.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:20.120539+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 68.41, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:20.218458+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.09, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:20.371231+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "agent_id": "default", "phase": "unknown", "error": "sync exploded"}
+{"ts": "2026-03-05T01:37:20.558304+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 43.29, "success": false, "agent_id": "default", "phase": "unknown", "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-05T01:37:20.704681+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 11.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:20.843909+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 9.35, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:21.003003+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 15.74, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:21.223500+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 21.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:21.412840+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 38.69, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:25.463538+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 101.48, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:26.252563+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 680.54, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:26.876980+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.08, "success": false, "agent_id": "default", "phase": "unknown", "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-304/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T01:37:33.132290+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 205.25, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:36.170257+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2873.76, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:36.546872+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 229.98, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:39.239969+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 183.87, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:43.297167+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2715.73, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:46.190581+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2750.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:49.248568+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2792.46, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:49.593594+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 232.59, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:52.435187+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2728.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:55.260162+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2719.83, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:57.751321+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 61.61, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:57.926800+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 65.02, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:37:58.138491+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 83.55, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:03.112097+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 6.65, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:03.396263+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 91.42, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:24.529133+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 18.8, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:28.256776+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 3156.81, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:28.355406+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 10.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:31.587960+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 3122.41, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:32.311226+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 646.94, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:38:58.068964+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 3645.42, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:39:00.749461+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2576.87, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:39:03.590299+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2694.6, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:39:08.092217+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4393.39, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:39:12.649890+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4441.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:39:17.158857+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4384.73, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:39:22.093945+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4572.54, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:40:50.985187+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:40:51.070749+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:40:51.152531+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:40:51.407469+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 168.52, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:40:51.689628+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 196.97, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:40:51.776154+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.64, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:41:35.993159+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4318.9, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:41:40.300017+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4224.4, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:41:40.496486+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 30.39, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:43:47.754470+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:43:52.938446+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 208.52, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:43:53.236262+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 205.24, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:43:53.527633+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 204.49, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:40.693050+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 41.45, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:40.777731+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.07, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:40.986589+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 102.62, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.058668+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.01, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.154561+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.363039+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 101.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.493238+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 47.87, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.598701+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.706959+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.791939+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.01, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:41.903111+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 19.39, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.263638+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.351633+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.440640+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.533497+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.32, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.621112+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.24, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.709841+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.26, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.829087+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:51.975541+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.28, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:52.162269+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.69, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:52.267048+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:52.355579+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:52.823742+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:52.942830+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:44:53.029095+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:57:10.683982+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 140.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:57:11.094705+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 153.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:57:11.736759+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 152.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:57:21.241981+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:57:21.342016+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.29, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T01:57:21.435562+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 7.83, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:16.356456+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:16.652413+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 214.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:16.971900+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 152.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:17.203797+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 143.01, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:17.412711+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 136.43, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:17.685508+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 193.65, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:18.340038+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:18.411635+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:18.493987+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:18.680678+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:18.749178+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:50.520625+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 5307.57, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:52.864903+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2279.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:03:57.143701+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4096.8, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:01.245546+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4038.53, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:04.580471+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3273.23, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:04.679829+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 22.57, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:04.809577+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 27.83, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:04.883169+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.07, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:04.957398+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "agent_id": "default", "phase": "unknown", "error": "sync exploded"}
+{"ts": "2026-03-05T02:04:05.030079+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 2.77, "success": false, "agent_id": "default", "phase": "unknown", "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-05T02:04:05.100136+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 5.42, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:05.169411+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 5.41, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:05.245698+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 4.82, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:05.323345+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 4.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:05.403913+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 7.77, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:07.561526+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 26.97, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:08.327155+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 700.47, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:08.776596+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.05, "success": false, "agent_id": "default", "phase": "unknown", "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-315/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T02:04:12.169346+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 115.33, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:14.355792+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2119.71, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:14.584379+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 126.96, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:16.182551+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 122.76, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:19.212690+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2130.36, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:21.373323+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2089.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:23.509667+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2074.08, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:23.709821+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 125.64, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:25.844125+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2018.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:27.983245+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2025.49, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:29.688579+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 40.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:29.815709+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 53.74, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:29.954047+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 56.85, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:33.479287+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 2.87, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:33.594612+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 38.01, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:48.118450+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 16.78, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:49.184460+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 700.8, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:49.248092+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 3.67, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:49.982115+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 669.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:04:50.675262+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 636.81, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:05:06.015488+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2258.9, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:05:08.336666+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2204.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:05:10.627357+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2226.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:05:14.719992+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4024.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:05:18.888695+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4077.42, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:05:23.147919+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4145.94, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:05:27.311729+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3997.06, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:00.850836+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:00.945155+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:01.018684+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:01.246730+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 137.5, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:01.517259+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 168.1, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:01.594890+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.3, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:35.656174+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4160.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:39.783557+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4058.88, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:07:39.994341+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 39.72, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:09:28.938002+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:09:33.318358+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 119.07, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:09:33.567904+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 125.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:09:33.841915+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 198.27, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:17.431849+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 30.32, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:17.553546+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.06, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:17.746748+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 99.38, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:17.846977+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.01, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:17.930019+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:18.137089+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 99.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:18.272619+00:00", "event": "tool_invocation", "tool_name": "trw_run_report", "duration_ms": 59.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:18.360467+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:18.434334+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:18.528739+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:18.639133+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 14.35, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:25.983943+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.074578+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.146021+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.217061+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.24, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.307939+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.393390+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.474297+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.580499+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.687878+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.800649+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:26.900622+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:27.379504+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:27.452408+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:10:27.530379+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:15:24.500814+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 125.86, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:15:24.788126+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 118.11, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:15:25.402464+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 113.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:15:35.091234+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 6.02, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:15:35.212249+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 37.11, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:15:35.314692+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 6.76, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:37.342031+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:37.757938+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 287.31, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:38.046645+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 177.82, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:38.394181+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 234.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:38.765476+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 258.25, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:39.149429+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 288.44, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:39.964138+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:40.051289+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:40.141898+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:40.284929+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:22:40.394473+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:14.121695+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2911.12, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:16.603067+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2414.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:24.450837+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 7766.29, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:28.856958+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4257.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:32.320038+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3383.67, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:32.437584+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 36.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:32.553975+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 38.65, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:32.632400+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.07, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:32.713734+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "agent_id": "default", "phase": "unknown", "error": "sync exploded"}
+{"ts": "2026-03-05T02:23:32.812297+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 14.05, "success": false, "agent_id": "default", "phase": "unknown", "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-05T02:23:32.901685+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 6.36, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:32.990746+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 7.72, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:33.108008+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 9.63, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:33.200850+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 6.83, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:33.323136+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 13.71, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:35.965143+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 37.61, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:36.722573+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 665.64, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:37.134166+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.07, "success": false, "agent_id": "default", "phase": "unknown", "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-316/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T02:23:41.261376+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 237.02, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:43.799973+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2458.36, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:44.021400+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 145.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:46.103951+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 150.11, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:49.536382+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2403.89, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:52.141694+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2399.44, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:54.502730+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2284.92, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:54.732427+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 140.27, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:57.094725+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2285.89, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:23:59.494040+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 2252.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:01.483688+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 58.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:01.610127+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 45.48, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:01.744649+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 55.59, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:05.569061+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 4.75, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:05.732980+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 72.18, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:22.496358+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 14.37, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:23.609744+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 680.29, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:23.695265+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 7.4, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:24.386965+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 614.33, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:25.105370+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 635.21, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:41.916512+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1640.48, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:43.563259+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1575.64, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:45.282995+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1646.35, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:49.498700+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4140.33, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:53.742113+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4170.03, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:24:57.909734+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4091.48, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:25:02.217208+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4130.73, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:10.598234+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:10.681107+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:10.766053+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:11.019461+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 167.66, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:11.288332+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 156.88, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:11.378202+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.32, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:48.239420+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4273.59, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:52.482640+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4162.38, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:26:52.667576+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 28.02, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:28:56.558003+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:29:02.026243+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 210.96, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:29:02.352379+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 215.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:29:02.652546+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 197.33, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.068381+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.198306+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.310168+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.411952+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.56, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.510067+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.614801+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.710101+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.810025+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.4, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:06.928323+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:07.054389+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.28, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:07.153747+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.42, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:07.713377+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.24, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:07.813469+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:30:07.896376+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:00.443036+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.13, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:00.526606+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.12, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:00.610574+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:00.694344+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:00.776277+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.24, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:00.852026+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.008776+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.081995+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.160358+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.276192+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.362601+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.834917+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.918762+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:01.997550+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.01, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "group_by must be one of: agent, model, none, phase, task"}
+{"ts": "2026-03-05T02:41:29.226420+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.310079+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.410537+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.492626+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.583475+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.668837+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.26, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.759710+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.863141+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:29.954683+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:30.076406+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:30.168059+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.14, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:30.669789+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:30.745873+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:41:30.840352+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.01, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "group_by must be one of: agent, model, none, phase, task"}
+{"ts": "2026-03-05T02:43:04.278356+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:04.363728+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:04.471763+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:04.563803+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:04.651200+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:04.754167+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:04.837560+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.29, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:04.925221+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:05.003887+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:05.086493+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.2, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:05.183032+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.15, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:05.707040+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:05.789813+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:43:05.876611+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.01, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "group_by must be one of: agent, model, none, phase, task"}
+{"ts": "2026-03-05T02:47:30.887260+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 5836.65, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:33.549882+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2523.46, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:37.919762+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4300.57, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:42.056605+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4072.82, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:45.365595+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3235.51, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:45.519235+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 33.57, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:45.625563+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 38.97, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:45.719588+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.08, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:45.799873+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "sync exploded"}
+{"ts": "2026-03-05T02:47:45.896292+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 12.78, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-05T02:47:45.965403+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 4.63, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:46.034663+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 4.89, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:46.121247+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 5.02, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:46.251775+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 11.95, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:46.344900+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 11.92, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:48.546850+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 21.72, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:49.289303+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 674.89, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:49.656141+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.05, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-325/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T02:47:54.667945+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 9.78, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:55.769101+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 640.39, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:55.846580+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 4.35, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:56.610197+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 617.75, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:47:57.239622+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 568.0, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:52:19.382824+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 162.05, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:52:19.626012+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 105.69, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:52:20.156335+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 99.69, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:52:29.521095+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 8.23, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:52:29.594844+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 4.15, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:52:29.689325+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 6.45, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:36.329476+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.0, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:36.564452+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 145.09, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:36.868810+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 173.67, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:37.152686+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 200.11, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:37.390433+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 160.97, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:37.635461+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 130.49, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:38.349457+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:38.453272+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:38.537188+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:38.647008+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.03, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:57:38.722844+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:12.588133+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 4760.1, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:14.271079+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 1606.27, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:18.543015+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4170.46, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:22.792463+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4167.83, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.084454+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 3229.32, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.182316+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 22.77, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.293981+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 27.81, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.365155+00:00", "event": "tool_invocation", "tool_name": "trw_learn_update", "duration_ms": 0.07, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.434164+00:00", "event": "tool_invocation", "tool_name": "trw_claude_md_sync", "duration_ms": 0.02, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "sync exploded"}
+{"ts": "2026-03-05T02:58:26.501162+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 2.78, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "Invalid risk_level: 'EXTREMELY_DANGEROUS'. Valid: ['critical', 'high', 'medium', 'low']"}
+{"ts": "2026-03-05T02:58:26.582460+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 5.08, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.692558+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 6.59, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.770953+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 6.22, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.849006+00:00", "event": "tool_invocation", "tool_name": "trw_prd_create", "duration_ms": 5.09, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:26.923490+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 7.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:29.310116+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 29.77, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:30.057051+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 669.31, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:30.461680+00:00", "event": "tool_invocation", "tool_name": "trw_prd_validate", "duration_ms": 0.06, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "PRD file not found: /tmp/pytest-of-wallter/pytest-326/test_prd_validate_missing_file0/NONEXISTENT-PRD.md"}
+{"ts": "2026-03-05T02:58:34.085958+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 130.76, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:35.680106+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1460.13, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:35.897540+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 129.76, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:37.687618+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 134.51, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:40.083369+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1433.55, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:41.653007+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1474.14, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:43.216249+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1479.31, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:43.447723+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 159.26, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:45.018605+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1498.44, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:46.492860+00:00", "event": "tool_invocation", "tool_name": "trw_learn", "duration_ms": 1404.24, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:48.504843+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 47.61, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:48.654093+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 50.86, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:48.817003+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 50.91, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:52.369875+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 4.14, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:58:52.533789+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 61.35, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:07.494476+00:00", "event": "tool_invocation", "tool_name": "trw_knowledge_sync", "duration_ms": 9.41, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:08.698855+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 685.32, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:08.837685+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 6.59, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:09.580401+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 662.91, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:10.302273+00:00", "event": "tool_invocation", "tool_name": "trw_recall", "duration_ms": 651.42, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:27.394040+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2765.94, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:29.851641+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2378.67, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:32.294408+00:00", "event": "tool_invocation", "tool_name": "trw_session_start", "duration_ms": 2380.65, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:36.480580+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4056.8, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:40.587575+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4046.83, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:44.691777+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4035.9, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T02:59:48.876622+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4112.24, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:15.131219+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:15.209642+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.05, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:15.279757+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.04, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:15.485177+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 138.56, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:15.660451+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 106.51, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:15.730983+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 0.3, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:52.850844+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4291.5, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:57.247090+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 4306.4, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:01:57.431291+00:00", "event": "tool_invocation", "tool_name": "trw_status", "duration_ms": 23.97, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:03:57.472943+00:00", "event": "tool_invocation", "tool_name": "trw_analytics_report", "duration_ms": 0.12, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:02.482107+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 157.22, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:02.766347+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 162.98, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:03.061396+00:00", "event": "tool_invocation", "tool_name": "trw_build_check", "duration_ms": 185.75, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:56.968815+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.064262+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.152675+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.19, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.243337+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.24, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.335909+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.31, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.413178+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.24, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.578400+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.21, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.666685+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.757312+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.22, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.847267+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.16, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:57.932138+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:58.472979+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.18, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:58.551992+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.17, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T03:04:58.630269+00:00", "event": "tool_invocation", "tool_name": "trw_usage_report", "duration_ms": 0.01, "success": false, "agent_id": "default", "agent_role": "lead", "phase": "unknown", "error": "group_by must be one of: agent, model, none, phase, task"}
+{"ts": "2026-03-05T06:13:12.551094+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 119962.27, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}
+{"ts": "2026-03-05T06:16:16.848706+00:00", "event": "tool_invocation", "tool_name": "trw_deliver", "duration_ms": 114013.99, "success": true, "agent_id": "default", "agent_role": "lead", "phase": "unknown"}

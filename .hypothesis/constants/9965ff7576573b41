@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/event_helpers.py
+# hypothesis_version: 6.151.9
+
+['claude_md_sync', 'claude_md_synced', 'data', 'event', 'phase', 'phase_check', 'reflection_complete', 'tool_invocation', 'tool_name', 'trw_reflect_complete', 'valid', 'validate']

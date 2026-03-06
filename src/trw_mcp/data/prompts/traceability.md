@@ -41,8 +41,8 @@ Every requirement MUST trace to at least one source:
 
 ### Downstream Links (Implementation Traceability)
 Implemented requirements SHOULD trace to:
-- Implementation file(s): `module.py:function` or `class.method`
-- Test file(s): `test_module.py::test_function`
+- Implementation file(s): `module.py:function`, `component.ts:method`, or `handler.go:Function`
+- Test file(s): `test_module.py::test_function`, `component.test.ts::testCase`, or `handler_test.go::TestFunction`
 
 ### Knowledge Entry Links (Research Traceability)
 Research-backed requirements SHOULD link to:
@@ -299,7 +299,7 @@ Generate in both Markdown and YAML:
 
 | ID | Title | Source | Implementation | Tests | KE | Status | Coverage |
 |----|-------|--------|----------------|-------|----|----|---------|
-| FR-001 | ... | doc.md:S2 | module.py:fn | test.py::test | KE-001 | Impl | 100% |
+| FR-001 | ... | doc.md:S2 | module.py:fn (or component.ts:fn) | test.py::test (or component.test.ts::test) | KE-001 | Impl | 100% |
 | FR-002 | ... | interview | - | - | - | Pending | 25% |
 ```
 
@@ -327,11 +327,11 @@ traceability_matrix:
 
       downstream:
         implementation:
-          - file: "module.py"
+          - file: "module.py"  # or component.ts, handler.go, service.rb, etc.
             location: "function_name"
             lines: "10-25"
         tests:
-          - file: "test_module.py"
+          - file: "test_module.py"  # or component.test.ts, handler_test.go, etc.
             tests: ["test_function"]
 
       knowledge:
@@ -379,7 +379,7 @@ You are validating traceability links for accuracy. Check that all links point t
 - Has the source been updated since linking?
 
 ### 2. Implementation Validation
-- Does the referenced file exist?
+- Does the referenced file exist? (any language: `.py`, `.ts`, `.go`, `.rs`, etc.)
 - Does the function/class still exist?
 - Does the implementation still match the requirement?
 
@@ -533,7 +533,7 @@ You are generating an audit-ready traceability report per AARE-F standards and s
 
 | Requirement | Source Evidence | Impl Evidence | Test Evidence |
 |-------------|-----------------|---------------|---------------|
-| FR-001 | doc.md (SHA: xxx) | module.py:10 | test.py::test |
+| FR-001 | doc.md (SHA: xxx) | module.py:10 (or component.ts:10) | test.py::test (or component.test.ts::test) |
 
 ## Appendices
 

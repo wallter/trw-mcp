@@ -84,7 +84,7 @@ Common failure modes to look for:
 
 For EACH FR, execute this ritual using FRESH evidence (not from memory):
 
-1. **IDENTIFY**: What is the verification command? (e.g., `pytest tests/test_foo.py::test_fr01 -v`)
+1. **IDENTIFY**: What is the verification command? (e.g., `pytest tests/test_foo.py::test_fr01 -v` for Python, or the equivalent for your project's test framework)
 2. **RUN**: Execute the command NOW — not from a previous run, fresh execution
 3. **READ**: Read the FULL output (not just exit code — look at actual test assertions)
 4. **VERIFY**: Does the output confirm the requirement is met? Cite specific output lines
@@ -105,7 +105,7 @@ fr_coverage:
   - id: FR01
     status: implemented  # MUST be "implemented" — "partial" triggers re-block
     file: path/to/file.py
-    evidence: "verified 2026-02-26T21:00:00Z — pytest: test_fr01_happy PASSED (function_name() returns expected at line N)"
+    evidence: "verified 2026-02-26T21:00:00Z — test run: test_fr01_happy PASSED (function_name() returns expected at line N)"
   - id: FR02
     status: implemented
     file: path/to/file.py
@@ -113,7 +113,7 @@ fr_coverage:
 files_changed:
   - path/to/file1.py
   - path/to/file2.py
-tests_run: ".venv/bin/python -m pytest tests/test_foo.py -v — 12 passed, 0 failed"
+tests_run: "<test framework command> tests/test_foo.py -v — 12 passed, 0 failed"
 integration_verified:
   - "new_function() called from existing_module.py:55 — verified via grep"
   - "config field X referenced in new_module.py:12 — verified via read"

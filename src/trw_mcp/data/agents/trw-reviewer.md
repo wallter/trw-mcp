@@ -53,7 +53,7 @@ verdict: pass|conditional|fail
 score: 85  # out of 100
 findings:
   - severity: P0|P1|P2
-    file: path/to/file.py
+    file: path/to/file
     line: 42
     issue: "Description of the issue"
     fix: "Suggested fix"
@@ -68,7 +68,7 @@ rubric_scores:
 prd_coverage:
   - req_id: FR01
     covered: true
-    evidence: "test_feature.py:test_fr01"
+    evidence: "test_feature.py:test_fr01 (or component.test.ts::testFr01)"
 ```
 </workflow>
 

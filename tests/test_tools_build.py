@@ -373,7 +373,7 @@ class TestBuildPhaseGate:
         _write_build_cache(trw_dir, mypy_clean=False)
         config = TRWConfig()
         failures = _check_build_status(trw_dir, config, "validate")
-        mypy_failures = [f for f in failures if f.rule == "mypy_clean"]
+        mypy_failures = [f for f in failures if f.rule == "type_check_clean"]
         assert len(mypy_failures) == 1
 
     def test_coverage_below_min(self, tmp_path: Path) -> None:

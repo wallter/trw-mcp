@@ -1,8 +1,9 @@
 """TRW build verification gate tool — PRD-CORE-023, PRD-QUAL-025/028/029.
 
-Runs pytest and mypy via subprocess, caches results to
-.trw/context/build-status.yaml, and returns BuildStatus.
-Phase gates consume cached status — they never run subprocesses.
+Runs the project's test suite and type checker via subprocess, caches results
+to .trw/context/build-status.yaml, and returns BuildStatus. Defaults to
+pytest + mypy for Python projects but supports configurable test/type-check
+commands. Phase gates consume cached status — they never run subprocesses.
 
 Extended with mutation testing (QUAL-025), dependency audit (QUAL-028),
 and API fuzz (QUAL-029) scopes.
@@ -886,13 +887,14 @@ def register_build_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Verify your code passes tests and type checking — the gate between implementation and delivery.
 
-        Runs pytest and/or mypy via subprocess, parses results, and caches to
-        .trw/context/build-status.yaml. Returns test count, coverage percentage,
-        failure details, and mypy status. This is the VALIDATE phase gate — run
-        it after implementation before moving to review and delivery.
+        Runs the project's test suite and type checker via subprocess, parses
+        results, and caches to .trw/context/build-status.yaml. Returns test
+        count, coverage percentage, failure details, and type-check status.
+        This is the VALIDATE phase gate — run it after implementation before
+        moving to review and delivery.
 
         Args:
-            scope: Check scope — 'full' (pytest + mypy), 'pytest', 'mypy'.
+            scope: Check scope — 'full' (tests + type-check), 'pytest', 'mypy'.
                 Also supports 'mutations' (mutation testing only),
                 'deps' (dependency audit only), 'api' (API fuzz only).
             run_path: Optional run directory for event logging.
@@ -1039,6 +1041,29 @@ def register_build_tools(server: FastMCP) -> None:
                 result["dep_audit_blocking"] = True
 
         return result
+
+    @server.tool()
+    @log_tool_call
+    def trw_quality_dashboard(
+        window_days: int = 90,
+        compare_sprint: str = "",
+        format: str = "summary",
+    ) -> dict[str, object]:
+        """View quality trends — ceremony scores, coverage, review verdicts, and degradation alerts.
+
+        Aggregates session event data to show how your project's quality metrics
+        are trending over time. Use compare_sprint to see sprint-over-sprint deltas.
+
+        Args:
+            window_days: Number of days to include (1-365, default 90).
+            compare_sprint: Optional sprint ID to compare against previous sprint.
+            format: Output format — "summary" or "detailed".
+        """
+        from trw_mcp.state.dashboard import aggregate_dashboard
+
+        trw_dir = resolve_trw_dir()
+        clamped_days = max(1, min(365, window_days))
+        return aggregate_dashboard(trw_dir, clamped_days, compare_sprint)
 
 
 def __reload_hook__() -> None:

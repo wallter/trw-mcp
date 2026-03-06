@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/analytics_entries.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.5, 0.6, '-', '[^a-z0-9]+', 'active', 'agent', 'auto-discovered', 'created', 'data', 'detail', 'dry_run', 'entries', 'error', 'human', 'id', 'impact', 'index.yaml', 'learning_entry_saved', 'learning_id', 'llm', 'q_observations', 'q_value', 'repeated operation:', 'resolved_at', 'skipped_count', 'source_identity', 'source_type', 'status', 'success:', 'summary', 'tags', 'total_count', 'total_scanned', 'true', 'trw_reflect', 'trw_reflect:llm', 'ts', 'updated', 'updated_count']

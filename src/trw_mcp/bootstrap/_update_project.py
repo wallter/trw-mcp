@@ -37,6 +37,8 @@ _ALWAYS_UPDATE: list[tuple[str, str]] = [
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
     ("settings.json", ".claude/settings.json"),
+    ("trw_readme.md", "docs/TRW_README.md"),
+    ("config_reference.md", "docs/CONFIG-REFERENCE.md"),
 ]
 
 # Files that are never overwritten during update (user-customized).
@@ -45,11 +47,6 @@ _NEVER_OVERWRITE = {
     ".trw/config.yaml",
     ".trw/learnings/index.yaml",
 }
-
-# Files that are smart-merged during update (preserve user content, ensure
-# framework entries exist).  .mcp.json was previously in _NEVER_OVERWRITE
-# which caused the trw server entry to be lost if removed by the user.
-_MERGE_FILES = {".mcp.json"}
 
 # Files in .trw/context/ that are always preserved during cleanup.
 _CONTEXT_ALLOWLIST: frozenset[str] = frozenset({

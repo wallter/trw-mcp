@@ -57,7 +57,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
     CeremonyTool("Any", "trw_checkpoint", "After milestones — preserves progress across compactions", "Atomic state snapshot", "trw_checkpoint(message='...')"),
     CeremonyTool("PLAN", "trw_prd_create", "When defining requirements", "Generate AARE-F PRD", "trw_prd_create(input_text='...')"),
     CeremonyTool("PLAN", "trw_prd_validate", "Before implementation", "PRD quality gate", "trw_prd_validate(prd_path='...')"),
-    CeremonyTool("VALIDATE", "trw_build_check", "After implementation — runs pytest + mypy, verifies integration", "Run pytest + mypy", "trw_build_check(scope='full')"),
+    CeremonyTool("VALIDATE", "trw_build_check", "After implementation — runs tests and type-check, verifies integration", "Run tests + type-check", "trw_build_check(scope='full')"),
     CeremonyTool("REVIEW", "review diff", "After VALIDATE — check quality (DRY/KISS/SOLID), fix gaps, record learnings", "Review diff, fix incomplete integrations", "Read diff, fix gaps, trw_learn(summary='...')"),
     CeremonyTool("DELIVER", "trw_claude_md_sync", "At delivery — promotes learnings to CLAUDE.md", "Promote learnings to CLAUDE.md", "trw_claude_md_sync()"),
     CeremonyTool("DELIVER", "trw_deliver", "At task completion — persists everything in one call", "reflect+sync+checkpoint+index", "trw_deliver()"),

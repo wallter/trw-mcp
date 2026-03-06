@@ -292,228 +292,97 @@ class TestCheckDuplicate:
 # ---------------------------------------------------------------------------
 
 class TestMergeEntries:
-    """Tests for the merge_entries() function."""
+    """Tests for the merge_entries() function.
+
+    Uses make_merge_scenario from _factories to reduce per-test boilerplate.
+    """
 
     def test_merge_updates_tags_as_union(self, tmp_path: Path) -> None:
         """merge_entries unions the tag sets."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
+        from tests._factories import make_merge_scenario
 
-        existing_path = write_entry(entries_dir, writer, "L-merge01", "summary", "detail")
-        writer.write_yaml(existing_path, {
-            "id": "L-merge01",
-            "summary": "summary",
-            "detail": "detail",
-            "tags": ["python", "testing"],
-            "evidence": ["file1.py"],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
-
-        new_data = {
-            "id": "L-new01",
-            "summary": "summary",
-            "detail": "longer detail with more info",
-            "tags": ["testing", "fixtures"],
-            "evidence": ["file2.py"],
-            "impact": 0.7,
-            "merged_from": [],
-        }
-
-        merge_entries(existing_path, new_data, reader, writer)
-
-        updated = reader.read_yaml(existing_path)
+        path, new_data, reader, writer = make_merge_scenario(
+            tmp_path,
+            existing_tags=["python", "testing"],
+            existing_evidence=["file1.py"],
+            new_tags=["testing", "fixtures"],
+            new_evidence=["file2.py"],
+        )
+        merge_entries(path, new_data, reader, writer)
+        updated = reader.read_yaml(path)
         assert set(updated["tags"]) == {"python", "testing", "fixtures"}
 
     def test_merge_updates_evidence_as_union(self, tmp_path: Path) -> None:
         """merge_entries unions evidence lists."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
+        from tests._factories import make_merge_scenario
 
-        existing_path = entries_dir / "L-ev01.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-ev01",
-            "summary": "summary",
-            "detail": "short detail",
-            "tags": [],
-            "evidence": ["file_a.py"],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
-
-        new_data = {
-            "id": "L-new02",
-            "summary": "summary",
-            "detail": "shorter",
-            "tags": [],
-            "evidence": ["file_b.py", "file_a.py"],
-            "impact": 0.4,
-            "merged_from": [],
-        }
-
-        merge_entries(existing_path, new_data, reader, writer)
-
-        updated = reader.read_yaml(existing_path)
+        path, new_data, reader, writer = make_merge_scenario(
+            tmp_path,
+            existing_evidence=["file_a.py"],
+            new_evidence=["file_b.py", "file_a.py"],
+            new_impact=0.4,
+            new_detail="shorter",
+        )
+        merge_entries(path, new_data, reader, writer)
+        updated = reader.read_yaml(path)
         assert set(updated["evidence"]) == {"file_a.py", "file_b.py"}
 
     def test_merge_takes_max_impact(self, tmp_path: Path) -> None:
         """merge_entries uses max(existing.impact, new.impact)."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
+        from tests._factories import make_merge_scenario
 
-        existing_path = entries_dir / "L-imp01.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-imp01",
-            "summary": "s",
-            "detail": "d",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
-
-        new_data = {"id": "L-new03", "summary": "s", "detail": "d", "tags": [], "evidence": [], "impact": 0.8, "merged_from": []}
-        merge_entries(existing_path, new_data, reader, writer)
-
-        updated = reader.read_yaml(existing_path)
+        path, new_data, reader, writer = make_merge_scenario(
+            tmp_path, existing_impact=0.5, new_impact=0.8,
+        )
+        merge_entries(path, new_data, reader, writer)
+        updated = reader.read_yaml(path)
         assert float(updated["impact"]) == 0.8
 
     def test_merge_increments_recurrence(self, tmp_path: Path) -> None:
         """merge_entries increments recurrence count."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
+        from tests._factories import make_merge_scenario
 
-        existing_path = entries_dir / "L-rec01.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-rec01",
-            "summary": "s",
-            "detail": "d",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 2,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
-
-        new_data = {"id": "L-new04", "summary": "s", "detail": "d", "tags": [], "evidence": [], "impact": 0.5, "merged_from": []}
-        merge_entries(existing_path, new_data, reader, writer)
-
-        updated = reader.read_yaml(existing_path)
+        path, new_data, reader, writer = make_merge_scenario(
+            tmp_path, existing_recurrence=2, new_impact=0.5,
+        )
+        merge_entries(path, new_data, reader, writer)
+        updated = reader.read_yaml(path)
         assert int(updated["recurrence"]) == 3
 
     def test_merge_adds_merged_from(self, tmp_path: Path) -> None:
         """merge_entries appends new entry ID to merged_from."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
+        from tests._factories import make_merge_scenario
 
-        existing_path = entries_dir / "L-mf01.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-mf01",
-            "summary": "s",
-            "detail": "d",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
-
-        new_data = {"id": "L-newmerge05", "summary": "s", "detail": "d", "tags": [], "evidence": [], "impact": 0.5, "merged_from": []}
-        merge_entries(existing_path, new_data, reader, writer)
-
-        updated = reader.read_yaml(existing_path)
+        path, new_data, reader, writer = make_merge_scenario(
+            tmp_path, new_id="L-newmerge05", new_impact=0.5,
+        )
+        merge_entries(path, new_data, reader, writer)
+        updated = reader.read_yaml(path)
         assert "L-newmerge05" in updated["merged_from"]
 
     def test_merge_appends_longer_detail(self, tmp_path: Path) -> None:
         """merge_entries appends detail when new detail is longer than existing."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
+        from tests._factories import make_merge_scenario
 
-        existing_path = entries_dir / "L-det01.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-det01",
-            "summary": "s",
-            "detail": "short detail",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
-
-        new_data = {
-            "id": "L-newdet06",
-            "summary": "s",
-            "detail": "this is a much longer and more informative detail that should be appended",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "merged_from": [],
-        }
-        merge_entries(existing_path, new_data, reader, writer)
-
-        updated = reader.read_yaml(existing_path)
+        path, new_data, reader, writer = make_merge_scenario(
+            tmp_path,
+            existing_detail="short detail",
+            new_detail="this is a much longer and more informative detail that should be appended",
+            new_impact=0.5,
+        )
+        merge_entries(path, new_data, reader, writer)
+        updated = reader.read_yaml(path)
         assert "this is a much longer" in str(updated["detail"])
 
     def test_merge_returns_path(self, tmp_path: Path) -> None:
         """merge_entries returns the path of the updated entry."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
+        from tests._factories import make_merge_scenario
 
-        existing_path = entries_dir / "L-ret01.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-ret01",
-            "summary": "s",
-            "detail": "d",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
-
-        new_data = {"id": "L-newret07", "summary": "s", "detail": "d", "tags": [], "evidence": [], "impact": 0.5, "merged_from": []}
-        returned_path = merge_entries(existing_path, new_data, reader, writer)
-
-        assert returned_path == existing_path
+        path, new_data, reader, writer = make_merge_scenario(
+            tmp_path, new_impact=0.5,
+        )
+        returned_path = merge_entries(path, new_data, reader, writer)
+        assert returned_path == path
 
 
 # ---------------------------------------------------------------------------

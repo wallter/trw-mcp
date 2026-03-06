@@ -5,6 +5,10 @@ Engineering memory MCP server for Claude Code -- patterns, gotchas, and project 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
+## Getting Started
+
+See [Developer Quickstart](../docs/TRW_README.md) for installation and first-run instructions.
+
 ## What It Does
 
 TRW-MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives Claude Code persistent engineering memory. It records what you learn during development sessions -- patterns, gotchas, architecture decisions -- and recalls relevant knowledge at the start of every new session. Over time, your AI assistant accumulates project-specific expertise instead of starting from scratch.

@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/analytics_counters.py
+# hypothesis_version: 6.151.9
+
+[0.5, 0.7, 200, '0/0', 'analytics.yaml', 'analytics_updated', 'claude_md_syncs', 'count', 'data', 'detail', 'event_type', 'impact', 'q_observations', 'sequence', 'sessions_tracked', 'success_rate', 'successful_outcomes', 'summary', 'total_learnings', 'total_outcomes', 'unknown']

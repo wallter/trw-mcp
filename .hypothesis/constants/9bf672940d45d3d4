@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/export.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.8, '*.yaml', '.trw', ';', 'TRW_PROJECT_ROOT', 'access_count', 'aggregate', 'all', 'analytics', 'analytics.yaml', 'ceremony_aggregates', 'created', 'cross-project', 'csv', 'detail', 'dry_run', 'error', 'evidence', 'export_date', 'failed', 'format', 'id', 'ignore', 'impact', 'imported', 'imported_ids', 'index.yaml', 'json', 'learnings', 'learnings_count', 'learnings_csv', 'metadata', 'ok', 'project', 'q_value', 'reflection_quality', 'runs', 'scope', 'session_analytics', 'skipped_duplicate', 'skipped_filter', 'source_project', 'source_type', 'status', 'summary', 'tags', 'total_source', 'trw_version', 'unknown', 'updated', 'utf-8']

@@ -390,11 +390,11 @@ You are a traceability analyst. Verify the traceability coverage of these requir
 
 ### 2. Downstream Traceability (Implementation)
 - Implemented requirements should link to code
-- Format: `module.py:function` or `class.method`
+- Format: `module.py:function`, `component.ts:method`, or `handler.go:Function`
 
 ### 3. Test Traceability
 - Requirements should link to test cases
-- Format: `test_module.py::test_function`
+- Format: `test_module.py::test_function`, `component.test.ts::testCase`, or `handler_test.go::TestFunction`
 
 ### 4. Knowledge Entry Links (AARE-F)
 - Research-backed requirements should link to KE entries

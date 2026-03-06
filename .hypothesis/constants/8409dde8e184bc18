@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/auto_upgrade.py
+# hypothesis_version: 6.151.9
+
+[200, 300, 8192, '.', '..', '/', '0.0.0', 'Authorization', 'GET', 'advisory', 'applied', 'artifact_checksum', 'artifact_url', 'auto_upgrade_failed', 'available', 'channel', 'checksum_mismatch', 'created', 'current', 'data', 'details', 'errors', 'latest', 'r:gz', 'rb', 'release.tar.gz', 'trw-upgrade-', 'update.lock', 'updated', 'utf-8', 'version', 'version_check_failed', 'w']

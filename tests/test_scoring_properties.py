@@ -18,13 +18,15 @@ from trw_mcp.scoring import (
     _IMPACT_DECAY_FLOOR,
     _TIER_HIGH_CEILING,
     _TIER_MEDIUM_CEILING,
-    _TIME_DECAY_FLOOR,
     apply_impact_decay,
     apply_time_decay,
     compute_utility_score,
     enforce_tier_distribution,
     update_q_value,
 )
+
+# Floor constant from trw_memory.lifecycle.scoring.apply_time_decay
+_TIME_DECAY_FLOOR: float = 0.3
 
 # ---------------------------------------------------------------------------
 # Strategy helpers

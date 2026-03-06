@@ -159,14 +159,17 @@ def _compute_verdict(findings: list[dict[str, str]]) -> str:
     return "pass"
 
 
-def _persist_review(
+def _persist_review_artifact(
     resolved_run: Path | None,
     review_data: dict[str, object],
     event_fields: dict[str, object],
 ) -> str:
     """Write review.yaml and log review_complete event.
 
-    Shared helper for all three review modes (manual, cross_model, auto).
+    Specific to manual/cross_model/auto review modes — writes to
+    ``meta/review.yaml`` and logs event type ``review_complete``.
+    Do NOT use for reconciliation (which writes ``reconciliation.yaml``
+    with event type ``spec_reconciliation``).
 
     Args:
         resolved_run: Run directory path, or None if no run active.

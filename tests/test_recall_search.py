@@ -228,14 +228,14 @@ class TestHybridSearchFiltering:
         assert "L-py" in ids
         assert "L-js" not in ids
 
-    def test_tag_filter_with_non_list_tags_passes(self, tmp_path: Path) -> None:
-        """When entry tags is not a list, the tag filter is skipped (line 72 isinstance check)."""
+    def test_tag_filter_with_non_list_tags_excluded(self, tmp_path: Path) -> None:
+        """When entry tags is not a list, the entry is excluded by tag filter."""
         results = [
             {"id": "L-str", "summary": "string tags", "detail": "", "impact": 0.5, "tags": "not-a-list"},
         ]
-        # With tag filter active but tags is a string (not list), entry should NOT be excluded
+        # With tag filter active but tags is a string (not list), entry should be excluded
         matches, _ = self._run_hybrid_search(tmp_path, results, tags=["anything"])
-        assert len(matches) == 1
+        assert len(matches) == 0
 
     def test_entry_id_not_in_glob_uses_fallback_path(self, tmp_path: Path) -> None:
         """When entry_id doesn't match any file, fallback path is used (lines 83-84)."""

@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/retrieval/dense.py
+# hypothesis_version: 6.151.9
+
+[0.0, 'dense_search_skipped', 'embedder_unavailable', 'no_candidates', 'no_embedder', 'null_query_embedding']

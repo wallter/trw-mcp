@@ -16,6 +16,7 @@ import structlog
 import trw_mcp.state.analytics_core as _ac
 from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state.persistence import lock_for_rmw, model_to_dict
+from trw_mcp.tools._learning_helpers import is_noise_summary
 
 logger = structlog.get_logger()
 
@@ -402,16 +403,6 @@ def extract_learnings_mechanical(
     return new_learnings
 
 
-def _is_telemetry_noise(summary: str) -> bool:
-    """Check if a learning summary is telemetry noise that should be suppressed.
-
-    Matches summaries starting with "Repeated operation:" or "Success:" which
-    are analytics counters, not actionable learnings (PRD-FIX-021).
-    """
-    lower = summary.lower()
-    return lower.startswith(("repeated operation:", "success:"))
-
-
 def extract_learnings_from_llm(
     llm_items: list[dict[str, object]],
     trw_dir: Path,
@@ -432,7 +423,7 @@ def extract_learnings_from_llm(
 
     for item in llm_items:
         summary = str(item.get("summary", "LLM-extracted learning"))
-        if _is_telemetry_noise(summary):
+        if is_noise_summary(summary):
             continue
         raw_tags = item.get("tags")
         tags = raw_tags if isinstance(raw_tags, list) else ["auto-discovered", "llm"]

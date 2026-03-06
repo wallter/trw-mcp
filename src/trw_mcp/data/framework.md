@@ -362,50 +362,6 @@ Shard output: `scratch/shard-{id}/findings.yaml` — fields: `shard_id`, `phase`
 
 ---
 
-## WAVE ORCHESTRATION
-
-Waves sequence groups of parallel shards. Each wave completes before the next begins.
-
-`shards/wave_manifest.yaml` — each entry: `wave`, `shards`, `status` (pending|active|complete|failed|partial), `depends_on`.
-
-| Rule | Description |
-|------|-------------|
-| Parallel within wave | All shards launch as blocking Task() in ONE message |
-| Sequential between waves | Wave N+1 starts after wave N complete |
-| Fail-fast | Shard failure → pause → replan before advancing |
-| Manifest update | Update status after each wave |
-
-On resume: classify shards as complete/partial/failed/not_started, launch only incomplete.
-When ALL shards independent: MAY omit `wave_manifest.yaml` and launch directly.
-
----
-
-## OUTPUT CONTRACTS
-
-Every shard declares output (`output_contract`: `file`, `schema` with `keys`/`required`). ORC validates after each wave.
-
-| Rule | Description |
-|------|-------------|
-| Post-wave check | Verify output file exists, contains required keys |
-| Missing output | Block next wave, log failure, replan |
-| Schema mismatch | Warn if optional keys missing; proceed |
-| Contract immutability | Once wave starts, contracts MUST NOT change |
-
----
-
-## SELF-DIRECTING SHARDS
-
-Shards MAY self-decompose (bounded recursion). ALL must be true: `self_decompose: true`, depth < MAX_CHILD_DEPTH, >=2 independent subtasks, parent can define child contracts. Depth: 0=ORC, 1=child, 2=grandchild. Hard ceiling: 3.
-
-<shard-rules>
-- Children MUST be blocking Task() calls
-- Parent waits for all children before writing output
-- Child failure: parent retries, replans, or fails with partial
-- At ceiling: no self-decomposition regardless of settings
-</shard-rules>
-
----
-
 ## PARALLELISM
 
 Heuristic: if shards independent (<=5% file overlap), spawn `clamp(MIN_SHARDS_FLOOR, axes, PARALLELISM_MAX)`. Default: 3. Trivial: 1.
@@ -440,21 +396,6 @@ PRD lifecycle via skills: `/trw-prd-new` → `/trw-prd-groom` → `/trw-prd-revi
 - Run `trw_build_check(scope="full")` at VALIDATE and DELIVER
 </tdd-rules>
 
-### 5-Step Verification Ritual (per task, before completion)
-
-Every task requires fresh evidence before marking complete — not from memory, not from reasoning, from execution:
-
-1. **IDENTIFY**: What is the verification command for this task?
-2. **RUN**: Execute the command now (fresh — not from a previous run)
-3. **READ**: Read the FULL output (not just exit code)
-4. **VERIFY**: Does the output confirm the requirement is met? (cite specific lines)
-5. **RECORD**: Write evidence into completion artifact with timestamp
-
-Evidence requirements:
-- Implementation: cite test output showing the FR works end-to-end
-- Tests: cite coverage report showing the FR has tests
-- Integration: cite data flow from entry point to output
-
 ---
 
 ## TOOL RETRY
@@ -485,12 +426,6 @@ git push -u origin "{BRANCH}"
 ```
 
 All paths MUST be absolute (TASK_DIR or REPO_ROOT). Update CHANGELOG.md at DELIVER.
-
----
-
-## TURN HYGIENE
-
-Turn start: status (Green|Amber|Red), phase, wave progress, next actions. Turn end: decisions, artifacts modified, next action. Compact format only.
 
 ---
 

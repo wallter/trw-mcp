@@ -47,8 +47,12 @@ _writer = _ac._writer
 # ---------------------------------------------------------------------------
 # Module B — analytics_entries (persistence, index, status, extraction)
 # ---------------------------------------------------------------------------
+from trw_mcp.tools._learning_helpers import is_noise_summary as is_noise_summary
+
+# Backward-compat alias — _is_telemetry_noise was removed (DRY: replaced by is_noise_summary)
+_is_telemetry_noise = is_noise_summary
+
 from trw_mcp.state.analytics_entries import (
-    _is_telemetry_noise as _is_telemetry_noise,
     _save_and_record as _save_and_record,
     apply_status_update as apply_status_update,
     backfill_source_attribution as backfill_source_attribution,

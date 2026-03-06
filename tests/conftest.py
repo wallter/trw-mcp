@@ -32,7 +32,7 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStat
 _UNIT_FILES: frozenset[str] = frozenset({
     "test_models.py",
     "test_scoring.py",
-    "test_scoring_extra.py",
+    "test_scoring_branches.py",
     "test_scoring_properties.py",
     "test_bayesian_calibration.py",
     "test_clients_llm.py",
@@ -47,7 +47,7 @@ _UNIT_FILES: frozenset[str] = frozenset({
 _SLOW_FILES: frozenset[str] = frozenset({
     "test_consolidation.py",
     "test_bootstrap.py",
-    "test_bootstrap_extra.py",
+    "test_bootstrap_branches.py",
 })
 
 _E2E_FILES: frozenset[str] = frozenset()

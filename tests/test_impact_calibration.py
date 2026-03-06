@@ -412,9 +412,15 @@ class TestRecallRankingDecayIntegration:
     """Verify older learnings rank lower in recall due to time decay."""
 
     def test_new_entry_ranks_higher_than_old_entry(self) -> None:
-        """A brand-new entry ranks higher than a 2-year-old entry (all else equal)."""
+        """A recently-accessed entry ranks higher than a stale one (all else equal).
+
+        PRD-QUAL-032: Ranking depends on days_since_last_access (via
+        compute_utility_score retention), not on linear time decay from
+        created date (which was the double-decay bug).
+        """
         from trw_mcp.scoring import rank_by_utility
 
+        now = datetime.now(timezone.utc)
         fresh_entry: dict[str, object] = {
             "id": "L-fresh",
             "summary": "fresh learning about testing",
@@ -424,9 +430,11 @@ class TestRecallRankingDecayIntegration:
             "q_value": 0.8,
             "q_observations": 5,
             "recurrence": 1,
-            "access_count": 0,
+            "access_count": 3,
             "source_type": "agent",
-            "created": datetime.now(timezone.utc).isoformat(),
+            "created": now.isoformat(),
+            # Recently accessed — high retention in compute_utility_score
+            "last_accessed_at": now.strftime("%Y-%m-%d"),
         }
         old_entry: dict[str, object] = {
             "id": "L-old",
@@ -439,7 +447,9 @@ class TestRecallRankingDecayIntegration:
             "recurrence": 1,
             "access_count": 0,
             "source_type": "agent",
-            "created": (datetime.now(timezone.utc) - timedelta(days=730)).isoformat(),
+            "created": (now - timedelta(days=730)).isoformat(),
+            # Not accessed recently — low retention in compute_utility_score
+            "last_accessed_at": (now - timedelta(days=60)).strftime("%Y-%m-%d"),
         }
 
         ranked = rank_by_utility(

@@ -8,6 +8,7 @@ density, structural completeness, traceability, and placeholder dimensions.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 import structlog
 
@@ -427,8 +428,8 @@ def score_traceability_v2(
     if "Traceability Matrix" in content:
         matrix_section = content.split("Traceability Matrix")[-1]
         # Count rows with implementation file references
-        impl_refs = re.findall(r"`[\w/]+\.py[:\w]*`", matrix_section)
-        test_refs = re.findall(r"`test_[\w]+\.py[:\w]*`", matrix_section)
+        impl_refs = re.findall(r"`[\w/]+\.\w+[:\w]*`", matrix_section)
+        test_refs = re.findall(r"`test[\w_]*\.\w+[:\w]*`", matrix_section)
         # Count FR references in matrix
         fr_refs = re.findall(r"FR\d+", matrix_section)
 
@@ -610,7 +611,7 @@ def validate_prd_quality_v2(
 
     # Score 3 active dimensions (Phase 2a) + 3 placeholders
     # Each active dimension: (name, scorer_callable, max_score_from_config)
-    _active_dims: list[tuple[str, object, float]] = [
+    _active_dims: list[tuple[str, Callable[[], DimensionScore], float]] = [
         ("content_density", lambda: score_content_density(content, _config), _config.validation_density_weight),
         ("structural_completeness", lambda: score_structural_completeness(frontmatter, sections, _config), _config.validation_structure_weight),
         ("traceability", lambda: score_traceability_v2(frontmatter, content, _config), _config.validation_traceability_weight),
@@ -618,8 +619,9 @@ def validate_prd_quality_v2(
     dimensions: list[DimensionScore] = []
     for dim_name, scorer, max_score in _active_dims:
         try:
-            dimensions.append(scorer())  # type: ignore[operator]
+            dimensions.append(scorer())
         except Exception:
+            logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
             dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 
     # Placeholder dimensions (modules removed in strip-down; 0-weight)

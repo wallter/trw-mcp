@@ -556,8 +556,9 @@ class TestProcessOutcomeForEvent:
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
-        receipts_dir = trw_dir / "learnings" / "receipts"
-        receipts_dir.mkdir(parents=True)
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True)
 
         entry: dict[str, object] = {
             "id": "L-hist001",
@@ -580,7 +581,7 @@ class TestProcessOutcomeForEvent:
             "matched_ids": ["L-hist001"],
             "query": "history",
         }
-        writer.append_jsonl(receipts_dir / "recall_log.jsonl", receipt)
+        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", receipt)
 
         old_config = _sc._config
         old_reader = _sc._reader
@@ -614,8 +615,9 @@ class TestProcessOutcomeForEvent:
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
-        receipts_dir = trw_dir / "learnings" / "receipts"
-        receipts_dir.mkdir(parents=True)
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True)
 
         entry: dict[str, object] = {
             "id": "L-neg001",
@@ -637,7 +639,7 @@ class TestProcessOutcomeForEvent:
             "matched_ids": ["L-neg001"],
             "query": "test",
         }
-        writer.append_jsonl(receipts_dir / "recall_log.jsonl", receipt)
+        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", receipt)
 
         old_config = _sc._config
         old_reader = _sc._reader
@@ -929,8 +931,9 @@ class TestBuildCheckMypyOnlyScope:
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
-        receipts_dir = trw_dir / "learnings" / "receipts"
-        receipts_dir.mkdir(parents=True)
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True)
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
 
@@ -957,7 +960,7 @@ class TestBuildCheckMypyOnlyScope:
             "matched_ids": ["L-qobs001"],
             "query": "q-obs test",
         }
-        writer.append_jsonl(receipts_dir / "recall_log.jsonl", receipt)
+        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", receipt)
 
         cfg = TRWConfig(trw_dir=str(trw_dir))
         object.__setattr__(cfg, "learning_outcome_correlation_window_minutes", 9999)

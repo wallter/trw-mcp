@@ -755,17 +755,15 @@ class TestCorrelateRecalls:
         writer: FileStateWriter,
         records: list[dict[str, object]],
     ) -> Path:
-        """Create .trw/learnings/receipts/recall_log.jsonl with given records."""
-        import trw_mcp.scoring as scoring_mod
+        """Create .trw/logs/recall_tracking.jsonl with given records.
 
+        PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        (matching the canonical write path in recall_tracking.py).
+        """
         trw_dir = tmp_path / ".trw"
-        receipts_dir = (
-            trw_dir
-            / scoring_mod._config.learnings_dir
-            / scoring_mod._config.receipts_dir
-        )
-        receipts_dir.mkdir(parents=True, exist_ok=True)
-        log_path = receipts_dir / "recall_log.jsonl"
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "recall_tracking.jsonl"
         for record in records:
             writer.append_jsonl(log_path, record)
         return trw_dir
@@ -908,12 +906,10 @@ class TestProcessOutcome:
 
         # Create a receipt log with a recent recall
         now_ts = datetime.now(timezone.utc).isoformat()
-        log_path = (
-            trw_dir
-            / scoring_mod._config.learnings_dir
-            / scoring_mod._config.receipts_dir
-            / "recall_log.jsonl"
-        )
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "recall_tracking.jsonl"
         writer.append_jsonl(log_path, {"ts": now_ts, "matched_ids": ["L-ghost"]})
 
         # Don't create entries_dir — process_outcome should return empty list
@@ -936,12 +932,10 @@ class TestProcessOutcome:
         entries_dir.mkdir(parents=True, exist_ok=True)
 
         now_ts = datetime.now(timezone.utc).isoformat()
-        log_path = (
-            trw_dir
-            / scoring_mod._config.learnings_dir
-            / scoring_mod._config.receipts_dir
-            / "recall_log.jsonl"
-        )
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "recall_tracking.jsonl"
         writer.append_jsonl(log_path, {"ts": now_ts, "matched_ids": ["L-missing"]})
 
         result = process_outcome(trw_dir, 0.8, "tests_passed")
@@ -976,12 +970,10 @@ class TestProcessOutcome:
         })
 
         now_ts = datetime.now(timezone.utc).isoformat()
-        log_path = (
-            trw_dir
-            / scoring_mod._config.learnings_dir
-            / scoring_mod._config.receipts_dir
-            / "recall_log.jsonl"
-        )
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "recall_tracking.jsonl"
         writer.append_jsonl(log_path, {"ts": now_ts, "matched_ids": ["L-corrupt"]})
 
         result = process_outcome(trw_dir, 0.8, "tests_passed")
@@ -1395,15 +1387,11 @@ class TestCorrelateRecallsAdvancedPaths:
         writer: FileStateWriter,
         records: list[dict[str, object]],
     ) -> Path:
-        import trw_mcp.scoring as scoring_mod
         trw_dir = tmp_path / ".trw"
-        receipts_dir = (
-            trw_dir
-            / scoring_mod._config.learnings_dir
-            / scoring_mod._config.receipts_dir
-        )
-        receipts_dir.mkdir(parents=True, exist_ok=True)
-        log_path = receipts_dir / "recall_log.jsonl"
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "recall_tracking.jsonl"
         for record in records:
             writer.append_jsonl(log_path, record)
         return trw_dir
@@ -1467,15 +1455,11 @@ class TestCorrelateRecallsAdvancedPaths:
         # Create a receipt with a timestamp 1 hour in the future
         future_ts = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
 
-        import trw_mcp.scoring as scoring_mod
         trw_dir = tmp_path / ".trw"
-        receipts_dir = (
-            trw_dir
-            / scoring_mod._config.learnings_dir
-            / scoring_mod._config.receipts_dir
-        )
-        receipts_dir.mkdir(parents=True, exist_ok=True)
-        writer.append_jsonl(receipts_dir / "recall_log.jsonl", {
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", {
             "ts": future_ts,
             "matched_ids": ["L-future"],
         })
@@ -1525,8 +1509,11 @@ class TestProcessOutcomeHistoryCap:
         })
 
         # Write receipt pointing to this entry
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
         now_ts = datetime.now(timezone.utc).isoformat()
-        writer.append_jsonl(receipts_dir / "recall_log.jsonl", {
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", {
             "ts": now_ts, "matched_ids": ["L-capped"],
         })
 
@@ -1568,12 +1555,11 @@ class TestProcessOutcomeForEventSuccessPath:
         trw_dir = tmp_path / ".trw"
 
         # Set up receipts
-        receipts_dir = (
-            trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.receipts_dir
-        )
-        receipts_dir.mkdir(parents=True)
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True)
         now_ts = datetime.now(timezone.utc).isoformat()
-        writer.append_jsonl(receipts_dir / "recall_log.jsonl", {
+        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", {
             "ts": now_ts,
             "matched_ids": ["L-target"],
         })

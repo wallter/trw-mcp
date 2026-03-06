@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/consolidation.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.5, 0.75, 1000, '*.yaml', '-', '/', 'L-', 'TierManager | None', '[REDACTED_PATH]', '[^a-zA-Z0-9_\\-]', 'active', 'archived', 'clusters', 'clusters_found', 'cold_archive', 'completed', 'consolidated', 'consolidated_count', 'consolidated_from', 'consolidated_into', 'count', 'created', 'detail', 'dry_run', 'entry_ids', 'errors', 'evidence', 'find_clusters', 'haiku', 'id', 'impact', 'index.yaml', 'last_accessed_at', 'mean_similarity', 'no_clusters', 'q_value', 'recurrence', 'source_type', 'sqlite_read_fallback', 'status', 'summary', 'tags', 'updated', '{']

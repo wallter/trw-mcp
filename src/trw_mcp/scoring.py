@@ -50,9 +50,6 @@ _writer = FileStateWriter()
 # --- Scoring constants ---
 
 _LN2: float = math.log(2)  # ≈0.693 — Ebbinghaus decay exponent
-_DAYS_PER_YEAR: int = 365
-_TIME_DECAY_FLOOR: float = 0.3  # Minimum retention for time decay
-_TIME_DECAY_SLOPE: float = 0.3  # Linear decay factor per year
 _IMPACT_DECAY_FLOOR: float = 0.1  # Minimum impact after exponential decay
 
 # Tier boundary thresholds for enforce_tier_distribution
@@ -373,19 +370,9 @@ def _entry_utility(
     source_type = str(entry.get("source_type", "agent"))
     days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
 
-    # PRD-CORE-034: Apply time decay to both base_impact and q_value so that
-    # older learnings naturally sink in recall ranking, regardless of whether
-    # the cold-start threshold has been crossed.
-    created_raw = str(entry.get("created", ""))
-    if created_raw and created_raw != "None":
-        try:
-            created_dt = datetime.fromisoformat(created_raw)
-            # query-time only — does not write to disk (PRD-FIX-027-FR06)
-            base_impact = apply_time_decay(base_impact, created_dt)
-            # query-time only — does not write to disk (PRD-FIX-027-FR06)
-            q_value = apply_time_decay(q_value, created_dt)
-        except ValueError:
-            pass  # Fall through: use raw values if date is unparseable
+    # Double-decay fix (PRD-QUAL-032-FR03): apply_time_decay was removed here
+    # because compute_utility_score() already applies Ebbinghaus exponential
+    # decay internally via retention = exp(-decay_rate * days).
 
     return compute_utility_score(
         q_value=q_value,
@@ -924,9 +911,7 @@ def correlate_recalls(
         across receipts (caller should deduplicate).
     """
     effective_scope = scope or _config.learning_outcome_correlation_scope
-    receipt_path = (
-        trw_dir / _config.learnings_dir / _config.receipts_dir / "recall_log.jsonl"
-    )
+    receipt_path = trw_dir / "logs" / "recall_tracking.jsonl"
     if not receipt_path.exists():
         return []
 
@@ -945,13 +930,27 @@ def correlate_recalls(
 
     records = _reader.read_jsonl(receipt_path)
     for record in records:
+        # Support both receipt formats:
+        # - Legacy receipts: {"ts": ISO string, "matched_ids": [...]}
+        # - recall_tracking: {"timestamp": unix float, "learning_id": str}
         ts_str = str(record.get("ts", ""))
         if not ts_str:
-            continue
-        try:
-            receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str))
-        except ValueError:
-            continue
+            # Try recall_tracking format: unix timestamp float
+            ts_raw = record.get("timestamp")
+            if ts_raw is not None:
+                try:
+                    receipt_ts = datetime.fromtimestamp(
+                        float(str(ts_raw)), tz=timezone.utc,
+                    )
+                except (ValueError, OSError):
+                    continue
+            else:
+                continue
+        else:
+            try:
+                receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str))
+            except ValueError:
+                continue
 
         # Skip receipts outside the correlation scope
         if receipt_ts < cutoff_ts:
@@ -966,11 +965,17 @@ def correlate_recalls(
             1.0 - elapsed_secs / total_window_secs,
         )
 
-        matched_ids = record.get("matched_ids", [])
-        if isinstance(matched_ids, list):
+        # Support both formats for learning IDs
+        matched_ids = record.get("matched_ids")
+        if isinstance(matched_ids, list) and matched_ids:
             for lid in matched_ids:
                 if isinstance(lid, str) and lid:
                     results.append((lid, discount))
+        else:
+            # recall_tracking format: single learning_id
+            lid_single = record.get("learning_id")
+            if isinstance(lid_single, str) and lid_single:
+                results.append((lid_single, discount))
 
     return results
 

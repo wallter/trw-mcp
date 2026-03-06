@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/tools/telemetry.py
+# hypothesis_version: 6.151.9
+
+[0.0, 5.0, 100, 200, 1000, 'P', 'T', 'TRW_AGENT_ID', 'TRW_AGENT_ROLE', 'agent_id', 'agent_role', 'args_hash', 'default', 'duration_ms', 'error', 'events.jsonl', 'lead', 'meta', 'phase', 'result_summary', 'run.yaml', 'session-events.jsonl', 'success', 'tool', 'tool_call', 'tool_invocation', 'tool_name', 'unknown']

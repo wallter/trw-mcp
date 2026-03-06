@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/risk_profiles.py
+# hypothesis_version: 6.151.9
+
+[0.2, 0.3, 0.4, 0.5, 20.0, 30.0, 35.0, 45.0, 50.0, 60.0, 70.0, 75.0, 85.0, 88.0, 92.0, 'P0', 'P1', 'P2', 'P3', 'critical', 'high', 'low', 'medium']

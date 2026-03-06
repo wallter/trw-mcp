@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/tools/mutations.py
+# hypothesis_version: 6.151.9
+
+[200, ',', '--json', '--name-only', '.py', 'HEAD', 'changed_file_count', 'changed_files', 'critical', 'description', 'diff', 'experimental', 'file', 'git', 'killed', 'line', 'mutation-status.yaml', 'mutation_passed', 'mutation_score', 'mutation_skip_reason', 'mutation_skipped', 'mutation_threshold', 'mutation_tier', 'mutmut', 'mutmut run', 'mutmut_not_installed', 'no_changed_files', 'parse_error', 'results', 'run', 'standard', 'survived', 'survived_mutants', 'surviving_mutants', 'suspicious', 'timeout', 'total_mutants', 'trw-mcp/src']

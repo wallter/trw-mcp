@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/migration/from_trw.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.5, 1.0, '*.yaml', 'access_count', 'active', 'agent', 'archived', 'consolidated_from', 'consolidated_into', 'content', 'created', 'created_at', 'default', 'detail', 'evidence', 'id', 'impact', 'importance', 'last_accessed_at', 'merged_from', 'metadata', 'migration complete', 'namespace', 'obsolete', 'q_observations', 'q_value', 'recurrence', 'resolved', 'source', 'source_identity', 'starting migration', 'status', 'summary', 'tags', 'updated', 'updated_at']

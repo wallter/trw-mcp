@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/_phase_validators.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.3, '_orchestrator', 'claude_md_sync', 'complete', 'deliver', 'error', 'events.jsonl', 'events_exist', 'final.md', 'final_report_exists', 'implement', 'info', 'manifest.yaml', 'manifest_exists', 'meta', 'phase_test_advisory', 'plan', 'plan.md', 'plan_exists', 'reflection', 'reflection_complete', 'reflection_quality', 'reflection_required', 'reports', 'research', 'research_complete', 'research_synthesis', 'review', 'run.yaml', 'run.yaml:status', 'score', 'scratch', 'shards', 'shards/manifest.yaml', 'status', 'status_complete', 'sync_required', 'synthesis_exists', 'test_strategy', 'validate', 'validate_passed', 'validate_phase', 'warning']

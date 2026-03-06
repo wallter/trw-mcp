@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/phase_gates_prd.py
+# hypothesis_version: 6.151.9
+
+['approved', 'deprecated', 'done', 'draft', 'error', 'implemented', 'merged', 'meta', 'off', 'prd_discovery', 'prd_exists', 'prd_read_failed', 'prd_readable', 'prd_scope', 'prd_status', 'research', 'review', 'run.yaml', 'run_type', 'run_type_read_failed', 'status', 'strict', 'utf-8', 'warning']

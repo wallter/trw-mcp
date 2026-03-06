@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/embeddings/local.py
+# hypothesis_version: 6.151.9
+
+[384, 'all-MiniLM-L6-v2']

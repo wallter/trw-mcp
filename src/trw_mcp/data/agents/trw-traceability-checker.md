@@ -62,11 +62,13 @@ Verify 4 types of traceability links between PRDs, source code, and tests:
 3. **Check Prior Knowledge**: Call `trw_recall("traceability")` to surface
    any known traceability gaps or patterns from previous verification runs.
 
-4. **Grep Source Files**: Search `src/**/*.py` (or the project's source directory)
+4. **Grep Source Files**: Search `src/**/*` (or the project's source directory,
+   filtering to relevant source extensions for the language in use)
    for each requirement ID using the patterns defined in `<tracing_patterns>`.
    Record which FRs have source references and which do not.
 
-5. **Grep Test Files**: Search `tests/**/*.py` (or the project's test directory)
+5. **Grep Test Files**: Search `tests/**/*` (or the project's test directory,
+   filtering to relevant source extensions for the language in use)
    for each requirement ID. Record which FRs have test references and which
    do not.
 
@@ -82,18 +84,18 @@ Verify 4 types of traceability links between PRDs, source code, and tests:
 <tracing_patterns>
 ## Source Code Reference Patterns
 
-Search for these patterns in `src/**/*.py` (or the project's source directory):
-- `# PRD-{CAT}-{SEQ}` — PRD-level reference
+Search for these patterns in `src/**/*` (or the project's source directory, using the appropriate extension for the language — e.g., `*.py`, `*.ts`, `*.go`):
+- `# PRD-{CAT}-{SEQ}` — PRD-level reference (comment syntax may vary by language)
 - `# PRD-{CAT}-{SEQ}-FR{NN}` — Requirement-level reference
 - `# {PRD-ID}:` — Inline reference with colon
-- Docstrings containing `PRD-` followed by a category code
+- Docstrings or block comments containing `PRD-` followed by a category code
 
 ## Test Reference Patterns
 
-Search for these patterns in `tests/**/*.py` (or the project's test directory):
-- `# Tests PRD-{CAT}-{SEQ}-FR{NN}`
-- `def test_*` function names matching requirement keywords
-- Docstrings referencing PRD IDs
+Search for these patterns in `tests/**/*` (or the project's test directory, using the appropriate extension for the language):
+- `# Tests PRD-{CAT}-{SEQ}-FR{NN}` (comment syntax may vary by language)
+- Test function/method names matching requirement keywords (e.g., `test_*`, `it_*`, `should_*`)
+- Docstrings or block comments referencing PRD IDs
 - Class names or comments with `PRD-{CAT}-{SEQ}` references
 </tracing_patterns>
 

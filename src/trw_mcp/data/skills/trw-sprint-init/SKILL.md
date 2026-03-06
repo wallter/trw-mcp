@@ -57,7 +57,7 @@ exit_criteria:
     type: auto
     verified: false
   - id: build-gate
-    description: Build gate passes -- pytest + mypy clean
+    description: Build gate passes -- tests pass + type-check clean
     type: auto
     command: "trw_build_check(scope='full')"
     verified: false
@@ -96,7 +96,7 @@ exit_criteria:
 ## Exit Criteria
 
 - [ ] All assigned PRDs reach done status
-- [ ] Build gate passes: pytest + mypy clean
+- [ ] Build gate passes: tests pass + type-check clean
 - [ ] Coverage >= {coverage_threshold}%
 - [ ] Delivery ceremony completed (/trw-deliver)
 ````

@@ -45,13 +45,13 @@ from trw_mcp.state.recall_search import (
     collect_context,
     search_patterns,
 )
-from trw_mcp.state.receipts import log_recall_receipt
 from trw_mcp.tools._learning_helpers import (
     LearningParams,
     calibrate_impact,
     check_and_handle_dedup,
     check_soft_cap,
     enforce_distribution,
+    is_noise_summary,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -99,6 +99,14 @@ def register_learning_tools(server: FastMCP) -> None:
             source_type: Learning provenance — "human" or "agent".
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
         """
+        # PRD-QUAL-032-FR09: Reject auto-generated noise entries early
+        if is_noise_summary(summary):
+            return {
+                "status": "rejected",
+                "reason": "noise_filter",
+                "message": f"Summary matches noise pattern — not persisted: {summary[:60]}",
+            }
+
         trw_dir = resolve_trw_dir()
         entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
         _writer.ensure_dir(entries_dir)
@@ -323,7 +331,6 @@ def register_learning_tools(server: FastMCP) -> None:
         # Update access tracking for recalled IDs
         matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
         adapter_update_access(trw_dir, matched_ids)
-        log_recall_receipt(trw_dir, query, matched_ids, shard_id=shard_id)
 
         # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
         try:

@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/validation.py
+# hypothesis_version: 6.151.9
+
+[0.0, 100.0, 'ContractValidator', 'P2', 'PHASE_EXIT_CRITERIA', 'PHASE_INPUT_CRITERIA', 'PHASE_STATUS_MAPPING', 'RISK_PROFILES', 'RiskProfile', '_REFLECTION_EVENTS', '_SYNC_EVENTS', '_check_build_status', '_coerce_v1_failures', '_event_has_score', '_event_has_tool', '_events_contain', '_is_substantive_line', '_is_validate_pass', '_read_events', 'auto_progress_prds', 'check_integration', 'check_phase_exit', 'check_phase_input', 'completeness_score', 'content_density', 'derive_risk_level', 'ears_coverage', 'failures', 'map_grade', 'medium', 'missing_tests', 'parse_exit_criteria', 'prd_validated_v2', 'priority', 'readability', 'risk_level', 'smell_score', 'src', 'test_coverage', 'tool_registration', 'traceability', 'trw-mcp', 'trw_mcp', 'unregistered', 'valid', 'validate_prd_quality', 'warning']

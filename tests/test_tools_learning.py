@@ -1093,54 +1093,6 @@ class TestTrwRecallAccessTracking:
                 assert data.get("last_accessed_at") is None
                 break
 
-    def test_recall_appends_receipt(self, tmp_path: Path) -> None:
-        """trw_recall appends a receipt to recall_log.jsonl."""
-        tools = _get_tools()
-        tools["trw_learn"].fn(
-            summary="Receipt logging test",
-            detail="Should generate a recall receipt",
-            impact=0.8,
-        )
-
-        tools["trw_recall"].fn(query="receipt logging")
-
-        receipt_path = (
-            tmp_path / _CFG.trw_dir / _CFG.learnings_dir
-            / _CFG.receipts_dir / "recall_log.jsonl"
-        )
-        assert receipt_path.exists()
-        lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
-        assert len(lines) >= 1
-        record = json.loads(lines[-1])
-        assert record["query"] == "receipt logging"
-        assert "matched_ids" in record
-        assert "ts" in record
-
-    def test_recall_receipt_contains_matched_ids(self, tmp_path: Path) -> None:
-        """Receipt records the IDs of all matched learnings."""
-        tools = _get_tools()
-        r1 = tools["trw_learn"].fn(
-            summary="Receipt ID check alpha",
-            detail="First entry",
-            impact=0.8,
-        )
-        r2 = tools["trw_learn"].fn(
-            summary="Receipt ID check beta",
-            detail="Second entry",
-            impact=0.8,
-        )
-
-        tools["trw_recall"].fn(query="receipt id check")
-
-        receipt_path = (
-            tmp_path / _CFG.trw_dir / _CFG.learnings_dir
-            / _CFG.receipts_dir / "recall_log.jsonl"
-        )
-        lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
-        record = json.loads(lines[-1])
-        assert r1["learning_id"] in record["matched_ids"]
-        assert r2["learning_id"] in record["matched_ids"]
-
     def test_recall_no_match_no_access_update(self, tmp_path: Path) -> None:
         """When query has no matches, no access tracking updates occur."""
         tools = _get_tools()
@@ -1556,9 +1508,10 @@ class TestOutcomeCorrelation:
     ) -> None:
         """Only receipts within the correlation window are included."""
         trw_dir = tmp_path / _CFG.trw_dir
-        receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        receipt_dir = trw_dir / "logs"
         receipt_dir.mkdir(parents=True)
-        receipt_path = receipt_dir / "recall_log.jsonl"
+        receipt_path = receipt_dir / "recall_tracking.jsonl"
 
         now = datetime.now(timezone.utc)
         # Recent receipt (2 minutes ago)
@@ -1586,9 +1539,10 @@ class TestOutcomeCorrelation:
     def test_correlate_recalls_recency_discount(self, tmp_path: Path) -> None:
         """More recent receipts get higher recency discount."""
         trw_dir = tmp_path / _CFG.trw_dir
-        receipt_dir = trw_dir / _CFG.learnings_dir / _CFG.receipts_dir
+        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
+        receipt_dir = trw_dir / "logs"
         receipt_dir.mkdir(parents=True)
-        receipt_path = receipt_dir / "recall_log.jsonl"
+        receipt_path = receipt_dir / "recall_tracking.jsonl"
 
         now = datetime.now(timezone.utc)
         # Very recent (1 minute ago)

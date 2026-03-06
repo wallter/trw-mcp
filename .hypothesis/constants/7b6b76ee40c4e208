@@ -1,0 +1,4 @@
+# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/release_builder.py
+# hypothesis_version: 6.151.9
+
+[8192, '"', "'", '0.0.0', '=', 'checksum', 'data', 'path', 'pyproject.toml', 'rb', 'size_bytes', 'utf-8', 'version', 'w:gz']

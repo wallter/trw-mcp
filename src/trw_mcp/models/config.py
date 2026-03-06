@@ -550,6 +550,18 @@ class TRWConfig(BaseSettings):
 
     progressive_disclosure: bool = False
 
+    # ── 51. OTEL & cost attribution (INFRA-029) ────────────────────────────
+    # Optional OpenTelemetry integration — lazy import, fail-open
+
+    otel_enabled: bool = False
+    otel_endpoint: str = ""
+
+    # ── 52. Ceremony alerting (QUAL-031) ────────────────────────────────────
+    # Quality dashboard degradation detection thresholds
+
+    ceremony_alert_threshold: int = 40
+    ceremony_alert_consecutive: int = 3
+
     @property
     def effective_platform_urls(self) -> list[str]:
         """Merged list of all configured platform URLs (deduped, non-empty)."""
