@@ -116,5 +116,5 @@ def record_session_usage(
 
         with open(profile_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, separators=(",", ":")) + "\n")
-    except Exception:
+    except OSError:
         logger.debug("usage_profiler_write_failed", session_id=session_id)

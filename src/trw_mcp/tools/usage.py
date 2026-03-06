@@ -232,6 +232,34 @@ def register_usage_tools(server: FastMCP) -> None:
             "already_expanded": already,
         }
 
+    @server.tool()
+    @log_tool_call
+    def trw_trust_level(
+        security_tags: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Query your project's trust tier — Crawl/Walk/Run graduated autonomy.
+
+        Returns the current trust level based on accumulated successful sessions.
+        Optionally evaluates whether a change with the given security tags requires
+        human review.
+
+        Args:
+            security_tags: Optional list of security tags (e.g. ["auth", "secrets"])
+                to evaluate review requirements for a specific change.
+        """
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.trust import requires_human_review, trust_level_calculate
+
+        trw_dir = resolve_trw_dir()
+        result = trust_level_calculate(trw_dir)
+
+        if security_tags:
+            review = requires_human_review(security_tags, [], result)
+            result["review_required"] = review["required"]
+            result["review_reason"] = review["reason"]
+
+        return result
+
 
 def set_progressive_middleware(mw: ProgressiveDisclosureMiddleware | None) -> None:
     """Set the progressive disclosure middleware reference for expand tool."""

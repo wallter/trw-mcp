@@ -22,29 +22,9 @@ from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
-    mark_promoted,
     update_analytics,
-    update_analytics_sync,
 )
-from trw_mcp.state.claude_md import (
-    collect_context_data,
-    collect_patterns,
-    collect_promotable_learnings,
-    load_claude_md_template,
-    merge_trw_section,
-    render_adherence,
-    render_architecture,
-    render_behavioral_protocol,
-    render_categorized_learnings,
-    render_ceremony_flows,
-    render_ceremony_table,
-    render_closing_reminder,
-    render_conventions,
-    render_imperative_opener,
-    render_patterns,
-    render_phase_descriptions,
-    render_template,
-)
+from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -488,9 +468,107 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # Step 8: Batch send (G2)
         _run_step("batch_send", lambda: _step_batch_send(), results, errors)
 
+        # ── Step 9: Trust session increment (CORE-068-FR05) ──
+        # Only increment if build_check passed in this session
+        def _step_trust_increment() -> dict[str, object] | None:
+            try:
+                from trw_mcp.state.trust import increment_session_count
+
+                # Check if build_check passed by scanning events
+                events_path = resolved_run / "meta" / "events.jsonl" if resolved_run else None
+                build_passed = False
+                if events_path and events_path.exists():
+                    events = _reader.read_jsonl(events_path)
+                    for ev in events:
+                        ev_type = str(ev.get("event", ""))
+                        ev_data = ev.get("data", {})
+                        if not isinstance(ev_data, dict):
+                            ev_data = {}
+                        tool_name = str(ev_data.get("tool_name", ""))
+                        if ev_type == "build_check_complete" or tool_name == "trw_build_check":
+                            if ev_data.get("result") == "pass" or ev_data.get("build_passed") is True:
+                                build_passed = True
+                                break
+
+                if build_passed:
+                    import os
+                    agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
+                    return increment_session_count(trw_dir, agent_id)
+                return {"skipped": True, "reason": "build_check_not_passed"}
+            except Exception as exc:
+                return {"skipped": True, "reason": str(exc)}
+
+        _run_step("trust_increment", _step_trust_increment, results, errors)
+
+        # ── Step 10: Ceremony feedback recording (CORE-069-FR02) ──
+        def _step_ceremony_feedback() -> dict[str, object] | None:
+            try:
+                from trw_mcp.state.ceremony_feedback import (
+                    apply_auto_escalation,
+                    check_auto_escalation,
+                    classify_task_class,
+                    read_feedback_data,
+                    record_session_outcome,
+                )
+
+                # Load run state from run.yaml for task name and metadata
+                run_state: dict[str, object] = {}
+                if resolved_run is not None:
+                    run_yaml = resolved_run / "meta" / "run.yaml"
+                    if run_yaml.exists():
+                        run_state = _reader.read_yaml(run_yaml)
+
+                task_name = str(run_state.get("task_name", ""))
+                ceremony_score_val = results.get("telemetry", {})
+                if isinstance(ceremony_score_val, dict):
+                    score = float(ceremony_score_val.get("ceremony_score", 0))
+                else:
+                    score = 0.0
+
+                # Determine build pass from telemetry results
+                build_passed = False
+                coverage_delta = 0.0
+                critical_findings = 0
+                tel_data = results.get("telemetry", {})
+                if isinstance(tel_data, dict):
+                    build_passed = bool(tel_data.get("build_passed", False))
+
+                current_tier = "STANDARD"
+                if run_state.get("complexity_class"):
+                    current_tier = str(run_state["complexity_class"])
+
+                session_id = str(run_state.get("run_id", "unknown"))
+                run_p = str(resolved_run) if resolved_run else ""
+
+                entry = record_session_outcome(
+                    trw_dir=trw_dir,
+                    task_name=task_name,
+                    ceremony_score=score,
+                    build_passed=build_passed,
+                    coverage_delta=coverage_delta,
+                    critical_findings=critical_findings,
+                    mutation_score_ok=True,  # Default: no mutation testing
+                    current_tier=current_tier,
+                    run_path=run_p,
+                    session_id=session_id,
+                )
+
+                # Check auto-escalation
+                task_class = classify_task_class(task_name)
+                data = read_feedback_data(trw_dir)
+                escalation = check_auto_escalation(task_class.value, data)
+                if escalation:
+                    apply_auto_escalation(trw_dir, task_class.value, escalation)
+                    return {"recorded": True, "auto_escalation": escalation}
+                return {"recorded": True}
+            except Exception as exc:
+                return {"skipped": True, "reason": str(exc)}
+
+        _run_step("ceremony_feedback", _step_ceremony_feedback, results, errors)
+
         results["errors"] = errors
         results["success"] = len(errors) == 0
-        results["steps_completed"] = 10 - len(errors)
+        results["steps_completed"] = 12 - len(errors)
 
         # Log trw_deliver_complete to events.jsonl so hooks can detect it
         if resolved_run is not None and (resolved_run / "meta").exists():
@@ -565,49 +643,29 @@ def _do_reflect(
 
 
 def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
-    """Execute CLAUDE.md sync — promote high-impact learnings."""
-    project_root = resolve_project_root()
-    high_impact = collect_promotable_learnings(trw_dir, _config, _reader)
-    patterns = collect_patterns(trw_dir, _config, _reader)
-    arch_data, conv_data = collect_context_data(trw_dir, _config, _reader)
+    """Execute CLAUDE.md sync — delegates to the canonical implementation.
 
-    template = load_claude_md_template(trw_dir)
-    behavioral_protocol = render_behavioral_protocol()
+    Previously this function duplicated the template context dictionary
+    from ``claude_md.execute_claude_md_sync``, causing key drift (e.g.
+    missing ``ceremony_quick_ref``, stale progressive-disclosure policy).
+    Now it delegates entirely to the single canonical implementation in
+    ``claude_md.py``.
+    """
+    from trw_mcp.clients.llm import LLMClient
 
-    tpl_context: dict[str, str] = {
-        "imperative_opener": render_imperative_opener(),
-        "ceremony_quick_ref": "",
-        "behavioral_protocol": behavioral_protocol,
-        "delegation_section": "",
-        "agent_teams_section": "",
-        "rationalization_watchlist": "",
-        "ceremony_phases": render_phase_descriptions(),
-        "ceremony_table": render_ceremony_table(),
-        "ceremony_flows": render_ceremony_flows(),
-        "architecture_section": render_architecture(arch_data),
-        "conventions_section": render_conventions(conv_data),
-        "categorized_learnings": render_categorized_learnings(high_impact),
-        "patterns_section": render_patterns(patterns),
-        "adherence_section": render_adherence(high_impact),
-        "closing_reminder": render_closing_reminder(),
-    }
-    trw_section = render_template(template, tpl_context)
-
-    target = project_root / "CLAUDE.md"
-    total_lines = merge_trw_section(target, trw_section, _config.claude_md_max_lines)
-    update_analytics_sync(trw_dir)
-
-    for learning in high_impact:
-        lid = learning.get("id", "")
-        if isinstance(lid, str) and lid:
-            mark_promoted(trw_dir, lid)
-
-    return {
-        "status": "success",
-        "path": str(target),
-        "learnings_promoted": len(high_impact),
-        "total_lines": total_lines,
-    }
+    # Use a no-op LLM client — deliver path doesn't need LLM summarisation.
+    llm = LLMClient()
+    result = execute_claude_md_sync(
+        scope="root",
+        target_dir=None,
+        config=_config,
+        reader=_reader,
+        writer=_writer,
+        llm=llm,
+    )
+    # Normalise status for backward compatibility with deliver callers.
+    result["status"] = "success"
+    return result
 
 
 def _do_index_sync() -> dict[str, object]:

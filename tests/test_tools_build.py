@@ -136,7 +136,7 @@ class TestCacheBuildStatus:
 class TestRunBuildCheck:
     """Tests for run_build_check with mocked subprocess calls."""
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value=None)
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None)
     def test_pytest_not_found(
         self, mock_which: MagicMock, tmp_path: Path,
     ) -> None:
@@ -145,8 +145,8 @@ class TestRunBuildCheck:
         assert status.tests_passed is False
         assert any("not found" in f for f in status.failures)
 
-    @patch("trw_mcp.tools.build.shutil.which")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     def test_pytest_passes(
         self,
         mock_run: MagicMock,
@@ -164,8 +164,8 @@ class TestRunBuildCheck:
         assert status.coverage_pct == 90.0
         assert status.test_count == 5
 
-    @patch("trw_mcp.tools.build.shutil.which")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     def test_pytest_fails(
         self,
         mock_run: MagicMock,
@@ -183,8 +183,8 @@ class TestRunBuildCheck:
         assert status.failure_count == 2
         assert any("FAILED" in f for f in status.failures)
 
-    @patch("trw_mcp.tools.build.shutil.which")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     def test_pytest_timeout(
         self,
         mock_run: MagicMock,
@@ -199,8 +199,8 @@ class TestRunBuildCheck:
         assert status.tests_passed is False
         assert any("timed out" in f for f in status.failures)
 
-    @patch("trw_mcp.tools.build.shutil.which")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     def test_mypy_passes(
         self,
         mock_run: MagicMock,
@@ -217,8 +217,8 @@ class TestRunBuildCheck:
         assert status.mypy_clean is True
         assert status.failures == []
 
-    @patch("trw_mcp.tools.build.shutil.which")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     def test_mypy_errors(
         self,
         mock_run: MagicMock,
@@ -235,8 +235,8 @@ class TestRunBuildCheck:
         assert status.mypy_clean is False
         assert len(status.failures) >= 1
 
-    @patch("trw_mcp.tools.build.shutil.which")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     def test_full_scope(
         self,
         mock_run: MagicMock,
@@ -256,7 +256,7 @@ class TestRunBuildCheck:
         assert status.duration_secs >= 0
 
     def test_duration_tracked(self, tmp_path: Path) -> None:
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             status = run_build_check(tmp_path, scope="full")
         assert status.duration_secs >= 0
 
@@ -546,22 +546,24 @@ class TestBuildConfig:
 class TestBuildConfigWiring:
     """Tests for config-driven paths in build tools — PRD-INFRA-011."""
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
     def test_pytest_default_cwd_is_build_root(
         self,
         mock_which: MagicMock,
         mock_run: MagicMock,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR01: Default config → cwd = project_root / 'trw-mcp'."""
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cwd = mock_run.call_args.kwargs["cwd"]
         assert cwd == str(tmp_path / "trw-mcp")
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
     def test_pytest_custom_source_path_cwd(
         self,
         mock_which: MagicMock,
@@ -575,14 +577,14 @@ class TestBuildConfigWiring:
             tests_relative_path="tests",
             source_package_name="myapp",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cwd = mock_run.call_args.kwargs["cwd"]
         assert cwd == str(tmp_path / ".")
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
     def test_pytest_cov_target_from_config(
         self,
         mock_which: MagicMock,
@@ -592,43 +594,47 @@ class TestBuildConfigWiring:
     ) -> None:
         """FR01: source_package_name='myapp' → --cov=myapp."""
         config = TRWConfig(source_package_name="myapp")
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cmd = mock_run.call_args.args[0]
         assert "--cov=myapp" in cmd
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
     def test_pytest_test_dir_strips_build_root(
         self,
         mock_which: MagicMock,
         mock_run: MagicMock,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR01: tests_relative_path='trw-mcp/tests' → stripped to 'tests/' for cwd."""
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cmd = mock_run.call_args.args[0]
         assert "tests/" in cmd
         assert "trw-mcp/tests/" not in " ".join(cmd)
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
     def test_mypy_default_cwd_is_build_root(
         self,
         mock_which: MagicMock,
         mock_run: MagicMock,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02: Default config → mypy cwd = project_root / 'trw-mcp'."""
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         run_build_check(tmp_path, scope="mypy")
         cwd = mock_run.call_args.kwargs["cwd"]
         assert cwd == str(tmp_path / "trw-mcp")
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
     def test_mypy_custom_source_target(
         self,
         mock_which: MagicMock,
@@ -641,21 +647,23 @@ class TestBuildConfigWiring:
             source_package_path="src",
             source_package_name="myapp",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         run_build_check(tmp_path, scope="mypy")
         cmd = mock_run.call_args.args[0]
         assert cmd[-1] == "src/myapp/"
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
     def test_mypy_default_source_target(
         self,
         mock_which: MagicMock,
         mock_run: MagicMock,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02: Default config → src_target='src/trw_mcp/'."""
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         run_build_check(tmp_path, scope="mypy")
         cmd = mock_run.call_args.args[0]
@@ -668,8 +676,8 @@ class TestBuildConfigWiring:
     ) -> None:
         """FR03: source_package_path='src' → checks project_root/.venv/bin/."""
         config = TRWConfig(source_package_path="src")
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
-        monkeypatch.setattr("trw_mcp.tools.build.shutil.which", lambda _: None)
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess.shutil.which", lambda _: None)
 
         venv_bin = tmp_path / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
@@ -684,7 +692,8 @@ class TestBuildConfigWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR03: Default config → checks project_root/trw-mcp/.venv/bin/."""
-        monkeypatch.setattr("trw_mcp.tools.build.shutil.which", lambda _: None)
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess._config", TRWConfig())
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess.shutil.which", lambda _: None)
 
         venv_bin = tmp_path / "trw-mcp" / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
@@ -693,8 +702,8 @@ class TestBuildConfigWiring:
         result = _find_executable("pytest", tmp_path)
         assert result == str(venv_bin / "pytest")
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
     def test_pytest_empty_config_falls_back(
         self,
         mock_which: MagicMock,
@@ -708,7 +717,7 @@ class TestBuildConfigWiring:
             tests_relative_path="",
             source_package_name="",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         status = run_build_check(tmp_path, scope="pytest")
         assert status.tests_passed is True
@@ -718,8 +727,8 @@ class TestBuildConfigWiring:
         assert "--cov=trw_mcp" in cmd
         assert cwd == str(tmp_path / "trw-mcp")
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
     def test_mypy_empty_config_falls_back(
         self,
         mock_which: MagicMock,
@@ -732,7 +741,7 @@ class TestBuildConfigWiring:
             source_package_path="",
             source_package_name="",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         status = run_build_check(tmp_path, scope="mypy")
         assert status.mypy_clean is True
@@ -750,10 +759,10 @@ class TestBuildConfigWiring:
 class TestMinCoverageThreshold:
     """Tests for the min_coverage parameter on trw_build_check tool."""
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
-    @patch("trw_mcp.tools.build.run_build_check")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration.run_build_check")
     def test_coverage_below_threshold_fails(
         self,
         mock_run: MagicMock,
@@ -801,10 +810,10 @@ class TestMinCoverageThreshold:
         assert result["coverage_threshold"] == 80.0
         assert "75.0%" in str(result["coverage_threshold_message"])
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
-    @patch("trw_mcp.tools.build.run_build_check")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration.run_build_check")
     def test_coverage_meets_threshold_passes(
         self,
         mock_run: MagicMock,
@@ -849,10 +858,10 @@ class TestMinCoverageThreshold:
         assert result["tests_passed"] is True
         assert "coverage_threshold_failed" not in result
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
-    @patch("trw_mcp.tools.build.run_build_check")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration.run_build_check")
     def test_no_min_coverage_skips_check(
         self,
         mock_run: MagicMock,

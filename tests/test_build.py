@@ -50,7 +50,7 @@ class TestFindExecutable:
     """Tests for _find_executable venv resolution order."""
 
     def test_finds_on_path(self, tmp_path: Path) -> None:
-        with patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest"):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest"):
             result = _find_executable("pytest", tmp_path)
         assert result == "/usr/bin/pytest"
 
@@ -60,7 +60,7 @@ class TestFindExecutable:
         pytest_bin = venv_bin / "pytest"
         pytest_bin.touch()
 
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             result = _find_executable("pytest", tmp_path)
         assert result == str(pytest_bin)
 
@@ -70,7 +70,7 @@ class TestFindExecutable:
         pytest_bin = venv_bin / "pytest"
         pytest_bin.touch()
 
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             result = _find_executable("pytest", tmp_path)
         assert result == str(pytest_bin)
 
@@ -81,23 +81,26 @@ class TestFindExecutable:
             venv_bin.mkdir(parents=True)
             (venv_bin / "pytest").touch()
 
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             result = _find_executable("pytest", tmp_path)
         assert result == str(tmp_path / ".venv" / "bin" / "pytest")
 
-    def test_falls_back_to_legacy_venv(self, tmp_path: Path) -> None:
+    def test_falls_back_to_legacy_venv(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         # Legacy: source_package_path parent's .venv
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess._config", TRWConfig())
         legacy_bin = tmp_path / "trw-mcp" / ".venv" / "bin"
         legacy_bin.mkdir(parents=True)
         pytest_bin = legacy_bin / "pytest"
         pytest_bin.touch()
 
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             result = _find_executable("pytest", tmp_path)
         assert result == str(pytest_bin)
 
     def test_returns_none_when_not_found(self, tmp_path: Path) -> None:
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             result = _find_executable("pytest", tmp_path)
         assert result is None
 
@@ -112,19 +115,19 @@ class TestCustomTestCommand:
 
     def test_custom_cmd_success(self, tmp_path: Path) -> None:
         cfg = TRWConfig(build_check_pytest_cmd="echo all-tests-passed")
-        with patch("trw_mcp.tools.build._config", cfg):
+        with patch("trw_mcp.tools.build._runners._config", cfg):
             result = _run_pytest(tmp_path, timeout_secs=30, extra_args="")
         assert result["tests_passed"] is True
 
     def test_custom_cmd_failure(self, tmp_path: Path) -> None:
         cfg = TRWConfig(build_check_pytest_cmd="false")
-        with patch("trw_mcp.tools.build._config", cfg):
+        with patch("trw_mcp.tools.build._runners._config", cfg):
             result = _run_pytest(tmp_path, timeout_secs=30, extra_args="")
         assert result["tests_passed"] is False
 
     def test_custom_cmd_not_found(self, tmp_path: Path) -> None:
         cfg = TRWConfig(build_check_pytest_cmd="nonexistent_test_runner_xyz")
-        with patch("trw_mcp.tools.build._config", cfg):
+        with patch("trw_mcp.tools.build._runners._config", cfg):
             result = _run_pytest(tmp_path, timeout_secs=30, extra_args="")
         assert result["tests_passed"] is False
         failures = result["failures"]
@@ -142,21 +145,21 @@ class TestRunBuildCheck:
 
     def test_scope_pytest_only(self, tmp_path: Path) -> None:
         # With pytest not found, should get a failure but mypy_clean stays True
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             status = run_build_check(tmp_path, scope="pytest")
         assert status.tests_passed is False
         assert status.mypy_clean is True  # mypy not run in pytest scope
         assert status.scope == "pytest"
 
     def test_scope_mypy_only(self, tmp_path: Path) -> None:
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             status = run_build_check(tmp_path, scope="mypy")
         assert status.tests_passed is True  # pytest not run in mypy scope
         assert status.mypy_clean is False
         assert status.scope == "mypy"
 
     def test_has_duration(self, tmp_path: Path) -> None:
-        with patch("trw_mcp.tools.build.shutil.which", return_value=None):
+        with patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None):
             status = run_build_check(tmp_path, scope="pytest")
         assert status.duration_secs >= 0
 
@@ -172,7 +175,7 @@ class TestRunSubprocess:
     def test_oserror_returns_error_string(self, tmp_path: Path) -> None:
         """Lines 112-113: subprocess.run raises OSError -> returns error string."""
         with patch(
-            "trw_mcp.tools.build.subprocess.run",
+            "trw_mcp.tools.build._subprocess.subprocess.run",
             side_effect=OSError("no such file"),
         ):
             result = _run_subprocess(["fakecmd", "--arg"], tmp_path, 30)
@@ -184,7 +187,7 @@ class TestRunSubprocess:
     def test_timeout_returns_error_string(self, tmp_path: Path) -> None:
         """Lines 110-111: subprocess.run raises TimeoutExpired -> returns error string."""
         with patch(
-            "trw_mcp.tools.build.subprocess.run",
+            "trw_mcp.tools.build._subprocess.subprocess.run",
             side_effect=subprocess.TimeoutExpired("fakecmd", 5),
         ):
             result = _run_subprocess(["fakecmd"], tmp_path, 5)
@@ -199,7 +202,7 @@ class TestRunSubprocess:
         mock_proc.stdout = "output"
         mock_proc.stderr = ""
 
-        with patch("trw_mcp.tools.build.subprocess.run", return_value=mock_proc):
+        with patch("trw_mcp.tools.build._subprocess.subprocess.run", return_value=mock_proc):
             result = _run_subprocess(["echo", "hello"], tmp_path, 10)
 
         assert result is mock_proc
@@ -218,10 +221,10 @@ class TestCustomCmdErrorPath:
     ) -> None:
         """Line 209: custom_cmd path returns error string (OSError/timeout)."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --suite all")
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
 
         with patch(
-            "trw_mcp.tools.build._run_subprocess",
+            "trw_mcp.tools.build._runners._run_subprocess",
             return_value="mypytest executable not found",
         ):
             result = _run_pytest(tmp_path, 30, "")
@@ -237,14 +240,14 @@ class TestCustomCmdErrorPath:
     ) -> None:
         """custom_cmd happy path -- returncode 0."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --fast")
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
 
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = "All tests passed"
         mock_result.stderr = ""
 
-        with patch("trw_mcp.tools.build._run_subprocess", return_value=mock_result):
+        with patch("trw_mcp.tools.build._runners._run_subprocess", return_value=mock_result):
             result = _run_pytest(tmp_path, 30, "")
 
         assert result["tests_passed"] is True
@@ -255,14 +258,14 @@ class TestCustomCmdErrorPath:
     ) -> None:
         """custom_cmd failure -- returncode != 0 extracts FAILED lines."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --suite all")
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
 
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = "FAILED tests/test_foo.py::test_bar\nsome other output"
         mock_result.stderr = ""
 
-        with patch("trw_mcp.tools.build._run_subprocess", return_value=mock_result):
+        with patch("trw_mcp.tools.build._runners._run_subprocess", return_value=mock_result):
             result = _run_pytest(tmp_path, 30, "")
 
         assert result["tests_passed"] is False
@@ -272,8 +275,8 @@ class TestCustomCmdErrorPath:
 class TestPytestExtraArgs:
     """Line 209: extra_args passed to pytest command."""
 
-    @patch("trw_mcp.tools.build.subprocess.run")
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/pytest")
+    @patch("trw_mcp.tools.build._subprocess.subprocess.run")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
     def test_extra_args_appended_to_cmd(
         self,
         mock_which: MagicMock,
@@ -297,13 +300,13 @@ class TestPytestExtraArgs:
 class TestRunMypyErrorPath:
     """Tests for _run_mypy OSError/timeout path (line 282)."""
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
     def test_mypy_subprocess_error_string(
         self, mock_which: MagicMock, tmp_path: Path
     ) -> None:
         """Line 282: _run_subprocess returns a string -> mypy_clean=False."""
         with patch(
-            "trw_mcp.tools.build._run_subprocess",
+            "trw_mcp.tools.build._runners._run_subprocess",
             return_value="mypy timed out after 30s",
         ):
             status = run_build_check(tmp_path, scope="mypy")
@@ -311,13 +314,13 @@ class TestRunMypyErrorPath:
         assert status.mypy_clean is False
         assert any("timed out" in f for f in status.failures)
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/mypy")
+    @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
     def test_mypy_oserror_returns_error_string(
         self, mock_which: MagicMock, tmp_path: Path
     ) -> None:
         """mypy OSError: subprocess returns error string."""
         with patch(
-            "trw_mcp.tools.build._run_subprocess",
+            "trw_mcp.tools.build._runners._run_subprocess",
             return_value="mypy executable not found",
         ):
             status = run_build_check(tmp_path, scope="mypy")
@@ -384,7 +387,7 @@ class TestTrwBuildCheckTool:
     ) -> None:
         """Line 396-400: build_check_enabled=False returns skipped status."""
         config = TRWConfig(build_check_enabled=False)
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
 
         from fastmcp import FastMCP
 
@@ -396,8 +399,8 @@ class TestTrwBuildCheckTool:
         # Call the tool directly by importing the registered function
         # We patch resolve_trw_dir and resolve_project_root so we don't need real paths
         with (
-            patch("trw_mcp.tools.build.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.build.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.tools.build._registration.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.tools.build._registration.resolve_project_root", return_value=tmp_path),
         ):
             # Get the tool function from registered tools dict
             tools_dict = server._tool_manager._tools
@@ -414,7 +417,7 @@ class TestTrwBuildCheckTool:
         (tmp_path / ".trw").mkdir()
 
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
 
         from fastmcp import FastMCP
 
@@ -424,10 +427,10 @@ class TestTrwBuildCheckTool:
         register_build_tools(server)
 
         with (
-            patch("trw_mcp.tools.build.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.build.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.tools.build.run_build_check") as mock_rbc,
-            patch("trw_mcp.tools.build.cache_build_status") as mock_cache,
+            patch("trw_mcp.tools.build._registration.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.tools.build._registration.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.tools.build._registration.run_build_check") as mock_rbc,
+            patch("trw_mcp.tools.build._registration.cache_build_status") as mock_cache,
         ):
             from trw_mcp.models.build import BuildStatus
 
@@ -465,7 +468,7 @@ class TestTrwBuildCheckTool:
         meta_dir.mkdir(parents=True)
 
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
 
         from fastmcp import FastMCP
 
@@ -475,10 +478,10 @@ class TestTrwBuildCheckTool:
         register_build_tools(server)
 
         with (
-            patch("trw_mcp.tools.build.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.build.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.tools.build.run_build_check") as mock_rbc,
-            patch("trw_mcp.tools.build.cache_build_status") as mock_cache,
+            patch("trw_mcp.tools.build._registration.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.tools.build._registration.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.tools.build._registration.run_build_check") as mock_rbc,
+            patch("trw_mcp.tools.build._registration.cache_build_status") as mock_cache,
         ):
             from trw_mcp.models.build import BuildStatus
 
@@ -522,7 +525,7 @@ class TestTrwBuildCheckTool:
         # Do NOT create meta directory
 
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
 
         from fastmcp import FastMCP
 
@@ -532,10 +535,10 @@ class TestTrwBuildCheckTool:
         register_build_tools(server)
 
         with (
-            patch("trw_mcp.tools.build.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.build.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.tools.build.run_build_check") as mock_rbc,
-            patch("trw_mcp.tools.build.cache_build_status") as mock_cache,
+            patch("trw_mcp.tools.build._registration.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.tools.build._registration.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.tools.build._registration.run_build_check") as mock_rbc,
+            patch("trw_mcp.tools.build._registration.cache_build_status") as mock_cache,
         ):
             from trw_mcp.models.build import BuildStatus
 
@@ -569,7 +572,7 @@ class TestTrwBuildCheckTool:
         """Line 404-407: timeout_secs capped at 600."""
         (tmp_path / ".trw").mkdir()
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
 
         from fastmcp import FastMCP
 
@@ -581,10 +584,10 @@ class TestTrwBuildCheckTool:
         captured_timeout: list[int] = []
 
         with (
-            patch("trw_mcp.tools.build.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.build.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.tools.build.cache_build_status") as mock_cache,
-            patch("trw_mcp.tools.build.run_build_check") as mock_rbc,
+            patch("trw_mcp.tools.build._registration.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.tools.build._registration.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.tools.build._registration.cache_build_status") as mock_cache,
+            patch("trw_mcp.tools.build._registration.run_build_check") as mock_rbc,
         ):
             from trw_mcp.models.build import BuildStatus
 
@@ -614,7 +617,7 @@ class TestTrwBuildCheckTool:
         """Line 405: timeout_secs=None uses config default."""
         (tmp_path / ".trw").mkdir()
         config = TRWConfig(build_check_enabled=True, build_check_timeout_secs=120)
-        monkeypatch.setattr("trw_mcp.tools.build._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
 
         from fastmcp import FastMCP
 
@@ -626,10 +629,10 @@ class TestTrwBuildCheckTool:
         captured_timeout: list[int] = []
 
         with (
-            patch("trw_mcp.tools.build.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.build.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.tools.build.cache_build_status") as mock_cache,
-            patch("trw_mcp.tools.build.run_build_check") as mock_rbc,
+            patch("trw_mcp.tools.build._registration.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.tools.build._registration.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.tools.build._registration.cache_build_status") as mock_cache,
+            patch("trw_mcp.tools.build._registration.run_build_check") as mock_rbc,
         ):
             from trw_mcp.models.build import BuildStatus
 

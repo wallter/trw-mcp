@@ -64,7 +64,7 @@ def surface_validated_learnings(
                 })
         validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
         return validated
-    except Exception:
+    except Exception:  # broad catch: ImportError + SQLite/adapter failures
         pass  # Fall through to YAML
 
     # Fallback: YAML scan
@@ -117,7 +117,7 @@ def has_existing_success_learning(
         for data in all_active:
             if str(data.get("summary", ""))[:50].lower() == target:
                 return True
-    except Exception:
+    except Exception:  # broad catch: ImportError + SQLite/adapter failures
         pass  # Fall through to YAML
 
     # Also check YAML (entries from save_learning_entry may only be in YAML)
@@ -156,7 +156,7 @@ def has_existing_mechanical_learning(
             summary = str(data.get("summary", "")).lower()
             if summary.startswith(target):
                 return True
-    except Exception:
+    except Exception:  # broad catch: ImportError + SQLite/adapter failures
         pass  # Fall through to YAML
 
     # Also check YAML (entries from save_learning_entry may only be in YAML)
@@ -302,7 +302,7 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
             metadata = dict(entry.metadata) if entry.metadata else {}
             metadata["promoted_to_claude_md"] = "true"
             backend.update(learning_id, metadata=metadata)
-    except Exception:
+    except (ImportError, OSError, ValueError):
         pass  # Fail-open
 
     # Fallback: also update YAML if it exists

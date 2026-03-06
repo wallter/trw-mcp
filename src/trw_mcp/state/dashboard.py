@@ -13,6 +13,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.models.config import get_config
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
@@ -96,7 +97,7 @@ def compute_ceremony_trend(sessions: list[dict[str, object]]) -> dict[str, objec
 
     try:
         _threshold = float(get_config().ceremony_alert_threshold)
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         _threshold = 60.0
     pass_count = sum(1 for sc in scores if sc >= _threshold)
     return {
@@ -138,7 +139,7 @@ def compute_coverage_trend(sessions: list[dict[str, object]]) -> dict[str, objec
 
     try:
         _cov_min = get_config().build_check_coverage_min
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         _cov_min = 85.0
     below = sum(1 for v in values if v < _cov_min)
     return {
@@ -340,7 +341,7 @@ def aggregate_dashboard(
     if analytics_path.exists():
         try:
             analytics = _reader.read_yaml(analytics_path)
-        except Exception:
+        except (OSError, StateError):
             pass
 
     # Read session events from session-events.jsonl
@@ -349,7 +350,7 @@ def aggregate_dashboard(
     if events_path.exists():
         try:
             raw_events = _reader.read_jsonl(events_path)
-        except Exception:
+        except (OSError, StateError):
             pass
 
     # Filter to window and extract session-like events
@@ -394,7 +395,7 @@ def aggregate_dashboard(
         cfg = get_config()
         alert_threshold = cfg.ceremony_alert_threshold
         alert_consecutive = cfg.ceremony_alert_consecutive
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         alert_threshold = 40
         alert_consecutive = 3
 

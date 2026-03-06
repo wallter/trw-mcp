@@ -66,9 +66,10 @@ def _check_build_status(
 
     from trw_mcp.state.persistence import FileStateReader
 
+    from trw_mcp.exceptions import StateError
     try:
         data = FileStateReader().read_yaml(cache_path)
-    except Exception:
+    except (OSError, StateError):
         return [
             ValidationFailure(
                 field="build_status",
@@ -177,8 +178,8 @@ def _best_effort_build_check(
     try:
         from trw_mcp.state._paths import resolve_trw_dir
         failures.extend(_check_build_status(resolve_trw_dir(), config, phase_name))
-    except Exception:
-        pass  # Best-effort
+    except Exception:  # broad catch: best-effort gate, never blocks
+        pass
 
 
 def _best_effort_integration_check(
@@ -218,8 +219,8 @@ def _best_effort_integration_check(
                     message=f"Missing test file: {test_name}",
                     severity="warning",
                 ))
-    except Exception:
-        pass  # Best-effort — scanner errors never block
+    except Exception:  # broad catch: best-effort gate, never blocks
+        pass
 
 
 def _best_effort_orphan_check(
@@ -258,5 +259,5 @@ def _best_effort_orphan_check(
                     ),
                     severity=severity,
                 ))
-    except Exception:
-        pass  # Best-effort — scanner errors never block
+    except Exception:  # broad catch: best-effort gate, never blocks
+        pass

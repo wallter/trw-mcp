@@ -20,6 +20,7 @@ import structlog
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 from trw_mcp.state.memory_adapter import count_entries, get_backend
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -263,7 +264,7 @@ def preserve_manual_markers(existing_content: str, new_content: str) -> str:
             manual_block = normalized[start_idx : end_idx + len(end_marker)]
 
         return new_content.rstrip("\n") + "\n\n" + manual_block + "\n"
-    except Exception:
+    except (ValueError, IndexError):
         return existing_content
 
 
@@ -334,7 +335,7 @@ def _render_cluster_documents(
         slug = str(cluster.get("slug", "topic"))
         try:
             rendered = render_topic_document(cluster)
-        except Exception as exc:
+        except (KeyError, ValueError, TypeError) as exc:
             errors.append(f"Cluster '{slug}': {exc}")
             logger.warning(
                 "knowledge_cluster_render_failed",
@@ -383,7 +384,7 @@ def _write_knowledge_files(
             writer.write_text(topic_path, rendered)
             topics_generated += 1
             slugs_written.append(slug)
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             errors.append(f"Cluster '{slug}': {exc}")
             logger.warning(
                 "knowledge_cluster_render_failed",
@@ -418,7 +419,7 @@ def execute_knowledge_sync(
     # Step 1: threshold check (NFR02: fail-open on StorageError)
     try:
         total_count = count_entries(trw_dir)
-    except Exception as exc:
+    except (ImportError, OSError, ValueError) as exc:
         logger.warning("knowledge_sync_count_failed", error=str(exc))
         result = _base_result(0, config, trw_dir, threshold_met=False, dry_run=dry_run)
         result["errors"] = [f"count_entries failed: {exc}"]
@@ -445,8 +446,8 @@ def execute_knowledge_sync(
     backend = get_backend(trw_dir)
     entries = backend.list_entries(
         status=MemoryStatus.ACTIVE,
-        namespace="default",
-        limit=10000,
+        namespace=DEFAULT_NAMESPACE,
+        limit=DEFAULT_LIST_LIMIT,
     )
 
     # Step 3: form Jaccard clusters
@@ -503,7 +504,7 @@ def execute_knowledge_sync(
             with open(fd, "w", encoding="utf-8") as f:
                 json.dump(clusters_data, f, indent=2)
             Path(tmp_path_str).replace(clusters_path)
-        except Exception:
+        except Exception:  # broad catch: cleanup temp file on any write failure
             with contextlib.suppress(OSError):
                 Path(tmp_path_str).unlink(missing_ok=True)
             raise
@@ -513,7 +514,7 @@ def execute_knowledge_sync(
             cluster_count=len(cluster_map),
             total_entries=entries_clustered,
         )
-    except Exception as exc:
+    except (OSError, ValueError, TypeError) as exc:
         errors.append(f"clusters.json write failed: {exc}")
         logger.warning("knowledge_clusters_json_failed", error=str(exc))
 

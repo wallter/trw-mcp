@@ -55,8 +55,8 @@ def _get_tool_fn(server: FastMCP) -> object:
 class TestPipAuditTypeGuards:
     """Tests for type guard continue-statements in _run_pip_audit parsing."""
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_non_dict_dep_is_skipped(
         self,
         mock_subprocess: MagicMock,
@@ -92,8 +92,8 @@ class TestPipAuditTypeGuards:
         assert len(vulns) == 1
         assert vulns[0]["package"] == "good-pkg"
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_non_list_vulns_is_skipped(
         self,
         mock_subprocess: MagicMock,
@@ -135,8 +135,8 @@ class TestPipAuditTypeGuards:
         assert isinstance(vulns, list)
         assert vulns[0]["package"] == "good-pkg"
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_non_dict_vuln_is_skipped(
         self,
         mock_subprocess: MagicMock,
@@ -181,8 +181,8 @@ class TestPipAuditTypeGuards:
 class TestCvssSeverityFallback:
     """Tests for CVSS-based severity fallback when named severity is unknown."""
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_cvss_high_severity_fallback(
         self,
         mock_subprocess: MagicMock,
@@ -216,8 +216,8 @@ class TestCvssSeverityFallback:
         assert len(vulns) == 1
         assert vulns[0]["cvss_score"] == 7.5
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_cvss_medium_severity_fallback(
         self,
         mock_subprocess: MagicMock,
@@ -252,8 +252,8 @@ class TestCvssSeverityFallback:
         assert vulns[0]["severity"] == "unknown"
         assert vulns[0]["cvss_score"] == 5.5
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_cvss_medium_excluded_at_high_level(
         self,
         mock_subprocess: MagicMock,
@@ -282,8 +282,8 @@ class TestCvssSeverityFallback:
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_vulnerability_count") == 0
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_cvss_low_severity_fallback(
         self,
         mock_subprocess: MagicMock,
@@ -317,8 +317,8 @@ class TestCvssSeverityFallback:
         assert len(vulns) == 1
         assert vulns[0]["cve_id"] == "CVE-2023-LOW"
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_cvss_low_excluded_at_high_level(
         self,
         mock_subprocess: MagicMock,
@@ -356,9 +356,9 @@ class TestCvssSeverityFallback:
 class TestInvalidScope:
     """Test that an invalid scope parameter returns an error dict."""
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_invalid_scope_returns_error(
         self,
         mock_trw_dir: MagicMock,
@@ -383,9 +383,9 @@ class TestInvalidScope:
         assert "Invalid scope" in str(result["reason"])
         assert "'invalid'" in str(result["reason"])
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_empty_scope_returns_error(
         self,
         mock_trw_dir: MagicMock,
@@ -418,9 +418,9 @@ class TestInvalidScope:
 class TestDisabledFeatureFlags:
     """Tests for disabled feature flags returning skipped status."""
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_mutations_disabled_returns_skipped(
         self,
         mock_trw_dir: MagicMock,
@@ -445,9 +445,9 @@ class TestDisabledFeatureFlags:
         assert result["status"] == "skipped"
         assert "mutation_enabled" in str(result["reason"])
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_deps_disabled_returns_skipped(
         self,
         mock_trw_dir: MagicMock,
@@ -472,9 +472,9 @@ class TestDisabledFeatureFlags:
         assert result["status"] == "skipped"
         assert "dep_audit_enabled" in str(result["reason"])
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_api_fuzz_disabled_returns_skipped(
         self,
         mock_trw_dir: MagicMock,
@@ -508,8 +508,8 @@ class TestDisabledFeatureFlags:
 class TestNpmAuditJsonParseFailures:
     """Tests for npm audit when stdout is not valid JSON or unexpected type."""
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/npm")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit.shutil.which", return_value="/usr/bin/npm")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_npm_audit_invalid_json(
         self,
         mock_subprocess: MagicMock,
@@ -528,8 +528,8 @@ class TestNpmAuditJsonParseFailures:
         assert result.get("npm_audit_skipped") is True
         assert "invalid JSON" in str(result.get("npm_audit_skip_reason", ""))
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/npm")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit.shutil.which", return_value="/usr/bin/npm")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_npm_audit_stdout_none_type_error(
         self,
         mock_subprocess: MagicMock,
@@ -550,8 +550,8 @@ class TestNpmAuditJsonParseFailures:
         assert result.get("npm_audit_skipped") is True
         assert "invalid JSON" in str(result.get("npm_audit_skip_reason", ""))
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/npm")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit.shutil.which", return_value="/usr/bin/npm")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_npm_audit_empty_json_output(
         self,
         mock_subprocess: MagicMock,
@@ -570,9 +570,9 @@ class TestNpmAuditJsonParseFailures:
         assert result.get("npm_audit_skipped") is True
         assert "invalid JSON" in str(result.get("npm_audit_skip_reason", ""))
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/npm")
+    @patch("trw_mcp.tools.build._audit.shutil.which", return_value="/usr/bin/npm")
     @patch(
-        "trw_mcp.tools.build._run_subprocess",
+        "trw_mcp.tools.build._subprocess._run_subprocess",
         return_value="npm timed out after 60s",
     )
     def test_npm_audit_subprocess_error_string(

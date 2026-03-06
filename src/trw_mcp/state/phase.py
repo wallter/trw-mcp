@@ -13,6 +13,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.models.run import PHASE_ORDER, Phase
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -52,7 +53,7 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
                 "phase": new_phase.value,
                 "previous_phase": current,
             })
-        except Exception:
+        except (OSError, StateError):
             logger.debug("phase_event_log_failed", phase=new_phase.value)
 
     return True
@@ -69,5 +70,5 @@ def try_update_phase(run_path: Path | None, phase: Phase) -> None:
         return
     try:
         update_run_phase(run_path, phase)
-    except Exception:
+    except Exception:  # broad catch: best-effort wrapper, never raises
         logger.debug("try_update_phase_failed", phase=phase.value)

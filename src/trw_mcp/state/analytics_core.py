@@ -160,7 +160,7 @@ def infer_topic_tags(
                 if len(inferred) >= _TOPIC_TAG_MAX:
                     break
         return list(inferred.values())
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         return []
 
 

@@ -23,6 +23,7 @@ from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.scoring import _days_since_access
 from trw_mcp.state.dedup import cosine_similarity
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -224,7 +225,7 @@ class TierManager:
             data = self._reader.read_yaml(target)
             data["last_accessed_at"] = date.today().isoformat()
             self._writer.write_yaml(target, data)
-        except Exception:
+        except (OSError, StateError):
             logger.warning(
                 "hot_tier_flush_failed",
                 entry_id=entry_id,
@@ -462,12 +463,12 @@ class TierManager:
             data = self._reader.read_yaml(entry_path)
             self._writer.write_yaml(dest, data)
             # Remove from warm vec store (best-effort)
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError, StateError):
                 self.warm_remove(entry_id)
             # Delete original
             entry_path.unlink(missing_ok=True)
             logger.debug("cold_archive", entry_id=entry_id, dest=str(dest))
-        except Exception:
+        except (OSError, StateError):
             logger.warning(
                 "cold_archive_failed",
                 entry_id=entry_id,
@@ -497,7 +498,7 @@ class TierManager:
         for yaml_file in cold_base.rglob("*.yaml"):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:
+            except (OSError, StateError):
                 continue
             if str(data.get("id", "")) != entry_id:
                 continue
@@ -511,7 +512,7 @@ class TierManager:
                 yaml_file.unlink(missing_ok=True)
                 logger.debug("cold_promote", entry_id=entry_id, src=str(yaml_file))
                 return data
-            except Exception:
+            except (OSError, StateError):
                 logger.warning(
                     "cold_promote_failed",
                     entry_id=entry_id,
@@ -543,7 +544,7 @@ class TierManager:
         for yaml_file in sorted(cold_base.rglob("*.yaml")):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:
+            except (OSError, StateError):
                 continue
 
             text = str(data.get("summary", "")).lower()
@@ -591,7 +592,7 @@ class TierManager:
                 self._flush_last_accessed(entry_id)
                 demoted += 1
                 logger.debug("sweep_hot_to_warm", entry_id=entry_id)
-            except Exception:
+            except (OSError, StateError, ValueError):
                 logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
                 errors += 1
 
@@ -649,7 +650,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:
+                except (OSError, StateError, ValueError):
                     logger.warning(
                         "sweep_warm_to_cold_failed",
                         entry_id=entry_id,
@@ -657,7 +658,7 @@ class TierManager:
                     )
                     errors += 1
             _used_sqlite = True
-        except Exception:
+        except Exception:  # broad catch: ImportError + any SQLite/adapter failure
             logger.warning(
                 "sqlite_read_fallback",
                 step="sweep_warm_to_cold",
@@ -688,7 +689,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:
+                except (OSError, StateError, ValueError):
                     logger.warning(
                         "sweep_warm_to_cold_failed",
                         path=str(yaml_file),
@@ -749,7 +750,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:
+                except (OSError, StateError, ValueError):
                     logger.warning(
                         "sweep_cold_purge_failed",
                         path=str(yaml_file),

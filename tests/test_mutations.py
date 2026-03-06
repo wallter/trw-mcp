@@ -723,7 +723,7 @@ class TestCacheMutationStatus:
 class TestRunPipAudit:
     """Tests for _run_pip_audit."""
 
-    @patch("trw_mcp.tools.build._find_executable", return_value=None)
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value=None)
     def test_skips_when_pip_audit_not_installed(
         self, mock_find: MagicMock, tmp_path: Path
     ) -> None:
@@ -733,8 +733,8 @@ class TestRunPipAudit:
         assert result.get("pip_audit_skipped") is True
         assert "not installed" in str(result.get("pip_audit_skip_reason", ""))
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_parses_vulnerabilities_and_filters_by_severity(
         self,
         mock_subprocess: MagicMock,
@@ -771,8 +771,8 @@ class TestRunPipAudit:
         assert len(vulns) == 1
         assert vulns[0]["cve_id"] == "CVE-2023-1234"
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_block_on_patchable_only_true_counts_only_fixed(
         self,
         mock_subprocess: MagicMock,
@@ -810,8 +810,8 @@ class TestRunPipAudit:
         assert result.get("pip_audit_blocking_count") == 1
         assert result.get("pip_audit_passed") is False
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_returns_passed_true_when_no_blocking_vulns(
         self,
         mock_subprocess: MagicMock,
@@ -827,9 +827,9 @@ class TestRunPipAudit:
         assert result.get("pip_audit_passed") is True
         assert result.get("pip_audit_blocking_count") == 0
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
     @patch(
-        "trw_mcp.tools.build._run_subprocess",
+        "trw_mcp.tools.build._subprocess._run_subprocess",
         return_value="pip-audit timed out after 30s",
     )
     def test_skips_when_subprocess_returns_error_string(
@@ -843,8 +843,8 @@ class TestRunPipAudit:
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_skipped") is True
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_skips_on_invalid_json_output(
         self,
         mock_subprocess: MagicMock,
@@ -859,8 +859,8 @@ class TestRunPipAudit:
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_skipped") is True
 
-    @patch("trw_mcp.tools.build._find_executable", return_value="/usr/bin/pip-audit")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value="/usr/bin/pip-audit")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_cvss_score_fallback_for_severity(
         self,
         mock_subprocess: MagicMock,
@@ -911,7 +911,7 @@ class TestRunNpmAudit:
             result.get("npm_audit_skip_reason", "")
         )
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value=None)
+    @patch("trw_mcp.tools.build._audit.shutil.which", return_value=None)
     def test_skips_when_npm_not_installed(
         self, mock_which: MagicMock, tmp_path: Path
     ) -> None:
@@ -924,8 +924,8 @@ class TestRunNpmAudit:
         assert result.get("npm_audit_skipped") is True
         assert "npm not installed" in str(result.get("npm_audit_skip_reason", ""))
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/npm")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit.shutil.which", return_value="/usr/bin/npm")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_parses_high_plus_vulnerabilities(
         self,
         mock_subprocess: MagicMock,
@@ -951,8 +951,8 @@ class TestRunNpmAudit:
         assert result.get("npm_audit_high_plus_count") == 2
         assert result.get("npm_audit_passed") is False
 
-    @patch("trw_mcp.tools.build.shutil.which", return_value="/usr/bin/npm")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit.shutil.which", return_value="/usr/bin/npm")
+    @patch("trw_mcp.tools.build._subprocess._run_subprocess")
     def test_passed_true_when_no_high_plus_vulns(
         self,
         mock_subprocess: MagicMock,
@@ -1080,9 +1080,9 @@ class TestDetectUnlistedImports:
 class TestRunDepAudit:
     """Tests for _run_dep_audit."""
 
-    @patch("trw_mcp.tools.build._run_pip_audit")
-    @patch("trw_mcp.tools.build._run_npm_audit")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._audit._run_pip_audit")
+    @patch("trw_mcp.tools.build._audit._run_npm_audit")
+    @patch("trw_mcp.tools.build._audit.subprocess.run")
     def test_combines_pip_and_npm_results(
         self,
         mock_git: MagicMock,
@@ -1100,9 +1100,9 @@ class TestRunDepAudit:
         assert "pip_audit_passed" in result
         assert "npm_audit_skipped" in result
 
-    @patch("trw_mcp.tools.build._run_pip_audit")
-    @patch("trw_mcp.tools.build._run_npm_audit")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._audit._run_pip_audit")
+    @patch("trw_mcp.tools.build._audit._run_npm_audit")
+    @patch("trw_mcp.tools.build._audit.subprocess.run")
     def test_overall_pass_requires_both_pip_and_npm_to_pass(
         self,
         mock_git: MagicMock,
@@ -1124,9 +1124,9 @@ class TestRunDepAudit:
         result = _run_dep_audit(tmp_path, config)
         assert result["dep_audit_passed"] is False
 
-    @patch("trw_mcp.tools.build._run_pip_audit")
-    @patch("trw_mcp.tools.build._run_npm_audit")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._audit._run_pip_audit")
+    @patch("trw_mcp.tools.build._audit._run_npm_audit")
+    @patch("trw_mcp.tools.build._audit.subprocess.run")
     def test_dep_audit_passed_true_when_both_pass(
         self,
         mock_git: MagicMock,
@@ -1142,9 +1142,9 @@ class TestRunDepAudit:
         result = _run_dep_audit(tmp_path, config)
         assert result["dep_audit_passed"] is True
 
-    @patch("trw_mcp.tools.build._run_pip_audit")
-    @patch("trw_mcp.tools.build._run_npm_audit")
-    @patch("trw_mcp.tools.build.subprocess.run")
+    @patch("trw_mcp.tools.build._audit._run_pip_audit")
+    @patch("trw_mcp.tools.build._audit._run_npm_audit")
+    @patch("trw_mcp.tools.build._audit.subprocess.run")
     def test_unlisted_imports_included_in_result(
         self,
         mock_git: MagicMock,
@@ -1166,10 +1166,10 @@ class TestRunDepAudit:
         # May or may not find it depending on pyproject.toml presence, but no crash
         assert "dep_audit_passed" in result
 
-    @patch("trw_mcp.tools.build._run_pip_audit")
-    @patch("trw_mcp.tools.build._run_npm_audit")
+    @patch("trw_mcp.tools.build._audit._run_pip_audit")
+    @patch("trw_mcp.tools.build._audit._run_npm_audit")
     @patch(
-        "trw_mcp.tools.build.subprocess.run",
+        "trw_mcp.tools.build._audit.subprocess.run",
         side_effect=subprocess.TimeoutExpired("git", 30),
     )
     def test_git_timeout_uses_empty_changed_files(
@@ -1224,7 +1224,7 @@ class TestCacheDepAudit:
 class TestRunApiFuzz:
     """Tests for _run_api_fuzz."""
 
-    @patch("trw_mcp.tools.build._find_executable", return_value=None)
+    @patch("trw_mcp.tools.build._audit._find_executable", return_value=None)
     def test_skips_when_schemathesis_not_installed(
         self, mock_find: MagicMock, tmp_path: Path
     ) -> None:
@@ -1237,11 +1237,11 @@ class TestRunApiFuzz:
         )
 
     @patch(
-        "trw_mcp.tools.build._find_executable",
+        "trw_mcp.tools.build._audit._find_executable",
         return_value="/usr/local/bin/schemathesis",
     )
     @patch("urllib.request.urlopen")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._run_subprocess")
     def test_passed_true_when_schemathesis_exits_zero(
         self,
         mock_subprocess: MagicMock,
@@ -1259,7 +1259,7 @@ class TestRunApiFuzz:
         assert result.get("api_fuzz_passed") is True
 
     @patch(
-        "trw_mcp.tools.build._find_executable",
+        "trw_mcp.tools.build._audit._find_executable",
         return_value="/usr/local/bin/schemathesis",
     )
     @patch(
@@ -1279,11 +1279,11 @@ class TestRunApiFuzz:
         assert "unreachable" in str(result.get("api_fuzz_skip_reason", ""))
 
     @patch(
-        "trw_mcp.tools.build._find_executable",
+        "trw_mcp.tools.build._audit._find_executable",
         return_value="/usr/local/bin/schemathesis",
     )
     @patch("urllib.request.urlopen")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._run_subprocess")
     def test_failed_when_schemathesis_exits_nonzero(
         self,
         mock_subprocess: MagicMock,
@@ -1302,12 +1302,12 @@ class TestRunApiFuzz:
         assert result.get("api_fuzz_passed") is False
 
     @patch(
-        "trw_mcp.tools.build._find_executable",
+        "trw_mcp.tools.build._audit._find_executable",
         return_value="/usr/local/bin/schemathesis",
     )
     @patch("urllib.request.urlopen")
     @patch(
-        "trw_mcp.tools.build._run_subprocess",
+        "trw_mcp.tools.build._audit._run_subprocess",
         return_value="schemathesis timed out after 120s",
     )
     def test_skips_on_subprocess_timeout(
@@ -1324,11 +1324,11 @@ class TestRunApiFuzz:
         assert result.get("api_fuzz_skipped") is True
 
     @patch(
-        "trw_mcp.tools.build._find_executable",
+        "trw_mcp.tools.build._audit._find_executable",
         return_value="/usr/local/bin/schemathesis",
     )
     @patch("urllib.request.urlopen")
-    @patch("trw_mcp.tools.build._run_subprocess")
+    @patch("trw_mcp.tools.build._audit._run_subprocess")
     def test_failure_lines_extracted(
         self,
         mock_subprocess: MagicMock,
@@ -1413,9 +1413,9 @@ def _get_tool_fn(server: object) -> object:
 class TestBuildCheckScopeIntegration:
     """Integration tests: trw_build_check MCP tool with scope='mutations','deps','api'."""
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.mutations.run_mutation_check")
     @patch("trw_mcp.tools.mutations.cache_mutation_status")
     def test_scope_mutations_calls_mutation_check_and_caches(
@@ -1454,11 +1454,11 @@ class TestBuildCheckScopeIntegration:
         mock_cache.assert_called_once()
         assert result.get("mutation_passed") is True
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
-    @patch("trw_mcp.tools.build._run_dep_audit")
-    @patch("trw_mcp.tools.build._cache_to_context")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._run_dep_audit")
+    @patch("trw_mcp.tools.build._registration._cache_to_context")
     def test_scope_deps_calls_dep_audit_and_caches(
         self,
         mock_cache: MagicMock,
@@ -1494,11 +1494,11 @@ class TestBuildCheckScopeIntegration:
         mock_cache.assert_called_once()
         assert result.get("dep_audit_passed") is True
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
-    @patch("trw_mcp.tools.build._run_api_fuzz")
-    @patch("trw_mcp.tools.build._cache_to_context")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._run_api_fuzz")
+    @patch("trw_mcp.tools.build._registration._cache_to_context")
     def test_scope_api_calls_api_fuzz_and_caches(
         self,
         mock_cache: MagicMock,
@@ -1534,12 +1534,12 @@ class TestBuildCheckScopeIntegration:
         mock_cache.assert_called_once()
         assert result.get("api_fuzz_skipped") is True
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
-    @patch("trw_mcp.tools.build.run_build_check")
-    @patch("trw_mcp.tools.build._run_dep_audit")
-    @patch("trw_mcp.tools.build._cache_to_context")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration.run_build_check")
+    @patch("trw_mcp.tools.build._registration._run_dep_audit")
+    @patch("trw_mcp.tools.build._registration._cache_to_context")
     def test_scope_full_includes_dep_audit_when_enabled(
         self,
         mock_cache_dep: MagicMock,
@@ -1584,10 +1584,10 @@ class TestBuildCheckScopeIntegration:
         mock_cache_dep.assert_called_once()
         assert "dep_audit" in result
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
-    @patch("trw_mcp.tools.build.run_build_check")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration.run_build_check")
     def test_scope_full_skips_dep_audit_when_disabled(
         self,
         mock_build: MagicMock,
@@ -1622,9 +1622,9 @@ class TestBuildCheckScopeIntegration:
         result = tool_fn(scope="full")
         assert "dep_audit" not in result
 
-    @patch("trw_mcp.tools.build._config")
-    @patch("trw_mcp.tools.build.resolve_project_root")
-    @patch("trw_mcp.tools.build.resolve_trw_dir")
+    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.resolve_project_root")
+    @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_scope_mutations_returns_skipped_when_disabled(
         self,
         mock_trw_dir: MagicMock,

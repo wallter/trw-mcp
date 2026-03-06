@@ -191,7 +191,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
             os.close(tmp_fd)
             tmp_path.write_text(new_content, encoding="utf-8")
             tmp_path.rename(path)
-        except Exception:
+        except Exception:  # broad catch: cleanup temp file on any write failure
             tmp_path.unlink(missing_ok=True)
             raise
 
@@ -199,7 +199,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
 
     except StateError:
         raise
-    except Exception as exc:
+    except (OSError, YAMLError, ValueError, TypeError) as exc:
         raise StateError(
             f"Failed to update frontmatter: {exc}", path=str(path)
         ) from exc

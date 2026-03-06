@@ -251,7 +251,7 @@ def update_analytics_extended(
                 q_activations += 1
             if float(str(entry_data.get("impact", 0.5))) >= 0.7:
                 high_impact += 1
-    except Exception:
+    except Exception:  # broad catch: ImportError + SQLite/adapter failures
         # Fallback: YAML scan
         entries_dir = _ac._entries_path(trw_dir)
         if entries_dir.is_dir():

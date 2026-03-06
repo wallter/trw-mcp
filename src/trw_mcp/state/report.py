@@ -19,6 +19,7 @@ from trw_mcp.models.report import (
     PhaseEntry,
     RunReport,
 )
+from trw_mcp.state._constants import DEFAULT_LIST_LIMIT
 from trw_mcp.state._helpers import safe_float
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader
@@ -151,8 +152,8 @@ def compute_learning_yield(
     end_date = _parse_date(run_end)
 
     try:
-        entries = list_active_learnings(trw_dir, min_impact=0.0, limit=10000)
-    except Exception:
+        entries = list_active_learnings(trw_dir, min_impact=0.0, limit=DEFAULT_LIST_LIMIT)
+    except (ImportError, OSError, ValueError):
         logger.warning("learning_yield_sqlite_failed", trw_dir=str(trw_dir))
         return LearningSummary()
 
@@ -258,7 +259,7 @@ def assemble_report(
                 test_count=int(str(build_data.get("test_count", 0))),
                 duration_secs=safe_float(build_data, "duration_secs", 0.0),
             )
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
             logger.warning("build_status_read_failed", path=str(build_path))
 
     # Optional: learning yield

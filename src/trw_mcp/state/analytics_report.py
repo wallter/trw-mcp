@@ -13,6 +13,7 @@ import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -143,7 +144,7 @@ def scan_all_runs(
                 run_data = _analyze_single_run(run_dir)
                 if run_data is not None:
                     runs.append(run_data)
-            except Exception as exc:
+            except (OSError, StateError, ValueError, KeyError) as exc:
                 parse_errors.append(f"{run_dir.name}: {exc}")
 
     # Apply since filter (validate ISO date format)
@@ -177,7 +178,7 @@ def scan_all_runs(
         _writer.ensure_dir(cache_dir)
         cache_path = cache_dir / "analytics-report.yaml"
         _writer.write_yaml(cache_path, report)
-    except Exception:
+    except (OSError, StateError):
         logger.debug("analytics_report_cache_write_failed")
 
     return report
@@ -194,7 +195,7 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
 
     try:
         state_data = _reader.read_yaml(run_yaml)
-    except Exception:
+    except (OSError, StateError):
         return None
 
     run_id = str(state_data.get("run_id", run_dir.name))
@@ -206,13 +207,13 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
     if events_path.exists():
         try:
             events = _reader.read_jsonl(events_path)
-        except Exception:
+        except (OSError, StateError):
             logger.debug("events_read_failed", path=str(events_path))
 
     # Compute ceremony score
     try:
         ceremony = compute_ceremony_score(events)
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         ceremony = {
             "score": None,
             "session_start": False,
@@ -341,7 +342,7 @@ def _get_last_activity_timestamp(run_dir: Path) -> datetime | None:
 
     try:
         records = _reader.read_jsonl(cp_path)
-    except Exception:
+    except (OSError, StateError):
         return None
 
     if not records:
@@ -376,7 +377,7 @@ def _write_archive_summary(
     if events_path.exists():
         try:
             events_count = len(_reader.read_jsonl(events_path))
-        except Exception:
+        except (OSError, StateError):
             logger.debug("run_events_read_failed", path=str(events_path))
 
     # Count checkpoints
@@ -385,7 +386,7 @@ def _write_archive_summary(
     if cp_path.exists():
         try:
             checkpoints_count = len(_reader.read_jsonl(cp_path))
-        except Exception:
+        except (OSError, StateError):
             logger.debug("run_checkpoints_read_failed", path=str(cp_path))
 
     # Determine started_at from run_id
@@ -510,7 +511,7 @@ def auto_close_stale_runs(
                     threshold_hours=threshold_hours,
                     task=str(data.get("task", "")),
                 )
-            except Exception as exc:
+            except (OSError, StateError, ValueError) as exc:
                 errors.append(f"{run_dir.name}: {exc}")
 
     return {"runs_closed": closed, "count": len(closed), "errors": errors}
@@ -552,7 +553,7 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
                     continue
                 if _is_run_stale(run_dir, data, threshold_hours, now):
                     count += 1
-            except Exception:
+            except (OSError, StateError):
                 continue
 
     return count

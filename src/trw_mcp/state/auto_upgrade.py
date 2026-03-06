@@ -160,7 +160,7 @@ def download_release_artifact(
         logger.warning("archive_missing_data_dir")
         return None
 
-    except Exception:
+    except (urllib.error.URLError, OSError, ValueError):
         logger.debug("artifact_download_failed", exc_info=True)
         return None
 
@@ -252,7 +252,7 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
                 with contextlib.suppress(OSError):
                     lock_path.unlink(missing_ok=True)
 
-    except Exception:
+    except Exception:  # broad catch: fail-open upgrade boundary
         logger.debug("auto_upgrade_failed", exc_info=True)
         return {
             "applied": False,

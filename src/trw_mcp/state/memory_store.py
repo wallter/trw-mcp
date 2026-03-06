@@ -145,7 +145,7 @@ class MemoryStore:
                 (query_bytes, top_k),
             ).fetchall()
             return [(str(row[0]), float(row[1])) for row in rows]
-        except Exception:
+        except sqlite3.Error:
             logger.debug("memory_store_search_error", exc_info=True)
             return []
 
@@ -211,7 +211,7 @@ class MemoryStore:
                 detail = str(data.get("detail", ""))
                 if entry_id and (summary or detail):
                     entries.append((entry_id, summary + " " + detail))
-            except Exception:
+            except (OSError, ValueError):
                 continue
 
         if not entries:

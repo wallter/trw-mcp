@@ -218,7 +218,7 @@ def auto_prune_excess_entries(
     try:
         from trw_mcp.state.memory_adapter import list_entries_by_status
         sqlite_entries = list_entries_by_status(trw_dir, status="active")
-    except Exception:
+    except Exception:  # broad catch: ImportError + SQLite/adapter failures
         logger.warning("sqlite_read_fallback", step="auto_prune", reason="get_backend failed")
 
     if sqlite_entries is not None:
@@ -430,7 +430,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
             if src:
                 source_types.add(src)
         _used_sqlite = True
-    except Exception:
+    except Exception:  # broad catch: ImportError + SQLite/adapter failures
         pass  # Fall through to YAML
 
     if not _used_sqlite and entries_dir.is_dir():

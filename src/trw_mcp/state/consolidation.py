@@ -20,6 +20,7 @@ import structlog
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state.dedup import cosine_similarity
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_memory.lifecycle.consolidation import (
     _parse_consolidation_response,
@@ -79,7 +80,7 @@ def _load_active_entries(
             if _is_clusterable(data):
                 entries.append(data)
         return entries
-    except Exception as exc:
+    except Exception as exc:  # broad catch: ImportError + SQLite/adapter failures
         logger.warning(
             "sqlite_read_fallback",
             step="find_clusters",
@@ -94,7 +95,7 @@ def _load_active_entries(
             break
         try:
             data = reader.read_yaml(yaml_file)
-        except Exception:
+        except (OSError, StateError):
             continue
         if str(data.get("status", "active")) != "active":
             continue
@@ -390,7 +391,7 @@ def _archive_originals(
             if tier_manager is not None and hasattr(tier_manager, "cold_archive"):
                 try:
                     tier_manager.cold_archive(entry_id, entry_path)
-                except Exception:
+                except (OSError, StateError):
                     # Cold archive failed — mark as archived instead
                     data["status"] = "archived"
                     writer.write_yaml(entry_path, data)
@@ -398,7 +399,7 @@ def _archive_originals(
                 data["status"] = "archived"
                 writer.write_yaml(entry_path, data)
 
-        except Exception as exc:
+        except (OSError, StateError) as exc:
             # Archive failed — rollback all processed entries
             logger.exception(
                 "consolidation_archive_failed",
@@ -426,7 +427,7 @@ def _rollback_archive(
     for entry_path, original_data in processed:
         try:
             writer.write_yaml(entry_path, original_data)
-        except Exception:
+        except (OSError, StateError):
             logger.exception(
                 "consolidation_rollback_failed",
                 path=str(entry_path),
@@ -439,7 +440,7 @@ def _rollback_archive(
     try:
         if consolidated_path.exists():
             consolidated_path.unlink()
-    except Exception:
+    except OSError:
         logger.exception(
             "consolidation_rollback_delete_failed",
             consolidated_id=consolidated_id,
@@ -555,7 +556,7 @@ def consolidate_cycle(
     try:
         from trw_mcp.state.tiers import TierManager as _TierManager
         tier_manager = _TierManager(trw_dir, reader=reader, writer=writer, config=cfg)
-    except Exception:
+    except (ImportError, OSError, StateError):
         pass  # Graceful degradation — cold archival falls back to status="archived"
 
     # Instantiate LLM client once for all clusters
@@ -564,7 +565,7 @@ def consolidate_cycle(
         candidate = LLMClient(model="haiku")
         if candidate.available:
             llm = candidate
-    except Exception:
+    except (ImportError, OSError, ValueError):
         pass  # LLM is optional — consolidation works without AI summaries
 
     consolidated_count = 0
@@ -600,7 +601,7 @@ def consolidate_cycle(
             )
             consolidated_count += 1
 
-        except Exception as exc:
+        except (OSError, StateError, ValueError, KeyError) as exc:
             logger.exception(
                 "consolidation_cluster_failed",
                 cluster_ids=cluster_ids,

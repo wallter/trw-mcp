@@ -241,7 +241,12 @@ class TestDoClaudeMdSync:
         assert "learnings_promoted" in result
 
     def test_deliver_includes_ceremony_sections(self, trw_project: Path) -> None:
-        """trw_deliver path produces CLAUDE.md with ceremony content."""
+        """trw_deliver path produces CLAUDE.md via canonical execute_claude_md_sync.
+
+        PRD-CORE-061: Progressive disclosure suppresses full ceremony sections
+        from CLAUDE.md — they are now delivered via /trw-ceremony-guide skill.
+        The quick-reference card replaces the full ceremony content.
+        """
         trw_dir = trw_project / ".trw"
         with (
             patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=trw_project),
@@ -253,16 +258,19 @@ class TestDoClaudeMdSync:
 
         claude_md = trw_project / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        # Ceremony sections present
-        assert "### Execution Phases" in content
-        assert "### Tool Lifecycle" in content
-        assert "### Example Flows" in content
-        assert "`trw_session_start`" in content
-        assert "`trw_deliver`" in content
+        # Quick-reference card present (progressive disclosure replacement)
+        assert "## TRW Behavioral Protocol (Auto-Generated)" in content
+        assert "`trw_session_start()`" in content
+        assert "`trw_deliver()`" in content
+        assert "`trw_checkpoint(message)`" in content
+        assert "`trw_learn(summary, detail)`" in content
         # Value-oriented opener present
         assert "TRW tools help you build effectively" in content
+        # Progressive disclosure pointer present
+        assert "/trw-ceremony-guide" in content
         # No unreplaced placeholders
         assert "{{imperative_opener}}" not in content
+        assert "{{ceremony_quick_ref}}" not in content
         assert "{{ceremony_phases}}" not in content
         assert "{{ceremony_table}}" not in content
         assert "{{ceremony_flows}}" not in content
@@ -952,10 +960,10 @@ class TestDeliverTelemetryIntegration:
         # Result still returned (not raised)
         assert "timestamp" in result
 
-    def test_deliver_steps_completed_count_is_10(
+    def test_deliver_steps_completed_count_is_12(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When all 10 steps succeed, steps_completed == 10."""
+        """When all 12 steps succeed, steps_completed == 12."""
         from unittest.mock import MagicMock
         tools = _make_deliver_with_stubs(monkeypatch, tmp_path)
 
@@ -975,8 +983,9 @@ class TestDeliverTelemetryIntegration:
             result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
 
         # With skip_reflect + skip_index_sync, reflect/index are skipped (not errored)
-        # Steps that succeed contribute to steps_completed = 10 - len(errors)
-        assert result["steps_completed"] == 10 - len(result["errors"])
+        # Steps that succeed contribute to steps_completed = 12 - len(errors)
+        # (10 original steps + trust_increment + ceremony_feedback)
+        assert result["steps_completed"] == 12 - len(result["errors"])
 
 
 # --- TestSessionStartWithQuery: query parameter for focused hybrid recall ---

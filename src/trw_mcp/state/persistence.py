@@ -136,7 +136,7 @@ class FileStateReader:
             return result
         except StateError:
             raise
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             raise StateError(
                 f"Failed to read YAML: {exc}",
                 path=str(path),
@@ -184,7 +184,7 @@ class FileStateReader:
             ) from exc
         except StateError:
             raise
-        except Exception as exc:
+        except OSError as exc:
             raise StateError(
                 f"Failed to read JSONL: {exc}",
                 path=str(path),
@@ -234,7 +234,7 @@ class FileStateWriter:
                     finally:
                         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
                 tmp_path.rename(path)
-            except Exception:
+            except Exception:  # broad catch: cleanup temp file on any write failure
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:
@@ -243,7 +243,7 @@ class FileStateWriter:
             logger.debug("yaml_written", path=str(path))
         except StateError:
             raise
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             raise StateError(
                 f"Failed to write YAML: {exc}",
                 path=str(path),
@@ -270,7 +270,7 @@ class FileStateWriter:
                 finally:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
             logger.debug("jsonl_appended", path=str(path), event_type=record.get("event"))
-        except Exception as exc:
+        except (OSError, TypeError, ValueError) as exc:
             raise StateError(
                 f"Failed to append JSONL: {exc}",
                 path=str(path),
@@ -301,7 +301,7 @@ class FileStateWriter:
                     fh.write(content)
                     fh.flush()
                 tmp_path.rename(path)
-            except Exception:
+            except Exception:  # broad catch: cleanup temp file on any write failure
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:
@@ -309,7 +309,7 @@ class FileStateWriter:
                     os.close(fd)
         except StateError:
             raise
-        except Exception as exc:
+        except OSError as exc:
             raise StateError(
                 f"Failed to write text file: {exc}",
                 path=str(path),
@@ -326,7 +326,7 @@ class FileStateWriter:
         """
         try:
             path.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:
+        except OSError as exc:
             raise StateError(
                 f"Failed to create directory: {exc}",
                 path=str(path),

@@ -738,7 +738,7 @@ def collect_promotable_learnings(
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
         all_active = list_active_learnings(trw_dir)
-    except Exception:
+    except (ImportError, OSError, ValueError):
         return high_impact
 
     for data in all_active:

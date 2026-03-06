@@ -178,7 +178,7 @@ def hybrid_search(
             if entry_id:
                 all_entries.append(data)
                 entry_map[entry_id] = data
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             logger.debug("entry_load_skipped", exc_type=type(exc).__name__, path=str(entry_file))
             continue
 
@@ -215,7 +215,7 @@ def hybrid_search(
                             rankings.append(dense_results)
                 finally:
                     store.close()
-        except Exception as exc:
+        except (ImportError, OSError, ValueError) as exc:
             logger.debug("vector_store_unavailable", exc_type=type(exc).__name__)
 
     if not rankings:

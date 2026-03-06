@@ -306,8 +306,8 @@ def _check_review_exit(
                     severity="warning",
                 )
             )
-    except Exception:
-        pass  # Best-effort advisory — never block on quality check failures
+    except Exception:  # broad catch: best-effort advisory, never blocks
+        pass
 
     # Spec reconciliation advisory (non-blocking)
     try:
@@ -348,8 +348,8 @@ def _check_review_exit(
                         severity="info",
                     )
                 )
-    except Exception:
-        pass  # Best-effort advisory — never block
+    except Exception:  # broad catch: best-effort advisory, never blocks
+        pass
 
 
 def _check_deliver_exit(
@@ -375,7 +375,7 @@ def _check_deliver_exit(
                         severity="warning",
                     )
                 )
-        except Exception:
+        except (OSError, ImportError):
             pass
 
     failures.append(

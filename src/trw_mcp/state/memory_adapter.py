@@ -24,6 +24,7 @@ from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.models.config import get_config
+from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 
 logger = structlog.get_logger()
 
@@ -36,8 +37,8 @@ _embedder_lock = threading.Lock()
 _embedder_checked: bool = False
 
 _SENTINEL_NAME = ".migrated"
-_NAMESPACE = "default"
-_MAX_ENTRIES = 10_000  # Effective "unlimited" cap for list/search operations
+_NAMESPACE = DEFAULT_NAMESPACE
+_MAX_ENTRIES = DEFAULT_LIST_LIMIT
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +131,7 @@ def get_embedder() -> Any:
                     "embeddings_enabled_but_deps_missing",
                     hint="pip install trw-memory[embeddings]",
                 )
-        except Exception:
+        except (ImportError, OSError, ValueError):
             logger.debug("embedder_init_failed")
 
         _embedder_checked = True
@@ -180,7 +181,7 @@ def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
         vector = embedder.embed(text)
         if vector is not None:
             backend.upsert_vector(entry_id, vector)
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.debug("embed_and_store_failed", entry_id=entry_id)
 
 
@@ -218,7 +219,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
 
     try:
         memory_entries = migrate_entries_dir(entries_dir)
-    except Exception:
+    except (OSError, ValueError, KeyError):
         logger.warning("memory_migration_read_failed", entries_dir=str(entries_dir))
         return {"migrated": 0, "skipped": 0}
 
@@ -229,7 +230,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
                 entry = entry.model_copy(update={"namespace": _NAMESPACE})
             backend.store(entry)
             migrated += 1
-        except Exception:
+        except (OSError, ValueError, KeyError):
             skipped += 1
             logger.debug("memory_migration_entry_skipped", entry_id=entry.id)
 
@@ -451,7 +452,7 @@ def _search_entries(
         )
         return results
 
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.debug("vector_search_failed_fallback_to_keyword", query=query[:80])
         return keyword_results
 
@@ -634,7 +635,7 @@ def list_active_learnings(
     trw_dir: Path,
     *,
     min_impact: float = 0.0,
-    limit: int = 10000,
+    limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, object]]:
     """List all active learning entries from SQLite.
 
@@ -658,7 +659,7 @@ def list_entries_by_status(
     *,
     status: str = "active",
     min_impact: float = 0.0,
-    limit: int = 10_000,
+    limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, object]]:
     """Return all entries with the given status as learning dicts.
 
@@ -729,7 +730,7 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                     access_count=entry.access_count + 1,
                     last_accessed_at=now,
                 )
-        except Exception:
+        except (OSError, ValueError):
             continue
 
 
@@ -769,7 +770,7 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
 
             backend.upsert_vector(entry.id, vector)
             embedded += 1
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             failed += 1
 
     logger.info(

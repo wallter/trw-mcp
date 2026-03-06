@@ -17,6 +17,7 @@ import structlog
 from trw_memory.retrieval.dense import cosine_similarity
 
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.telemetry.embeddings import embed, embedding_available
 
@@ -108,7 +109,7 @@ def check_duplicate(
             continue
         try:
             data = reader.read_yaml(yaml_file)
-        except Exception:
+        except (OSError, StateError):
             continue
 
         # Only compare against active entries
@@ -243,7 +244,7 @@ def merge_entries(
                     store.upsert(str(existing.get("id", "")), new_embedding, {})
                 finally:
                     store.close()
-    except Exception:
+    except (ImportError, OSError, ValueError):
         pass  # Best-effort re-indexing
 
     return existing_path
@@ -311,7 +312,7 @@ def batch_dedup(
             text = str(data.get("summary", "")) + " " + str(data.get("detail", ""))
             vec = embed(text)
             active_entries.append((yaml_file, data, vec))
-        except Exception:
+        except (OSError, StateError, ValueError):
             continue
 
     merged_count = 0
@@ -355,7 +356,7 @@ def batch_dedup(
                 try:
                     data_i = reader.read_yaml(path_i)
                     active_entries[i] = (path_i, data_i, vec_i)
-                except Exception:
+                except (OSError, StateError):
                     pass
                 merged_count += 1
 
