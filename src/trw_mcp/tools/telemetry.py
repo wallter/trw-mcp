@@ -138,7 +138,7 @@ def _write_tool_event(
                 run_data = reader.read_yaml(run_yaml)
                 phase = str(run_data.get("phase", "unknown"))
             except Exception:
-                pass
+                logger.debug("telemetry_phase_read_failed", exc_info=True)
     event_data["phase"] = phase
 
     if error is not None:

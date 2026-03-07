@@ -30,7 +30,15 @@ _event_count=$(wc -l < "$_events_path" 2>/dev/null | tr -d ' ') || _event_count=
 [ "$_event_count" -gt 0 ] 2>/dev/null || exit 0
 
 # Check for ceremony completion — if present, clear block count and allow
+# Check both run events and fallback session-events (no-run deliver case)
+_session_events="$_context_dir/session-events.jsonl"
+_deliver_found=false
 if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete" || has_event "$_events_path" "trw_deliver_complete"; then
+  _deliver_found=true
+elif [ -f "$_session_events" ] && has_event "$_session_events" "trw_deliver_complete"; then
+  _deliver_found=true
+fi
+if [ "$_deliver_found" = true ]; then
   rm -f "$_block_file" 2>/dev/null || true
   rm -rf "$_lock_dir" 2>/dev/null || true
   exit 0

@@ -2,6 +2,17 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.10.1] — 2026-03-07
+
+### Fixed — Framework Optimization Audit
+
+- **Session duration tracking** — `_step_telemetry()` computes `total_duration_ms` from earliest `session_start` event timestamp; was always 0
+- **Stop hook false positives** — `trw_deliver()` logs `trw_deliver_complete` to fallback `session-events.jsonl` when no active run; hook checks both locations
+- **Review confidence scale mismatch** — normalize 0.0-1.0 confidence to 0-100 before comparing against `review_confidence_threshold`; was silently filtering 90%+ confidence findings
+- **Silent exception handlers** — 15 `except Exception: pass` in tools/ replaced with `logger.debug(event, exc_info=True)`; fail-open preserved
+
+---
+
 ## [0.10.0] — 2026-03-04
 
 ### Architecture — DRY Consolidation & God Module Decomposition (Sprint 54)

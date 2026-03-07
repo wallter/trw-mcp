@@ -308,7 +308,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 fallback_path = context_path / "session-events.jsonl"
                 _events.log_event(fallback_path, "session_start", event_data)
         except Exception:
-            pass  # Fail-open: event write failure must not affect tool result
+            logger.debug("session_event_write_failed", exc_info=True)
 
         # Step 3b: Queue SessionStartEvent for telemetry publishing
         try:
@@ -324,7 +324,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             ))
             tel_client.flush()
         except Exception:
-            pass  # Fail-open: telemetry must not break session start
+            logger.debug("session_telemetry_failed", exc_info=True)
 
         # Steps 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings)
         try:
@@ -333,7 +333,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             )
             results.update(maintenance)
         except Exception:
-            pass  # Fail-open: maintenance must not break session start
+            logger.debug("session_maintenance_failed", exc_info=True)
 
         # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
         try:
@@ -350,7 +350,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     results["auto_recalled"] = phase_recalled
                     results["auto_recall_count"] = len(phase_recalled)
         except Exception:
-            pass  # Fail-open: auto-recall must not break session start
+            logger.debug("session_auto_recall_failed", exc_info=True)
 
         results["errors"] = errors
         results["success"] = len(errors) == 0

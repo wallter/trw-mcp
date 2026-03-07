@@ -118,7 +118,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 if is_migration_needed(trw_dir):
                     batch_dedup(trw_dir, _reader, _writer, config=_config)
             except Exception:
-                pass  # Migration is best-effort
+                logger.debug("learning_migration_failed", exc_info=True)
 
         # Bayesian calibration of impact score (PRD-CORE-034)
         calibrated_impact = calibrate_impact(impact, _config)
@@ -262,7 +262,7 @@ def register_learning_tools(server: FastMCP) -> None:
                     _writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
             except Exception:
-                pass  # Fail-open: YAML backup update is best-effort
+                logger.debug("yaml_backup_update_failed", exc_info=True)
 
         return result
 
@@ -338,7 +338,7 @@ def register_learning_tools(server: FastMCP) -> None:
             for lid in matched_ids:
                 _record_recall(lid, query)
         except Exception:
-            pass  # Fail-open: tracking failure must not affect tool result
+            logger.debug("recall_tracking_failed", exc_info=True)
 
         # Augment local results with remote shared learnings (PRD-CORE-033)
         try:
@@ -347,7 +347,7 @@ def register_learning_tools(server: FastMCP) -> None:
             if remote:
                 matching_learnings = list(matching_learnings) + remote
         except Exception:
-            pass  # Fail-open: remote recall failure must not affect local results
+            logger.debug("remote_recall_failed", exc_info=True)
 
         # Search patterns and rank all results by utility
         matching_patterns = search_patterns(

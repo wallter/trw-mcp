@@ -381,13 +381,18 @@ def handle_auto_mode(
     confidence_threshold = config.review_confidence_threshold
 
     # Filter findings by confidence threshold
+    # ReviewFinding.confidence is 0.0-1.0 float; config threshold is 0-100 int.
+    # Normalize both to 0-100 for comparison.
     surfaced: list[dict[str, object]] = []
     for f in all_auto_findings:
         if not isinstance(f, dict):
             continue
         confidence = f.get("confidence", 0)
-        if isinstance(confidence, (int, float)) and confidence >= confidence_threshold:
-            surfaced.append(f)
+        if isinstance(confidence, (int, float)):
+            # Normalize: values <= 1.0 are 0-1 scale, multiply to 0-100
+            confidence_pct = confidence * 100 if confidence <= 1.0 else confidence
+            if confidence_pct >= confidence_threshold:
+                surfaced.append(f)
 
     # Compute verdict from surfaced findings only
     surfaced_for_verdict: list[dict[str, str]] = [
