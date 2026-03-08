@@ -9,6 +9,7 @@
 #   bash install-trw.sh --upgrade       # Upgrade package only (skip init-project)
 #   bash install-trw.sh --ai            # Install with AI/LLM extras
 #   bash install-trw.sh --script --ai   # Non-interactive with AI extras
+#   bash install-trw.sh --name myproj --api-key trw_abc123  # Headless with config
 #   curl ... | bash                     # Headless mode (auto-detected)
 #
 # Re-run with a newer version of this script to upgrade.
@@ -26,6 +27,10 @@ INTERACTIVE=false
 QUIET=false
 INSTALL_AI=""          # "" = unset (prompt), "yes", "no"
 INSTALL_SQLITEVEC=""   # "" = unset (prompt), "yes", "no"
+OPT_PROJECT_NAME=""    # --name flag value
+OPT_API_KEY=""         # --api-key flag value
+OPT_TELEMETRY=""       # "" = unset, "yes", "no"
+PLATFORM_STATUS=""     # Set after config: "connected", "telemetry", "offline"
 
 # ── Color output ──────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -306,6 +311,51 @@ prompt_yes_no() {
     esac
 }
 
+# ── Input sanitization ────────────────────────────────────────────────
+sanitize_project_name() {
+    local input="$1"
+    # Lowercase
+    local result
+    result=$(echo "$input" | tr '[:upper:]' '[:lower:]')
+    # Replace non-alphanumeric with hyphens
+    result=$(echo "$result" | sed 's/[^a-z0-9]/-/g')
+    # Collapse multiple hyphens
+    result=$(echo "$result" | sed 's/-\{2,\}/-/g')
+    # Strip leading/trailing hyphens
+    result=$(echo "$result" | sed 's/^-//;s/-$//')
+    # Truncate to 64 chars
+    result=$(echo "$result" | cut -c1-64)
+    # Strip trailing hyphen again (from truncation)
+    result=$(echo "$result" | sed 's/-$//')
+    echo "$result"
+}
+
+validate_api_key() {
+    local key="$1"
+    # Must start with trw_, only alphanumeric and underscores, max 128 chars
+    if [ ${#key} -gt 128 ]; then
+        return 1
+    fi
+    if echo "$key" | grep -qE '^trw_[a-zA-Z0-9_]+$'; then
+        return 0
+    fi
+    return 1
+}
+
+prompt_input() {
+    local prompt_text="$1"
+    local default_val="${2:-}"
+    local result
+    if [ -n "$default_val" ]; then
+        printf "    %s [%s] " "$prompt_text" "$default_val"
+    else
+        printf "    %s " "$prompt_text"
+    fi
+    read -r result </dev/tty
+    result="${result:-$default_val}"
+    echo "$result"
+}
+
 # ── Banner ────────────────────────────────────────────────────────────
 show_banner() {
     if [ "$QUIET" = true ]; then
@@ -315,6 +365,7 @@ show_banner() {
         echo ""
         echo -e "${CYAN}╭──────────────────────────────────────────╮${NC}"
         echo -e "${CYAN}│${NC}  ${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}$(printf '%*s' $((10 - ${#TRW_VERSION})) '')${CYAN}│${NC}"
+        echo -e "${CYAN}│${NC}  ${DIM}Engineering memory for Claude Code${NC}      ${CYAN}│${NC}"
         echo -e "${CYAN}╰──────────────────────────────────────────╯${NC}"
     else
         echo -e "${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}"
@@ -327,11 +378,20 @@ show_success_banner() {
         info "TRW Framework v${TRW_VERSION} installed."
         return
     fi
+    local platform_line=""
+    case "$PLATFORM_STATUS" in
+        connected) platform_line="Connected to trwframework.com" ;;
+        telemetry) platform_line="Anonymous telemetry enabled" ;;
+        *)         platform_line="Offline mode (run installer again to connect)" ;;
+    esac
+
     if [ "$INTERACTIVE" = true ]; then
         echo ""
         echo -e "${GREEN}╭──────────────────────────────────────────╮${NC}"
         echo -e "${GREEN}│${NC}  ${GREEN}${BOLD}✓ TRW Framework v${TRW_VERSION} — ready${NC}$(printf '%*s' $((13 - ${#TRW_VERSION})) '')${GREEN}│${NC}"
         echo -e "${GREEN}╰──────────────────────────────────────────╯${NC}"
+        echo ""
+        echo -e "  ${DIM}${platform_line}${NC}"
         echo ""
         echo -e "  Next steps:"
         echo -e "    1. Start Claude Code:  ${BOLD}claude${NC}"
@@ -342,6 +402,7 @@ show_success_banner() {
         echo ""
         echo -e "${GREEN}${BOLD}TRW Framework v${TRW_VERSION} — ready${NC}"
         echo ""
+        info "${platform_line}"
         info "Next steps:"
         info "  1. Start Claude Code:  claude"
         info "  2. TRW tools are automatically available"
@@ -387,6 +448,22 @@ main() {
                 force_script=true
                 shift
                 ;;
+            --name)
+                OPT_PROJECT_NAME="$2"
+                shift 2
+                ;;
+            --api-key)
+                OPT_API_KEY="$2"
+                shift 2
+                ;;
+            --telemetry)
+                OPT_TELEMETRY="yes"
+                shift
+                ;;
+            --no-telemetry)
+                OPT_TELEMETRY="no"
+                shift
+                ;;
             --help|-h)
                 echo "Usage: bash install-trw.sh [OPTIONS] [TARGET_DIR]"
                 echo ""
@@ -401,6 +478,10 @@ main() {
                 echo "  --no-ai             Skip AI extras (default in script mode)"
                 echo "  --sqlite-vec        Install sqlite-vec for vector search"
                 echo "  --no-sqlite-vec     Skip sqlite-vec (default in script mode)"
+                echo "  --name NAME         Set project name (installation ID)"
+                echo "  --api-key KEY       Set platform API key"
+                echo "  --telemetry         Enable anonymous usage telemetry"
+                echo "  --no-telemetry      Disable telemetry"
                 echo "  --quiet, -q         Minimal output"
                 echo "  --script            Force non-interactive mode (no prompts)"
                 echo "  --help, -h          Show this help message"
@@ -530,6 +611,16 @@ main() {
     if [ "$INSTALL_SQLITEVEC" = "yes" ]; then
         extra_steps=$((extra_steps + 1))
     fi
+    # Add configuration step: always in interactive mode, only if flags provided in script mode
+    local has_config_step=false
+    if [ "$INTERACTIVE" = true ]; then
+        has_config_step=true
+    elif [ -n "$OPT_PROJECT_NAME" ] || [ -n "$OPT_API_KEY" ]; then
+        has_config_step=true
+    fi
+    if [ "$has_config_step" = true ]; then
+        extra_steps=$((extra_steps + 1))
+    fi
     total_steps=$((total_steps + extra_steps))
     local current_step=3
 
@@ -636,6 +727,199 @@ main() {
         run_with_progress "Initializing project..." $setup_cmd init-project "${target_dir}"
         local setup_rc=$?
         stop_spinner $setup_rc "Project initialized" "Project setup failed"
+    fi
+
+    current_step=$((current_step + 1))
+
+    # ── Step N: Configure project ──────────────────────────────────────
+    if [ "$has_config_step" = true ]; then
+        step_header "$current_step" "$total_steps" "Configure your project"
+
+        local project_name=""
+        local api_key=""
+        local telemetry_enabled="false"
+        local default_name
+        default_name=$(basename "$target_dir")
+        default_name=$(sanitize_project_name "$default_name")
+
+        if [ "$INTERACTIVE" = true ]; then
+            # ── a) Project name ──
+            local raw_name
+            raw_name=$(prompt_input "Project name (identifies this installation):" "$default_name")
+            project_name=$(sanitize_project_name "$raw_name")
+
+            # Validate: must match pattern (or be empty -> use default)
+            if [ -z "$project_name" ]; then
+                project_name="$default_name"
+            fi
+
+            if ! echo "$project_name" | grep -qE '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
+                step_warn "Could not sanitize name, using default"
+                project_name="$default_name"
+            fi
+
+            if [ "$project_name" != "$raw_name" ] && [ -n "$raw_name" ]; then
+                step_ok "Project name: ${project_name} (sanitized from '${raw_name}')"
+            else
+                step_ok "Project name: ${project_name}"
+            fi
+
+            # ── b) Platform API key ──
+            local key_attempts=0
+            local max_key_attempts=3  # initial + 2 retries
+            while [ $key_attempts -lt $max_key_attempts ]; do
+                local raw_key
+                raw_key=$(prompt_input "Platform API key (optional, press Enter to skip):")
+                # Strip whitespace
+                raw_key=$(echo "$raw_key" | tr -d '[:space:]')
+
+                if [ -z "$raw_key" ]; then
+                    step_ok "No API key — skipping platform connection"
+                    break
+                fi
+
+                if validate_api_key "$raw_key"; then
+                    api_key="$raw_key"
+                    telemetry_enabled="true"
+                    step_ok "API key accepted"
+                    break
+                else
+                    key_attempts=$((key_attempts + 1))
+                    if [ $key_attempts -lt $max_key_attempts ]; then
+                        step_warn "Invalid format (must start with trw_ and contain only alphanumeric/underscores). Try again:"
+                    else
+                        step_warn "Invalid format — skipping API key"
+                    fi
+                fi
+            done
+
+            # ── c) Telemetry opt-in (only if no API key) ──
+            if [ -z "$api_key" ]; then
+                if prompt_yes_no "Enable anonymous usage telemetry? (helps improve TRW)"; then
+                    telemetry_enabled="true"
+                    step_ok "Telemetry enabled"
+                else
+                    step_ok "Telemetry disabled"
+                fi
+            fi
+        else
+            # Script mode: use flags
+            if [ -n "$OPT_PROJECT_NAME" ]; then
+                project_name=$(sanitize_project_name "$OPT_PROJECT_NAME")
+            else
+                project_name="$default_name"
+            fi
+
+            if [ -n "$OPT_API_KEY" ]; then
+                if validate_api_key "$OPT_API_KEY"; then
+                    api_key="$OPT_API_KEY"
+                    telemetry_enabled="true"
+                else
+                    warn "Invalid API key format — ignoring --api-key"
+                fi
+            fi
+
+            if [ -z "$api_key" ] && [ "$OPT_TELEMETRY" = "yes" ]; then
+                telemetry_enabled="true"
+            fi
+            if [ "$OPT_TELEMETRY" = "no" ]; then
+                telemetry_enabled="false"
+            fi
+
+            step_ok "Project name: ${project_name}"
+        fi
+
+        # ── Write configuration to .trw/config.yaml ──
+        local config_path="${target_dir}/.trw/config.yaml"
+        if [ -f "$config_path" ]; then
+            "$python_cmd" - "$config_path" "$project_name" "$api_key" "$telemetry_enabled" << 'PYEOF'
+import sys
+
+config_path = sys.argv[1]
+project_name = sys.argv[2]
+api_key = sys.argv[3]
+telemetry_enabled = sys.argv[4] == "true"
+
+# Read existing config
+with open(config_path) as f:
+    lines = f.readlines()
+
+# Track which keys we've already updated
+updated_keys = set()
+new_lines = []
+platform_url = "https://api.trwframework.com"
+
+for line in lines:
+    stripped = line.lstrip()
+    # Update installation_id
+    if stripped.startswith("installation_id:"):
+        new_lines.append(f"installation_id: {project_name}\n")
+        updated_keys.add("installation_id")
+        continue
+    # Update platform_api_key
+    if stripped.startswith("platform_api_key:"):
+        if api_key:
+            new_lines.append(f'platform_api_key: "{api_key}"\n')
+        else:
+            new_lines.append(line)
+        updated_keys.add("platform_api_key")
+        continue
+    # Update platform_telemetry_enabled
+    if stripped.startswith("platform_telemetry_enabled:"):
+        new_lines.append(f"platform_telemetry_enabled: {'true' if telemetry_enabled else 'false'}\n")
+        updated_keys.add("platform_telemetry_enabled")
+        continue
+    # Remove existing platform_urls block (we'll re-add if needed)
+    if stripped.startswith("platform_urls:"):
+        updated_keys.add("platform_urls")
+        continue
+    # Skip list items belonging to platform_urls
+    if stripped.startswith("- ") and "platform_urls" in updated_keys and "platform_urls_done" not in updated_keys:
+        continue
+    # Any non-list-item line ends the platform_urls block
+    if "platform_urls" in updated_keys and "platform_urls_done" not in updated_keys and not stripped.startswith("- "):
+        updated_keys.add("platform_urls_done")
+    # Skip commented-out platform config hints (from default config template)
+    if stripped.startswith("# platform_urls:") or stripped.startswith('#   - "https://api.') or stripped.startswith("# platform_api_key:") or stripped.startswith("# platform_telemetry_enabled:") or stripped.startswith("# Platform telemetry"):
+        continue
+    new_lines.append(line)
+
+# Append missing keys
+if "installation_id" not in updated_keys:
+    new_lines.append(f"installation_id: {project_name}\n")
+if api_key and "platform_api_key" not in updated_keys:
+    new_lines.append(f'platform_api_key: "{api_key}"\n')
+if telemetry_enabled and "platform_telemetry_enabled" not in updated_keys:
+    new_lines.append(f"platform_telemetry_enabled: true\n")
+if (api_key or telemetry_enabled):
+    new_lines.append(f"platform_urls:\n")
+    new_lines.append(f'  - "{platform_url}"\n')
+
+with open(config_path, "w") as f:
+    f.writelines(new_lines)
+PYEOF
+            local config_rc=$?
+            if [ $config_rc -eq 0 ]; then
+                step_ok "Configuration saved to .trw/config.yaml"
+            else
+                step_warn "Failed to update config — you can set these manually"
+            fi
+        else
+            step_warn "Config file not found — run project setup first"
+        fi
+
+        # Set platform status for success banner
+        if [ -n "$api_key" ]; then
+            PLATFORM_STATUS="connected"
+        elif [ "$telemetry_enabled" = "true" ]; then
+            PLATFORM_STATUS="telemetry"
+        else
+            PLATFORM_STATUS="offline"
+        fi
+
+        current_step=$((current_step + 1))
+    else
+        PLATFORM_STATUS="offline"
     fi
 
     # ── Success ───────────────────────────────────────────────────────
