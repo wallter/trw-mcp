@@ -4,9 +4,12 @@
 # Version: {{VERSION}}
 #
 # Usage:
-#   bash install-trw.sh           # Install in current directory
-#   bash install-trw.sh /path/to  # Install in specified directory
-#   bash install-trw.sh --upgrade # Upgrade package only (skip init-project)
+#   bash install-trw.sh                 # Interactive install in current directory
+#   bash install-trw.sh /path/to        # Install in specified directory
+#   bash install-trw.sh --upgrade       # Upgrade package only (skip init-project)
+#   bash install-trw.sh --ai            # Install with AI/LLM extras
+#   bash install-trw.sh --script --ai   # Non-interactive with AI extras
+#   curl ... | bash                     # Headless mode (auto-detected)
 #
 # Re-run with a newer version of this script to upgrade.
 
@@ -18,16 +21,122 @@ MEMORY_WHEEL_FILENAME="{{MEMORY_WHEEL_FILENAME}}"
 TRW_VERSION="{{VERSION}}"
 MIN_PYTHON_VERSION="3.10"
 
+# ── Mode flags (set during argument parsing) ──────────────────────────
+INTERACTIVE=false
+QUIET=false
+INSTALL_AI=""          # "" = unset (prompt), "yes", "no"
+INSTALL_SQLITEVEC=""   # "" = unset (prompt), "yes", "no"
+
 # ── Color output ──────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
-info()  { echo -e "${GREEN}[TRW]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[TRW]${NC} $*"; }
-error() { echo -e "${RED}[TRW]${NC} $*" >&2; }
+# ── Output helpers ────────────────────────────────────────────────────
+info() {
+    if [ "$QUIET" = false ]; then
+        echo -e "${GREEN}[TRW]${NC} $*"
+    fi
+}
+
+warn() {
+    echo -e "${YELLOW}[TRW]${NC} $*"
+}
+
+error() {
+    echo -e "${RED}[TRW]${NC} $*" >&2
+}
+
+# Interactive-mode output helpers
+step_header() {
+    local step="$1"
+    local total="$2"
+    local label="$3"
+    if [ "$INTERACTIVE" = true ]; then
+        echo ""
+        echo -e "  ${BOLD}Step ${step}/${total}${NC}  ${label}"
+    else
+        info "${label}"
+    fi
+}
+
+step_ok() {
+    local msg="$1"
+    if [ "$INTERACTIVE" = true ]; then
+        echo -e "            ${GREEN}✓${NC} ${msg}"
+    elif [ "$QUIET" = false ]; then
+        info "$msg"
+    fi
+}
+
+step_warn() {
+    local msg="$1"
+    if [ "$INTERACTIVE" = true ]; then
+        echo -e "            ${YELLOW}!${NC} ${msg}"
+    else
+        warn "$msg"
+    fi
+}
+
+step_fail() {
+    local msg="$1"
+    if [ "$INTERACTIVE" = true ]; then
+        echo -e "            ${RED}✗${NC} ${msg}"
+    else
+        error "$msg"
+    fi
+}
+
+# ── Spinner ───────────────────────────────────────────────────────────
+# Usage: start_spinner "message"; long_command; stop_spinner $? "ok" "fail"
+SPINNER_PID=""
+
+start_spinner() {
+    if [ "$INTERACTIVE" = false ]; then
+        return
+    fi
+    local msg="$1"
+    (
+        local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+        local i=0
+        while true; do
+            local frame="${frames:$i:1}"
+            printf "\r            %s %s" "$frame" "$msg"
+            i=$(( (i + 1) % ${#frames} ))
+            sleep 0.1
+        done
+    ) &
+    SPINNER_PID=$!
+    # Ensure spinner is killed on script exit
+    trap 'kill $SPINNER_PID 2>/dev/null; rm -rf "$tmpdir" 2>/dev/null' EXIT
+}
+
+stop_spinner() {
+    if [ "$INTERACTIVE" = false ]; then
+        return
+    fi
+    local exit_code="$1"
+    local ok_msg="$2"
+    local fail_msg="${3:-Failed}"
+    if [ -n "$SPINNER_PID" ]; then
+        kill "$SPINNER_PID" 2>/dev/null || true
+        wait "$SPINNER_PID" 2>/dev/null || true
+        SPINNER_PID=""
+        printf "\r            \033[K"  # Clear spinner line
+    fi
+    if [ "$exit_code" -eq 0 ]; then
+        step_ok "$ok_msg"
+    else
+        step_fail "$fail_msg"
+    fi
+    # Restore normal trap
+    trap 'rm -rf "$tmpdir" 2>/dev/null' EXIT
+}
 
 # ── Python version check ─────────────────────────────────────────────
 find_python() {
@@ -53,8 +162,30 @@ find_python() {
         exit 1
     fi
 
-    info "Using Python ${major}.${minor} ($py)" >&2
+    PYTHON_VERSION="${major}.${minor}"
+    PYTHON_PATH="$(command -v "$py")"
     echo "$py"
+}
+
+# ── pip install with fallback ─────────────────────────────────────────
+# Tries normal, --user, --break-system-packages in order
+pip_install() {
+    local python_cmd="$1"
+    local pkg="$2"
+    local label="$3"
+    local pip_quiet="--quiet"
+
+    if "$python_cmd" -m pip install --upgrade "$pkg" $pip_quiet 2>/dev/null; then
+        return 0
+    elif "$python_cmd" -m pip install --upgrade --user "$pkg" $pip_quiet 2>/dev/null; then
+        step_warn "Installed ${label} with --user (PEP 668 managed environment)"
+        return 0
+    elif "$python_cmd" -m pip install --upgrade --break-system-packages "$pkg" $pip_quiet 2>/dev/null; then
+        step_warn "Installed ${label} with --break-system-packages (consider using a venv)"
+        return 0
+    else
+        return 1
+    fi
 }
 
 # ── Extract embedded wheels ───────────────────────────────────────────
@@ -87,10 +218,76 @@ sys.stdout.buffer.write(base64.b64decode(data))
 " > "$dest"
 }
 
+# ── Interactive prompts ───────────────────────────────────────────────
+prompt_yes_no() {
+    local question="$1"
+    local default="${2:-n}"  # "y" or "n"
+    local hint
+    if [ "$default" = "y" ]; then
+        hint="[Y/n]"
+    else
+        hint="[y/N]"
+    fi
+
+    local answer
+    printf "    %s %s " "$question" "$hint"
+    read -r answer </dev/tty
+    answer="${answer:-$default}"
+    case "$answer" in
+        [Yy]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# ── Banner ────────────────────────────────────────────────────────────
+show_banner() {
+    if [ "$QUIET" = true ]; then
+        return
+    fi
+    if [ "$INTERACTIVE" = true ]; then
+        echo ""
+        echo -e "${CYAN}╭──────────────────────────────────────────╮${NC}"
+        echo -e "${CYAN}│${NC}  ${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}$(printf '%*s' $((10 - ${#TRW_VERSION})) '')${CYAN}│${NC}"
+        echo -e "${CYAN}╰──────────────────────────────────────────╯${NC}"
+    else
+        echo -e "${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}"
+        echo ""
+    fi
+}
+
+show_success_banner() {
+    if [ "$QUIET" = true ]; then
+        info "TRW Framework v${TRW_VERSION} installed."
+        return
+    fi
+    if [ "$INTERACTIVE" = true ]; then
+        echo ""
+        echo -e "${GREEN}╭──────────────────────────────────────────╮${NC}"
+        echo -e "${GREEN}│${NC}  ${GREEN}${BOLD}✓ TRW Framework v${TRW_VERSION} — ready${NC}$(printf '%*s' $((13 - ${#TRW_VERSION})) '')${GREEN}│${NC}"
+        echo -e "${GREEN}╰──────────────────────────────────────────╯${NC}"
+        echo ""
+        echo -e "  Next steps:"
+        echo -e "    1. Start Claude Code:  ${BOLD}claude${NC}"
+        echo -e "    2. TRW tools are automatically available"
+        echo ""
+        echo -e "  ${DIM}Re-run this script anytime to upgrade.${NC}"
+    else
+        echo ""
+        echo -e "${GREEN}${BOLD}TRW Framework v${TRW_VERSION} — ready${NC}"
+        echo ""
+        info "Next steps:"
+        info "  1. Start Claude Code:  claude"
+        info "  2. TRW tools are automatically available"
+        echo ""
+        info "Re-run this script anytime to upgrade."
+    fi
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 main() {
     local upgrade_only=false
     local target_dir="."
+    local force_script=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -99,18 +296,63 @@ main() {
                 upgrade_only=true
                 shift
                 ;;
+            --ai)
+                INSTALL_AI="yes"
+                shift
+                ;;
+            --no-ai)
+                INSTALL_AI="no"
+                shift
+                ;;
+            --sqlite-vec)
+                INSTALL_SQLITEVEC="yes"
+                shift
+                ;;
+            --no-sqlite-vec)
+                INSTALL_SQLITEVEC="no"
+                shift
+                ;;
+            --quiet|-q)
+                QUIET=true
+                shift
+                ;;
+            --script)
+                force_script=true
+                shift
+                ;;
             --help|-h)
                 echo "Usage: bash install-trw.sh [OPTIONS] [TARGET_DIR]"
                 echo ""
                 echo "Install TRW Framework in a project directory."
                 echo ""
                 echo "Arguments:"
-                echo "  TARGET_DIR    Project directory (default: current directory)"
+                echo "  TARGET_DIR          Project directory (default: current directory)"
                 echo ""
                 echo "Options:"
-                echo "  --upgrade     Upgrade package only, skip project setup"
-                echo "  --help, -h    Show this help message"
+                echo "  --upgrade           Upgrade package only, skip project setup"
+                echo "  --ai                Install AI/LLM extras (embeddings, analysis)"
+                echo "  --no-ai             Skip AI extras (default in script mode)"
+                echo "  --sqlite-vec        Install sqlite-vec for vector search"
+                echo "  --no-sqlite-vec     Skip sqlite-vec (default in script mode)"
+                echo "  --quiet, -q         Minimal output"
+                echo "  --script            Force non-interactive mode (no prompts)"
+                echo "  --help, -h          Show this help message"
+                echo ""
+                echo "Interactive mode (default when run in a terminal):"
+                echo "  Prompts for optional features, shows progress spinners."
+                echo ""
+                echo "Script/headless mode (piped input or --script):"
+                echo "  No prompts, quiet output. Use --ai/--sqlite-vec flags."
+                echo ""
+                echo "Examples:"
+                echo "  bash install-trw.sh                    # Interactive install"
+                echo "  bash install-trw.sh --script --ai      # Headless with AI extras"
+                echo "  curl ... | bash                        # Piped (headless, no extras)"
                 exit 0
+                ;;
+            -*)
+                error "Unknown option: $1 (use --help for usage)"
+                exit 1
                 ;;
             *)
                 target_dir="$1"
@@ -119,63 +361,134 @@ main() {
         esac
     done
 
+    # Detect interactive mode: terminal on stdin, not forced to script mode
+    if [ "$force_script" = false ] && [ -t 0 ]; then
+        INTERACTIVE=true
+    fi
+
+    # In script mode, default unset flags to "no" (no prompts)
+    if [ "$INTERACTIVE" = false ]; then
+        INSTALL_AI="${INSTALL_AI:-no}"
+        INSTALL_SQLITEVEC="${INSTALL_SQLITEVEC:-no}"
+    fi
+
     target_dir="$(cd "$target_dir" 2>/dev/null && pwd)" || {
         error "Directory not found: $target_dir"
         exit 1
     }
 
-    echo -e "${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}"
-    echo ""
+    # Pre-calculate total steps from known flags (recalculated after prompts)
+    local total_steps=4  # python, extract, install-base, project-setup
+    if [ "$INSTALL_AI" = "yes" ]; then total_steps=$((total_steps + 1)); fi
+    if [ "$INSTALL_SQLITEVEC" = "yes" ]; then total_steps=$((total_steps + 1)); fi
 
-    # 1. Find Python
+    show_banner
+
+    # ── Step 1: Find Python ───────────────────────────────────────────
+    step_header 1 "$total_steps" "Checking Python environment"
+
     local python_cmd
-    python_cmd=$(find_python)
+    PYTHON_VERSION=""
+    PYTHON_PATH=""
+    python_cmd=$(find_python 2>/dev/null)
 
-    # 2. Extract embedded wheels
+    if [ -z "$python_cmd" ]; then
+        step_fail "Python not found (>= ${MIN_PYTHON_VERSION} required)"
+        exit 1
+    fi
+
+    # Re-extract version for display (find_python sets PYTHON_VERSION)
+    if [ -z "$PYTHON_VERSION" ]; then
+        PYTHON_VERSION=$("$python_cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        PYTHON_PATH="$(command -v "$python_cmd")"
+    fi
+    step_ok "Python ${PYTHON_VERSION} (${PYTHON_PATH})"
+
+    # ── Step 2: Extract embedded wheels ───────────────────────────────
+    step_header 2 "$total_steps" "Extracting embedded packages"
+
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
 
-    info "Extracting embedded packages..."
     local memory_wheel_path="${tmpdir}/${MEMORY_WHEEL_FILENAME}"
+    start_spinner "Extracting trw-memory..."
     extract_memory_wheel "$python_cmd" "$memory_wheel_path"
+    local extract_rc=$?
+    stop_spinner $extract_rc "Extracted trw-memory wheel"
 
     if [ ! -s "$memory_wheel_path" ]; then
-        error "Failed to extract trw-memory wheel data"
+        step_fail "Failed to extract trw-memory wheel data"
         exit 1
     fi
 
     local wheel_path="${tmpdir}/${WHEEL_FILENAME}"
+    start_spinner "Extracting trw-mcp..."
     extract_wheel "$python_cmd" "$wheel_path"
+    extract_rc=$?
+    stop_spinner $extract_rc "Extracted trw-mcp wheel"
 
     if [ ! -s "$wheel_path" ]; then
-        error "Failed to extract trw-mcp wheel data"
+        step_fail "Failed to extract trw-mcp wheel data"
         exit 1
     fi
 
-    # 3. Install trw-memory first (dependency of trw-mcp)
-    info "Installing trw-memory..."
-    if "$python_cmd" -m pip install --upgrade "$memory_wheel_path" --quiet 2>/dev/null; then
-        :
-    elif "$python_cmd" -m pip install --upgrade --user "$memory_wheel_path" --quiet 2>/dev/null; then
-        info "Installed trw-memory with --user (PEP 668 managed environment)"
-    elif "$python_cmd" -m pip install --upgrade --break-system-packages "$memory_wheel_path" --quiet 2>/dev/null; then
-        warn "Installed trw-memory with --break-system-packages (consider using a venv)"
-    else
+    # ── Optional features prompt (interactive only) ───────────────────
+    if [ "$INTERACTIVE" = true ] && { [ -z "$INSTALL_AI" ] || [ -z "$INSTALL_SQLITEVEC" ]; }; then
+        echo ""
+        echo -e "  ${BOLD}Optional features:${NC}"
+
+        if [ -z "$INSTALL_AI" ]; then
+            if prompt_yes_no "Install AI/LLM features? (embeddings, analysis)"; then
+                INSTALL_AI="yes"
+            else
+                INSTALL_AI="no"
+            fi
+        fi
+
+        if [ -z "$INSTALL_SQLITEVEC" ]; then
+            if prompt_yes_no "Install sqlite-vec for vector search?"; then
+                INSTALL_SQLITEVEC="yes"
+            else
+                INSTALL_SQLITEVEC="no"
+            fi
+        fi
+    fi
+
+    # Recalculate total steps based on selections
+    total_steps=4  # python, extract, install-base, project-setup
+    local extra_steps=0
+    if [ "$INSTALL_AI" = "yes" ]; then
+        extra_steps=$((extra_steps + 1))
+    fi
+    if [ "$INSTALL_SQLITEVEC" = "yes" ]; then
+        extra_steps=$((extra_steps + 1))
+    fi
+    total_steps=$((total_steps + extra_steps))
+    local current_step=3
+
+    # ── Step 3: Install base packages ─────────────────────────────────
+    step_header "$current_step" "$total_steps" "Installing base packages"
+
+    # Install trw-memory
+    start_spinner "Installing trw-memory..."
+    pip_install "$python_cmd" "$memory_wheel_path" "trw-memory"
+    local pip_rc=$?
+    stop_spinner $pip_rc "Installed trw-memory" "pip install failed for trw-memory"
+
+    if [ $pip_rc -ne 0 ]; then
         error "pip install failed for trw-memory — try installing in a virtual environment:"
         error "  python3 -m venv .venv && source .venv/bin/activate"
         error "  bash install-trw.sh"
         exit 1
     fi
 
-    # 4. Install trw-mcp (try normal, then --user, then --break-system-packages)
-    info "Installing trw-mcp v${TRW_VERSION}..."
-    if "$python_cmd" -m pip install --upgrade "$wheel_path" --quiet 2>/dev/null; then
-        :
-    elif "$python_cmd" -m pip install --upgrade --user "$wheel_path" --quiet 2>/dev/null; then
-        info "Installed trw-mcp with --user (PEP 668 managed environment)"
-    elif "$python_cmd" -m pip install --upgrade --break-system-packages "$wheel_path" --quiet 2>/dev/null; then
-        warn "Installed trw-mcp with --break-system-packages (consider using a venv)"
-    else
+    # Install trw-mcp
+    start_spinner "Installing trw-mcp v${TRW_VERSION}..."
+    pip_install "$python_cmd" "$wheel_path" "trw-mcp"
+    pip_rc=$?
+    stop_spinner $pip_rc "Installed trw-mcp v${TRW_VERSION}" "pip install failed for trw-mcp"
+
+    if [ $pip_rc -ne 0 ]; then
         error "pip install failed for trw-mcp — try installing in a virtual environment:"
         error "  python3 -m venv .venv && source .venv/bin/activate"
         error "  bash install-trw.sh"
@@ -184,48 +497,82 @@ main() {
 
     # Verify both packages
     if ! "$python_cmd" -c "import trw_memory" 2>/dev/null; then
-        error "Installation failed — trw_memory module not importable"
+        step_fail "trw_memory module not importable after install"
         exit 1
     fi
     if ! "$python_cmd" -c "import trw_mcp" 2>/dev/null; then
-        error "Installation failed — trw_mcp module not importable"
+        step_fail "trw_mcp module not importable after install"
         exit 1
     fi
-    info "Both packages installed successfully"
 
-    # 5. Auto-detect install vs upgrade, run appropriate bootstrap
-    if [ "$upgrade_only" = true ]; then
-        info "Upgrade complete (--upgrade flag: skipping project setup)"
-    elif [ ! -d "${target_dir}/.git" ]; then
-        warn "Not a git repository — skipping project setup."
-        warn "After initializing git, run: trw-mcp init-project ."
-    elif [ -d "${target_dir}/.trw" ]; then
-        # Existing installation → update
-        info "Existing TRW installation detected — upgrading..."
-        if command -v trw-mcp &>/dev/null; then
-            trw-mcp update-project "${target_dir}"
-        else
-            "$python_cmd" -m trw_mcp.server update-project "${target_dir}"
+    current_step=$((current_step + 1))
+
+    # ── Step N: Install AI extras (if requested) ──────────────────────
+    if [ "$INSTALL_AI" = "yes" ]; then
+        step_header "$current_step" "$total_steps" "Installing AI extras"
+
+        start_spinner "Installing trw-mcp[ai]..."
+        pip_install "$python_cmd" "trw-mcp[ai]" "trw-mcp[ai]"
+        pip_rc=$?
+        stop_spinner $pip_rc "AI features enabled" "Failed to install AI extras (non-fatal)"
+
+        if [ $pip_rc -ne 0 ]; then
+            step_warn "AI extras failed to install — base TRW still works"
         fi
-    else
-        # Fresh install
-        info "Setting up TRW in ${target_dir}..."
-        if command -v trw-mcp &>/dev/null; then
-            trw-mcp init-project "${target_dir}"
-        else
-            "$python_cmd" -m trw_mcp.server init-project "${target_dir}"
-        fi
+
+        current_step=$((current_step + 1))
     fi
 
-    # 6. Success
-    echo ""
-    echo -e "${GREEN}${BOLD}TRW Framework v${TRW_VERSION} — ready${NC}"
-    echo ""
-    info "Next steps:"
-    info "  1. Start Claude Code:  claude"
-    info "  2. TRW tools are automatically available"
-    echo ""
-    info "Re-run this script anytime to upgrade."
+    # ── Step N: Install sqlite-vec (if requested) ─────────────────────
+    if [ "$INSTALL_SQLITEVEC" = "yes" ]; then
+        step_header "$current_step" "$total_steps" "Installing sqlite-vec"
+
+        start_spinner "Installing sqlite-vec..."
+        pip_install "$python_cmd" "sqlite-vec" "sqlite-vec"
+        pip_rc=$?
+        stop_spinner $pip_rc "sqlite-vec enabled" "Failed to install sqlite-vec (non-fatal)"
+
+        if [ $pip_rc -ne 0 ]; then
+            step_warn "sqlite-vec failed to install — TRW works without it"
+        fi
+
+        current_step=$((current_step + 1))
+    fi
+
+    # ── Step N: Project setup ─────────────────────────────────────────
+    step_header "$current_step" "$total_steps" "Setting up project"
+
+    if [ "$upgrade_only" = true ]; then
+        step_ok "Upgrade complete (--upgrade flag: skipping project setup)"
+    elif [ ! -d "${target_dir}/.git" ]; then
+        step_warn "Not a git repository — skipping project setup"
+        step_warn "After initializing git, run: trw-mcp init-project ."
+    elif [ -d "${target_dir}/.trw" ]; then
+        # Existing installation -> update
+        start_spinner "Updating existing installation..."
+        if command -v trw-mcp &>/dev/null; then
+            trw-mcp update-project "${target_dir}" >/dev/null 2>&1
+            local setup_rc=$?
+        else
+            "$python_cmd" -m trw_mcp.server update-project "${target_dir}" >/dev/null 2>&1
+            local setup_rc=$?
+        fi
+        stop_spinner $setup_rc "Project updated" "Project update failed"
+    else
+        # Fresh install
+        start_spinner "Initializing project in ${target_dir}..."
+        if command -v trw-mcp &>/dev/null; then
+            trw-mcp init-project "${target_dir}" >/dev/null 2>&1
+            local setup_rc=$?
+        else
+            "$python_cmd" -m trw_mcp.server init-project "${target_dir}" >/dev/null 2>&1
+            local setup_rc=$?
+        fi
+        stop_spinner $setup_rc "Project initialized" "Project setup failed"
+    fi
+
+    # ── Success ───────────────────────────────────────────────────────
+    show_success_banner
 }
 
 main "$@"

@@ -2,6 +2,26 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.11.1] — 2026-03-07
+
+### Improved — Interactive Installer
+
+- **Interactive mode** — installer detects terminal and shows spinner animations, progress steps, and box-drawing banners
+- **Optional feature prompts** — interactive mode prompts for AI/LLM extras (`trw-mcp[ai]`) and `sqlite-vec` installation
+- **New CLI flags** — `--ai`, `--no-ai`, `--sqlite-vec`, `--no-sqlite-vec`, `--quiet`, `--script` for headless automation
+- **DRY pip install** — extracted `pip_install()` helper for the 3-tier fallback pattern (normal → `--user` → `--break-system-packages`)
+- **Cleaner update output** — `update-project` output captured with spinner overlay instead of raw structlog debug spam
+- **Script mode preserved** — piped input or `--script` flag gives the same quiet output as before
+
+### Fixed — Production Deployment
+
+- **NextAuth 500 on Amplify** — env vars (`AUTH_SECRET`, `NEXTAUTH_SECRET`) not reaching Next.js standalone runtime; fixed by baking them via `next.config.ts` `env{}` block
+- **Backend 500 on telemetry** — migration 0009 (token columns) never applied to production Lambda; added auto-migration step to `deploy.sh`
+- **Installer endpoint** — `/releases/latest/installer` was redirecting to `.zip` artifact instead of `install-trw.sh`; fixed S3 key derivation
+- **Version sync** — pyproject.toml version synced with CHANGELOG (was stuck at 0.4.0)
+
+---
+
 ## [0.11.0] — 2026-03-08
 
 ### Fixed — Framework Optimization Audit
