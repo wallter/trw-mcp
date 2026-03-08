@@ -365,7 +365,7 @@ show_banner() {
         echo ""
         echo -e "${CYAN}╭──────────────────────────────────────────╮${NC}"
         echo -e "${CYAN}│${NC}  ${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}$(printf '%*s' $((10 - ${#TRW_VERSION})) '')${CYAN}│${NC}"
-        echo -e "${CYAN}│${NC}  ${DIM}Engineering memory for Claude Code${NC}      ${CYAN}│${NC}"
+        echo -e "${CYAN}│${NC}  ${DIM}The Real Work — Accumulated Intelligence${NC} ${CYAN}│${NC}"
         echo -e "${CYAN}╰──────────────────────────────────────────╯${NC}"
     else
         echo -e "${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}"
