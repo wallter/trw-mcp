@@ -2,7 +2,7 @@
 
 All notable changes to the TRW MCP server package.
 
-## [0.10.1] — 2026-03-07
+## [0.11.0] — 2026-03-08
 
 ### Fixed — Framework Optimization Audit
 
@@ -10,6 +10,12 @@ All notable changes to the TRW MCP server package.
 - **Stop hook false positives** — `trw_deliver()` logs `trw_deliver_complete` to fallback `session-events.jsonl` when no active run; hook checks both locations
 - **Review confidence scale mismatch** — normalize 0.0-1.0 confidence to 0-100 before comparing against `review_confidence_threshold`; was silently filtering 90%+ confidence findings
 - **Silent exception handlers** — 15 `except Exception: pass` in tools/ replaced with `logger.debug(event, exc_info=True)`; fail-open preserved
+
+### Added
+
+- **Untracked source file detection** — `check_delivery_gates()` warns about uncommitted `.py`/`.ts`/`.tsx` files in `src/`/`tests/` before delivery
+- **Cross-shard DRY review** — integration reviewer prompt and `trw-reviewer.md` agent include DRY violation detection and spec-based test gap analysis
+- **Spec-based test review** — `trw-review-pr` skill and `reviewer-test-quality.md` expanded with acceptance-criterion verification checklist
 
 ---
 

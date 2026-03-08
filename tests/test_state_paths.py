@@ -6,7 +6,7 @@ and process-local run pinning.
 
 from __future__ import annotations
 
-import time
+import os
 from pathlib import Path
 
 import pytest
@@ -115,10 +115,11 @@ class TestResolveRunPath:
         run1 = project / "docs" / "task1" / "runs" / "run-001"
         (run1 / "meta").mkdir(parents=True)
         (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
-        time.sleep(0.05)
+        os.utime(run1 / "meta" / "run.yaml", (1000, 1000))
         run2 = project / "docs" / "task1" / "runs" / "run-002"
         (run2 / "meta").mkdir(parents=True)
         (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
+        os.utime(run2 / "meta" / "run.yaml", (2000, 2000))
         monkeypatch.setattr(
             "trw_mcp.state._paths.resolve_project_root", lambda: project,
         )
@@ -187,10 +188,11 @@ class TestResolveRunPath:
         run1 = project / "docs" / "task-a" / "runs" / "run-001"
         (run1 / "meta").mkdir(parents=True)
         (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
-        time.sleep(0.05)
+        os.utime(run1 / "meta" / "run.yaml", (1000, 1000))
         run2 = project / "docs" / "task-b" / "runs" / "run-002"
         (run2 / "meta").mkdir(parents=True)
         (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
+        os.utime(run2 / "meta" / "run.yaml", (2000, 2000))
         monkeypatch.setattr(
             "trw_mcp.state._paths.resolve_project_root", lambda: project,
         )

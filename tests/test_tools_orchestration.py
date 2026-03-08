@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import os
 from pathlib import Path
 from typing import Any
 
@@ -197,13 +197,15 @@ class TestVersionTracking:
         orch_tools["trw_init"].fn(task_name="skip-rewrite-task1")
 
         fw_path = tmp_path / ".trw" / "frameworks" / "FRAMEWORK.md"
-        mtime_after_first = fw_path.stat().st_mtime
-
-        time.sleep(0.05)
+        stat_after_first = fw_path.stat()
+        # Advance mtime so we can detect if a rewrite occurs
+        past = stat_after_first.st_mtime - 10
+        os.utime(fw_path, (past, past))
 
         orch_tools["trw_init"].fn(task_name="skip-rewrite-task2")
 
-        assert fw_path.stat().st_mtime == mtime_after_first
+        # If version matched, init should NOT rewrite — mtime stays at past
+        assert fw_path.stat().st_mtime == past
 
     def test_version_mismatch_triggers_upgrade(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
