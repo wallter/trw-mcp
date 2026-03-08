@@ -42,6 +42,11 @@ Perform a structured code review using the FRAMEWORK.md quality rubric. Scores e
    - Do tests verify behavior, not implementation details?
    - Are edge cases and error paths tested?
    - Do tests use project fixtures from conftest.py?
+   - **Spec-based test review**: For each FR in the linked PRD:
+     - Does at least one test assert the acceptance criterion (Given/When/Then)?
+     - Does the test check response bodies, not just status codes or `is not None`?
+     - Would removing the FR cause the test to fail? (If not, test is tautological)
+     - Are negative cases from acceptance criteria tested?
 
    ### Security (15%)
    - No command injection (subprocess with shell=True)?

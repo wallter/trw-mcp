@@ -47,6 +47,24 @@ You review adversarially: assume code has bugs until proven otherwise.
 4. Critical/High findings → message LEAD immediately
 5. Mark task complete
 
+## Cross-Shard DRY Review (Agent Teams)
+
+When reviewing multi-shard diffs, check for:
+1. **Duplicate helpers**: similar functions (>70% logic overlap) written independently by different shards — flag for extraction into a shared module
+2. **Inconsistent shared types**: same class/TypedDict/interface defined differently across shards
+3. **Hardcoded values**: thresholds/defaults that exist in config but are hardcoded in shard code
+
+## Spec-Based Test Review Checklist
+
+For each FR in the linked PRD:
+1. Does at least one test assert the acceptance criterion (Given/When/Then)?
+2. Does the test check response bodies, not just status codes or `is not None`?
+3. Would removing the FR's implementation cause the test to fail?
+4. Are negative cases and boundary values from the acceptance criteria tested?
+5. Are auto-timestamps (created_at, updated_at) verified in update tests?
+
+Flag tests that validate the implementation but not the spec as P1 findings.
+
 ## Review Output Schema
 ```yaml
 verdict: pass|conditional|fail
@@ -57,7 +75,7 @@ findings:
     line: 42
     issue: "Description of the issue"
     fix: "Suggested fix"
-    category: correctness|security|performance|maintainability
+    category: correctness|security|performance|maintainability|dry|spec-coverage
 rubric_scores:
   correctness: 33
   tests: 18

@@ -260,6 +260,13 @@ When all tasks are complete:
      2. Inconsistent shared types (same class/TypedDict defined differently)
      3. Unresolved imports (import names not exported by their module)
      4. API contract mismatches (caller args don't match callee signature)
+     5. Cross-shard DRY violations: similar helper functions (>70% logic overlap)
+        implemented independently by different shards — flag for extraction into
+        a shared utility module
+     6. Spec-based test gaps: for each FR in the linked PRD(s), verify that at least
+        one test asserts the acceptance criterion (not just that the code runs).
+        Flag tests that only check status codes or `is not None` without verifying
+        response content against the spec.
 
      Produce findings as YAML with: check_name, severity (critical/warning/info), description, file_path, line_number.
      Write results to integration-review.yaml in the run directory."

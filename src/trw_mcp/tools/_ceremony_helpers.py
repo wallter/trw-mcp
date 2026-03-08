@@ -283,6 +283,34 @@ def check_delivery_gates(
             logger.debug("maintenance_step_failed", exc_info=True)
     # No integration-review.yaml is fine for single-shard sprints
 
+    # Step 0a: Untracked source/test file detection
+    try:
+        import subprocess
+
+        git_result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(run_path.parent.parent.parent),  # project root
+        )
+        if git_result.returncode == 0:
+            untracked = [
+                f for f in git_result.stdout.strip().splitlines()
+                if f and (
+                    f.endswith(".py") or f.endswith(".ts") or f.endswith(".tsx")
+                ) and (
+                    "/src/" in f or "/tests/" in f or f.startswith("src/")
+                    or f.startswith("tests/")
+                )
+            ]
+            if untracked:
+                result["untracked_warning"] = (
+                    f"{len(untracked)} untracked source/test file(s) detected. "
+                    f"These won't be included in commits: {', '.join(untracked[:5])}"
+                    + (f" (+{len(untracked) - 5} more)" if len(untracked) > 5 else "")
+                )
+    except Exception:
+        logger.debug("untracked_file_check_failed", exc_info=True)
+
     # Step 0b: Build gate + premature delivery guard (single events.jsonl read)
     try:
         events_path = run_path / "meta" / "events.jsonl"

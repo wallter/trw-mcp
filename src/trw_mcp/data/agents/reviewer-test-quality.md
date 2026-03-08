@@ -18,6 +18,10 @@ You review code diffs for test quality issues.
 5. Mutation survival indicators — trivially invertible conditions not tested
 6. Fragile tests — tests coupled to implementation details, not behavior
 7. Missing edge case tests — only happy path covered
+8. Spec drift — test validates implementation behavior, not PRD acceptance criteria
+   (e.g., test asserts threshold=80 but PRD says 60, or test checks `is not None`
+   instead of verifying response body matches spec)
+9. Auto-timestamp gaps — update operations that don't verify `updated_at` changed
 
 ## Output Schema
 

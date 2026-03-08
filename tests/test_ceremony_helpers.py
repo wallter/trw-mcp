@@ -521,6 +521,36 @@ class TestCheckDeliveryGates:
         # (file exists at the path, so the else branch is skipped)
         assert "review_warning" not in result
 
+    def test_untracked_warning_when_git_reports_files(
+        self, run_dir: Path, reader: FileStateReader,
+    ) -> None:
+        """Untracked src/test files produce a warning."""
+        git_output = "src/trw_mcp/new_module.py\ntests/test_new.py\nREADME.md\n"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout=git_output,
+            )
+            result = check_delivery_gates(run_dir, reader)
+        assert "untracked_warning" in result
+        assert "2 untracked" in str(result["untracked_warning"])
+
+    def test_no_untracked_warning_when_clean(
+        self, run_dir: Path, reader: FileStateReader,
+    ) -> None:
+        """No warning when git reports no untracked source files."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="README.md\n")
+            result = check_delivery_gates(run_dir, reader)
+        assert "untracked_warning" not in result
+
+    def test_untracked_check_failopen_on_git_error(
+        self, run_dir: Path, reader: FileStateReader,
+    ) -> None:
+        """Git failure doesn't block delivery."""
+        with patch("subprocess.run", side_effect=Exception("git not found")):
+            result = check_delivery_gates(run_dir, reader)
+        assert "untracked_warning" not in result
+
     def test_build_passed_false_when_data_not_dict(
         self, run_dir: Path, reader: FileStateReader,
     ) -> None:
