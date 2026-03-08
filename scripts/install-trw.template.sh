@@ -95,25 +95,37 @@ step_fail() {
 # ── Spinner ───────────────────────────────────────────────────────────
 # Usage: start_spinner "message"; long_command; stop_spinner $? "ok" "fail"
 SPINNER_PID=""
+SPINNER_MSG_FILE=""
 
 start_spinner() {
     if [ "$INTERACTIVE" = false ]; then
         return
     fi
     local msg="$1"
+    SPINNER_MSG_FILE=$(mktemp)
+    echo "$msg" > "$SPINNER_MSG_FILE"
     (
         local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
         local i=0
         while true; do
             local frame="${frames:$i:1}"
-            printf "\r            %s %s" "$frame" "$msg"
+            local current_msg
+            current_msg=$(cat "$SPINNER_MSG_FILE" 2>/dev/null || echo "$msg")
+            printf "\r\033[K            %s %s" "$frame" "$current_msg"
             i=$(( (i + 1) % ${#frames} ))
             sleep 0.1
         done
     ) &
     SPINNER_PID=$!
     # Ensure spinner is killed on script exit
-    trap 'kill $SPINNER_PID 2>/dev/null; rm -rf "$tmpdir" 2>/dev/null' EXIT
+    trap 'kill $SPINNER_PID 2>/dev/null; rm -rf "$tmpdir" 2>/dev/null; rm -f "$SPINNER_MSG_FILE" 2>/dev/null' EXIT
+}
+
+# Update the spinner's displayed message without stopping it
+update_spinner() {
+    if [ -n "$SPINNER_MSG_FILE" ] && [ -f "$SPINNER_MSG_FILE" ]; then
+        echo "$1" > "$SPINNER_MSG_FILE"
+    fi
 }
 
 stop_spinner() {
@@ -127,7 +139,11 @@ stop_spinner() {
         kill "$SPINNER_PID" 2>/dev/null || true
         wait "$SPINNER_PID" 2>/dev/null || true
         SPINNER_PID=""
-        printf "\r            \033[K"  # Clear spinner line
+        printf "\r\033[K"  # Clear spinner line
+    fi
+    if [ -n "$SPINNER_MSG_FILE" ]; then
+        rm -f "$SPINNER_MSG_FILE" 2>/dev/null
+        SPINNER_MSG_FILE=""
     fi
     if [ "$exit_code" -eq 0 ]; then
         step_ok "$ok_msg"
@@ -136,6 +152,57 @@ stop_spinner() {
     fi
     # Restore normal trap
     trap 'rm -rf "$tmpdir" 2>/dev/null' EXIT
+}
+
+# ── Run command with live progress ────────────────────────────────────
+# Streams command output and updates spinner message with each line.
+# In script mode, shows prefixed output directly.
+# Usage: run_with_progress "fallback msg" command args...
+run_with_progress() {
+    local fallback_msg="$1"
+    shift
+    local log_file
+    log_file=$(mktemp)
+    local file_count=0
+
+    if [ "$INTERACTIVE" = true ]; then
+        start_spinner "$fallback_msg"
+        # Run command, parse output in real time, update spinner
+        "$@" > "$log_file" 2>&1 &
+        local cmd_pid=$!
+        local last_size=0
+        while kill -0 "$cmd_pid" 2>/dev/null; do
+            local current_size
+            current_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
+            if [ "$current_size" -gt "$last_size" ]; then
+                last_size=$current_size
+                # Parse latest lines for progress
+                local last_line
+                last_line=$(tail -1 "$log_file" 2>/dev/null | sed 's/^  //' | head -c 60)
+                if echo "$last_line" | grep -qE '(Updated|Created|Preserved|synced|WARNING):?'; then
+                    file_count=$((file_count + 1))
+                    local short
+                    short=$(echo "$last_line" | sed 's/Updated: //;s/Created (new): //;s/Preserved: //')
+                    update_spinner "${fallback_msg} (${file_count} files) ${DIM}${short}${NC}"
+                fi
+            fi
+            sleep 0.3
+        done
+        wait "$cmd_pid" 2>/dev/null
+        local rc=$?
+        rm -f "$log_file"
+        return $rc
+    else
+        # Script mode: run normally, show output with prefix
+        "$@" 2>&1 | while IFS= read -r line; do
+            if [ "$QUIET" = false ]; then
+                echo -e "${GREEN}[TRW]${NC}   $line"
+            fi
+        done
+        local rc=${PIPESTATUS[0]}
+        rm -f "$log_file"
+        return $rc
+    fi
 }
 
 # ── Python version check ─────────────────────────────────────────────
@@ -549,25 +616,25 @@ main() {
         step_warn "After initializing git, run: trw-mcp init-project ."
     elif [ -d "${target_dir}/.trw" ]; then
         # Existing installation -> update
-        start_spinner "Updating existing installation..."
+        local setup_cmd
         if command -v trw-mcp &>/dev/null; then
-            trw-mcp update-project "${target_dir}" >/dev/null 2>&1
-            local setup_rc=$?
+            setup_cmd="trw-mcp"
         else
-            "$python_cmd" -m trw_mcp.server update-project "${target_dir}" >/dev/null 2>&1
-            local setup_rc=$?
+            setup_cmd="$python_cmd -m trw_mcp.server"
         fi
+        run_with_progress "Updating project..." $setup_cmd update-project "${target_dir}"
+        local setup_rc=$?
         stop_spinner $setup_rc "Project updated" "Project update failed"
     else
         # Fresh install
-        start_spinner "Initializing project in ${target_dir}..."
+        local setup_cmd
         if command -v trw-mcp &>/dev/null; then
-            trw-mcp init-project "${target_dir}" >/dev/null 2>&1
-            local setup_rc=$?
+            setup_cmd="trw-mcp"
         else
-            "$python_cmd" -m trw_mcp.server init-project "${target_dir}" >/dev/null 2>&1
-            local setup_rc=$?
+            setup_cmd="$python_cmd -m trw_mcp.server"
         fi
+        run_with_progress "Initializing project..." $setup_cmd init-project "${target_dir}"
+        local setup_rc=$?
         stop_spinner $setup_rc "Project initialized" "Project setup failed"
     fi
 

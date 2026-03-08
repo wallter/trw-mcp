@@ -46,7 +46,7 @@ class TestTRWConfig:
         assert config.consensus_quorum == 0.67
         assert config.checkpoint_secs == 600
         assert config.timebox_hours == 8
-        assert config.framework_version == "v24.0_TRW"
+        assert config.framework_version == "v24.2_TRW"
         assert config.telemetry is False
 
     def test_learning_defaults(self) -> None:

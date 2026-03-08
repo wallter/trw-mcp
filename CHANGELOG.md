@@ -2,6 +2,17 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.11.2] — 2026-03-07
+
+### Fixed — Installer Progress Feedback
+
+- **Live progress during project setup** — spinner now updates with file-by-file progress (`Updating project... (12 files) CLAUDE.md`) instead of a static "Updating existing installation..." message that appeared frozen
+- **`run_with_progress()` helper** — streams command output in background, parses Updated/Created/Preserved lines, and updates spinner message in real time
+- **`update_spinner()` function** — allows dynamic spinner message updates via shared temp file
+- Script mode shows prefixed output directly instead of suppressing it
+
+---
+
 ## [0.11.1] — 2026-03-07
 
 ### Improved — Interactive Installer
