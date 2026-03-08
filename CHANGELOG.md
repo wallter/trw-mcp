@@ -2,6 +2,24 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.12.1] — 2026-03-08
+
+### Changed — Installer Rewrite (Bash → Python)
+
+- **Installer rewritten from bash to Python** — `install-trw.template.py` replaces `install-trw.template.sh` as the default installer format. Users now run `python3 install-trw.py` instead of `bash install-trw.sh`.
+- **Box alignment fixed permanently** — `draw_box()` uses ANSI-aware `_visible_len()` + f-string padding. No more bash `printf` alignment bugs.
+- **Smart color detection** — ANSI colors auto-disable when stdout is not a TTY (clean piped output).
+- **Phased architecture** — each installation step is a standalone function (`phase_check_python`, `phase_extract_wheels`, `phase_install_packages`, etc.) for maintainability.
+- **Threaded spinner** — replaces bash background subshell + PID juggling with a clean daemon thread.
+- **Section dividers** — interactive mode shows `── Optional Features ──`, `── Project Identity ──`, `── Platform Connection ──` section headers.
+- **Enhanced prompts** — every Y/N prompt includes a description and doc link (`Learn more: trwframework.com/docs/...`).
+- **`prompt_choice()`** — numbered option selector for future multi-option prompts.
+- **`build_installer.py`** — now supports `--format py|sh` (Python is default). Comment-prefixed base64 embedding for Python format.
+- **All docs/marketing/scripts updated** — references to `install-trw.sh` changed to `install-trw.py` across 11 files.
+- **Bash template preserved** — `install-trw.template.sh` kept as fallback via `--format sh`.
+
+---
+
 ## [0.11.2] — 2026-03-07
 
 ### Fixed — Installer Progress Feedback

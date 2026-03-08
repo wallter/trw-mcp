@@ -363,10 +363,10 @@ show_banner() {
     fi
     if [ "$INTERACTIVE" = true ]; then
         echo ""
-        echo -e "${CYAN}╭──────────────────────────────────────────╮${NC}"
-        echo -e "${CYAN}│${NC}  ${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}$(printf '%*s' $((10 - ${#TRW_VERSION})) '')${CYAN}│${NC}"
-        echo -e "${CYAN}│${NC}  ${DIM}The Real Work — Accumulated Intelligence${NC} ${CYAN}│${NC}"
-        echo -e "${CYAN}╰──────────────────────────────────────────╯${NC}"
+        echo -e "${CYAN}╭───────────────────────────────────────────────╮${NC}"
+        echo -e "${CYAN}│${NC}  ${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}$(printf '%*s' $((19 - ${#TRW_VERSION})) '')${CYAN}│${NC}"
+        echo -e "${CYAN}│${NC}  ${DIM}The Real Work — Accumulated Intelligence${NC}    ${CYAN}│${NC}"
+        echo -e "${CYAN}╰───────────────────────────────────────────────╯${NC}"
     else
         echo -e "${BOLD}TRW Framework Installer v${TRW_VERSION}${NC}"
         echo ""
@@ -387,9 +387,9 @@ show_success_banner() {
 
     if [ "$INTERACTIVE" = true ]; then
         echo ""
-        echo -e "${GREEN}╭──────────────────────────────────────────╮${NC}"
-        echo -e "${GREEN}│${NC}  ${GREEN}${BOLD}✓ TRW Framework v${TRW_VERSION} — ready${NC}$(printf '%*s' $((13 - ${#TRW_VERSION})) '')${GREEN}│${NC}"
-        echo -e "${GREEN}╰──────────────────────────────────────────╯${NC}"
+        echo -e "${GREEN}╭───────────────────────────────────────────────╮${NC}"
+        echo -e "${GREEN}│${NC}  ${GREEN}${BOLD}✓ TRW Framework v${TRW_VERSION} — ready${NC}$(printf '%*s' $((18 - ${#TRW_VERSION})) '')${GREEN}│${NC}"
+        echo -e "${GREEN}╰───────────────────────────────────────────────╯${NC}"
         echo ""
         echo -e "  ${DIM}${platform_line}${NC}"
         echo ""
@@ -586,7 +586,9 @@ main() {
         echo -e "  ${BOLD}Optional features:${NC}"
 
         if [ -z "$INSTALL_AI" ]; then
-            if prompt_yes_no "Install AI/LLM features? (embeddings, analysis)"; then
+            echo -e "    ${DIM}Enables semantic search over your learnings and LLM-powered analysis.${NC}"
+            echo -e "    ${DIM}Docs: https://trwframework.com/docs/integration#ai-extras${NC}"
+            if prompt_yes_no "Install AI/LLM features?"; then
                 INSTALL_AI="yes"
             else
                 INSTALL_AI="no"
@@ -594,6 +596,8 @@ main() {
         fi
 
         if [ -z "$INSTALL_SQLITEVEC" ]; then
+            echo -e "    ${DIM}Adds vector similarity search for faster, more relevant recall.${NC}"
+            echo -e "    ${DIM}Docs: https://trwframework.com/docs/integration#vector-search${NC}"
             if prompt_yes_no "Install sqlite-vec for vector search?"; then
                 INSTALL_SQLITEVEC="yes"
             else
@@ -795,7 +799,11 @@ main() {
 
             # ── c) Telemetry opt-in (only if no API key) ──
             if [ -z "$api_key" ]; then
-                if prompt_yes_no "Enable anonymous usage telemetry? (helps improve TRW)"; then
+                echo ""
+                echo -e "    ${DIM}Anonymous usage data helps us improve TRW for everyone.${NC}"
+                echo -e "    ${DIM}No code or learnings are shared — only tool usage counts.${NC}"
+                echo -e "    ${DIM}Docs: https://trwframework.com/docs/integration#telemetry${NC}"
+                if prompt_yes_no "Enable anonymous usage telemetry?"; then
                     telemetry_enabled="true"
                     step_ok "Telemetry enabled"
                 else
