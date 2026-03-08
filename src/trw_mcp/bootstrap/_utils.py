@@ -105,17 +105,29 @@ def _default_config(
         source_package: If set, adds ``source_package_name`` field.
         test_path: If set, adds ``tests_relative_path`` field.
     """
+    from trw_mcp.models.config import get_config
+
+    config = get_config()
     lines = [
         "# TRW Framework Configuration",
         "# See trw://config resource for all available fields.",
         "task_root: docs",
         "debug: false",
         "claude_md_max_lines: 500",
+        f"framework_version: {config.framework_version}",
     ]
     if source_package:
         lines.append(f"source_package_name: {source_package}")
     if test_path:
         lines.append(f"tests_relative_path: {test_path}")
+    lines.extend([
+        "",
+        "# Platform telemetry — set platform_api_key to enable",
+        "# platform_urls:",
+        '#   - "https://api.trwframework.com"',
+        "# platform_api_key: ''",
+        "# platform_telemetry_enabled: true",
+    ])
     return "\n".join(lines) + "\n"
 
 
