@@ -235,6 +235,7 @@ class TestSkills:
         "trw-ceremony-guide",
         "trw-commit",
         "trw-deliver",
+        "trw-email-template",
         "trw-exec-plan",
         "trw-framework-check",
         "trw-learn",
@@ -255,7 +256,7 @@ class TestSkills:
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 21 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 22 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -1000,7 +1001,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
-        assert len(skills) == 21
+        assert len(skills) == 22
         assert len(agents) == 18
         assert len(hooks) > 0
 

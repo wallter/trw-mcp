@@ -668,7 +668,10 @@ def _check_framework_version_staleness(run_framework: str) -> str | None:
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
+    from trw_mcp.models.config import _reset_config
+
     global _config, _reader, _writer, _events
+    _reset_config()
     _config = get_config()
     _reader = FileStateReader()
     _writer = FileStateWriter()
