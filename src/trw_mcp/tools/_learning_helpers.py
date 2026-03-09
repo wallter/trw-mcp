@@ -19,6 +19,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.exceptions import StateError
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -85,7 +87,7 @@ def calibrate_impact(impact: float, config: TRWConfig) -> float:
             user_impact=impact,
             user_weight=user_weight,
         )
-    except Exception:
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError, ZeroDivisionError):
         return impact  # Fail-open: calibration failure falls back to raw impact
 
 
@@ -135,7 +137,7 @@ def check_soft_cap(
                     f"{threshold_pct}% threshold."
                 )
                 return round(adjusted, 4), warning
-    except Exception:
+    except (OSError, RuntimeError, ValueError, TypeError):
         pass  # Fail-open: distribution check must not block learning recording
 
     return impact, None
@@ -227,9 +229,9 @@ def check_and_handle_dedup(
                             "similarity": str(round(dedup_result.similarity, 3)),
                             "message": f"Merged into existing entry: {dedup_result.existing_id}",
                         }
-                except Exception:
+                except (OSError, StateError, ValueError, TypeError):
                     continue
-    except Exception as exc:
+    except (ImportError, OSError, RuntimeError, StateError, ValueError, TypeError) as exc:
         logger.debug("dedup_check_failed", error=str(exc))
 
     return None
@@ -283,7 +285,7 @@ def enforce_distribution(
         demotions = enforce_tier_distribution(all_entries)
         for demoted_id, new_score in demotions:
             demoted_ids.append(demoted_id)
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError, RuntimeError, ValueError, TypeError):
                 adapter_update(trw_dir, demoted_id, impact=new_score)
 
         if demotions:
@@ -294,7 +296,7 @@ def enforce_distribution(
                 f"{'y' if len(demotions) == 1 else 'ies'} to maintain tier caps. "
                 f"IDs: {[d[0] for d in demotions]}"
             )
-    except Exception:
+    except (OSError, RuntimeError, ValueError, TypeError):
         pass  # Fail-open: distribution enforcement must not block learning recording
 
     return distribution_warning, demoted_ids

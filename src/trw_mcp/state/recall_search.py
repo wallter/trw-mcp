@@ -134,7 +134,7 @@ def search_entries(
                     results=len(matching),
                 )
                 return matching, matched_files
-        except (ImportError, OSError, ValueError):
+        except Exception:
             pass  # Fall through to keyword search
 
     # --- Keyword scan fallback ---

@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.build import (
     _collect_failures,
@@ -403,7 +405,7 @@ class TestTrwBuildCheckTool:
             patch("trw_mcp.tools.build._registration.resolve_project_root", return_value=tmp_path),
         ):
             # Get the tool function from registered tools dict
-            tools_dict = server._tool_manager._tools
+            tools_dict = get_tools_sync(server)
             tool = tools_dict["trw_build_check"]
             result = tool.fn(scope="full", run_path=None, timeout_secs=None)
 
@@ -446,7 +448,7 @@ class TestTrwBuildCheckTool:
             mock_rbc.return_value = mock_status
             mock_cache.return_value = tmp_path / ".trw" / "context" / "build-status.yaml"
 
-            tools_dict = server._tool_manager._tools
+            tools_dict = get_tools_sync(server)
             tool = tools_dict["trw_build_check"]
             result = tool.fn(scope="full", run_path=None, timeout_secs=None)
 
@@ -497,7 +499,7 @@ class TestTrwBuildCheckTool:
             mock_rbc.return_value = mock_status
             mock_cache.return_value = tmp_path / ".trw" / "context" / "build-status.yaml"
 
-            tools_dict = server._tool_manager._tools
+            tools_dict = get_tools_sync(server)
             tool = tools_dict["trw_build_check"]
             result = tool.fn(
                 scope="pytest",
@@ -554,7 +556,7 @@ class TestTrwBuildCheckTool:
             mock_rbc.return_value = mock_status
             mock_cache.return_value = tmp_path / ".trw" / "context" / "build-status.yaml"
 
-            tools_dict = server._tool_manager._tools
+            tools_dict = get_tools_sync(server)
             tool = tools_dict["trw_build_check"]
             result = tool.fn(
                 scope="full",
@@ -605,7 +607,7 @@ class TestTrwBuildCheckTool:
             mock_rbc.side_effect = capture_rbc
             mock_cache.return_value = tmp_path / ".trw" / "context" / "build-status.yaml"
 
-            tools_dict = server._tool_manager._tools
+            tools_dict = get_tools_sync(server)
             tool = tools_dict["trw_build_check"]
             tool.fn(scope="full", run_path=None, timeout_secs=9999)
 
@@ -650,7 +652,7 @@ class TestTrwBuildCheckTool:
             mock_rbc.side_effect = capture_rbc
             mock_cache.return_value = tmp_path / ".trw" / "context" / "build-status.yaml"
 
-            tools_dict = server._tool_manager._tools
+            tools_dict = get_tools_sync(server)
             tool = tools_dict["trw_build_check"]
             tool.fn(scope="full", run_path=None, timeout_secs=None)
 

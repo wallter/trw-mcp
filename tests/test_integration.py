@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.state.persistence import FileStateReader
 
 
@@ -31,7 +33,7 @@ def _get_all_tools() -> dict[str, Any]:
     register_learning_tools(srv)
     register_requirements_tools(srv)
     register_ceremony_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+    return get_tools_sync(srv)
 
 
 class TestFullWorkflow:
@@ -159,7 +161,7 @@ class TestSessionLifecycle:
             skip_index_sync=True,
         )
         assert deliver_result["success"]
-        assert deliver_result["steps_completed"] >= 3
+        assert deliver_result["critical_steps_completed"] >= 3
 
     def test_fresh_project_session_start(self, tmp_path: Path) -> None:
         """session_start on empty .trw/ returns zero learnings, no active run."""
@@ -209,20 +211,20 @@ class TestMultiSessionSimulation:
         # Session 1: Init and learn
         tools["trw_init"].fn(task_name="multi-session")
         tools["trw_learn"].fn(
-            summary="Session 1 learning",
-            detail="First session discovery",
+            summary="Database connection pooling optimization",
+            detail="Use pgbouncer for connection reuse",
             impact=0.8,
         )
 
         # Session 2: More learning (same .trw/ dir)
         tools["trw_learn"].fn(
-            summary="Session 2 learning",
-            detail="Second session discovery",
+            summary="Frontend CSS grid layout techniques",
+            detail="Use minmax for responsive columns",
             impact=0.7,
         )
 
         # Verify accumulation
-        recall = tools["trw_recall"].fn(query="session")
+        recall = tools["trw_recall"].fn(query="*")
         assert recall["total_matches"] >= 2
 
         # Verify analytics

@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 
 def make_ceremony_server(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
@@ -29,4 +31,5 @@ def make_ceremony_server(
     register_ceremony_tools(srv)
     register_checkpoint_tools(srv)
     register_review_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+
+    return get_tools_sync(srv)

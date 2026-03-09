@@ -20,6 +20,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import FastMCP
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.exceptions import StateError, ValidationError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
@@ -47,9 +49,9 @@ def _make_server() -> FastMCP:
 
 def _extract_tool(server: FastMCP, name: str):
     """Return the raw callable registered under ``name``."""
-    for tool in server._tool_manager._tools.values():
-        if tool.name == name:
-            return tool.fn
+    tools = get_tools_sync(server)
+    if name in tools:
+        return tools[name].fn
     raise KeyError(f"Tool {name!r} not found")
 
 
@@ -151,67 +153,52 @@ class TestCeremonyDeliverSubStepFailures:
         assert len(sync_errors) == 1
 
     def test_deliver_auto_progress_failure_captured(self, tmp_path: Path) -> None:
-        """Lines 275-277: auto_progress exception populates errors list."""
-        tool = self._register_and_get_deliver()
+        """auto_progress exception is captured by _run_step in deferred path."""
+        from trw_mcp.tools.ceremony import _run_step
+
+        results: dict[str, object] = {}
+        errors: list[str] = []
 
         with patch(
-            "trw_mcp.tools.ceremony.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.ceremony.find_active_run",
-            return_value=None,
-        ), patch(
-            "trw_mcp.tools.ceremony._do_reflect",
-            return_value={"status": "success", "learnings_produced": 0},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_claude_md_sync",
-            return_value={"status": "success"},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_index_sync",
-            return_value={"status": "success"},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_auto_progress",
+            "trw_mcp.tools.ceremony._step_auto_progress",
             side_effect=RuntimeError("progress failed"),
         ):
-            result = tool(skip_reflect=False, skip_index_sync=False)
+            _run_step(
+                "auto_progress",
+                lambda: __import__(
+                    "trw_mcp.tools.ceremony", fromlist=["_step_auto_progress"]
+                )._step_auto_progress(None),
+                results,
+                errors,
+            )
 
-        assert result["auto_progress"]["status"] == "failed"
-        assert "progress failed" in result["auto_progress"]["error"]
-        progress_errors = [e for e in result["errors"] if "auto_progress" in e]
+        assert results["auto_progress"]["status"] == "failed"  # type: ignore[index]
+        assert "progress failed" in results["auto_progress"]["error"]  # type: ignore[index]
+        progress_errors = [e for e in errors if "auto_progress" in e]
         assert len(progress_errors) == 1
 
     def test_deliver_publish_learnings_failure_captured(self, tmp_path: Path) -> None:
-        """Lines 284-286: publish_learnings import/exception populates errors list."""
-        tool = self._register_and_get_deliver()
+        """publish_learnings exception is captured by _run_step in deferred path."""
+        from trw_mcp.tools.ceremony import _run_step
 
-        mock_pub = MagicMock(side_effect=RuntimeError("publish failed"))
+        results: dict[str, object] = {}
+        errors: list[str] = []
 
         with patch(
-            "trw_mcp.tools.ceremony.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.ceremony.find_active_run",
-            return_value=None,
-        ), patch(
-            "trw_mcp.tools.ceremony._do_reflect",
-            return_value={"status": "success", "learnings_produced": 0},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_claude_md_sync",
-            return_value={"status": "success"},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_index_sync",
-            return_value={"status": "success"},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_auto_progress",
-            return_value={"status": "skipped"},
-        ), patch.dict(
-            "sys.modules",
-            {"trw_mcp.telemetry.publisher": MagicMock(publish_learnings=mock_pub)},
+            "trw_mcp.tools.ceremony._step_publish_learnings",
+            side_effect=RuntimeError("publish failed"),
         ):
-            result = tool(skip_reflect=False, skip_index_sync=False)
+            _run_step(
+                "publish_learnings",
+                lambda: __import__(
+                    "trw_mcp.tools.ceremony", fromlist=["_step_publish_learnings"]
+                )._step_publish_learnings(),
+                results,
+                errors,
+            )
 
-        assert result["publish_learnings"]["status"] == "failed"
-        pub_errors = [e for e in result["errors"] if "publish_learnings" in e]
+        assert results["publish_learnings"]["status"] == "failed"  # type: ignore[index]
+        pub_errors = [e for e in errors if "publish_learnings" in e]
         assert len(pub_errors) == 1
 
 

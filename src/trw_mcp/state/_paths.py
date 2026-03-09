@@ -7,6 +7,7 @@ or an active run path MUST use these functions instead of inline logic.
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -17,16 +18,31 @@ from trw_mcp.state.persistence import FileStateReader
 _config = get_config()
 _reader = FileStateReader()
 
-# --- Process-local run pinning (RC-001 fix) ---
+# --- Session identity (PRD-FIX-042 FR03) ---
+_session_id: str = uuid.uuid4().hex
+
+
+def get_session_id() -> str:
+    """Return the current process session ID."""
+    return _session_id
+
+
+def _reset_session_id(new_id: str | None = None) -> None:
+    """Reset the session ID (for testing). Generates a new one if *new_id* is None."""
+    global _session_id
+    _session_id = new_id if new_id is not None else uuid.uuid4().hex
+
+
+# --- Per-session run pinning (PRD-FIX-042 FR06) ---
 # Each Claude Code instance spawns its own MCP process (stdio transport).
 # trw_init pins the run it creates so all subsequent find_active_run() calls
-# in THIS process return it, preventing telemetry hijack when parallel
+# for THIS session return it, preventing telemetry hijack when parallel
 # instances share the same filesystem.
-_pinned_run_dir: Path | None = None
+_pinned_runs: dict[str, Path] = {}
 
 
-def pin_active_run(run_dir: Path) -> None:
-    """Pin a run directory as the active run for this process.
+def pin_active_run(run_dir: Path, *, session_id: str | None = None) -> None:
+    """Pin a run directory as the active run for a session.
 
     After pinning, find_active_run() returns this directory instead of
     scanning the filesystem. This prevents telemetry hijack when multiple
@@ -34,20 +50,22 @@ def pin_active_run(run_dir: Path) -> None:
 
     Args:
         run_dir: Absolute path to the run directory to pin.
+        session_id: Session to pin for. Defaults to the current process session.
     """
-    global _pinned_run_dir
-    _pinned_run_dir = run_dir.resolve()
+    sid = session_id if session_id is not None else get_session_id()
+    _pinned_runs[sid] = run_dir.resolve()
 
 
-def unpin_active_run() -> None:
-    """Remove the process-local run pin, reverting to filesystem scan."""
-    global _pinned_run_dir
-    _pinned_run_dir = None
+def unpin_active_run(*, session_id: str | None = None) -> None:
+    """Remove the run pin for a session, reverting to filesystem scan."""
+    sid = session_id if session_id is not None else get_session_id()
+    _pinned_runs.pop(sid, None)
 
 
-def get_pinned_run() -> Path | None:
-    """Return the currently pinned run directory, or None."""
-    return _pinned_run_dir
+def get_pinned_run(*, session_id: str | None = None) -> Path | None:
+    """Return the currently pinned run directory for a session, or None."""
+    sid = session_id if session_id is not None else get_session_id()
+    return _pinned_runs.get(sid)
 
 
 def resolve_memory_store_path() -> Path:
@@ -135,23 +153,29 @@ def _find_latest_run_dir(base_dir: Path) -> Path | None:
     return latest_run
 
 
-def find_active_run() -> Path | None:
-    """Find the active run directory for this process.
+def find_active_run(*, session_id: str | None = None) -> Path | None:
+    """Find the active run directory for a session.
 
     Resolution order:
-    1. Process-local pinned run (set by ``pin_active_run`` during ``trw_init``)
+    1. Per-session pinned run (set by ``pin_active_run`` during ``trw_init``)
     2. Filesystem scan: ``{task_root}/*/runs/*/meta/run.yaml``, highest
-       lexicographic name (ISO timestamp prefix ensures chronological ordering)
+       lexicographic name (ISO timestamp prefix ensures chronological ordering),
+       skipping runs with status "complete" or "failed" (PRD-FIX-042 FR02).
 
     The pinned run prevents telemetry hijack when multiple Claude Code
     instances share the same filesystem — each instance's MCP process
     pins its own run at init time.
 
+    Args:
+        session_id: Session to check pin for. Defaults to the current process session.
+
     Returns:
         Path to run directory, or None if no active run found.
     """
-    if _pinned_run_dir is not None:
-        return _pinned_run_dir
+    sid = session_id if session_id is not None else get_session_id()
+    pinned = _pinned_runs.get(sid)
+    if pinned is not None:
+        return pinned
 
     try:
         project_root = resolve_project_root()
@@ -161,7 +185,15 @@ def find_active_run() -> Path | None:
 
         latest_name = ""
         latest_dir: Path | None = None
-        for run_dir, _run_yaml in iter_run_dirs(task_root):
+        for run_dir, run_yaml in iter_run_dirs(task_root):
+            # Status-aware: skip completed/failed runs (PRD-FIX-042 FR02)
+            try:
+                data = _reader.read_yaml(run_yaml)
+                status = str(data.get("status", "active"))
+                if status in ("complete", "failed"):
+                    continue
+            except Exception:
+                pass  # If can't read, treat as active (backward compat)
             if run_dir.name > latest_name:
                 latest_name = run_dir.name
                 latest_dir = run_dir
@@ -233,8 +265,9 @@ def detect_current_phase() -> str | None:
     """
     try:
         # Use pinned run if available
-        if _pinned_run_dir is not None:
-            run_yaml = _pinned_run_dir / "meta" / "run.yaml"
+        pinned = get_pinned_run()
+        if pinned is not None:
+            run_yaml = pinned / "meta" / "run.yaml"
             if run_yaml.exists():
                 data = _reader.read_yaml(run_yaml)
                 if str(data.get("status", "")) != "active":

@@ -17,6 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.build import (
@@ -1403,9 +1405,9 @@ def _setup_build_tool_mocks(
 
 def _get_tool_fn(server: object) -> object:
     """Extract trw_build_check tool function from a FastMCP server."""
-    for tool in server._tool_manager._tools.values():  # type: ignore[attr-defined]
-        if tool.name == "trw_build_check":
-            return tool.fn
+    tools = get_tools_sync(server)  # type: ignore[arg-type]
+    if "trw_build_check" in tools:
+        return tools["trw_build_check"].fn
     raise AssertionError("trw_build_check tool not found on server")
 
 

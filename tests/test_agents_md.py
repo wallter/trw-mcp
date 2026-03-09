@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 from fastmcp import FastMCP
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import TRW_MARKER_END, TRW_MARKER_START, merge_trw_section
 from trw_mcp.tools.learning import register_learning_tools
@@ -44,7 +46,7 @@ def _patched_learning_env(
     ):
         server = FastMCP("test")
         register_learning_tools(server)
-        tools = {t.name: t for t in server._tool_manager._tools.values()}
+        tools = get_tools_sync(server)
         yield tools
 
 

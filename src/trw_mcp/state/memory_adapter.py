@@ -131,7 +131,7 @@ def get_embedder() -> Any:
                     "embeddings_enabled_but_deps_missing",
                     hint="pip install trw-memory[embeddings]",
                 )
-        except (ImportError, OSError, ValueError):
+        except Exception:
             logger.debug("embedder_init_failed")
 
         _embedder_checked = True
@@ -219,7 +219,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
 
     try:
         memory_entries = migrate_entries_dir(entries_dir)
-    except (OSError, ValueError, KeyError):
+    except Exception:
         logger.warning("memory_migration_read_failed", entries_dir=str(entries_dir))
         return {"migrated": 0, "skipped": 0}
 
@@ -230,7 +230,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
                 entry = entry.model_copy(update={"namespace": _NAMESPACE})
             backend.store(entry)
             migrated += 1
-        except (OSError, ValueError, KeyError):
+        except Exception:
             skipped += 1
             logger.debug("memory_migration_entry_skipped", entry_id=entry.id)
 
@@ -730,7 +730,7 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                     access_count=entry.access_count + 1,
                     last_accessed_at=now,
                 )
-        except (OSError, ValueError):
+        except Exception:
             continue
 
 

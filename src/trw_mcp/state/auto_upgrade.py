@@ -160,7 +160,7 @@ def download_release_artifact(
         logger.warning("archive_missing_data_dir")
         return None
 
-    except (urllib.error.URLError, OSError, ValueError):
+    except Exception:
         logger.debug("artifact_download_failed", exc_info=True)
         return None
 

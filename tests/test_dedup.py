@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.state.dedup import (
@@ -480,7 +482,7 @@ class TestTrwLearnDedup:
         register_learning_tools(server)
 
         # Get the registered trw_learn tool and call it
-        tools = {t.name: t for t in server._tool_manager._tools.values()}
+        tools = get_tools_sync(server)
         tool_fn = tools["trw_learn"].fn
 
         result = tool_fn(summary=summary, detail=detail)
@@ -520,7 +522,7 @@ class TestTrwLearnDedup:
 
         server = FastMCP("test")
         register_learning_tools(server)
-        tools = {t.name: t for t in server._tool_manager._tools.values()}
+        tools = get_tools_sync(server)
         tool_fn = tools["trw_learn"].fn
 
         result = tool_fn(summary="some summary", detail="some detail")
@@ -593,7 +595,7 @@ class TestTrwLearnDedup:
 
         server = FastMCP("test")
         register_learning_tools(server)
-        tools = {t.name: t for t in server._tool_manager._tools.values()}
+        tools = get_tools_sync(server)
         tool_fn = tools["trw_learn"].fn
 
         result = tool_fn(summary="new similar summary", detail="new similar detail about the topic")
@@ -1124,7 +1126,7 @@ class TestSkipUpdatesAccessCount:
 
         server = FastMCP("test")
         register_learning_tools(server)
-        tools = {t.name: t for t in server._tool_manager._tools.values()}
+        tools = get_tools_sync(server)
         result = tools["trw_learn"].fn(summary=summary, detail=detail)
 
         assert result["status"] == "skipped"
@@ -1340,7 +1342,7 @@ class TestTrwLearnGracefulDegradation:
 
         server = FastMCP("test")
         register_learning_tools(server)
-        tools = {t.name: t for t in server._tool_manager._tools.values()}
+        tools = get_tools_sync(server)
         return tools["trw_learn"].fn
 
     def test_trw_learn_recorded_when_embed_returns_none(
@@ -1435,7 +1437,7 @@ class TestTrwLearnReturnDictKeys:
 
         server = FastMCP("test")
         register_learning_tools(server)
-        return {t.name: t for t in server._tool_manager._tools.values()}["trw_learn"].fn
+        return get_tools_sync(server)["trw_learn"].fn
 
     def test_recorded_result_has_learning_id_and_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

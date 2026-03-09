@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 
 @pytest.fixture(autouse=True)
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -31,7 +33,7 @@ def _get_tools() -> dict[str, Any]:
 
     srv = FastMCP("test-req-integration")
     register_requirements_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+    return get_tools_sync(srv)
 
 
 def _create_prd_file(

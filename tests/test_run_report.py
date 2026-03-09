@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.report import (
     BuildSummary,
     DurationInfo,
@@ -585,7 +587,7 @@ class TestReportToolLayer:
 
         srv = FastMCP("report-tool-test")
         register_report_tools(srv)
-        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        tools = get_tools_sync(srv)
         assert "trw_run_report" in tools, "trw_run_report not registered"
         assert "trw_analytics_report" in tools, "trw_analytics_report not registered"
 
@@ -608,7 +610,7 @@ class TestReportToolLayer:
 
         srv = FastMCP("run-report-error-test")
         register_report_tools(srv)
-        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        tools = get_tools_sync(srv)
         result = tools["trw_run_report"].fn()
         assert isinstance(result, dict)
         assert result.get("status") == "failed"
@@ -654,7 +656,7 @@ class TestReportToolLayer:
 
         srv = FastMCP("run-report-valid-test")
         register_report_tools(srv)
-        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        tools = get_tools_sync(srv)
         with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
             result = tools["trw_run_report"].fn()
         assert isinstance(result, dict)

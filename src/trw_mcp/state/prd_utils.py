@@ -199,7 +199,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
 
     except StateError:
         raise
-    except (OSError, YAMLError, ValueError, TypeError) as exc:
+    except Exception as exc:
         raise StateError(
             f"Failed to update frontmatter: {exc}", path=str(path)
         ) from exc

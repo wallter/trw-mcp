@@ -160,7 +160,7 @@ def auto_progress_prds(
             aare_dir = prds_dir.parent
             sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
             sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
-        except (ImportError, OSError, ValueError):
+        except Exception:
             pass  # Best-effort — never fail auto-progression for sync issues
 
     logger.info(

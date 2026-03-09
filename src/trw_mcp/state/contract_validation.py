@@ -93,7 +93,7 @@ class FileContractValidator:
                                 severity="error",
                             )
                         )
-            except (OSError, ValueError, KeyError) as exc:
+            except Exception as exc:
                 failures.append(
                     ValidationFailure(
                         field=contract.file,

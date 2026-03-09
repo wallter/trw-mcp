@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.state.persistence import FileStateWriter
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,7 @@ class TestDeliverBuildGate:
 
         server = FastMCP("test")
         register_ceremony_tools(server)
-        deliver_fn = server._tool_manager._tools["trw_deliver"].fn
+        deliver_fn = get_tools_sync(server)["trw_deliver"].fn
 
         with (
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
@@ -100,7 +102,7 @@ class TestDeliverBuildGate:
 
         server = FastMCP("test")
         register_ceremony_tools(server)
-        deliver_fn = server._tool_manager._tools["trw_deliver"].fn
+        deliver_fn = get_tools_sync(server)["trw_deliver"].fn
 
         with (
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
@@ -182,7 +184,7 @@ class TestStatusLastActivity:
 
         server = FastMCP("test")
         register_orchestration_tools(server)
-        status_fn = server._tool_manager._tools["trw_status"].fn
+        status_fn = get_tools_sync(server)["trw_status"].fn
 
         with (
             patch("trw_mcp.tools.orchestration.resolve_run_path", return_value=run_dir),

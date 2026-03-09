@@ -335,7 +335,7 @@ def _render_cluster_documents(
         slug = str(cluster.get("slug", "topic"))
         try:
             rendered = render_topic_document(cluster)
-        except (KeyError, ValueError, TypeError) as exc:
+        except Exception as exc:
             errors.append(f"Cluster '{slug}': {exc}")
             logger.warning(
                 "knowledge_cluster_render_failed",
@@ -384,7 +384,7 @@ def _write_knowledge_files(
             writer.write_text(topic_path, rendered)
             topics_generated += 1
             slugs_written.append(slug)
-        except (OSError, ValueError) as exc:
+        except Exception as exc:
             errors.append(f"Cluster '{slug}': {exc}")
             logger.warning(
                 "knowledge_cluster_render_failed",
@@ -419,7 +419,7 @@ def execute_knowledge_sync(
     # Step 1: threshold check (NFR02: fail-open on StorageError)
     try:
         total_count = count_entries(trw_dir)
-    except (ImportError, OSError, ValueError) as exc:
+    except Exception as exc:
         logger.warning("knowledge_sync_count_failed", error=str(exc))
         result = _base_result(0, config, trw_dir, threshold_met=False, dry_run=dry_run)
         result["errors"] = [f"count_entries failed: {exc}"]

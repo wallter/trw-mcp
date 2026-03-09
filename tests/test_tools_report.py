@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 from fastmcp import FastMCP
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools.report import register_report_tools
@@ -79,7 +81,7 @@ class TestRunReportTool:
     ) -> None:
         """Providing explicit run_path returns a valid report dict."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_run_report")
+        tool = get_tools_sync(server)["trw_run_report"]
 
         result = tool.fn(run_path=str(rich_run_dir))
         assert isinstance(result, dict)
@@ -89,7 +91,7 @@ class TestRunReportTool:
     def test_nonexistent_explicit_path_returns_error(self, server: FastMCP) -> None:
         """Nonexistent explicit path returns error dict instead of raising."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_run_report")
+        tool = get_tools_sync(server)["trw_run_report"]
 
         result = tool.fn(run_path="/nonexistent/path/run-000")
         assert "error" in result
@@ -103,7 +105,7 @@ class TestRunReportTool:
     ) -> None:
         """Auto-detect returns report when run exists."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_run_report")
+        tool = get_tools_sync(server)["trw_run_report"]
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
@@ -121,7 +123,7 @@ class TestRunReportTool:
     def test_no_active_runs_returns_error(self, server: FastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
         """When no active runs exist, returns error dict."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_run_report")
+        tool = get_tools_sync(server)["trw_run_report"]
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
@@ -140,7 +142,7 @@ class TestRunReportTool:
     ) -> None:
         """If assemble_report raises StateError, returns error dict."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_run_report")
+        tool = get_tools_sync(server)["trw_run_report"]
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
@@ -167,7 +169,7 @@ class TestRunReportTool:
     ) -> None:
         """When resolve_trw_dir fails, falls back to relative .trw dir."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_run_report")
+        tool = get_tools_sync(server)["trw_run_report"]
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
@@ -188,7 +190,7 @@ class TestRunReportTool:
     ) -> None:
         """Report result contains expected keys from model_dump."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_run_report")
+        tool = get_tools_sync(server)["trw_run_report"]
 
         result = tool.fn(run_path=str(rich_run_dir))
         assert isinstance(result, dict)
@@ -210,7 +212,7 @@ class TestAnalyticsReportTool:
     ) -> None:
         """Returns valid dict even with no runs available."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_analytics_report")
+        tool = get_tools_sync(server)["trw_analytics_report"]
 
         monkeypatch.setattr(
             "trw_mcp.state.analytics_report.resolve_project_root",
@@ -227,7 +229,7 @@ class TestAnalyticsReportTool:
     ) -> None:
         """Date filter is passed to scan_all_runs correctly."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_analytics_report")
+        tool = get_tools_sync(server)["trw_analytics_report"]
 
         monkeypatch.setattr(
             "trw_mcp.state.analytics_report.resolve_project_root",
@@ -242,7 +244,7 @@ class TestAnalyticsReportTool:
     ) -> None:
         """Unexpected exception is caught and returned as error dict."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_analytics_report")
+        tool = get_tools_sync(server)["trw_analytics_report"]
 
         import trw_mcp.state.analytics_report as analytics_mod
         monkeypatch.setattr(
@@ -264,7 +266,7 @@ class TestAnalyticsReportTool:
     ) -> None:
         """Returns runs_scanned > 0 when run directories exist."""
         register_report_tools(server)
-        tool = next(t for t in server._tool_manager._tools.values() if t.name == "trw_analytics_report")
+        tool = get_tools_sync(server)["trw_analytics_report"]
 
         # Create a run directory
         run_dir = tmp_path / "docs" / "task1" / "runs" / "20260219T100000Z-abcd1234"
@@ -289,6 +291,6 @@ class TestAnalyticsReportTool:
     def test_tools_are_registered(self, server: FastMCP) -> None:
         """Both tools are registered after register_report_tools."""
         register_report_tools(server)
-        tool_names = list(server._tool_manager._tools.keys())
+        tool_names = list(get_tools_sync(server).keys())
         assert "trw_run_report" in tool_names
         assert "trw_analytics_report" in tool_names

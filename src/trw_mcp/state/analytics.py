@@ -49,9 +49,6 @@ _writer = _ac._writer
 # ---------------------------------------------------------------------------
 from trw_mcp.tools._learning_helpers import is_noise_summary as is_noise_summary
 
-# Backward-compat alias — _is_telemetry_noise was removed (DRY: replaced by is_noise_summary)
-_is_telemetry_noise = is_noise_summary
-
 from trw_mcp.state.analytics_entries import (
     _save_and_record as _save_and_record,
     apply_status_update as apply_status_update,
@@ -124,7 +121,6 @@ __all__ = [
     "apply_status_update",
     "_save_and_record",
     "extract_learnings_mechanical",
-    "_is_telemetry_noise",
     "extract_learnings_from_llm",
     "backfill_source_attribution",
     # analytics_counters

@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import get_resources_sync
 from trw_mcp.state.persistence import FileStateWriter
 
 
@@ -29,8 +30,7 @@ def _get_resources() -> dict[str, Any]:
     register_config_resources(srv)
     register_template_resources(srv)
     register_run_state_resources(srv)
-    # Keys are strings in _resources dict
-    return dict(srv._resource_manager._resources)
+    return get_resources_sync(srv)
 
 
 class TestConfigResource:

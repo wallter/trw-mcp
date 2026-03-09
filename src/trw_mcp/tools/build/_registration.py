@@ -225,5 +225,8 @@ def register_build_tools(server: FastMCP) -> None:
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
+    from trw_mcp.models.config import _reset_config
+
     global _config
+    _reset_config()
     _config = get_config()

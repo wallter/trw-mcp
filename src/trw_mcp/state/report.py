@@ -153,7 +153,7 @@ def compute_learning_yield(
 
     try:
         entries = list_active_learnings(trw_dir, min_impact=0.0, limit=DEFAULT_LIST_LIMIT)
-    except (ImportError, OSError, ValueError):
+    except Exception:
         logger.warning("learning_yield_sqlite_failed", trw_dir=str(trw_dir))
         return LearningSummary()
 
@@ -259,7 +259,7 @@ def assemble_report(
                 test_count=int(str(build_data.get("test_count", 0))),
                 duration_secs=safe_float(build_data, "duration_secs", 0.0),
             )
-        except (OSError, ValueError, KeyError, TypeError):
+        except Exception:
             logger.warning("build_status_read_failed", path=str(build_path))
 
     # Optional: learning yield

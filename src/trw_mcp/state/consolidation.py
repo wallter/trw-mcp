@@ -391,7 +391,7 @@ def _archive_originals(
             if tier_manager is not None and hasattr(tier_manager, "cold_archive"):
                 try:
                     tier_manager.cold_archive(entry_id, entry_path)
-                except (OSError, StateError):
+                except Exception:
                     # Cold archive failed — mark as archived instead
                     data["status"] = "archived"
                     writer.write_yaml(entry_path, data)
@@ -556,7 +556,7 @@ def consolidate_cycle(
     try:
         from trw_mcp.state.tiers import TierManager as _TierManager
         tier_manager = _TierManager(trw_dir, reader=reader, writer=writer, config=cfg)
-    except (ImportError, OSError, StateError):
+    except Exception:
         pass  # Graceful degradation — cold archival falls back to status="archived"
 
     # Instantiate LLM client once for all clusters
@@ -565,7 +565,7 @@ def consolidate_cycle(
         candidate = LLMClient(model="haiku")
         if candidate.available:
             llm = candidate
-    except (ImportError, OSError, ValueError):
+    except Exception:
         pass  # LLM is optional — consolidation works without AI summaries
 
     consolidated_count = 0
@@ -601,7 +601,7 @@ def consolidate_cycle(
             )
             consolidated_count += 1
 
-        except (OSError, StateError, ValueError, KeyError) as exc:
+        except Exception as exc:
             logger.exception(
                 "consolidation_cluster_failed",
                 cluster_ids=cluster_ids,

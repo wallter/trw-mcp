@@ -620,7 +620,7 @@ def validate_prd_quality_v2(
     for dim_name, scorer, max_score in _active_dims:
         try:
             dimensions.append(scorer())
-        except (ValueError, TypeError, KeyError):
+        except Exception:
             logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
             dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 

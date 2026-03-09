@@ -20,8 +20,14 @@ from trw_mcp.state.index_sync import (
     ROADMAP_CATALOGUE_END,
     ROADMAP_CATALOGUE_START,
     PRDEntry,
+    _INDEX_SUMMARY_RE,
+    _ROADMAP_TOTAL_RE,
+    _build_index_stats,
+    _build_roadmap_stats,
     _group_by_status,
     _merge_section,
+    _stats_parts,
+    _update_header_stats,
     render_index_catalogue,
     render_roadmap_catalogue,
     scan_prd_frontmatters,
@@ -329,3 +335,126 @@ class TestSyncRoadmapMd:
         sync_roadmap_md(roadmap_path, prds_dir)
         second = roadmap_path.read_text(encoding="utf-8")
         assert first == second
+
+
+# --- _build_stats_summary ---
+
+
+class TestStatsParts:
+    """Header stats string builder."""
+
+    def test_basic_parts(self) -> None:
+        groups = _group_by_status([
+            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+        ])
+        parts = _stats_parts(groups)
+        assert parts == ["1 done", "1 draft"]
+
+    def test_all_statuses(self) -> None:
+        groups = _group_by_status([
+            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+            PRDEntry(id="B", title="", priority="P1", status="merged", category="C"),
+            PRDEntry(id="C", title="", priority="P2", status="deprecated", category="C"),
+            PRDEntry(id="D", title="", priority="P1", status="review", category="C"),
+            PRDEntry(id="E", title="", priority="P1", status="draft", category="C"),
+        ])
+        parts = _stats_parts(groups)
+        assert "1 done" in parts
+        assert "1 merged" in parts
+        assert "1 deprecated" in parts
+        assert "1 review" in parts
+        assert "1 draft" in parts
+
+
+class TestBuildIndexStats:
+    """INDEX.md format: ``(N total: X done, ...)``."""
+
+    def test_format(self) -> None:
+        groups = _group_by_status([
+            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+        ])
+        result = _build_index_stats(groups, 2)
+        assert result == "(2 total: 1 done, 1 draft)"
+
+
+class TestBuildRoadmapStats:
+    """ROADMAP.md format: ``N (X done, ...)``."""
+
+    def test_format(self) -> None:
+        groups = _group_by_status([
+            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+        ])
+        result = _build_roadmap_stats(groups, 2)
+        assert result == "2 (1 done, 1 draft)"
+
+
+# --- _update_header_stats ---
+
+
+class TestUpdateHeaderStats:
+    """Header stats line replacement outside catalogue markers."""
+
+    def test_updates_index_summary_line(self) -> None:
+        content = "# Index\n\n## Summary (10 total: 5 done, 5 draft)\n\nMore text."
+        groups = _group_by_status([
+            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+        ])
+        result = _update_header_stats(
+            content, groups, 2, _INDEX_SUMMARY_RE, index_format=True,
+        )
+        assert "## Summary (2 total: 1 done, 1 draft)" in result
+        assert "More text." in result
+
+    def test_updates_roadmap_total_line(self) -> None:
+        content = "# Roadmap\n\n**PRD Total**: 100 (50 done, 50 draft)\n\nSprints."
+        groups = _group_by_status([
+            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+        ])
+        result = _update_header_stats(content, groups, 1, _ROADMAP_TOTAL_RE)
+        assert "**PRD Total**: 1 (1 done, 0 draft)" in result
+        assert "Sprints." in result
+
+    def test_no_match_returns_unchanged(self) -> None:
+        content = "# Header\n\nNo stats here."
+        groups = _group_by_status([])
+        result = _update_header_stats(content, groups, 0, _INDEX_SUMMARY_RE)
+        assert result == content
+
+
+# --- sync_index_md header stats ---
+
+
+class TestSyncIndexMdHeaderStats:
+    """Verify sync_index_md updates header stats outside markers."""
+
+    def test_updates_summary_line(self, tmp_path: Path, prds_dir: Path) -> None:
+        index_path = tmp_path / "INDEX.md"
+        content = (
+            "# Index\n\n## Summary (0 total: 0 done, 0 draft)\n\n"
+            + INDEX_CATALOGUE_START + "\nold\n" + INDEX_CATALOGUE_END
+        )
+        index_path.write_text(content, encoding="utf-8")
+        sync_index_md(index_path, prds_dir)
+        updated = index_path.read_text(encoding="utf-8")
+        assert "## Summary (4 total: 1 done," in updated
+        assert "0 total" not in updated
+
+
+class TestSyncRoadmapMdHeaderStats:
+    """Verify sync_roadmap_md updates header stats outside markers."""
+
+    def test_updates_prd_total_line(self, tmp_path: Path, prds_dir: Path) -> None:
+        roadmap_path = tmp_path / "ROADMAP.md"
+        content = (
+            "# Roadmap\n\n**PRD Total**: 0 (0 done, 0 draft)\n\n"
+            + ROADMAP_CATALOGUE_START + "\nold\n" + ROADMAP_CATALOGUE_END
+        )
+        roadmap_path.write_text(content, encoding="utf-8")
+        sync_roadmap_md(roadmap_path, prds_dir)
+        updated = roadmap_path.read_text(encoding="utf-8")
+        assert "**PRD Total**: 4 (1 done," in updated
+        assert "0 total" not in updated

@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring import EVENT_ALIASES, REWARD_MAP, apply_time_decay
@@ -124,24 +126,32 @@ class TestBuildCheckQLearningWiring:
         from fastmcp import FastMCP
 
         import trw_mcp.tools.build as build_mod
+        import trw_mcp.tools.build._registration as reg_mod
         from trw_mcp.models.config import TRWConfig
 
         mock_status = self._make_mock_status(passed)
         mock_config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
+        # Patch both package-level and _registration-level names so the
+        # registered tool closure sees the mocked values.
         monkeypatch.setattr(build_mod, "_config", mock_config)
+        monkeypatch.setattr(reg_mod, "_config", mock_config)
         monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
+        monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
+        monkeypatch.setattr(reg_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
         monkeypatch.setattr(build_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
+        monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr(build_mod, "resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr(reg_mod, "resolve_project_root", lambda: tmp_path)
 
         server = FastMCP("test")
         build_mod.register_build_tools(server)
 
-        for tool in server._tool_manager._tools.values():
-            if tool.name == "trw_build_check":
-                return tool.fn
+        tools = get_tools_sync(server)
+        if "trw_build_check" in tools:
+            return tools["trw_build_check"].fn
         return None
 
     def test_build_check_calls_process_outcome_on_pass(
@@ -882,6 +892,7 @@ class TestBuildCheckMypyOnlyScope:
         """
 
         import trw_mcp.tools.build as build_mod
+        import trw_mcp.tools.build._registration as reg_mod
 
         called_events: list[str] = []
         mock_status = self._make_mypy_status(mypy_clean=True)
@@ -889,10 +900,15 @@ class TestBuildCheckMypyOnlyScope:
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
         monkeypatch.setattr(build_mod, "_config", mock_config)
+        monkeypatch.setattr(reg_mod, "_config", mock_config)
         monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
+        monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
+        monkeypatch.setattr(reg_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
         monkeypatch.setattr(build_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
+        monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr(build_mod, "resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr(reg_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
             lambda event_type: called_events.append(event_type) or [],
@@ -900,13 +916,9 @@ class TestBuildCheckMypyOnlyScope:
 
         server = __import__("fastmcp", fromlist=["FastMCP"]).FastMCP("test")
         build_mod.register_build_tools(server)
-        tool_fn = None
-        for tool in server._tool_manager._tools.values():
-            if tool.name == "trw_build_check":
-                tool_fn = tool.fn
-                break
-
-        assert tool_fn is not None
+        tools = get_tools_sync(server)
+        assert "trw_build_check" in tools
+        tool_fn = tools["trw_build_check"].fn
         tool_fn(scope="mypy", run_path=None, timeout_secs=30)
 
         # Current implementation fires build_passed even for mypy-only scope
@@ -927,6 +939,7 @@ class TestBuildCheckMypyOnlyScope:
 
         import trw_mcp.scoring as scoring_mod
         import trw_mcp.tools.build as build_mod
+        import trw_mcp.tools.build._registration as reg_mod
 
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -984,20 +997,21 @@ class TestBuildCheckMypyOnlyScope:
         mock_status.duration_secs = 1.0
 
         monkeypatch.setattr(build_mod, "_config", cfg)
+        monkeypatch.setattr(reg_mod, "_config", cfg)
         monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
+        monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
+        monkeypatch.setattr(reg_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
         monkeypatch.setattr(build_mod, "resolve_trw_dir", lambda: trw_dir)
+        monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: trw_dir)
         monkeypatch.setattr(build_mod, "resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr(reg_mod, "resolve_project_root", lambda: tmp_path)
 
         server = FastMCP("test")
         build_mod.register_build_tools(server)
-        tool_fn = None
-        for tool in server._tool_manager._tools.values():
-            if tool.name == "trw_build_check":
-                tool_fn = tool.fn
-                break
-
-        assert tool_fn is not None
+        tools = get_tools_sync(server)
+        assert "trw_build_check" in tools
+        tool_fn = tools["trw_build_check"].fn
         result = tool_fn(scope="full", run_path=None, timeout_secs=30)
         assert result["tests_passed"] is True
 

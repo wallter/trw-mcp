@@ -132,14 +132,33 @@ def load_project_config(trw_dir: Path) -> TRWConfig:
         trw_dir: Path to the .trw directory.
 
     Returns:
-        TRWConfig instance (defaults if config.yaml is missing).
+        TRWConfig instance (defaults if config.yaml is missing or invalid).
     """
+    from pydantic import ValidationError
+
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state.persistence import FileStateReader
 
     config_path = trw_dir / "config.yaml"
     if config_path.exists():
         reader = FileStateReader()
-        data = reader.read_yaml(config_path)
-        return TRWConfig(**{k: v for k, v in data.items() if v is not None})  # type: ignore[arg-type]
+        try:
+            data = reader.read_yaml(config_path)
+            return TRWConfig.model_validate(
+                {k: v for k, v in data.items() if v is not None},
+            )
+        except ValidationError as exc:
+            logger.warning(
+                "config_validation_failed",
+                path=str(config_path),
+                errors=str(exc),
+            )
+            return TRWConfig()
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "config_read_failed",
+                path=str(config_path),
+                error=str(exc),
+            )
+            return TRWConfig()
     return TRWConfig()

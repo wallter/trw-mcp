@@ -136,7 +136,7 @@ class FileStateReader:
             return result
         except StateError:
             raise
-        except (OSError, ValueError) as exc:
+        except Exception as exc:
             raise StateError(
                 f"Failed to read YAML: {exc}",
                 path=str(path),
@@ -184,7 +184,7 @@ class FileStateReader:
             ) from exc
         except StateError:
             raise
-        except OSError as exc:
+        except Exception as exc:
             raise StateError(
                 f"Failed to read JSONL: {exc}",
                 path=str(path),
@@ -309,7 +309,7 @@ class FileStateWriter:
                     os.close(fd)
         except StateError:
             raise
-        except OSError as exc:
+        except Exception as exc:
             raise StateError(
                 f"Failed to write text file: {exc}",
                 path=str(path),

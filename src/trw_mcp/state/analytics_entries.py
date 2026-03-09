@@ -302,7 +302,7 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
             metadata = dict(entry.metadata) if entry.metadata else {}
             metadata["promoted_to_claude_md"] = "true"
             backend.update(learning_id, metadata=metadata)
-    except (ImportError, OSError, ValueError):
+    except Exception:
         pass  # Fail-open
 
     # Fallback: also update YAML if it exists

@@ -14,6 +14,8 @@ from unittest.mock import patch
 import pytest
 from fastmcp import FastMCP
 
+from tests.conftest import get_tools_sync
+
 import trw_mcp.tools.orchestration as orch_mod
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -38,7 +40,7 @@ def _make_orch_tools() -> dict[str, Any]:
     """Create a FastMCP server with orchestration tools and return the tools dict."""
     srv = FastMCP("test")
     register_orchestration_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+    return get_tools_sync(srv)
 
 
 @pytest.fixture

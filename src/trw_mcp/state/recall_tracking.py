@@ -65,7 +65,7 @@ def record_outcome(learning_id: str, outcome: str) -> bool:
         }
         writer.append_jsonl(tracking_path, entry)
         return True
-    except (OSError, StateError):
+    except Exception:
         logger.debug("outcome_record_failed", learning_id=learning_id)
         return False
 
@@ -117,7 +117,7 @@ def get_recall_stats(entries_dir: Path | None = None) -> dict[str, Any]:
             "negative_outcomes": negative,
             "neutral_outcomes": neutral,
         }
-    except (OSError, StateError):
+    except Exception:
         return {
             "total_recalls": 0,
             "unique_learnings": 0,

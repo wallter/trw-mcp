@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
     render_agent_teams_protocol,
@@ -32,7 +34,7 @@ def _get_tools() -> dict[str, Any]:
 
     srv = FastMCP("test")
     register_learning_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+    return get_tools_sync(srv)
 
 
 class TestRenderAgentTeamsProtocol:

@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state._helpers import load_project_config as _load_project_config
 from trw_mcp.state.analytics import (
@@ -66,7 +67,7 @@ def _collect_learnings(
             continue
         try:
             data = _reader.read_yaml(f)
-        except Exception:
+        except (OSError, StateError):
             continue
 
         impact = float(str(data.get("impact", 0)))
@@ -127,14 +128,14 @@ def _collect_analytics(
     # Load analytics.yaml
     analytics_path = trw_dir / config.context_dir / "analytics.yaml"
     if analytics_path.exists():
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(OSError, StateError):
             analytics["session_analytics"] = _reader.read_yaml(analytics_path)
 
     # Reflection quality
     try:
         with temp_project_root(target_dir):
             analytics["reflection_quality"] = compute_reflection_quality(trw_dir)
-    except Exception:
+    except (OSError, RuntimeError, StateError, ValueError, TypeError, ZeroDivisionError):
         pass
 
     # Ceremony aggregates (from cached report or fresh scan)
@@ -143,7 +144,7 @@ def _collect_analytics(
         try:
             cached = _reader.read_yaml(report_path)
             analytics["ceremony_aggregates"] = cached.get("aggregate", {})
-        except Exception:
+        except (OSError, StateError):
             pass
 
     return analytics
@@ -236,7 +237,7 @@ def import_learnings(
     # Load source entries
     try:
         raw = json.loads(source_file.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         return {"error": f"Failed to read source file: {exc}", "status": "failed"}
 
     # Accept either a list of learnings or a full export with "learnings" key
@@ -262,7 +263,7 @@ def import_learnings(
         try:
             data = _reader.read_yaml(f)
             existing_summaries.append(str(data.get("summary", "")))
-        except Exception:
+        except (OSError, StateError):
             continue
 
     imported = 0

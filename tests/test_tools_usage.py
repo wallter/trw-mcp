@@ -40,15 +40,17 @@ def _write_usage_record(
     })
 
 
-async def _get_report_tool_fn() -> Callable[..., Any]:
+def _get_report_tool_fn() -> Callable[..., Any]:
     """Extract the trw_usage_report fn from the FastMCP server."""
+    from tests.conftest import get_tools_sync
+
     from fastmcp import FastMCP
 
     from trw_mcp.tools.usage import register_usage_tools
 
     server = FastMCP("test")
     register_usage_tools(server)
-    tools = await server.get_tools()
+    tools = get_tools_sync(server)
     return tools["trw_usage_report"].fn  # type: ignore[return-value]
 
 
@@ -121,7 +123,7 @@ class TestUsageReportEmpty:
             "trw_mcp.tools.usage.resolve_trw_dir",
             lambda: tmp_path / ".trw",
         )
-        report_fn = await _get_report_tool_fn()
+        report_fn = _get_report_tool_fn()
         result = report_fn()
 
         assert result["total_calls"] == 0
@@ -140,7 +142,7 @@ class TestUsageReportEmpty:
             "trw_mcp.tools.usage.resolve_trw_dir",
             lambda: tmp_path / ".trw",
         )
-        report_fn = await _get_report_tool_fn()
+        report_fn = _get_report_tool_fn()
         result = report_fn()
         assert result["total_calls"] == 0
 
@@ -167,7 +169,7 @@ class TestUsageReportSingleRecord:
             "trw_mcp.tools.usage.resolve_trw_dir",
             lambda: tmp_path / ".trw",
         )
-        report_fn = await _get_report_tool_fn()
+        report_fn = _get_report_tool_fn()
         result = report_fn()
 
         assert result["total_calls"] == 1
@@ -196,7 +198,7 @@ class TestUsageReportMultipleRecords:
             "trw_mcp.tools.usage.resolve_trw_dir",
             lambda: tmp_path / ".trw",
         )
-        report_fn = await _get_report_tool_fn()
+        report_fn = _get_report_tool_fn()
         result = report_fn()
 
         assert result["total_calls"] == 3
@@ -231,7 +233,7 @@ class TestUsageReportMultipleRecords:
             "trw_mcp.tools.usage.resolve_trw_dir",
             lambda: tmp_path / ".trw",
         )
-        report_fn = await _get_report_tool_fn()
+        report_fn = _get_report_tool_fn()
         result = report_fn()
 
         by_model = result["by_model"]
@@ -267,7 +269,7 @@ class TestUsageReportMultipleRecords:
             "trw_mcp.tools.usage.resolve_trw_dir",
             lambda: tmp_path / ".trw",
         )
-        report_fn = await _get_report_tool_fn()
+        report_fn = _get_report_tool_fn()
         result = report_fn()
 
         by_caller = result["by_caller"]
@@ -301,7 +303,7 @@ class TestUsageReportCostEstimation:
             "trw_mcp.tools.usage.resolve_trw_dir",
             lambda: tmp_path / ".trw",
         )
-        report_fn = await _get_report_tool_fn()
+        report_fn = _get_report_tool_fn()
         return report_fn()  # type: ignore[return-value]
 
     async def test_usage_report_cost_haiku(
@@ -454,7 +456,7 @@ class TestUsageReportGroupBy:
 
         monkeypatch.setattr("trw_mcp.tools.usage.resolve_trw_dir", lambda: tmp_path / ".trw")
 
-        tool_fn = await _get_report_tool_fn()
+        tool_fn = _get_report_tool_fn()
         result = tool_fn(group_by="model")
 
         assert "grouped_by" in result
@@ -478,7 +480,7 @@ class TestUsageReportGroupBy:
 
         monkeypatch.setattr("trw_mcp.tools.usage.resolve_trw_dir", lambda: tmp_path / ".trw")
 
-        tool_fn = await _get_report_tool_fn()
+        tool_fn = _get_report_tool_fn()
         result = tool_fn(group_by="none")
 
         assert "grouped_by" not in result
@@ -496,6 +498,6 @@ class TestUsageReportGroupBy:
 
         monkeypatch.setattr("trw_mcp.tools.usage.resolve_trw_dir", lambda: tmp_path / ".trw")
 
-        tool_fn = await _get_report_tool_fn()
+        tool_fn = _get_report_tool_fn()
         with pytest.raises(ValueError, match="group_by must be one of"):
             tool_fn(group_by="invalid_field")

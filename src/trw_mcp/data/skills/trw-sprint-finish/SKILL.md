@@ -22,9 +22,11 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
 
 2. **Read sprint doc**: Extract assigned PRDs, goals, and completion criteria.
 
-3. **Check PRD statuses**: For each assigned PRD, read its frontmatter status:
+3. **Check PRD statuses (read-only)**: For each assigned PRD, read its YAML frontmatter status (the `status:` field is nested under the `prd:` key, e.g., `prd:\n  status: draft`):
    - Expected: `done` or `implemented`
-   - If any PRD is still `draft`, `review`, or `approved`, report which PRDs are incomplete and ask the user whether to proceed anyway
+   - If any PRD is still `draft`, `review`, `approved`, or `implemented`, report which PRDs need updating
+   - If any PRD is genuinely incomplete (work not done), ask the user whether to update it anyway or exclude it from the sprint
+   - **Do NOT update PRD statuses yet** — wait until the build gate passes (step 5)
 
 4. **Parse exit criteria checkboxes**: Spec reconciliation (`trw_review(mode='reconcile')`) should have been run during the REVIEW phase for each governing PRD. Extract all `- [ ]` and `- [x]` lines from the "Exit Criteria" section of the sprint doc.
    - For each **unchecked** (`- [ ]`) item, classify it:
@@ -38,13 +40,20 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    - Call `trw_build_check(scope="full")` to run tests + type-check
    - If coverage is below the threshold: BLOCK with message showing actual vs required
    - If build **fails**: Report failures, do NOT proceed. The sprint cannot be completed with a failing build.
-   - If build **passes** and coverage meets threshold: Continue.
+   - If build **passes** and coverage meets threshold: Continue to step 5a.
 
-6. **Move sprint doc to completed**: Move the sprint doc from its current location (`sprints/planned/` or `sprints/active/`) to the `sprints/completed/` subdirectory. Update the sprint doc's `**Status**:` line to `Done` with the completion date. This step is REQUIRED — sprint docs left in `planned/` or `active/` after completion cause confusion in future sprint planning.
+   5a. **Update PRD statuses to `done`**: Now that the build gate has passed, update all non-done PRDs. For each PRD that is not yet `done`, use the Edit tool to change `status: <current>` to `status: done` under the `prd:` frontmatter key. Sprint completion certifies the work — the state machine's incremental transitions are for in-flight work, not for the sprint closure ceremony.
+
+6. **Move sprint doc to completed and clean up duplicates**:
+   a. Copy the sprint doc to the `sprints/completed/` subdirectory (if not already there).
+   b. Update the sprint doc's `**Status**:` line to `Done` with the completion date.
+   c. **Remove all copies from other directories** — check `sprints/planned/` and `sprints/active/` for copies of the same sprint doc and delete them. This prevents duplicate sprint docs that cause confusion in future sprint planning.
    ```bash
    # Example (adjust filename):
-   mv "sprints/planned/sprint-39-name.md" "sprints/completed/sprint-39-name.md"
+   cp "sprints/planned/sprint-39-name.md" "sprints/completed/sprint-39-name.md"
+   rm -f "sprints/planned/sprint-39-name.md" "sprints/active/sprint-39-name.md"
    ```
+   This step is REQUIRED — sprint docs left in `planned/` or `active/` after completion cause confusion in future sprint planning (this was identified as a recurring framework bug).
 
 7. **Delivery ceremony**: Call `trw_deliver()` for full delivery (reflect, checkpoint, claude_md_sync, index_sync).
 
@@ -70,6 +79,9 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "I can check the boxes because the work was 'partially' done" | Partial completion is not completion — a checkbox means 100% done, verified | Checking a box for partial work hides gaps that compound across sprints |
 | "Coverage is close enough to the threshold, rounding is fine" | The threshold exists precisely to prevent gradual erosion — 79.9% is not 80% | Each sprint that ships below threshold normalizes the gap until coverage is meaningfully degraded |
 | "I'll skip moving the sprint doc, it's just housekeeping" | Sprint docs in `planned/` signal unfinished work to future agents — leaving a completed sprint there wastes planning time and causes confusion | Sprint 39 was completed but left in `planned/`, requiring a manual cleanup pass |
+| "I'll update PRD statuses before running the build gate" | If the build gate fails, PRDs are stuck at terminal `done` with no rollback — `done` is a terminal status in the state machine | Always run the build gate FIRST, then update PRDs only after it passes (step 5a) |
+| "The PRDs will get updated to 'done' eventually by auto-progression" | Auto-progression relies on run prd_scope and valid state machine transitions — PRDs stuck in 'draft' can NEVER auto-progress to 'done' because draft→done is not a valid transition | Sprints 45, 48, and 51 completed with all 12 PRDs left as 'draft', requiring manual reconciliation |
+| "I only need to remove the sprint doc from its current directory" | Sprint docs can exist in multiple directories simultaneously (planned/ AND completed/) if previous sprint attempts copied but didn't clean up | Sprints 48 and 51 had duplicate docs in both planned/ and completed/, confusing future sprint planning |
 
 ## Notes
 

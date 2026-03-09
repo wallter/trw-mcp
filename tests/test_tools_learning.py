@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.scoring import correlate_recalls, process_outcome, process_outcome_for_event
 from trw_mcp.state.analytics import (
@@ -43,8 +45,18 @@ _CFG = TRWConfig()
 
 @pytest.fixture(autouse=True)
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Set TRW_PROJECT_ROOT to temp directory for all tests."""
+    """Set TRW_PROJECT_ROOT to temp directory for all tests.
+
+    Dedup is disabled to prevent BM25/vector similarity from merging
+    entries that tests expect to remain distinct (e.g. "Learning 1" and
+    "Learning 2" score >0.85 similarity and would otherwise be merged).
+    """
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
+    # Force learning module to pick up the new env-var config
+    from trw_mcp.tools.learning import __reload_hook__
+
+    __reload_hook__()
     return tmp_path
 
 
@@ -56,7 +68,7 @@ def _get_tools() -> dict[str, Any]:
 
     srv = FastMCP("test")
     register_learning_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+    return get_tools_sync(srv)
 
 
 def _entries_dir(root: Path) -> Path:
@@ -2088,7 +2100,7 @@ class TestToolDelegationIntact:
         from trw_mcp.tools.learning import register_learning_tools
         srv = FastMCP("test-learning")
         register_learning_tools(srv)
-        tool_names = {t.name for t in srv._tool_manager._tools.values()}
+        tool_names = set(get_tools_sync(srv).keys())
         expected = {
             "trw_learn", "trw_learn_update", "trw_recall", "trw_claude_md_sync",
         }

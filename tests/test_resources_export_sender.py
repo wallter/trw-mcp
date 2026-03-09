@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import get_resources_sync
 from trw_mcp.state.persistence import FileStateWriter
 
 _writer = FileStateWriter()
@@ -54,7 +55,7 @@ def _get_learnings_resource() -> Any:
 
     srv = FastMCP("test")
     register_config_resources(srv)
-    return srv._resource_manager._resources["trw://learnings/summary"].fn
+    return get_resources_sync(srv)["trw://learnings/summary"].fn
 
 
 class TestLearningsSummaryErrorHandling:

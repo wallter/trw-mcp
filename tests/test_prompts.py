@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import get_prompts_sync
+
 
 @pytest.fixture(autouse=True)
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -23,7 +25,7 @@ def _get_prompts() -> dict[str, Any]:
 
     srv = FastMCP("test")
     register_aaref_prompts(srv)
-    return {p.name: p for p in srv._prompt_manager._prompts.values()}
+    return get_prompts_sync(srv)
 
 
 class TestElicitPrompt:

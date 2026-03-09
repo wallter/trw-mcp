@@ -2,6 +2,20 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.12.2] — 2026-03-09
+
+### Fixed — Index Sync & Sprint-Finish Hardening
+
+- **Header stats format corruption** — split `_build_stats_summary` into `_build_index_stats` (parenthesized) and `_build_roadmap_stats` (count-first) to prevent `## Summary 187 (1 done, ...)` corruption
+- **Double file write** — `sync_index_md` and `sync_roadmap_md` consolidated to single read→merge→update→write
+- **Dead code** — removed unused `_write_catalogue` function
+- **Sprint-finish step ordering** — PRD status update moved from step 3 to step 5a (after build gate passes)
+- **Frontmatter nesting** — sprint-finish step 3 specifies `prd:` key nesting for status field
+- **FD leak** — `_try_acquire_deferred_lock` widened from `except OSError` to `except Exception`
+- **Auto-progression catch** — `prd_progression.py` index sync catch widened to `except Exception`
+
+---
+
 ## [0.12.1] — 2026-03-08
 
 ### Changed — Installer Rewrite (Bash → Python)

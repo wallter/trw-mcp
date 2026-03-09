@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import Phase
@@ -797,12 +799,9 @@ class TestMinCoverageThreshold:
         register_build_tools(server)
 
         # Get the registered tool function
-        tool_fn = None
-        for tool in server._tool_manager._tools.values():
-            if tool.name == "trw_build_check":
-                tool_fn = tool.fn
-                break
-        assert tool_fn is not None
+        tools = get_tools_sync(server)
+        assert "trw_build_check" in tools
+        tool_fn = tools["trw_build_check"].fn
 
         result = tool_fn(scope="pytest", min_coverage=80.0)
         assert result["tests_passed"] is False
@@ -847,12 +846,9 @@ class TestMinCoverageThreshold:
         server = FastMCP("test")
         register_build_tools(server)
 
-        tool_fn = None
-        for tool in server._tool_manager._tools.values():
-            if tool.name == "trw_build_check":
-                tool_fn = tool.fn
-                break
-        assert tool_fn is not None
+        tools = get_tools_sync(server)
+        assert "trw_build_check" in tools
+        tool_fn = tools["trw_build_check"].fn
 
         result = tool_fn(scope="pytest", min_coverage=80.0)
         assert result["tests_passed"] is True
@@ -895,12 +891,9 @@ class TestMinCoverageThreshold:
         server = FastMCP("test")
         register_build_tools(server)
 
-        tool_fn = None
-        for tool in server._tool_manager._tools.values():
-            if tool.name == "trw_build_check":
-                tool_fn = tool.fn
-                break
-        assert tool_fn is not None
+        tools = get_tools_sync(server)
+        assert "trw_build_check" in tools
+        tool_fn = tools["trw_build_check"].fn
 
         result = tool_fn(scope="pytest")
         assert result["tests_passed"] is True

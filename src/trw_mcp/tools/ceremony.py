@@ -10,6 +10,10 @@ Checkpoint tools: trw_mcp.tools.checkpoint (PRD-CORE-053)
 
 from __future__ import annotations
 
+import fcntl
+import json
+import threading
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,9 +64,24 @@ def _get_run_status(run_dir: Path) -> dict[str, object]:
             result["phase"] = str(data.get("phase", "unknown"))
             result["status"] = str(data.get("status", "unknown"))
             result["task_name"] = str(data.get("task_name", ""))
+            if "owner_session_id" in data:
+                result["owner_session_id"] = data["owner_session_id"]
     except (StateError, OSError, ValueError):
         result["status"] = "error_reading"
     return result
+
+
+def _mark_run_complete(run_dir: Path) -> None:
+    """Mark a run as complete by updating status in run.yaml."""
+    run_yaml = run_dir / "meta" / "run.yaml"
+    if not run_yaml.exists():
+        return
+    try:
+        data = _reader.read_yaml(run_yaml)
+        data["status"] = "complete"
+        _writer.write_yaml(run_yaml, data)
+    except Exception:
+        pass  # Best-effort
 
 
 def _run_step(
@@ -84,6 +103,187 @@ def _run_step(
     except Exception as exc:
         errors.append(f"{name}: {exc}")
         results[name] = {"status": "failed", "error": str(exc)}
+
+
+# --- Deferred delivery infrastructure ---
+
+# Global tracker for the background thread — lets callers check status
+_deferred_thread: threading.Thread | None = None
+_deferred_lock = threading.Lock()
+
+
+def _try_acquire_deferred_lock(trw_dir: Path) -> int | None:
+    """Try to acquire the deferred-deliver file lock (non-blocking).
+
+    Returns the lock file descriptor on success, or None if another
+    deferred batch is already running.  Caller MUST call
+    ``_release_deferred_lock(fd)`` when done.
+    """
+    lock_path = trw_dir / "deliver-deferred.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = lock_path.open("w", encoding="utf-8")
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Write PID + timestamp so operators can inspect
+        fd.write(f"{{'pid': {__import__('os').getpid()}, 'ts': '{datetime.now(timezone.utc).isoformat()}'}}\n")
+        fd.flush()
+        return fd  # type: ignore[return-value]
+    except Exception:
+        fd.close()
+        return None
+
+
+def _release_deferred_lock(fd: object) -> None:
+    """Release the deferred-deliver file lock."""
+    try:
+        import io
+        if isinstance(fd, io.TextIOWrapper):
+            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            fd.close()
+    except Exception:
+        pass  # Best-effort cleanup
+
+
+def _log_deferred_result(
+    trw_dir: Path,
+    results: dict[str, object],
+    errors: list[str],
+) -> None:
+    """Append deferred step results to an audit log."""
+    log_path = trw_dir / "logs" / "deferred-deliver.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "results": {k: v for k, v in results.items() if k != "timestamp"},
+        "errors": errors,
+        "success": len(errors) == 0,
+    }
+    try:
+        with log_path.open("a", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.write(json.dumps(entry, default=str) + "\n")
+            f.flush()
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        logger.debug("deferred_log_write_failed", exc_info=True)
+
+
+def _run_deferred_steps(
+    trw_dir: Path,
+    resolved_run: Path | None,
+    critical_results: dict[str, object],
+    *,
+    skip_index_sync: bool = False,
+) -> None:
+    """Execute deferred delivery steps in the background.
+
+    Acquires a non-blocking file lock to prevent concurrent deferred batches.
+    Each step is fail-open — failures are logged but don't block other steps.
+    """
+    lock_fd = _try_acquire_deferred_lock(trw_dir)
+    if lock_fd is None:
+        logger.info("deferred_deliver_skipped", reason="another_batch_running")
+        return
+
+    results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
+    errors: list[str] = []
+    t0 = time.monotonic()
+
+    try:
+        # Step 2.5: Auto-prune excess learnings
+        _run_step("auto_prune", lambda: _step_auto_prune(trw_dir), results, errors)
+
+        # Step 2.6: Memory consolidation (PRD-CORE-044)
+        _run_step("consolidation", lambda: _step_consolidation(trw_dir), results, errors)
+
+        # Step 2.7: Tier lifecycle sweep (PRD-CORE-043)
+        _run_step("tier_sweep", lambda: _step_tier_sweep(trw_dir), results, errors)
+
+        # Step 4: INDEX.md / ROADMAP.md sync
+        if not skip_index_sync:
+            _run_step("index_sync", lambda: _do_index_sync(), results, errors)
+        else:
+            results["index_sync"] = {"status": "skipped"}
+
+        # Step 5: Auto-progress PRD statuses
+        _run_step("auto_progress", lambda: _step_auto_progress(resolved_run), results, errors)
+
+        # Step 6: Publish high-impact learnings
+        _run_step("publish_learnings", lambda: _step_publish_learnings(), results, errors)
+
+        # Step 6.5: Outcome correlation
+        _run_step("outcome_correlation", lambda: _step_outcome_correlation(), results, errors)
+
+        # Step 6.6: Recall outcome tracking
+        _run_step("recall_outcome", lambda: _step_recall_outcome(resolved_run), results, errors)
+
+        # Step 7: Telemetry events
+        _run_step("telemetry", lambda: _step_telemetry(resolved_run), results, errors)
+
+        # Step 8: Batch send telemetry
+        _run_step("batch_send", lambda: _step_batch_send(), results, errors)
+
+        # Step 9: Trust increment
+        _run_step(
+            "trust_increment",
+            lambda: _step_trust_increment(resolved_run),
+            results,
+            errors,
+        )
+
+        # Step 10: Ceremony feedback
+        _run_step(
+            "ceremony_feedback",
+            lambda: _step_ceremony_feedback(resolved_run, critical_results),
+            results,
+            errors,
+        )
+
+        elapsed = time.monotonic() - t0
+        results["elapsed_seconds"] = round(elapsed, 2)
+        logger.info(
+            "deferred_deliver_complete",
+            steps=len(results) - 2,  # minus timestamp and elapsed
+            errors=len(errors),
+            elapsed=round(elapsed, 2),
+        )
+    except Exception as exc:
+        # Catch-all: should never reach here since _run_step is fail-open
+        errors.append(f"deferred_fatal: {exc}")
+        logger.warning("deferred_deliver_fatal", error=str(exc), exc_info=True)
+    finally:
+        _log_deferred_result(trw_dir, results, errors)
+        _release_deferred_lock(lock_fd)
+
+
+def _launch_deferred(
+    trw_dir: Path,
+    resolved_run: Path | None,
+    critical_results: dict[str, object],
+    *,
+    skip_index_sync: bool = False,
+) -> str:
+    """Launch deferred steps on a daemon thread.
+
+    Returns a status string indicating what happened:
+    - "launched": new background thread started
+    - "skipped_already_running": a previous deferred batch is still active
+    """
+    global _deferred_thread
+    with _deferred_lock:
+        if _deferred_thread is not None and _deferred_thread.is_alive():
+            logger.info("deferred_launch_skipped", reason="thread_still_alive")
+            return "skipped_already_running"
+
+        _deferred_thread = threading.Thread(
+            target=_run_deferred_steps,
+            args=(trw_dir, resolved_run, critical_results),
+            kwargs={"skip_index_sync": skip_index_sync},
+            name="trw-deliver-deferred",
+            daemon=True,
+        )
+        _deferred_thread.start()
+        return "launched"
 
 
 # --- Deliver step helpers ---
@@ -234,6 +434,100 @@ def _step_batch_send() -> dict[str, object]:
     return dict(BatchSender.from_config().send())
 
 
+def _step_trust_increment(resolved_run: Path | None) -> dict[str, object] | None:
+    """Step 9: Trust session increment (CORE-068-FR05)."""
+    try:
+        from trw_mcp.state.trust import increment_session_count
+
+        events_path = resolved_run / "meta" / "events.jsonl" if resolved_run else None
+        build_passed = False
+        if events_path and events_path.exists():
+            events = _reader.read_jsonl(events_path)
+            for ev in events:
+                ev_type = str(ev.get("event", ""))
+                ev_data = ev.get("data", {})
+                if not isinstance(ev_data, dict):
+                    ev_data = {}
+                tool_name = str(ev_data.get("tool_name", ""))
+                if ev_type == "build_check_complete" or tool_name == "trw_build_check":
+                    if ev_data.get("result") == "pass" or ev_data.get("build_passed") is True:
+                        build_passed = True
+                        break
+
+        if build_passed:
+            import os
+            agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
+            trw_dir = resolve_trw_dir()
+            return increment_session_count(trw_dir, agent_id)
+        return {"skipped": True, "reason": "build_check_not_passed"}
+    except Exception as exc:
+        return {"skipped": True, "reason": str(exc)}
+
+
+def _step_ceremony_feedback(
+    resolved_run: Path | None,
+    deliver_results: dict[str, object],
+) -> dict[str, object] | None:
+    """Step 10: Ceremony feedback recording (CORE-069-FR02)."""
+    try:
+        from trw_mcp.state.ceremony_feedback import (
+            apply_auto_escalation,
+            check_auto_escalation,
+            classify_task_class,
+            read_feedback_data,
+            record_session_outcome,
+        )
+
+        trw_dir = resolve_trw_dir()
+        run_state: dict[str, object] = {}
+        if resolved_run is not None:
+            run_yaml = resolved_run / "meta" / "run.yaml"
+            if run_yaml.exists():
+                run_state = _reader.read_yaml(run_yaml)
+
+        task_name = str(run_state.get("task_name", ""))
+        ceremony_score_val = deliver_results.get("telemetry", {})
+        if isinstance(ceremony_score_val, dict):
+            score = float(ceremony_score_val.get("ceremony_score", 0))
+        else:
+            score = 0.0
+
+        build_passed = False
+        tel_data = deliver_results.get("telemetry", {})
+        if isinstance(tel_data, dict):
+            build_passed = bool(tel_data.get("build_passed", False))
+
+        current_tier = "STANDARD"
+        if run_state.get("complexity_class"):
+            current_tier = str(run_state["complexity_class"])
+
+        session_id = str(run_state.get("run_id", "unknown"))
+        run_p = str(resolved_run) if resolved_run else ""
+
+        entry = record_session_outcome(
+            trw_dir=trw_dir,
+            task_name=task_name,
+            ceremony_score=score,
+            build_passed=build_passed,
+            coverage_delta=0.0,
+            critical_findings=0,
+            mutation_score_ok=True,
+            current_tier=current_tier,
+            run_path=run_p,
+            session_id=session_id,
+        )
+
+        task_class = classify_task_class(task_name)
+        data = read_feedback_data(trw_dir)
+        escalation = check_auto_escalation(task_class.value, data)
+        if escalation:
+            apply_auto_escalation(trw_dir, task_class.value, escalation)
+            return {"recorded": True, "auto_escalation": escalation}
+        return {"recorded": True}
+    except Exception as exc:
+        return {"skipped": True, "reason": str(exc)}
+
+
 def register_ceremony_tools(server: FastMCP) -> None:
     """Register session ceremony composite tools on the MCP server."""
 
@@ -371,16 +665,18 @@ def register_ceremony_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Persist your learnings and progress for future sessions — without this, your work is invisible to the next agent.
 
-        Runs reflect (extract learnings from events), checkpoint (save final state),
-        CLAUDE.md sync (promote high-impact learnings), and INDEX/ROADMAP sync.
-        Each sub-operation runs independently — a failure in one step does not
-        block the others. Your learnings become available to every future session.
+        Runs critical steps synchronously (reflect, checkpoint, CLAUDE.md sync),
+        then launches housekeeping steps in the background (consolidation, publish,
+        telemetry, tier sweep, etc.). Background steps are concurrency-safe — if
+        another deliver's background work is already running, it is skipped rather
+        than queued.
 
         Args:
             run_path: Path to run directory (auto-detected if None).
             skip_reflect: Skip reflection step (e.g., if already reflected).
             skip_index_sync: Skip INDEX/ROADMAP sync step.
         """
+        t0 = time.monotonic()
         results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
         trw_dir = resolve_trw_dir()
@@ -420,6 +716,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
             results["success"] = False
             return results
 
+        # ── CRITICAL PATH (synchronous) ──
+        # These 3 steps must complete before returning — they produce the
+        # artifacts the next session depends on.
+
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:
             _run_step("reflect", lambda: _do_reflect(trw_dir, resolved_run), results, errors)
@@ -432,143 +732,28 @@ def register_ceremony_tools(server: FastMCP) -> None:
         else:
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
-        # Step 2.5: Auto-prune excess learnings (prevents saturation)
-        _run_step("auto_prune", lambda: _step_auto_prune(trw_dir), results, errors)
-
-        # Step 2.6: Memory consolidation (PRD-CORE-044)
-        _run_step("consolidation", lambda: _step_consolidation(trw_dir), results, errors)
-
-        # Step 2.7: Tier lifecycle sweep (PRD-CORE-043)
-        _run_step("tier_sweep", lambda: _step_tier_sweep(trw_dir), results, errors)
-
         # Step 3: CLAUDE.md sync
         _run_step("claude_md_sync", lambda: _do_claude_md_sync(trw_dir), results, errors)
 
-        # Step 4: INDEX.md / ROADMAP.md sync
-        if not skip_index_sync:
-            _run_step("index_sync", lambda: _do_index_sync(), results, errors)
-        else:
-            results["index_sync"] = {"status": "skipped"}
+        critical_elapsed = round(time.monotonic() - t0, 2)
+        results["critical_elapsed_seconds"] = critical_elapsed
 
-        # Step 5: Auto-progress PRD statuses (PRD-CORE-025 via GAP-PROC-001)
-        _run_step("auto_progress", lambda: _step_auto_progress(resolved_run), results, errors)
+        # ── DEFERRED PATH (background thread) ──
+        # Housekeeping, analytics, publishing, and telemetry — these don't
+        # affect the next session's startup and can run after we return.
+        # Concurrency-safe: file lock prevents overlapping deferred batches.
+        deferred_status = _launch_deferred(
+            trw_dir, resolved_run, results,
+            skip_index_sync=skip_index_sync,
+        )
+        results["deferred"] = deferred_status
 
-        # Step 6: Publish high-impact learnings to platform backend (PRD-CORE-033)
-        _run_step("publish_learnings", lambda: _step_publish_learnings(), results, errors)
-
-        # Step 6.5: Outcome correlation (G1)
-        _run_step("outcome_correlation", lambda: _step_outcome_correlation(), results, errors)
-
-        # Step 6.6: Recall outcome tracking (G6)
-        _run_step("recall_outcome", lambda: _step_recall_outcome(resolved_run), results, errors)
-
-        # Step 7: Telemetry events (G3 + G4)
-        _run_step("telemetry", lambda: _step_telemetry(resolved_run), results, errors)
-
-        # Step 8: Batch send (G2)
-        _run_step("batch_send", lambda: _step_batch_send(), results, errors)
-
-        # ── Step 9: Trust session increment (CORE-068-FR05) ──
-        # Only increment if build_check passed in this session
-        def _step_trust_increment() -> dict[str, object] | None:
-            try:
-                from trw_mcp.state.trust import increment_session_count
-
-                # Check if build_check passed by scanning events
-                events_path = resolved_run / "meta" / "events.jsonl" if resolved_run else None
-                build_passed = False
-                if events_path and events_path.exists():
-                    events = _reader.read_jsonl(events_path)
-                    for ev in events:
-                        ev_type = str(ev.get("event", ""))
-                        ev_data = ev.get("data", {})
-                        if not isinstance(ev_data, dict):
-                            ev_data = {}
-                        tool_name = str(ev_data.get("tool_name", ""))
-                        if ev_type == "build_check_complete" or tool_name == "trw_build_check":
-                            if ev_data.get("result") == "pass" or ev_data.get("build_passed") is True:
-                                build_passed = True
-                                break
-
-                if build_passed:
-                    import os
-                    agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
-                    return increment_session_count(trw_dir, agent_id)
-                return {"skipped": True, "reason": "build_check_not_passed"}
-            except Exception as exc:
-                return {"skipped": True, "reason": str(exc)}
-
-        _run_step("trust_increment", _step_trust_increment, results, errors)
-
-        # ── Step 10: Ceremony feedback recording (CORE-069-FR02) ──
-        def _step_ceremony_feedback() -> dict[str, object] | None:
-            try:
-                from trw_mcp.state.ceremony_feedback import (
-                    apply_auto_escalation,
-                    check_auto_escalation,
-                    classify_task_class,
-                    read_feedback_data,
-                    record_session_outcome,
-                )
-
-                # Load run state from run.yaml for task name and metadata
-                run_state: dict[str, object] = {}
-                if resolved_run is not None:
-                    run_yaml = resolved_run / "meta" / "run.yaml"
-                    if run_yaml.exists():
-                        run_state = _reader.read_yaml(run_yaml)
-
-                task_name = str(run_state.get("task_name", ""))
-                ceremony_score_val = results.get("telemetry", {})
-                if isinstance(ceremony_score_val, dict):
-                    score = float(ceremony_score_val.get("ceremony_score", 0))
-                else:
-                    score = 0.0
-
-                # Determine build pass from telemetry results
-                build_passed = False
-                coverage_delta = 0.0
-                critical_findings = 0
-                tel_data = results.get("telemetry", {})
-                if isinstance(tel_data, dict):
-                    build_passed = bool(tel_data.get("build_passed", False))
-
-                current_tier = "STANDARD"
-                if run_state.get("complexity_class"):
-                    current_tier = str(run_state["complexity_class"])
-
-                session_id = str(run_state.get("run_id", "unknown"))
-                run_p = str(resolved_run) if resolved_run else ""
-
-                entry = record_session_outcome(
-                    trw_dir=trw_dir,
-                    task_name=task_name,
-                    ceremony_score=score,
-                    build_passed=build_passed,
-                    coverage_delta=coverage_delta,
-                    critical_findings=critical_findings,
-                    mutation_score_ok=True,  # Default: no mutation testing
-                    current_tier=current_tier,
-                    run_path=run_p,
-                    session_id=session_id,
-                )
-
-                # Check auto-escalation
-                task_class = classify_task_class(task_name)
-                data = read_feedback_data(trw_dir)
-                escalation = check_auto_escalation(task_class.value, data)
-                if escalation:
-                    apply_auto_escalation(trw_dir, task_class.value, escalation)
-                    return {"recorded": True, "auto_escalation": escalation}
-                return {"recorded": True}
-            except Exception as exc:
-                return {"skipped": True, "reason": str(exc)}
-
-        _run_step("ceremony_feedback", _step_ceremony_feedback, results, errors)
-
+        # Count only critical steps for immediate success evaluation
+        critical_step_count = 3  # reflect + checkpoint + claude_md_sync
         results["errors"] = errors
         results["success"] = len(errors) == 0
-        results["steps_completed"] = 12 - len(errors)
+        results["critical_steps_completed"] = critical_step_count - len(errors)
+        results["deferred_steps"] = 11  # launched in background
 
         # Log trw_deliver_complete to events.jsonl so hooks can detect it
         if resolved_run is not None and (resolved_run / "meta").exists():
@@ -576,14 +761,18 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 resolved_run / "meta" / "events.jsonl",
                 "trw_deliver_complete",
                 {
-                    "steps_completed": results.get("steps_completed"),
+                    "critical_steps_completed": results.get("critical_steps_completed"),
+                    "deferred": deferred_status,
+                    "critical_elapsed_seconds": critical_elapsed,
                     "errors": len(errors),
                 },
             )
 
         logger.info(
             "trw_deliver_complete",
-            steps_completed=results.get("steps_completed"),
+            critical_steps=results.get("critical_steps_completed"),
+            deferred=deferred_status,
+            critical_elapsed=critical_elapsed,
             errors=len(errors),
         )
         return results
@@ -714,7 +903,10 @@ def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
+    from trw_mcp.models.config import _reset_config
+
     global _config, _reader, _writer, _events
+    _reset_config()
     _config = get_config()
     _reader = FileStateReader()
     _writer = FileStateWriter()

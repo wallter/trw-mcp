@@ -144,7 +144,7 @@ def scan_all_runs(
                 run_data = _analyze_single_run(run_dir)
                 if run_data is not None:
                     runs.append(run_data)
-            except (OSError, StateError, ValueError, KeyError) as exc:
+            except Exception as exc:
                 parse_errors.append(f"{run_dir.name}: {exc}")
 
     # Apply since filter (validate ISO date format)
@@ -178,7 +178,7 @@ def scan_all_runs(
         _writer.ensure_dir(cache_dir)
         cache_path = cache_dir / "analytics-report.yaml"
         _writer.write_yaml(cache_path, report)
-    except (OSError, StateError):
+    except Exception:
         logger.debug("analytics_report_cache_write_failed")
 
     return report
@@ -207,13 +207,13 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
     if events_path.exists():
         try:
             events = _reader.read_jsonl(events_path)
-        except (OSError, StateError):
+        except Exception:
             logger.debug("events_read_failed", path=str(events_path))
 
     # Compute ceremony score
     try:
         ceremony = compute_ceremony_score(events)
-    except (ValueError, TypeError, KeyError):
+    except Exception:
         ceremony = {
             "score": None,
             "session_start": False,

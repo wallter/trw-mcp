@@ -160,7 +160,7 @@ class TestBuildReleaseBundle:
         """Result dict has path, version, checksum, size_bytes."""
         result = build_release_bundle(version="2.0.0", output_dir=tmp_path)
 
-        assert set(result.keys()) == {"path", "version", "checksum", "size_bytes"}
+        assert set(result.keys()) == {"path", "version", "checksum", "size_bytes", "framework_version"}
 
     def test_checksum_matches_file(self, tmp_path: Path) -> None:
         """Returned checksum matches an independent SHA-256 of the bundle."""

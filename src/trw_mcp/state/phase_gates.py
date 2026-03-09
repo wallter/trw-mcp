@@ -375,7 +375,7 @@ def _check_deliver_exit(
                         severity="warning",
                     )
                 )
-        except (OSError, ImportError):
+        except Exception:
             pass
 
     failures.append(

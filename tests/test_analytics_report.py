@@ -19,6 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 import trw_mcp.state.analytics_report as analytics_mod
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics_report import (
@@ -378,10 +380,8 @@ class TestStaleCountInStatus:
         register_orchestration_tools(server)
 
         # Get the trw_status tool
-        tools = server._tool_manager._tools
-        status_tool = next(
-            t for t in tools.values() if t.name == "trw_status"
-        )
+        tools = get_tools_sync(server)
+        status_tool = tools["trw_status"]
 
         # Mock count_stale_runs to return a known value
         with (
@@ -412,10 +412,8 @@ class TestStaleCountInStatus:
         server = FastMCP("test")
         register_orchestration_tools(server)
 
-        tools = server._tool_manager._tools
-        status_tool = next(
-            t for t in tools.values() if t.name == "trw_status"
-        )
+        tools = get_tools_sync(server)
+        status_tool = tools["trw_status"]
 
         with (
             patch(
@@ -443,10 +441,8 @@ class TestStaleCountInStatus:
         server = FastMCP("test")
         register_orchestration_tools(server)
 
-        tools = server._tool_manager._tools
-        status_tool = next(
-            t for t in tools.values() if t.name == "trw_status"
-        )
+        tools = get_tools_sync(server)
+        status_tool = tools["trw_status"]
 
         with (
             patch(

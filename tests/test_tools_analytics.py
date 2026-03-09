@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 import trw_mcp.state.analytics_report as analytics_mod
 from trw_mcp.state.analytics_report import (
     _parse_run_id_timestamp,
@@ -596,7 +598,7 @@ class TestAnalyticsReportToolLayer:
 
         srv = FastMCP("report-test")
         register_report_tools(srv)
-        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        tools = get_tools_sync(srv)
         assert "trw_analytics_report" in tools
         assert "trw_run_report" in tools
 
@@ -619,7 +621,7 @@ class TestAnalyticsReportToolLayer:
 
         srv = FastMCP("report-callable-test")
         register_report_tools(srv)
-        tools = {t.name: t for t in srv._tool_manager._tools.values()}
+        tools = get_tools_sync(srv)
         result = tools["trw_analytics_report"].fn()
         assert isinstance(result, dict)
         assert "runs" in result

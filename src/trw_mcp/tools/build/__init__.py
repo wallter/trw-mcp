@@ -35,6 +35,7 @@ from trw_mcp.tools.build._core import (
     run_build_check,
 )
 from trw_mcp.tools.build._registration import register_build_tools
+from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.tools.build._runners import (
     _COVERAGE_RE,
     _PYTEST_SUMMARY_RE,
@@ -83,7 +84,16 @@ __all__ = [
     "cache_build_status",
     # _registration
     "register_build_tools",
+    # _paths (re-exported for test monkeypatching)
+    "resolve_trw_dir",
+    "resolve_project_root",
 ]
+
+
+from trw_mcp.tools.build._core import (
+    _config,
+    _writer,
+)
 
 
 def __reload_hook__() -> None:
@@ -105,3 +115,10 @@ def __reload_hook__() -> None:
     _runners_reload()
     _core_reload()
     _reg_reload()
+
+    # Re-bind package-level aliases so tests see fresh instances
+    import trw_mcp.tools.build as _self
+    from trw_mcp.tools.build import _core
+
+    _self._config = _core._config  # type: ignore[attr-defined]
+    _self._writer = _core._writer  # type: ignore[attr-defined]

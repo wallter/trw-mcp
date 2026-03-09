@@ -19,6 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.scoring import apply_impact_decay, apply_time_decay, enforce_tier_distribution
 
 # ---------------------------------------------------------------------------
@@ -322,7 +324,7 @@ class TestTrwLearnForcedDistributionWiring:
         from trw_mcp.tools.learning import register_learning_tools
         srv = FastMCP("test")
         register_learning_tools(srv)
-        return {t.name: t for t in srv._tool_manager._tools.values()}
+        return get_tools_sync(srv)
 
     def _entries_dir(self, root: Path) -> Path:
         from trw_mcp.models.config import TRWConfig

@@ -193,6 +193,7 @@ class RunState(BaseModel):
     complexity_signals: ComplexitySignals | None = None
     complexity_override: ComplexityOverride | None = None
     phase_requirements: PhaseRequirements | None = None
+    owner_session_id: str | None = None
 
 
 class EventType(str, Enum):

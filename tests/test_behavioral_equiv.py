@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import get_tools_sync
+
 from trw_mcp.models.config import TRWConfig
 
 _CFG = TRWConfig()
@@ -21,6 +23,7 @@ _CFG = TRWConfig()
 def _set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
     return tmp_path
 
 
@@ -32,7 +35,7 @@ def _get_tools() -> dict[str, Any]:
 
     srv = FastMCP("test")
     register_learning_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+    return get_tools_sync(srv)
 
 
 def _entries_dir(root: Path) -> Path:

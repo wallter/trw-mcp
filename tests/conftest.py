@@ -19,13 +19,58 @@ To classify a new test file:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fastmcp import FastMCP
 
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
+
+
+def _run_async(coro: Any) -> Any:
+    """Run an async coroutine from sync context, handling nested loops."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
+
+def get_tools_sync(server: FastMCP) -> dict[str, Any]:
+    """Synchronously list tools from a FastMCP server.
+
+    Replaces the broken ``server._tool_manager._tools`` internal API
+    with the public ``server.list_tools()`` async method.
+    """
+    tools = _run_async(server.list_tools())
+    return {t.name: t for t in tools}
+
+
+def get_resources_sync(server: FastMCP) -> dict[str, Any]:
+    """Synchronously list resources from a FastMCP server.
+
+    Replaces the broken ``server._resource_manager`` internal API.
+    """
+    resources = _run_async(server.list_resources())
+    return {str(r.uri): r for r in resources}
+
+
+def get_prompts_sync(server: FastMCP) -> dict[str, Any]:
+    """Synchronously list prompts from a FastMCP server.
+
+    Replaces the broken ``server._prompt_manager`` internal API.
+    """
+    prompts = _run_async(server.list_prompts())
+    return {p.name: p for p in prompts}
 
 # --- Marker auto-assignment ---
 
@@ -90,18 +135,44 @@ def _reset_config_singleton() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _reset_run_pin() -> Iterator[None]:
     """Reset active run pin for test isolation."""
-    from trw_mcp.state._paths import unpin_active_run
-    unpin_active_run()
+    from trw_mcp.state._paths import _pinned_runs  # type: ignore[attr-defined]
+    _pinned_runs.clear()
     yield
-    unpin_active_run()
+    _pinned_runs.clear()
+
+
+def _join_and_reset_deferred() -> None:
+    """Wait for any background deliver thread, then clear the reference.
+
+    Prevents use-after-close segfaults when conftest resets the SQLite
+    backend while a deferred thread is mid-query.
+    """
+    try:
+        import trw_mcp.tools.ceremony as cer
+        with cer._deferred_lock:
+            t = cer._deferred_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=15)
+        # Clear the reference so the next test starts fresh
+        with cer._deferred_lock:
+            cer._deferred_thread = None
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)
 def _reset_memory_backend() -> Iterator[None]:
-    """Reset memory adapter singleton for test isolation."""
+    """Reset memory adapter singleton for test isolation.
+
+    Joins any running deferred-deliver thread first to prevent
+    use-after-close segfaults on the SQLite backend.
+    """
     from trw_mcp.state.memory_adapter import reset_backend
+
+    _join_and_reset_deferred()
     reset_backend()
     yield
+    _join_and_reset_deferred()
     reset_backend()
 
 

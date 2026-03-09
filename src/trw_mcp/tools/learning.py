@@ -16,6 +16,7 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
@@ -117,7 +118,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 from trw_mcp.state.dedup import batch_dedup, is_migration_needed
                 if is_migration_needed(trw_dir):
                     batch_dedup(trw_dir, _reader, _writer, config=_config)
-            except Exception:
+            except (ImportError, OSError, ValueError, TypeError):
                 logger.debug("learning_migration_failed", exc_info=True)
 
         # Bayesian calibration of impact score (PRD-CORE-034)
@@ -126,7 +127,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Fetch active learnings once — reused by soft-cap and distribution
         all_active: list[dict[str, object]] = []
         # Fail-open: listing failure must not block learning recording
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(OSError, StateError, ValueError, TypeError):
             all_active = list_active_learnings(trw_dir)
 
         # Forced distribution soft-cap check (PRD-CORE-034-FR01)
@@ -186,7 +187,7 @@ def register_learning_tools(server: FastMCP) -> None:
             )
             entry_path = save_learning_entry(trw_dir, entry)
             update_analytics(trw_dir, 1)
-        except Exception:
+        except (OSError, ValueError, TypeError):
             entry_path = entries_dir / f"{learning_id}.yaml"
 
         # Forced distribution enforcement (PRD-CORE-034)
@@ -261,7 +262,7 @@ def register_learning_tools(server: FastMCP) -> None:
                     data["updated"] = date_type.today().isoformat()
                     _writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
-            except Exception:
+            except (OSError, ValueError, TypeError):
                 logger.debug("yaml_backup_update_failed", exc_info=True)
 
         return result
@@ -337,16 +338,18 @@ def register_learning_tools(server: FastMCP) -> None:
             from trw_mcp.state.recall_tracking import record_recall as _record_recall
             for lid in matched_ids:
                 _record_recall(lid, query)
-        except Exception:
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError):
             logger.debug("recall_tracking_failed", exc_info=True)
 
         # Augment local results with remote shared learnings (PRD-CORE-033)
+        # NOTE: broad except kept intentionally — remote fetch is external code
+        # that can raise arbitrary exceptions (network, auth, serialization).
         try:
             from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
             remote = fetch_shared_learnings(query)
             if remote:
                 matching_learnings = list(matching_learnings) + remote
-        except Exception:
+        except Exception:  # noqa: BLE001 — fail-open for external service
             logger.debug("remote_recall_failed", exc_info=True)
 
         # Search patterns and rank all results by utility
@@ -418,7 +421,10 @@ def register_learning_tools(server: FastMCP) -> None:
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
+    from trw_mcp.models.config import _reset_config
+
     global _config, _reader, _writer, _llm, _llm_usage_path
+    _reset_config()
     _config = get_config()
     _reader = FileStateReader()
     _writer = FileStateWriter()

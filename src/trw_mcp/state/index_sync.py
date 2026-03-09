@@ -3,10 +3,14 @@
 PRD-CORE-018: Scans PRD files, extracts frontmatter metadata,
 and updates catalogue sections using marker-based merge to
 preserve user-authored content outside the markers.
+
+Also updates summary/header stats lines outside the markers so
+they stay in sync with the auto-generated catalogue counts.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -279,24 +283,74 @@ def _merge_section(
     return content.rstrip() + "\n\n" + new_section + "\n"
 
 
-def _write_catalogue(
-    target_path: Path,
-    catalogue: str,
-    start_marker: str,
-    end_marker: str,
-    writer: FileStateWriter,
-) -> None:
-    """Merge catalogue into target file between markers, or create the file.
+def _stats_parts(groups: dict[str, list[PRDEntry]]) -> list[str]:
+    """Build the comma-separated status count fragments."""
+    parts: list[str] = [f"{len(groups['done'])} done"]
+    if groups["merged"]:
+        parts.append(f"{len(groups['merged'])} merged")
+    if groups["deprecated"]:
+        parts.append(f"{len(groups['deprecated'])} deprecated")
+    if groups["review"]:
+        parts.append(f"{len(groups['review'])} review")
+    parts.append(f"{len(groups['draft'])} draft")
+    return parts
 
-    Content outside markers is preserved. If the file does not exist,
-    it is created with the catalogue as its sole content.
+
+def _build_index_stats(groups: dict[str, list[PRDEntry]], total: int) -> str:
+    """Build INDEX.md format: ``(N total: X done, Y draft)``."""
+    return f"({total} total: {', '.join(_stats_parts(groups))})"
+
+
+def _build_roadmap_stats(groups: dict[str, list[PRDEntry]], total: int) -> str:
+    """Build ROADMAP.md format: ``N (X done, Y draft)``."""
+    return f"{total} ({', '.join(_stats_parts(groups))})"
+
+
+# Patterns for header stats outside the catalogue markers.
+# INDEX.md: ## Summary (N total: N done, ...)
+_INDEX_SUMMARY_RE = re.compile(
+    r"^(## Summary )\(\d+ total:.*?\)$",
+    re.MULTILINE,
+)
+# ROADMAP.md: **PRD Total**: N (N done, ...)
+_ROADMAP_TOTAL_RE = re.compile(
+    r"^(\*\*PRD Total\*\*: )\d+ \(.*?\)$",
+    re.MULTILINE,
+)
+
+
+def _update_header_stats(
+    content: str,
+    groups: dict[str, list[PRDEntry]],
+    total: int,
+    pattern: re.Pattern[str],
+    *,
+    index_format: bool = False,
+) -> str:
+    """Update a stats header line outside the catalogue markers.
+
+    Finds the line matching *pattern* and replaces the stats portion
+    with current counts. Returns *content* unchanged if no match.
+
+    Args:
+        content: File content.
+        groups: PRD status groups.
+        total: Total PRD count.
+        pattern: Compiled regex with a capture group for the line prefix.
+        index_format: Use INDEX.md ``(N total: ...)`` format when True,
+            ROADMAP.md ``N (...)`` format when False.
     """
-    if target_path.exists():
-        content = target_path.read_text(encoding="utf-8")
-        updated = _merge_section(content, catalogue, start_marker, end_marker)
-    else:
-        updated = catalogue + "\n"
-    writer.write_text(target_path, updated)
+    summary = (
+        _build_index_stats(groups, total)
+        if index_format
+        else _build_roadmap_stats(groups, total)
+    )
+    match = pattern.search(content)
+    if not match:
+        return content
+    prefix = match.group(1)
+    return content[:match.start()] + prefix + summary + content[match.end():]
+
 
 
 def sync_index_md(
@@ -321,15 +375,22 @@ def sync_index_md(
     """
     writer = writer or FileStateWriter()
     entries = scan_prd_frontmatters(prds_dir)
-    _write_catalogue(
-        index_path,
-        render_index_catalogue(entries),
-        INDEX_CATALOGUE_START,
-        INDEX_CATALOGUE_END,
-        writer,
-    )
-
     groups = _group_by_status(entries)
+    catalogue = render_index_catalogue(entries)
+
+    # Single read → merge catalogue + update header → single write
+    if index_path.exists():
+        content = index_path.read_text(encoding="utf-8")
+        content = _merge_section(
+            content, catalogue, INDEX_CATALOGUE_START, INDEX_CATALOGUE_END,
+        )
+    else:
+        content = catalogue + "\n"
+    content = _update_header_stats(
+        content, groups, len(entries), _INDEX_SUMMARY_RE, index_format=True,
+    )
+    writer.write_text(index_path, content)
+
     return {
         "index_path": str(index_path),
         "total_prds": len(entries),
@@ -363,13 +424,21 @@ def sync_roadmap_md(
     """
     writer = writer or FileStateWriter()
     entries = scan_prd_frontmatters(prds_dir)
-    _write_catalogue(
-        roadmap_path,
-        render_roadmap_catalogue(entries),
-        ROADMAP_CATALOGUE_START,
-        ROADMAP_CATALOGUE_END,
-        writer,
+    groups = _group_by_status(entries)
+    catalogue = render_roadmap_catalogue(entries)
+
+    # Single read → merge catalogue + update header → single write
+    if roadmap_path.exists():
+        content = roadmap_path.read_text(encoding="utf-8")
+        content = _merge_section(
+            content, catalogue, ROADMAP_CATALOGUE_START, ROADMAP_CATALOGUE_END,
+        )
+    else:
+        content = catalogue + "\n"
+    content = _update_header_stats(
+        content, groups, len(entries), _ROADMAP_TOTAL_RE,
     )
+    writer.write_text(roadmap_path, content)
 
     return {
         "roadmap_path": str(roadmap_path),

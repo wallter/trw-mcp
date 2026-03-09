@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.conftest import get_tools_sync
+
 import pytest
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
@@ -846,16 +848,13 @@ class TestToolRegistration:
     def test_knowledge_sync_registered(self) -> None:
         from trw_mcp.server import mcp
 
-        tool_names = {t.name for t in mcp._tool_manager._tools.values()}
+        tool_names = set(get_tools_sync(mcp).keys())
         assert "trw_knowledge_sync" in tool_names
 
     def test_knowledge_sync_callable(self, tmp_path: Path) -> None:
         from trw_mcp.server import mcp
 
-        tool = next(
-            t for t in mcp._tool_manager._tools.values()
-            if t.name == "trw_knowledge_sync"
-        )
+        tool = get_tools_sync(mcp)["trw_knowledge_sync"]
         assert callable(tool.fn)
 
     def test_knowledge_sync_dry_run_parameter(self, tmp_path: Path) -> None:
@@ -863,10 +862,7 @@ class TestToolRegistration:
 
         from trw_mcp.server import mcp
 
-        tool = next(
-            t for t in mcp._tool_manager._tools.values()
-            if t.name == "trw_knowledge_sync"
-        )
+        tool = get_tools_sync(mcp)["trw_knowledge_sync"]
         sig = inspect.signature(tool.fn)
         assert "dry_run" in sig.parameters
 
@@ -875,10 +871,7 @@ class TestToolRegistration:
         from trw_mcp.state._paths import resolve_trw_dir
 
         trw_dir = resolve_trw_dir()
-        tool = next(
-            t for t in mcp._tool_manager._tools.values()
-            if t.name == "trw_knowledge_sync"
-        )
+        tool = get_tools_sync(mcp)["trw_knowledge_sync"]
 
         with patch("trw_mcp.state.knowledge_topology.count_entries", return_value=1):
             result = tool.fn(dry_run=False)
@@ -1030,10 +1023,7 @@ class TestRecallTopicFilter:
 
         from trw_mcp.server import mcp
 
-        tool = next(
-            t for t in mcp._tool_manager._tools.values()
-            if t.name == "trw_recall"
-        )
+        tool = get_tools_sync(mcp)["trw_recall"]
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
@@ -1062,10 +1052,7 @@ class TestRecallTopicFilter:
 
         from trw_mcp.server import mcp
 
-        tool = next(
-            t for t in mcp._tool_manager._tools.values()
-            if t.name == "trw_recall"
-        )
+        tool = get_tools_sync(mcp)["trw_recall"]
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
@@ -1095,10 +1082,7 @@ class TestRecallTopicFilter:
 
         from trw_mcp.server import mcp
 
-        tool = next(
-            t for t in mcp._tool_manager._tools.values()
-            if t.name == "trw_recall"
-        )
+        tool = get_tools_sync(mcp)["trw_recall"]
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
@@ -1123,10 +1107,7 @@ class TestRecallTopicFilter:
 
         from trw_mcp.server import mcp
 
-        tool = next(
-            t for t in mcp._tool_manager._tools.values()
-            if t.name == "trw_recall"
-        )
+        tool = get_tools_sync(mcp)["trw_recall"]
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),

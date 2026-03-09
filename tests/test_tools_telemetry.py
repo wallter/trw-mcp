@@ -24,6 +24,8 @@ import pytest
 import structlog
 from fastmcp import FastMCP
 
+from tests.conftest import get_tools_sync
+
 import trw_mcp.tools.telemetry as telemetry
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.telemetry import log_tool_call
@@ -46,7 +48,7 @@ def _make_ceremony_tools(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dic
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     srv = FastMCP("test")
     register_ceremony_tools(srv)
-    return {t.name: t for t in srv._tool_manager._tools.values()}
+    return get_tools_sync(srv)
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +494,7 @@ class TestToolDiscovery:
             """Echo the message back."""
             return {"echo": message}
 
-        registered = {t.name: t for t in srv._tool_manager._tools.values()}
+        registered = get_tools_sync(srv)
         assert "api_tool" in registered
 
     def test_t25_registered_tool_is_callable_via_fastmcp(
@@ -511,7 +513,7 @@ class TestToolDiscovery:
             """Multiply x by 3."""
             return x * 3
 
-        registered = {t.name: t for t in srv._tool_manager._tools.values()}
+        registered = get_tools_sync(srv)
         result = registered["compute_tool"].fn(x=5)
         assert result == 15
 
