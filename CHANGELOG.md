@@ -2,6 +2,22 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.11.4] — 2026-03-10
+
+### Fixed — Silent MCP Startup Crashes
+
+- **Crash log on startup failure** — `__main__.py` wraps the entire startup in try/except, writes crash details to `.trw/logs/crash.log` AND stderr so failures are always visible
+- **Early stderr logging** — `main()` configures basic logging before config/middleware loads, so exceptions during initialization are no longer invisible
+- **Defensive middleware init** — `_build_middleware()` and `_load_server_instructions()` catch exceptions instead of crashing the import chain
+- **Correct Python path in `.mcp.json`** — uses `sys.executable` (absolute path) instead of bare `python` which doesn't exist on many systems
+- **Resilient message loading** — `get_message_or_default()` catches all exceptions (not just KeyError/FileNotFoundError), so missing `ruamel.yaml` doesn't kill the server
+
+### Added
+
+- **CLAUDE.md deployment docs** — release workflow, migration fallback, API key scopes, PostgreSQL JSON cast gotchas
+
+---
+
 ## [0.11.3] — 2026-03-09
 
 ### Added
