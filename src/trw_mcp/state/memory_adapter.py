@@ -132,7 +132,11 @@ def get_embedder() -> Any:
                     hint="pip install trw-memory[embeddings]",
                 )
         except Exception:
-            logger.debug("embedder_init_failed")
+            # FR06: Log at warning so embedder failures are visible in logs.
+            # Do NOT set _embedder_checked — allows retry on next call or
+            # after reset_embedder() (e.g. session restart).
+            logger.warning("embedder_init_failed", exc_info=True)
+            return _embedder
 
         _embedder_checked = True
         return _embedder
@@ -182,6 +186,7 @@ def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
         if vector is not None:
             backend.upsert_vector(entry_id, vector)
     except (OSError, ValueError, RuntimeError):
+        # justified: embedding is optional enrichment — store succeeds without it.
         logger.debug("embed_and_store_failed", entry_id=entry_id)
 
 
@@ -220,7 +225,11 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
     try:
         memory_entries = migrate_entries_dir(entries_dir)
     except Exception:
-        logger.warning("memory_migration_read_failed", entries_dir=str(entries_dir))
+        logger.warning(
+            "memory_migration_read_failed",
+            exc_info=True,
+            entries_dir=str(entries_dir),
+        )
         return {"migrated": 0, "skipped": 0}
 
     for entry in memory_entries:
@@ -232,7 +241,11 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
             migrated += 1
         except Exception:
             skipped += 1
-            logger.debug("memory_migration_entry_skipped", entry_id=entry.id)
+            logger.warning(
+                "memory_migration_entry_skipped",
+                exc_info=True,
+                entry_id=entry.id,
+            )
 
     # Only write sentinel on success
     sentinel.parent.mkdir(parents=True, exist_ok=True)
@@ -731,6 +744,13 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                     last_accessed_at=now,
                 )
         except Exception:
+            # justified: access tracking is best-effort maintenance — failing
+            # to increment a counter must not break recall results.
+            logger.warning(
+                "access_tracking_update_failed",
+                exc_info=True,
+                entry_id=lid,
+            )
             continue
 
 

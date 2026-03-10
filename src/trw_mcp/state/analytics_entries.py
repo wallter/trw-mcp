@@ -14,8 +14,14 @@ from pathlib import Path
 import structlog
 
 import trw_mcp.state.analytics_core as _ac
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry, LearningStatus
-from trw_mcp.state.persistence import lock_for_rmw, model_to_dict
+from trw_mcp.state.persistence import (
+    FileStateReader,
+    FileStateWriter,
+    lock_for_rmw,
+    model_to_dict,
+)
 from trw_mcp.tools._learning_helpers import is_noise_summary
 
 logger = structlog.get_logger()
@@ -203,7 +209,7 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     filename = f"{entry.created.isoformat()}-{slug}.yaml"
     entry_path = _ac._entries_path(trw_dir) / filename
-    _ac._writer.write_yaml(entry_path, model_to_dict(entry))
+    FileStateWriter().write_yaml(entry_path, model_to_dict(entry))
     logger.debug("learning_entry_saved", learning_id=entry.id, path=str(entry_path))
 
     update_learning_index(trw_dir, entry)
@@ -220,12 +226,15 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
         trw_dir: Path to .trw directory.
         entry: New learning entry to add to index.
     """
-    index_path = trw_dir / _ac._config.learnings_dir / "index.yaml"
+    cfg: TRWConfig = get_config()
+    reader = FileStateReader()
+    writer = FileStateWriter()
+    index_path = trw_dir / cfg.learnings_dir / "index.yaml"
 
     with lock_for_rmw(index_path):
         index_data: dict[str, object] = {}
-        if _ac._reader.exists(index_path):
-            index_data = _ac._reader.read_yaml(index_path)
+        if reader.exists(index_path):
+            index_data = reader.read_yaml(index_path)
 
         raw = index_data.get("entries", [])
         entries: list[dict[str, object]] = (
@@ -240,13 +249,13 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
             "created": entry.created.isoformat(),
         })
 
-        if len(entries) > _ac._config.learning_max_entries:
+        if len(entries) > cfg.learning_max_entries:
             entries.sort(key=lambda e: float(str(e.get("impact", 0.0))))
-            entries = entries[-_ac._config.learning_max_entries:]
+            entries = entries[-cfg.learning_max_entries:]
 
         index_data["entries"] = entries
         index_data["total_count"] = len(entries)
-        _ac._writer.write_yaml(index_path, index_data)
+        writer.write_yaml(index_path, index_data)
 
 
 def resync_learning_index(trw_dir: Path) -> None:
@@ -258,7 +267,8 @@ def resync_learning_index(trw_dir: Path) -> None:
         trw_dir: Path to .trw directory.
     """
     entries_dir = _ac._entries_path(trw_dir)
-    index_path = trw_dir / _ac._config.learnings_dir / "index.yaml"
+    cfg_resync: TRWConfig = get_config()
+    index_path = trw_dir / cfg_resync.learnings_dir / "index.yaml"
 
     entries: list[dict[str, object]] = []
     if entries_dir.exists():
@@ -276,7 +286,7 @@ def resync_learning_index(trw_dir: Path) -> None:
         "entries": entries,
         "total_count": len(entries),
     }
-    _ac._writer.write_yaml(index_path, index_data)
+    FileStateWriter().write_yaml(index_path, index_data)
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +323,7 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
     if found is not None:
         entry_file, data = found
         data["promoted_to_claude_md"] = True
-        _ac._writer.write_yaml(entry_file, data)
+        FileStateWriter().write_yaml(entry_file, data)
 
 
 def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:
@@ -335,7 +345,7 @@ def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> Non
         data["updated"] = date.today().isoformat()
         if new_status == LearningStatus.RESOLVED.value:
             data["resolved_at"] = date.today().isoformat()
-        _ac._writer.write_yaml(entry_file, data)
+        FileStateWriter().write_yaml(entry_file, data)
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +493,7 @@ def backfill_source_attribution(
             data["source_type"] = "agent"
             data["source_identity"] = ""
             data["updated"] = date.today().isoformat()
-            _ac._writer.write_yaml(entry_file, data)
+            FileStateWriter().write_yaml(entry_file, data)
         updated += 1
 
     return {

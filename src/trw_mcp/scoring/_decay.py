@@ -13,6 +13,8 @@ from pathlib import Path
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.scoring._utils import (
+    FileStateReader,
+    TRWConfig,
     _IMPACT_DECAY_FLOOR,
     _LN2,
     _TIER_HIGH_CEILING,
@@ -20,6 +22,7 @@ from trw_mcp.scoring._utils import (
     _ensure_utc,
     apply_time_decay,
     compute_utility_score,
+    get_config,
     safe_float,
     safe_int,
 )
@@ -38,7 +41,8 @@ def _days_since_access(
     Resolution order: last_accessed_at -> created -> fallback_days.
     """
     if fallback_days is None:
-        fallback_days = _su._config.scoring_default_days_unused
+        cfg: TRWConfig = get_config()
+        fallback_days = cfg.scoring_default_days_unused
 
     for field in ("last_accessed_at", "created"):
         raw = str(entry.get(field, ""))
@@ -76,7 +80,7 @@ def _entry_utility(
     # Double-decay fix (PRD-QUAL-032-FR03): apply_time_decay was removed here
     # because compute_utility_score() already applies Ebbinghaus exponential
     # decay internally via retention = exp(-decay_rate * days).
-    cfg = _su._config
+    cfg: TRWConfig = get_config()
 
     return compute_utility_score(
         q_value=q_value,
@@ -124,9 +128,10 @@ def compute_impact_distribution(
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     total = 0
 
+    reader = FileStateReader()
     for yaml_file in entries_dir.glob("*.yaml"):
         try:
-            data = _su._reader.read_yaml(yaml_file)
+            data = reader.read_yaml(yaml_file)
         except Exception:
             continue
         if str(data.get("status", "active")) != "active":
@@ -189,7 +194,7 @@ def enforce_tier_distribution(
         List of (learning_id, new_impact) tuples for entries whose scores
         were changed.  Empty list if no demotions were needed.
     """
-    cfg = _su._config
+    cfg: TRWConfig = get_config()
     effective_critical_cap = critical_cap if critical_cap is not None else cfg.impact_tier_critical_cap
     effective_high_cap = high_cap if high_cap is not None else cfg.impact_tier_high_cap
 
@@ -302,7 +307,7 @@ def apply_impact_decay(
     Returns:
         The same list with ``impact`` fields updated where decay applied.
     """
-    cfg = _su._config
+    cfg: TRWConfig = get_config()
     effective_half_life = half_life_days if half_life_days is not None else cfg.impact_decay_half_life_days
     now = datetime.now(timezone.utc)
 

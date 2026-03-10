@@ -557,7 +557,9 @@ def consolidate_cycle(
         from trw_mcp.state.tiers import TierManager as _TierManager
         tier_manager = _TierManager(trw_dir, reader=reader, writer=writer, config=cfg)
     except Exception:
-        pass  # Graceful degradation — cold archival falls back to status="archived"
+        # justified: TierManager is optional — consolidation works without cold
+        # archival by falling back to status="archived" on the entry.
+        logger.warning("consolidation_tier_manager_init_failed", exc_info=True)
 
     # Instantiate LLM client once for all clusters
     llm: LLMClient | None = None
@@ -566,7 +568,9 @@ def consolidate_cycle(
         if candidate.available:
             llm = candidate
     except Exception:
-        pass  # LLM is optional — consolidation works without AI summaries
+        # justified: LLM is optional — consolidation works without AI summaries
+        # via the _summarize_cluster_fallback path.
+        logger.warning("consolidation_llm_init_failed", exc_info=True)
 
     consolidated_count = 0
     errors: list[str] = []

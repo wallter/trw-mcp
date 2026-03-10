@@ -23,6 +23,47 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # ---------------------------------------------------------------------------
+# Module-level path checks for @pytest.mark.skipif decorators
+# ---------------------------------------------------------------------------
+
+try:
+    from trw_mcp.bootstrap._utils import _DATA_DIR as _BS_DATA_DIR
+except ImportError:
+    _BS_DATA_DIR = Path("/nonexistent")
+
+_HOOKS_DIR = _BS_DATA_DIR / "hooks"
+_SKILLS_DIR = _BS_DATA_DIR / "skills"
+_AGENTS_DIR = _BS_DATA_DIR / "agents"
+
+_HAS_HOOKS_DIR = _HOOKS_DIR.is_dir()
+_HOOK_FILES = list(_HOOKS_DIR.glob("*.sh")) if _HAS_HOOKS_DIR else []
+_HAS_HOOK_FILES = len(_HOOK_FILES) > 0
+
+_HAS_SKILLS_DIR = _SKILLS_DIR.is_dir()
+_SKILL_DIRS = [d for d in _SKILLS_DIR.iterdir() if d.is_dir()] if _HAS_SKILLS_DIR else []
+_HAS_SKILL_DIRS = len(_SKILL_DIRS) > 0
+_FIRST_SKILL_DIR = _SKILL_DIRS[0] if _HAS_SKILL_DIRS else None
+_SKILL_DIR_FILES = (
+    [f for f in _FIRST_SKILL_DIR.iterdir() if f.is_file()]
+    if _FIRST_SKILL_DIR is not None
+    else []
+)
+_HAS_SKILL_FILES = len(_SKILL_DIR_FILES) > 0
+
+_HAS_AGENTS_DIR = _AGENTS_DIR.is_dir()
+_AGENT_FILES = list(_AGENTS_DIR.glob("*.md")) if _HAS_AGENTS_DIR else []
+_HAS_AGENT_FILES = len(_AGENT_FILES) > 0
+
+try:
+    from trw_mcp.prompts.aaref import _DATA_DIR as _AAREF_DATA_DIR
+except ImportError:
+    _AAREF_DATA_DIR = Path("/nonexistent")
+
+_AAREF_TEMPLATES = list(_AAREF_DATA_DIR.glob("*.md")) if _AAREF_DATA_DIR.is_dir() else []
+_HAS_AAREF_TEMPLATES = len(_AAREF_TEMPLATES) > 0
+
+
+# ---------------------------------------------------------------------------
 # bootstrap.py coverage
 # ---------------------------------------------------------------------------
 
@@ -40,18 +81,15 @@ class TestBootstrapDryRunBranches:
         (target / ".claude" / "agents").mkdir(parents=True)
         return target
 
+    @pytest.mark.skipif(not _HAS_HOOKS_DIR, reason="No hooks in bundled data")
+    @pytest.mark.skipif(not _HAS_HOOK_FILES, reason="No .sh files in hooks")
     def test_dry_run_hook_identical_file_skips_update(self, tmp_path: Path) -> None:
         """Line 272: dry_run with identical hook — no 'would update' added."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         hooks_source = bs._DATA_DIR / "hooks"
-        if not hooks_source.is_dir():
-            pytest.skip("No hooks in bundled data")
-
         hook_files = [f for f in hooks_source.iterdir() if f.suffix == ".sh"]
-        if not hook_files:
-            pytest.skip("No .sh files in hooks")
 
         # Copy a real hook to destination so files are identical
         hook_src = hook_files[0]
@@ -68,18 +106,15 @@ class TestBootstrapDryRunBranches:
             f"Identical file should not appear in dry_run updated list: {would_update_names}"
         )
 
+    @pytest.mark.skipif(not _HAS_HOOKS_DIR, reason="No hooks in bundled data")
+    @pytest.mark.skipif(not _HAS_HOOK_FILES, reason="No .sh files in hooks")
     def test_dry_run_hook_different_content_flags_would_update(self, tmp_path: Path) -> None:
         """Line 272: dry_run with modified hook — appends 'would update'."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         hooks_source = bs._DATA_DIR / "hooks"
-        if not hooks_source.is_dir():
-            pytest.skip("No hooks bundled")
-
         hook_files = [f for f in hooks_source.iterdir() if f.suffix == ".sh"]
-        if not hook_files:
-            pytest.skip("No .sh hooks")
 
         hook_src = hook_files[0]
         dest_hook = target / ".claude" / "hooks" / hook_src.name
@@ -90,24 +125,18 @@ class TestBootstrapDryRunBranches:
         would_update = [s for s in result.get("updated", []) if "would update" in s]
         assert any(hook_src.name in s for s in would_update)
 
+    @pytest.mark.skipif(not _HAS_SKILLS_DIR, reason="No skills in bundled data")
+    @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
+    @pytest.mark.skipif(not _HAS_SKILL_FILES, reason="No files in skill dir")
     def test_dry_run_skill_file_identical_no_update(self, tmp_path: Path) -> None:
         """Line 305: dry_run skill file identical — not added to updated list."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         skills_source = bs._DATA_DIR / "skills"
-        if not skills_source.is_dir():
-            pytest.skip("No skills bundled")
-
         skill_dirs = [d for d in skills_source.iterdir() if d.is_dir()]
-        if not skill_dirs:
-            pytest.skip("No skill directories")
-
         skill_dir = skill_dirs[0]
         skill_files = [f for f in skill_dir.iterdir() if f.is_file()]
-        if not skill_files:
-            pytest.skip("No files in skill dir")
-
         skill_file = skill_files[0]
         dest_skill_dir = target / ".claude" / "skills" / skill_dir.name
         dest_skill_dir.mkdir(parents=True, exist_ok=True)
@@ -122,24 +151,18 @@ class TestBootstrapDryRunBranches:
             skill_file.name in s for s in would_update
         ), f"Identical skill file should not be flagged: {would_update}"
 
+    @pytest.mark.skipif(not _HAS_SKILLS_DIR, reason="No skills in bundled data")
+    @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
+    @pytest.mark.skipif(not _HAS_SKILL_FILES, reason="No files in skill dir")
     def test_dry_run_skill_file_different_flags_would_update(self, tmp_path: Path) -> None:
         """Line 305 alt path: dry_run skill with different content."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         skills_source = bs._DATA_DIR / "skills"
-        if not skills_source.is_dir():
-            pytest.skip("No skills bundled")
-
         skill_dirs = [d for d in skills_source.iterdir() if d.is_dir()]
-        if not skill_dirs:
-            pytest.skip("No skill directories")
-
         skill_dir = skill_dirs[0]
         skill_files = [f for f in skill_dir.iterdir() if f.is_file()]
-        if not skill_files:
-            pytest.skip("No files in skill dir")
-
         skill_file = skill_files[0]
         dest_skill_dir = target / ".claude" / "skills" / skill_dir.name
         dest_skill_dir.mkdir(parents=True, exist_ok=True)
@@ -151,42 +174,29 @@ class TestBootstrapDryRunBranches:
         would_update = [s for s in result.get("updated", []) if "would update" in s]
         assert any(skill_file.name in s for s in would_update)
 
+    @pytest.mark.skipif(not _HAS_SKILLS_DIR, reason="No skills in bundled data")
+    @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
+    @pytest.mark.skipif(not _HAS_SKILL_FILES, reason="No files in skill dir")
     def test_dry_run_new_skill_file_would_create(self, tmp_path: Path) -> None:
         """Line 315 (else branch): skill file doesn't exist → would create."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
-        skills_source = bs._DATA_DIR / "skills"
-        if not skills_source.is_dir():
-            pytest.skip("No skills bundled")
-
-        skill_dirs = [d for d in skills_source.iterdir() if d.is_dir()]
-        if not skill_dirs:
-            pytest.skip("No skill directories")
-
-        skill_dir = skill_dirs[0]
-        skill_files = [f for f in skill_dir.iterdir() if f.is_file()]
-        if not skill_files:
-            pytest.skip("No files in skill dir")
 
         # Do NOT create the destination skill dir/files - they don't exist
         result = bs.update_project(target, dry_run=True)
         would_create = result.get("created", [])
         assert any("would create" in s for s in would_create)
 
+    @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
+    @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_agent_file_identical_not_flagged(self, tmp_path: Path) -> None:
         """Line 330: dry_run agent identical — no 'would update' added."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         agents_source = bs._DATA_DIR / "agents"
-        if not agents_source.is_dir():
-            pytest.skip("No agents bundled")
-
         agent_files = [f for f in agents_source.iterdir() if f.suffix == ".md"]
-        if not agent_files:
-            pytest.skip("No .md agents")
-
         agent_file = agent_files[0]
         dest_agent = target / ".claude" / "agents" / agent_file.name
         # Copy identical content
@@ -196,19 +206,15 @@ class TestBootstrapDryRunBranches:
         would_update = [s for s in result.get("updated", []) if "would update" in s]
         assert not any(agent_file.name in s for s in would_update)
 
+    @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
+    @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_agent_different_content_flags_would_update(self, tmp_path: Path) -> None:
         """Line 330 alt path: agent file with different content."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         agents_source = bs._DATA_DIR / "agents"
-        if not agents_source.is_dir():
-            pytest.skip("No agents bundled")
-
         agent_files = [f for f in agents_source.iterdir() if f.suffix == ".md"]
-        if not agent_files:
-            pytest.skip("No .md agents")
-
         agent_file = agent_files[0]
         dest_agent = target / ".claude" / "agents" / agent_file.name
         dest_agent.write_text("# old agent content", encoding="utf-8")
@@ -217,18 +223,13 @@ class TestBootstrapDryRunBranches:
         would_update = [s for s in result.get("updated", []) if "would update" in s]
         assert any(agent_file.name in s for s in would_update)
 
+    @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
+    @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_new_agent_file_would_create(self, tmp_path: Path) -> None:
         """Line 340 (else branch): agent file doesn't exist → would create."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
-        agents_source = bs._DATA_DIR / "agents"
-        if not agents_source.is_dir():
-            pytest.skip("No agents bundled")
-
-        agent_files = [f for f in agents_source.iterdir() if f.suffix == ".md"]
-        if not agent_files:
-            pytest.skip("No .md agents")
 
         # Don't create any agent files in target — all would be "created"
         result = bs.update_project(target, dry_run=True)
@@ -292,8 +293,8 @@ class TestLLMClientAskSync:
                 # We ARE in an async context (asyncio_mode=auto), so ask_sync
                 # will hit the ThreadPoolExecutor branch
                 result = client.ask_sync("test prompt")
-                # result may be "mocked" or None depending on mock behavior
-                assert result is not None or result is None  # just hit the branch
+                # ask_sync returns str | None
+                assert result is None or isinstance(result, str)
 
     def test_ask_sync_without_running_loop(self) -> None:
         """Lines 200-203: ask_sync without a running loop uses asyncio.run."""
@@ -676,47 +677,36 @@ class TestPublisherCoverage:
 class TestAutoUpgradeCoverage:
     """Lines 29-30: get_installed_version ImportError/AttributeError."""
 
-    def test_get_installed_version_import_error_returns_fallback(self) -> None:
+    def test_get_installed_version_import_error_returns_fallback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Lines 29-30: ImportError branch → returns '0.0.0'.
 
-        We test the branch logic directly by executing an inline
-        reimplementation that mirrors get_installed_version()'s try/except.
+        The actual function does ``from trw_mcp import __version__``.
+        When __version__ is missing from the module, this raises ImportError
+        which the function catches and returns "0.0.0".
         """
-        # Simulate what get_installed_version() does when ImportError is raised
-        def simulated_get_installed_version() -> str:
-            try:
-                raise ImportError("no module named trw_mcp")
-            except (ImportError, AttributeError):
-                return "0.0.0"
+        import trw_mcp as _trw_mcp_mod
+        from trw_mcp.state.auto_upgrade import get_installed_version
 
-        result = simulated_get_installed_version()
+        monkeypatch.delattr(_trw_mcp_mod, "__version__", raising=False)
+        result = get_installed_version()
         assert result == "0.0.0"
 
-    def test_get_installed_version_attribute_error_returns_fallback(self) -> None:
-        """Lines 29-30: AttributeError on __version__ → returns '0.0.0'."""
-        import sys
-        import types
+    def test_get_installed_version_attribute_error_returns_fallback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Lines 29-30: AttributeError on __version__ → returns '0.0.0'.
 
+        When __version__ is removed, ``from trw_mcp import __version__``
+        raises ImportError (caught by the same except clause).
+        """
+        import trw_mcp as _trw_mcp_mod
+        from trw_mcp.state.auto_upgrade import get_installed_version
 
-        # Create a fake trw_mcp module without __version__
-        fake_module = types.ModuleType("trw_mcp")
-        # No __version__ attribute
-
-        original = sys.modules.get("trw_mcp")
-        sys.modules["trw_mcp_fake_test"] = fake_module
-        try:
-            with patch("trw_mcp.state.auto_upgrade.get_installed_version") as mock_ver:
-                mock_ver.side_effect = AttributeError("no __version__")
-                # Test the fallback by directly calling original function logic
-                try:
-                    mock_ver()
-                except AttributeError:
-                    version = "0.0.0"
-                assert version == "0.0.0"
-        finally:
-            del sys.modules["trw_mcp_fake_test"]
-            if original is not None:
-                sys.modules["trw_mcp"] = original
+        monkeypatch.delattr(_trw_mcp_mod, "__version__", raising=False)
+        result = get_installed_version()
+        assert result == "0.0.0"
 
     def test_get_installed_version_returns_actual_version(self) -> None:
         """Positive case: get_installed_version returns a non-empty string."""
@@ -769,14 +759,13 @@ class TestAarefPromptFallback:
         assert "nonexistent_template_xyz.md" in result
         assert "not found" in result
 
+    @pytest.mark.skipif(not _HAS_AAREF_TEMPLATES, reason="No .md templates in aaref data dir")
     def test_load_prompt_template_existing_file_returns_content(self) -> None:
         """Line 26-27: existing template file returns its content."""
         from trw_mcp.prompts.aaref import _DATA_DIR, _load_prompt_template
 
         # Find any actual template file in the data dir
         templates = list(_DATA_DIR.glob("*.md"))
-        if not templates:
-            pytest.skip("No .md templates in aaref data dir")
 
         content = _load_prompt_template(templates[0].name)
         assert len(content) > 0
@@ -889,7 +878,9 @@ class TestPathsCoverage:
         assert result is not None
         assert result.name == "20260206T120000Z-abc1"
 
-    def test_detect_current_phase_skips_non_dir_runs(self, tmp_path: Path) -> None:
+    def test_detect_current_phase_skips_non_dir_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Line 172: detect_current_phase skips task_dirs without 'runs' subdir."""
         from trw_mcp.state import _paths
 
@@ -909,26 +900,19 @@ class TestPathsCoverage:
         # Status is "complete", not "active"
         run_yaml.write_text("run_id: xyz1\nphase: deliver\nstatus: complete\n", encoding="utf-8")
 
-        # Patch _paths module-level config and reader
-        old_config = _paths._config
-        old_reader = _paths._reader
+        fake_cfg = MagicMock()
+        fake_cfg.task_root = "docs"
+        monkeypatch.setattr("trw_mcp.state._paths._config", fake_cfg)
 
-        try:
-            # Override task_root in _config
-            fake_cfg = MagicMock()
-            fake_cfg.task_root = "docs"
-            _paths._config = fake_cfg
-
-            with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-                result = _paths.detect_current_phase()
-        finally:
-            _paths._config = old_config
-            _paths._reader = old_reader
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
+            result = _paths.detect_current_phase()
 
         # Status is "complete", not "active" → returns None
         assert result is None
 
-    def test_detect_current_phase_inactive_run_returns_none(self, tmp_path: Path) -> None:
+    def test_detect_current_phase_inactive_run_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Line 184: detect_current_phase returns None when status != active."""
         from trw_mcp.state import _paths
 
@@ -943,20 +927,18 @@ class TestPathsCoverage:
             "run_id: xyz1\nphase: deliver\nstatus: complete\n", encoding="utf-8"
         )
 
-        old_config = _paths._config
-        try:
-            fake_cfg = MagicMock()
-            fake_cfg.task_root = "docs"
-            _paths._config = fake_cfg
+        fake_cfg = MagicMock()
+        fake_cfg.task_root = "docs"
+        monkeypatch.setattr("trw_mcp.state._paths._config", fake_cfg)
 
-            with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-                result = _paths.detect_current_phase()
-        finally:
-            _paths._config = old_config
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
+            result = _paths.detect_current_phase()
 
         assert result is None
 
-    def test_detect_current_phase_active_run_returns_phase(self, tmp_path: Path) -> None:
+    def test_detect_current_phase_active_run_returns_phase(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Positive: detect_current_phase returns phase when status == active."""
         from trw_mcp.state import _paths
 
@@ -971,15 +953,11 @@ class TestPathsCoverage:
             "run_id: xyz2\nphase: implement\nstatus: active\n", encoding="utf-8"
         )
 
-        old_config = _paths._config
-        try:
-            fake_cfg = MagicMock()
-            fake_cfg.task_root = "docs"
-            _paths._config = fake_cfg
+        fake_cfg = MagicMock()
+        fake_cfg.task_root = "docs"
+        monkeypatch.setattr("trw_mcp.state._paths._config", fake_cfg)
 
-            with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-                result = _paths.detect_current_phase()
-        finally:
-            _paths._config = old_config
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
+            result = _paths.detect_current_phase()
 
         assert result == "implement"

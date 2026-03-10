@@ -43,6 +43,15 @@ from trw_mcp.state.phase_gates_build import (
 from trw_mcp.state.phase_gates_build import (
     _check_build_status as _check_build_status,
 )
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_dry_check as _best_effort_dry_check,
+)
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_migration_check as _best_effort_migration_check,
+)
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_semantic_check as _best_effort_semantic_check,
+)
 
 # Re-export from sub-modules for backward compatibility
 from trw_mcp.state.phase_gates_prd import (
@@ -242,6 +251,9 @@ def _check_validate_exit(
     _best_effort_integration_check(failures, severity="warning")
     _best_effort_orphan_check(failures, severity="warning")
     _best_effort_build_check(config, "validate", failures)
+    _best_effort_dry_check(config, failures)
+    _best_effort_migration_check(config, failures)
+    _best_effort_semantic_check(config, failures)
 
 
 def _check_review_exit(

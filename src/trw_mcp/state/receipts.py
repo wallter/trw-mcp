@@ -17,14 +17,12 @@ from trw_mcp.state.persistence import (
     json_serializer,
 )
 
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
 
 
 def _receipt_path(trw_dir: Path) -> Path:
     """Return the path to the recall receipt log."""
-    return trw_dir / _config.learnings_dir / _config.receipts_dir / "recall_log.jsonl"
+    config = get_config()
+    return trw_dir / config.learnings_dir / config.receipts_dir / "recall_log.jsonl"
 
 
 def log_recall_receipt(
@@ -45,8 +43,9 @@ def log_recall_receipt(
         matched_ids: IDs of matched learning entries.
         shard_id: Optional shard identifier for sub-agent attribution.
     """
+    writer = FileStateWriter()
     path = _receipt_path(trw_dir)
-    _writer.ensure_dir(path.parent)
+    writer.ensure_dir(path.parent)
     record: dict[str, object] = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "query": query,
@@ -55,7 +54,7 @@ def log_recall_receipt(
     }
     if shard_id:
         record["shard_id"] = shard_id
-    _writer.append_jsonl(path, record)
+    writer.append_jsonl(path, record)
 
 
 def prune_recall_receipts(trw_dir: Path) -> int:
@@ -67,12 +66,16 @@ def prune_recall_receipts(trw_dir: Path) -> int:
     Returns:
         Number of entries removed.
     """
+    config = get_config()
+    reader = FileStateReader()
+    writer = FileStateWriter()
+
     path = _receipt_path(trw_dir)
     if not path.exists():
         return 0
 
-    records = _reader.read_jsonl(path)
-    limit = _config.recall_receipt_max_entries
+    records = reader.read_jsonl(path)
+    limit = config.recall_receipt_max_entries
 
     if len(records) <= limit:
         return 0
@@ -84,6 +87,6 @@ def prune_recall_receipts(trw_dir: Path) -> int:
         json.dumps(record, default=json_serializer) + "\n"
         for record in records[-limit:]
     )
-    _writer.write_text(path, content)
+    writer.write_text(path, content)
 
     return removed

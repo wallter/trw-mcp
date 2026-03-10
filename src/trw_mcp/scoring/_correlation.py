@@ -15,7 +15,11 @@ import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring._utils import (
+    FileStateReader,
+    FileStateWriter,
+    TRWConfig,
     _ensure_utc,
+    get_config,
     safe_float,
     safe_int,
     update_q_value,
@@ -90,12 +94,14 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
         Timestamp of the most recent session-start event, or None.
     """
     project_root = trw_dir.parent
-    task_root = project_root / _su._config.task_root
+    cfg: TRWConfig = get_config()
+    task_root = project_root / cfg.task_root
     latest_ts: datetime | None = None
 
     if not task_root.exists():
         return None
 
+    reader = FileStateReader()
     for task_dir in task_root.iterdir():
         runs_dir = task_dir / "runs"
         if not runs_dir.is_dir():
@@ -104,7 +110,7 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
             events_path = run_dir / "meta" / "events.jsonl"
             if not events_path.exists():
                 continue
-            records = _su._reader.read_jsonl(events_path)
+            records = reader.read_jsonl(events_path)
             for record in reversed(records):
                 event_type = str(record.get("event", ""))
                 if event_type in ("run_init", "session_start"):
@@ -149,7 +155,8 @@ def correlate_recalls(
         List of (learning_id, discount) tuples. May contain duplicates
         across receipts (caller should deduplicate).
     """
-    effective_scope = scope or _su._config.learning_outcome_correlation_scope
+    cfg_corr: TRWConfig = get_config()
+    effective_scope = scope or cfg_corr.learning_outcome_correlation_scope
     receipt_path = trw_dir / "logs" / "recall_tracking.jsonl"
     if not receipt_path.exists():
         return []
@@ -167,7 +174,8 @@ def correlate_recalls(
     total_window_secs = max((now - cutoff_ts).total_seconds(), 1.0)
     results: list[tuple[str, float]] = []
 
-    records = _su._reader.read_jsonl(receipt_path)
+    reader_corr = FileStateReader()
+    records = reader_corr.read_jsonl(receipt_path)
     for record in records:
         # Support both receipt formats:
         # - Legacy receipts: {"ts": ISO string, "matched_ids": [...]}
@@ -200,7 +208,7 @@ def correlate_recalls(
 
         # Recency discount: 1.0 at t=0, floor at t=window_edge
         discount = max(
-            _su._config.scoring_recency_discount_floor,
+            cfg_corr.scoring_recency_discount_floor,
             1.0 - elapsed_secs / total_window_secs,
         )
 
@@ -240,7 +248,7 @@ def process_outcome(
     """
     from trw_mcp.state.analytics import find_entry_by_id
 
-    cfg = _su._config
+    cfg: TRWConfig = get_config()
     correlated = correlate_recalls(
         trw_dir,
         cfg.learning_outcome_correlation_window_minutes,
@@ -262,6 +270,7 @@ def process_outcome(
     updated_ids: list[str] = []
     today_iso = date.today().isoformat()
     history_cap = cfg.learning_outcome_history_cap
+    writer = FileStateWriter()
 
     for lid, discount in best_discount.items():
         found = find_entry_by_id(entries_dir, lid)
@@ -296,7 +305,7 @@ def process_outcome(
             history = history[-history_cap:]
         data["outcome_history"] = history
 
-        _su._writer.write_yaml(entry_path, data)
+        writer.write_yaml(entry_path, data)
         updated_ids.append(lid)
 
     if updated_ids:
@@ -368,9 +377,9 @@ def _resolve_event_reward(
             return mapped_reward, alias
 
     # 4. Error keyword fallback
-    cfg = _su._config
-    if any(kw in event_type.lower() for kw in cfg.scoring_error_keywords):
-        return cfg.scoring_error_fallback_reward, event_type
+    cfg_err: TRWConfig = get_config()
+    if any(kw in event_type.lower() for kw in cfg_err.scoring_error_keywords):
+        return cfg_err.scoring_error_fallback_reward, event_type
 
     return None, event_type
 

@@ -17,9 +17,6 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
 
-_reader = FileStateReader()
-_writer = FileStateWriter()
-
 
 # --- FR01: Trust Registry ---
 
@@ -34,6 +31,8 @@ def _audit_log_path(trw_dir: Path) -> Path:
 
 def read_trust_registry(trw_dir: Path) -> dict[str, object]:
     """Read trust registry, creating default if missing."""
+    reader = FileStateReader()
+    writer = FileStateWriter()
     path = _registry_path(trw_dir)
     if not path.exists():
         default: dict[str, object] = {
@@ -44,17 +43,18 @@ def read_trust_registry(trw_dir: Path) -> dict[str, object]:
                 "tier": "crawl",
             }
         }
-        _writer.ensure_dir(path.parent)
-        _writer.write_yaml(path, default)
+        writer.ensure_dir(path.parent)
+        writer.write_yaml(path, default)
         return default
-    return _reader.read_yaml(path)
+    return reader.read_yaml(path)
 
 
 def write_trust_registry(trw_dir: Path, data: dict[str, object]) -> None:
     """Write trust registry atomically."""
+    writer = FileStateWriter()
     path = _registry_path(trw_dir)
-    _writer.ensure_dir(path.parent)
-    _writer.write_yaml(path, data)
+    writer.ensure_dir(path.parent)
+    writer.write_yaml(path, data)
 
 
 # --- FR02: Trust Level Calculation ---
@@ -256,8 +256,9 @@ def _log_trust_transition(
     triggered_by: str,
 ) -> None:
     """Append immutable audit entry for tier transition (SOC 2 CC8)."""
+    writer = FileStateWriter()
     path = _audit_log_path(trw_dir)
-    _writer.ensure_dir(path.parent)
+    writer.ensure_dir(path.parent)
 
     entry: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -269,7 +270,7 @@ def _log_trust_transition(
         "triggered_by": triggered_by,
     }
 
-    _writer.append_jsonl(path, entry)
+    writer.append_jsonl(path, entry)
     logger.info(
         "trust_transition_logged",
         previous_tier=previous_tier,
@@ -280,7 +281,8 @@ def _log_trust_transition(
 
 def read_audit_log(trw_dir: Path) -> list[dict[str, object]]:
     """Read all trust audit log entries."""
+    reader = FileStateReader()
     path = _audit_log_path(trw_dir)
     if not path.exists():
         return []
-    return _reader.read_jsonl(path)
+    return reader.read_jsonl(path)

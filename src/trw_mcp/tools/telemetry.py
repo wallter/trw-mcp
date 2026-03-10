@@ -16,8 +16,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import ParamSpec, TypeVar
+from uuid import uuid4
 
 import structlog
+import structlog.contextvars
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import find_active_run, resolve_trw_dir
@@ -72,6 +74,14 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         if not _config.telemetry_enabled:
             return func(*args, **kwargs)
 
+        # FR01 (PRD-CORE-082): Bind correlation ID for structured log tracing.
+        # Preserve parent ID for nested tool calls (don't rebind).
+        existing_ctx = structlog.contextvars.get_contextvars()
+        is_nested = "tool_call_id" in existing_ctx
+        if not is_nested:
+            tool_call_id = uuid4().hex[:8]
+            structlog.contextvars.bind_contextvars(tool_call_id=tool_call_id)
+
         start = time.monotonic()
         success = True
         error_msg: str | None = None
@@ -102,6 +112,10 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                     )
                 except Exception as exc:
                     logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
+
+            # FR01: Clean up correlation ID (only if we bound it)
+            if not is_nested:
+                structlog.contextvars.unbind_contextvars("tool_call_id")
 
     return wrapper
 

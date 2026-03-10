@@ -2,6 +2,22 @@
 
 All notable changes to the TRW MCP server package.
 
+## [Unreleased]
+
+### Added — Sprint 56: Agent Quality & Review Gaps
+
+- **Context-aware learning injection** (`state/learning_injection.py`) — `select_learnings_for_task()` ranks recall results by 60% tag overlap + 40% impact score; `infer_domain_tags()` maps path components to domain tags; `format_learning_injection()` renders markdown for prompt prepending
+- **N-gram DRY enforcement** (`state/dry_check.py`) — sliding-window SHA-256 duplication detector with configurable block size and boilerplate filtering
+- **Migration verification gate** (`state/phase_gates_build.py`) — detects model-without-migration gaps and NOT NULL columns without `server_default`
+- **Semantic review automation** (`state/semantic_checks.py` + `data/semantic_checks.yaml`) — 10 regex-based semantic checks (6 automated, 4 manual) with language-aware filtering
+- **`trw-dry-check` skill** — on-demand duplication scanning via `/trw-dry-check`
+- **VALIDATE soft gates** — DRY, migration, and semantic checks wired into `_check_validate_exit()` as best-effort warnings
+- **Agent prompt updates** — `trw-implementer.md` DRY checklist, `trw-reviewer.md` semantic rubric, `trw-team-playbook` learning injection
+- **Config fields** — `migration_gate_enabled`, `dry_check_enabled`, `dry_check_min_block_size`, `agent_learning_injection`, `agent_learning_max`, `agent_learning_min_impact`, `semantic_checks_enabled`
+- **109 new tests** — migration gate (26), DRY check (19), learning injection (30), semantic checks (34)
+
+---
+
 ## [0.11.4] — 2026-03-10
 
 ### Fixed — Silent MCP Startup Crashes

@@ -8,6 +8,7 @@ improvement suggestions.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import (
@@ -413,7 +414,7 @@ class TestV2Models:
         assert ss.substantive_lines == 0
 
     def test_section_score_rejects_negative_density(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SectionScore(section_name="Test", density=-0.1)
 
     def test_dimension_score_bounds(self) -> None:
@@ -422,7 +423,7 @@ class TestV2Models:
         assert ds.max_score == 15.0
 
     def test_dimension_score_rejects_negative(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             DimensionScore(name="test", score=-1.0, max_score=10.0)
 
     def test_v2_result_has_v1_fields(self) -> None:
@@ -439,7 +440,7 @@ class TestV2Models:
         assert 0.0 <= result.total_score <= 100.0
 
     def test_v2_result_total_score_rejects_over_100(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ValidationResultV2(total_score=101.0)
 
     def test_quality_tier_enum_values(self) -> None:

@@ -78,7 +78,7 @@ class TestReviewFindingNewFields:
 
     def test_review_finding_is_frozen(self) -> None:
         finding = ReviewFinding(category="quality", severity="warning", description="test")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             finding.confidence = 0.5  # type: ignore[misc]
 
 
@@ -176,5 +176,5 @@ class TestIntegrationReviewArtifact:
             findings=[], verdict="pass",
             human_escalation_path="",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             artifact.verdict = "block"  # type: ignore[misc]

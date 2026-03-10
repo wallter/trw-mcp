@@ -13,10 +13,6 @@ from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
-_config = get_config()
-_reader = FileStateReader()
-
-
 def _dump_yaml(data: dict[str, object]) -> str:
     """Serialize a dict to YAML text.
 
@@ -44,14 +40,16 @@ def register_config_resources(server: FastMCP) -> None:
         Returns merged configuration as YAML text. Project-level overrides
         from .trw/config.yaml take precedence over built-in defaults.
         """
+        config = get_config()
+        reader = FileStateReader()
         project_root = resolve_project_root()
-        config_path = project_root / _config.trw_dir / "config.yaml"
+        config_path = project_root / config.trw_dir / "config.yaml"
 
-        result = model_to_dict(_config)
+        result = model_to_dict(config)
 
         # Merge project overrides
-        if _reader.exists(config_path):
-            overrides = _reader.read_yaml(config_path)
+        if reader.exists(config_path):
+            overrides = reader.read_yaml(config_path)
             result.update(overrides)
 
         return _dump_yaml(result)
@@ -64,15 +62,17 @@ def register_config_resources(server: FastMCP) -> None:
         AARE-F-FRAMEWORK.md, including trw-mcp package version
         and deployment timestamp.
         """
+        config = get_config()
+        reader = FileStateReader()
         project_root = resolve_project_root()
         version_path = (
-            project_root / _config.trw_dir / _config.frameworks_dir / "VERSION.yaml"
+            project_root / config.trw_dir / config.frameworks_dir / "VERSION.yaml"
         )
 
-        if not _reader.exists(version_path):
+        if not reader.exists(version_path):
             return "# No frameworks deployed yet\n# Run trw_init to deploy.\n"
 
-        data = _reader.read_yaml(version_path)
+        data = reader.read_yaml(version_path)
         return _dump_yaml(dict(data))
 
     @server.resource("trw://learnings/summary")
@@ -82,8 +82,10 @@ def register_config_resources(server: FastMCP) -> None:
         Returns a formatted summary of high-impact learnings, discovered
         patterns, and context (architecture + conventions) from .trw/.
         """
+        config = get_config()
+        reader = FileStateReader()
         project_root = resolve_project_root()
-        trw_dir = project_root / _config.trw_dir
+        trw_dir = project_root / config.trw_dir
 
         lines: list[str] = ["# TRW Learnings Summary\n"]
 
@@ -97,14 +99,14 @@ def register_config_resources(server: FastMCP) -> None:
                 lines.append(f"- **{summary}**: {detail}\n")
 
         # Patterns
-        patterns_dir = trw_dir / _config.patterns_dir
+        patterns_dir = trw_dir / config.patterns_dir
         if patterns_dir.exists():
             lines.append("\n## Discovered Patterns\n")
             for pattern_file in sorted(patterns_dir.glob("*.yaml")):
                 if pattern_file.name == "index.yaml":
                     continue
                 try:
-                    data = _reader.read_yaml(pattern_file)
+                    data = reader.read_yaml(pattern_file)
                     name = data.get("name", "")
                     desc = data.get("description", "")
                     lines.append(f"- **{name}**: {desc}\n")
@@ -112,9 +114,9 @@ def register_config_resources(server: FastMCP) -> None:
                     continue
 
         # Analytics
-        analytics_path = trw_dir / _config.context_dir / "analytics.yaml"
-        if _reader.exists(analytics_path):
-            data = _reader.read_yaml(analytics_path)
+        analytics_path = trw_dir / config.context_dir / "analytics.yaml"
+        if reader.exists(analytics_path):
+            data = reader.read_yaml(analytics_path)
             lines.append("\n## Analytics\n")
             lines.append(f"- Sessions tracked: {data.get('sessions_tracked', 0)}\n")
             lines.append(f"- Total learnings: {data.get('total_learnings', 0)}\n")

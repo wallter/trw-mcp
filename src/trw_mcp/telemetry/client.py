@@ -106,20 +106,33 @@ class TelemetryClient:
             return 0
 
         written = 0
+        failed: list[TelemetryEvent] = []
         for event in pending:
             record = _event_to_record(event)
             try:
                 self._writer.append_jsonl(self._output_path, record)
                 written += 1
             except Exception:
+                # justified: telemetry is fail-open — individual write errors
+                # must not propagate, but we preserve the event for retry.
                 logger.warning(
                     "telemetry_flush_error",
+                    exc_info=True,
                     output_path=str(self._output_path),
                     event_type=event.event_type,
                 )
+                failed.append(event)
+
+        # FR03: Restore failed events to the queue so they are retried on
+        # the next flush() call instead of being silently dropped.
+        if failed:
+            with self._lock:
+                self._queue[:0] = failed
+
         logger.debug(
             "telemetry_flushed",
             written=written,
+            failed=len(failed),
             path=str(self._output_path),
         )
         return written

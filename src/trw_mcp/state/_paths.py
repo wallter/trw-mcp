@@ -15,9 +15,6 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader
 
-_config = get_config()
-_reader = FileStateReader()
-
 # --- Session identity (PRD-FIX-042 FR03) ---
 _session_id: str = uuid.uuid4().hex
 
@@ -77,7 +74,8 @@ def resolve_memory_store_path() -> Path:
     Returns:
         Absolute path to the sqlite-vec database file.
     """
-    return resolve_trw_dir() / _config.memory_store_path.removeprefix(".trw/")
+    config = get_config()
+    return resolve_trw_dir() / config.memory_store_path.removeprefix(".trw/")
 
 
 def resolve_project_root() -> Path:
@@ -102,7 +100,8 @@ def resolve_trw_dir() -> Path:
     Returns:
         Absolute path to the .trw directory (project_root / config.trw_dir).
     """
-    return resolve_project_root() / _config.trw_dir
+    config = get_config()
+    return resolve_project_root() / config.trw_dir
 
 
 def iter_run_dirs(task_root: Path) -> Iterator[tuple[Path, Path]]:
@@ -178,8 +177,10 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
         return pinned
 
     try:
+        config = get_config()
+        reader = FileStateReader()
         project_root = resolve_project_root()
-        task_root = project_root / _config.task_root
+        task_root = project_root / config.task_root
         if not task_root.exists():
             return None
 
@@ -188,7 +189,7 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
         for run_dir, run_yaml in iter_run_dirs(task_root):
             # Status-aware: skip completed/failed runs (PRD-FIX-042 FR02)
             try:
-                data = _reader.read_yaml(run_yaml)
+                data = reader.read_yaml(run_yaml)
                 status = str(data.get("status", "active"))
                 if status in ("complete", "failed"):
                     continue
@@ -233,18 +234,19 @@ def resolve_run_path(run_path: str | None = None) -> Path:
             )
         return resolved
 
+    config = get_config()
     project_root = resolve_project_root()
-    task_dir = project_root / _config.task_root
+    task_dir = project_root / config.task_root
     if not task_dir.exists():
         raise StateError(
-            f"Cannot auto-detect run path: {_config.task_root}/ directory not found",
+            f"Cannot auto-detect run path: {config.task_root}/ directory not found",
             project_root=str(project_root),
         )
 
     latest_run = _find_latest_run_dir(task_dir)
     if latest_run is None:
         raise StateError(
-            f"No active runs found in {_config.task_root}/*/runs/",
+            f"No active runs found in {config.task_root}/*/runs/",
             project_root=str(project_root),
         )
 
@@ -264,18 +266,21 @@ def detect_current_phase() -> str | None:
         Current phase string (e.g. ``"implement"``), or ``None`` if no active run.
     """
     try:
+        config = get_config()
+        reader = FileStateReader()
+
         # Use pinned run if available
         pinned = get_pinned_run()
         if pinned is not None:
             run_yaml = pinned / "meta" / "run.yaml"
             if run_yaml.exists():
-                data = _reader.read_yaml(run_yaml)
+                data = reader.read_yaml(run_yaml)
                 if str(data.get("status", "")) != "active":
                     return None
                 return str(data.get("phase", "")) or None
             return None
 
-        task_root = resolve_project_root() / _config.task_root
+        task_root = resolve_project_root() / config.task_root
         if not task_root.exists():
             return None
 
@@ -289,7 +294,7 @@ def detect_current_phase() -> str | None:
         if latest_yaml is None:
             return None
 
-        data = _reader.read_yaml(latest_yaml)
+        data = reader.read_yaml(latest_yaml)
         if str(data.get("status", "")) != "active":
             return None
         return str(data.get("phase", "")) or None

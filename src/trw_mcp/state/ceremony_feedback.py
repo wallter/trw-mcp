@@ -19,9 +19,6 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
 
-_reader = FileStateReader()
-_writer = FileStateWriter()
-
 
 def _get_class_sessions(
     task_class: str,
@@ -110,13 +107,15 @@ def _overrides_path(trw_dir: Path) -> Path:
 
 def read_feedback_data(trw_dir: Path) -> dict[str, object]:
     """Read ceremony feedback data, creating default if missing."""
+    reader = FileStateReader()
+    writer = FileStateWriter()
     path = _feedback_path(trw_dir)
     if not path.exists():
         default: dict[str, object] = {"task_classes": {}}
-        _writer.ensure_dir(path.parent)
-        _writer.write_yaml(path, default)
+        writer.ensure_dir(path.parent)
+        writer.write_yaml(path, default)
         return default
-    return _reader.read_yaml(path)
+    return reader.read_yaml(path)
 
 
 def record_session_outcome(
@@ -178,8 +177,9 @@ def record_session_outcome(
     task_classes[class_key]["sessions"] = sessions
     data["task_classes"] = task_classes
 
-    _writer.ensure_dir(_feedback_path(trw_dir).parent)
-    _writer.write_yaml(_feedback_path(trw_dir), data)
+    writer = FileStateWriter()
+    writer.ensure_dir(_feedback_path(trw_dir).parent)
+    writer.write_yaml(_feedback_path(trw_dir), data)
 
     return entry
 
@@ -311,11 +311,12 @@ def apply_auto_escalation(
     escalation: dict[str, object],
 ) -> None:
     """Apply auto-escalation by writing override and audit entry."""
+    writer = FileStateWriter()
     # Write override
     overrides = read_overrides(trw_dir)
     overrides[task_class] = str(escalation.get("new_tier", "COMPREHENSIVE"))
-    _writer.ensure_dir(_overrides_path(trw_dir).parent)
-    _writer.write_yaml(_overrides_path(trw_dir), overrides)
+    writer.ensure_dir(_overrides_path(trw_dir).parent)
+    writer.write_yaml(_overrides_path(trw_dir), overrides)
 
     # Log to ceremony-history.jsonl
     _log_ceremony_change(
@@ -350,6 +351,7 @@ def approve_proposal(trw_dir: Path, proposal_id: str) -> dict[str, object]:
     if proposal_id not in _pending_proposals:
         raise ValueError(f"No pending proposal with id: {proposal_id}")
 
+    writer = FileStateWriter()
     proposal = _pending_proposals.pop(proposal_id)
     task_class = str(proposal.get("task_class", ""))
     new_tier = str(proposal.get("to_tier", ""))
@@ -358,8 +360,8 @@ def approve_proposal(trw_dir: Path, proposal_id: str) -> dict[str, object]:
     # Write override
     overrides = read_overrides(trw_dir)
     overrides[task_class] = new_tier
-    _writer.ensure_dir(_overrides_path(trw_dir).parent)
-    _writer.write_yaml(_overrides_path(trw_dir), overrides)
+    writer.ensure_dir(_overrides_path(trw_dir).parent)
+    writer.write_yaml(_overrides_path(trw_dir), overrides)
 
     # Log
     change_id = f"chg-{uuid.uuid4().hex[:12]}"
@@ -402,13 +404,14 @@ def revert_change(trw_dir: Path, change_id: str) -> dict[str, object]:
     to_tier = str(original_entry.get("from_tier", ""))
 
     # Remove or restore override
+    writer = FileStateWriter()
     overrides = read_overrides(trw_dir)
     if task_class in overrides:
         if to_tier:
             overrides[task_class] = to_tier
         else:
             del overrides[task_class]
-    _writer.write_yaml(_overrides_path(trw_dir), overrides)
+    writer.write_yaml(_overrides_path(trw_dir), overrides)
 
     _log_ceremony_change(
         trw_dir=trw_dir,
@@ -425,11 +428,12 @@ def revert_change(trw_dir: Path, change_id: str) -> dict[str, object]:
 
 def read_overrides(trw_dir: Path) -> dict[str, object]:
     """Read ceremony tier overrides."""
+    reader = FileStateReader()
     path = _overrides_path(trw_dir)
     if not path.exists():
         return {}
     try:
-        data = _reader.read_yaml(path)
+        data = reader.read_yaml(path)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -524,8 +528,9 @@ def _log_ceremony_change(
     change_id: str | None = None,
 ) -> None:
     """Log ceremony tier change to audit trail."""
+    writer = FileStateWriter()
     path = _history_path(trw_dir)
-    _writer.ensure_dir(path.parent)
+    writer.ensure_dir(path.parent)
 
     entry: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -538,12 +543,13 @@ def _log_ceremony_change(
         "agent_id": agent_id,
     }
 
-    _writer.append_jsonl(path, entry)
+    writer.append_jsonl(path, entry)
 
 
 def read_ceremony_history(trw_dir: Path) -> list[dict[str, object]]:
     """Read ceremony change history."""
+    reader = FileStateReader()
     path = _history_path(trw_dir)
     if not path.exists():
         return []
-    return _reader.read_jsonl(path)
+    return reader.read_jsonl(path)

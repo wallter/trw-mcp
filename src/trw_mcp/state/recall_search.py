@@ -135,7 +135,12 @@ def search_entries(
                 )
                 return matching, matched_files
         except Exception:
-            pass  # Fall through to keyword search
+            logger.warning(
+                "recall_search_hybrid_failed",
+                exc_info=True,
+                query_tokens=query_tokens,
+            )
+            # Fall through to keyword search
 
     # --- Keyword scan fallback ---
     for entry_file in sorted(entries_dir.glob("*.yaml")):

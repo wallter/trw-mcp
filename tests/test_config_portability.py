@@ -8,6 +8,7 @@ _check_mcp_json_portability warns on stale absolute paths.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,33 +37,25 @@ class TestTrwMcpServerEntryPortable:
         # Must NOT contain any absolute path
         assert not str(entry["command"]).startswith("/")
 
-    def test_returns_python_m_fallback_when_not_on_path(self) -> None:
-        """When trw-mcp is not on PATH, return 'python -m trw_mcp.server'."""
+    def test_returns_sys_executable_fallback_when_not_on_path(self) -> None:
+        """When trw-mcp is not on PATH, return sys.executable -m trw_mcp.server."""
         from trw_mcp.bootstrap._utils import _trw_mcp_server_entry
 
         with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
             mock_shutil.which.return_value = None
             entry = _trw_mcp_server_entry()
 
-        assert entry["command"] == "python"
+        assert entry["command"] == sys.executable
         assert entry["args"] == ["-m", "trw_mcp.server", "--debug"]
-        # Must NOT contain any absolute path
-        assert not str(entry["command"]).startswith("/")
 
-    def test_never_returns_absolute_path(self) -> None:
-        """Regardless of environment, command must never be an absolute path."""
+    def test_on_path_returns_bare_command_not_absolute(self) -> None:
+        """When trw-mcp is on PATH, command is bare name (not the resolved absolute path)."""
         from trw_mcp.bootstrap._utils import _trw_mcp_server_entry
 
-        # Case 1: on PATH
         with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
             mock_shutil.which.return_value = "/some/path/trw-mcp"
             entry = _trw_mcp_server_entry()
-        assert not str(entry["command"]).startswith("/")
-
-        # Case 2: not on PATH
-        with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
-            mock_shutil.which.return_value = None
-            entry = _trw_mcp_server_entry()
+        assert entry["command"] == "trw-mcp"
         assert not str(entry["command"]).startswith("/")
 
     def test_entry_always_has_debug_arg(self) -> None:

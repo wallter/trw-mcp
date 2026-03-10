@@ -26,9 +26,6 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
 
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
 
 # --- Scoring constants ---
 
@@ -50,9 +47,6 @@ __all__ = [
     "update_q_value",
     # Shared state
     "logger",
-    "_config",
-    "_reader",
-    "_writer",
     # Constants
     "_LN2",
     "_IMPACT_DECAY_FLOOR",
@@ -63,4 +57,6 @@ __all__ = [
     "safe_int",
     "get_config",
     "TRWConfig",
+    "FileStateReader",
+    "FileStateWriter",
 ]

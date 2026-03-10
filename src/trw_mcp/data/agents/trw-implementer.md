@@ -75,7 +75,8 @@ Common failure modes to look for:
 
 ### Step 3: Quality Review
 
-- Duplicated logic → extract shared helpers (DRY)
+- **DRY Check (REQUIRED)**: Before marking complete, scan your modified files for any code blocks >5 lines that appear more than once. If found, extract to a shared helper function. This is the #1 source of review findings — catching it here saves a full review cycle.
+- **Semantic Check**: Verify no dead `hasattr()` on ORM models, no misleading variable names with hardcoded values, no missing domain constraints (role/status Literal types).
 - Over-engineered → simplify to minimum viable (KISS)
 - Mixed responsibilities → separate concerns (SOLID)
 - Missing error handling at system boundaries

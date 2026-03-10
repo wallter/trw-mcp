@@ -13,6 +13,8 @@ from pathlib import Path
 import structlog
 
 import trw_mcp.state.analytics_core as _ac
+from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
 
@@ -38,7 +40,8 @@ def find_repeated_operations(
         for event in events
         if (et := _ac._get_event_type(event))
     )
-    threshold = _ac._config.learning_repeated_op_threshold
+    cfg: TRWConfig = get_config()
+    threshold = cfg.learning_repeated_op_threshold
     return sorted(
         ((op, count) for op, count in counts.items() if count >= threshold),
         key=lambda x: x[1],
@@ -85,7 +88,8 @@ def find_success_patterns(
             "count": str(count),
         })
 
-    return patterns[:_ac._config.reflect_max_success_patterns]
+    cfg_sp: TRWConfig = get_config()
+    return patterns[:cfg_sp.reflect_max_success_patterns]
 
 
 def detect_tool_sequences(
@@ -153,13 +157,16 @@ def _read_analytics(trw_dir: Path) -> tuple[Path, dict[str, object]]:
 
     Creates the context directory if it does not exist.
     """
-    context_dir = trw_dir / _ac._config.context_dir
-    _ac._writer.ensure_dir(context_dir)
+    cfg: TRWConfig = get_config()
+    writer = FileStateWriter()
+    reader = FileStateReader()
+    context_dir = trw_dir / cfg.context_dir
+    writer.ensure_dir(context_dir)
     analytics_path = context_dir / "analytics.yaml"
 
     data: dict[str, object] = {}
-    if _ac._reader.exists(analytics_path):
-        data = _ac._reader.read_yaml(analytics_path)
+    if reader.exists(analytics_path):
+        data = reader.read_yaml(analytics_path)
     return analytics_path, data
 
 
@@ -189,7 +196,7 @@ def update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
     """
     analytics_path, data = _read_analytics(trw_dir)
     _, total_learnings = _update_core_counters(data, new_learnings_count)
-    _ac._writer.write_yaml(analytics_path, data)
+    FileStateWriter().write_yaml(analytics_path, data)
     logger.debug("analytics_updated", new_learnings=new_learnings_count, total=total_learnings)
 
 
@@ -201,7 +208,7 @@ def update_analytics_sync(trw_dir: Path) -> None:
     """
     analytics_path, data = _read_analytics(trw_dir)
     data["claude_md_syncs"] = _ac._safe_int(data, "claude_md_syncs") + 1
-    _ac._writer.write_yaml(analytics_path, data)
+    FileStateWriter().write_yaml(analytics_path, data)
 
 
 def update_analytics_extended(
@@ -263,4 +270,4 @@ def update_analytics_extended(
     data["q_learning_activations"] = q_activations
     data["high_impact_learnings"] = high_impact
 
-    _ac._writer.write_yaml(analytics_path, data)
+    FileStateWriter().write_yaml(analytics_path, data)

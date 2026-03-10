@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import (
@@ -266,16 +267,16 @@ class TestComplexitySignals:
         assert signals.unknown_codebase is False
 
     def test_files_affected_negative_raises(self) -> None:
-        with pytest.raises(Exception):  # ValidationError
+        with pytest.raises(ValidationError):
             ComplexitySignals(files_affected=-1)
 
     def test_files_affected_capped_at_100(self) -> None:
-        with pytest.raises(Exception):  # ValidationError
+        with pytest.raises(ValidationError):
             ComplexitySignals(files_affected=101)
 
     def test_frozen_model(self) -> None:
         signals = ComplexitySignals()
-        with pytest.raises(Exception):  # ValidationError
+        with pytest.raises(ValidationError):
             signals.files_affected = 5  # type: ignore[misc]
 
 

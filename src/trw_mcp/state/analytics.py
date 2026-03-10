@@ -35,15 +35,6 @@ from trw_mcp.state.analytics_core import (
     is_success_event as is_success_event,
 )
 
-# Re-export singletons so patch.object(analytics, "_config", ...) works.
-# These are module-attribute references — updated by __reload_hook__()
-# in analytics_core, which is re-exported above.
-import trw_mcp.state.analytics_core as _ac  # noqa: E402
-
-_config = _ac._config
-_reader = _ac._reader
-_writer = _ac._writer
-
 # ---------------------------------------------------------------------------
 # Module B — analytics_entries (persistence, index, status, extraction)
 # ---------------------------------------------------------------------------

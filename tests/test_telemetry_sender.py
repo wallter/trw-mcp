@@ -273,6 +273,37 @@ class TestPartialSuccess:
         assert remaining[0]["idx"] == 2
         assert remaining[1]["idx"] == 3
 
+    def test_send_interleaved_success_failure_preserves_failed(
+        self, tmp_path: Path
+    ) -> None:
+        """FR04: batch1 OK, batch2 FAIL, batch3 OK — failed batch preserved."""
+        sender, input_path = _make_sender(
+            tmp_path, batch_size=2, max_retries=1, backoff_base=0.0
+        )
+        events = [{"idx": i} for i in range(6)]
+        _write_events(input_path, events)
+
+        batch_num = {"n": 0}
+
+        def _post(url: str, payload: list[dict[str, object]]) -> bool:
+            # Batch 0 succeeds, batch 1 fails, batch 2 succeeds
+            result = batch_num["n"] != 1
+            batch_num["n"] += 1
+            return result
+
+        with patch.object(sender, "_http_post", side_effect=_post):
+            result = sender.send()
+
+        assert result["sent"] == 4
+        assert result["failed"] == 2
+        assert result["remaining"] == 2
+
+        remaining = _read_events(input_path)
+        assert len(remaining) == 2
+        # The failed batch was batch 1 (idx 2,3)
+        assert remaining[0]["idx"] == 2
+        assert remaining[1]["idx"] == 3
+
 
 # ===========================================================================
 # Backoff timing

@@ -20,8 +20,6 @@ For full tool guide: invoke `/trw-ceremony-guide`
 
 Sessions where you orchestrate (delegate, verify, learn) rather than implement directly produce higher quality and fewer rework cycles — your strategic oversight is more valuable than your keystrokes.
 
-When spawning agents, pass `model=` with canonical IDs: `claude-opus-4-6` (Tier 1: architecture, planning), `claude-sonnet-4-6` (Tier 2: implementation, review, testing), `claude-haiku-4-5-20251001` (Tier 3: lightweight checks).
-
 ### Session Boundaries
 
 Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.

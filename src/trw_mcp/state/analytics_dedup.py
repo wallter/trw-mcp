@@ -13,7 +13,9 @@ import structlog
 
 import trw_mcp.state.analytics_core as _ac
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state.analytics_entries import apply_status_update, resync_learning_index
+from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
 
@@ -393,16 +395,18 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     Returns:
         Dict with score (0.0-1.0), components, and diagnostics.
     """
-    reflections_dir = trw_dir / _ac._config.reflections_dir
+    cfg_rq: TRWConfig = get_config()
+    reflections_dir = trw_dir / cfg_rq.reflections_dir
     entries_dir = _ac._entries_path(trw_dir)
 
     # Count reflections
     reflection_count = 0
     total_learnings_from_reflections = 0
+    reader_rq = FileStateReader()
     if reflections_dir.is_dir():
         for ref_file in reflections_dir.glob("*.yaml"):
             try:
-                data = _ac._reader.read_yaml(ref_file)
+                data = reader_rq.read_yaml(ref_file)
                 reflection_count += 1
                 new_learnings = data.get("new_learnings", [])
                 if isinstance(new_learnings, list):

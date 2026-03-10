@@ -388,7 +388,7 @@ class FileEventLogger:
             **data,
         }
         self._writer.append_jsonl(events_path, record)
-        logger.info("event_logged", event_type=event_type, path=str(events_path))
+        logger.debug("event_logged", event_type=event_type, path=str(events_path))
 
 
 def model_to_dict(model: BaseModel) -> dict[str, object]:

@@ -18,8 +18,6 @@ from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
 
-_reader = FileStateReader()
-
 
 def _safe_float(d: dict[str, object], key: str, default: float = 0.0) -> float:
     """Safely extract a float from a dict, defaulting on missing/invalid."""
@@ -335,12 +333,14 @@ def aggregate_dashboard(
     """
     context_dir = trw_dir / "context"
 
+    reader = FileStateReader()
+
     # Read aggregate counters from analytics.yaml
     analytics: dict[str, object] = {}
     analytics_path = context_dir / "analytics.yaml"
     if analytics_path.exists():
         try:
-            analytics = _reader.read_yaml(analytics_path)
+            analytics = reader.read_yaml(analytics_path)
         except (OSError, StateError):
             pass
 
@@ -349,7 +349,7 @@ def aggregate_dashboard(
     raw_events: list[dict[str, object]] = []
     if events_path.exists():
         try:
-            raw_events = _reader.read_jsonl(events_path)
+            raw_events = reader.read_jsonl(events_path)
         except (OSError, StateError):
             pass
 

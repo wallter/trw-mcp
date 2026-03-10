@@ -49,8 +49,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_config = get_config()
-_writer = FileStateWriter()
 
 # Priority → base confidence score mapping
 _PRIORITY_CONFIDENCE: dict[str, float] = {
@@ -89,6 +87,8 @@ def register_requirements_tools(server: FastMCP) -> None:
             sequence: Sequence number for PRD ID. Auto-increments from existing PRDs when default (1).
             risk_level: Optional risk level (critical, high, medium, low). Scales validation strictness.
         """
+        config = get_config()
+        writer = FileStateWriter()
         # Validate priority
         try:
             prd_priority = Priority(priority)
@@ -101,7 +101,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Auto-increment sequence when using default value (1)
         if sequence == 1:
-            prds_dir_for_seq = resolve_project_root() / _config.prds_relative_path
+            prds_dir_for_seq = resolve_project_root() / config.prds_relative_path
             sequence = next_prd_sequence(prds_dir_for_seq, category.upper())
 
         prd_id = f"PRD-{category.upper()}-{sequence:03d}"
@@ -153,9 +153,9 @@ def register_requirements_tools(server: FastMCP) -> None:
             ),
             traceability=PRDTraceability(),
             quality_gates=PRDQualityGates(
-                ambiguity_rate_max=_config.ambiguity_rate_max,
-                completeness_min=_config.completeness_min,
-                traceability_coverage_min=_config.traceability_coverage_min,
+                ambiguity_rate_max=config.ambiguity_rate_max,
+                completeness_min=config.completeness_min,
+                traceability_coverage_min=config.traceability_coverage_min,
             ),
             dates=PRDDates(
                 created=date.today(),
@@ -171,16 +171,16 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         output_path = ""
         project_root = resolve_project_root()
-        prds_dir = project_root / _config.prds_relative_path
-        if prds_dir.exists() or (project_root / _config.trw_dir).exists():
-            _writer.ensure_dir(prds_dir)
+        prds_dir = project_root / config.prds_relative_path
+        if prds_dir.exists() or (project_root / config.trw_dir).exists():
+            writer.ensure_dir(prds_dir)
             prd_file = prds_dir / f"{prd_id}.md"
-            _writer.write_text(prd_file, prd_content)
+            writer.write_text(prd_file, prd_content)
             output_path = str(prd_file)
 
         # Auto-sync INDEX.md/ROADMAP.md so catalogue stays current
         index_synced = False
-        if output_path and _config.index_auto_sync_on_status_change:
+        if output_path and config.index_auto_sync_on_status_change:
             index_synced = _auto_sync_index()
 
         logger.info(
@@ -223,7 +223,8 @@ def register_requirements_tools(server: FastMCP) -> None:
         content = path.read_text(encoding="utf-8")
 
         # Single V2 validation call — subsumes all V1 checks (PRD-FIX-011)
-        v2_result = validate_prd_quality_v2(content, _config)
+        config = get_config()
+        v2_result = validate_prd_quality_v2(content, config)
 
         sections = _extract_sections(content)
 
@@ -587,12 +588,14 @@ def _auto_sync_index() -> bool:
     try:
         from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
 
+        config = get_config()
+        writer = FileStateWriter()
         project_root = resolve_project_root()
-        prds_dir = project_root / _config.prds_relative_path
+        prds_dir = project_root / config.prds_relative_path
         aare_dir = prds_dir.parent
 
-        sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=_writer)
-        sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=_writer)
+        sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
+        sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
 
         logger.debug("auto_index_sync_complete")
         return True

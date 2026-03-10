@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from trw_mcp.models.run import ReviewFinding
 
@@ -116,7 +117,7 @@ class TestReviewFindingModel:
             severity="info",
             description="Low coverage",
         )
-        with pytest.raises(Exception):  # ValidationError for frozen model
+        with pytest.raises(ValidationError):
             f.category = "other"  # type: ignore[misc]
 
 

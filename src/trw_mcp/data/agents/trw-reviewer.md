@@ -65,6 +65,19 @@ For each FR in the linked PRD:
 
 Flag tests that validate the implementation but not the spec as P1 findings.
 
+## Semantic Review Checklist (PRD-QUAL-040)
+
+For each file in the diff, check these semantic patterns:
+
+1. **Dead Code**: Are there `hasattr()` checks on ORM models (always True)? Unreachable branches after unconditional returns? Unused variables or imports?
+2. **DRY Violations**: Any block >5 lines repeated within or across files? Similar functions with >70% logic overlap?
+3. **Misleading Names**: Variables named with hardcoded values (e.g., `cutoff_14d`) but assigned from dynamic parameters? Single-letter variable names outside comprehensions?
+4. **Missing Domain Constraints**: String fields that should use `Literal` types? Role/status sets missing required values (e.g., 'owner' missing from admin roles)?
+5. **Comment-Code Drift**: Comments mentioning specific values that don't match the code? Docstrings describing behavior the code doesn't implement?
+6. **Hardcoded Credentials**: Strings that look like passwords, API keys, or tokens?
+
+Flag semantic issues as P1 findings — they survive VALIDATE (pytest+mypy) but cause production bugs.
+
 ## Review Output Schema
 ```yaml
 verdict: pass|conditional|fail

@@ -132,6 +132,42 @@ class TestGetEmbedder:
             result = get_embedder()
             assert result is None
 
+    def test_embedder_init_failure_allows_retry(self) -> None:
+        """FR06: After init failure, _embedder_checked is NOT set — retry works."""
+        reset_embedder()
+        mock_provider = MagicMock()
+        mock_provider.available.return_value = True
+
+        call_count = {"n": 0}
+
+        def _provider_factory(**kwargs: Any) -> Any:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("transient failure")
+            return mock_provider
+
+        with (
+            patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg,
+            patch(
+                "trw_memory.embeddings.local.LocalEmbeddingProvider",
+                side_effect=_provider_factory,
+            ),
+        ):
+            cfg = MagicMock()
+            cfg.embeddings_enabled = True
+            cfg.retrieval_embedding_model = "test-model"
+            cfg.retrieval_embedding_dim = 128
+            mock_cfg.return_value = cfg
+
+            # First call fails
+            result1 = get_embedder()
+            assert result1 is None
+
+            # Second call retries and succeeds
+            result2 = get_embedder()
+            assert result2 is mock_provider
+            assert call_count["n"] == 2
+
     def test_embedder_available_true_caches(self) -> None:
         """When provider.available() returns True, embedder is cached."""
         reset_embedder()

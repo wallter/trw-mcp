@@ -23,10 +23,7 @@ from trw_mcp.scoring._utils import (
     _TIER_HIGH_CEILING as _TIER_HIGH_CEILING,
     _TIER_MEDIUM_CEILING as _TIER_MEDIUM_CEILING,
     _clamp01 as _clamp01,
-    _config as _config,
     _ensure_utc as _ensure_utc,
-    _reader as _reader,
-    _writer as _writer,
     apply_time_decay as apply_time_decay,
     bayesian_calibrate as bayesian_calibrate,
     compute_calibration_accuracy as compute_calibration_accuracy,
@@ -108,38 +105,3 @@ __all__ = [
     "process_outcome",
     "process_outcome_for_event",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Module wrapper: propagate _config/_reader/_writer assignments to _utils
-# so that test code doing ``scoring_mod._config = X`` is seen by sub-modules
-# that access these via ``_su._config`` (where _su = trw_mcp.scoring._utils).
-# ---------------------------------------------------------------------------
-import sys as _sys  # noqa: E402
-import types as _types  # noqa: E402
-
-from trw_mcp.scoring import _utils as _scoring_utils_mod  # noqa: E402
-
-_PROPAGATED_ATTRS = frozenset({"_config", "_reader", "_writer", "resolve_trw_dir"})
-
-
-class _ScoringModule(_types.ModuleType):
-    """Thin wrapper that propagates mutable-state writes to _utils."""
-
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        if name in _PROPAGATED_ATTRS:
-            setattr(_scoring_utils_mod, name, value)
-
-
-# Replace this module in sys.modules with the wrapper instance.
-_self = _sys.modules[__name__]
-_wrapper = _ScoringModule(__name__, __doc__)
-_wrapper.__dict__.update(
-    {k: v for k, v in _self.__dict__.items() if k != "__dict__"},
-)
-_wrapper.__path__ = _self.__path__
-_wrapper.__package__ = _self.__package__
-_wrapper.__spec__ = _self.__spec__
-_wrapper.__file__ = _self.__file__
-_sys.modules[__name__] = _wrapper

@@ -235,6 +235,7 @@ class TestSkills:
         "trw-ceremony-guide",
         "trw-commit",
         "trw-deliver",
+        "trw-dry-check",
         "trw-email-template",
         "trw-exec-plan",
         "trw-framework-check",
@@ -1001,7 +1002,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
-        assert len(skills) == 22
+        assert len(skills) == 23
         assert len(agents) == 18
         assert len(hooks) > 0
 

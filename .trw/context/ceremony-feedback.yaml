@@ -1,0 +1,21 @@
+task_classes:
+  documentation:
+    sessions:
+    - session_id: advisory-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-102/test_deliver_review_advisory0/docs/task/runs/20260226T120000Z-advisory-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-10T18:03:39.562116+00:00'
+    - session_id: gate-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-102/test_deliver_review_soft_gate_0/docs/task/runs/20260226T120000Z-gate-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-10T18:03:39.669615+00:00'

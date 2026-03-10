@@ -507,6 +507,8 @@ class TestTelemetryClientErrorHandling:
         result = client.flush()
         # Written count is 0 because the write failed
         assert result == 0
+        # FR03: Failed events are restored to the queue for retry
+        assert client.queue_size() == 1
 
     def test_flush_continues_after_partial_write_error(self, tmp_path: Path) -> None:
         output = tmp_path / "logs" / "partial.jsonl"
@@ -531,6 +533,8 @@ class TestTelemetryClientErrorHandling:
         result = client.flush()
         assert result == 1  # Only the second event succeeded
         assert mock_writer.append_jsonl.call_count == 2
+        # FR03: The failed event is restored to the queue for retry
+        assert client.queue_size() == 1
 
 
 # ===========================================================================
@@ -602,3 +606,81 @@ class TestTelemetryClientFromConfig:
 
         expected = trw_dir / "logs" / "custom-telemetry.jsonl"
         assert client._output_path == expected
+
+
+# ===========================================================================
+# FR03 — flush data loss prevention
+# ===========================================================================
+
+
+class TestFlushDataLossPrevention:
+    """PRD-FIX-043 FR03: Failed events restored to queue on flush errors."""
+
+    def test_all_events_restored_on_total_failure(self, tmp_path: Path) -> None:
+        """When all writes fail, all events return to the queue."""
+        output = tmp_path / "telemetry.jsonl"
+        mock_writer = MagicMock()
+        mock_writer.append_jsonl.side_effect = OSError("disk full")
+
+        client = TelemetryClient(
+            enabled=True, output_path=output, writer=mock_writer
+        )
+        for _ in range(3):
+            client.record_event(_base_event())
+
+        result = client.flush()
+        assert result == 0
+        assert client.queue_size() == 3
+
+    def test_only_failed_events_restored(self, tmp_path: Path) -> None:
+        """Mixed success: only failed events go back to queue."""
+        output = tmp_path / "logs" / "mixed.jsonl"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        mock_writer = MagicMock()
+        call_idx = {"n": 0}
+
+        def _side_effect(path: Path, record: dict[str, object]) -> None:
+            call_idx["n"] += 1
+            if call_idx["n"] == 2:
+                raise OSError("transient")
+
+        mock_writer.append_jsonl.side_effect = _side_effect
+
+        client = TelemetryClient(
+            enabled=True, output_path=output, writer=mock_writer
+        )
+        for _ in range(3):
+            client.record_event(_base_event())
+
+        result = client.flush()
+        assert result == 2  # events 1 and 3 succeeded
+        assert client.queue_size() == 1  # event 2 failed, restored
+
+    def test_restored_events_can_be_retried(self, tmp_path: Path) -> None:
+        """Failed events restored to queue succeed on second flush."""
+        output = tmp_path / "logs" / "retry.jsonl"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        mock_writer = MagicMock()
+        call_idx = {"n": 0}
+
+        def _side_effect(path: Path, record: dict[str, object]) -> None:
+            call_idx["n"] += 1
+            if call_idx["n"] == 1:
+                raise OSError("transient")
+
+        mock_writer.append_jsonl.side_effect = _side_effect
+
+        client = TelemetryClient(
+            enabled=True, output_path=output, writer=mock_writer
+        )
+        client.record_event(_base_event())
+
+        # First flush fails
+        result1 = client.flush()
+        assert result1 == 0
+        assert client.queue_size() == 1
+
+        # Second flush succeeds (side_effect only fails call #1)
+        result2 = client.flush()
+        assert result2 == 1
+        assert client.queue_size() == 0

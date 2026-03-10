@@ -12,7 +12,7 @@ from pathlib import Path
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.scoring._decay import _entry_utility
-from trw_mcp.scoring._utils import safe_float, safe_int
+from trw_mcp.scoring._utils import TRWConfig, get_config, safe_float, safe_int
 
 
 # --- Recall ranking (PRD-FIX-010: moved from tools/learning.py) ---
@@ -92,6 +92,7 @@ def utility_based_prune_candidates(
     candidates: list[dict[str, object]] = []
     seen_ids: set[str] = set()
     today = date.today()
+    cfg: TRWConfig = get_config()
 
     for _, data in entries:
         entry_id = str(data.get("id", ""))
@@ -124,7 +125,7 @@ def utility_based_prune_candidates(
         utility = _entry_utility(data, today, fallback_days=age_days)
 
         # Tier 2: Delete-level utility (effectively forgotten)
-        if utility < _su._config.learning_utility_delete_threshold:
+        if utility < cfg.learning_utility_delete_threshold:
             candidates.append({
                 "id": entry_id,
                 "summary": data.get("summary", ""),
@@ -133,7 +134,7 @@ def utility_based_prune_candidates(
                 "suggested_status": "obsolete",
                 "reason": (
                     f"Utility {utility:.3f} below delete threshold "
-                    f"({_su._config.learning_utility_delete_threshold}). "
+                    f"({cfg.learning_utility_delete_threshold}). "
                     f"recurrence={recurrence}, age={age_days}d"
                 ),
             })
@@ -141,7 +142,7 @@ def utility_based_prune_candidates(
             continue
 
         # Tier 3: Prune-level utility (fading, older than 14 days)
-        if utility < _su._config.learning_utility_prune_threshold and age_days > 14:
+        if utility < cfg.learning_utility_prune_threshold and age_days > 14:
             candidates.append({
                 "id": entry_id,
                 "summary": data.get("summary", ""),
@@ -150,7 +151,7 @@ def utility_based_prune_candidates(
                 "suggested_status": "obsolete",
                 "reason": (
                     f"Utility {utility:.3f} below prune threshold "
-                    f"({_su._config.learning_utility_prune_threshold}) and "
+                    f"({cfg.learning_utility_prune_threshold}) and "
                     f"age {age_days}d > 14d"
                 ),
             })

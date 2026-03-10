@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import os
+import sys
 import shutil
 import subprocess
 from pathlib import Path
@@ -940,12 +941,12 @@ class TestTrwMcpServerEntry:
         assert "command" in entry
         assert "args" in entry
 
-    def test_falls_back_to_python_m_when_no_which(self) -> None:
-        """Falls back to python -m when trw-mcp not in PATH."""
+    def test_falls_back_to_sys_executable_when_no_which(self) -> None:
+        """Falls back to sys.executable -m when trw-mcp not in PATH."""
         with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
             mock_shutil.which.return_value = None
             entry = _trw_mcp_server_entry()
-        assert entry["command"] == "python"
+        assert entry["command"] == sys.executable
         assert "-m" in entry["args"]  # type: ignore[operator]
 
 

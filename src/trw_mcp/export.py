@@ -29,9 +29,6 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.analytics_report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-_reader = FileStateReader()
-_writer = FileStateWriter()
-
 
 @contextmanager
 def temp_project_root(target_dir: Path) -> Generator[None, None, None]:
@@ -61,12 +58,13 @@ def _collect_learnings(
     if not entries_dir.is_dir():
         return []
 
+    reader = FileStateReader()
     results: list[dict[str, object]] = []
     for f in sorted(entries_dir.glob("*.yaml")):
         if f.name == "index.yaml":
             continue
         try:
-            data = _reader.read_yaml(f)
+            data = reader.read_yaml(f)
         except (OSError, StateError):
             continue
 
@@ -125,11 +123,12 @@ def _collect_analytics(
     """Merge analytics.yaml, reflection quality, and ceremony aggregates."""
     analytics: dict[str, object] = {}
 
+    reader = FileStateReader()
     # Load analytics.yaml
     analytics_path = trw_dir / config.context_dir / "analytics.yaml"
     if analytics_path.exists():
         with contextlib.suppress(OSError, StateError):
-            analytics["session_analytics"] = _reader.read_yaml(analytics_path)
+            analytics["session_analytics"] = reader.read_yaml(analytics_path)
 
     # Reflection quality
     try:
@@ -142,7 +141,7 @@ def _collect_analytics(
     report_path = trw_dir / config.context_dir / "analytics-report.yaml"
     if report_path.exists():
         try:
-            cached = _reader.read_yaml(report_path)
+            cached = reader.read_yaml(report_path)
             analytics["ceremony_aggregates"] = cached.get("aggregate", {})
         except (OSError, StateError):
             pass
@@ -254,14 +253,16 @@ def import_learnings(
         return {"error": "learnings must be a list", "status": "failed"}
 
     # Load existing entries for dedup
+    reader = FileStateReader()
+    writer = FileStateWriter()
     entries_dir = trw_dir / config.learnings_dir / config.entries_dir
-    _writer.ensure_dir(entries_dir)
+    writer.ensure_dir(entries_dir)
     existing_summaries: list[str] = []
     for f in entries_dir.glob("*.yaml"):
         if f.name == "index.yaml":
             continue
         try:
-            data = _reader.read_yaml(f)
+            data = reader.read_yaml(f)
             existing_summaries.append(str(data.get("summary", "")))
         except (OSError, StateError):
             continue

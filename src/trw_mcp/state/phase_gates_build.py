@@ -1,9 +1,13 @@
 """Build status, integration, and orphan-module checks for phase gates.
 
 Provides _check_build_status(), _best_effort_build_check(),
-_best_effort_integration_check(), and _best_effort_orphan_check()
-which validate cached build results, tool registration, and module
-reachability before allowing phase transitions.
+_best_effort_integration_check(), _best_effort_orphan_check(),
+_best_effort_migration_check() (PRD-INFRA-035),
+_best_effort_dry_check() (PRD-QUAL-039), and
+_best_effort_semantic_check() (PRD-QUAL-040)
+which validate cached build results, tool registration, module
+reachability, migration safety, code duplication, and semantic
+patterns before allowing phase transitions.
 Extracted from phase_gates.py for module focus.
 """
 
@@ -259,5 +263,296 @@ def _best_effort_orphan_check(
                     ),
                     severity=severity,
                 ))
+    except Exception:  # broad catch: best-effort gate, never blocks
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Migration verification gate (PRD-INFRA-035)
+# ---------------------------------------------------------------------------
+
+
+def _get_changed_files(project_root: Path) -> list[str]:
+    """Get list of changed files from git diff (staged + unstaged + untracked).
+
+    Returns empty list if git is unavailable.
+
+    Args:
+        project_root: Project root directory.
+
+    Returns:
+        De-duplicated list of changed file paths (relative to project root).
+    """
+    import subprocess
+
+    try:
+        # Staged + unstaged changes
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(project_root),
+        )
+        files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+
+        # Also check staged files (for new files)
+        result2 = subprocess.run(
+            ["git", "diff", "--name-only", "--cached"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(project_root),
+        )
+        staged = [f.strip() for f in result2.stdout.strip().split("\n") if f.strip()]
+
+        # Also check untracked files
+        result3 = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(project_root),
+        )
+        untracked = [
+            f.strip() for f in result3.stdout.strip().split("\n") if f.strip()
+        ]
+
+        all_files = list(set(files + staged + untracked))
+        return all_files
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return []
+
+
+def _check_nullable_defaults(
+    project_root: Path,
+    model_files: list[str],
+) -> list[str]:
+    """Parse model files for NOT NULL columns without server_default.
+
+    Inspects added lines (``+`` prefix) from ``git diff HEAD`` output for
+    patterns like ``Column(..., nullable=False)`` that lack ``server_default``.
+    Such columns will fail on existing production rows during migration.
+
+    Args:
+        project_root: Project root directory.
+        model_files: List of changed model file paths (relative to project root).
+
+    Returns:
+        List of warning messages.
+    """
+    import subprocess
+
+    warnings: list[str] = []
+
+    for model_file in model_files:
+        try:
+            # Get only added lines from the diff
+            result = subprocess.run(
+                ["git", "diff", "HEAD", "--", model_file],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=str(project_root),
+            )
+            for line in result.stdout.split("\n"):
+                if not line.startswith("+") or line.startswith("+++"):
+                    continue
+                added_line = line[1:]  # Strip the leading +
+                if (
+                    "Column(" in added_line
+                    and "nullable=False" in added_line
+                    and "server_default" not in added_line
+                ):
+                    clean_line = added_line.strip()
+                    warnings.append(
+                        f"NOT NULL column without server_default in "
+                        f"{model_file}: {clean_line}"
+                    )
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            continue
+
+    return warnings
+
+
+def check_migration_gate(project_root: Path) -> list[str]:
+    """Check for database model changes without corresponding Alembic migrations.
+
+    PRD-INFRA-035: Detects model-without-migration gaps and NOT NULL columns
+    without server_default that would fail on existing production rows.
+
+    Args:
+        project_root: Project root directory.
+
+    Returns:
+        List of warning messages (empty if no issues found).
+    """
+    warnings: list[str] = []
+
+    changed = _get_changed_files(project_root)
+    if not changed:
+        return warnings
+
+    # FR-1: Detect model file changes
+    model_files = [
+        f for f in changed if "models/database" in f and f.endswith(".py")
+    ]
+
+    # FR-2: Check for new migration files
+    migration_files = [
+        f
+        for f in changed
+        if "alembic/versions/" in f and f.endswith(".py")
+    ]
+
+    if model_files and not migration_files:
+        model_names = ", ".join(model_files)
+        warnings.append(
+            f"database.py modified ({model_names}) but no new Alembic "
+            f"migration detected"
+        )
+
+    # FR-3: Check NOT NULL without server_default
+    if model_files:
+        warnings.extend(_check_nullable_defaults(project_root, model_files))
+
+    return warnings
+
+
+def _best_effort_migration_check(
+    config: TRWConfig,
+    failures: list[ValidationFailure],
+) -> None:
+    """Append migration gate warnings (best-effort, never raises).
+
+    PRD-INFRA-035-FR04: Soft gate integration with trw_build_check.
+
+    Args:
+        config: Framework configuration.
+        failures: Mutable list to append failures into.
+    """
+    if not config.migration_gate_enabled:
+        return
+
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+
+        project_root = resolve_project_root()
+
+        warnings = check_migration_gate(project_root)
+        for warning_msg in warnings:
+            failures.append(
+                ValidationFailure(
+                    field="migration_gate",
+                    rule="migration_check",
+                    message=warning_msg,
+                    severity="warning",
+                )
+            )
+    except Exception:  # broad catch: best-effort gate, never blocks
+        pass
+
+
+def _best_effort_dry_check(
+    config: TRWConfig,
+    failures: list[ValidationFailure],
+) -> None:
+    """Append DRY check warnings for changed files (best-effort, never raises).
+
+    PRD-QUAL-039-FR03: Soft gate integration with trw_build_check.
+
+    Args:
+        config: Framework configuration.
+        failures: Mutable list to append failures into.
+    """
+    if not config.dry_check_enabled:
+        return
+
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.state.dry_check import find_duplicated_blocks
+
+        project_root = resolve_project_root()
+
+        # Reuse shared helper instead of duplicating subprocess call
+        changed = _get_changed_files(project_root)
+        py_files = [
+            str(project_root / f) for f in changed
+            if f.endswith(".py") and "/tests/" not in f
+        ]
+
+        if not py_files:
+            return
+
+        blocks = find_duplicated_blocks(
+            py_files, min_block_size=config.dry_check_min_block_size,
+        )
+
+        for block in blocks[:5]:  # Cap at 5 warnings
+            loc_summary = ", ".join(
+                f"{loc.file_path}:{loc.start_line}"
+                for loc in block.locations[:3]
+            )
+            failures.append(ValidationFailure(
+                field="dry_check",
+                rule="duplication_detected",
+                message=(
+                    f"Duplicated block ({len(block.locations)} occurrences, "
+                    f"{block.block_hash}): {loc_summary}"
+                ),
+                severity="warning",
+            ))
+    except Exception:  # broad catch: best-effort gate, never blocks
+        pass
+
+
+def _best_effort_semantic_check(
+    config: TRWConfig,
+    failures: list[ValidationFailure],
+) -> None:
+    """Append semantic check warnings for changed files (best-effort, never raises).
+
+    PRD-QUAL-040-FR04: Adds semantic warnings section to build gate.
+
+    Args:
+        config: Framework configuration.
+        failures: Mutable list to append failures into.
+    """
+    if not config.semantic_checks_enabled:
+        return
+
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.state.semantic_checks import run_semantic_checks
+
+        project_root = resolve_project_root()
+
+        # Reuse shared helper instead of duplicating subprocess call
+        changed = _get_changed_files(project_root)
+        scannable = [
+            str(project_root / f)
+            for f in changed
+            if f.endswith((".py", ".ts", ".tsx", ".js"))
+        ]
+
+        if not scannable:
+            return
+
+        check_result = run_semantic_checks(scannable)
+
+        # Only report warnings and errors (skip info-level)
+        for finding in check_result.findings[:10]:
+            if finding.severity in ("warning", "error"):
+                failures.append(
+                    ValidationFailure(
+                        field="semantic_check",
+                        rule=finding.check_id,
+                        message=(
+                            f"[{finding.severity}] {finding.description} "
+                            f"at {finding.file_path}:{finding.line_number}"
+                        ),
+                        severity="warning",  # Always soft gate
+                    )
+                )
     except Exception:  # broad catch: best-effort gate, never blocks
         pass

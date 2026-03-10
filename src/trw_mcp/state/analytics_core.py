@@ -1,8 +1,7 @@
-"""Analytics core — singletons, constants, and shared infrastructure.
+"""Analytics core — constants and shared infrastructure.
 
 Module A of the analytics decomposition.  All other analytics_* modules
-import their shared state (_config, _reader, _writer) and helper functions
-from here, ensuring a single source of truth for module-level singletons.
+import shared helper functions and constants from here.
 """
 
 from __future__ import annotations
@@ -31,9 +30,6 @@ _safe_int = safe_int
 
 __all__ = [
     "__reload_hook__",
-    "_config",
-    "_reader",
-    "_writer",
     "_safe_float",
     "_safe_int",
     "_SLUG_MAX_LEN",
@@ -51,21 +47,9 @@ __all__ = [
     "generate_learning_id",
 ]
 
-# ---------------------------------------------------------------------------
-# Module-level singletons (reset by __reload_hook__)
-# ---------------------------------------------------------------------------
-
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
-
 
 def __reload_hook__() -> None:
-    """Reset module-level caches — called by conftest and mcp-hmr."""
-    global _config, _reader, _writer
-    _config = get_config()
-    _reader = FileStateReader()
-    _writer = FileStateWriter()
+    """No-op — module-level singletons removed (PRD-FIX-044)."""
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +150,8 @@ def infer_topic_tags(
 
 def _entries_path(trw_dir: Path) -> Path:
     """Return the canonical entries directory path for a .trw directory."""
-    return trw_dir / _config.learnings_dir / _config.entries_dir
+    config = get_config()
+    return trw_dir / config.learnings_dir / config.entries_dir
 
 
 def _iter_entry_files(
@@ -178,12 +163,13 @@ def _iter_entry_files(
 
     Silently skips files that fail to parse or have unexpected types.
     """
+    reader = FileStateReader()
     glob = entries_dir.glob("*.yaml")
     for entry_file in (sorted(glob) if sorted_order else glob):
         if entry_file.name == "index.yaml":
             continue
         try:
-            data = _reader.read_yaml(entry_file)
+            data = reader.read_yaml(entry_file)
             yield entry_file, data
         except (StateError, ValueError, TypeError):
             continue
@@ -236,9 +222,10 @@ def find_entry_by_id(
     Returns:
         Tuple of (file_path, entry_data) if found, None otherwise.
     """
+    reader = FileStateReader()
     for entry_file in entries_dir.glob("*.yaml"):
         try:
-            data = _reader.read_yaml(entry_file)
+            data = reader.read_yaml(entry_file)
             if data.get("id") == learning_id:
                 return entry_file, data
         except (StateError, ValueError, TypeError):

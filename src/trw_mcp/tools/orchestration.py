@@ -35,10 +35,7 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
-_events = FileEventLogger(_writer)
+_events = FileEventLogger(FileStateWriter())
 
 
 def register_orchestration_tools(server: FastMCP) -> None:
@@ -78,40 +75,43 @@ def register_orchestration_tools(server: FastMCP) -> None:
             complexity_signals: Optional complexity signals dict for adaptive ceremony depth.
                 When provided, classifies task complexity into MINIMAL/STANDARD/COMPREHENSIVE tier.
         """
+        config = get_config()
+        reader = FileStateReader()
+        writer = FileStateWriter()
         project_root = resolve_project_root()
-        trw_dir = project_root / _config.trw_dir
+        trw_dir = project_root / config.trw_dir
 
         # Generate run ID: timestamp + random suffix for uniqueness
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         run_id = f"{timestamp}-{secrets.token_hex(4)}"
 
         trw_subdirs = [
-            _config.learnings_dir + "/" + _config.entries_dir,
-            _config.reflections_dir,
-            _config.scripts_dir,
-            _config.patterns_dir,
-            _config.context_dir,
-            _config.frameworks_dir,
-            _config.templates_dir,
+            config.learnings_dir + "/" + config.entries_dir,
+            config.reflections_dir,
+            config.scripts_dir,
+            config.patterns_dir,
+            config.context_dir,
+            config.frameworks_dir,
+            config.templates_dir,
         ]
         for subdir in trw_subdirs:
-            _writer.ensure_dir(trw_dir / subdir)
+            writer.ensure_dir(trw_dir / subdir)
 
         config_path = trw_dir / "config.yaml"
-        if not _reader.exists(config_path):
+        if not reader.exists(config_path):
             config_data: dict[str, object] = {
-                "framework_version": _config.framework_version,
-                "telemetry": _config.telemetry,
-                "parallelism_max": _config.parallelism_max,
-                "timebox_hours": _config.timebox_hours,
+                "framework_version": config.framework_version,
+                "telemetry": config.telemetry,
+                "parallelism_max": config.parallelism_max,
+                "timebox_hours": config.timebox_hours,
             }
             if config_overrides:
                 config_data.update(config_overrides)
-            _writer.write_yaml(config_path, config_data)
+            writer.write_yaml(config_path, config_data)
 
         # Write .trw/.gitignore from bundled template (DRY with bootstrap.py)
         gitignore_path = trw_dir / ".gitignore"
-        if not _reader.exists(gitignore_path):
+        if not reader.exists(gitignore_path):
             gitignore_content = _get_bundled_file("gitignore.txt")
             if gitignore_content:
                 gitignore_path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,7 +122,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         _deploy_templates(trw_dir)
 
         # Resolve task_root: explicit param > config field > default "docs"
-        resolved_task_root = task_root if task_root is not None else _config.task_root
+        resolved_task_root = task_root if task_root is not None else config.task_root
 
         task_dir = project_root / resolved_task_root / task_name
         run_root = task_dir / "runs" / run_id
@@ -133,7 +133,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "shards",
         ]
         for subdir in run_subdirs:
-            _writer.ensure_dir(run_root / subdir)
+            writer.ensure_dir(run_root / subdir)
 
         initial_phase = Phase.RESEARCH
 
@@ -160,7 +160,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         run_state = RunState(
             run_id=run_id,
             task=task_name,
-            framework=_config.framework_version,
+            framework=config.framework_version,
             status=RunStatus.ACTIVE,
             phase=initial_phase,
             confidence=Confidence.MEDIUM,
@@ -173,7 +173,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             complexity_override=complexity_override_val,
             phase_requirements=phase_reqs_val,
         )
-        _writer.write_yaml(
+        writer.write_yaml(
             run_root / "meta" / "run.yaml",
             model_to_dict(run_state),
         )
@@ -185,7 +185,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         _events.log_event(
             run_root / "meta" / "events.jsonl",
             "run_init",
-            {"task": task_name, "framework": _config.framework_version},
+            {"task": task_name, "framework": config.framework_version},
         )
 
         # Framework version captured in run.yaml `framework` field.
@@ -223,20 +223,22 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
         """
+        config = get_config()
+        reader = FileStateReader()
         resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
 
-        state_data = _reader.read_yaml(meta_path / "run.yaml")
+        state_data = reader.read_yaml(meta_path / "run.yaml")
 
         wave_data: dict[str, object] = {}
         wave_manifest_path = resolved_path / "shards" / "wave_manifest.yaml"
         if not wave_manifest_path.exists():
             wave_manifest_path = meta_path / "wave_manifest.yaml"
         if wave_manifest_path.exists():
-            wave_data = _reader.read_yaml(wave_manifest_path)
+            wave_data = reader.read_yaml(wave_manifest_path)
 
         events_path = meta_path / "events.jsonl"
-        events = _reader.read_jsonl(events_path)
+        events = reader.read_jsonl(events_path)
 
         # Reflection metrics (count only, no need to collect full lists)
         reflection_count = sum(
@@ -276,7 +278,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # Last activity tracking (RC-002: detect stale/abandoned tracks)
         checkpoints_path = meta_path / "checkpoints.jsonl"
         if checkpoints_path.exists():
-            checkpoints = _reader.read_jsonl(checkpoints_path)
+            checkpoints = reader.read_jsonl(checkpoints_path)
             if checkpoints:
                 last_cp = checkpoints[-1]
                 last_ts = str(last_cp.get("ts", ""))
@@ -323,7 +325,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
                     f"Use trw_session_start to auto-close them."
                 )
         except Exception:
-            pass  # Fail-open: omit stale_count on error
+            result["stale_count_error"] = True
+            logger.warning("stale_count_scan_failed", exc_info=True)
 
         logger.info("trw_status_read", run_id=result["run_id"])
         return result
@@ -346,10 +349,12 @@ def register_orchestration_tools(server: FastMCP) -> None:
             message: Describe what you accomplished and what comes next — this becomes your resume point after compaction.
             shard_id: Optional shard identifier for sub-agent attribution.
         """
+        reader = FileStateReader()
+        writer = FileStateWriter()
         resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
 
-        state_data = _reader.read_yaml(meta_path / "run.yaml")
+        state_data = reader.read_yaml(meta_path / "run.yaml")
 
         # Create checkpoint record
         ts = datetime.now(timezone.utc).isoformat()
@@ -362,7 +367,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             checkpoint["shard_id"] = shard_id
 
         checkpoints_path = meta_path / "checkpoints.jsonl"
-        _writer.append_jsonl(checkpoints_path, checkpoint)
+        writer.append_jsonl(checkpoints_path, checkpoint)
 
         event_data: dict[str, object] = {"message": message}
         if shard_id:
@@ -393,6 +398,7 @@ def _compute_wave_progress(
     Returns:
         Wave progress dict, or None if no waves found.
     """
+    reader = FileStateReader()
     waves_raw = wave_data.get("waves", [])
     if not isinstance(waves_raw, list) or not waves_raw:
         return None
@@ -401,7 +407,7 @@ def _compute_wave_progress(
     shard_manifest_path = run_path / "shards" / "manifest.yaml"
     if shard_manifest_path.exists():
         try:
-            shard_data = _reader.read_yaml(shard_manifest_path)
+            shard_data = reader.read_yaml(shard_manifest_path)
             raw_shards = shard_data.get("shards", [])
             if isinstance(raw_shards, list):
                 for s in raw_shards:
@@ -483,9 +489,10 @@ def _compute_reversion_metrics(
         by_trigger[trigger] = by_trigger.get(trigger, 0) + 1
 
     # Classification with configurable thresholds
-    if rate >= _config.reversion_rate_concerning:
+    config = get_config()
+    if rate >= config.reversion_rate_concerning:
         classification = "concerning"
-    elif rate >= _config.reversion_rate_elevated:
+    elif rate >= config.reversion_rate_elevated:
         classification = "elevated"
     else:
         classification = "healthy"
@@ -555,17 +562,20 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     Returns:
         Dictionary with deployment status and version info.
     """
-    frameworks_dir = trw_dir / _config.frameworks_dir
-    _writer.ensure_dir(frameworks_dir)
+    config = get_config()
+    reader = FileStateReader()
+    writer = FileStateWriter()
+    frameworks_dir = trw_dir / config.frameworks_dir
+    writer.ensure_dir(frameworks_dir)
 
     version_path = frameworks_dir / "VERSION.yaml"
-    current_fw_version = _config.framework_version
-    current_aaref_version = _config.aaref_version
+    current_fw_version = config.framework_version
+    current_aaref_version = config.aaref_version
     current_pkg_version = _get_package_version()
 
     # Check existing VERSION.yaml for skip logic
-    if _reader.exists(version_path):
-        existing = _reader.read_yaml(version_path)
+    if reader.exists(version_path):
+        existing = reader.read_yaml(version_path)
         existing_versions = (
             str(existing.get("framework_version", "")),
             str(existing.get("aaref_version", "")),
@@ -599,7 +609,7 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         "trw_mcp_version": current_pkg_version,
         "deployed_at": datetime.now(timezone.utc).isoformat(),
     }
-    _writer.write_yaml(version_path, version_data)
+    writer.write_yaml(version_path, version_data)
 
     logger.info(
         "frameworks_deployed",
@@ -622,8 +632,10 @@ def _deploy_templates(trw_dir: Path) -> None:
     Args:
         trw_dir: Path to the .trw directory.
     """
-    templates_dir = trw_dir / _config.templates_dir
-    _writer.ensure_dir(templates_dir)
+    config = get_config()
+    writer = FileStateWriter()
+    templates_dir = trw_dir / config.templates_dir
+    writer.ensure_dir(templates_dir)
 
     template_path = templates_dir / "claude_md.md"
     if template_path.exists():
@@ -647,12 +659,14 @@ def _check_framework_version_staleness(run_framework: str) -> str | None:
         return None
 
     try:
-        trw_dir = resolve_project_root() / _config.trw_dir
-        version_path = trw_dir / _config.frameworks_dir / "VERSION.yaml"
-        if not _reader.exists(version_path):
+        config = get_config()
+        reader = FileStateReader()
+        trw_dir = resolve_project_root() / config.trw_dir
+        version_path = trw_dir / config.frameworks_dir / "VERSION.yaml"
+        if not reader.exists(version_path):
             return None
 
-        version_data = _reader.read_yaml(version_path)
+        version_data = reader.read_yaml(version_path)
         current_version = str(version_data.get("framework_version", ""))
         if not current_version or run_framework == current_version:
             return None
@@ -668,11 +682,5 @@ def _check_framework_version_staleness(run_framework: str) -> str | None:
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    global _config, _reader, _writer, _events
-    _reset_config()
-    _config = get_config()
-    _reader = FileStateReader()
-    _writer = FileStateWriter()
-    _events = FileEventLogger(_writer)
+    global _events
+    _events = FileEventLogger(FileStateWriter())

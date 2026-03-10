@@ -188,7 +188,7 @@ def run_auto_maintenance(
                     )
                     maintenance["auto_upgrade"] = upgrade_result
     except Exception:
-        logger.debug("maintenance_step_failed", exc_info=True)
+        logger.warning("maintenance_auto_upgrade_failed", exc_info=True)
 
     # Auto-close stale runs
     try:
@@ -199,7 +199,7 @@ def run_auto_maintenance(
             if closed_count > 0:
                 maintenance["stale_runs_closed"] = close_result
     except Exception:
-        logger.debug("maintenance_step_failed", exc_info=True)
+        logger.warning("maintenance_stale_runs_close_failed", exc_info=True)
 
     # Embeddings status check + backfill
     try:
@@ -213,7 +213,7 @@ def run_auto_maintenance(
             if backfill.get("embedded", 0) > 0:
                 maintenance["embeddings_backfill"] = backfill
     except Exception:
-        logger.debug("maintenance_step_failed", exc_info=True)
+        logger.warning("maintenance_embeddings_check_failed", exc_info=True)
 
     return maintenance
 
@@ -251,7 +251,7 @@ def check_delivery_gates(
                     f"Delivery proceeding but review issues should be addressed."
                 )
         except Exception:
-            logger.debug("maintenance_step_failed", exc_info=True)
+            logger.warning("maintenance_review_gate_failed", exc_info=True)
     else:
         result["review_advisory"] = (
             "No trw_review was run before delivery. "
@@ -280,7 +280,7 @@ def check_delivery_gates(
                     "Integration review has warnings. Review findings before merging."
                 )
         except Exception:
-            logger.debug("maintenance_step_failed", exc_info=True)
+            logger.warning("maintenance_integration_review_failed", exc_info=True)
     # No integration-review.yaml is fine for single-shard sprints
 
     # Step 0a: Untracked source/test file detection
@@ -355,7 +355,7 @@ def check_delivery_gates(
                     work_events=0,
                 )
     except Exception:
-        logger.debug("maintenance_step_failed", exc_info=True)
+        logger.warning("maintenance_build_gate_failed", exc_info=True)
 
     return result
 
@@ -410,7 +410,7 @@ def copy_compliance_artifacts(
                 writer.write_yaml(compliance_dir / artifact_name, data)
                 copied.append(artifact_name)
             except Exception:
-                logger.debug("maintenance_step_failed", exc_info=True)
+                logger.warning("maintenance_compliance_copy_failed", exc_info=True)
 
     if copied:
         result["compliance_artifacts_copied"] = copied

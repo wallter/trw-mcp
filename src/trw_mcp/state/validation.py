@@ -96,6 +96,15 @@ from trw_mcp.state.phase_gates_build import (
 from trw_mcp.state.phase_gates_build import (
     _check_build_status as _check_build_status,
 )
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_dry_check as _best_effort_dry_check,
+)
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_migration_check as _best_effort_migration_check,
+)
+from trw_mcp.state.phase_gates_build import (
+    _best_effort_semantic_check as _best_effort_semantic_check,
+)
 from trw_mcp.state.phase_gates_prd import (
     _STATUS_ORDER as _STATUS_ORDER,
 )
@@ -205,7 +214,10 @@ __all__ = [
     "FileContractValidator",
     "RiskProfile",
     "_best_effort_build_check",
+    "_best_effort_dry_check",
     "_best_effort_integration_check",
+    "_best_effort_migration_check",
+    "_best_effort_semantic_check",
     "_best_effort_orphan_check",
     "_build_phase_result",
     "_check_build_status",

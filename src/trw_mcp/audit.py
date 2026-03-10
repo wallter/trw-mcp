@@ -27,8 +27,6 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.analytics_report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader
 
-_reader = FileStateReader()
-
 # Thresholds for PASS/WARN/FAIL verdicts
 _BLOAT_WARN_PCT = 0.20
 _CEREMONY_PASS_SCORE = 50
@@ -39,10 +37,11 @@ def _iter_entries(entries_dir: Path) -> list[dict[str, object]]:
     """Read all YAML entries from a directory (skipping index.yaml)."""
     from trw_mcp.state._helpers import iter_yaml_entry_files
 
+    reader = FileStateReader()
     entries: list[dict[str, object]] = []
     for f in iter_yaml_entry_files(entries_dir):
         try:
-            entries.append(_reader.read_yaml(f))
+            entries.append(reader.read_yaml(f))
         except Exception:
             continue
     return entries
@@ -122,11 +121,12 @@ def _audit_index_consistency(
     actual_count: int,
 ) -> dict[str, object]:
     """Check analytics.yaml total_learnings matches actual entry count."""
+    reader = FileStateReader()
     analytics_path = trw_dir / config.context_dir / "analytics.yaml"
     if not analytics_path.exists():
         return {"analytics_total": None, "actual_count": actual_count, "verdict": "SKIP"}
 
-    data = _reader.read_yaml(analytics_path)
+    data = reader.read_yaml(analytics_path)
     analytics_total = int(str(data.get("total_learnings", 0)))
     match = analytics_total == actual_count
 

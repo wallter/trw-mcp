@@ -18,10 +18,6 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStat
 
 logger = structlog.get_logger()
 
-_reader = FileStateReader()
-_writer = FileStateWriter()
-_event_logger = FileEventLogger(_writer)
-
 
 def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     """Update phase in run.yaml with forward-only guard.
@@ -29,11 +25,15 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     Returns True if phase was updated, False if skipped (already at or past target).
     Logs a ``phase_enter`` event to the run's events.jsonl on success.
     """
+    reader = FileStateReader()
+    writer = FileStateWriter()
+    event_logger = FileEventLogger(writer)
+
     run_yaml = run_path / "meta" / "run.yaml"
-    if not _reader.exists(run_yaml):
+    if not reader.exists(run_yaml):
         return False
 
-    data = _reader.read_yaml(run_yaml)
+    data = reader.read_yaml(run_yaml)
     current = str(data.get("phase", "research"))
     current_order = PHASE_ORDER.get(current, 0)
     new_order = PHASE_ORDER.get(new_phase.value, 0)
@@ -42,14 +42,14 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
         return False  # Forward-only: don't revert
 
     data["phase"] = new_phase.value
-    _writer.write_yaml(run_yaml, data)
+    writer.write_yaml(run_yaml, data)
     logger.info("phase_updated", run_path=str(run_path), old=current, new=new_phase.value)
 
     # Log phase_enter event (best-effort)
     events_path = run_path / "meta" / "events.jsonl"
     if events_path.parent.exists():
         try:
-            _event_logger.log_event(events_path, "phase_enter", {
+            event_logger.log_event(events_path, "phase_enter", {
                 "phase": new_phase.value,
                 "previous_phase": current,
             })

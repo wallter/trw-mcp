@@ -59,14 +59,14 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger()
 
 
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
-_llm_usage_path: Path | None = None
-if _config.llm_usage_log_enabled:
-    _trw_dir = resolve_trw_dir()
-    _llm_usage_path = _trw_dir / _config.logs_dir / _config.llm_usage_log_file
-_llm = LLMClient(model=_config.llm_default_model, usage_log_path=_llm_usage_path)
+def _create_llm_client() -> LLMClient:
+    """Create an LLM client using current config."""
+    config = get_config()
+    llm_usage_path: Path | None = None
+    if config.llm_usage_log_enabled:
+        trw_dir = resolve_trw_dir()
+        llm_usage_path = trw_dir / config.logs_dir / config.llm_usage_log_file
+    return LLMClient(model=config.llm_default_model, usage_log_path=llm_usage_path)
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -108,21 +108,24 @@ def register_learning_tools(server: FastMCP) -> None:
                 "message": f"Summary matches noise pattern — not persisted: {summary[:60]}",
             }
 
+        config = get_config()
+        reader = FileStateReader()
+        writer = FileStateWriter()
         trw_dir = resolve_trw_dir()
-        entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
-        _writer.ensure_dir(entries_dir)
+        entries_dir = trw_dir / config.learnings_dir / config.entries_dir
+        writer.ensure_dir(entries_dir)
 
         # One-time batch dedup migration (PRD-CORE-042 FR05)
-        if _config.dedup_enabled:
+        if config.dedup_enabled:
             try:
                 from trw_mcp.state.dedup import batch_dedup, is_migration_needed
                 if is_migration_needed(trw_dir):
-                    batch_dedup(trw_dir, _reader, _writer, config=_config)
+                    batch_dedup(trw_dir, reader, writer, config=config)
             except (ImportError, OSError, ValueError, TypeError):
                 logger.debug("learning_migration_failed", exc_info=True)
 
         # Bayesian calibration of impact score (PRD-CORE-034)
-        calibrated_impact = calibrate_impact(impact, _config)
+        calibrated_impact = calibrate_impact(impact, config)
 
         # Fetch active learnings once — reused by soft-cap and distribution
         all_active: list[dict[str, object]] = []
@@ -132,7 +135,7 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Forced distribution soft-cap check (PRD-CORE-034-FR01)
         calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
-            calibrated_impact, all_active, _config,
+            calibrated_impact, all_active, config,
         )
 
         learning_id = generate_learning_id()
@@ -152,7 +155,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 source_type=source_type,
                 source_identity=source_identity,
             ),
-            entries_dir, _reader, _writer, _config,
+            entries_dir, reader, writer, config,
         )
         if dedup_result is not None:
             return dedup_result
@@ -193,7 +196,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Forced distribution enforcement (PRD-CORE-034)
         distribution_warning, _demoted_ids = enforce_distribution(
             impact, calibrated_impact, learning_id,
-            all_active, trw_dir, _config,
+            all_active, trw_dir, config,
         )
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
@@ -229,6 +232,8 @@ def register_learning_tools(server: FastMCP) -> None:
             impact: Updated impact score (0.0-1.0).
             summary: Updated summary text (replaces existing summary).
         """
+        config = get_config()
+        writer = FileStateWriter()
         trw_dir = resolve_trw_dir()
         result = adapter_update(
             trw_dir,
@@ -245,7 +250,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 from datetime import date as date_type
 
                 from trw_mcp.state.analytics import find_entry_by_id, resync_learning_index
-                entries_dir = trw_dir / _config.learnings_dir / _config.entries_dir
+                entries_dir = trw_dir / config.learnings_dir / config.entries_dir
                 found = find_entry_by_id(entries_dir, learning_id)
                 if found is not None:
                     entry_path, data = found
@@ -260,7 +265,7 @@ def register_learning_tools(server: FastMCP) -> None:
                     if impact is not None:
                         data["impact"] = impact
                     data["updated"] = date_type.today().isoformat()
-                    _writer.write_yaml(entry_path, data)
+                    writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
             except (OSError, ValueError, TypeError):
                 logger.debug("yaml_backup_update_failed", exc_info=True)
@@ -275,7 +280,7 @@ def register_learning_tools(server: FastMCP) -> None:
         min_impact: float = 0.0,
         status: str | None = None,
         shard_id: str | None = None,
-        max_results: int = _config.recall_max_results,
+        max_results: int | None = None,
         compact: bool | None = None,
         topic: str | None = None,
     ) -> dict[str, object]:
@@ -298,7 +303,11 @@ def register_learning_tools(server: FastMCP) -> None:
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
         """
+        config = get_config()
+        reader = FileStateReader()
         trw_dir = resolve_trw_dir()
+        if max_results is None:
+            max_results = config.recall_max_results
         is_wildcard = query.strip() in ("*", "")
         query_tokens = [] if is_wildcard else query.lower().split()
         use_compact = compact if compact is not None else is_wildcard
@@ -312,7 +321,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Topic-scoped pre-filter (PRD-CORE-021-FR07)
         topic_filter_ignored = False
         if topic is not None:
-            clusters_path = trw_dir / _config.knowledge_output_dir / "clusters.json"
+            clusters_path = trw_dir / config.knowledge_output_dir / "clusters.json"
             try:
                 if clusters_path.exists():
                     clusters_data = json.loads(clusters_path.read_text(encoding="utf-8"))
@@ -354,10 +363,10 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Search patterns and rank all results by utility
         matching_patterns = search_patterns(
-            trw_dir / _config.patterns_dir, query_tokens, _reader,
+            trw_dir / config.patterns_dir, query_tokens, reader,
         )
         ranked_learnings = rank_by_utility(
-            matching_learnings, query_tokens, _config.recall_utility_lambda,
+            matching_learnings, query_tokens, config.recall_utility_lambda,
         )
 
         # Capture pre-cap counts for the total_available response field
@@ -369,7 +378,7 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Strip to compact fields when requested
         if use_compact:
-            allowed = _config.recall_compact_fields
+            allowed = config.recall_compact_fields
             ranked_learnings = [
                 {k: v for k, v in entry.items() if k in allowed}
                 for entry in ranked_learnings
@@ -378,7 +387,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Skip context collection for compact wildcard queries (saves I/O)
         context_data: dict[str, object] = {}
         if not (is_wildcard and use_compact):
-            context_data = collect_context(trw_dir, _config.context_dir, _reader)
+            context_data = collect_context(trw_dir, config.context_dir, reader)
 
         logger.info(
             "trw_recall_searched",
@@ -416,20 +425,15 @@ def register_learning_tools(server: FastMCP) -> None:
             scope: Sync scope — "root" for project CLAUDE.md, "sub" for module-level.
             target_dir: Target directory for sub-CLAUDE.md generation.
         """
-        return execute_claude_md_sync(scope, target_dir, _config, _reader, _writer, _llm)
+        config = get_config()
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        llm = _create_llm_client()
+        return execute_claude_md_sync(scope, target_dir, config, reader, writer, llm)
 
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
     from trw_mcp.models.config import _reset_config
 
-    global _config, _reader, _writer, _llm, _llm_usage_path
     _reset_config()
-    _config = get_config()
-    _reader = FileStateReader()
-    _writer = FileStateWriter()
-    _llm_usage_path = None
-    if _config.llm_usage_log_enabled:
-        _trw_dir = resolve_trw_dir()
-        _llm_usage_path = _trw_dir / _config.logs_dir / _config.llm_usage_log_file
-    _llm = LLMClient(model=_config.llm_default_model, usage_log_path=_llm_usage_path)

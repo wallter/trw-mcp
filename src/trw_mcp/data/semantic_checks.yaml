@@ -1,0 +1,70 @@
+# Semantic Check Rubric — PRD-QUAL-040
+# Patterns for automated review beyond syntax/type checking.
+# Each check has: id, pattern (regex), description, severity, automated flag.
+
+checks:
+  - id: dead-hasattr
+    pattern: 'hasattr\(\s*\w+\s*,\s*["''][a-z_]+["'']\s*\)'
+    description: "hasattr() on ORM model attribute — likely always True (dead code)"
+    severity: warning
+    automated: true
+    language: python
+
+  - id: bare-except
+    pattern: 'except\s*:'
+    description: "Bare except clause catches all exceptions including SystemExit and KeyboardInterrupt"
+    severity: warning
+    automated: true
+    language: python
+
+  - id: mutable-default-arg
+    pattern: 'def\s+\w+\([^)]*(?::\s*(?:list|dict|set)\s*=\s*(?:\[\]|\{\}))'
+    description: "Mutable default argument — use None with default factory instead"
+    severity: warning
+    automated: true
+    language: python
+
+  - id: hardcoded-secret
+    pattern: '(?:password|secret|api_key|token)\s*=\s*["''][^"'']{8,}["'']'
+    description: "Possible hardcoded secret or credential"
+    severity: error
+    automated: true
+    language: any
+
+  - id: todo-fixme
+    pattern: '(?:TODO|FIXME|HACK|XXX)\b'
+    description: "Unresolved TODO/FIXME comment — address or create a ticket"
+    severity: info
+    automated: true
+    language: any
+
+  - id: print-debug
+    pattern: '^\s*print\('
+    description: "print() statement — use structured logging instead"
+    severity: info
+    automated: true
+    language: python
+
+  - id: missing-literal
+    description: "Status/role field accepts any string — consider Literal type"
+    severity: info
+    automated: false
+    language: python
+
+  - id: misleading-name
+    description: "Variable name contains hardcoded value but actual value is dynamic"
+    severity: warning
+    automated: false
+    language: any
+
+  - id: comment-code-drift
+    description: "Comment mentions specific value but code uses variable or different value"
+    severity: warning
+    automated: false
+    language: any
+
+  - id: incomplete-role-set
+    description: "Role/status set is missing required values (e.g., 'owner' missing from admin roles)"
+    severity: warning
+    automated: false
+    language: any

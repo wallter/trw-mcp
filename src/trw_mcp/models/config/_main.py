@@ -89,6 +89,7 @@ class TRWConfig(BaseSettings):
     48. PostToolUse validation (030) . incremental_validation_enabled
     49. Compaction (CORE-066) ........ compact_instructions_template
     50. Progressive disclosure (067) .. progressive_disclosure
+    57. Learning injection (CORE-075) .. agent_learning_injection
     """
 
     model_config = SettingsConfigDict(
@@ -596,6 +597,29 @@ class TRWConfig(BaseSettings):
     ceremony_feedback_quality_threshold: float = 0.9
     ceremony_feedback_escalation_threshold: float = 60.0
     ceremony_feedback_escalation_window: int = 5
+
+    # -- 55. Migration gate (INFRA-035) --
+    # Detect model changes without Alembic migrations
+
+    migration_gate_enabled: bool = True
+
+    # -- 56. DRY check (QUAL-039) --
+    # Cross-shard duplication detection
+
+    dry_check_enabled: bool = True
+    dry_check_min_block_size: int = 5
+
+    # -- 57. Learning injection (CORE-075) --
+    # Context-aware learning injection for subagent prompts
+
+    agent_learning_injection: bool = True
+    agent_learning_max: int = 5
+    agent_learning_min_impact: float = 0.5
+
+    # -- 58. Semantic checks (QUAL-040) --
+    # Automated semantic review patterns
+
+    semantic_checks_enabled: bool = True
 
     # -- Domain Sub-Config Properties (PRD-CORE-071-FR01) --
     # Type-narrowed access: ``config.build.build_check_enabled``

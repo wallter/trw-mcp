@@ -38,10 +38,7 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
-_events = FileEventLogger(_writer)
+_events = FileEventLogger(FileStateWriter())
 
 # Re-export checkpoint helpers for backward compatibility with tests/hooks
 from trw_mcp.tools.checkpoint import (  # noqa: E402
@@ -56,11 +53,12 @@ __all__ = ["_do_checkpoint", "_maybe_auto_checkpoint", "_reset_tool_call_counter
 
 def _get_run_status(run_dir: Path) -> dict[str, object]:
     """Extract status summary from a run directory."""
+    reader = FileStateReader()
     result: dict[str, object] = {"active_run": str(run_dir)}
     try:
         run_yaml = run_dir / "meta" / "run.yaml"
         if run_yaml.exists():
-            data = _reader.read_yaml(run_yaml)
+            data = reader.read_yaml(run_yaml)
             result["phase"] = str(data.get("phase", "unknown"))
             result["status"] = str(data.get("status", "unknown"))
             result["task_name"] = str(data.get("task_name", ""))
@@ -73,15 +71,23 @@ def _get_run_status(run_dir: Path) -> dict[str, object]:
 
 def _mark_run_complete(run_dir: Path) -> None:
     """Mark a run as complete by updating status in run.yaml."""
+    reader = FileStateReader()
+    writer = FileStateWriter()
     run_yaml = run_dir / "meta" / "run.yaml"
     if not run_yaml.exists():
         return
     try:
-        data = _reader.read_yaml(run_yaml)
+        data = reader.read_yaml(run_yaml)
         data["status"] = "complete"
-        _writer.write_yaml(run_yaml, data)
+        writer.write_yaml(run_yaml, data)
     except Exception:
-        pass  # Best-effort
+        # justified: marking run complete is best-effort — failure must not
+        # block session_start or deliver.
+        logger.warning(
+            "mark_run_complete_failed",
+            exc_info=True,
+            run_dir=str(run_dir),
+        )
 
 
 def _run_step(
@@ -141,7 +147,9 @@ def _release_deferred_lock(fd: object) -> None:
             fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
             fd.close()
     except Exception:
-        pass  # Best-effort cleanup
+        # justified: lock release is best-effort cleanup — failing here
+        # only means the lock file persists until process exit.
+        pass
 
 
 def _log_deferred_result(
@@ -297,12 +305,13 @@ def _step_checkpoint(resolved_run: Path) -> dict[str, object]:
 
 def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
     """Step 2.5: Auto-prune excess learnings."""
-    if not _config.learning_auto_prune_on_deliver:
+    config = get_config()
+    if not config.learning_auto_prune_on_deliver:
         return None
     from trw_mcp.state.analytics import auto_prune_excess_entries
     prune_result = auto_prune_excess_entries(
         trw_dir,
-        max_entries=_config.learning_auto_prune_cap,
+        max_entries=config.learning_auto_prune_cap,
     )
     pruned = int(str(prune_result.get("actions_taken", 0)))
     return prune_result if pruned > 0 else None
@@ -310,19 +319,22 @@ def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
 
 def _step_consolidation(trw_dir: Path) -> dict[str, object]:
     """Step 2.6: Memory consolidation (PRD-CORE-044)."""
-    if not _config.memory_consolidation_enabled:
+    config = get_config()
+    if not config.memory_consolidation_enabled:
         return {"status": "skipped", "reason": "disabled"}
     from trw_mcp.state.consolidation import consolidate_cycle
     return dict(consolidate_cycle(
         trw_dir,
-        max_entries=_config.memory_consolidation_max_per_cycle,
+        max_entries=config.memory_consolidation_max_per_cycle,
     ))
 
 
 def _step_tier_sweep(trw_dir: Path) -> dict[str, object]:
     """Step 2.7: Tier lifecycle sweep (PRD-CORE-043)."""
     from trw_mcp.state.tiers import TierManager
-    tier_mgr = TierManager(trw_dir, _reader, _writer)
+    reader = FileStateReader()
+    writer = FileStateWriter()
+    tier_mgr = TierManager(trw_dir, reader, writer)
     sweep_result = tier_mgr.sweep()
     return {
         "status": "success",
@@ -442,7 +454,8 @@ def _step_trust_increment(resolved_run: Path | None) -> dict[str, object] | None
         events_path = resolved_run / "meta" / "events.jsonl" if resolved_run else None
         build_passed = False
         if events_path and events_path.exists():
-            events = _reader.read_jsonl(events_path)
+            reader = FileStateReader()
+            events = reader.read_jsonl(events_path)
             for ev in events:
                 ev_type = str(ev.get("event", ""))
                 ev_data = ev.get("data", {})
@@ -483,7 +496,8 @@ def _step_ceremony_feedback(
         if resolved_run is not None:
             run_yaml = resolved_run / "meta" / "run.yaml"
             if run_yaml.exists():
-                run_state = _reader.read_yaml(run_yaml)
+                reader = FileStateReader()
+                run_state = reader.read_yaml(run_yaml)
 
         task_name = str(run_state.get("task_name", ""))
         ceremony_score_val = deliver_results.get("telemetry", {})
@@ -553,6 +567,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
             run_auto_maintenance,
         )
 
+        config = get_config()
+        reader = FileStateReader()
+        writer = FileStateWriter()
         results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
@@ -561,7 +578,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         try:
             trw_dir = resolve_trw_dir()
             learnings, _auto_recalled, extra = perform_session_recalls(
-                trw_dir, query, _config, _reader,
+                trw_dir, query, config, reader,
             )
             results["learnings"] = learnings
             results["learnings_count"] = len(learnings)
@@ -597,8 +614,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     _events.log_event(events_path, "session_start", event_data)
             else:
                 trw_dir_path = resolve_trw_dir()
-                context_path = trw_dir_path / _config.context_dir
-                _writer.ensure_dir(context_path)
+                context_path = trw_dir_path / config.context_dir
+                writer.ensure_dir(context_path)
                 fallback_path = context_path / "session-events.jsonl"
                 _events.log_event(fallback_path, "session_start", event_data)
         except Exception:
@@ -612,7 +629,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             tel_client = TelemetryClient.from_config()
             tel_client.record_event(SessionStartEvent(
                 installation_id=inst_id,
-                framework_version=_config.framework_version,
+                framework_version=config.framework_version,
                 learnings_loaded=int(str(results.get("learnings_count", 0))),
                 run_id=str(run_dir.name) if run_dir else None,
             ))
@@ -624,7 +641,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     from trw_mcp.telemetry.sender import BatchSender
                     BatchSender.from_config().send()
                 except Exception:
-                    pass  # fail-open: never block session start
+                    # justified: fail-open telemetry — batch send is fire-and-forget
+                    # on a daemon thread; failure must never block session start.
+                    pass
             threading.Thread(target=_bg_send, daemon=True).start()
         except Exception:
             logger.debug("session_telemetry_failed", exc_info=True)
@@ -632,7 +651,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # Steps 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings)
         try:
             maintenance = run_auto_maintenance(
-                resolve_trw_dir(), _config, run_dir,
+                resolve_trw_dir(), config, run_dir,
             )
             results.update(maintenance)
         except Exception:
@@ -640,14 +659,14 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
         try:
-            if _config.auto_recall_enabled:
+            if config.auto_recall_enabled:
                 from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
 
                 trw_dir_ar = resolve_trw_dir()
                 run_status_obj = results.get("run", {})
                 rs = run_status_obj if isinstance(run_status_obj, dict) else None
                 phase_recalled = _phase_contextual_recall(
-                    trw_dir_ar, query, _config, run_dir, rs,
+                    trw_dir_ar, query, config, run_dir, rs,
                 )
                 if phase_recalled:
                     results["auto_recalled"] = phase_recalled
@@ -685,6 +704,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
             skip_reflect: Skip reflection step (e.g., if already reflected).
             skip_index_sync: Skip INDEX/ROADMAP sync step.
         """
+        config = get_config()
+        reader = FileStateReader()
+        writer = FileStateWriter()
         t0 = time.monotonic()
         results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
@@ -708,14 +730,12 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # Steps 0, 0b, premature guard: extracted to helper
         from trw_mcp.tools._ceremony_helpers import check_delivery_gates
 
-        gate_result = check_delivery_gates(resolved_run, _reader)
+        gate_result = check_delivery_gates(resolved_run, reader)
         results.update(gate_result)
 
         # Step 0c: Copy compliance artifacts (INFRA-027-FR05)
-        from trw_mcp.models.config import get_config
         from trw_mcp.tools._ceremony_helpers import copy_compliance_artifacts
-        config = get_config()
-        compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, _reader, _writer)
+        compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
         results.update(compliance_result)
 
         # Block delivery if integration review has blocking verdict
@@ -801,15 +821,18 @@ def _do_reflect(
         is_error_event,
     )
 
-    _writer.ensure_dir(trw_dir / _config.learnings_dir / _config.entries_dir)
-    _writer.ensure_dir(trw_dir / _config.reflections_dir)
+    config = get_config()
+    reader = FileStateReader()
+    writer = FileStateWriter()
+    writer.ensure_dir(trw_dir / config.learnings_dir / config.entries_dir)
+    writer.ensure_dir(trw_dir / config.reflections_dir)
 
     events: list[dict[str, object]] = []
 
     if run_dir:
         events_path = run_dir / "meta" / "events.jsonl"
-        if _reader.exists(events_path):
-            events = _reader.read_jsonl(events_path)
+        if reader.exists(events_path):
+            events = reader.read_jsonl(events_path)
 
     error_events = [e for e in events if is_error_event(e)]
     repeated_ops = find_repeated_operations(events)
@@ -851,14 +874,17 @@ def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
     """
     from trw_mcp.clients.llm import LLMClient
 
+    config = get_config()
+    reader = FileStateReader()
+    writer = FileStateWriter()
     # Use a no-op LLM client — deliver path doesn't need LLM summarisation.
     llm = LLMClient()
     result = execute_claude_md_sync(
         scope="root",
         target_dir=None,
-        config=_config,
-        reader=_reader,
-        writer=_writer,
+        config=config,
+        reader=reader,
+        writer=writer,
         llm=llm,
     )
     # Normalise status for backward compatibility with deliver callers.
@@ -870,12 +896,14 @@ def _do_index_sync() -> dict[str, object]:
     """Execute INDEX.md and ROADMAP.md sync from PRD frontmatter."""
     from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
 
+    config = get_config()
+    writer = FileStateWriter()
     project_root = resolve_project_root()
-    prds_dir = project_root / Path(_config.prds_relative_path)
+    prds_dir = project_root / Path(config.prds_relative_path)
     aare_dir = prds_dir.parent
 
-    index_result = sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=_writer)
-    roadmap_result = sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=_writer)
+    index_result = sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
+    roadmap_result = sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
 
     return {
         "status": "success",
@@ -895,12 +923,13 @@ def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
 
     from trw_mcp.state.validation import auto_progress_prds
 
+    config = get_config()
     project_root = resolve_project_root()
-    prds_dir = project_root / Path(_config.prds_relative_path)
+    prds_dir = project_root / Path(config.prds_relative_path)
     if not prds_dir.is_dir():
         return {"status": "skipped", "reason": "prds_dir_not_found"}
 
-    progressions = auto_progress_prds(run_dir, "deliver", prds_dir, _config)
+    progressions = auto_progress_prds(run_dir, "deliver", prds_dir, config)
 
     return {
         "status": "success",
@@ -912,11 +941,5 @@ def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
 
 def __reload_hook__() -> None:
     """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    global _config, _reader, _writer, _events
-    _reset_config()
-    _config = get_config()
-    _reader = FileStateReader()
-    _writer = FileStateWriter()
-    _events = FileEventLogger(_writer)
+    global _events
+    _events = FileEventLogger(FileStateWriter())

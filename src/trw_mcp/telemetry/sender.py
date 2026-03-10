@@ -80,6 +80,7 @@ class BatchSender:
 
         total_sent = 0
         total_failed = 0
+        unsent: list[dict[str, Any]] = []
 
         for i in range(0, len(records), self._batch_size):
             batch = records[i : i + self._batch_size]
@@ -88,15 +89,18 @@ class BatchSender:
                 total_sent += len(batch)
             else:
                 total_failed += len(batch)
+                # FR04: Track the actual failed batch events so they remain
+                # in the queue — records[total_sent:] would skip interleaved
+                # failed batches between successful ones.
+                unsent.extend(batch)
 
-        remaining = records[total_sent:]
         if total_sent > 0:
-            self._rewrite_queue(remaining)
+            self._rewrite_queue(unsent)
 
         return {
             "sent": total_sent,
             "failed": total_failed,
-            "remaining": len(remaining),
+            "remaining": len(unsent),
             "skipped_reason": None,
         }
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from tests.conftest import get_tools_sync
 
@@ -62,9 +63,9 @@ class TestBuildStatusModel:
         assert status.test_count == 150
 
     def test_coverage_bounds(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BuildStatus(coverage_pct=101.0)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BuildStatus(coverage_pct=-1.0)
 
     def test_serializable(self) -> None:

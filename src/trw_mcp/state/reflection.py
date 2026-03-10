@@ -32,10 +32,6 @@ from trw_mcp.state.persistence import (
     model_to_dict,
 )
 
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
-_events = FileEventLogger(_writer)
 
 # Named caps for mechanical extraction
 _MAX_ERROR_LEARNINGS = 5
@@ -68,18 +64,21 @@ def collect_reflection_inputs(
     Returns:
         ReflectionInputs with all categorized event data.
     """
+    config = get_config()
+    reader = FileStateReader()
+
     events: list[dict[str, object]] = []
     run_id: str | None = None
 
     if run_path:
         resolved = Path(run_path).resolve()
         events_path = resolved / "meta" / "events.jsonl"
-        if _reader.exists(events_path):
-            events = _reader.read_jsonl(events_path)
+        if reader.exists(events_path):
+            events = reader.read_jsonl(events_path)
 
         run_yaml = resolved / "meta" / "run.yaml"
-        if _reader.exists(run_yaml):
-            state = _reader.read_yaml(run_yaml)
+        if reader.exists(run_yaml):
+            state = reader.read_yaml(run_yaml)
             raw_id = state.get("run_id")
             run_id = raw_id if isinstance(raw_id, str) else None
 
@@ -89,12 +88,12 @@ def collect_reflection_inputs(
     success_patterns = find_success_patterns(events)
     tool_sequences = detect_tool_sequences(
         events,
-        lookback=_config.reflect_sequence_lookback,
+        lookback=config.reflect_sequence_lookback,
     )
     validated_learnings = surface_validated_learnings(
         trw_dir,
-        q_threshold=_config.reflect_q_value_threshold,
-        cold_start_threshold=_config.q_cold_start_threshold,
+        q_threshold=config.reflect_q_value_threshold,
+        cold_start_threshold=config.q_cold_start_threshold,
     )
 
     return ReflectionInputs(
@@ -122,15 +121,17 @@ def generate_reflection_learnings(
     Returns:
         Tuple of (new_learnings, llm_used, positive_count).
     """
+    config = get_config()
+
     new_learnings: list[dict[str, str]] = []
     llm_used = False
 
     _llm_usage_path: Path | None = None
-    if _config.llm_usage_log_enabled:
+    if config.llm_usage_log_enabled:
         _reflect_trw_dir = resolve_trw_dir()
-        _llm_usage_path = _reflect_trw_dir / _config.logs_dir / _config.llm_usage_log_file
-    llm = LLMClient(model=_config.llm_default_model, usage_log_path=_llm_usage_path)
-    if inputs.events and _config.llm_enabled and llm.available:  # pragma: no cover
+        _llm_usage_path = _reflect_trw_dir / config.logs_dir / config.llm_usage_log_file
+    llm = LLMClient(model=config.llm_default_model, usage_log_path=_llm_usage_path)
+    if inputs.events and config.llm_enabled and llm.available:  # pragma: no cover
         llm_result = llm_extract_learnings(inputs.events, llm)
         if llm_result is not None:
             llm_used = True
@@ -248,16 +249,20 @@ def persist_reflection(
         scope: Reflection scope.
         learnings_count: Number of learnings produced.
     """
+    config = get_config()
+    writer = FileStateWriter()
+    events = FileEventLogger(writer)
+
     reflection_path = (
-        trw_dir / _config.reflections_dir
+        trw_dir / config.reflections_dir
         / f"{date.today().isoformat()}-{reflection.id}.yaml"
     )
-    _writer.write_yaml(reflection_path, model_to_dict(reflection))
+    writer.write_yaml(reflection_path, model_to_dict(reflection))
 
     if run_path:
         run_events_path = Path(run_path).resolve() / "meta" / "events.jsonl"
         if run_events_path.parent.exists():
-            _events.log_event(run_events_path, "reflection_complete", {
+            events.log_event(run_events_path, "reflection_complete", {
                 "reflection_id": reflection.id,
                 "scope": scope,
                 "learnings_produced": learnings_count,

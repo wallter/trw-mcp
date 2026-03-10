@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from trw_mcp.models.config import PhaseTimeCaps, TRWConfig, _reset_config, get_config
 from trw_mcp.models.learning import (
@@ -235,7 +236,7 @@ class TestShardCard:
         assert card.output_contract.file == "result.yaml"
 
     def test_wave_must_be_positive(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ShardCard(id="shard-bad", title="Bad", wave=0)
 
 
@@ -283,7 +284,7 @@ class TestLearningEntry:
         assert entry.promoted_to_claude_md is False
 
     def test_impact_bounds(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LearningEntry(id="L-bad", summary="Bad", detail="Bad", impact=1.5)
 
     def test_tags_default(self) -> None:

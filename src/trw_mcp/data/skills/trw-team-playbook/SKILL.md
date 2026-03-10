@@ -348,6 +348,35 @@ Token budget enforcement: After generating each playbook, estimate its token cou
 
 Never truncate Sections 1-4 -- those are the minimum viable playbook.
 
+### Step 7b: Learning Injection (PRD-CORE-075)
+
+After generating each teammate's playbook, inject task-relevant learnings from prior sessions. This step requires `agent_learning_injection: true` in config (the default).
+
+For each teammate:
+
+1. Extract their task description (from Section 4) and file ownership list (from Section 2).
+2. Call `select_learnings_for_task(task_description, file_paths)` from `trw_mcp.state.learning_injection` to query recall for relevant learnings, ranked by domain tag overlap and impact score.
+3. Call `format_learning_injection(selected_learnings)` to render a markdown section.
+4. Append the formatted section to the teammate's playbook file, immediately after Section 4 (Tasks) and before Section 5 (Quality Standards).
+
+If `agent_learning_injection` is `false` in config, skip this step entirely. If no learnings are found for a teammate, skip injection for that teammate (do not add an empty section).
+
+The injected section looks like:
+
+```markdown
+## Task-Relevant Learnings (auto-injected)
+
+The following learnings from prior sessions are relevant to your current task. Treat them as high-priority constraints.
+
+- **[L-042]** require_org_admin must accept both admin and owner roles (impact: 0.9, tags: auth, admin)
+- **[L-089]** Pydantic v2: use_enum_values=True breaks comparison (impact: 0.8, tags: pydantic)
+```
+
+Configuration controls (from `.trw/config.yaml`):
+- `agent_learning_injection`: toggle on/off (default: true)
+- `agent_learning_max`: maximum learnings per teammate (default: 5)
+- `agent_learning_min_impact`: minimum impact score threshold (default: 0.5)
+
 ### Step 8: Report Results
 
 Output a summary table:

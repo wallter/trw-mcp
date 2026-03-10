@@ -18,10 +18,6 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
 
-_config = get_config()
-_reader = FileStateReader()
-_writer = FileStateWriter()
-
 
 # --- Ceremony Scoring (FR05) ---
 
@@ -126,8 +122,11 @@ def scan_all_runs(
         Structured dict with runs, aggregate, generated_at, runs_scanned,
         and parse_errors.
     """
+    config = get_config()
+    writer = FileStateWriter()
+
     project_root = resolve_project_root()
-    task_root = project_root / _config.task_root
+    task_root = project_root / config.task_root
     parse_errors: list[str] = []
     runs: list[dict[str, object]] = []
 
@@ -174,10 +173,10 @@ def scan_all_runs(
     # Cache to analytics-report.yaml (best-effort)
     try:
         trw_dir = resolve_trw_dir()
-        cache_dir = trw_dir / _config.context_dir
-        _writer.ensure_dir(cache_dir)
+        cache_dir = trw_dir / config.context_dir
+        writer.ensure_dir(cache_dir)
         cache_path = cache_dir / "analytics-report.yaml"
-        _writer.write_yaml(cache_path, report)
+        writer.write_yaml(cache_path, report)
     except Exception:
         logger.debug("analytics_report_cache_write_failed")
 
@@ -189,12 +188,14 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
 
     Returns None if run.yaml doesn't exist or cannot be read.
     """
+    reader = FileStateReader()
+
     run_yaml = run_dir / "meta" / "run.yaml"
     if not run_yaml.exists():
         return None
 
     try:
-        state_data = _reader.read_yaml(run_yaml)
+        state_data = reader.read_yaml(run_yaml)
     except (OSError, StateError):
         return None
 
@@ -206,7 +207,7 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
     events: list[dict[str, object]] = []
     if events_path.exists():
         try:
-            events = _reader.read_jsonl(events_path)
+            events = reader.read_jsonl(events_path)
         except Exception:
             logger.debug("events_read_failed", path=str(events_path))
 
@@ -336,12 +337,14 @@ def _get_last_activity_timestamp(run_dir: Path) -> datetime | None:
 
     Returns None if no checkpoints exist.
     """
+    reader = FileStateReader()
+
     cp_path = run_dir / "meta" / "checkpoints.jsonl"
     if not cp_path.exists():
         return None
 
     try:
-        records = _reader.read_jsonl(cp_path)
+        records = reader.read_jsonl(cp_path)
     except (OSError, StateError):
         return None
 
@@ -369,6 +372,9 @@ def _write_archive_summary(
     closed_at: str,
 ) -> None:
     """Write a summary.yaml artifact when closing a stale run."""
+    reader = FileStateReader()
+    writer = FileStateWriter()
+
     meta = run_dir / "meta"
 
     # Count events
@@ -376,7 +382,7 @@ def _write_archive_summary(
     events_path = meta / "events.jsonl"
     if events_path.exists():
         try:
-            events_count = len(_reader.read_jsonl(events_path))
+            events_count = len(reader.read_jsonl(events_path))
         except (OSError, StateError):
             logger.debug("run_events_read_failed", path=str(events_path))
 
@@ -385,7 +391,7 @@ def _write_archive_summary(
     cp_path = meta / "checkpoints.jsonl"
     if cp_path.exists():
         try:
-            checkpoints_count = len(_reader.read_jsonl(cp_path))
+            checkpoints_count = len(reader.read_jsonl(cp_path))
         except (OSError, StateError):
             logger.debug("run_checkpoints_read_failed", path=str(cp_path))
 
@@ -407,7 +413,7 @@ def _write_archive_summary(
         "events_count": events_count,
         "checkpoints_count": checkpoints_count,
     }
-    _writer.write_yaml(meta / "summary.yaml", summary)
+    writer.write_yaml(meta / "summary.yaml", summary)
 
 
 def _is_run_stale(
@@ -457,6 +463,9 @@ def auto_close_stale_runs(
         Dict with runs_closed list, count, and any errors.
     """
     cfg = get_config()
+    reader = FileStateReader()
+    writer = FileStateWriter()
+
     if ttl_hours is not None:
         threshold_hours = ttl_hours
     elif age_days is not None:
@@ -483,7 +492,7 @@ def auto_close_stale_runs(
             if not run_yaml.exists():
                 continue
             try:
-                data = _reader.read_yaml(run_yaml)
+                data = reader.read_yaml(run_yaml)
                 status = str(data.get("status", ""))
                 if status != "active":
                     continue
@@ -499,7 +508,7 @@ def auto_close_stale_runs(
                 data["abandoned_reason"] = (
                     f"Stale timeout — exceeded threshold: {threshold_hours}h"
                 )
-                _writer.write_yaml(run_yaml, data)
+                writer.write_yaml(run_yaml, data)
                 closed.append(run_id)
 
                 # Write archive summary
@@ -529,6 +538,7 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
         Number of stale active runs.
     """
     cfg = get_config()
+    reader = FileStateReader()
     threshold_hours = ttl_hours if ttl_hours is not None else cfg.run_stale_ttl_hours
     project_root = resolve_project_root()
     task_root = project_root / cfg.task_root
@@ -547,7 +557,7 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
             if not run_yaml.exists():
                 continue
             try:
-                data = _reader.read_yaml(run_yaml)
+                data = reader.read_yaml(run_yaml)
                 status = str(data.get("status", ""))
                 if status != "active":
                     continue
