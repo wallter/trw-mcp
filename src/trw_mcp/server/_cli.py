@@ -281,6 +281,18 @@ def main() -> None:
     Parses arguments, dispatches to subcommand handlers, or starts the
     MCP server with the appropriate transport.
     """
+    import logging as _logging
+    import sys as _sys
+
+    # Early stderr logging so exceptions during config load are visible.
+    # This is replaced by configure_logging() once config is loaded.
+    _logging.basicConfig(
+        format="%(levelname)s: %(message)s",
+        level=_logging.DEBUG,
+        stream=_sys.stderr,
+        force=True,
+    )
+
     parser = _build_arg_parser()
     args = parser.parse_args()
 

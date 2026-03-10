@@ -30,27 +30,41 @@ _DEFAULT_INSTRUCTIONS = (
 
 def _load_server_instructions() -> str:
     """Load MCP server instructions from centralized messages, with fallback."""
-    from trw_mcp.prompts.messaging import get_message_or_default
+    try:
+        from trw_mcp.prompts.messaging import get_message_or_default
 
-    return get_message_or_default("server_instructions", _DEFAULT_INSTRUCTIONS)
+        return get_message_or_default("server_instructions", _DEFAULT_INSTRUCTIONS)
+    except Exception:
+        return _DEFAULT_INSTRUCTIONS
 
 
 def _build_middleware() -> list[object]:
-    """Build the middleware list, conditionally including progressive disclosure."""
-    from trw_mcp.models.config import get_config
+    """Build the middleware list, conditionally including progressive disclosure.
 
-    middleware: list[object] = [CeremonyMiddleware()]
+    Catches all exceptions to prevent module-level import from crashing
+    the server before logging is configured.
+    """
+    try:
+        middleware: list[object] = [CeremonyMiddleware()]
+    except Exception:
+        sys.stderr.write("WARNING: CeremonyMiddleware init failed, using empty middleware\n")
+        return []
 
-    config = get_config()
-    if config.progressive_disclosure:
-        from trw_mcp.state._paths import resolve_trw_dir
-        from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
-        from trw_mcp.state.usage_profiler import TOOL_GROUPS, compute_hot_set
+    try:
+        from trw_mcp.models.config import get_config
 
-        trw_dir = resolve_trw_dir()
-        hot_set = set(compute_hot_set(trw_dir))
-        pd_mw = ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
-        middleware.append(pd_mw)
+        config = get_config()
+        if config.progressive_disclosure:
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
+            from trw_mcp.state.usage_profiler import TOOL_GROUPS, compute_hot_set
+
+            trw_dir = resolve_trw_dir()
+            hot_set = set(compute_hot_set(trw_dir))
+            pd_mw = ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
+            middleware.append(pd_mw)
+    except Exception:
+        sys.stderr.write("WARNING: Progressive disclosure middleware init failed, skipping\n")
 
     return middleware
 

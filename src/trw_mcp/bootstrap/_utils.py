@@ -139,14 +139,15 @@ def _default_config(
 def _trw_mcp_server_entry() -> dict[str, object]:
     """Build the ``trw`` MCP server entry for .mcp.json.
 
-    Always returns a portable command that resolves via $PATH.
-    No absolute paths are written — this ensures .mcp.json works
-    across machines and venvs (PRD-FIX-037).
+    Uses the absolute path to the Python interpreter that installed
+    trw-mcp so the correct venv is always used (PRD-FIX-037).
+    Falls back to ``python3`` if ``trw-mcp`` console script isn't on PATH.
     """
     if shutil.which("trw-mcp"):
         return {"command": "trw-mcp", "args": ["--debug"]}
-    # Fallback: use bare python -m invocation (no absolute paths)
-    return {"command": "python", "args": ["-m", "trw_mcp.server", "--debug"]}
+    # Use the absolute path to the current interpreter — ensures
+    # the correct venv is used even when PATH varies.
+    return {"command": sys.executable, "args": ["-m", "trw_mcp.server", "--debug"]}
 
 
 def _merge_mcp_json(
