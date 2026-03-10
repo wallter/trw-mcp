@@ -2,44 +2,32 @@
 
 All notable changes to the TRW MCP server package.
 
-## [0.13.0] — 2026-03-09
+## [0.11.3] — 2026-03-09
 
-### Added — Session-Start Telemetry Send
+### Added
 
 - **Background batch send on session start** — `trw_session_start()` now fires a daemon-thread batch send after flushing telemetry events, so new installations appear in the dashboard immediately instead of waiting for `trw_deliver()`
-- Previously, telemetry events were queued locally on session start but only transmitted during `trw_deliver()` — meaning installations never appeared in the dashboard until a full deliver cycle
-
----
-
-## [0.12.2] — 2026-03-09
-
-### Fixed — Index Sync & Sprint-Finish Hardening
-
-- **Header stats format corruption** — split `_build_stats_summary` into `_build_index_stats` (parenthesized) and `_build_roadmap_stats` (count-first) to prevent `## Summary 187 (1 done, ...)` corruption
-- **Double file write** — `sync_index_md` and `sync_roadmap_md` consolidated to single read→merge→update→write
-- **Dead code** — removed unused `_write_catalogue` function
-- **Sprint-finish step ordering** — PRD status update moved from step 3 to step 5a (after build gate passes)
-- **Frontmatter nesting** — sprint-finish step 3 specifies `prd:` key nesting for status field
-- **FD leak** — `_try_acquire_deferred_lock` widened from `except OSError` to `except Exception`
-- **Auto-progression catch** — `prd_progression.py` index sync catch widened to `except Exception`
-
----
-
-## [0.12.1] — 2026-03-08
+- **Admin installations endpoint** — `GET /admin/installations` shows all installations across all orgs (platform admin only)
+- **Admin-aware installations dashboard** — admin users see all installations with org column; non-admin users see org-scoped view
 
 ### Changed — Installer Rewrite (Bash → Python)
 
 - **Installer rewritten from bash to Python** — `install-trw.template.py` replaces `install-trw.template.sh` as the default installer format. Users now run `python3 install-trw.py` instead of `bash install-trw.sh`.
-- **Box alignment fixed permanently** — `draw_box()` uses ANSI-aware `_visible_len()` + f-string padding. No more bash `printf` alignment bugs.
-- **Smart color detection** — ANSI colors auto-disable when stdout is not a TTY (clean piped output).
-- **Phased architecture** — each installation step is a standalone function (`phase_check_python`, `phase_extract_wheels`, `phase_install_packages`, etc.) for maintainability.
-- **Threaded spinner** — replaces bash background subshell + PID juggling with a clean daemon thread.
-- **Section dividers** — interactive mode shows `── Optional Features ──`, `── Project Identity ──`, `── Platform Connection ──` section headers.
-- **Enhanced prompts** — every Y/N prompt includes a description and doc link (`Learn more: trwframework.com/docs/...`).
-- **`prompt_choice()`** — numbered option selector for future multi-option prompts.
-- **`build_installer.py`** — now supports `--format py|sh` (Python is default). Comment-prefixed base64 embedding for Python format.
-- **All docs/marketing/scripts updated** — references to `install-trw.sh` changed to `install-trw.py` across 11 files.
-- **Bash template preserved** — `install-trw.template.sh` kept as fallback via `--format sh`.
+- **Box alignment fixed permanently** — `draw_box()` uses ANSI-aware `_visible_len()` + f-string padding
+- **Smart color detection** — ANSI colors auto-disable when stdout is not a TTY
+- **Phased architecture** — each installation step is a standalone function for maintainability
+- **Threaded spinner** — replaces bash background subshell + PID juggling with a clean daemon thread
+- **`build_installer.py`** — now supports `--format py|sh` (Python is default)
+
+### Fixed
+
+- **API key scopes on waitlist conversion** — converted users now get `scopes=["*"]` instead of empty scopes, fixing 401 errors on all scope-protected endpoints
+- **API key scopes on admin key creation** — same fix for `POST /admin/organizations/{org_id}/api-keys`
+- **Header stats format corruption** — split `_build_stats_summary` into separate index/roadmap formatters
+- **Index sync double write** — consolidated to single read→merge→update→write
+- **Sprint-finish step ordering** — PRD status update moved after build gate passes
+- **FD leak** — `_try_acquire_deferred_lock` exception handler widened
+- **Deploy script** — `.trw/` excluded from uncommitted changes check; `python` → `python3` for WSL2
 
 ---
 
