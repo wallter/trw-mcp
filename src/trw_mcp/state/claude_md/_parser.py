@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -72,6 +73,9 @@ def render_template(template: str, context: dict[str, str]) -> str:
 
     Returns:
         Rendered markdown string with empty sections collapsed.
+
+    Raises:
+        StateError: If any ``{{placeholder}}`` tokens remain after replacement.
     """
     result = template
     for key, value in context.items():
@@ -79,6 +83,13 @@ def render_template(template: str, context: dict[str, str]) -> str:
     # Collapse runs of 3+ consecutive blank lines to 2
     while "\n\n\n" in result:
         result = result.replace("\n\n\n", "\n\n")
+    # Validate no unreplaced markers remain
+    unreplaced = re.findall(r"\{\{(\w+)\}\}", result)
+    if unreplaced:
+        from trw_mcp.exceptions import StateError
+
+        msg = f"Unresolved template markers: {', '.join(unreplaced)}"
+        raise StateError(msg)
     return result
 
 
