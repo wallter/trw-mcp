@@ -2,6 +2,15 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.13.0] — 2026-03-09
+
+### Added — Session-Start Telemetry Send
+
+- **Background batch send on session start** — `trw_session_start()` now fires a daemon-thread batch send after flushing telemetry events, so new installations appear in the dashboard immediately instead of waiting for `trw_deliver()`
+- Previously, telemetry events were queued locally on session start but only transmitted during `trw_deliver()` — meaning installations never appeared in the dashboard until a full deliver cycle
+
+---
+
 ## [0.12.2] — 2026-03-09
 
 ### Fixed — Index Sync & Sprint-Finish Hardening

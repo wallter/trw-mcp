@@ -300,11 +300,9 @@ def check_python_version(ui: UI) -> str:
 def _extract_wheel_data(marker: str) -> bytes:
     """Read base64 data following *marker* from this script file.
 
-    Wheels are embedded as comment lines after marker comments:
-        # __MEMORY_WHEEL_DATA__
-        # <base64 ...>
-        # __WHEEL_DATA__
-        # <base64 ...>
+    Wheels are embedded as comment lines after marker comments at the
+    end of the file (e.g. MEMORY_WHEEL_DATA, WHEEL_DATA). Each marker
+    is followed by comment-prefixed base64 lines.
     """
     script_path = (
         Path(sys.argv[0]).resolve()

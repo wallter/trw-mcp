@@ -617,6 +617,15 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 run_id=str(run_dir.name) if run_dir else None,
             ))
             tel_client.flush()
+            # Fire-and-forget batch send so new installations appear immediately
+            import threading
+            def _bg_send() -> None:
+                try:
+                    from trw_mcp.telemetry.sender import BatchSender
+                    BatchSender.from_config().send()
+                except Exception:
+                    pass  # fail-open: never block session start
+            threading.Thread(target=_bg_send, daemon=True).start()
         except Exception:
             logger.debug("session_telemetry_failed", exc_info=True)
 

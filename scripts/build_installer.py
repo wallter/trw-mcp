@@ -135,7 +135,63 @@ def build_installer(
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(f"Output:             {output_path} ({size_mb:.1f} MB)")
+
+    # Validate round-trip: verify embedded wheels can be extracted
+    if fmt == "py":
+        _validate_py_installer(output_path, wheel_path, memory_wheel_path)
+
     return output_path
+
+
+def _validate_py_installer(
+    installer_path: Path,
+    expected_mcp_wheel: Path,
+    expected_memory_wheel: Path,
+) -> None:
+    """Verify the built Python installer can extract valid wheels."""
+    text = installer_path.read_text(encoding="utf-8", errors="replace")
+
+    for marker, expected_wheel, label in [
+        ("__MEMORY_WHEEL_DATA__", expected_memory_wheel, "trw-memory"),
+        ("__WHEEL_DATA__", expected_mcp_wheel, "trw-mcp"),
+    ]:
+        collecting = False
+        chunks: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped == f"# {marker}":
+                collecting = True
+                continue
+            if collecting:
+                if stripped.startswith("# __") and stripped.endswith("__"):
+                    break
+                if stripped.startswith("# "):
+                    chunks.append(stripped[2:])
+                elif stripped == "#":
+                    continue
+                else:
+                    break
+
+        if not chunks:
+            print(f"ERROR: No base64 data found for {marker}", file=sys.stderr)
+            sys.exit(1)
+
+        joined = "".join(chunks)
+        try:
+            decoded = base64.b64decode(joined)
+        except Exception as exc:
+            print(f"ERROR: base64 decode failed for {label} ({marker}): {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        expected_size = expected_wheel.stat().st_size
+        if len(decoded) != expected_size:
+            print(
+                f"ERROR: {label} size mismatch: decoded {len(decoded)} vs expected {expected_size}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        print(f"Verified:           {label} wheel round-trip OK ({len(decoded)} bytes)")
 
 
 def main() -> None:
