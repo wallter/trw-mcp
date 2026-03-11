@@ -583,10 +583,16 @@ def _get_bundled_file(filename: str, subdir: str = "") -> str | None:
     Returns:
         File text content, or None if not found.
     """
-    data_dir = Path(__file__).parent.parent / "data"
+    data_dir = (Path(__file__).parent.parent / "data").resolve()
     if subdir:
         data_dir = data_dir / subdir
-    file_path = data_dir / filename
+    file_path = (data_dir / filename).resolve()
+
+    # QUAL-042-FR04: Path containment — prevent traversal outside data dir
+    if not file_path.is_relative_to(data_dir):
+        logger.warning("bundled_file_path_traversal", filename=filename, subdir=subdir)
+        return None
+
     if file_path.exists():
         return file_path.read_text(encoding="utf-8")
     return None

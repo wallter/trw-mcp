@@ -100,7 +100,7 @@ class TestRunPathContainment:
         project_root.mkdir()
 
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=project_root):
-            with pytest.raises(StateError, match="resolves outside project root"):
+            with pytest.raises(StateError, match="escapes project root"):
                 resolve_run_path(str(outside_dir))
 
     def test_run_path_inside_project_root_succeeds(self, tmp_path: Path) -> None:

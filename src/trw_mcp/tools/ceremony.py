@@ -75,6 +75,10 @@ def _get_run_status(run_dir: Path) -> dict[str, object]:
             result["task_name"] = str(data.get("task_name", ""))
             if "owner_session_id" in data:
                 result["owner_session_id"] = data["owner_session_id"]
+            # INFRA-036-FR05: Include wave status in session start
+            wave_status = data.get("wave_status")
+            if wave_status and isinstance(wave_status, dict):
+                result["wave_status"] = wave_status
     except (StateError, OSError, ValueError):
         result["status"] = "error_reading"
     return result

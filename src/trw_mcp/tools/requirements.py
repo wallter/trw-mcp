@@ -235,6 +235,17 @@ def register_requirements_tools(server: FastMCP) -> None:
             prd_path: Path to the PRD markdown file to validate.
         """
         path = Path(prd_path).resolve()
+
+        # QUAL-042-FR03: Path containment — prevent reading files outside project
+        from trw_mcp.state._paths import resolve_project_root
+
+        project_root = resolve_project_root()
+        if not path.is_relative_to(project_root):
+            raise StateError(
+                f"PRD path escapes project root: {path}",
+                path=str(path),
+            )
+
         if not path.exists():
             raise StateError(f"PRD file not found: {path}", path=str(path))
 
