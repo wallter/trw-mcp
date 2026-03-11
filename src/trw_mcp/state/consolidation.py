@@ -131,7 +131,7 @@ def find_clusters(
         List of clusters; each cluster is a list of entry dicts.
         Returns [] when embeddings are unavailable.
     """
-    from trw_mcp.telemetry.embeddings import embed_batch, embedding_available
+    from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch, embedding_available
 
     _t0 = time.monotonic()
 
@@ -635,7 +635,7 @@ def _mean_pairwise_similarity(cluster: list[dict[str, object]]) -> float:
 
     Returns 0.0 when embeddings are unavailable or cluster is too small.
     """
-    from trw_mcp.telemetry.embeddings import embed_batch
+    from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch
 
     if len(cluster) < 2:
         return 0.0

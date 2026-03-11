@@ -208,12 +208,3 @@ def register_checkpoint_tools(server: FastMCP) -> None:
             return result
         except Exception as exc:
             return {"status": "failed", "error": str(exc)}
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    global _reader, _writer, _events
-    _reader = FileStateReader()
-    _writer = FileStateWriter()
-    _events = FileEventLogger(_writer)
-    _checkpoint_state.counter = 0

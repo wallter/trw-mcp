@@ -357,10 +357,9 @@ class TestTrwLearnForcedDistributionWiring:
 
     def test_no_demotion_when_disabled(self, tmp_path: Path) -> None:
         """When impact_forced_distribution_enabled=False, no demotions occur."""
-        import trw_mcp.tools.learning as learning_mod
         from trw_mcp.models.config import TRWConfig
         disabled_cfg = TRWConfig().model_copy(update={"impact_forced_distribution_enabled": False})
-        with patch.object(learning_mod, "_config", disabled_cfg):
+        with patch("trw_mcp.tools.learning.get_config", return_value=disabled_cfg):
             tools = self._get_tools()
             entries_dir = self._entries_dir(tmp_path)
             for i in range(10):

@@ -16,20 +16,11 @@ from trw_mcp.state.memory_adapter import (
     list_active_learnings,
     list_entries_by_status,
     recall_learnings,
-    reset_backend,
     store_learning,
     update_access_tracking,
     update_learning,
 )
 from trw_mcp.state.persistence import FileStateWriter
-
-
-@pytest.fixture(autouse=True)
-def _isolate_backend() -> None:  # type: ignore[misc]
-    """Reset the module-level backend singleton between tests."""
-    reset_backend()
-    yield  # type: ignore[misc]
-    reset_backend()
 
 
 @pytest.fixture

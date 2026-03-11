@@ -71,14 +71,8 @@ def _read_version() -> str:
 
 def _read_framework_version() -> str:
     """Read framework version from bundled FRAMEWORK.md first line."""
-    fw_path = _DATA_DIR / "framework.md"
-    if fw_path.exists():
-        first_line = fw_path.read_text(encoding="utf-8").split("\n", 1)[0]
-        # "v24.2_TRW — CLAUDE CODE..."
-        if "\u2014" in first_line:
-            return first_line.split("\u2014")[0].strip().split()[0]
-        return first_line.split()[0]
-    return "unknown"
+    from trw_mcp.state._helpers import read_framework_version
+    return read_framework_version()
 
 
 def _sha256(path: Path) -> str:

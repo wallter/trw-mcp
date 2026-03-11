@@ -436,7 +436,7 @@ class TestSessionStartAutoClose:
             # Step 5 uses a function-local import: patch at the source module
             ar_mod.auto_close_stale_runs = mock_close  # type: ignore[method-assign]
             with (
-                patch.object(ceremony_mod, "_config", cfg),
+                patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
                 patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
                 patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
                 patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
@@ -461,7 +461,7 @@ class TestSessionStartAutoClose:
         import trw_mcp.tools.ceremony as ceremony_mod
 
         with (
-            patch.object(ceremony_mod, "_config", cfg),
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
@@ -487,7 +487,7 @@ class TestSessionStartAutoClose:
         import trw_mcp.tools.ceremony as ceremony_mod
 
         with (
-            patch.object(ceremony_mod, "_config", cfg),
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
@@ -533,7 +533,7 @@ class TestDeliverAutoPrune:
     def _base_patches(self, tmp_path: Path, cfg: TRWConfig) -> dict[str, object]:
         """Return a dict of common patch targets for trw_deliver tests."""
         return {
-            "trw_mcp.tools.ceremony._config": cfg,
+            "trw_mcp.tools.ceremony.get_config": lambda: cfg,
             "trw_mcp.tools.ceremony.resolve_trw_dir": lambda: tmp_path / ".trw",
             "trw_mcp.tools.ceremony.find_active_run": lambda: None,
             "trw_mcp.tools.ceremony._do_reflect": lambda *a, **kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0},
@@ -563,7 +563,7 @@ class TestDeliverAutoPrune:
         mock_prune = MagicMock(return_value=prune_result)
 
         with (
-            patch.object(ceremony_mod, "_config", cfg),
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony._step_consolidation", return_value=noop),
             patch("trw_mcp.tools.ceremony._step_tier_sweep", return_value=noop),
@@ -605,7 +605,7 @@ class TestDeliverAutoPrune:
         mock_prune = MagicMock(return_value={"actions_taken": 0})
 
         with (
-            patch.object(ceremony_mod, "_config", cfg),
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.tools.ceremony._do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}),
@@ -643,7 +643,7 @@ class TestDeliverAutoPrune:
         noop: dict[str, object] = {"status": "skipped"}
 
         with (
-            patch.object(ceremony_mod, "_config", cfg),
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony._step_consolidation", return_value=noop),
             patch("trw_mcp.tools.ceremony._step_tier_sweep", return_value=noop),
@@ -688,7 +688,7 @@ class TestDeliverAutoPrune:
         mock_prune = MagicMock(return_value={"actions_taken": 0})
 
         with (
-            patch.object(ceremony_mod, "_config", cfg),
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.tools.ceremony._do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}),

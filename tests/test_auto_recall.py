@@ -325,8 +325,9 @@ class TestAutoRecallMaxResults:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """auto_recall_max_results limits returned entries."""
-        import trw_mcp.tools.ceremony as ceremony_mod
-        monkeypatch.setattr(ceremony_mod._config, "auto_recall_max_results", 2)
+        from trw_mcp.models.config import TRWConfig
+        mock_cfg = TRWConfig(auto_recall_max_results=2)
+        monkeypatch.setattr("trw_mcp.tools.ceremony.get_config", lambda: mock_cfg)
 
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = _setup_trw_dir(tmp_path)

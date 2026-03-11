@@ -195,7 +195,7 @@ class MemoryStore:
         Returns:
             Dict with 'migrated', 'skipped', and 'total' counts.
         """
-        from trw_mcp.telemetry.embeddings import embed_batch, embedding_available
+        from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch, embedding_available
 
         if self._conn is None or not embedding_available():
             return {"migrated": 0, "skipped": 0, "total": 0}

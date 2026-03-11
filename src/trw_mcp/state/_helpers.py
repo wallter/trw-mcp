@@ -118,6 +118,26 @@ def is_active_entry(data: dict[str, object]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Framework version (PRD-FIX-045-FR03)
+# ---------------------------------------------------------------------------
+
+
+def read_framework_version() -> str:
+    """Read the framework version from the bundled framework.md file.
+
+    Parses the first line of data/framework.md. Returns 'unknown' if
+    the file is missing or unparseable.
+    """
+    fw_path = Path(__file__).resolve().parent.parent / "data" / "framework.md"
+    if fw_path.exists():
+        first_line = fw_path.read_text(encoding="utf-8").split("\n", 1)[0]
+        if "\u2014" in first_line:
+            return first_line.split("\u2014")[0].strip().split()[0]
+        return first_line.split()[0] if first_line.strip() else "unknown"
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
 

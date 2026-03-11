@@ -224,12 +224,8 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
 
 def _get_framework_version() -> str:
     """Extract framework version from bundled FRAMEWORK.md."""
-    fw_path = Path(__file__).parent.parent / "data" / "framework.md"
-    if fw_path.exists():
-        first_line = fw_path.read_text(encoding="utf-8").split("\n", 1)[0]
-        # "v24.1_TRW -- CLAUDE CODE..."
-        return first_line.split("\u2014")[0].strip().split()[0] if "\u2014" in first_line else first_line.split()[0]
-    return "unknown"
+    from trw_mcp.state._helpers import read_framework_version
+    return read_framework_version()
 
 
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {

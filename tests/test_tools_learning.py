@@ -12,7 +12,7 @@ import pytest
 
 from tests.conftest import get_tools_sync
 
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.scoring import correlate_recalls, process_outcome, process_outcome_for_event
 from trw_mcp.state.analytics import (
     extract_learnings_from_llm,
@@ -38,7 +38,7 @@ from trw_mcp.state.claude_md import (
     render_template,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.state.recall_search import search_entries, search_patterns, update_access_tracking
+from trw_mcp.state.recall_search import search_patterns
 
 _CFG = TRWConfig()
 
@@ -53,10 +53,6 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
-    # Force learning module to pick up the new env-var config
-    from trw_mcp.tools.learning import __reload_hook__
-
-    __reload_hook__()
     return tmp_path
 
 
@@ -483,7 +479,7 @@ class TestTrwClaudeMdSync:
         content = claude_md.read_text(encoding="utf-8")
         line_count = len(content.split("\n"))
         # Should be at or below the configured max (200) + 1 for truncation comment
-        assert line_count <= learn_mod._config.claude_md_max_lines + 1
+        assert line_count <= get_config().claude_md_max_lines + 1
 
 
     def test_wildcard_returns_all_learnings(self, tmp_path: Path) -> None:
@@ -1477,11 +1473,9 @@ class TestOutcomeCorrelation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """outcome_history is capped to learning_outcome_history_cap."""
-        import trw_mcp.scoring as scoring_mod
-
-        # Set cap to 3 for testing — process_outcome reads from scoring._config
+        # Set cap to 3 for testing — process_outcome reads get_config() in _correlation
         cfg = TRWConfig(learning_outcome_history_cap=3)
-        monkeypatch.setattr(scoring_mod, "_config", cfg)
+        monkeypatch.setattr("trw_mcp.scoring._correlation.get_config", lambda: cfg)
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1890,41 +1884,13 @@ class TestBehavioralProtocol:
 class TestRecallSearch:
     """Unit tests for state.recall_search functions."""
 
+    @pytest.mark.skip(reason="search_entries removed — YAML search stack retired (PRD-CORE-080)")
     def test_search_entries_finds_matching(self, tmp_project: Path) -> None:
         """search_entries returns entries matching query tokens."""
-        writer = FileStateWriter()
-        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
-        writer.write_yaml(entries_dir / "test.yaml", {
-            "id": "L-test001",
-            "summary": "JWT authentication gotcha",
-            "detail": "Tokens expire silently",
-            "tags": ["auth", "gotcha"],
-            "impact": 0.8,
-            "status": "active",
-        })
-        reader = FileStateReader()
-        matches, files = search_entries(entries_dir, ["jwt"], reader)
-        assert len(matches) == 1
-        assert matches[0]["id"] == "L-test001"
-        assert len(files) == 1
 
+    @pytest.mark.skip(reason="search_entries removed — YAML search stack retired (PRD-CORE-080)")
     def test_search_entries_respects_min_impact(self, tmp_project: Path) -> None:
         """search_entries filters by min_impact."""
-        writer = FileStateWriter()
-        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
-        writer.write_yaml(entries_dir / "low.yaml", {
-            "id": "L-low", "summary": "low impact",
-            "detail": "", "tags": [], "impact": 0.2, "status": "active",
-        })
-        writer.write_yaml(entries_dir / "high.yaml", {
-            "id": "L-high", "summary": "high impact",
-            "detail": "", "tags": [], "impact": 0.9, "status": "active",
-        })
-        reader = FileStateReader()
-        from trw_mcp.state.recall_search import search_entries
-        matches, _ = search_entries(entries_dir, [], reader, min_impact=0.5)
-        assert len(matches) == 1
-        assert matches[0]["id"] == "L-high"
 
     def test_search_patterns_finds_matching(self, tmp_project: Path) -> None:
         """search_patterns returns patterns matching query."""
@@ -1938,41 +1904,13 @@ class TestRecallSearch:
         matches = search_patterns(patterns_dir, ["research"], reader)
         assert len(matches) == 1
 
+    @pytest.mark.skip(reason="search_entries removed — YAML search stack retired (PRD-CORE-080)")
     def test_search_entries_matches_hyphenated_tag_parts(self, tmp_project: Path) -> None:
         """search_entries matches individual parts of hyphenated tags."""
-        writer = FileStateWriter()
-        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
-        writer.write_yaml(entries_dir / "hyph.yaml", {
-            "id": "L-hyph001",
-            "summary": "Some gotcha",
-            "detail": "Details here",
-            "tags": ["pydantic-v2", "cross-project"],
-            "impact": 0.8,
-            "status": "active",
-        })
-        reader = FileStateReader()
-        # "pydantic" should match via expanded hyphenated tag "pydantic-v2"
-        matches, _ = search_entries(entries_dir, ["pydantic"], reader)
-        assert len(matches) == 1
-        assert matches[0]["id"] == "L-hyph001"
-        # "cross" should also match from "cross-project"
-        matches2, _ = search_entries(entries_dir, ["cross"], reader)
-        assert len(matches2) == 1
 
+    @pytest.mark.skip(reason="update_access_tracking removed — YAML search stack retired (PRD-CORE-080)")
     def test_update_access_tracking_increments(self, tmp_project: Path) -> None:
         """update_access_tracking increments access_count."""
-        writer = FileStateWriter()
-        reader = FileStateReader()
-        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
-        entry_path = entries_dir / "track.yaml"
-        writer.write_yaml(entry_path, {
-            "id": "L-track", "summary": "test",
-            "access_count": 0, "last_accessed_at": None,
-        })
-        ids = update_access_tracking([entry_path], reader, writer)
-        assert ids == ["L-track"]
-        updated = reader.read_yaml(entry_path)
-        assert updated["access_count"] == 1
 
 
 class TestAnalyticsExtraction:
@@ -2260,10 +2198,8 @@ class TestTrwLearnDistributionWarning:
 
     def test_learn_no_warning_when_disabled(self, tmp_path: Path) -> None:
         """No warning when impact_forced_distribution_enabled=False."""
-        import trw_mcp.tools.learning as learning_mod
-
         disabled_cfg = _CFG.model_copy(update={"impact_forced_distribution_enabled": False})
-        with patch.object(learning_mod, "_config", disabled_cfg):
+        with patch("trw_mcp.tools.learning.get_config", return_value=disabled_cfg):
             tools = _get_tools()
             entries_dir = _entries_dir(tmp_path)
             for i in range(10):

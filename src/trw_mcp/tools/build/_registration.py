@@ -221,12 +221,3 @@ def register_build_tools(server: FastMCP) -> None:
         trw_dir = resolve_trw_dir()
         clamped_days = max(1, min(365, window_days))
         return aggregate_dashboard(trw_dir, clamped_days, compare_sprint)
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    global _config
-    _reset_config()
-    _config = get_config()

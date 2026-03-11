@@ -150,6 +150,44 @@ def reset_embedder() -> None:
         _embedder_checked = False
 
 
+def embedding_available() -> bool:
+    """Return True if an embedding provider is available (PRD-CORE-080)."""
+    return get_embedder() is not None
+
+
+def embed_text(text: str) -> list[float] | None:
+    """Generate a single embedding vector for *text* (PRD-CORE-080).
+
+    Returns None if embeddings are unavailable or text is empty.
+    """
+    embedder = get_embedder()
+    if embedder is None or not text.strip():
+        return None
+    try:
+        result: list[float] | None = embedder.embed(text)
+        return result
+    except (OSError, ValueError, RuntimeError):
+        logger.debug("embed_text_failed", text_length=len(text))
+        return None
+
+
+def embed_text_batch(texts: list[str]) -> list[list[float] | None]:
+    """Generate embeddings for multiple texts (PRD-CORE-080).
+
+    Returns a list of embedding vectors (or None per text on failure).
+    """
+    if not texts:
+        return []
+    embedder = get_embedder()
+    if embedder is None:
+        return [None] * len(texts)
+    try:
+        return [embed_text(t) for t in texts]
+    except (OSError, ValueError, RuntimeError):
+        logger.debug("embed_text_batch_failed", text_count=len(texts))
+        return [None] * len(texts)
+
+
 def check_embeddings_status() -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
 

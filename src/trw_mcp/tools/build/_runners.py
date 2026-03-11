@@ -181,12 +181,3 @@ def _run_mypy(
     mypy_clean = result.returncode == 0
     failures = _extract_failures(output, (": error:",)) if not mypy_clean else []
     return {"mypy_clean": mypy_clean, "failures": failures}
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    global _config
-    _reset_config()
-    _config = get_config()

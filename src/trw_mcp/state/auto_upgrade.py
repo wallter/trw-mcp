@@ -58,8 +58,9 @@ def check_for_update() -> dict[str, object]:
         try:
             url = f"{base_url.rstrip('/')}/v1/releases/latest?channel={cfg.update_channel}"
             headers: dict[str, str] = {}
-            if cfg.platform_api_key:
-                headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+            _key = cfg.platform_api_key.get_secret_value()
+            if _key:
+                headers["Authorization"] = f"Bearer {_key}"
             req = urllib.request.Request(url, method="GET", headers=headers)
             with urllib.request.urlopen(req, timeout=3) as response:
                 if 200 <= response.status < 300:
@@ -123,26 +124,29 @@ def download_release_artifact(
         # Download
         cfg = get_config()
         headers: dict[str, str] = {}
-        if cfg.platform_api_key:
-            headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+        _key = cfg.platform_api_key.get_secret_value()
+        if _key:
+            headers["Authorization"] = f"Bearer {_key}"
         req = urllib.request.Request(artifact_url, method="GET", headers=headers)
         with urllib.request.urlopen(req, timeout=30) as response:
             archive_path.write_bytes(response.read())
 
-        # Verify checksum
-        if expected_checksum:
-            h = hashlib.sha256()
-            with open(archive_path, "rb") as f:
-                for chunk in iter(lambda: f.read(8192), b""):
-                    h.update(chunk)
-            actual = h.hexdigest()
-            if actual != expected_checksum:
-                logger.warning(
-                    "checksum_mismatch",
-                    expected=expected_checksum,
-                    actual=actual,
-                )
-                return None
+        # Mandatory checksum verification (PRD-QUAL-042-FR08)
+        if not expected_checksum:
+            logger.warning("checksum_missing", url=artifact_url)
+            return None
+        h = hashlib.sha256()
+        with open(archive_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        actual = h.hexdigest()
+        if actual != expected_checksum:
+            logger.warning(
+                "checksum_mismatch",
+                expected=expected_checksum,
+                actual=actual,
+            )
+            return None
 
         # Extract
         with tarfile.open(archive_path, "r:gz") as tar:
@@ -272,8 +276,9 @@ def _fetch_artifact_info(version: str) -> dict[str, object] | None:
         try:
             url = f"{base_url.rstrip('/')}/v1/releases/{version}/artifact"
             headers: dict[str, str] = {}
-            if cfg.platform_api_key:
-                headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+            _key = cfg.platform_api_key.get_secret_value()
+            if _key:
+                headers["Authorization"] = f"Bearer {_key}"
             req = urllib.request.Request(url, method="GET", headers=headers)
             with urllib.request.urlopen(req, timeout=5) as response:
                 if 200 <= response.status < 300:

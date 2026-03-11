@@ -59,6 +59,17 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger()
 
 
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    if name == "_reader":
+        return FileStateReader()
+    if name == "_writer":
+        return FileStateWriter()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def _create_llm_client() -> LLMClient:
     """Create an LLM client using current config."""
     config = get_config()
@@ -100,6 +111,9 @@ def register_learning_tools(server: FastMCP) -> None:
             source_type: Learning provenance — "human" or "agent".
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
         """
+        # Input validation (PRD-QUAL-042-FR06): impact bounds
+        impact = max(0.0, min(1.0, impact))
+
         # PRD-QUAL-032-FR09: Reject auto-generated noise entries early
         if is_noise_summary(summary):
             return {
@@ -303,6 +317,9 @@ def register_learning_tools(server: FastMCP) -> None:
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
         """
+        # Input validation (PRD-QUAL-042-FR06): impact bounds
+        min_impact = max(0.0, min(1.0, min_impact))
+
         config = get_config()
         reader = FileStateReader()
         trw_dir = resolve_trw_dir()
@@ -430,10 +447,3 @@ def register_learning_tools(server: FastMCP) -> None:
         writer = FileStateWriter()
         llm = _create_llm_client()
         return execute_claude_md_sync(scope, target_dir, config, reader, writer, llm)
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    _reset_config()

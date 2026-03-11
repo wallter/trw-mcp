@@ -23,6 +23,7 @@ from fastmcp import FastMCP
 from tests.conftest import get_tools_sync
 
 from trw_mcp.exceptions import StateError, ValidationError
+from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
 from trw_mcp.models.run import Phase
@@ -218,84 +219,77 @@ class TestLearningExceptionPaths:
 
     def test_trw_learn_yaml_read_exception_skips_file(self, tmp_path: Path) -> None:
         """Distribution check is fail-open when list_active_learnings raises."""
-        import trw_mcp.tools.learning as mod
+        from trw_mcp.models.config import TRWConfig
 
-        # Enable forced distribution so the distribution block runs
-        old_config = mod._config
-        try:
-            cfg = mod._config.__class__()
-            object.__setattr__(cfg, "impact_forced_distribution_enabled", True)
-            mod._config = cfg
+        cfg = TRWConfig(impact_forced_distribution_enabled=True)
 
-            tool = self._register_and_get("trw_learn")
+        tool = self._register_and_get("trw_learn")
 
-            with patch(
-                "trw_mcp.tools.learning.resolve_trw_dir",
-                return_value=tmp_path / ".trw",
-            ), patch(
-                "trw_mcp.tools.learning.generate_learning_id",
-                return_value="L-test0001",
-            ), patch(
-                "trw_mcp.tools.learning.adapter_store",
-                return_value={"learning_id": "L-test0001", "path": "sqlite://L-test0001", "status": "recorded", "distribution_warning": ""},
-            ), patch(
-                "trw_mcp.tools.learning.update_analytics",
-            ), patch(
-                "trw_mcp.tools.learning.list_active_learnings",
-                side_effect=StateError("adapter read failure"),
-            ):
-                result = tool(
-                    summary="test summary",
-                    detail="test detail",
-                    impact=0.8,  # >= 0.7 triggers distribution check
-                )
+        with patch(
+            "trw_mcp.tools.learning.get_config",
+            return_value=cfg,
+        ), patch(
+            "trw_mcp.tools.learning.resolve_trw_dir",
+            return_value=tmp_path / ".trw",
+        ), patch(
+            "trw_mcp.tools.learning.generate_learning_id",
+            return_value="L-test0001",
+        ), patch(
+            "trw_mcp.tools.learning.adapter_store",
+            return_value={"learning_id": "L-test0001", "path": "sqlite://L-test0001", "status": "recorded", "distribution_warning": ""},
+        ), patch(
+            "trw_mcp.tools.learning.update_analytics",
+        ), patch(
+            "trw_mcp.tools.learning.list_active_learnings",
+            side_effect=StateError("adapter read failure"),
+        ):
+            result = tool(
+                summary="test summary",
+                detail="test detail",
+                impact=0.8,  # >= 0.7 triggers distribution check
+            )
 
-            # Distribution enforcement raised but exception was swallowed (fail-open)
-            assert result["status"] == "recorded"
-            assert result["learning_id"] == "L-test0001"
-        finally:
-            mod._config = old_config
+        # Distribution enforcement raised but exception was swallowed (fail-open)
+        assert result["status"] == "recorded"
+        assert result["learning_id"] == "L-test0001"
 
     def test_trw_learn_distribution_exception_fail_open(self, tmp_path: Path) -> None:
         """enforce_tier_distribution raising is fail-open in trw_learn."""
-        import trw_mcp.tools.learning as mod
+        from trw_mcp.models.config import TRWConfig
 
-        old_config = mod._config
-        try:
-            cfg = mod._config.__class__()
-            object.__setattr__(cfg, "impact_forced_distribution_enabled", True)
-            mod._config = cfg
+        cfg = TRWConfig(impact_forced_distribution_enabled=True)
 
-            tool = self._register_and_get("trw_learn")
+        tool = self._register_and_get("trw_learn")
 
-            with patch(
-                "trw_mcp.tools.learning.resolve_trw_dir",
-                return_value=tmp_path / ".trw",
-            ), patch(
-                "trw_mcp.tools.learning.generate_learning_id",
-                return_value="L-test0002",
-            ), patch(
-                "trw_mcp.tools.learning.adapter_store",
-                return_value={"learning_id": "L-test0002", "path": "sqlite://L-test0002", "status": "recorded", "distribution_warning": ""},
-            ), patch(
-                "trw_mcp.tools.learning.update_analytics",
-            ), patch(
-                "trw_mcp.tools.learning.list_active_learnings",
-                return_value=[{"id": "L-abc", "impact": 0.8}],
-            ), patch(
-                "trw_mcp.scoring.enforce_tier_distribution",
-                side_effect=RuntimeError("distribution exploded"),
-            ):
-                result = tool(
-                    summary="test summary",
-                    detail="test detail",
-                    impact=0.9,
-                )
+        with patch(
+            "trw_mcp.tools.learning.get_config",
+            return_value=cfg,
+        ), patch(
+            "trw_mcp.tools.learning.resolve_trw_dir",
+            return_value=tmp_path / ".trw",
+        ), patch(
+            "trw_mcp.tools.learning.generate_learning_id",
+            return_value="L-test0002",
+        ), patch(
+            "trw_mcp.tools.learning.adapter_store",
+            return_value={"learning_id": "L-test0002", "path": "sqlite://L-test0002", "status": "recorded", "distribution_warning": ""},
+        ), patch(
+            "trw_mcp.tools.learning.update_analytics",
+        ), patch(
+            "trw_mcp.tools.learning.list_active_learnings",
+            return_value=[{"id": "L-abc", "impact": 0.8}],
+        ), patch(
+            "trw_mcp.scoring.enforce_tier_distribution",
+            side_effect=RuntimeError("distribution exploded"),
+        ):
+            result = tool(
+                summary="test summary",
+                detail="test detail",
+                impact=0.9,
+            )
 
-            # Fail-open: distribution failure must not block recording
-            assert result["status"] == "recorded"
-        finally:
-            mod._config = old_config
+        # Fail-open: distribution failure must not block recording
+        assert result["status"] == "recorded"
 
     def test_trw_learn_update_write_failure(self, tmp_path: Path) -> None:
         """learn_update delegates to adapter_update and returns 'updated' status."""
@@ -373,14 +367,14 @@ class TestRequirementsFailurePaths:
             "trw_mcp.tools.requirements.next_prd_sequence",
             return_value=99,
         ), patch(
-            "trw_mcp.tools.requirements._config",
-        ) as mock_cfg:
-            mock_cfg.prds_relative_path = "docs/requirements-aare-f/prds"
-            mock_cfg.trw_dir = ".trw"
-            mock_cfg.index_auto_sync_on_status_change = False
-            mock_cfg.ambiguity_rate_max = 0.3
-            mock_cfg.completeness_min = 0.7
-            mock_cfg.traceability_coverage_min = 0.5
+            "trw_mcp.tools.requirements.get_config",
+        ) as mock_get_cfg:
+            mock_get_cfg.return_value.prds_relative_path = "docs/requirements-aare-f/prds"
+            mock_get_cfg.return_value.trw_dir = ".trw"
+            mock_get_cfg.return_value.index_auto_sync_on_status_change = False
+            mock_get_cfg.return_value.ambiguity_rate_max = 0.3
+            mock_get_cfg.return_value.completeness_min = 0.7
+            mock_get_cfg.return_value.traceability_coverage_min = 0.5
             result = tool(
                 input_text="Test feature",
                 category="CORE",
@@ -1036,9 +1030,9 @@ class TestReflectionPersistWithRunPath:
         reflection = create_reflection_record(inputs, [], "session")
 
         with patch(
-            "trw_mcp.state.reflection._config",
-        ) as mock_cfg:
-            mock_cfg.reflections_dir = "reflections"
+            "trw_mcp.state.reflection.get_config",
+        ) as mock_get_cfg:
+            mock_get_cfg.return_value.reflections_dir = "reflections"
             persist_reflection(
                 trw_dir=trw_dir,
                 reflection=reflection,
@@ -1077,9 +1071,9 @@ class TestReflectionPersistWithRunPath:
         reflection = create_reflection_record(inputs, [], "session")
 
         with patch(
-            "trw_mcp.state.reflection._config",
-        ) as mock_cfg:
-            mock_cfg.reflections_dir = "reflections"
+            "trw_mcp.state.reflection.get_config",
+        ) as mock_get_cfg:
+            mock_get_cfg.return_value.reflections_dir = "reflections"
             persist_reflection(
                 trw_dir=trw_dir,
                 reflection=reflection,
@@ -1116,9 +1110,9 @@ class TestReflectionPersistWithRunPath:
         reflection = create_reflection_record(inputs, [], "run")
 
         with patch(
-            "trw_mcp.state.reflection._config",
-        ) as mock_cfg:
-            mock_cfg.reflections_dir = "reflections"
+            "trw_mcp.state.reflection.get_config",
+        ) as mock_get_cfg:
+            mock_get_cfg.return_value.reflections_dir = "reflections"
             persist_reflection(
                 trw_dir=trw_dir,
                 reflection=reflection,
@@ -1143,7 +1137,6 @@ class TestCeremonyGetRunStatus:
 
     def test_get_run_status_read_error_returns_error_status(self, tmp_path: Path) -> None:
         """Lines 74-75: When read_yaml raises StateError, result includes error_reading."""
-        import trw_mcp.tools.ceremony as cer_mod
         from trw_mcp.tools.ceremony import _get_run_status
 
         run_dir = tmp_path / "run"
@@ -1151,19 +1144,14 @@ class TestCeremonyGetRunStatus:
         meta.mkdir(parents=True)
         (meta / "run.yaml").write_text("status: active\n")
 
-        original_read_yaml = cer_mod._reader.read_yaml
-        try:
-            cer_mod._reader.read_yaml = lambda p: (_ for _ in ()).throw(StateError("corrupt"))  # type: ignore[method-assign]
+        with patch.object(FileStateReader, "read_yaml", side_effect=StateError("corrupt")):
             result = _get_run_status(run_dir)
-        finally:
-            cer_mod._reader.read_yaml = original_read_yaml
 
         assert result["status"] == "error_reading"
         assert result["active_run"] == str(run_dir)
 
     def test_get_run_status_oserror_caught(self, tmp_path: Path) -> None:
         """Lines 74-75: OSError variant also sets error_reading status."""
-        import trw_mcp.tools.ceremony as cer_mod
         from trw_mcp.tools.ceremony import _get_run_status
 
         run_dir = tmp_path / "run"
@@ -1171,12 +1159,8 @@ class TestCeremonyGetRunStatus:
         meta.mkdir(parents=True)
         (meta / "run.yaml").write_text("status: active\n")
 
-        original_read_yaml = cer_mod._reader.read_yaml
-        try:
-            cer_mod._reader.read_yaml = lambda p: (_ for _ in ()).throw(OSError("disk error"))  # type: ignore[method-assign]
+        with patch.object(FileStateReader, "read_yaml", side_effect=OSError("disk error")):
             result = _get_run_status(run_dir)
-        finally:
-            cer_mod._reader.read_yaml = original_read_yaml
 
         assert result["status"] == "error_reading"
 
@@ -1190,48 +1174,45 @@ class TestLearningDistributionSkipsInactiveEntries:
 
     def test_trw_learn_distribution_skips_inactive_entries(self, tmp_path: Path) -> None:
         """list_active_learnings only returns active entries; inactive are excluded."""
-        import trw_mcp.tools.learning as mod
+        from trw_mcp.models.config import TRWConfig
 
-        old_config = mod._config
-        try:
-            cfg = mod._config.__class__()
-            object.__setattr__(cfg, "impact_forced_distribution_enabled", True)
-            mod._config = cfg
+        cfg = TRWConfig(impact_forced_distribution_enabled=True)
 
-            server = _make_server()
-            register_learning_tools(server)
-            tool = _extract_tool(server, "trw_learn")
+        server = _make_server()
+        register_learning_tools(server)
+        tool = _extract_tool(server, "trw_learn")
 
-            # list_active_learnings already filters to active only.
-            # Return only the active entry (resolved is excluded by the adapter).
-            with patch(
-                "trw_mcp.tools.learning.resolve_trw_dir",
-                return_value=tmp_path / ".trw",
-            ), patch(
-                "trw_mcp.tools.learning.generate_learning_id",
-                return_value="L-new001",
-            ), patch(
-                "trw_mcp.tools.learning.adapter_store",
-                return_value={"learning_id": "L-new001", "path": "sqlite://L-new001", "status": "recorded", "distribution_warning": ""},
-            ), patch(
-                "trw_mcp.tools.learning.update_analytics",
-            ), patch(
-                "trw_mcp.tools.learning.list_active_learnings",
-                return_value=[{"id": "L-active", "impact": 0.5}],  # resolved excluded
-            ), patch(
-                "trw_mcp.scoring.enforce_tier_distribution",
-                return_value=[],  # No demotions
-            ):
-                result = tool(
-                    summary="new summary",
-                    detail="detail",
-                    impact=0.8,
-                )
+        # list_active_learnings already filters to active only.
+        # Return only the active entry (resolved is excluded by the adapter).
+        with patch(
+            "trw_mcp.tools.learning.get_config",
+            return_value=cfg,
+        ), patch(
+            "trw_mcp.tools.learning.resolve_trw_dir",
+            return_value=tmp_path / ".trw",
+        ), patch(
+            "trw_mcp.tools.learning.generate_learning_id",
+            return_value="L-new001",
+        ), patch(
+            "trw_mcp.tools.learning.adapter_store",
+            return_value={"learning_id": "L-new001", "path": "sqlite://L-new001", "status": "recorded", "distribution_warning": ""},
+        ), patch(
+            "trw_mcp.tools.learning.update_analytics",
+        ), patch(
+            "trw_mcp.tools.learning.list_active_learnings",
+            return_value=[{"id": "L-active", "impact": 0.5}],  # resolved excluded
+        ), patch(
+            "trw_mcp.scoring.enforce_tier_distribution",
+            return_value=[],  # No demotions
+        ):
+            result = tool(
+                summary="new summary",
+                detail="detail",
+                impact=0.8,
+            )
 
-            # Distribution ran (only active entry included), no errors
-            assert result["status"] == "recorded"
-        finally:
-            mod._config = old_config
+        # Distribution ran (only active entry included), no errors
+        assert result["status"] == "recorded"
 
 
 # ---------------------------------------------------------------------------

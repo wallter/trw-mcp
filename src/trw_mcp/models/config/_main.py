@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from functools import cached_property
+
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from trw_mcp.models.config._sub_models import (
@@ -464,7 +466,7 @@ class TRWConfig(BaseSettings):
     update_channel: str = "latest"            # update channel: latest | lts
     platform_url: str = ""                    # single backend URL (backward compat, empty = offline)
     platform_urls: list[str] = Field(default_factory=list)  # multi-backend: fan-out writes, first-success reads
-    platform_api_key: str = ""                # API key for platform backend authentication
+    platform_api_key: SecretStr = SecretStr("")  # API key for platform backend (PRD-QUAL-042-FR07)
     installation_id: str = ""                 # anonymized installation identifier
     auto_upgrade: bool = False                # auto-install updates on session start (PRD-INFRA-014)
 
@@ -625,7 +627,7 @@ class TRWConfig(BaseSettings):
     # Type-narrowed access: ``config.build.build_check_enabled``
     # Flat access preserved: ``config.build_check_enabled``
 
-    @property
+    @cached_property
     def build(self) -> BuildConfig:
         """Build verification and mutation testing sub-config."""
         return BuildConfig(**{
@@ -634,7 +636,7 @@ class TRWConfig(BaseSettings):
             if hasattr(self, name)
         })
 
-    @property
+    @cached_property
     def memory(self) -> MemoryConfig:
         """Learning storage and retrieval sub-config."""
         return MemoryConfig(**{
@@ -643,7 +645,7 @@ class TRWConfig(BaseSettings):
             if hasattr(self, name)
         })
 
-    @property
+    @cached_property
     def telemetry_settings(self) -> TelemetryConfig:
         """Telemetry and OTEL sub-config (avoids ``telemetry`` field conflict)."""
         return TelemetryConfig(**{
@@ -652,7 +654,7 @@ class TRWConfig(BaseSettings):
             if hasattr(self, name)
         })
 
-    @property
+    @cached_property
     def orchestration(self) -> OrchestrationConfig:
         """Wave/shard orchestration sub-config."""
         return OrchestrationConfig(**{
@@ -661,7 +663,7 @@ class TRWConfig(BaseSettings):
             if hasattr(self, name)
         })
 
-    @property
+    @cached_property
     def scoring(self) -> ScoringConfig:
         """Scoring weights and decay parameters sub-config."""
         return ScoringConfig(**{
@@ -670,7 +672,7 @@ class TRWConfig(BaseSettings):
             if hasattr(self, name)
         })
 
-    @property
+    @cached_property
     def trust(self) -> TrustConfig:
         """Progressive trust model sub-config."""
         return TrustConfig(**{
@@ -679,7 +681,7 @@ class TRWConfig(BaseSettings):
             if hasattr(self, name)
         })
 
-    @property
+    @cached_property
     def ceremony_feedback(self) -> CeremonyFeedbackConfig:
         """Self-improving ceremony feedback sub-config."""
         return CeremonyFeedbackConfig(**{
@@ -688,7 +690,7 @@ class TRWConfig(BaseSettings):
             if hasattr(self, name)
         })
 
-    @property
+    @cached_property
     def paths(self) -> PathsConfig:
         """Directory structure and path defaults sub-config."""
         return PathsConfig(**{

@@ -50,6 +50,15 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger()
 
 
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    if name == "_writer":
+        return FileStateWriter()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # Priority → base confidence score mapping
 _PRIORITY_CONFIDENCE: dict[str, float] = {
     "P0": 0.9, "P1": 0.7, "P2": 0.6, "P3": 0.5,
@@ -89,6 +98,15 @@ def register_requirements_tools(server: FastMCP) -> None:
         """
         config = get_config()
         writer = FileStateWriter()
+
+        # Input validation (PRD-QUAL-042-FR03): category enum
+        valid_categories = {"CORE", "QUAL", "INFRA", "LOCAL", "EXPLR", "RESEARCH", "FIX"}
+        if category.upper() not in valid_categories:
+            raise ValidationError(
+                f"Invalid category: {category!r}. Must be one of {sorted(valid_categories)}",
+            )
+        category = category.upper()
+
         # Validate priority
         try:
             prd_priority = Priority(priority)
@@ -562,18 +580,6 @@ def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     yaml_str = stream.getvalue()
 
     return f"---\n{yaml_str}---\n\n{body}\n"
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    global _config, _writer, _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION
-    _reset_config()
-    _config = get_config()
-    _writer = FileStateWriter()
-    _CACHED_TEMPLATE_BODY = None
-    _CACHED_TEMPLATE_VERSION = None
 
 
 def _auto_sync_index() -> bool:

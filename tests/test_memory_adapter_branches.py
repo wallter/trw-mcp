@@ -35,14 +35,6 @@ from trw_mcp.state.memory_adapter import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _isolate_backend() -> None:  # type: ignore[misc]
-    """Reset both backend and embedder singletons between tests."""
-    reset_backend()
-    yield  # type: ignore[misc]
-    reset_backend()
-
-
 @pytest.fixture
 def trw_dir(tmp_path: Path) -> Path:
     """Minimal .trw structure for adapter tests."""

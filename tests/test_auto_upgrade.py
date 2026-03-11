@@ -423,8 +423,8 @@ class TestFetchArtifactInfo:
 
 
 class TestDownloadReleaseArtifact:
-    def test_success_no_checksum(self, tmp_path: Path) -> None:
-        """Happy path: download, extract, return data/ dir."""
+    def test_no_checksum_returns_none(self, tmp_path: Path) -> None:
+        """PRD-QUAL-042-FR08: mandatory checksum — no checksum returns None."""
         archive_bytes = _make_tar_gz_bytes({"data/hello.txt": b"world"})
         mock_resp = _mock_urlopen_for_bytes(archive_bytes)
 
@@ -434,9 +434,7 @@ class TestDownloadReleaseArtifact:
                 (tmp_path / "dl").mkdir()
                 result = download_release_artifact("https://example.com/release.tar.gz")
 
-        assert result is not None
-        assert result.name == "data"
-        assert result.is_dir()
+        assert result is None
 
     def test_success_with_valid_checksum(self, tmp_path: Path) -> None:
         """Checksum verification passes."""

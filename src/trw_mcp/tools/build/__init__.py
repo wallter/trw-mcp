@@ -94,31 +94,3 @@ from trw_mcp.tools.build._core import (
     _config,
     _writer,
 )
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.tools.build._core import (
-        __reload_hook__ as _core_reload,
-    )
-    from trw_mcp.tools.build._registration import (
-        __reload_hook__ as _reg_reload,
-    )
-    from trw_mcp.tools.build._runners import (
-        __reload_hook__ as _runners_reload,
-    )
-    from trw_mcp.tools.build._subprocess import (
-        __reload_hook__ as _subprocess_reload,
-    )
-
-    _subprocess_reload()
-    _runners_reload()
-    _core_reload()
-    _reg_reload()
-
-    # Re-bind package-level aliases so tests see fresh instances
-    import trw_mcp.tools.build as _self
-    from trw_mcp.tools.build import _core
-
-    _self._config = _core._config  # type: ignore[attr-defined]
-    _self._writer = _core._writer  # type: ignore[attr-defined]

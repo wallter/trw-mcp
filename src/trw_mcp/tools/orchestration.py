@@ -6,6 +6,7 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 
 from __future__ import annotations
 
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,17 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger()
 
 _events = FileEventLogger(FileStateWriter())
+
+
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    if name == "_reader":
+        return FileStateReader()
+    if name == "_writer":
+        return FileStateWriter()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def register_orchestration_tools(server: FastMCP) -> None:
@@ -75,6 +87,12 @@ def register_orchestration_tools(server: FastMCP) -> None:
             complexity_signals: Optional complexity signals dict for adaptive ceremony depth.
                 When provided, classifies task complexity into MINIMAL/STANDARD/COMPREHENSIVE tier.
         """
+        # Input validation (PRD-QUAL-042-FR01)
+        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", task_name):
+            raise StateError(
+                f"Invalid task_name: must match [a-zA-Z0-9][a-zA-Z0-9_-]*, got: {task_name!r}",
+            )
+
         config = get_config()
         reader = FileStateReader()
         writer = FileStateWriter()
@@ -271,6 +289,11 @@ def register_orchestration_tools(server: FastMCP) -> None:
             if wave_progress:
                 result["wave_progress"] = wave_progress
 
+        # Wave status from run.yaml checkpoints (PRD-INFRA-036-FR03)
+        wave_status = state_data.get("wave_status")
+        if isinstance(wave_status, dict) and wave_status:
+            result["wave_status"] = wave_status
+
         # Reversion frequency metrics
         reversion_metrics = _compute_reversion_metrics(events)
         result["reversions"] = reversion_metrics
@@ -337,6 +360,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         run_path: str | None = None,
         message: str = "",
         shard_id: str | None = None,
+        wave_id: str | None = None,
     ) -> dict[str, str]:
         """Save your implementation progress — if context compacts, you resume here instead of re-implementing from scratch.
 
@@ -348,6 +372,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             run_path: Path to the run directory. Auto-detects if not provided.
             message: Describe what you accomplished and what comes next — this becomes your resume point after compaction.
             shard_id: Optional shard identifier for sub-agent attribution.
+            wave_id: Optional wave identifier for wave-aware progress tracking (PRD-INFRA-036).
         """
         reader = FileStateReader()
         writer = FileStateWriter()
@@ -365,6 +390,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         }
         if shard_id:
             checkpoint["shard_id"] = shard_id
+        if wave_id:
+            checkpoint["wave_id"] = wave_id
 
         checkpoints_path = meta_path / "checkpoints.jsonl"
         writer.append_jsonl(checkpoints_path, checkpoint)
@@ -372,14 +399,42 @@ def register_orchestration_tools(server: FastMCP) -> None:
         event_data: dict[str, object] = {"message": message}
         if shard_id:
             event_data["shard_id"] = shard_id
+        if wave_id:
+            event_data["wave_id"] = wave_id
         _events.log_event(
             meta_path / "events.jsonl",
             "checkpoint",
             event_data,
         )
 
+        # Update wave status in run.yaml if wave_id provided (PRD-INFRA-036-FR02)
+        if wave_id:
+            try:
+                run_yaml = meta_path / "run.yaml"
+                if run_yaml.exists():
+                    run_data = reader.read_yaml(run_yaml)
+                    if isinstance(run_data, dict):
+                        wave_status = run_data.get("wave_status", {})
+                        if not isinstance(wave_status, dict):
+                            wave_status = {}
+                        wave_status[wave_id] = {
+                            "last_checkpoint": ts,
+                            "message": message,
+                        }
+                        run_data["wave_status"] = wave_status
+                        writer.write_yaml(run_yaml, run_data)
+            except Exception:
+                logger.debug("wave_status_update_failed", wave_id=wave_id)
+
         logger.info("trw_checkpoint_created", message=message)
-        return {"timestamp": ts, "status": "checkpoint_created", "message": message}
+        result: dict[str, str] = {
+            "timestamp": ts,
+            "status": "checkpoint_created",
+            "message": message,
+        }
+        if wave_id:
+            result["wave_id"] = wave_id
+        return result
 
 
 # --- Private helpers ---
@@ -678,9 +733,3 @@ def _check_framework_version_staleness(run_framework: str) -> str | None:
         )
     except (StateError, ValueError, TypeError, OSError):
         return None
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    global _events
-    _events = FileEventLogger(FileStateWriter())

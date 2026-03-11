@@ -475,8 +475,8 @@ class TestUpdateLearningIndexOverflow:
             learning_max_entries=2,
         )
 
-        # Patch the module-level _config (in analytics_core where it lives)
-        with patch.object(analytics_core_mod, "_config", config_with_low_max):
+        # Patch get_config in analytics_entries where it's called
+        with patch("trw_mcp.state.analytics_entries.get_config", return_value=config_with_low_max):
             # Create entries via LearningEntry objects
             from datetime import date
             entries = [
@@ -857,8 +857,10 @@ class TestScanAllRunsExceptionPaths:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Exception in _analyze_single_run is caught and added to parse_errors — lines 146-147."""
+        from trw_mcp.models.config import TRWConfig
+        mock_cfg = TRWConfig(task_root="docs")
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: mock_cfg)
         monkeypatch.setattr(
             analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw"
         )
@@ -897,8 +899,10 @@ class TestScanAllRunsExceptionPaths:
         Must create at least one valid run so the function reaches the cache write
         section rather than returning early via _empty_report.
         """
+        from trw_mcp.models.config import TRWConfig
+        mock_cfg = TRWConfig(task_root="docs")
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: mock_cfg)
 
         # Create a valid run so task_root.exists() is True and we reach the cache section
         _write_run(

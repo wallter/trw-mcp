@@ -49,6 +49,21 @@ You exist because "all tests pass" is insufficient — Sprint 29 proved that age
 - Extract every NFR with its verification method
 - Build a checklist: one row per FR/NFR, initially all UNCHECKED
 
+### Step 1a: Security PRD Escalation (PRD-QUAL-044-FR04)
+- If the PRD has `tags: [security]` or title contains "security"/"hardening"/"vulnerability":
+  - Any FAIL or MISSING verdict is automatically escalated to P0
+  - Report must include "SECURITY PRD — incomplete security PRDs block sprint completion"
+  - Do NOT allow partial completion for security-tagged PRDs
+
+### Step 1b: AC Keyword Extraction (PRD-QUAL-045-FR01/FR02)
+- From each FR's acceptance criteria (Given/When/Then), extract key technical terms:
+  - Function/class/method names mentioned in the spec
+  - Field names, status codes, error messages
+  - Boundary values and thresholds
+- Use these keywords to grep the implementation and test code
+- Report a "keyword match score" per FR: (keywords found in code / total keywords)
+- Score < 50% → P1 finding "Acceptance criteria keywords not reflected in implementation"
+
 ### Step 2: Locate Implementation Code
 - Use Grep/Glob to find source files implementing each FR
 - Map each FR to specific functions/classes/endpoints
@@ -58,6 +73,13 @@ You exist because "all tests pass" is insufficient — Sprint 29 proved that age
 - Use Grep/Glob to find test files for each FR
 - Map each FR to specific test functions
 - If a FR has NO corresponding test, mark it UNTESTED (P1)
+
+### Step 3a: Wiring Check (PRD-QUAL-045-FR03)
+- For each new function/class defined in the implementation:
+  - Verify it is actually CALLED from at least one other module or test
+  - Use Grep to find callers: `grep -rn "function_name" src/ tests/`
+  - Functions that are defined but never called are P1 "dead code — defined but not wired"
+  - Exclude private helper functions called only within the same file (these are OK)
 
 ### Step 4: Audit Each FR Against Acceptance Criteria
 For each FR, answer THREE questions:

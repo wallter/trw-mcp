@@ -29,7 +29,6 @@ _safe_float = safe_float
 _safe_int = safe_int
 
 __all__ = [
-    "__reload_hook__",
     "_safe_float",
     "_safe_int",
     "_SLUG_MAX_LEN",
@@ -46,10 +45,6 @@ __all__ = [
     "find_entry_by_id",
     "generate_learning_id",
 ]
-
-
-def __reload_hook__() -> None:
-    """No-op — module-level singletons removed (PRD-FIX-044)."""
 
 
 # ---------------------------------------------------------------------------

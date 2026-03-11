@@ -46,6 +46,17 @@ Verify implementation exists:
 - Use Grep/Glob to find source files referenced in the PRD's Technical Approach
 - If no implementation files found: abort with "No implementation found for {PRD-ID}. Nothing to audit."
 
+### Step 2a: AC Keyword Extraction (PRD-QUAL-045-FR01/FR02)
+
+From each FR's acceptance criteria (Given/When/Then), extract key technical terms:
+- Function/class/method names mentioned in the spec
+- Field names, status codes, error messages, boundary values
+- Configuration keys and thresholds
+
+Use these keywords to grep the implementation and test code. Report a "keyword match score" per FR:
+- `keywords_found / total_keywords` as a percentage
+- Score < 50% → P1 finding "Acceptance criteria keywords not reflected in implementation"
+
 ### Step 3: Locate Code and Tests
 
 For each FR in the PRD:
@@ -55,6 +66,14 @@ For each FR in the PRD:
 
 If a FR has NO implementation: mark as MISSING (P0) immediately.
 If a FR has NO tests: mark as UNTESTED (P1) immediately.
+
+### Step 3a: Wiring Check (PRD-QUAL-045-FR03)
+
+For each new function/class defined in the implementation:
+1. Verify it is actually CALLED from at least one other module or test
+2. Use Grep: `grep -rn "function_name" src/ tests/`
+3. Functions defined but never called → P1 "dead code — defined but not wired"
+4. Exclude private helpers called only within the same file (these are OK)
 
 ### Step 4: Audit Each FR
 
@@ -101,6 +120,8 @@ Run EVERY item against EVERY endpoint/component. Do NOT skip items.
 | P0 | FR completely missing or fundamentally broken | Endpoint not implemented, auth not enforced |
 | P1 | FR partially implemented, key behavior missing | Pagination exists but no max limit, response missing fields |
 | P2 | Minor gap, edge case not covered | Missing negative test, cosmetic field wrong |
+
+**Security PRD escalation (PRD-QUAL-044-FR04)**: If the PRD has `tags: [security]` or its title contains "security"/"hardening"/"vulnerability", any FAIL or MISSING verdict is automatically escalated to P0. Security PRDs cannot be left incomplete.
 
 ### Step 7: Write Audit Report
 

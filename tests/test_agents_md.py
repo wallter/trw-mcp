@@ -39,7 +39,7 @@ def _patched_learning_env(
     """
     with (
         patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=project_root / ".trw"),
-        patch("trw_mcp.tools.learning._config", TRWConfig(agents_md_enabled=agents_md_enabled)),
+        patch("trw_mcp.tools.learning.get_config", return_value=TRWConfig(agents_md_enabled=agents_md_enabled)),
         patch("trw_mcp.state.claude_md._config", TRWConfig()),
         patch("trw_mcp.state.claude_md.resolve_project_root", return_value=project_root),
         patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=project_root / ".trw"),

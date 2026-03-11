@@ -15,6 +15,14 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader
 
+
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # --- Session identity (PRD-FIX-042 FR03) ---
 _session_id: str = uuid.uuid4().hex
 
@@ -230,6 +238,13 @@ def resolve_run_path(run_path: str | None = None) -> Path:
         if not resolved.exists():
             raise StateError(
                 f"Run path does not exist: {resolved}",
+                path=str(resolved),
+            )
+        # Path containment check (PRD-QUAL-042-FR02)
+        project_root = resolve_project_root()
+        if not resolved.is_relative_to(project_root):
+            raise StateError(
+                f"Run path escapes project root: {resolved}",
                 path=str(resolved),
             )
         return resolved

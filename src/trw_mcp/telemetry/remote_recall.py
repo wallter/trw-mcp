@@ -14,7 +14,7 @@ from typing import Any
 import structlog
 
 from trw_mcp.models.config import get_config
-from trw_mcp.telemetry.embeddings import embed
+from trw_mcp.state.memory_adapter import embed_text as embed
 
 logger = structlog.get_logger()
 
@@ -47,8 +47,9 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[dict[str, An
         try:
             data = json.dumps(payload).encode("utf-8")
             headers: dict[str, str] = {"Content-Type": "application/json"}
-            if cfg.platform_api_key:
-                headers["Authorization"] = f"Bearer {cfg.platform_api_key}"
+            _api_key = cfg.platform_api_key.get_secret_value()
+            if _api_key:
+                headers["Authorization"] = f"Bearer {_api_key}"
             req = urllib.request.Request(
                 url,
                 data=data,

@@ -56,7 +56,7 @@ class BatchSender:
         input_path = trw_dir / cfg.logs_dir / cfg.telemetry_file
         return cls(
             platform_urls=cfg.effective_platform_urls,
-            platform_api_key=cfg.platform_api_key,
+            platform_api_key=cfg.platform_api_key.get_secret_value(),
             input_path=input_path,
         )
 

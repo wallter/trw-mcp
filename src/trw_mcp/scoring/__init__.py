@@ -17,6 +17,7 @@ existing ``from trw_mcp.scoring import X`` imports continue to work.
 from __future__ import annotations
 
 # --- Re-exports from _utils (constants, trw_memory delegates, shared state) ---
+from trw_mcp.models.config import get_config as get_config
 from trw_mcp.scoring._utils import (
     _IMPACT_DECAY_FLOOR as _IMPACT_DECAY_FLOOR,
     _LN2 as _LN2,
@@ -33,6 +34,10 @@ from trw_mcp.scoring._utils import (
     safe_float as safe_float,
     safe_int as safe_int,
     update_q_value as update_q_value,
+)
+from trw_mcp.state.persistence import (
+    FileStateReader as FileStateReader,
+    FileStateWriter as FileStateWriter,
 )
 
 # --- Re-exports from _complexity ---
@@ -70,6 +75,17 @@ from trw_mcp.scoring._correlation import (
     process_outcome as process_outcome,
     process_outcome_for_event as process_outcome_for_event,
 )
+
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    if name == "_reader":
+        return FileStateReader()
+    if name == "_writer":
+        return FileStateWriter()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # trw_memory re-exports

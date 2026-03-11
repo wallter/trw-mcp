@@ -19,6 +19,17 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 logger = structlog.get_logger()
 
 
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    if name == "_reader":
+        return FileStateReader()
+    if name == "_writer":
+        return FileStateWriter()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # --- Ceremony Scoring (FR05) ---
 
 _CEREMONY_WEIGHTS: dict[str, int] = {

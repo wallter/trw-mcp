@@ -18,9 +18,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import (
     collect_context,
-    search_entries,
     search_patterns,
-    update_access_tracking,
 )
 from trw_mcp.state._helpers import safe_float
 from trw_mcp.state.report import (
@@ -36,102 +34,6 @@ from trw_mcp.state.report import (
 # ===========================================================================
 
 
-class TestSearchEntriesStatusFilter:
-    """Cover lines 62-65: status filter branch."""
-
-    def test_status_filter_excludes_non_matching(self, tmp_path: Path) -> None:
-        """Entries whose status != filter value are skipped (lines 63-65)."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
-
-        # Write one active entry and one resolved entry
-        writer.write_yaml(entries_dir / "active.yaml", {
-            "id": "L-act",
-            "summary": "active learning",
-            "detail": "detail",
-            "impact": 0.7,
-            "status": "active",
-        })
-        writer.write_yaml(entries_dir / "resolved.yaml", {
-            "id": "L-res",
-            "summary": "resolved learning",
-            "detail": "detail",
-            "impact": 0.7,
-            "status": "resolved",
-        })
-
-        # Filter to only active — resolved entry must be excluded
-        matches, paths = search_entries(
-            entries_dir,
-            query_tokens=[],
-            reader=reader,
-            status="active",
-        )
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-act" in ids
-        assert "L-res" not in ids
-
-    def test_status_filter_matches_only_resolved(self, tmp_path: Path) -> None:
-        """Filtering by resolved excludes active entries."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
-
-        writer.write_yaml(entries_dir / "active.yaml", {
-            "id": "L-act", "summary": "active", "detail": "", "impact": 0.5, "status": "active",
-        })
-        writer.write_yaml(entries_dir / "resolved.yaml", {
-            "id": "L-res", "summary": "resolved", "detail": "", "impact": 0.5, "status": "resolved",
-        })
-
-        matches, _ = search_entries(
-            entries_dir, query_tokens=[], reader=reader, status="resolved",
-        )
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-res" in ids
-        assert "L-act" not in ids
-
-
-class TestSearchEntriesExceptionHandling:
-    """Cover lines 86-87: exception handling in search_entries."""
-
-    def test_invalid_yaml_file_is_skipped(self, tmp_path: Path) -> None:
-        """A file that raises StateError on read is silently skipped (lines 86-87)."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        # Write a valid entry and a corrupt entry
-        writer = FileStateWriter()
-        writer.write_yaml(entries_dir / "good.yaml", {
-            "id": "L-good", "summary": "good entry", "detail": "", "impact": 0.7,
-        })
-        # Write raw invalid YAML that will fail to parse
-        (entries_dir / "bad.yaml").write_text("{invalid: yaml: content: [}", encoding="utf-8")
-
-        reader = FileStateReader()
-        # Should return only the good entry without raising
-        matches, _ = search_entries(entries_dir, query_tokens=[], reader=reader)
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-good" in ids
-
-    def test_reader_raises_state_error_skips_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """StateError from reader is caught and entry is skipped."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        # Create a dummy YAML file so glob finds something
-        (entries_dir / "dummy.yaml").write_text("id: test\n", encoding="utf-8")
-
-        reader = FileStateReader()
-        monkeypatch.setattr(reader, "read_yaml", lambda _: (_ for _ in ()).throw(
-            StateError("fail", path="dummy")
-        ))
-
-        matches, _ = search_entries(entries_dir, query_tokens=[], reader=reader)
-        assert matches == []
 
 
 class TestSearchPatternsExceptionHandling:
@@ -174,40 +76,6 @@ class TestSearchPatternsExceptionHandling:
         names = [str(m.get("name", "")) for m in matches]
         assert "good" in names
 
-
-class TestUpdateAccessTrackingExceptionHandling:
-    """Cover lines 161-162: exception handling in update_access_tracking."""
-
-    def test_unreadable_entry_is_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """StateError on read during access tracking skips that file (lines 161-162)."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        writer = FileStateWriter()
-        good_file = entries_dir / "good.yaml"
-        bad_file = entries_dir / "bad.yaml"
-        writer.write_yaml(good_file, {"id": "L-good", "summary": "g", "access_count": 0})
-        bad_file.write_text("{invalid", encoding="utf-8")
-
-        reader = FileStateReader()
-
-        # Pass both files — bad_file will raise StateError, good_file processes normally
-        result = update_access_tracking([bad_file, good_file], reader, writer)
-        # Only good_file produced a tracked id
-        assert "L-good" in result
-
-    def test_entry_with_no_id_not_appended(self, tmp_path: Path) -> None:
-        """Entry without id field does not contribute to matched_ids."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        writer = FileStateWriter()
-        no_id_file = entries_dir / "noid.yaml"
-        writer.write_yaml(no_id_file, {"summary": "no id here", "access_count": 0})
-
-        reader = FileStateReader()
-        result = update_access_tracking([no_id_file], reader, writer)
-        assert result == []
 
 
 class TestCollectContextConventions:
@@ -516,60 +384,35 @@ class TestUtilityBasedPruneCandidatesTier3:
 
     def test_tier3_medium_impact_older_entry_prune_range(self) -> None:
         """Verify tier 3 path (not tier 2) executes by using moderate impact, old entry."""
-        # Force moderate prune/delete thresholds so an old medium-utility entry
-        # falls precisely in tier 3 (below prune but above delete)
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import utility_based_prune_candidates
-        old_config = scoring_mod._config
 
-        try:
-            # Use config with delete_threshold much lower than prune_threshold
-            test_config = TRWConfig()
-            # Most entries with 60 days old and moderate impact will be tier 2 or 3
-            scoring_mod._config = test_config
+        test_config = TRWConfig()
 
-            # Use 30-day-old entry with impact=0.45, q_observations=5 (past cold start)
-            # This should produce moderate utility that might be in tier 3 range
+        with patch("trw_mcp.scoring._recall.get_config", return_value=test_config):
             entry = self._make_entry("L-t3b", "2025-12-15", impact=0.45)
             result = utility_based_prune_candidates([entry])
-            # Result may be empty if utility is above prune threshold - that's fine.
-            # The important thing is no exception is raised and lines 623-635 are visited
-            # when the conditions are met. We verify with a clearly old low-impact entry.
             old_entry = self._make_entry("L-t3c", "2025-09-01", impact=0.35)
             result2 = utility_based_prune_candidates([old_entry])
             assert isinstance(result2, list)
-        finally:
-            scoring_mod._config = old_config
 
     def test_tier3_reason_contains_prune_threshold(self) -> None:
         """Tier 3 candidate reason mentions 'prune threshold'."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import utility_based_prune_candidates
-        old_config = scoring_mod._config
 
-        try:
-            # Set a very high prune threshold so an old entry falls into tier 3
-            # by overriding the thresholds via a custom config object
-            cfg = TRWConfig()
-            # Manipulate the object directly
-            object.__setattr__(cfg, "learning_utility_delete_threshold", 0.0)
-            object.__setattr__(cfg, "learning_utility_prune_threshold", 0.99)
-            scoring_mod._config = cfg
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "learning_utility_delete_threshold", 0.0)
+        object.__setattr__(cfg, "learning_utility_prune_threshold", 0.99)
 
+        with patch("trw_mcp.scoring._recall.get_config", return_value=cfg):
             entry = self._make_entry("L-t3-reason", "2025-10-01", impact=0.5)
             result = utility_based_prune_candidates([entry])
 
-            # With prune_threshold=0.99 and delete_threshold=0.0,
-            # any utility > 0.0 will be caught by tier 3 (not tier 2)
-            # and age > 14 days (created 2025-10-01 is definitely > 14 days ago)
             assert any(
                 "prune threshold" in str(r.get("reason", ""))
                 for r in result
             ), f"Expected 'prune threshold' in reasons, got: {[r.get('reason') for r in result]}"
-        finally:
-            scoring_mod._config = old_config
 
 
 class TestFindSessionStartTs:
@@ -585,165 +428,94 @@ class TestFindSessionStartTs:
         result = _find_session_start_ts(trw_dir)
         assert result is None
 
+    @staticmethod
+    def _task_root_patch():
+        from trw_mcp.models.config import TRWConfig
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "task_root", "tasks")
+        return patch("trw_mcp.scoring._correlation.get_config", return_value=cfg)
+
     def test_finds_run_init_event(self, tmp_path: Path) -> None:
         """Finds run_init event timestamp from events.jsonl (lines 715-738)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import _find_session_start_ts
 
-        old_config = scoring_mod._config
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        task_dir = tmp_path / "tasks" / "my-task"
+        meta_dir = task_dir / "runs" / "20260101T000000Z-abc12345" / "meta"
+        meta_dir.mkdir(parents=True)
+        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
+            "ts": "2026-01-01T10:00:00+00:00", "event": "run_init",
+        })
 
-        try:
-            # Configure task_root to point to our temp dir structure
-            cfg = scoring_mod._config.__class__()
-            object.__setattr__(cfg, "task_root", "tasks")
-            scoring_mod._config = cfg
-
-            trw_dir = tmp_path / ".trw"
-            trw_dir.mkdir()
-
-            task_dir = tmp_path / "tasks" / "my-task"
-            run_dir = task_dir / "runs" / "20260101T000000Z-abc12345"
-            meta_dir = run_dir / "meta"
-            meta_dir.mkdir(parents=True)
-
-            writer = FileStateWriter()
-            writer.append_jsonl(meta_dir / "events.jsonl", {
-                "ts": "2026-01-01T10:00:00+00:00",
-                "event": "run_init",
-            })
-
+        with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
-            assert result is not None
-            assert result.year == 2026
-
-        finally:
-            scoring_mod._config = old_config
+        assert result is not None
+        assert result.year == 2026
 
     def test_finds_session_start_event(self, tmp_path: Path) -> None:
         """Finds session_start event timestamp (also accepted event type)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import _find_session_start_ts
 
-        old_config = scoring_mod._config
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        meta_dir = tmp_path / "tasks" / "another-task" / "runs" / "20260115T000000Z-def67890" / "meta"
+        meta_dir.mkdir(parents=True)
+        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
+            "ts": "2026-01-15T08:00:00+00:00", "event": "session_start",
+        })
 
-        try:
-            cfg = scoring_mod._config.__class__()
-            object.__setattr__(cfg, "task_root", "tasks")
-            scoring_mod._config = cfg
-
-            trw_dir = tmp_path / ".trw"
-            trw_dir.mkdir()
-
-            task_dir = tmp_path / "tasks" / "another-task"
-            run_dir = task_dir / "runs" / "20260115T000000Z-def67890"
-            meta_dir = run_dir / "meta"
-            meta_dir.mkdir(parents=True)
-
-            writer = FileStateWriter()
-            writer.append_jsonl(meta_dir / "events.jsonl", {
-                "ts": "2026-01-15T08:00:00+00:00",
-                "event": "session_start",
-            })
-
+        with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
-            assert result is not None
-            assert result.month == 1
-            assert result.day == 15
-
-        finally:
-            scoring_mod._config = old_config
+        assert result is not None
+        assert result.month == 1
+        assert result.day == 15
 
     def test_invalid_timestamp_in_event_skipped(self, tmp_path: Path) -> None:
         """Invalid ts in event is skipped without raising (ValueError continue)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import _find_session_start_ts
 
-        old_config = scoring_mod._config
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        meta_dir = tmp_path / "tasks" / "bad-ts-task" / "runs" / "20260101T000000Z-bad12345" / "meta"
+        meta_dir.mkdir(parents=True)
+        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
+            "ts": "not-a-timestamp", "event": "run_init",
+        })
 
-        try:
-            cfg = scoring_mod._config.__class__()
-            object.__setattr__(cfg, "task_root", "tasks")
-            scoring_mod._config = cfg
-
-            trw_dir = tmp_path / ".trw"
-            trw_dir.mkdir()
-
-            task_dir = tmp_path / "tasks" / "bad-ts-task"
-            run_dir = task_dir / "runs" / "20260101T000000Z-bad12345"
-            meta_dir = run_dir / "meta"
-            meta_dir.mkdir(parents=True)
-
-            writer = FileStateWriter()
-            # Write event with invalid timestamp
-            writer.append_jsonl(meta_dir / "events.jsonl", {
-                "ts": "not-a-timestamp",
-                "event": "run_init",
-            })
-
+        with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
-            # Invalid ts: no valid timestamp found, returns None
-            assert result is None
-
-        finally:
-            scoring_mod._config = old_config
+        assert result is None
 
     def test_no_matching_events_returns_none(self, tmp_path: Path) -> None:
         """Non-session events don't update latest_ts, returns None."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import _find_session_start_ts
 
-        old_config = scoring_mod._config
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        meta_dir = tmp_path / "tasks" / "no-session-task" / "runs" / "20260101T000000Z-ccc12345" / "meta"
+        meta_dir.mkdir(parents=True)
+        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
+            "ts": "2026-01-01T10:00:00+00:00", "event": "checkpoint",
+        })
 
-        try:
-            cfg = scoring_mod._config.__class__()
-            object.__setattr__(cfg, "task_root", "tasks")
-            scoring_mod._config = cfg
-
-            trw_dir = tmp_path / ".trw"
-            trw_dir.mkdir()
-
-            task_dir = tmp_path / "tasks" / "no-session-task"
-            run_dir = task_dir / "runs" / "20260101T000000Z-ccc12345"
-            meta_dir = run_dir / "meta"
-            meta_dir.mkdir(parents=True)
-
-            writer = FileStateWriter()
-            writer.append_jsonl(meta_dir / "events.jsonl", {
-                "ts": "2026-01-01T10:00:00+00:00",
-                "event": "checkpoint",  # Not run_init or session_start
-            })
-
+        with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
-            assert result is None
-
-        finally:
-            scoring_mod._config = old_config
+        assert result is None
 
     def test_task_dir_without_runs_subdir_skipped(self, tmp_path: Path) -> None:
         """Task directory without runs/ subdirectory is skipped gracefully."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import _find_session_start_ts
 
-        old_config = scoring_mod._config
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        task_dir = tmp_path / "tasks" / "no-runs"
+        task_dir.mkdir(parents=True)
+        (task_dir / "somefile.txt").write_text("hello", encoding="utf-8")
 
-        try:
-            cfg = scoring_mod._config.__class__()
-            object.__setattr__(cfg, "task_root", "tasks")
-            scoring_mod._config = cfg
-
-            trw_dir = tmp_path / ".trw"
-            trw_dir.mkdir()
-
-            # Create a task dir without runs/ inside it
-            task_dir = tmp_path / "tasks" / "no-runs"
-            task_dir.mkdir(parents=True)
-            (task_dir / "somefile.txt").write_text("hello", encoding="utf-8")
-
+        with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
-            assert result is None
-
-        finally:
-            scoring_mod._config = old_config
+        assert result is None
 
 
 class TestCorrelateRecalls:
@@ -1057,142 +829,6 @@ class TestProcessOutcomeForEventException:
         assert isinstance(result, list)
 
 
-# ===========================================================================
-# Additional recall_search.py tests to cover remaining lines
-# ===========================================================================
-
-
-class TestSearchEntriesNonExistentDir:
-    """Cover line 46: early return when entries_dir doesn't exist."""
-
-    def test_nonexistent_dir_returns_empty(self, tmp_path: Path) -> None:
-        """Non-existent entries_dir returns ([], []) immediately (line 46)."""
-        reader = FileStateReader()
-        matches, paths = search_entries(
-            tmp_path / "does_not_exist",
-            query_tokens=[],
-            reader=reader,
-        )
-        assert matches == []
-        assert paths == []
-
-
-class TestSearchEntriesImpactFilter:
-    """Cover line 59: min_impact filter skips entries below threshold."""
-
-    def test_low_impact_entry_excluded(self, tmp_path: Path) -> None:
-        """Entry with impact below min_impact is skipped (line 59 continue)."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        writer = FileStateWriter()
-        reader = FileStateReader()
-
-        writer.write_yaml(entries_dir / "low.yaml", {
-            "id": "L-low", "summary": "low impact entry", "detail": "", "impact": 0.2,
-        })
-        writer.write_yaml(entries_dir / "high.yaml", {
-            "id": "L-high", "summary": "high impact entry", "detail": "", "impact": 0.8,
-        })
-
-        matches, _ = search_entries(
-            entries_dir, query_tokens=[], reader=reader, min_impact=0.7,
-        )
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-high" in ids
-        assert "L-low" not in ids
-
-
-class TestSearchEntriesTagFilter:
-    """Cover lines 69-70: tag filter — entry must match at least one tag."""
-
-    def test_tag_filter_excludes_non_matching(self, tmp_path: Path) -> None:
-        """Entry without matching tag is excluded (lines 69-70 continue)."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        writer = FileStateWriter()
-        reader = FileStateReader()
-
-        writer.write_yaml(entries_dir / "tagged.yaml", {
-            "id": "L-tagged", "summary": "tagged entry", "detail": "",
-            "impact": 0.7, "tags": ["pytest", "testing"],
-        })
-        writer.write_yaml(entries_dir / "untagged.yaml", {
-            "id": "L-untagged", "summary": "untagged entry", "detail": "",
-            "impact": 0.7, "tags": ["deployment"],
-        })
-
-        matches, _ = search_entries(
-            entries_dir, query_tokens=[], reader=reader, tags=["pytest"],
-        )
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-tagged" in ids
-        assert "L-untagged" not in ids
-
-    def test_tag_filter_accepts_any_matching_tag(self, tmp_path: Path) -> None:
-        """Entry is included when any one of the filter tags matches."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        writer = FileStateWriter()
-        reader = FileStateReader()
-
-        writer.write_yaml(entries_dir / "entry.yaml", {
-            "id": "L-match", "summary": "entry", "detail": "",
-            "impact": 0.7, "tags": ["pydantic", "models"],
-        })
-
-        matches, _ = search_entries(
-            entries_dir, query_tokens=[], reader=reader, tags=["models", "testing"],
-        )
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-match" in ids
-
-
-class TestSearchEntriesHyphenatedTagExpansion:
-    """Cover lines 77-80: hyphenated tag expansion during query matching."""
-
-    def test_hyphenated_tag_expanded_for_query_match(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Query 'pydantic' matches entry with tag 'pydantic-v2' (lines 77-80)."""
-        import sys
-        import types
-        mock_retrieval = types.ModuleType("trw_mcp.state.retrieval")
-        mock_retrieval.hybrid_search = lambda *a, **kw: []  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "trw_mcp.state.retrieval", mock_retrieval)
-
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        writer = FileStateWriter()
-        reader = FileStateReader()
-
-        writer.write_yaml(entries_dir / "pydantic.yaml", {
-            "id": "L-pyd", "summary": "model handling", "detail": "v2 details",
-            "impact": 0.7, "tags": ["pydantic-v2", "models"],
-        })
-
-        # Query for 'pydantic' — should match via tag expansion of 'pydantic-v2'
-        matches, _ = search_entries(
-            entries_dir, query_tokens=["pydantic"], reader=reader,
-        )
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-pyd" in ids
-
-    def test_non_hyphenated_tags_still_matched(self, tmp_path: Path) -> None:
-        """Tags without hyphens still appear in tag_text for query matching."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        writer = FileStateWriter()
-        reader = FileStateReader()
-
-        writer.write_yaml(entries_dir / "simple.yaml", {
-            "id": "L-simple", "summary": "basic entry", "detail": "",
-            "impact": 0.7, "tags": ["testing"],
-        })
-
-        matches, _ = search_entries(
-            entries_dir, query_tokens=["testing"], reader=reader,
-        )
-        ids = [str(m.get("id", "")) for m in matches]
-        assert "L-simple" in ids
-
 
 class TestSearchPatternsNonExistentDir:
     """Cover line 115: search_patterns early return when dir missing."""
@@ -1351,31 +987,22 @@ class TestFindSessionStartTsRunDirWithoutEvents:
 
     def test_run_dir_without_events_file_skipped(self, tmp_path: Path) -> None:
         """Run directory without events.jsonl is skipped (line 722 continue)."""
-        import trw_mcp.scoring as scoring_mod
+        from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import _find_session_start_ts
 
-        old_config = scoring_mod._config
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "task_root", "tasks")
 
-        try:
-            cfg = scoring_mod._config.__class__()
-            object.__setattr__(cfg, "task_root", "tasks")
-            scoring_mod._config = cfg
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
 
-            trw_dir = tmp_path / ".trw"
-            trw_dir.mkdir()
+        task_dir = tmp_path / "tasks" / "no-events-task"
+        meta_dir = task_dir / "runs" / "20260101T000000Z-noevent1" / "meta"
+        meta_dir.mkdir(parents=True)
 
-            # Create a run directory structure without events.jsonl
-            task_dir = tmp_path / "tasks" / "no-events-task"
-            run_dir = task_dir / "runs" / "20260101T000000Z-noevent1"
-            meta_dir = run_dir / "meta"
-            meta_dir.mkdir(parents=True)
-            # No events.jsonl written
-
+        with patch("trw_mcp.scoring._correlation.get_config", return_value=cfg):
             result = _find_session_start_ts(trw_dir)
-            assert result is None
-
-        finally:
-            scoring_mod._config = old_config
+        assert result is None
 
 
 class TestCorrelateRecallsAdvancedPaths:
@@ -1400,51 +1027,31 @@ class TestCorrelateRecallsAdvancedPaths:
         self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """scope='session' + found session_start -> cutoff_ts = session_start (line 782)."""
-        import trw_mcp.scoring as scoring_mod
+        from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import correlate_recalls
 
-        old_config = scoring_mod._config
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "task_root", "tasks")
+        object.__setattr__(cfg, "learning_outcome_correlation_scope", "window")
 
-        try:
-            cfg = scoring_mod._config.__class__()
-            object.__setattr__(cfg, "task_root", "tasks")
-            # Force session scope
-            object.__setattr__(cfg, "learning_outcome_correlation_scope", "window")
-            scoring_mod._config = cfg
+        now = datetime.now(timezone.utc)
+        session_start_ts = (now - timedelta(hours=2)).replace(microsecond=0)
+        receipt_ts = (now - timedelta(hours=1)).replace(microsecond=0)
 
-            now = datetime.now(timezone.utc)
-            # Create a session start event 2 hours ago
-            session_start_ts = (now - timedelta(hours=2)).replace(microsecond=0)
-            # Create a receipt from 1 hour ago (within session scope, outside 30-min window)
-            receipt_ts = (now - timedelta(hours=1)).replace(microsecond=0)
+        trw_dir = self._make_receipt_log(tmp_path, writer, [
+            {"ts": receipt_ts.isoformat(), "matched_ids": ["L-in-session"]},
+        ])
 
-            # Set up run events
-            task_dir = tmp_path / "tasks" / "session-task"
-            run_dir = task_dir / "runs" / "20260101T000000Z-sess1111"
-            meta_dir = run_dir / "meta"
-            meta_dir.mkdir(parents=True)
-            writer.append_jsonl(meta_dir / "events.jsonl", {
-                "ts": session_start_ts.isoformat(),
-                "event": "run_init",
-            })
-
-            # Patch _find_session_start_ts to return our known session_start
-            trw_dir = self._make_receipt_log(tmp_path, writer, [
-                {"ts": receipt_ts.isoformat(), "matched_ids": ["L-in-session"]},
-            ])
-
-            # Monkeypatch to force session_start to be found
-            monkeypatch.setattr(
-                scoring_mod, "_find_session_start_ts",
-                lambda _: session_start_ts,
-            )
-
+        with (
+            patch("trw_mcp.scoring._correlation.get_config", return_value=cfg),
+            patch(
+                "trw_mcp.scoring._correlation._find_session_start_ts",
+                return_value=session_start_ts,
+            ),
+        ):
             result = correlate_recalls(trw_dir, 30, scope="session")
-            ids = [lid for lid, _ in result]
-            assert "L-in-session" in ids
-
-        finally:
-            scoring_mod._config = old_config
+        ids = [lid for lid, _ in result]
+        assert "L-in-session" in ids
 
     def test_future_timestamp_receipt_is_skipped(
         self, tmp_path: Path, writer: FileStateWriter
@@ -1531,31 +1138,28 @@ class TestProcessOutcomeForEventSuccessPath:
     """Cover line 997-998: successful resolve_trw_dir + process_outcome call."""
 
     def test_process_outcome_called_with_valid_trw_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path,
     ) -> None:
         """When resolve_trw_dir succeeds, process_outcome is invoked (lines 997-998)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome_for_event
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        # No receipts present, so process_outcome returns []
-        monkeypatch.setattr(scoring_mod, "resolve_trw_dir", lambda: trw_dir)
 
-        result = process_outcome_for_event("phase_gate_passed")
+        with patch("trw_mcp.scoring._utils.resolve_trw_dir", return_value=trw_dir):
+            result = process_outcome_for_event("phase_gate_passed")
         assert isinstance(result, list)
 
     def test_process_outcome_returns_updated_ids_on_success(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter
     ) -> None:
         """Full success path: receipts exist + entries exist -> IDs returned."""
-        import trw_mcp.scoring as scoring_mod
+        from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import process_outcome_for_event
 
+        cfg = TRWConfig()
         trw_dir = tmp_path / ".trw"
 
-        # Set up receipts
-        # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
         logs_dir = trw_dir / "logs"
         logs_dir.mkdir(parents=True)
         now_ts = datetime.now(timezone.utc).isoformat()
@@ -1564,10 +1168,7 @@ class TestProcessOutcomeForEventSuccessPath:
             "matched_ids": ["L-target"],
         })
 
-        # Set up entries directory with the referenced entry
-        entries_dir = (
-            trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
-        )
+        entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
         entries_dir.mkdir(parents=True)
         writer.write_yaml(entries_dir / "2026-01-01-L-target.yaml", {
             "id": "L-target",
@@ -1581,7 +1182,6 @@ class TestProcessOutcomeForEventSuccessPath:
             "source_type": "agent",
         })
 
-        monkeypatch.setattr(scoring_mod, "resolve_trw_dir", lambda: trw_dir)
-
-        result = process_outcome_for_event("tests_passed")
+        with patch("trw_mcp.scoring._utils.resolve_trw_dir", return_value=trw_dir):
+            result = process_outcome_for_event("tests_passed")
         assert "L-target" in result

@@ -19,7 +19,7 @@ from trw_memory.retrieval.dense import cosine_similarity
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.telemetry.embeddings import embed, embedding_available
+from trw_mcp.state.memory_adapter import embed_text as embed, embedding_available
 
 logger = structlog.get_logger()
 
@@ -232,7 +232,7 @@ def merge_entries(
     # FR03: Re-compute embedding for merged entry and update sqlite-vec if available
     try:
         from trw_mcp.state.memory_store import MemoryStore
-        from trw_mcp.telemetry.embeddings import embed as _embed
+        from trw_mcp.state.memory_adapter import embed_text as _embed
         if MemoryStore.available():
             merged_text = str(existing.get("summary", "")) + " " + str(existing.get("detail", ""))
             new_embedding = _embed(merged_text)

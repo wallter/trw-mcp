@@ -118,13 +118,3 @@ def cache_build_status(trw_dir: Path, status: BuildStatus) -> Path:
     cache_path = context_dir / "build-status.yaml"
     _writer.write_yaml(cache_path, model_to_dict(status))
     return cache_path
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    global _config, _writer
-    _reset_config()
-    _config = get_config()
-    _writer = FileStateWriter()

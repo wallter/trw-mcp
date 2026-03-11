@@ -33,6 +33,13 @@ from trw_mcp.state.persistence import (
 )
 
 
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # Named caps for mechanical extraction
 _MAX_ERROR_LEARNINGS = 5
 _MAX_REPEATED_OPS = 3

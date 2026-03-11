@@ -26,15 +26,29 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    - Expected: `done` or `implemented`
    - If any PRD is still `draft`, `review`, `approved`, or `implemented`, report which PRDs need updating
    - If any PRD is genuinely incomplete (work not done), ask the user whether to update it anyway or exclude it from the sprint
+   - **Security PRD escalation (PRD-QUAL-044-FR04)**: If any PRD has `tags: [security]` or title contains "security"/"hardening"/"vulnerability" and its status is NOT `done`, escalate it to P0 — security PRDs cannot be deferred or left incomplete
    - **Do NOT update PRD statuses yet** — wait until the build gate passes (step 5)
+
+3a. **Spawn adversarial auditor (PRD-QUAL-044-FR01/FR02)**: Before proceeding to exit criteria, spawn a `trw-adversarial-auditor` agent for each sprint PRD (or batch them into one audit pass covering all PRDs). The auditor independently verifies spec compliance — this is mandatory, not optional.
+   - If the auditor reports **any P0 findings**: BLOCK sprint completion — status cannot be set to "done"
+   - If the auditor reports **P1 findings**: report them but allow completion with user acknowledgement
+   - If the auditor is unavailable (e.g., agent spawn fails): log a warning and proceed, but flag it in the report as "audit_skipped"
+
+3b. **Check for partial completion (PRD-QUAL-044-FR03)**: If the user passes `--partial` flag or the sprint doc has `status: partial` in frontmatter:
+   - Allow sprint to close with status "partial" instead of "done"
+   - Require a completion table in the sprint doc listing which PRDs are done vs. remaining
+   - Remaining PRDs will be carried forward to the next sprint
 
 4. **Parse exit criteria checkboxes**: Spec reconciliation (`trw_review(mode='reconcile')`) should have been run during the REVIEW phase for each governing PRD. Extract all `- [ ]` and `- [x]` lines from the "Exit Criteria" section of the sprint doc.
    - For each **unchecked** (`- [ ]`) item, classify it:
      - **Auto-verifiable**: build passes, coverage >= N%, mypy clean, PRD status = done — verify these now and report pass/fail
      - **Manual**: pen testing completed, docs published, deployment verified — require explicit user waiver (`WAIVE: criterion text`)
+   - **`verify:` command support (PRD-QUAL-045-FR04)**: If an exit criterion has an inline `verify: <command>` field, run the command (with a 60s timeout) and use its exit code to determine pass/fail. This allows automated verification of criteria like "grep -c pattern file".
    - If **any criterion is unchecked AND not auto-verified AND not waived**: BLOCK sprint completion
    - Report all criteria with their verification status: `[CHECKED]`, `[VERIFIED]`, `[WAIVED]`, or `[BLOCKED]`
    - If the sprint doc has YAML frontmatter with `exit_criteria:` list, parse that instead (machine-readable format takes precedence over markdown checkboxes)
+
+4a. **Wave completion check (PRD-INFRA-036-FR04)**: If the sprint doc contains a wave manifest (YAML `waves:` block), check that each wave has at least one checkpoint with a matching `wave_id`. Warn (do not block) if any wave lacks a completion checkpoint — this indicates incomplete tracking, not necessarily incomplete work.
 
 5. **Build gate with coverage threshold**: Extract coverage target from exit criteria (pattern: `coverage >= X%` or `coverage_threshold: X` in YAML frontmatter). Default to 80% if not specified.
    - Call `trw_build_check(scope="full")` to run tests + type-check

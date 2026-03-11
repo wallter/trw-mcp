@@ -22,7 +22,7 @@ from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import strip_pii
-from trw_mcp.telemetry.embeddings import embed
+from trw_mcp.state.memory_adapter import embed_text as embed
 
 logger = structlog.get_logger()
 
@@ -167,14 +167,14 @@ def publish_learnings(
                 # Fan-out: publish to all configured backends in parallel
                 if executor:
                     futs = {
-                        executor.submit(_post_learning, url, payload, cfg.platform_api_key): url
+                        executor.submit(_post_learning, url, payload, cfg.platform_api_key.get_secret_value()): url
                         for url in urls
                     }
                     results = [f.result() for f in as_completed(futs)]
                     any_success = any(results)
                 else:
                     any_success = any(
-                        _post_learning(url, payload, cfg.platform_api_key)
+                        _post_learning(url, payload, cfg.platform_api_key.get_secret_value())
                         for url in urls
                     )
 

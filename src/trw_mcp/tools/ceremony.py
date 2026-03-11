@@ -40,6 +40,17 @@ logger = structlog.get_logger()
 
 _events = FileEventLogger(FileStateWriter())
 
+
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    if name == "_config":
+        return get_config()
+    if name == "_reader":
+        return FileStateReader()
+    if name == "_writer":
+        return FileStateWriter()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 # Re-export checkpoint helpers for backward compatibility with tests/hooks
 from trw_mcp.tools.checkpoint import (  # noqa: E402
     _do_checkpoint,
@@ -937,9 +948,3 @@ def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
         "applied": sum(1 for p in progressions if p.get("applied")),
         "progressions": progressions,
     }
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    global _events
-    _events = FileEventLogger(FileStateWriter())

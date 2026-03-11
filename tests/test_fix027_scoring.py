@@ -83,8 +83,8 @@ class TestDeliverCompleteEventType:
         # We patch _config and the trw_dir resolution so the function can run
         mock_config = TRWConfig(trw_dir=str(trw_dir))
         with (
-            patch("trw_mcp.scoring._config", mock_config),
-            patch("trw_mcp.scoring.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.scoring._correlation.get_config", return_value=mock_config),
+            patch("trw_mcp.scoring._utils.resolve_trw_dir", return_value=trw_dir),
         ):
             # The function should not raise — even if no session events exist,
             # returning [] is acceptable when no recalls occurred this session.
@@ -759,58 +759,11 @@ class TestApplyTimeDecayPurity:
         files_created = list(tmp_path.rglob("*"))
         assert files_created == [], f"apply_time_decay wrote files: {files_created}"
 
+    @pytest.mark.skip(reason="search_entries removed from recall_search (PRD-CORE-080)")
     def test_stored_impact_unchanged_after_repeated_trw_recall(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """FR06/NFR03: Calling trw_recall N times never mutates the stored impact field.
-
-        Given a learning entry with impact=0.75, created 400 days ago,
-        after calling trw_recall 3 times the YAML still has impact=0.75.
-        """
-
-        trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
-        reader = FileStateReader()
-
-        old_date = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat()
-        entry: dict[str, object] = {
-            "id": "L-immut01",
-            "summary": "immutability test entry",
-            "detail": "should not change",
-            "impact": 0.75,
-            "q_value": 0.75,
-            "q_observations": 0,
-            "status": "active",
-            "created_at": old_date,
-            "tags": ["immutability"],
-        }
-        entry_path = entries_dir / "L-immut01.yaml"
-        writer.write_yaml(entry_path, entry)
-
-        # Force keyword-scan fallback by mocking retrieval module.
-        # The real hybrid_search imports sentence-transformers which is slow.
-        import sys
-        import types
-
-        mock_retrieval = types.ModuleType("trw_mcp.state.retrieval")
-        mock_retrieval.hybrid_search = lambda *a, **kw: []  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "trw_mcp.state.retrieval", mock_retrieval)
-
-        # Call search_entries 3 times — simulates repeated recall queries
-        # FR06/NFR03: search_entries applies decay in-memory only; stored impact must be unchanged
-        from trw_mcp.state.recall_search import search_entries as rse
-
-        for _ in range(3):
-            rse(entries_dir, ["immutability", "should"], reader)
-
-        stored = reader.read_yaml(entry_path)
-        stored_impact = stored.get("impact")
-        assert stored_impact == 0.75, (
-            f"Stored impact was mutated from 0.75 to {stored_impact} by recall calls"
-        )
+        """FR06/NFR03: search_entries was removed; recall now uses memory_adapter."""
 
 
 # ============================================================================
@@ -979,12 +932,9 @@ class TestBuildCheckMypyOnlyScope:
         object.__setattr__(cfg, "learning_outcome_correlation_window_minutes", 9999)
         object.__setattr__(cfg, "learning_outcome_correlation_scope", "window")
 
-        # Patch scoring module-level objects AND resolve_trw_dir so outcome
-        # correlation uses the tmp trw_dir, not the real project's .trw/
-        monkeypatch.setattr(scoring_mod, "_config", cfg)
-        monkeypatch.setattr(scoring_mod, "_reader", reader)
-        monkeypatch.setattr(scoring_mod, "_writer", writer)
-        monkeypatch.setattr(scoring_mod, "resolve_trw_dir", lambda: trw_dir)
+        # Patch scoring submodules so outcome correlation uses the tmp trw_dir
+        monkeypatch.setattr("trw_mcp.scoring._correlation.get_config", lambda: cfg)
+        monkeypatch.setattr("trw_mcp.scoring._utils.resolve_trw_dir", lambda: trw_dir)
 
         mock_status = MagicMock()
         mock_status.tests_passed = True

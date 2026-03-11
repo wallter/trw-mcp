@@ -208,15 +208,3 @@ def _write_telemetry_record(
     _writer.ensure_dir(logs_dir)
     telemetry_path = logs_dir / _config.telemetry_file
     _events.log_event(telemetry_path, "tool_call", record)
-
-
-def __reload_hook__() -> None:
-    """Reset module-level caches on mcp-hmr hot-reload."""
-    from trw_mcp.models.config import _reset_config
-
-    global _config, _writer, _events, _cached_run_dir
-    _reset_config()
-    _config = get_config()
-    _writer = FileStateWriter()
-    _events = FileEventLogger(_writer)
-    _cached_run_dir = (0.0, None)

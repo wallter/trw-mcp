@@ -17,7 +17,6 @@ from __future__ import annotations
 # Module A — analytics_core (singletons, constants, shared helpers)
 # ---------------------------------------------------------------------------
 from trw_mcp.state.analytics_core import (
-    __reload_hook__ as __reload_hook__,
     _entries_path as _entries_path,
     _ERROR_KEYWORDS as _ERROR_KEYWORDS,
     _get_event_type as _get_event_type,
@@ -90,7 +89,6 @@ from trw_mcp.state.analytics_dedup import (
 # ---------------------------------------------------------------------------
 __all__ = [
     # analytics_core
-    "__reload_hook__",
     "infer_topic_tags",
     "_entries_path",
     "_iter_entry_files",
@@ -134,8 +132,4 @@ __all__ = [
     "_score_learning_depth",
     "_score_impact_distribution",
     "compute_reflection_quality",
-    # singletons (from analytics_core via module reference)
-    "_config",
-    "_reader",
-    "_writer",
 ]
