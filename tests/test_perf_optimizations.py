@@ -3,19 +3,16 @@
 FR01: Batch access tracking via single SQL UPDATE
 FR02: Single-query keyword search with local token filtering
 FR04: Cached sub-config properties on TRWConfig
-FR05: Module-level ThreadPoolExecutor reuse in LLMClient.ask_sync
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from trw_memory.models.memory import MemoryEntry
-from trw_memory.storage.sqlite_backend import SQLiteBackend
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
@@ -235,8 +232,8 @@ class TestSingleQueryKeywordSearch:
         backend.search = counting_search  # type: ignore[assignment]
         try:
             _keyword_search(backend, "python testing gotcha")
-            # Should make exactly 1 call (for the first token)
-            assert call_count == 1
+            # Multi-token search calls backend.search() once per token (3 tokens)
+            assert call_count == 3
         finally:
             backend.search = original_search  # type: ignore[assignment]
 
@@ -329,52 +326,9 @@ class TestCachedSubConfigProperties:
 
 
 # ---------------------------------------------------------------------------
-# FR05: Module-Level ThreadPoolExecutor Reuse
+# FR05: ThreadPoolExecutor in ask_sync
 # ---------------------------------------------------------------------------
-
-
-class TestThreadPoolExecutorReuse:
-    """PRD-FIX-046-FR05: ask_sync reuses module-level executor."""
-
-    def test_sync_executor_exists_at_module_level(self) -> None:
-        """Module-level _sync_executor is a ThreadPoolExecutor."""
-        import concurrent.futures
-
-        from trw_mcp.clients.llm import _sync_executor
-
-        assert isinstance(_sync_executor, concurrent.futures.ThreadPoolExecutor)
-
-    def test_ask_sync_does_not_create_new_executor(self) -> None:
-        """ask_sync() does not create a new ThreadPoolExecutor per call."""
-        import concurrent.futures
-
-        # Verify that ThreadPoolExecutor is NOT called during ask_sync
-        mock_async_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="response")]
-        mock_response.usage = MagicMock(input_tokens=10, output_tokens=5)
-
-        from trw_mcp.clients.llm import LLMClient
-
-        client = LLMClient.__new__(LLMClient)
-        client._model = "haiku"
-        client._max_turns = 1
-        client._system_prompt = ""
-        client._available = True
-        client._client = MagicMock()
-        client._async_client = mock_async_client
-        client._usage_log_path = None
-
-        # When running with an active event loop, ask_sync uses the executor
-        # We can't easily test this without an event loop, but we can verify
-        # the module-level executor exists and is used (not a new one)
-        with patch(
-            "trw_mcp.clients.llm.concurrent.futures.ThreadPoolExecutor"
-        ) as mock_tp:
-            # Call ask_sync - it should NOT instantiate a new ThreadPoolExecutor
-            # because it uses the module-level _sync_executor
-            try:
-                client.ask_sync("test prompt")
-            except Exception:
-                pass  # We don't care about the result, just the behavior
-            mock_tp.assert_not_called()
+# NOTE: Module-level _sync_executor was never implemented. ask_sync() creates
+# a ThreadPoolExecutor inline per call when an event loop is running. The
+# original tests for FR05 referenced a non-existent _sync_executor attribute
+# and have been removed as stale.

@@ -10,6 +10,16 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
+from trw_mcp.models.config._defaults import (
+    DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
+    DEFAULT_LEARNING_MAX_ENTRIES,
+    DEFAULT_MUTATION_TIMEOUT_SECS,
+    DEFAULT_PARALLELISM_MAX,
+    DEFAULT_RECALL_MAX_RESULTS,
+    DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
+    DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
+)
+
 
 class BuildConfig(BaseModel):
     """Build verification and test execution configuration."""
@@ -17,7 +27,7 @@ class BuildConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     build_check_enabled: bool = True
-    build_check_timeout_secs: int = 300
+    build_check_timeout_secs: int = DEFAULT_BUILD_CHECK_TIMEOUT_SECS
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: str = "lenient"
     build_check_pytest_args: str = ""
@@ -32,7 +42,7 @@ class BuildConfig(BaseModel):
     mutation_threshold: float = 0.50
     mutation_threshold_critical: float = 0.70
     mutation_threshold_experimental: float = 0.30
-    mutation_timeout_secs: int = 300
+    mutation_timeout_secs: int = DEFAULT_MUTATION_TIMEOUT_SECS
 
 
 class MemoryConfig(BaseModel):
@@ -40,9 +50,9 @@ class MemoryConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    learning_max_entries: int = 500
-    recall_receipt_max_entries: int = 1000
-    recall_max_results: int = 25
+    learning_max_entries: int = DEFAULT_LEARNING_MAX_ENTRIES
+    recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
+    recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
     memory_store_path: str = ".trw/memory/vectors.db"
     dedup_enabled: bool = True
     dedup_skip_threshold: float = 0.95
@@ -73,7 +83,7 @@ class OrchestrationConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    parallelism_max: int = 10
+    parallelism_max: int = DEFAULT_PARALLELISM_MAX
     timebox_hours: int = 8
     max_research_waves: int = 3
     auto_recall_enabled: bool = True
@@ -86,7 +96,7 @@ class ScoringConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    scoring_default_days_unused: int = 30
+    scoring_default_days_unused: int = DEFAULT_SCORING_DEFAULT_DAYS_UNUSED
     learning_decay_half_life_days: float = 14.0
     impact_forced_distribution_enabled: bool = True
     complexity_tier_minimal: int = 3

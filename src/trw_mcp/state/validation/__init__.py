@@ -17,178 +17,178 @@ All public names are re-exported here for backward compatibility.
 
 from __future__ import annotations
 
-from trw_mcp.state.contract_validation import (
+from trw_mcp.state.validation.contract_validation import (
     _INTEGRATION_CHECKLIST as _INTEGRATION_CHECKLIST,
 )
 
 # --- contract_validation ---
-from trw_mcp.state.contract_validation import (
+from trw_mcp.state.validation.contract_validation import (
     ContractValidator as ContractValidator,
 )
-from trw_mcp.state.contract_validation import (
+from trw_mcp.state.validation.contract_validation import (
     FileContractValidator as FileContractValidator,
 )
-from trw_mcp.state.contract_validation import (
+from trw_mcp.state.validation.contract_validation import (
     validate_wave_contracts as validate_wave_contracts,
 )
 
 # --- event_helpers ---
-from trw_mcp.state.event_helpers import (
+from trw_mcp.state.validation.event_helpers import (
     _REFLECTION_EVENTS as _REFLECTION_EVENTS,
 )
-from trw_mcp.state.event_helpers import (
+from trw_mcp.state.validation.event_helpers import (
     _SYNC_EVENTS as _SYNC_EVENTS,
 )
-from trw_mcp.state.event_helpers import (
+from trw_mcp.state.validation.event_helpers import (
     _events_contain as _events_contain,
 )
-from trw_mcp.state.event_helpers import (
+from trw_mcp.state.validation.event_helpers import (
     _is_validate_pass as _is_validate_pass,
 )
-from trw_mcp.state.event_helpers import (
+from trw_mcp.state.validation.event_helpers import (
     _read_events as _read_events,
 )
-from trw_mcp.state.integration_check import (
+from trw_mcp.state.validation.integration_check import (
     _CHECKBOX_RE as _CHECKBOX_RE,
 )
-from trw_mcp.state.integration_check import (
+from trw_mcp.state.validation.integration_check import (
     _EXIT_CRITERIA_RE as _EXIT_CRITERIA_RE,
 )
 
 # --- integration_check ---
-from trw_mcp.state.integration_check import (
+from trw_mcp.state.validation.integration_check import (
     check_integration as check_integration,
 )
-from trw_mcp.state.integration_check import (
+from trw_mcp.state.validation.integration_check import (
     parse_exit_criteria as parse_exit_criteria,
 )
-from trw_mcp.state.phase_gates import (
+from trw_mcp.state.validation.phase_gates import (
     PHASE_EXIT_CRITERIA as PHASE_EXIT_CRITERIA,
 )
-from trw_mcp.state.phase_gates import (
+from trw_mcp.state.validation.phase_gates import (
     PHASE_INPUT_CRITERIA as PHASE_INPUT_CRITERIA,
 )
-from trw_mcp.state.phase_gates import (
+from trw_mcp.state.validation.phase_gates import (
     _build_phase_result as _build_phase_result,
 )
 
 # --- phase_gates ---
-from trw_mcp.state.phase_gates import (
+from trw_mcp.state.validation.phase_gates import (
     check_phase_exit as check_phase_exit,
 )
-from trw_mcp.state.phase_gates import (
+from trw_mcp.state.validation.phase_gates import (
     check_phase_input as check_phase_input,
 )
 
 # --- phase_gates_build ---
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _BUILD_STALENESS_SECS as _BUILD_STALENESS_SECS,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_build_check as _best_effort_build_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_integration_check as _best_effort_integration_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_orphan_check as _best_effort_orphan_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _check_build_status as _check_build_status,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_dry_check as _best_effort_dry_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_migration_check as _best_effort_migration_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_semantic_check as _best_effort_semantic_check,
 )
-from trw_mcp.state.phase_gates_prd import (
+from trw_mcp.state.validation.phase_gates_prd import (
     _STATUS_ORDER as _STATUS_ORDER,
 )
 
 # --- phase_gates_prd ---
-from trw_mcp.state.phase_gates_prd import (
+from trw_mcp.state.validation.phase_gates_prd import (
     _check_prd_enforcement as _check_prd_enforcement,
 )
-from trw_mcp.state.prd_progression import (
+from trw_mcp.state.validation.prd_progression import (
     _TERMINAL_STATUSES as _TERMINAL_STATUSES,
 )
-from trw_mcp.state.prd_progression import (
+from trw_mcp.state.validation.prd_progression import (
     PHASE_STATUS_MAPPING as PHASE_STATUS_MAPPING,
 )
 
 # --- prd_progression ---
-from trw_mcp.state.prd_progression import (
+from trw_mcp.state.validation.prd_progression import (
     auto_progress_prds as auto_progress_prds,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTION_NAMES,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _GRADE_MAP as _GRADE_MAP,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _HEADING_RE as _HEADING_RE,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _HIGH_WEIGHT_SECTIONS as _HIGH_WEIGHT_SECTIONS,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _PLACEHOLDER_RE as _PLACEHOLDER_RE,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _coerce_v1_failures as _coerce_v1_failures,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _is_substantive_line as _is_substantive_line,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     _parse_section_content as _parse_section_content,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     classify_quality_tier as classify_quality_tier,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     generate_improvement_suggestions as generate_improvement_suggestions,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     map_grade as map_grade,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     score_content_density as score_content_density,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     score_section_density as score_section_density,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     score_structural_completeness as score_structural_completeness,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     score_traceability_v2 as score_traceability_v2,
 )
 
 # --- prd_quality ---
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     validate_prd_quality as validate_prd_quality,
 )
-from trw_mcp.state.prd_quality import (
+from trw_mcp.state.validation.prd_quality import (
     validate_prd_quality_v2 as validate_prd_quality_v2,
 )
-from trw_mcp.state.risk_profiles import (
+from trw_mcp.state.validation.risk_profiles import (
     RISK_PROFILES as RISK_PROFILES,
 )
 
 # --- risk_profiles ---
-from trw_mcp.state.risk_profiles import (
+from trw_mcp.state.validation.risk_profiles import (
     RiskProfile as RiskProfile,
 )
-from trw_mcp.state.risk_profiles import (
+from trw_mcp.state.validation.risk_profiles import (
     derive_risk_level as derive_risk_level,
 )
-from trw_mcp.state.risk_profiles import (
+from trw_mcp.state.validation.risk_profiles import (
     get_risk_scaled_config as get_risk_scaled_config,
 )
 

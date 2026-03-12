@@ -73,7 +73,7 @@ def get_message_or_default(key: str, default: str, **kwargs: object) -> str:
     """
     try:
         return get_message(key, **kwargs)
-    except Exception:
+    except Exception:  # justified: fail-open, message registry errors fall back to inline defaults
         if kwargs:
             return default.format(**{k: str(v) for k, v in kwargs.items()})
         return default

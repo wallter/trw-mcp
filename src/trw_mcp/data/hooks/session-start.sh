@@ -94,15 +94,17 @@ case "$_source" in
     echo ""
     _emit_tier_guidance
     echo ""
+    echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
+    echo "WHY: It defines the 6-phase execution model (RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER),"
+    echo "  exit criteria for each phase, formation selection for parallel work, quality gates with rubric scoring,"
+    echo "  phase reversion rules, and the rationalization watchlist. Your tools implement this methodology —"
+    echo "  without reading it, you will pass tool checks while missing the process that prevents rework."
+    echo "  The framework is ~500 lines. Read it once at session start; re-read relevant sections at phase transitions."
+    echo ""
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
     echo ""
-    echo "RATIONALIZATION WATCHLIST — if you think any of these, stop and follow the process:"
-    echo "- 'This is too simple for ceremony' → Simple tasks compound into gaps. Skip checkpoint → context compacts → re-implement from scratch."
-    echo "- 'I'll deliver after I finish' → Context compaction erases uncheckpointed work permanently."
-    echo "- 'I already know the codebase' → Sprint 26 had 6 P0/P1 defects from agents who skipped recall."
-    echo ""
-    echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, completion artifacts."
+    echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK.md, completion artifacts."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;
@@ -114,12 +116,19 @@ case "$_source" in
     _emit_tier_guidance
     echo ""
     echo "SESSION RESUMED — your run state and learnings are preserved."
+    echo "FRAMEWORK: If you haven't read .trw/frameworks/FRAMEWORK.md this session, read it now — it defines exit criteria and phase gates that govern your work."
     echo "Call trw_status() to see where you left off and what to work on next."
     ;;
 
   compact)
     # FR03: Compaction recovery — emphasize progress is safe, show recovered state
     echo "CONTEXT COMPACTED — your conversation was compressed but your implementation progress is safe."
+    echo ""
+    echo "FRAMEWORK RE-READ REQUIRED: Read .trw/frameworks/FRAMEWORK.md now, before resuming work."
+    echo "WHY: Context compaction erased your understanding of the methodology. The framework itself mandates"
+    echo "  re-reading after compaction (§ FRAMEWORK ADHERENCE). This costs ~500 tokens but prevents systematic"
+    echo "  errors from working without phase gates, exit criteria, formation guidance, and quality rubrics."
+    echo "  Agents who skip this produce work that drifts from the methodology and requires rework."
     echo ""
     _emit_protocol
     echo ""
@@ -137,13 +146,18 @@ case "$_source" in
       fi
     fi
     echo ""
-    echo "CONTINUE: Call trw_status() to see your current state, then resume implementation."
+    echo "CONTINUE: Read .trw/frameworks/FRAMEWORK.md first, then call trw_status() to see your current state."
     echo "Your checkpoint has your progress — pick up where you left off rather than re-planning."
     ;;
 
   clear)
     # FR01: Clear — full protocol injection (same as startup)
     _emit_protocol
+    echo ""
+    echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
+    echo "WHY: It defines the 6-phase execution model, exit criteria, formations, quality gates, and phase reversion"
+    echo "  rules that structure your work. Your tools implement this methodology — without reading it, you will pass"
+    echo "  tool checks while missing the process that prevents rework."
     echo ""
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."

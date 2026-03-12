@@ -16,9 +16,13 @@ import contextlib
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from trw_memory.embeddings.local import LocalEmbeddingProvider
+
 from trw_memory.migration.from_trw import migrate_entries_dir
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
@@ -32,7 +36,7 @@ logger = structlog.get_logger()
 _backend: SQLiteBackend | None = None
 _backend_lock = threading.Lock()
 
-_embedder: Any = None  # LocalEmbeddingProvider | None
+_embedder: LocalEmbeddingProvider | None = None
 _embedder_lock = threading.Lock()
 _embedder_checked: bool = False
 
@@ -94,7 +98,7 @@ def reset_backend() -> None:
 # Embedder lifecycle
 # ---------------------------------------------------------------------------
 
-def get_embedder() -> Any:
+def get_embedder() -> LocalEmbeddingProvider | None:
     """Return the singleton LocalEmbeddingProvider, or None if unavailable.
 
     Only attempts initialization when ``embeddings_enabled=True`` in config.
@@ -131,7 +135,7 @@ def get_embedder() -> Any:
                     "embeddings_enabled_but_deps_missing",
                     hint="pip install trw-memory[embeddings]",
                 )
-        except Exception:
+        except Exception:  # justified: import-guard, embedder init may fail if deps missing
             # FR06: Log at warning so embedder failures are visible in logs.
             # Do NOT set _embedder_checked — allows retry on next call or
             # after reset_embedder() (e.g. session restart).
@@ -262,7 +266,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
 
     try:
         memory_entries = migrate_entries_dir(entries_dir)
-    except Exception:
+    except Exception:  # justified: boundary, migration from YAML entries may fail on corrupt files
         logger.warning(
             "memory_migration_read_failed",
             exc_info=True,
@@ -277,7 +281,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
                 entry = entry.model_copy(update={"namespace": _NAMESPACE})
             backend.store(entry)
             migrated += 1
-        except Exception:
+        except Exception:  # justified: scan-resilience, one bad entry must not abort migration
             skipped += 1
             logger.warning(
                 "memory_migration_entry_skipped",
@@ -419,8 +423,8 @@ def store_learning(
     backend.store(entry)
 
     # Generate and store embedding when enabled
-    embed_text = f"{summary} {detail}"
-    _embed_and_store(backend, learning_id, embed_text)
+    embed_input = f"{summary} {detail}"
+    _embed_and_store(backend, learning_id, embed_input)
 
     logger.info("memory_store_learning", learning_id=learning_id)
     return {
@@ -531,8 +535,8 @@ def _keyword_search(
 
     # Intersect: entry must match ALL tokens
     token_id_sets: list[set[str]] = []
-    token_entry_map: dict[str, Any] = {}
-    first_token_ordered: list[Any] = []
+    token_entry_map: dict[str, MemoryEntry] = {}
+    first_token_ordered: list[MemoryEntry] = []
     for i, token in enumerate(tokens):
         token_results = backend.search(
             token,

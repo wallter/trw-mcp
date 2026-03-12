@@ -7,14 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastmcp import FastMCP
 
-from tests.conftest import get_tools_sync
+from tests.conftest import get_tools_sync, make_test_server
 
 import trw_mcp.tools.orchestration as orch_mod
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
-from trw_mcp.tools.orchestration import register_orchestration_tools
 
 # Single source of truth for the expected framework version in test assertions.
 # Must match the default in TRWConfig.framework_version.
@@ -30,9 +28,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _make_orch_tools() -> dict[str, Any]:
     """Create a FastMCP server with orchestration tools and return the tools dict."""
-    srv = FastMCP("test")
-    register_orchestration_tools(srv)
-    return get_tools_sync(srv)
+    return get_tools_sync(make_test_server("orchestration"))
 
 
 @pytest.fixture
@@ -190,7 +186,7 @@ class TestVersionTracking:
     ) -> None:
         """Run first init at default version, then patch config to trigger upgrade."""
         _make_orch_tools()["trw_init"].fn(task_name="upgrade-task1")
-        monkeypatch.setattr(orch_mod, "_config", TRWConfig(framework_version=upgraded_version))
+        monkeypatch.setattr("trw_mcp.tools.orchestration.get_config", lambda: TRWConfig(framework_version=upgraded_version))
 
     def test_same_version_skips_rewrite(
         self, tmp_path: Path, orch_tools: dict[str, Any],
@@ -270,7 +266,7 @@ class TestCeremonyScoring:
     """Tests for compute_ceremony_score() — direct and tool_invocation event formats."""
 
     def _score(self, events: list[dict[str, object]]) -> dict[str, object]:
-        from trw_mcp.state.analytics_report import compute_ceremony_score
+        from trw_mcp.state.analytics.report import compute_ceremony_score
         return compute_ceremony_score(events)
 
     # --- Direct event format (original behavior) ---

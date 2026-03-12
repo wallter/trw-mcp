@@ -19,9 +19,9 @@ import pytest
 
 from tests.conftest import get_tools_sync
 
-import trw_mcp.state.analytics_report as analytics_mod
+import trw_mcp.state.analytics.report as analytics_mod
 from trw_mcp.models.config import TRWConfig, _reset_config
-from trw_mcp.state.analytics_report import auto_close_stale_runs
+from trw_mcp.state.analytics.report import auto_close_stale_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 _reader = FileStateReader()
@@ -78,8 +78,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -102,8 +102,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -122,8 +122,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -137,8 +137,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -153,8 +153,8 @@ class TestAutoCloseStaleRuns:
         # tmp_path/docs does NOT exist
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -169,8 +169,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             # With custom threshold of 3 days, the 5-day-old run should be closed
             result = auto_close_stale_runs(age_days=3)
@@ -186,8 +186,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs(age_days=30)
 
@@ -207,8 +207,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -231,8 +231,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -248,8 +248,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -265,8 +265,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -283,8 +283,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             auto_close_stale_runs()
 
@@ -304,8 +304,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -316,8 +316,8 @@ class TestAutoCloseStaleRuns:
         """Result always contains runs_closed, count, and errors keys."""
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -333,8 +333,8 @@ class TestAutoCloseStaleRuns:
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.analytics_report.get_config", return_value=TRWConfig()),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
             result = auto_close_stale_runs()
 
@@ -423,7 +423,7 @@ class TestSessionStartAutoClose:
         cfg = TRWConfig()
         object.__setattr__(cfg, "run_auto_close_enabled", True)
 
-        import trw_mcp.state.analytics_report as ar_mod
+        import trw_mcp.state.analytics.report as ar_mod
         import trw_mcp.tools.ceremony as ceremony_mod
 
         close_result = {"runs_closed": ["run-001"], "count": 1, "errors": []}
@@ -469,7 +469,7 @@ class TestSessionStartAutoClose:
             patch("trw_mcp.tools.ceremony._events"),
         ):
             mock_close = MagicMock(return_value={"runs_closed": [], "count": 0, "errors": []})
-            with patch("trw_mcp.state.analytics_report.auto_close_stale_runs", mock_close):
+            with patch("trw_mcp.state.analytics.report.auto_close_stale_runs", mock_close):
                 fn = self._get_session_start_fn()
                 result = fn()
 
@@ -495,7 +495,7 @@ class TestSessionStartAutoClose:
             patch("trw_mcp.tools.ceremony._events"),
         ):
             # Patch the function imported inside Step 5 body
-            import trw_mcp.state.analytics_report as ar_mod
+            import trw_mcp.state.analytics.report as ar_mod
             original_fn = ar_mod.auto_close_stale_runs
             try:
                 ar_mod.auto_close_stale_runs = MagicMock(  # type: ignore[method-assign]

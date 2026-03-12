@@ -409,7 +409,7 @@ def _run_api_fuzz(
             method="HEAD",
         )
         urllib.request.urlopen(req, timeout=5)
-    except Exception:
+    except Exception:  # justified: boundary, backend reachability check may fail for many reasons
         return {
             "api_fuzz_skipped": True,
             "api_fuzz_skip_reason": f"backend unreachable at {base_url}",

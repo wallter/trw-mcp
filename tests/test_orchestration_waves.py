@@ -428,6 +428,11 @@ class TestComputeWaveProgress:
         # Should not raise
         result = _compute_wave_progress(wave_data, tmp_path)
         assert result is not None
+        assert result["total_waves"] == 1
+        # Shard status defaults to pending when manifest is corrupt
+        details = result["wave_details"]
+        assert isinstance(details, list)
+        assert details[0]["shards"]["pending"] == 1
 
 
 # ────────────────────────────────────────────────
@@ -491,7 +496,7 @@ class TestComputeReversionMetrics:
         """Moderate reversion rate classified as 'elevated'."""
         # concerning > 0.5, elevated > 0.1 — give a rate in between
         cfg = TRWConfig(reversion_rate_concerning=0.9, reversion_rate_elevated=0.1)
-        monkeypatch.setattr(orch_mod, "_config", cfg)
+        monkeypatch.setattr("trw_mcp.tools.orchestration.get_config", lambda: cfg)
 
         # 1 revert + 1 phase_enter = rate 0.5 (between 0.1 and 0.9)
         events: list[dict[str, object]] = [
@@ -724,9 +729,10 @@ class TestCheckFrameworkVersionStaleness:
         def _raise_state_error(path: Path) -> dict[str, object]:
             raise TRWStateError("simulated error")
 
-        monkeypatch.setattr(_orch_mod._reader, "read_yaml", _raise_state_error)
-
-        result = _check_framework_version_staleness("v2.0_TRW")
+        from unittest.mock import patch as _patch
+        from trw_mcp.state.persistence import FileStateReader as _FSR
+        with _patch.object(_FSR, "read_yaml", side_effect=_raise_state_error):
+            result = _check_framework_version_staleness("v2.0_TRW")
         assert result is None
 
 

@@ -28,17 +28,9 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     list_active_learnings,
-)
-from trw_mcp.state.memory_adapter import (
     recall_learnings as adapter_recall,
-)
-from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
-)
-from trw_mcp.state.memory_adapter import (
     update_access_tracking as adapter_update_access,
-)
-from trw_mcp.state.memory_adapter import (
     update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -61,13 +53,9 @@ logger = structlog.get_logger()
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    if name == "_config":
-        return get_config()
-    if name == "_reader":
-        return FileStateReader()
-    if name == "_writer":
-        return FileStateWriter()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from trw_mcp.state._helpers import _compat_getattr
+
+    return _compat_getattr(name)
 
 
 def _create_llm_client() -> LLMClient:

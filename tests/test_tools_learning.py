@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.conftest import get_tools_sync
+from tests.conftest import get_tools_sync, make_test_server
 
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.scoring import correlate_recalls, process_outcome, process_outcome_for_event
@@ -58,13 +58,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
-    from fastmcp import FastMCP
-
-    from trw_mcp.tools.learning import register_learning_tools
-
-    srv = FastMCP("test")
-    register_learning_tools(srv)
-    return get_tools_sync(srv)
+    return get_tools_sync(make_test_server("learning"))
 
 
 def _entries_dir(root: Path) -> Path:
@@ -91,7 +85,7 @@ class TestTrwLearn:
         entry_files = list(entries_dir.glob("*.yaml"))
         assert len(entry_files) == 1
 
-    def test_updates_index(self, tmp_path: Path) -> None:
+    def test_updates_index(self, tmp_path: Path, reader: FileStateReader) -> None:
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Learning 1",
@@ -102,7 +96,6 @@ class TestTrwLearn:
             detail="Detail 2",
         )
 
-        reader = FileStateReader()
         index = reader.read_yaml(
             tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml"
         )
@@ -112,7 +105,7 @@ class TestTrwLearn:
 class TestTrwLearnUpdate:
     """Tests for trw_learn_update tool."""
 
-    def test_updates_status_to_resolved(self, tmp_path: Path) -> None:
+    def test_updates_status_to_resolved(self, tmp_path: Path, reader: FileStateReader) -> None:
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Bug that was fixed",
@@ -129,7 +122,6 @@ class TestTrwLearnUpdate:
         assert "status→resolved" in update_result["changes"]
 
         # Verify on disk
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -154,7 +146,7 @@ class TestTrwLearnUpdate:
         assert update_result["status"] == "updated"
         assert "status→obsolete" in update_result["changes"]
 
-    def test_updates_detail_and_summary(self, tmp_path: Path) -> None:
+    def test_updates_detail_and_summary(self, tmp_path: Path, reader: FileStateReader) -> None:
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Original summary",
@@ -173,7 +165,6 @@ class TestTrwLearnUpdate:
         assert "detail updated" in update_result["changes"]
 
         # Verify on disk
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -251,7 +242,7 @@ class TestTrwLearnUpdate:
         update_result = tools["trw_learn_update"].fn(learning_id=lid)
         assert update_result["status"] == "no_changes"
 
-    def test_resyncs_index_after_update(self, tmp_path: Path) -> None:
+    def test_resyncs_index_after_update(self, tmp_path: Path, reader: FileStateReader) -> None:
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Index resync test",
@@ -266,7 +257,6 @@ class TestTrwLearnUpdate:
         )
 
         # Index should reflect the updated status
-        reader = FileStateReader()
         index = reader.read_yaml(
             tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml"
         )
@@ -825,15 +815,13 @@ class TestProgressiveDisclosure:
         matches = re.findall(orphan_pattern, auto_gen)
         assert len(matches) == 0, f"Found orphan headers: {matches}"
 
-    def test_max_auto_lines_gate_raises_error(self, tmp_path: Path) -> None:
+    def test_max_auto_lines_gate_raises_error(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """PRD-CORE-061-FR04: StateError raised when auto-gen exceeds limit."""
         from trw_mcp.clients.llm import LLMClient
         from trw_mcp.exceptions import StateError
         from trw_mcp.state.claude_md import execute_claude_md_sync
 
         config = TRWConfig(max_auto_lines=5)  # Very low limit
-        reader = FileStateReader()
-        writer = FileStateWriter()
         llm = LLMClient()
         with pytest.raises(StateError, match="exceeds max_auto_lines=5"):
             execute_claude_md_sync("root", None, config, reader, writer, llm)
@@ -993,7 +981,7 @@ class TestTrwClaudeMdSyncLLM:
 class TestTrwLearnAnalytics:
     """Tests for trw_learn analytics counter."""
 
-    def test_learn_increments_analytics_counter(self, tmp_path: Path) -> None:
+    def test_learn_increments_analytics_counter(self, tmp_path: Path, reader: FileStateReader) -> None:
         """trw_learn should increment total_learnings in analytics.yaml."""
         tools = _get_tools()
 
@@ -1012,7 +1000,6 @@ class TestTrwLearnAnalytics:
             tmp_path / _CFG.trw_dir / _CFG.context_dir / "analytics.yaml"
         )
         if analytics_path.exists():
-            reader = FileStateReader()
             data = reader.read_yaml(analytics_path)
             assert int(str(data.get("total_learnings", 0))) >= 2
 
@@ -1074,7 +1061,7 @@ class TestTrwRecallAccessTracking:
         assert data is not None, "Entry not found in SQLite"
         assert int(str(data.get("access_count", 0))) == 3
 
-    def test_recall_only_updates_matched_entries(self, tmp_path: Path) -> None:
+    def test_recall_only_updates_matched_entries(self, tmp_path: Path, reader: FileStateReader) -> None:
         """trw_recall does not touch entries that don't match the query."""
         tools = _get_tools()
 
@@ -1091,7 +1078,6 @@ class TestTrwRecallAccessTracking:
 
         tools["trw_recall"].fn(query="database pooling xray")
 
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1122,13 +1108,12 @@ class TestTrwRecallAccessTracking:
             record = json.loads(lines[-1])
             assert len(record["matched_ids"]) == 0
 
-    def test_new_fields_default_for_existing_entries(self, tmp_path: Path) -> None:
+    def test_new_fields_default_for_existing_entries(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Entries created without new fields get defaults (lazy migration)."""
         from trw_mcp.state.memory_adapter import find_entry_by_id as adapter_find
         from trw_mcp.state.memory_adapter import store_learning
 
         # Simulate an old entry without last_accessed_at or access_count
-        writer = FileStateWriter()
         entries_dir = _entries_dir(tmp_path)
         writer.ensure_dir(entries_dir)
         old_entry = {
@@ -1245,7 +1230,7 @@ class TestRecallUtilityRanking:
         result = tools["trw_recall"].fn(query="preserve ranking entry")
         assert len(result["learnings"]) == 5
 
-    def test_q_value_fields_in_new_entries(self, tmp_path: Path) -> None:
+    def test_q_value_fields_in_new_entries(self, tmp_path: Path, reader: FileStateReader) -> None:
         """New entries have q_value and q_observations fields on disk."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1254,7 +1239,6 @@ class TestRecallUtilityRanking:
             impact=0.7,
         )
 
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1385,12 +1369,11 @@ class TestRecallCompactMode:
         assert len(result["learnings"]) == 3
         assert result["total_available"] == 10
 
-    def test_recall_compact_omits_context_on_wildcard(self, tmp_path: Path) -> None:
+    def test_recall_compact_omits_context_on_wildcard(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Wildcard + compact omits context dict."""
         tools = _get_tools()
 
         # Create architecture context file
-        writer = FileStateWriter()
         ctx_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         ctx_dir.mkdir(parents=True, exist_ok=True)
         writer.write_yaml(ctx_dir / "architecture.yaml", {"language": "python"})
@@ -1414,7 +1397,7 @@ class TestRecallCompactMode:
 class TestOutcomeCorrelation:
     """Tests for PRD-CORE-004 Phase 1c — automatic outcome correlation."""
 
-    def test_process_outcome_updates_q_values(self, tmp_path: Path) -> None:
+    def test_process_outcome_updates_q_values(self, tmp_path: Path, reader: FileStateReader) -> None:
         """_process_outcome updates Q-values for recently recalled learnings."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1434,7 +1417,6 @@ class TestOutcomeCorrelation:
         assert lid in updated
 
         # Verify Q-value was updated on disk
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1443,7 +1425,7 @@ class TestOutcomeCorrelation:
                 assert int(str(data.get("q_observations", 0))) == 1
                 break
 
-    def test_process_outcome_writes_history(self, tmp_path: Path) -> None:
+    def test_process_outcome_writes_history(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Outcome processing appends to outcome_history."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1458,7 +1440,6 @@ class TestOutcomeCorrelation:
         trw_dir = tmp_path / _CFG.trw_dir
         process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1470,7 +1451,7 @@ class TestOutcomeCorrelation:
                 break
 
     def test_process_outcome_caps_history(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self, tmp_path: Path, reader: FileStateReader, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """outcome_history is capped to learning_outcome_history_cap."""
         # Set cap to 3 for testing — process_outcome reads get_config() in _correlation
@@ -1492,7 +1473,6 @@ class TestOutcomeCorrelation:
             tools["trw_recall"].fn(query="history cap test")
             process_outcome(trw_dir, reward=0.8, event_label=f"event_{i}")
 
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1601,7 +1581,7 @@ class TestOutcomeCorrelation:
         updated = process_outcome_for_event("some_random_event")
         assert updated == []
 
-    def test_process_outcome_for_event_error_keyword(self, tmp_path: Path) -> None:
+    def test_process_outcome_for_event_error_keyword(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Events with error keywords get negative reward."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1617,7 +1597,6 @@ class TestOutcomeCorrelation:
         assert lid in updated
 
         # Verify Q-value decreased
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1625,7 +1604,7 @@ class TestOutcomeCorrelation:
                 assert float(str(data.get("q_value", 0.5))) < 0.5
                 break
 
-    def test_negative_reward_decreases_q(self, tmp_path: Path) -> None:
+    def test_negative_reward_decreases_q(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Negative reward events decrease Q-value."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1640,7 +1619,6 @@ class TestOutcomeCorrelation:
         trw_dir = tmp_path / _CFG.trw_dir
         process_outcome(trw_dir, reward=-0.5, event_label="tests_failed")
 
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1649,7 +1627,7 @@ class TestOutcomeCorrelation:
                 assert q_val < 0.5  # decreased from default
                 break
 
-    def test_multiple_outcomes_converge(self, tmp_path: Path) -> None:
+    def test_multiple_outcomes_converge(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Multiple positive outcomes increase Q-value progressively."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1664,7 +1642,6 @@ class TestOutcomeCorrelation:
             tools["trw_recall"].fn(query="convergence outcome test")
             process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
@@ -1726,7 +1703,7 @@ class TestClaudeMdSyncQValuePromotion:
         content = claude_md.read_text(encoding="utf-8")
         assert "Mature q promotion test" not in content
 
-    def test_immature_entry_uses_impact(self, tmp_path: Path) -> None:
+    def test_immature_entry_uses_impact(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Entry with q_observations < threshold uses impact for promotion."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1737,8 +1714,6 @@ class TestClaudeMdSyncQValuePromotion:
 
         # Set q_value low but q_observations below threshold
         entries_dir = _entries_dir(tmp_path)
-        reader = FileStateReader()
-        writer = FileStateWriter()
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
             if data.get("id") == result["learning_id"]:
@@ -1776,10 +1751,9 @@ class TestClaudeMdSyncQValuePromotion:
 class TestBehavioralProtocol:
     """Tests for behavioral protocol rendering and integration."""
 
-    def test_render_behavioral_protocol_from_yaml(self, tmp_path: Path) -> None:
+    def test_render_behavioral_protocol_from_yaml(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Renders directives from behavioral_protocol.yaml."""
         # Create protocol file
-        writer = FileStateWriter()
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
         writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
@@ -1798,9 +1772,8 @@ class TestBehavioralProtocol:
         result = render_behavioral_protocol()
         assert result == ""
 
-    def test_render_behavioral_protocol_caps_at_12(self, tmp_path: Path) -> None:
+    def test_render_behavioral_protocol_caps_at_12(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Respects _BEHAVIORAL_PROTOCOL_CAP of 12 directives."""
-        writer = FileStateWriter()
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
         writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
@@ -1846,9 +1819,8 @@ class TestBehavioralProtocol:
         # Detail should NOT appear (no sentence extraction for behavioral-mandate)
         assert "short detail" not in result
 
-    def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path) -> None:
+    def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Full trw_claude_md_sync includes quick ref header but not full directives."""
-        writer = FileStateWriter()
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
         writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
@@ -1884,33 +1856,15 @@ class TestBehavioralProtocol:
 class TestRecallSearch:
     """Unit tests for state.recall_search functions."""
 
-    @pytest.mark.skip(reason="search_entries removed — YAML search stack retired (PRD-CORE-080)")
-    def test_search_entries_finds_matching(self, tmp_project: Path) -> None:
-        """search_entries returns entries matching query tokens."""
-
-    @pytest.mark.skip(reason="search_entries removed — YAML search stack retired (PRD-CORE-080)")
-    def test_search_entries_respects_min_impact(self, tmp_project: Path) -> None:
-        """search_entries filters by min_impact."""
-
-    def test_search_patterns_finds_matching(self, tmp_project: Path) -> None:
+    def test_search_patterns_finds_matching(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """search_patterns returns patterns matching query."""
-        writer = FileStateWriter()
         patterns_dir = tmp_project / ".trw" / "patterns"
         writer.write_yaml(patterns_dir / "p1.yaml", {
             "name": "research-map-reduce",
             "description": "3-wave research pattern",
         })
-        reader = FileStateReader()
         matches = search_patterns(patterns_dir, ["research"], reader)
         assert len(matches) == 1
-
-    @pytest.mark.skip(reason="search_entries removed — YAML search stack retired (PRD-CORE-080)")
-    def test_search_entries_matches_hyphenated_tag_parts(self, tmp_project: Path) -> None:
-        """search_entries matches individual parts of hyphenated tags."""
-
-    @pytest.mark.skip(reason="update_access_tracking removed — YAML search stack retired (PRD-CORE-080)")
-    def test_update_access_tracking_increments(self, tmp_project: Path) -> None:
-        """update_access_tracking increments access_count."""
 
 
 class TestAnalyticsExtraction:
@@ -1983,10 +1937,8 @@ class TestAnalyticsExtraction:
 class TestClaudeMdCollection:
     """Unit tests for claude_md collection helpers."""
 
-    def test_collect_promotable_learnings(self, tmp_project: Path) -> None:
+    def test_collect_promotable_learnings(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """collect_promotable_learnings returns high-impact active entries."""
-        writer = FileStateWriter()
-        reader = FileStateReader()
         config = TRWConfig()
         entries_dir = tmp_project / ".trw" / "learnings" / "entries"
         writer.write_yaml(entries_dir / "high.yaml", {
@@ -2003,10 +1955,8 @@ class TestClaudeMdCollection:
         assert any(d["id"] == "L-high" for d in result)
         assert not any(d["id"] == "L-low" for d in result)
 
-    def test_collect_patterns(self, tmp_project: Path) -> None:
+    def test_collect_patterns(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """collect_patterns returns non-index pattern files."""
-        writer = FileStateWriter()
-        reader = FileStateReader()
         config = TRWConfig()
         patterns_dir = tmp_project / ".trw" / "patterns"
         writer.write_yaml(patterns_dir / "p1.yaml", {"name": "test-pattern"})
@@ -2015,10 +1965,8 @@ class TestClaudeMdCollection:
         assert len(result) == 1
         assert result[0]["name"] == "test-pattern"
 
-    def test_collect_context_data(self, tmp_project: Path) -> None:
+    def test_collect_context_data(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """collect_context_data returns arch and conv data."""
-        writer = FileStateWriter()
-        reader = FileStateReader()
         config = TRWConfig()
         context_dir = tmp_project / ".trw" / "context"
         writer.write_yaml(context_dir / "architecture.yaml", {"style": "hexagonal"})
@@ -2033,11 +1981,7 @@ class TestToolDelegationIntact:
 
     def test_all_learning_tools_registered(self) -> None:
         """All 4 learning tools should be registered on a test server."""
-        from fastmcp import FastMCP
-
-        from trw_mcp.tools.learning import register_learning_tools
-        srv = FastMCP("test-learning")
-        register_learning_tools(srv)
+        srv = make_test_server("learning")
         tool_names = set(get_tools_sync(srv).keys())
         expected = {
             "trw_learn", "trw_learn_update", "trw_recall", "trw_claude_md_sync",
@@ -2278,7 +2222,7 @@ class TestBayesianCalibrationWiring:
                 break
 
     def test_calibration_failure_falls_back_to_raw_impact(
-        self, tmp_path: Path,
+        self, tmp_path: Path, reader: FileStateReader,
     ) -> None:
         """If Bayesian calibration raises, raw impact is used (fail-open)."""
         tools = _get_tools()
@@ -2296,7 +2240,6 @@ class TestBayesianCalibrationWiring:
 
         assert result["status"] == "recorded"
         # Verify it still saved something
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         entry_files = list(entries_dir.glob("*.yaml"))
         assert len(entry_files) >= 1
@@ -2508,7 +2451,7 @@ class TestInferTopicTags:
 class TestTagInferenceIntegration:
     """QUAL-018 FR03: Tag inference is wired into learning save paths."""
 
-    def test_trw_learn_infers_tags(self, tmp_path: Path) -> None:
+    def test_trw_learn_infers_tags(self, tmp_path: Path, reader: FileStateReader) -> None:
         """trw_learn auto-infers tags from summary when storing."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -2520,7 +2463,6 @@ class TestTagInferenceIntegration:
         assert result["status"] == "recorded"
 
         # Verify tags were enriched in the YAML backup
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         yaml_files = list(entries_dir.glob("*.yaml"))
         assert len(yaml_files) == 1
@@ -2531,7 +2473,7 @@ class TestTagInferenceIntegration:
         # Inferred tag 'testing' should be present from 'pytest' + 'fixture'
         assert "testing" in tags
 
-    def test_trw_learn_no_duplicate_tags(self, tmp_path: Path) -> None:
+    def test_trw_learn_no_duplicate_tags(self, tmp_path: Path, reader: FileStateReader) -> None:
         """trw_learn does not add inferred tags that already exist (FR05)."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -2542,7 +2484,6 @@ class TestTagInferenceIntegration:
         )
         assert result["status"] == "recorded"
 
-        reader = FileStateReader()
         entries_dir = _entries_dir(tmp_path)
         yaml_files = list(entries_dir.glob("*.yaml"))
         assert len(yaml_files) == 1

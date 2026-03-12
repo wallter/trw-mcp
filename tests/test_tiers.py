@@ -114,6 +114,7 @@ class TestHotTier:
         result = mgr.hot_get("e1")
         assert result is not None
         assert result.id == "e1"
+        assert result.summary == "test summary"
 
     def test_hot_get_cache_hit_no_file_io(self, tmp_path: Path) -> None:
         """Cache hit must not perform any file I/O (FR01 acceptance criterion)."""
@@ -123,6 +124,7 @@ class TestHotTier:
         mgr._reader.read_yaml.side_effect = AssertionError("unexpected file I/O on cache hit")
         result = mgr.hot_get("e1")
         assert result is not None
+        assert result.id == "e1"
         mgr._reader.read_yaml.assert_not_called()
 
     def test_hot_lru_eviction(self, tmp_path: Path) -> None:
@@ -380,7 +382,9 @@ class TestColdTier:
 
         result = mgr.cold_promote("p1")
         assert result is not None
+        assert isinstance(result, dict)
         assert str(result.get("id", "")) == "p1"
+        assert "summary" in result
 
     def test_cold_promote_updates_last_accessed(self, tmp_path: Path) -> None:
         """Promoted entry has last_accessed_at set to today."""
@@ -392,6 +396,8 @@ class TestColdTier:
 
         result = mgr.cold_promote("p2")
         assert result is not None
+        assert isinstance(result, dict)
+        assert str(result.get("id", "")) == "p2"
         assert str(result.get("last_accessed_at", "")) == date.today().isoformat()
 
     def test_cold_promote_removes_entry_from_cold(self, tmp_path: Path) -> None:

@@ -11,6 +11,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import structlog
+
+logger = structlog.get_logger()
+
 import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import EventType
@@ -362,7 +366,7 @@ def _resolve_event_reward(
                     if float(str(score)) >= 0.8:
                         return REWARD_MAP.get(EventType.COMPLIANCE_PASSED), EventType.COMPLIANCE_PASSED
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("compliance_score_parse_failed", exc_info=True)
 
     # 3. EVENT_ALIASES resolution
     alias = EVENT_ALIASES.get(event_type)

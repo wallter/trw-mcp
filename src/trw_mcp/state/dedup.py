@@ -357,7 +357,7 @@ def batch_dedup(
                     data_i = reader.read_yaml(path_i)
                     active_entries[i] = (path_i, data_i, vec_i)
                 except (OSError, StateError):
-                    pass
+                    logger.debug("merged_entry_reread_failed", path=str(path_i), exc_info=True)
                 merged_count += 1
 
     # Write migration marker

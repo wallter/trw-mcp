@@ -129,7 +129,7 @@ class BatchSender:
                 try:
                     if fut.result():
                         any_success = True
-                except Exception as exc:
+                except Exception as exc:  # justified: boundary, backend URL can fail arbitrarily
                     logger.debug("batch_future_failed", exc_type=type(exc).__name__)
             return any_success
 
@@ -142,7 +142,7 @@ class BatchSender:
                 success = self._http_post(url, batch)
                 if success:
                     return True
-            except Exception:
+            except Exception:  # justified: boundary, HTTP post to external backend
                 logger.debug(
                     "batch_send_retry",
                     attempt=attempt + 1,

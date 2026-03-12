@@ -39,7 +39,7 @@ def validate_manual_findings(
         normalized = {**f, "severity": _normalize_severity(f.get("severity", "info"))}
         try:
             ReviewFinding(**normalized)  # type: ignore[arg-type]  # dict[str,str] coerced by Pydantic
-        except Exception:
+        except Exception:  # justified: fail-open, include finding even if model validation fails
             pass  # Still include even if other fields fail validation
         validated.append(normalized)
     return validated

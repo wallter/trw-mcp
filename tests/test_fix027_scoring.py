@@ -133,10 +133,8 @@ class TestBuildCheckQLearningWiring:
         mock_config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
-        # Patch both package-level and _registration-level names so the
-        # registered tool closure sees the mocked values.
-        monkeypatch.setattr(build_mod, "_config", mock_config)
-        monkeypatch.setattr(reg_mod, "_config", mock_config)
+        # Patch get_config so function-level calls return the mock config.
+        monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
         monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
@@ -759,11 +757,6 @@ class TestApplyTimeDecayPurity:
         files_created = list(tmp_path.rglob("*"))
         assert files_created == [], f"apply_time_decay wrote files: {files_created}"
 
-    @pytest.mark.skip(reason="search_entries removed from recall_search (PRD-CORE-080)")
-    def test_stored_impact_unchanged_after_repeated_trw_recall(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """FR06/NFR03: search_entries was removed; recall now uses memory_adapter."""
 
 
 # ============================================================================
@@ -852,8 +845,7 @@ class TestBuildCheckMypyOnlyScope:
         mock_config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
-        monkeypatch.setattr(build_mod, "_config", mock_config)
-        monkeypatch.setattr(reg_mod, "_config", mock_config)
+        monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
         monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
@@ -946,8 +938,7 @@ class TestBuildCheckMypyOnlyScope:
         mock_status.scope = "full"
         mock_status.duration_secs = 1.0
 
-        monkeypatch.setattr(build_mod, "_config", cfg)
-        monkeypatch.setattr(reg_mod, "_config", cfg)
+        monkeypatch.setattr(reg_mod, "get_config", lambda: cfg)
         monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
         monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))

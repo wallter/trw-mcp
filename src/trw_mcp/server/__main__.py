@@ -38,6 +38,6 @@ if __name__ == "__main__":
         from trw_mcp.server._cli import main
 
         main()
-    except Exception as exc:
+    except Exception as exc:  # justified: boundary, top-level crash handler for server process
         _crash_log(exc)
         sys.exit(1)

@@ -24,7 +24,7 @@ import pytest
 import structlog
 from fastmcp import FastMCP
 
-from tests.conftest import get_tools_sync
+from tests.conftest import get_tools_sync, make_test_server
 
 import trw_mcp.tools.telemetry as telemetry
 from trw_mcp.state.persistence import FileStateReader
@@ -43,12 +43,8 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
 
 def _make_ceremony_tools(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     """Create a FastMCP server with ceremony tools registered and project root patched."""
-    from trw_mcp.tools.ceremony import register_ceremony_tools
-
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    srv = FastMCP("test")
-    register_ceremony_tools(srv)
-    return get_tools_sync(srv)
+    return get_tools_sync(make_test_server("ceremony"))
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +95,7 @@ class TestLogToolCallDecorator:
         # Point the telemetry module at our tmp_path as project root so
         # resolve_trw_dir returns tmp_path / ".trw" and find_active_run
         # returns our prepared run_dir.
-        monkeypatch.setattr(telemetry, "_config", _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
         monkeypatch.setattr(
             telemetry, "_get_cached_run_dir", lambda: run_dir,
         )
@@ -127,7 +123,7 @@ class TestLogToolCallDecorator:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
     ) -> None:
         """T-01 variant: error field appears when tool raises."""
-        monkeypatch.setattr(telemetry, "_config", _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
 
         @log_tool_call
@@ -148,7 +144,7 @@ class TestLogToolCallDecorator:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-02: Exception during event write does not propagate; tool result is returned normally."""
-        monkeypatch.setattr(telemetry, "_config", _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
 
         # Make _write_tool_event raise to simulate a broken filesystem
         monkeypatch.setattr(
@@ -170,7 +166,7 @@ class TestLogToolCallDecorator:
     ) -> None:
         """T-03: When telemetry_enabled=False, decorator bypasses all event writing."""
         monkeypatch.setattr(
-            telemetry, "_config", _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
         # Patch _write_tool_event to assert it is never called
         write_mock = MagicMock()
@@ -189,7 +185,7 @@ class TestLogToolCallDecorator:
     ) -> None:
         """T-03 file variant: events.jsonl remains empty when telemetry_enabled=False."""
         monkeypatch.setattr(
-            telemetry, "_config", _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
 
@@ -205,7 +201,7 @@ class TestLogToolCallDecorator:
 
     def test_t04_p95_overhead_under_5ms(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """T-04: P95 overhead of the decorator on a no-op function is < 5 ms (100 iterations)."""
-        monkeypatch.setattr(telemetry, "_config", _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
         # Suppress actual disk writes so we measure pure decorator overhead
         monkeypatch.setattr(telemetry, "_write_tool_event", MagicMock())
         monkeypatch.setattr(telemetry, "_write_telemetry_record", MagicMock())
@@ -386,7 +382,7 @@ class TestDetailedTelemetry:
             logs_dir="logs",
             telemetry_file="tool-telemetry.jsonl",
         )
-        monkeypatch.setattr(telemetry, "_config", cfg)
+        monkeypatch.setattr(telemetry, "get_config", lambda: cfg)
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
         monkeypatch.setattr(
             "trw_mcp.tools.telemetry.resolve_trw_dir", lambda: trw_dir,
@@ -428,7 +424,7 @@ class TestDetailedTelemetry:
             logs_dir="logs",
             telemetry_file="tool-telemetry.jsonl",
         )
-        monkeypatch.setattr(telemetry, "_config", cfg)
+        monkeypatch.setattr(telemetry, "get_config", lambda: cfg)
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
 
         @log_tool_call
@@ -502,7 +498,7 @@ class TestToolDiscovery:
     ) -> None:
         """T-25: A registered decorated tool can be invoked through FastMCP's tool manager."""
         monkeypatch.setattr(
-            telemetry, "_config", _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
 
         srv = FastMCP("discovery-invoke-test")
@@ -530,7 +526,7 @@ class TestToolDiscovery:
     ) -> None:
         """T-25: Decorated tool accepts keyword arguments and returns correct result."""
         monkeypatch.setattr(
-            telemetry, "_config", _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
 
         @log_tool_call
@@ -609,7 +605,7 @@ class TestWriteToolEventFallback:
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
 
-        monkeypatch.setattr(telemetry, "_config", _config_with(
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
             telemetry_enabled=True,
             telemetry=False,
             context_dir="context",
@@ -642,7 +638,7 @@ class TestWriteToolEventFallback:
         import shutil
         shutil.rmtree(run_dir / "meta")
 
-        monkeypatch.setattr(telemetry, "_config", _config_with(
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
             telemetry_enabled=True,
             telemetry=False,
             context_dir="context",
@@ -684,7 +680,7 @@ class TestTelemetryIntegration:
         )
         (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
 
-        monkeypatch.setattr(telemetry, "_config", _config_with(
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
             telemetry_enabled=True, telemetry=False,
         ))
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
@@ -717,7 +713,7 @@ class TestTelemetryIntegration:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
     ) -> None:
         """T-21: telemetry_enabled=False prevents all tool_invocation events."""
-        monkeypatch.setattr(telemetry, "_config", _config_with(
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
             telemetry_enabled=False, telemetry=False,
         ))
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
@@ -750,7 +746,7 @@ class TestTelemetryIntegration:
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
 
-        monkeypatch.setattr(telemetry, "_config", _config_with(
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
             telemetry_enabled=True, telemetry=False, context_dir="context",
         ))
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: rd)

@@ -187,18 +187,18 @@ def run_auto_maintenance(
                         f"{upgrade_result.get('details', '')}"
                     )
                     maintenance["auto_upgrade"] = upgrade_result
-    except Exception:
+    except Exception:  # justified: fail-open, auto-upgrade must not block session start
         logger.warning("maintenance_auto_upgrade_failed", exc_info=True)
 
     # Auto-close stale runs
     try:
         if config.run_auto_close_enabled:
-            from trw_mcp.state.analytics_report import auto_close_stale_runs
+            from trw_mcp.state.analytics.report import auto_close_stale_runs
             close_result = auto_close_stale_runs()
             closed_count = int(str(close_result.get("count", 0)))
             if closed_count > 0:
                 maintenance["stale_runs_closed"] = close_result
-    except Exception:
+    except Exception:  # justified: fail-open, stale run cleanup must not block session start
         logger.warning("maintenance_stale_runs_close_failed", exc_info=True)
 
     # Embeddings status check + backfill
@@ -212,7 +212,7 @@ def run_auto_maintenance(
             backfill = backfill_embeddings(resolve_trw_dir())
             if backfill.get("embedded", 0) > 0:
                 maintenance["embeddings_backfill"] = backfill
-    except Exception:
+    except Exception:  # justified: fail-open, embeddings check must not block session start
         logger.warning("maintenance_embeddings_check_failed", exc_info=True)
 
     return maintenance
@@ -250,7 +250,7 @@ def check_delivery_gates(
                     f"Review has {rv_critical} critical findings. "
                     f"Delivery proceeding but review issues should be addressed."
                 )
-        except Exception:
+        except Exception:  # justified: fail-open, review gate check must not block delivery
             logger.warning("maintenance_review_gate_failed", exc_info=True)
     else:
         result["review_advisory"] = (
@@ -279,7 +279,7 @@ def check_delivery_gates(
                 result["integration_review_warning"] = (
                     "Integration review has warnings. Review findings before merging."
                 )
-        except Exception:
+        except Exception:  # justified: fail-open, integration review check must not block delivery
             logger.warning("maintenance_integration_review_failed", exc_info=True)
     # No integration-review.yaml is fine for single-shard sprints
 
@@ -308,7 +308,7 @@ def check_delivery_gates(
                     f"These won't be included in commits: {', '.join(untracked[:5])}"
                     + (f" (+{len(untracked) - 5} more)" if len(untracked) > 5 else "")
                 )
-    except Exception:
+    except Exception:  # justified: fail-open, untracked file detection is advisory only
         logger.debug("untracked_file_check_failed", exc_info=True)
 
     # Step 0b: Build gate + premature delivery guard (single events.jsonl read)
@@ -354,7 +354,7 @@ def check_delivery_gates(
                     total_events=len(all_events),
                     work_events=0,
                 )
-    except Exception:
+    except Exception:  # justified: fail-open, build gate check must not block delivery
         logger.warning("maintenance_build_gate_failed", exc_info=True)
 
     return result
@@ -409,7 +409,7 @@ def copy_compliance_artifacts(
                 writer.ensure_dir(compliance_dir)
                 writer.write_yaml(compliance_dir / artifact_name, data)
                 copied.append(artifact_name)
-            except Exception:
+            except Exception:  # justified: fail-open, compliance artifact copy is best-effort
                 logger.warning("maintenance_compliance_copy_failed", exc_info=True)
 
     if copied:

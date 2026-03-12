@@ -15,11 +15,12 @@ from pathlib import Path
 
 import pytest
 
+from tests._factories import make_run_dir_with_structure
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus, ValidationFailure
 from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
-from trw_mcp.state.integration_check import check_orphan_modules
+from trw_mcp.state.validation.integration_check import check_orphan_modules
 from trw_mcp.state.validation import (
     _check_prd_enforcement,
     _coerce_v1_failures,
@@ -35,21 +36,12 @@ from trw_mcp.state.validation import (
 
 def _make_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     """Create a minimal run directory with run.yaml present."""
-    run_dir = tmp_path / "runs" / "20260101T000000Z-test1234"
-    meta = run_dir / "meta"
-    meta.mkdir(parents=True)
-    (run_dir / "reports").mkdir()
-    (run_dir / "scratch" / "_orchestrator").mkdir(parents=True)
-    (run_dir / "shards").mkdir()
-    writer.write_yaml(meta / "run.yaml", {
-        "run_id": "20260101T000000Z-test1234",
-        "task": "coverage-test",
-        "framework": "v24.0_TRW",
-        "status": "active",
-        "phase": "research",
-        "confidence": "medium",
-    })
-    return run_dir
+    return make_run_dir_with_structure(
+        tmp_path,
+        task="coverage-test",
+        writer=writer,
+        with_scratch_orchestrator=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -955,3 +947,738 @@ class TestCheckPhaseInputWithPrdScope:
         result = check_phase_input(Phase.IMPLEMENT, run_dir, config)
         rules = [f.rule for f in result.failures]
         assert "prd_exists" in rules
+
+
+# ---------------------------------------------------------------------------
+# check_phase_exit — EXIT criteria checks (phase_gates.py)
+# ---------------------------------------------------------------------------
+
+from trw_mcp.state.validation import (
+    _build_phase_result,
+    check_phase_exit,
+)
+
+
+class TestCheckPhaseExitResearch:
+    """Research exit criteria: research synthesis must exist."""
+
+    def test_research_exit_warns_when_no_synthesis(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Missing synthesis at both locations produces a warning (not error)."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig()
+        result = check_phase_exit(Phase.RESEARCH, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "synthesis_exists" in rules
+        synth_f = [f for f in result.failures if f.rule == "synthesis_exists"]
+        assert synth_f[0].severity == "warning"
+        # Warnings alone do not make the result invalid
+        assert result.valid is True
+
+    def test_research_exit_passes_with_primary_synthesis(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Synthesis in scratch/_orchestrator/ satisfies exit criteria."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        synthesis = run_dir / "scratch" / "_orchestrator" / "research_synthesis.md"
+        synthesis.parent.mkdir(parents=True, exist_ok=True)
+        synthesis.write_text("# Synthesis\nDone.", encoding="utf-8")
+        config = TRWConfig()
+        result = check_phase_exit(Phase.RESEARCH, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "synthesis_exists" not in rules
+
+    def test_research_exit_passes_with_alt_synthesis(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Synthesis in reports/ also satisfies exit criteria."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        alt = run_dir / "reports" / "research_synthesis.md"
+        alt.parent.mkdir(parents=True, exist_ok=True)
+        alt.write_text("# Alt Synthesis", encoding="utf-8")
+        config = TRWConfig()
+        result = check_phase_exit(Phase.RESEARCH, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "synthesis_exists" not in rules
+
+
+class TestCheckPhaseExitPlan:
+    """Plan exit criteria: plan.md must exist, PRD enforcement checked."""
+
+    def test_plan_exit_fails_without_plan_md(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Missing plan.md is an error-severity failure."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig(phase_gate_enforcement="off")
+        result = check_phase_exit(Phase.PLAN, run_dir, config)
+        plan_failures = [f for f in result.failures if f.rule == "plan_exists"]
+        assert len(plan_failures) == 1
+        assert plan_failures[0].severity == "error"
+        # Error-severity failure makes result invalid
+        assert result.valid is False
+
+    def test_plan_exit_passes_with_plan_md(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """plan.md present satisfies the plan existence check."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        plan = run_dir / "reports" / "plan.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text("# Plan\n", encoding="utf-8")
+        config = TRWConfig(phase_gate_enforcement="off")
+        result = check_phase_exit(Phase.PLAN, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "plan_exists" not in rules
+
+
+class TestCheckPhaseExitImplement:
+    """Implement exit criteria: manifest presence, PRD enforcement, build check."""
+
+    def test_implement_exit_warns_when_shards_exist_without_manifest(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Shards dir without manifest.yaml produces a warning."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        shards = run_dir / "shards"
+        shards.mkdir(parents=True, exist_ok=True)
+        # No manifest.yaml inside shards
+        # Disable build and PRD checks to isolate this behavior
+        config = TRWConfig(
+            phase_gate_enforcement="off",
+            build_check_enabled=False,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        result = check_phase_exit(Phase.IMPLEMENT, run_dir, config)
+        manifest_f = [f for f in result.failures if f.rule == "manifest_exists"]
+        assert len(manifest_f) == 1
+        assert manifest_f[0].severity == "warning"
+
+    def test_implement_exit_no_manifest_warning_when_no_shards_dir(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When shards dir doesn't exist, no manifest_exists warning is emitted."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        # Ensure shards dir does not exist
+        shards = run_dir / "shards"
+        if shards.exists():
+            shards.rmdir()
+        config = TRWConfig(
+            phase_gate_enforcement="off",
+            build_check_enabled=False,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        result = check_phase_exit(Phase.IMPLEMENT, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "manifest_exists" not in rules
+
+    def test_implement_exit_invalid_prd_status_config_falls_back_to_approved(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Invalid prd_required_status_for_implement falls back to APPROVED."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        # Set up a PRD at 'review' status -- below 'approved'
+        writer.write_yaml(run_dir / "meta" / "run.yaml", {
+            "run_id": "20260101T000000Z-test1234",
+            "task": "coverage-test",
+            "status": "active",
+            "phase": "implement",
+            "prd_scope": ["PRD-TEST-099"],
+        })
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+        prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        prds_dir.mkdir(parents=True)
+        (prds_dir / "PRD-TEST-099.md").write_text(
+            "---\nprd:\n  id: PRD-TEST-099\n  title: Test\n  version: '1.0'\n"
+            "  status: review\n  priority: P1\n---\n# PRD-TEST-099\n",
+            encoding="utf-8",
+        )
+        config = TRWConfig(
+            phase_gate_enforcement="strict",
+            prd_required_status_for_implement="INVALID_STATUS",
+            build_check_enabled=False,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        result = check_phase_exit(Phase.IMPLEMENT, run_dir, config)
+        # Fallback to APPROVED means 'review' < 'approved' => prd_status failure
+        rules = [f.rule for f in result.failures]
+        assert "prd_status" in rules
+
+
+class TestCheckPhaseExitValidate:
+    """Validate exit criteria: advisory test info, integration/orphan/build checks."""
+
+    def test_validate_exit_always_includes_test_advisory(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Validate exit always includes the phase_test_advisory info message."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        # Stub out all best-effort checks to isolate
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_integration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_orphan_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_dry_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_migration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_semantic_check",
+            lambda *a, **kw: None,
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.VALIDATE, run_dir, config)
+        advisory = [f for f in result.failures if f.rule == "phase_test_advisory"]
+        assert len(advisory) == 1
+        assert advisory[0].severity == "info"
+        # Info-only failures do not make result invalid
+        assert result.valid is True
+
+
+class TestCheckPhaseExitReview:
+    """Review exit criteria: final report, reflection event, quality checks."""
+
+    def test_review_exit_warns_when_no_final_report(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Missing final.md produces a warning."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        # Write events with reflection so that branch doesn't confound
+        meta = run_dir / "meta"
+        writer.append_jsonl(meta / "events.jsonl", {
+            "event": "reflection_complete",
+            "ts": "2026-01-01T12:00:00Z",
+        })
+        # Stub out the lazy imports used inside _check_review_exit
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_trw_dir",
+            lambda: tmp_path,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.analytics.compute_reflection_quality",
+            lambda _: {"score": 1.0},
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.REVIEW, run_dir, config)
+        report_f = [f for f in result.failures if f.rule == "final_report_exists"]
+        assert len(report_f) == 1
+        assert report_f[0].severity == "warning"
+
+    def test_review_exit_warns_when_no_events_jsonl(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """No events.jsonl at all produces reflection_required with 'unknown' message."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig()
+        result = check_phase_exit(Phase.REVIEW, run_dir, config)
+        refl_f = [f for f in result.failures if f.rule == "reflection_required"]
+        assert len(refl_f) == 1
+        assert "unknown" in refl_f[0].message.lower()
+
+    def test_review_exit_warns_when_events_but_no_reflection(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Events exist but no reflection event produces reflection_required warning."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        meta = run_dir / "meta"
+        writer.append_jsonl(meta / "events.jsonl", {
+            "event": "run_init",
+            "ts": "2026-01-01T00:00:00Z",
+        })
+        config = TRWConfig()
+        result = check_phase_exit(Phase.REVIEW, run_dir, config)
+        refl_f = [f for f in result.failures if f.rule == "reflection_required"]
+        assert len(refl_f) == 1
+        assert "trw_reflect()" in refl_f[0].message
+
+    def test_review_exit_no_reflection_warning_with_reflection_event(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reflection event present means no reflection_required failure."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        meta = run_dir / "meta"
+        writer.append_jsonl(meta / "events.jsonl", {
+            "event": "reflection_complete",
+            "ts": "2026-01-01T12:00:00Z",
+        })
+        # Stub the lazy imports used inside _check_review_exit
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_trw_dir",
+            lambda: tmp_path,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.analytics.compute_reflection_quality",
+            lambda _: {"score": 1.0},
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.REVIEW, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "reflection_required" not in rules
+
+
+class TestCheckPhaseExitDeliver:
+    """Deliver exit criteria: run status, sync event, integration/orphan checks."""
+
+    def test_deliver_exit_warns_when_run_status_not_complete(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Run status != 'complete' produces a warning."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        # run.yaml has status="active" by default from _make_run_dir
+        # Stub best-effort checks
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_integration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_orphan_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.DELIVER, run_dir, config)
+        status_f = [f for f in result.failures if f.rule == "status_complete"]
+        assert len(status_f) == 1
+        assert status_f[0].severity == "warning"
+
+    def test_deliver_exit_no_status_warning_when_complete(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Run status == 'complete' passes the status check."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        writer.write_yaml(run_dir / "meta" / "run.yaml", {
+            "run_id": "20260101T000000Z-test1234",
+            "task": "coverage-test",
+            "status": "complete",
+            "phase": "deliver",
+        })
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_integration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_orphan_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.DELIVER, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "status_complete" not in rules
+
+    def test_deliver_exit_always_includes_test_advisory(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Deliver exit always includes the phase_test_advisory info message."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_integration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_orphan_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.DELIVER, run_dir, config)
+        advisory = [f for f in result.failures if f.rule == "phase_test_advisory"]
+        assert len(advisory) == 1
+        assert "DELIVER" in advisory[0].message
+
+    def test_deliver_exit_warns_when_sync_missing(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Events exist but no claude_md_sync event produces sync_required warning."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        meta = run_dir / "meta"
+        writer.append_jsonl(meta / "events.jsonl", {
+            "event": "run_init",
+            "ts": "2026-01-01T00:00:00Z",
+        })
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_integration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_orphan_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.DELIVER, run_dir, config)
+        sync_f = [f for f in result.failures if f.rule == "sync_required"]
+        assert len(sync_f) == 1
+        assert "trw_claude_md_sync()" in sync_f[0].message
+
+    def test_deliver_exit_no_sync_warning_with_sync_event(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """claude_md_sync event satisfies the sync check."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        meta = run_dir / "meta"
+        writer.append_jsonl(meta / "events.jsonl", {
+            "event": "claude_md_sync",
+            "ts": "2026-01-01T12:00:00Z",
+        })
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_integration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_orphan_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.DELIVER, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "sync_required" not in rules
+
+    def test_deliver_exit_no_sync_warning_when_no_events(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When events.jsonl doesn't exist, sync_required is NOT emitted.
+
+        The code only checks sync when events list is truthy.
+        """
+        run_dir = _make_run_dir(tmp_path, writer)
+        # No events.jsonl
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_integration_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_orphan_check",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.validation.phase_gates._best_effort_build_check",
+            lambda *a, **kw: None,
+        )
+        config = TRWConfig()
+        result = check_phase_exit(Phase.DELIVER, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "sync_required" not in rules
+
+
+# ---------------------------------------------------------------------------
+# _build_phase_result — boundary conditions
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPhaseResult:
+    """Boundary conditions for _build_phase_result."""
+
+    def test_no_failures_yields_valid_and_completeness_one(self) -> None:
+        """Zero failures means valid=True and completeness_score=1.0."""
+        result = _build_phase_result(
+            failures=[],
+            criteria=["crit1", "crit2", "crit3"],
+            phase_name="test",
+            log_event="test_event",
+        )
+        assert result.valid is True
+        assert result.completeness_score == 1.0
+        assert result.failures == []
+
+    def test_warnings_only_still_valid(self) -> None:
+        """Warnings do not set valid=False; only errors do."""
+        warning = ValidationFailure(
+            field="f", rule="r", message="m", severity="warning",
+        )
+        result = _build_phase_result(
+            failures=[warning],
+            criteria=["crit1", "crit2"],
+            phase_name="test",
+            log_event="test_event",
+        )
+        assert result.valid is True
+        assert result.completeness_score == 0.5
+
+    def test_error_makes_result_invalid(self) -> None:
+        """A single error-severity failure makes valid=False."""
+        error = ValidationFailure(
+            field="f", rule="r", message="m", severity="error",
+        )
+        result = _build_phase_result(
+            failures=[error],
+            criteria=["crit1"],
+            phase_name="test",
+            log_event="test_event",
+        )
+        assert result.valid is False
+
+    def test_more_failures_than_criteria_clamps_score_at_zero(self) -> None:
+        """Completeness score never goes below 0.0."""
+        failures = [
+            ValidationFailure(field="f", rule="r", message="m", severity="warning")
+            for _ in range(5)
+        ]
+        result = _build_phase_result(
+            failures=failures,
+            criteria=["crit1"],
+            phase_name="test",
+            log_event="test_event",
+        )
+        assert result.completeness_score == 0.0
+
+    def test_empty_criteria_does_not_divide_by_zero(self) -> None:
+        """Empty criteria list uses max(len, 1) to avoid division by zero."""
+        warning = ValidationFailure(
+            field="f", rule="r", message="m", severity="warning",
+        )
+        result = _build_phase_result(
+            failures=[warning],
+            criteria=[],
+            phase_name="test",
+            log_event="test_event",
+        )
+        # 1 - (1 / max(0, 1)) = 1 - 1 = 0.0
+        assert result.completeness_score == 0.0
+
+    def test_info_severity_does_not_make_invalid(self) -> None:
+        """Info-severity failures do not set valid=False."""
+        info = ValidationFailure(
+            field="f", rule="r", message="m", severity="info",
+        )
+        result = _build_phase_result(
+            failures=[info],
+            criteria=["crit1", "crit2"],
+            phase_name="test",
+            log_event="test_event",
+        )
+        assert result.valid is True
+
+
+# ---------------------------------------------------------------------------
+# check_phase_exit/input — unknown phase (no registered checker)
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownPhaseHandling:
+    """Phases without a registered checker return empty results gracefully."""
+
+    def test_exit_for_research_with_no_checker_side_effects(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """All phases have exit checkers, so test research which has the
+        simplest logic and confirm the dispatch actually fires."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig()
+        # Calling check_phase_exit should not raise for any valid Phase
+        result = check_phase_exit(Phase.RESEARCH, run_dir, config)
+        assert isinstance(result.valid, bool)
+        assert isinstance(result.completeness_score, float)
+
+
+# ---------------------------------------------------------------------------
+# check_phase_input — strict vs lenient severity propagation
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseInputStrictSeverity:
+    """strict_input_criteria=True escalates failures to error severity."""
+
+    def test_plan_input_strict_makes_failures_errors(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Plan input with strict=True and missing synthesis uses error severity."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig(strict_input_criteria=True)
+        result = check_phase_input(Phase.PLAN, run_dir, config)
+        synthesis_f = [f for f in result.failures if f.rule == "research_complete"]
+        assert len(synthesis_f) == 1
+        assert synthesis_f[0].severity == "error"
+        assert result.valid is False
+
+    def test_plan_input_lenient_makes_failures_warnings(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Plan input with strict=False and missing synthesis uses warning severity."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig(strict_input_criteria=False)
+        result = check_phase_input(Phase.PLAN, run_dir, config)
+        synthesis_f = [f for f in result.failures if f.rule == "research_complete"]
+        assert len(synthesis_f) == 1
+        assert synthesis_f[0].severity == "warning"
+        # Warnings only => still valid
+        assert result.valid is True
+
+    def test_implement_input_strict_plan_missing_is_error(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """In strict mode, missing plan.md for implement input is an error."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig(
+            strict_input_criteria=True,
+            phase_gate_enforcement="off",
+        )
+        result = check_phase_input(Phase.IMPLEMENT, run_dir, config)
+        plan_f = [f for f in result.failures if f.rule == "plan_exists"]
+        assert len(plan_f) == 1
+        assert plan_f[0].severity == "error"
+
+    def test_deliver_input_strict_no_events_is_error(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """In strict mode, missing events.jsonl for deliver input is an error."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig(strict_input_criteria=True)
+        result = check_phase_input(Phase.DELIVER, run_dir, config)
+        events_f = [f for f in result.failures if f.rule == "events_exist"]
+        assert len(events_f) == 1
+        assert events_f[0].severity == "error"
+        assert result.valid is False
+
+
+# ---------------------------------------------------------------------------
+# check_phase_input — validate input with OSError on iterdir
+# ---------------------------------------------------------------------------
+
+
+class TestValidateInputOSError:
+    """_check_validate_input handles OSError from shards iterdir gracefully."""
+
+    def test_validate_input_oserror_treated_as_empty(
+        self, tmp_path: Path, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """OSError during shards.iterdir() is treated as empty shards."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        shards = run_dir / "shards"
+        shards.mkdir(parents=True, exist_ok=True)
+
+        original_iterdir = Path.iterdir
+
+        def _raise_oserror(self: Path) -> None:
+            if "shards" in str(self):
+                raise OSError("permission denied")
+            return original_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", _raise_oserror)
+        config = TRWConfig(strict_input_criteria=True)
+        result = check_phase_input(Phase.VALIDATE, run_dir, config)
+        rules = [f.rule for f in result.failures]
+        assert "implementation_complete" in rules
+
+
+# ---------------------------------------------------------------------------
+# check_phase_input — completeness score varies with failure count
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseInputCompletenessScore:
+    """Completeness score reflects the ratio of failures to criteria."""
+
+    def test_research_input_with_run_yaml_has_full_completeness(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Research phase with run.yaml and no additional prereqs scores high."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig()
+        result = check_phase_input(Phase.RESEARCH, run_dir, config)
+        # Research has 1 criterion, 0 failures -> 1.0
+        assert result.completeness_score == 1.0
+
+    def test_implement_input_all_missing_has_low_completeness(
+        self, tmp_path: Path, writer: FileStateWriter,
+    ) -> None:
+        """Implement with plan, manifest, and PRDs all missing has low score."""
+        run_dir = _make_run_dir(tmp_path, writer)
+        config = TRWConfig(
+            strict_input_criteria=False,
+            phase_gate_enforcement="off",
+        )
+        result = check_phase_input(Phase.IMPLEMENT, run_dir, config)
+        # At least plan_exists and manifest_exists failures
+        assert result.completeness_score < 1.0
+        assert len(result.failures) >= 2
+
+
+# ---------------------------------------------------------------------------
+# PHASE_INPUT_CRITERIA / PHASE_EXIT_CRITERIA — coverage for all phases
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseCriteriaDictCoverage:
+    """Ensure all Phase enum values have entries in criteria dicts."""
+
+    def test_all_phases_have_exit_criteria(self) -> None:
+        """Every Phase enum value has an entry in PHASE_EXIT_CRITERIA."""
+        from trw_mcp.state.validation import PHASE_EXIT_CRITERIA
+        for phase in Phase:
+            assert phase.value in PHASE_EXIT_CRITERIA, (
+                f"Phase '{phase.value}' missing from PHASE_EXIT_CRITERIA"
+            )
+
+    def test_all_phases_have_input_criteria(self) -> None:
+        """Every Phase enum value has an entry in PHASE_INPUT_CRITERIA."""
+        from trw_mcp.state.validation import PHASE_INPUT_CRITERIA
+        for phase in Phase:
+            assert phase.value in PHASE_INPUT_CRITERIA, (
+                f"Phase '{phase.value}' missing from PHASE_INPUT_CRITERIA"
+            )
+
+    def test_exit_criteria_values_are_nonempty_lists(self) -> None:
+        """Each exit criteria list has at least one item."""
+        from trw_mcp.state.validation import PHASE_EXIT_CRITERIA
+        for phase_name, criteria in PHASE_EXIT_CRITERIA.items():
+            assert isinstance(criteria, list)
+            assert len(criteria) > 0, f"{phase_name} has empty exit criteria"
+
+    def test_input_criteria_values_are_nonempty_lists(self) -> None:
+        """Each input criteria list has at least one item."""
+        from trw_mcp.state.validation import PHASE_INPUT_CRITERIA
+        for phase_name, criteria in PHASE_INPUT_CRITERIA.items():
+            assert isinstance(criteria, list)
+            assert len(criteria) > 0, f"{phase_name} has empty input criteria"

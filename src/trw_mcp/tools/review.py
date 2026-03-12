@@ -22,9 +22,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_writer = FileStateWriter()
-_events = FileEventLogger(_writer)
-
 # Reviewer roles for multi-agent review (QUAL-027)
 REVIEWER_ROLES: tuple[str, ...] = (
     "correctness",
@@ -182,12 +179,15 @@ def _persist_review_artifact(
     if resolved_run is None:
         return ""
 
+    writer = FileStateWriter()
+    events = FileEventLogger(writer)
+
     review_path = resolved_run / "meta" / "review.yaml"
-    _writer.write_yaml(review_path, review_data)
+    writer.write_yaml(review_path, review_data)
 
     events_path = resolved_run / "meta" / "events.jsonl"
     if events_path.parent.exists():
-        _events.log_event(events_path, "review_complete", event_fields)
+        events.log_event(events_path, "review_complete", event_fields)
 
     return str(review_path)
 

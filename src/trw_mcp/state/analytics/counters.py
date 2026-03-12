@@ -12,7 +12,7 @@ from pathlib import Path
 
 import structlog
 
-import trw_mcp.state.analytics_core as _ac
+import trw_mcp.state.analytics.core as _ac
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 

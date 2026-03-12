@@ -23,6 +23,10 @@ _DEFAULT_INSTRUCTIONS = (
     "TRW gives you engineering memory that persists across sessions "
     "\u2014 patterns, gotchas, and project knowledge that accumulate over time. "
     "Call trw_session_start() first to load your prior learnings and any active run state. "
+    "Pass a query for focused recall: trw_session_start(query='auth patterns'). "
+    "Read .trw/frameworks/FRAMEWORK.md \u2014 it defines the 6-phase execution model, "
+    "exit criteria, formations, and quality gates that your tools implement. "
+    "Re-read it after context compaction. "
     "Workflow: trw_session_start \u2192 work \u2192 trw_learn (discoveries) \u2192 trw_deliver. "
     "Without trw_deliver, your learnings from this session are lost to future agents."
 )
@@ -34,7 +38,7 @@ def _load_server_instructions() -> str:
         from trw_mcp.prompts.messaging import get_message_or_default
 
         return get_message_or_default("server_instructions", _DEFAULT_INSTRUCTIONS)
-    except Exception:
+    except Exception:  # justified: fail-open, message registry failure falls back to inline default
         return _DEFAULT_INSTRUCTIONS
 
 
@@ -46,7 +50,7 @@ def _build_middleware() -> list[object]:
     """
     try:
         middleware: list[object] = [CeremonyMiddleware()]
-    except Exception:
+    except Exception:  # justified: fail-open, middleware init failure must not crash server startup
         sys.stderr.write("WARNING: CeremonyMiddleware init failed, using empty middleware\n")
         return []
 
@@ -63,7 +67,7 @@ def _build_middleware() -> list[object]:
             hot_set = set(compute_hot_set(trw_dir))
             pd_mw = ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
             middleware.append(pd_mw)
-    except Exception:
+    except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
         sys.stderr.write("WARNING: Progressive disclosure middleware init failed, skipping\n")
 
     return middleware

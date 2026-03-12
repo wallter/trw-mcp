@@ -426,7 +426,7 @@ class TestAutoPruneYamlPath:
         ):
             # Mock find_duplicate_learnings to return a duplicate pair
             with patch(
-                "trw_mcp.state.analytics_dedup.find_duplicate_learnings",
+                "trw_mcp.state.analytics.dedup.find_duplicate_learnings",
                 return_value=[("entry-0", "entry-1", 0.85)],
             ):
                 # Mock utility_based_prune_candidates to return a candidate
@@ -442,10 +442,10 @@ class TestAutoPruneYamlPath:
                     ],
                 ):
                     with patch(
-                        "trw_mcp.state.analytics_dedup.apply_status_update"
+                        "trw_mcp.state.analytics.dedup.apply_status_update"
                     ) as mock_apply:
                         with patch(
-                            "trw_mcp.state.analytics_dedup.resync_learning_index"
+                            "trw_mcp.state.analytics.dedup.resync_learning_index"
                         ) as mock_resync:
                             result = auto_prune_excess_entries(
                                 trw_dir, max_entries=2, dry_run=False,
@@ -475,7 +475,7 @@ class TestAutoPruneYamlPath:
             side_effect=ImportError("no sqlite"),
         ):
             with patch(
-                "trw_mcp.state.analytics_dedup.find_duplicate_learnings",
+                "trw_mcp.state.analytics.dedup.find_duplicate_learnings",
                 return_value=[("entry-0", "entry-1", 0.9)],
             ):
                 with patch(

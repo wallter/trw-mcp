@@ -39,11 +39,10 @@ from trw_mcp.state.report import (
 class TestSearchPatternsExceptionHandling:
     """Cover lines 119 and 127-128: exception handling in search_patterns."""
 
-    def test_index_yaml_is_skipped(self, tmp_path: Path) -> None:
+    def test_index_yaml_is_skipped(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """index.yaml is always skipped (line 119 continue branch)."""
         patterns_dir = tmp_path / "patterns"
         patterns_dir.mkdir()
-        writer = FileStateWriter()
         # Write index.yaml — should be skipped
         writer.write_yaml(patterns_dir / "index.yaml", {
             "name": "should not appear", "description": "skipped",
@@ -52,14 +51,13 @@ class TestSearchPatternsExceptionHandling:
             "name": "real pattern", "description": "this should appear",
         })
 
-        reader = FileStateReader()
         matches = search_patterns(patterns_dir, query_tokens=[], reader=reader)
         names = [str(m.get("name", "")) for m in matches]
         assert "real pattern" in names
         assert "should not appear" not in names
 
     def test_corrupt_pattern_file_is_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, reader: FileStateReader, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """StateError/ValueError on pattern read causes that file to be skipped (lines 127-128)."""
         patterns_dir = tmp_path / "patterns"
@@ -69,7 +67,6 @@ class TestSearchPatternsExceptionHandling:
             "name: good\ndescription: works\n", encoding="utf-8"
         )
 
-        reader = FileStateReader()
         # Don't monkeypatch — rely on actual reader raising on corrupt YAML
         # The corrupt file raises StateError internally and is skipped
         matches = search_patterns(patterns_dir, query_tokens=[], reader=reader)
@@ -81,13 +78,11 @@ class TestSearchPatternsExceptionHandling:
 class TestCollectContextConventions:
     """Cover line 189: collect_context with conventions.yaml present."""
 
-    def test_collects_conventions_when_present(self, tmp_path: Path) -> None:
+    def test_collects_conventions_when_present(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """When conventions.yaml exists, it is included in context (line 189)."""
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
-        writer = FileStateWriter()
-        reader = FileStateReader()
 
         writer.write_yaml(context_dir / "conventions.yaml", {
             "naming": "snake_case",
@@ -98,13 +93,11 @@ class TestCollectContextConventions:
         assert "conventions" in result
         assert isinstance(result["conventions"], dict)
 
-    def test_collects_both_when_both_present(self, tmp_path: Path) -> None:
+    def test_collects_both_when_both_present(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Both architecture and conventions are collected when both exist."""
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
-        writer = FileStateWriter()
-        reader = FileStateReader()
 
         writer.write_yaml(context_dir / "architecture.yaml", {"layers": ["tool", "state"]})
         writer.write_yaml(context_dir / "conventions.yaml", {"style": "pep8"})
@@ -113,11 +106,10 @@ class TestCollectContextConventions:
         assert "architecture" in result
         assert "conventions" in result
 
-    def test_returns_empty_when_neither_exists(self, tmp_path: Path) -> None:
+    def test_returns_empty_when_neither_exists(self, tmp_path: Path, reader: FileStateReader) -> None:
         """No context files -> empty dict."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
-        reader = FileStateReader()
         result = collect_context(trw_dir, "context", reader)
         assert result == {}
 
@@ -155,13 +147,12 @@ class TestComputeLearningYieldSQLiteFailure:
     """Cover exception handling when list_active_learnings raises."""
 
     def test_sqlite_error_returns_empty_summary(
-        self, tmp_path: Path,
+        self, tmp_path: Path, reader: FileStateReader,
     ) -> None:
         """When list_active_learnings raises, return empty LearningSummary."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
 
-        reader = FileStateReader()
         with patch(
             "trw_mcp.state.report.list_active_learnings",
             side_effect=RuntimeError("db corrupt"),
@@ -256,14 +247,13 @@ class TestAssembleReportBuildStatusException:
     """Cover lines 271-272: build-status.yaml read exception in assemble_report."""
 
     def test_corrupt_build_status_results_in_none_build(
-        self, tmp_path: Path
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
     ) -> None:
         """When build-status.yaml exists but raises on read, build=None (lines 271-272)."""
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260101T000000Z-aaaa0001"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
 
-        writer = FileStateWriter()
         writer.write_yaml(meta / "run.yaml", {
             "run_id": "20260101T000000Z-aaaa0001",
             "task": "task",
@@ -281,8 +271,6 @@ class TestAssembleReportBuildStatusException:
             "tests_passed": True,
             "test_count": "not-an-int",  # int(str(...)) will succeed, need another approach
         })
-
-        reader = FileStateReader()
 
         # Monkeypatch reader.read_yaml to raise for build-status.yaml
         original_read = reader.read_yaml
@@ -307,7 +295,7 @@ class TestAssembleReportBuildStatusException:
 class TestComputeImpactDistributionReadException:
     """Cover lines 277-278: YAML read exception in compute_impact_distribution."""
 
-    def test_corrupt_yaml_file_is_skipped(self, tmp_path: Path) -> None:
+    def test_corrupt_yaml_file_is_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When _reader.read_yaml raises, the file is skipped (lines 277-278)."""
         import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import compute_impact_distribution
@@ -315,7 +303,6 @@ class TestComputeImpactDistributionReadException:
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
-        writer = FileStateWriter()
         writer.write_yaml(entries_dir / "good.yaml", {
             "id": "L-ok", "summary": "ok", "impact": 0.9, "status": "active",
         })
@@ -453,7 +440,7 @@ class TestFindSessionStartTs:
         assert result is not None
         assert result.year == 2026
 
-    def test_finds_session_start_event(self, tmp_path: Path) -> None:
+    def test_finds_session_start_event(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Finds session_start event timestamp (also accepted event type)."""
         from trw_mcp.scoring import _find_session_start_ts
 
@@ -461,7 +448,7 @@ class TestFindSessionStartTs:
         trw_dir.mkdir()
         meta_dir = tmp_path / "tasks" / "another-task" / "runs" / "20260115T000000Z-def67890" / "meta"
         meta_dir.mkdir(parents=True)
-        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
+        writer.append_jsonl(meta_dir / "events.jsonl", {
             "ts": "2026-01-15T08:00:00+00:00", "event": "session_start",
         })
 
@@ -471,7 +458,7 @@ class TestFindSessionStartTs:
         assert result.month == 1
         assert result.day == 15
 
-    def test_invalid_timestamp_in_event_skipped(self, tmp_path: Path) -> None:
+    def test_invalid_timestamp_in_event_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Invalid ts in event is skipped without raising (ValueError continue)."""
         from trw_mcp.scoring import _find_session_start_ts
 
@@ -479,7 +466,7 @@ class TestFindSessionStartTs:
         trw_dir.mkdir()
         meta_dir = tmp_path / "tasks" / "bad-ts-task" / "runs" / "20260101T000000Z-bad12345" / "meta"
         meta_dir.mkdir(parents=True)
-        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
+        writer.append_jsonl(meta_dir / "events.jsonl", {
             "ts": "not-a-timestamp", "event": "run_init",
         })
 
@@ -487,7 +474,7 @@ class TestFindSessionStartTs:
             result = _find_session_start_ts(trw_dir)
         assert result is None
 
-    def test_no_matching_events_returns_none(self, tmp_path: Path) -> None:
+    def test_no_matching_events_returns_none(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Non-session events don't update latest_ts, returns None."""
         from trw_mcp.scoring import _find_session_start_ts
 
@@ -495,7 +482,7 @@ class TestFindSessionStartTs:
         trw_dir.mkdir()
         meta_dir = tmp_path / "tasks" / "no-session-task" / "runs" / "20260101T000000Z-ccc12345" / "meta"
         meta_dir.mkdir(parents=True)
-        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
+        writer.append_jsonl(meta_dir / "events.jsonl", {
             "ts": "2026-01-01T10:00:00+00:00", "event": "checkpoint",
         })
 
@@ -714,7 +701,7 @@ class TestProcessOutcome:
         assert result == []
 
     def test_non_list_outcome_history_reset(
-        self, tmp_path: Path, writer: FileStateWriter
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
     ) -> None:
         """When outcome_history is not a list, it is reset to [] (line 890)."""
         import trw_mcp.scoring as scoring_mod
@@ -753,7 +740,7 @@ class TestProcessOutcome:
         assert "L-corrupt" in result
 
         # Verify the outcome_history was written as a list
-        updated = FileStateReader().read_yaml(entries_dir / "2026-01-01-L-corrupt.yaml")
+        updated = reader.read_yaml(entries_dir / "2026-01-01-L-corrupt.yaml")
         assert isinstance(updated.get("outcome_history"), list)
 
 
@@ -833,9 +820,8 @@ class TestProcessOutcomeForEventException:
 class TestSearchPatternsNonExistentDir:
     """Cover line 115: search_patterns early return when dir missing."""
 
-    def test_nonexistent_patterns_dir_returns_empty(self, tmp_path: Path) -> None:
+    def test_nonexistent_patterns_dir_returns_empty(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Non-existent patterns_dir returns [] immediately (line 115 branch)."""
-        reader = FileStateReader()
         result = search_patterns(tmp_path / "no_patterns", query_tokens=[], reader=reader)
         assert result == []
 
@@ -1081,7 +1067,7 @@ class TestProcessOutcomeHistoryCap:
     """Cover line 893: outcome_history trimmed when it exceeds history_cap."""
 
     def test_history_trimmed_when_exceeds_cap(
-        self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When outcome_history exceeds history_cap, it is trimmed (line 893)."""
         import trw_mcp.scoring as scoring_mod
@@ -1128,7 +1114,7 @@ class TestProcessOutcomeHistoryCap:
         assert "L-capped" in result
 
         # Verify history was trimmed to cap
-        updated = FileStateReader().read_yaml(entries_dir / "2026-01-01-L-capped.yaml")
+        updated = reader.read_yaml(entries_dir / "2026-01-01-L-capped.yaml")
         history = updated.get("outcome_history", [])
         assert isinstance(history, list)
         assert len(history) <= history_cap

@@ -14,6 +14,7 @@ Extracted from phase_gates.py for module focus.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,26 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import ValidationFailure
 
 logger = structlog.get_logger()
+
+
+def _best_effort_check(
+    check_fn: Callable[[], None],
+    check_name: str,
+) -> None:
+    """Run a best-effort gate check, logging failures at debug level.
+
+    All ``_best_effort_*`` wrappers delegate to this helper so that
+    the try/except-and-log pattern lives in exactly one place.
+
+    Args:
+        check_fn: Zero-argument callable that performs the check.
+            It should mutate any ``failures`` list via closure.
+        check_name: Short identifier used in the debug log on failure.
+    """
+    try:
+        check_fn()
+    except Exception:  # broad catch: best-effort gate, never blocks
+        logger.debug(f"{check_name}_failed", exc_info=True)
 
 # Build status staleness threshold (PRD-CORE-023-FR10)
 _BUILD_STALENESS_SECS = 1800  # 30 minutes
@@ -179,11 +200,11 @@ def _best_effort_build_check(
         phase_name: Current phase name.
         failures: Mutable list to append failures into.
     """
-    try:
+    def _check() -> None:
         from trw_mcp.state._paths import resolve_trw_dir
         failures.extend(_check_build_status(resolve_trw_dir(), config, phase_name))
-    except Exception:  # broad catch: best-effort gate, never blocks
-        pass
+
+    _best_effort_check(_check, "build_check")
 
 
 def _best_effort_integration_check(
@@ -197,9 +218,9 @@ def _best_effort_integration_check(
         failures: Mutable list to append failures into.
         severity: Severity for unregistered-tool findings.
     """
-    try:
+    def _check() -> None:
         from trw_mcp.state._paths import resolve_project_root
-        from trw_mcp.state.integration_check import check_integration
+        from trw_mcp.state.validation.integration_check import check_integration
 
         src_dir = resolve_project_root() / "trw-mcp" / "src" / "trw_mcp"
         if not src_dir.is_dir():
@@ -223,8 +244,8 @@ def _best_effort_integration_check(
                     message=f"Missing test file: {test_name}",
                     severity="warning",
                 ))
-    except Exception:  # broad catch: best-effort gate, never blocks
-        pass
+
+    _best_effort_check(_check, "integration_check")
 
 
 def _best_effort_orphan_check(
@@ -242,9 +263,9 @@ def _best_effort_orphan_check(
         failures: Mutable list to append failures into.
         severity: Severity for orphan findings.
     """
-    try:
+    def _check() -> None:
         from trw_mcp.state._paths import resolve_project_root
-        from trw_mcp.state.integration_check import check_orphan_modules
+        from trw_mcp.state.validation.integration_check import check_orphan_modules
 
         src_dir = resolve_project_root() / "trw-mcp" / "src" / "trw_mcp"
         if not src_dir.is_dir():
@@ -263,8 +284,8 @@ def _best_effort_orphan_check(
                     ),
                     severity=severity,
                 ))
-    except Exception:  # broad catch: best-effort gate, never blocks
-        pass
+
+    _best_effort_check(_check, "orphan_check")
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +455,7 @@ def _best_effort_migration_check(
     if not config.migration_gate_enabled:
         return
 
-    try:
+    def _check() -> None:
         from trw_mcp.state._paths import resolve_project_root
 
         project_root = resolve_project_root()
@@ -449,8 +470,8 @@ def _best_effort_migration_check(
                     severity="warning",
                 )
             )
-    except Exception:  # broad catch: best-effort gate, never blocks
-        pass
+
+    _best_effort_check(_check, "migration_check")
 
 
 def _best_effort_dry_check(
@@ -468,7 +489,7 @@ def _best_effort_dry_check(
     if not config.dry_check_enabled:
         return
 
-    try:
+    def _check() -> None:
         from trw_mcp.state._paths import resolve_project_root
         from trw_mcp.state.dry_check import find_duplicated_blocks
 
@@ -502,8 +523,8 @@ def _best_effort_dry_check(
                 ),
                 severity="warning",
             ))
-    except Exception:  # broad catch: best-effort gate, never blocks
-        pass
+
+    _best_effort_check(_check, "dry_check")
 
 
 def _best_effort_semantic_check(
@@ -521,7 +542,7 @@ def _best_effort_semantic_check(
     if not config.semantic_checks_enabled:
         return
 
-    try:
+    def _check() -> None:
         from trw_mcp.state._paths import resolve_project_root
         from trw_mcp.state.semantic_checks import run_semantic_checks
 
@@ -554,5 +575,5 @@ def _best_effort_semantic_check(
                         severity="warning",  # Always soft gate
                     )
                 )
-    except Exception:  # broad catch: best-effort gate, never blocks
-        pass
+
+    _best_effort_check(_check, "semantic_check")

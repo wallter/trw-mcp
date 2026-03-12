@@ -93,7 +93,7 @@ class FileContractValidator:
                                 severity="error",
                             )
                         )
-            except Exception as exc:
+            except Exception as exc:  # justified: scan-resilience, unparseable contract file is a validation failure
                 failures.append(
                     ValidationFailure(
                         field=contract.file,

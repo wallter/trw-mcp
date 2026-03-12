@@ -358,14 +358,14 @@ class TestCvssSeverityFallback:
 class TestInvalidScope:
     """Test that an invalid scope parameter returns an error dict."""
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_invalid_scope_returns_error(
         self,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Line 889: scope='invalid' returns error dict with valid scopes listed."""
@@ -373,8 +373,7 @@ class TestInvalidScope:
         trw_dir.mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 120
+        mock_get_config.return_value = TRWConfig(build_check_enabled=True, build_check_timeout_secs=120)
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -385,14 +384,14 @@ class TestInvalidScope:
         assert "Invalid scope" in str(result["reason"])
         assert "'invalid'" in str(result["reason"])
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_empty_scope_returns_error(
         self,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Empty string scope is also invalid."""
@@ -400,8 +399,7 @@ class TestInvalidScope:
         trw_dir.mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 120
+        mock_get_config.return_value = TRWConfig(build_check_enabled=True, build_check_timeout_secs=120)
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -420,14 +418,14 @@ class TestInvalidScope:
 class TestDisabledFeatureFlags:
     """Tests for disabled feature flags returning skipped status."""
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_mutations_disabled_returns_skipped(
         self,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Line 905: scope='mutations' with mutation_enabled=False returns skipped."""
@@ -435,9 +433,9 @@ class TestDisabledFeatureFlags:
         trw_dir.mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 300
-        mock_config.mutation_enabled = False
+        mock_get_config.return_value = TRWConfig(
+            build_check_enabled=True, build_check_timeout_secs=300, mutation_enabled=False,
+        )
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -447,14 +445,14 @@ class TestDisabledFeatureFlags:
         assert result["status"] == "skipped"
         assert "mutation_enabled" in str(result["reason"])
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_deps_disabled_returns_skipped(
         self,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Line 917: scope='deps' with dep_audit_enabled=False returns skipped."""
@@ -462,9 +460,9 @@ class TestDisabledFeatureFlags:
         trw_dir.mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 300
-        mock_config.dep_audit_enabled = False
+        mock_get_config.return_value = TRWConfig(
+            build_check_enabled=True, build_check_timeout_secs=300, dep_audit_enabled=False,
+        )
 
         server = FastMCP("test")
         register_build_tools(server)
@@ -474,14 +472,14 @@ class TestDisabledFeatureFlags:
         assert result["status"] == "skipped"
         assert "dep_audit_enabled" in str(result["reason"])
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_api_fuzz_disabled_returns_skipped(
         self,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Line 924: scope='api' with api_fuzz_enabled=False returns skipped."""
@@ -489,9 +487,9 @@ class TestDisabledFeatureFlags:
         trw_dir.mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 300
-        mock_config.api_fuzz_enabled = False
+        mock_get_config.return_value = TRWConfig(
+            build_check_enabled=True, build_check_timeout_secs=300, api_fuzz_enabled=False,
+        )
 
         server = FastMCP("test")
         register_build_tools(server)

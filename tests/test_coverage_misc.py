@@ -640,7 +640,7 @@ class TestPublisherCoverage:
             cfg.effective_platform_urls = ["http://test.example.com"]
             cfg.platform_telemetry_enabled = True
             cfg.installation_id = "test"
-            cfg.platform_api_key = ""
+            cfg.platform_api_key.get_secret_value.return_value = ""
             mock_cfg.return_value = cfg
 
             with patch("trw_mcp.telemetry.publisher.resolve_trw_dir") as mock_trw:
@@ -677,29 +677,14 @@ class TestPublisherCoverage:
 class TestAutoUpgradeCoverage:
     """Lines 29-30: get_installed_version ImportError/AttributeError."""
 
-    def test_get_installed_version_import_error_returns_fallback(
+    def test_get_installed_version_missing_attr_returns_fallback(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Lines 29-30: ImportError branch → returns '0.0.0'.
+        """Lines 29-30: When __version__ is missing, returns '0.0.0'.
 
-        The actual function does ``from trw_mcp import __version__``.
-        When __version__ is missing from the module, this raises ImportError
-        which the function catches and returns "0.0.0".
-        """
-        import trw_mcp as _trw_mcp_mod
-        from trw_mcp.state.auto_upgrade import get_installed_version
-
-        monkeypatch.delattr(_trw_mcp_mod, "__version__", raising=False)
-        result = get_installed_version()
-        assert result == "0.0.0"
-
-    def test_get_installed_version_attribute_error_returns_fallback(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Lines 29-30: AttributeError on __version__ → returns '0.0.0'.
-
-        When __version__ is removed, ``from trw_mcp import __version__``
-        raises ImportError (caught by the same except clause).
+        The function does ``from trw_mcp import __version__``.
+        When __version__ is absent, ImportError is caught and '0.0.0' returned.
+        (Both ImportError and AttributeError trigger the same except clause.)
         """
         import trw_mcp as _trw_mcp_mod
         from trw_mcp.state.auto_upgrade import get_installed_version
@@ -709,38 +694,18 @@ class TestAutoUpgradeCoverage:
         assert result == "0.0.0"
 
     def test_get_installed_version_returns_actual_version(self) -> None:
-        """Positive case: get_installed_version returns a non-empty string."""
+        """Positive case: get_installed_version returns a semver string."""
+        import re
+
         from trw_mcp.state.auto_upgrade import get_installed_version
 
         version = get_installed_version()
         assert isinstance(version, str)
         assert len(version) > 0
+        assert re.match(r"\d+\.\d+\.\d+", version), (
+            f"Expected semver pattern, got: {version!r}"
+        )
 
-    def test_get_installed_version_import_error_via_monkeypatch(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Lines 29-30: Directly test exception branches in get_installed_version."""
-        # We need to make the `from trw_mcp import __version__` fail
-        # Save and remove the module from sys.modules
-        import sys
-
-        from trw_mcp.state import auto_upgrade
-
-        # Patch the function implementation directly by replacing module temporarily
-        original_trw_mcp = sys.modules.get("trw_mcp")
-
-        # Create a module object that raises AttributeError on __version__ access
-        class BadModule:
-            @property
-            def __version__(self) -> str:
-                raise AttributeError("no version")
-
-        # We can't easily replace sys.modules["trw_mcp"] since it's already imported
-        # Instead, test the function via a direct reimplementation approach
-        # by checking what the function's except clause does
-        result = auto_upgrade.get_installed_version()
-        # Should return a version string (or "0.0.0" if error)
-        assert isinstance(result, str)
 
 
 # ---------------------------------------------------------------------------

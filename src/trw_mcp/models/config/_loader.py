@@ -6,7 +6,11 @@ import get_config(), while _build_config() imports state modules.
 
 from __future__ import annotations
 
+import structlog
+
 from trw_mcp.models.config._main import TRWConfig
+
+logger = structlog.get_logger()
 
 # --- Singleton factory ---------------------------------------------------
 
@@ -65,8 +69,8 @@ def _build_config() -> TRWConfig:
                 }
                 if filtered:
                     return TRWConfig(**filtered)  # type: ignore[arg-type]
-    except Exception:
-        pass  # Fall back to defaults if project root not found
+    except Exception:  # justified: fail-open, config file read failure falls back to defaults
+        logger.debug("config_load_failed", exc_info=True)
     return TRWConfig()
 
 

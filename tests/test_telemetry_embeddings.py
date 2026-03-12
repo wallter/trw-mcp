@@ -56,8 +56,9 @@ def _single_vector() -> list[float]:
 
 @pytest.fixture(autouse=True)
 def reset_model_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reset the module-level _model singleton before every test."""
+    """Reset the module-level singletons before every test."""
     monkeypatch.setattr(emb_module, "_model", None)
+    monkeypatch.setattr(emb_module, "_provider", None)
 
 
 # ===========================================================================

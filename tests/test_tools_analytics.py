@@ -8,8 +8,8 @@ import pytest
 
 from tests.conftest import get_tools_sync
 
-import trw_mcp.state.analytics_report as analytics_mod
-from trw_mcp.state.analytics_report import (
+import trw_mcp.state.analytics.report as analytics_mod
+from trw_mcp.state.analytics.report import (
     _parse_run_id_timestamp,
     compute_ceremony_score,
     scan_all_runs,

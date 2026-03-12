@@ -72,12 +72,93 @@ def get_prompts_sync(server: FastMCP) -> dict[str, Any]:
     prompts = _run_async(server.list_prompts())
     return {p.name: p for p in prompts}
 
+
+# --- Shared server/tool factories ---
+#
+# These replace the repetitive 3-step pattern found in 30+ test files:
+#   srv = FastMCP("test"); register_X_tools(srv); tools = get_tools_sync(srv)
+
+
+# Registry mapping short group name -> (module_path, function_name).
+# Imports are deferred so conftest doesn't eagerly pull in all tool modules.
+_TOOL_GROUPS: dict[str, tuple[str, str]] = {
+    "build": ("trw_mcp.tools.build", "register_build_tools"),
+    "ceremony": ("trw_mcp.tools.ceremony", "register_ceremony_tools"),
+    "ceremony_feedback": ("trw_mcp.tools.ceremony_feedback", "register_ceremony_feedback_tools"),
+    "checkpoint": ("trw_mcp.tools.checkpoint", "register_checkpoint_tools"),
+    "knowledge": ("trw_mcp.tools.knowledge", "register_knowledge_tools"),
+    "learning": ("trw_mcp.tools.learning", "register_learning_tools"),
+    "orchestration": ("trw_mcp.tools.orchestration", "register_orchestration_tools"),
+    "report": ("trw_mcp.tools.report", "register_report_tools"),
+    "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),
+    "review": ("trw_mcp.tools.review", "register_review_tools"),
+    "usage": ("trw_mcp.tools.usage", "register_usage_tools"),
+}
+
+
+def make_test_server(*groups: str) -> FastMCP:
+    """Create a FastMCP server with the specified tool groups registered.
+
+    Args:
+        *groups: Tool group names to register (e.g. ``"ceremony"``,
+            ``"orchestration"``).  If no groups are given, a bare server
+            is returned (same as ``FastMCP("test")``).
+
+    Returns:
+        A ``FastMCP`` instance with the requested tool groups registered.
+
+    Raises:
+        KeyError: If an unknown group name is passed.
+
+    Example::
+
+        server = make_test_server("ceremony", "checkpoint")
+        tools = get_tools_sync(server)
+        deliver_fn = tools["trw_deliver"].fn
+    """
+    import importlib
+
+    server = FastMCP("test")
+    for group in groups:
+        module_path, func_name = _TOOL_GROUPS[group]
+        mod = importlib.import_module(module_path)
+        register_fn = getattr(mod, func_name)
+        register_fn(server)
+    return server
+
+
+def extract_tool_fn(server: FastMCP, tool_name: str) -> Any:
+    """Extract a tool's callable function from a FastMCP server by name.
+
+    This is the shared replacement for the ``_extract_tool()`` /
+    ``_get_tool_fn()`` local helpers found across test files.
+
+    Args:
+        server: A FastMCP server with tools already registered.
+        tool_name: The registered tool name (e.g. ``"trw_session_start"``).
+
+    Returns:
+        The raw callable (``tool.fn``) for the named tool.
+
+    Raises:
+        KeyError: If the tool name is not found on the server.
+    """
+    tools = get_tools_sync(server)
+    if tool_name not in tools:
+        raise KeyError(
+            f"Tool {tool_name!r} not found. "
+            f"Available: {sorted(tools.keys())}"
+        )
+    return tools[tool_name].fn
+
+
 # --- Marker auto-assignment ---
 
 _UNIT_FILES: frozenset[str] = frozenset({
     "test_models.py",
     "test_scoring.py",
     "test_scoring_branches.py",
+    "test_scoring_edge_cases.py",
     "test_scoring_properties.py",
     "test_bayesian_calibration.py",
     "test_clients_llm.py",
@@ -87,6 +168,7 @@ _UNIT_FILES: frozenset[str] = frozenset({
     "test_telemetry_embeddings.py",
     "test_telemetry_remote_recall.py",
     "test_validation_v2.py",
+    "test_prd_utils_edge.py",
 })
 
 _SLOW_FILES: frozenset[str] = frozenset({

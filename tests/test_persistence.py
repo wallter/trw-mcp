@@ -76,36 +76,32 @@ class TestJsonSerializer:
 class TestReadYamlNonDict:
     """Tests for FileStateReader.read_yaml with non-dict content."""
 
-    def test_yaml_list_root_raises_state_error(self, tmp_path: Path) -> None:
+    def test_yaml_list_root_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Line 115: YAML file with list root raises StateError."""
         yaml_file = tmp_path / "list.yaml"
         yaml_file.write_text("- item1\n- item2\n", encoding="utf-8")
 
-        reader = FileStateReader()
         with pytest.raises(StateError, match="mapping"):
             reader.read_yaml(yaml_file)
 
-    def test_yaml_scalar_root_raises_state_error(self, tmp_path: Path) -> None:
+    def test_yaml_scalar_root_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """YAML file with scalar root raises StateError."""
         yaml_file = tmp_path / "scalar.yaml"
         yaml_file.write_text("just a string\n", encoding="utf-8")
 
-        reader = FileStateReader()
         with pytest.raises(StateError, match="mapping"):
             reader.read_yaml(yaml_file)
 
-    def test_yaml_none_returns_empty_dict(self, tmp_path: Path) -> None:
+    def test_yaml_none_returns_empty_dict(self, tmp_path: Path, reader: FileStateReader) -> None:
         """YAML file with null/empty content returns empty dict."""
         yaml_file = tmp_path / "empty.yaml"
         yaml_file.write_text("", encoding="utf-8")
 
-        reader = FileStateReader()
         result = reader.read_yaml(yaml_file)
         assert result == {}
 
-    def test_yaml_not_found_raises_state_error(self, tmp_path: Path) -> None:
+    def test_yaml_not_found_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Missing YAML file raises StateError."""
-        reader = FileStateReader()
         with pytest.raises(StateError, match="not found"):
             reader.read_yaml(tmp_path / "nonexistent.yaml")
 
@@ -118,12 +114,11 @@ class TestReadYamlNonDict:
 class TestReadYamlStateErrorReRaise:
     """Lines 122-127: StateError re-raise and generic Exception wrapping."""
 
-    def test_state_error_propagates_from_yaml_load(self, tmp_path: Path) -> None:
+    def test_state_error_propagates_from_yaml_load(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Line 122: StateError from _new_yaml().load() propagates without wrapping."""
         yaml_file = tmp_path / "file.yaml"
         yaml_file.write_text("key: value\n", encoding="utf-8")
 
-        reader = FileStateReader()
         original_error = StateError("inner error", path=str(yaml_file))
 
         mock_yaml = MagicMock()
@@ -133,12 +128,11 @@ class TestReadYamlStateErrorReRaise:
             with pytest.raises(StateError, match="inner error"):
                 reader.read_yaml(yaml_file)
 
-    def test_generic_exception_wraps_to_state_error(self, tmp_path: Path) -> None:
+    def test_generic_exception_wraps_to_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Lines 123-127: Generic Exception from load() wraps to StateError."""
         yaml_file = tmp_path / "file.yaml"
         yaml_file.write_text("key: value\n", encoding="utf-8")
 
-        reader = FileStateReader()
         mock_yaml = MagicMock()
         mock_yaml.load.side_effect = RuntimeError("encoding error")
 
@@ -150,14 +144,12 @@ class TestReadYamlStateErrorReRaise:
 class TestFileStateReaderExists:
     """Line 186: FileStateReader.exists() coverage."""
 
-    def test_exists_returns_true_for_existing_path(self, tmp_path: Path) -> None:
+    def test_exists_returns_true_for_existing_path(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Line 186: exists() returns True when path exists."""
-        reader = FileStateReader()
         assert reader.exists(tmp_path) is True
 
-    def test_exists_returns_false_for_missing_path(self, tmp_path: Path) -> None:
+    def test_exists_returns_false_for_missing_path(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Line 186: exists() returns False when path does not exist."""
-        reader = FileStateReader()
         assert reader.exists(tmp_path / "no_such_file.txt") is False
 
 
@@ -169,7 +161,7 @@ class TestFileStateReaderExists:
 class TestReadJsonlNonDictLine:
     """Line 156: non-dict JSON lines in JSONL trigger logger.warning."""
 
-    def test_non_dict_line_skipped_with_warning(self, tmp_path: Path) -> None:
+    def test_non_dict_line_skipped_with_warning(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Non-dict JSON lines are skipped and trigger a warning log."""
         jsonl_file = tmp_path / "data.jsonl"
         # Mix: valid dict, list (non-dict), another valid dict
@@ -180,7 +172,6 @@ class TestReadJsonlNonDictLine:
             encoding="utf-8",
         )
 
-        reader = FileStateReader()
         with patch("trw_mcp.state.persistence.logger") as mock_logger:
             records = reader.read_jsonl(jsonl_file)
 
@@ -193,7 +184,7 @@ class TestReadJsonlNonDictLine:
         call_args = mock_logger.warning.call_args
         assert "jsonl_non_dict_line" in call_args[0]
 
-    def test_scalar_jsonl_line_skipped(self, tmp_path: Path) -> None:
+    def test_scalar_jsonl_line_skipped(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Scalar JSON values in JSONL are also skipped."""
         jsonl_file = tmp_path / "data.jsonl"
         jsonl_file.write_text(
@@ -202,7 +193,6 @@ class TestReadJsonlNonDictLine:
             encoding="utf-8",
         )
 
-        reader = FileStateReader()
         records = reader.read_jsonl(jsonl_file)
         assert len(records) == 1
         assert records[0] == {"a": 1}
@@ -216,21 +206,19 @@ class TestReadJsonlNonDictLine:
 class TestReadJsonlErrorPaths:
     """Tests for read_jsonl error handling branches."""
 
-    def test_json_decode_error_raises_state_error(self, tmp_path: Path) -> None:
+    def test_json_decode_error_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Lines 164-168: JSONDecodeError wraps to StateError."""
         jsonl_file = tmp_path / "corrupt.jsonl"
         jsonl_file.write_text("not valid json {\n", encoding="utf-8")
 
-        reader = FileStateReader()
         with pytest.raises(StateError, match="JSONL"):
             reader.read_jsonl(jsonl_file)
 
-    def test_generic_exception_raises_state_error(self, tmp_path: Path) -> None:
+    def test_generic_exception_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Lines 170-172: Generic exception wraps to StateError."""
         jsonl_file = tmp_path / "data.jsonl"
         jsonl_file.write_text('{"key": "val"}\n', encoding="utf-8")
 
-        reader = FileStateReader()
         with patch(
             "trw_mcp.state.persistence.json.loads",
             side_effect=RuntimeError("disk error"),
@@ -238,7 +226,7 @@ class TestReadJsonlErrorPaths:
             with pytest.raises(StateError, match="JSONL"):
                 reader.read_jsonl(jsonl_file)
 
-    def test_blank_lines_in_jsonl_skipped(self, tmp_path: Path) -> None:
+    def test_blank_lines_in_jsonl_skipped(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Line 151: blank lines inside JSONL file are skipped (continue)."""
         jsonl_file = tmp_path / "data.jsonl"
         jsonl_file.write_text(
@@ -249,18 +237,16 @@ class TestReadJsonlErrorPaths:
             encoding="utf-8",
         )
 
-        reader = FileStateReader()
         records = reader.read_jsonl(jsonl_file)
         assert len(records) == 2
         assert records[0] == {"a": 1}
         assert records[1] == {"b": 2}
 
-    def test_state_error_from_jsonl_propagates(self, tmp_path: Path) -> None:
+    def test_state_error_from_jsonl_propagates(self, tmp_path: Path, reader: FileStateReader) -> None:
         """StateError raised inside read_jsonl propagates unchanged."""
         jsonl_file = tmp_path / "data.jsonl"
         jsonl_file.write_text('{"key": "val"}\n', encoding="utf-8")
 
-        reader = FileStateReader()
         original_err = StateError("jsonl state error", path=str(jsonl_file))
         with patch(
             "trw_mcp.state.persistence.json.loads",
@@ -269,18 +255,16 @@ class TestReadJsonlErrorPaths:
             with pytest.raises(StateError, match="jsonl state error"):
                 reader.read_jsonl(jsonl_file)
 
-    def test_empty_file_returns_empty_list(self, tmp_path: Path) -> None:
+    def test_empty_file_returns_empty_list(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Empty JSONL file returns empty list."""
         jsonl_file = tmp_path / "empty.jsonl"
         jsonl_file.write_text("", encoding="utf-8")
 
-        reader = FileStateReader()
         result = reader.read_jsonl(jsonl_file)
         assert result == []
 
-    def test_nonexistent_jsonl_returns_empty_list(self, tmp_path: Path) -> None:
+    def test_nonexistent_jsonl_returns_empty_list(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Missing JSONL file returns empty list."""
-        reader = FileStateReader()
         result = reader.read_jsonl(tmp_path / "missing.jsonl")
         assert result == []
 
@@ -293,10 +277,9 @@ class TestReadJsonlErrorPaths:
 class TestWriteYamlCleanup:
     """Tests for write_yaml atomic write failure and cleanup paths."""
 
-    def test_write_yaml_cleans_up_tmp_on_error(self, tmp_path: Path) -> None:
+    def test_write_yaml_cleans_up_tmp_on_error(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 221-223: if write raises, tmp file is removed."""
         yaml_file = tmp_path / "output.yaml"
-        writer = FileStateWriter()
 
         # Patch _new_yaml().dump to raise, simulating write failure
         mock_yaml = MagicMock()
@@ -312,10 +295,9 @@ class TestWriteYamlCleanup:
         tmp_files = list(tmp_path.glob("*.yaml.tmp"))
         assert len(tmp_files) == 0
 
-    def test_write_yaml_oserror_on_close_fd(self, tmp_path: Path) -> None:
+    def test_write_yaml_oserror_on_close_fd(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 227-228: os.close() raising OSError is silenced."""
         yaml_file = tmp_path / "output.yaml"
-        writer = FileStateWriter()
 
         with patch("trw_mcp.state.persistence.os.close", side_effect=OSError("bad fd")):
             # Should NOT raise — OSError from os.close is caught and ignored
@@ -323,10 +305,9 @@ class TestWriteYamlCleanup:
 
         assert yaml_file.exists()
 
-    def test_write_yaml_state_error_reraise(self, tmp_path: Path) -> None:
+    def test_write_yaml_state_error_reraise(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 230-231: StateError from inner block propagates unchanged."""
         yaml_file = tmp_path / "output.yaml"
-        writer = FileStateWriter()
 
         original_err = StateError("inner yaml error", path=str(yaml_file))
         mock_yaml = MagicMock()
@@ -336,10 +317,9 @@ class TestWriteYamlCleanup:
             with pytest.raises(StateError, match="inner yaml error"):
                 writer.write_yaml(yaml_file, {"key": "value"})
 
-    def test_write_yaml_wraps_generic_exception(self, tmp_path: Path) -> None:
+    def test_write_yaml_wraps_generic_exception(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 232-236: Generic exception wraps to StateError."""
         yaml_file = tmp_path / "output.yaml"
-        writer = FileStateWriter()
 
         mock_yaml = MagicMock()
         mock_yaml.dump.side_effect = ValueError("bad data")
@@ -357,21 +337,18 @@ class TestWriteYamlCleanup:
 class TestAppendJsonlErrorPaths:
     """Tests for append_jsonl error handling."""
 
-    def test_append_jsonl_raises_state_error_on_failure(self, tmp_path: Path) -> None:
+    def test_append_jsonl_raises_state_error_on_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 259-260: exception in append_jsonl wraps to StateError."""
         jsonl_file = tmp_path / "events.jsonl"
         jsonl_file.parent.mkdir(parents=True, exist_ok=True)
-
-        writer = FileStateWriter()
 
         with patch.object(Path, "open", side_effect=OSError("permission denied")):
             with pytest.raises(StateError, match="Failed to append JSONL"):
                 writer.append_jsonl(jsonl_file, {"key": "value"})
 
-    def test_append_jsonl_datetime_serialization(self, tmp_path: Path) -> None:
+    def test_append_jsonl_datetime_serialization(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """append_jsonl correctly serializes datetime values via json_serializer."""
         jsonl_file = tmp_path / "events.jsonl"
-        writer = FileStateWriter()
 
         dt = datetime(2026, 2, 22, 0, 0, 0, tzinfo=timezone.utc)
         writer.append_jsonl(jsonl_file, {"ts": dt, "event": "test_event"})
@@ -388,10 +365,9 @@ class TestAppendJsonlErrorPaths:
 class TestWriteTextCleanup:
     """Tests for write_text atomic write failure and cleanup paths."""
 
-    def test_write_text_cleans_up_tmp_on_base_exception(self, tmp_path: Path) -> None:
+    def test_write_text_cleans_up_tmp_on_base_exception(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 290-292: BaseException during write cleans up tmp file."""
         text_file = tmp_path / "output.md"
-        writer = FileStateWriter()
 
         original_open = Path.open
 
@@ -410,20 +386,18 @@ class TestWriteTextCleanup:
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert len(tmp_files) == 0
 
-    def test_write_text_oserror_on_close_fd_silenced(self, tmp_path: Path) -> None:
+    def test_write_text_oserror_on_close_fd_silenced(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 296-298: os.close() raising OSError is silenced in write_text."""
         text_file = tmp_path / "output.md"
-        writer = FileStateWriter()
 
         with patch("trw_mcp.state.persistence.os.close", side_effect=OSError("bad fd")):
             writer.write_text(text_file, "some content")
 
         assert text_file.read_text() == "some content"
 
-    def test_write_text_state_error_reraise(self, tmp_path: Path) -> None:
+    def test_write_text_state_error_reraise(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 298-299: StateError propagates unchanged from write_text."""
         text_file = tmp_path / "output.md"
-        writer = FileStateWriter()
 
         original_err = StateError("inner text error", path=str(text_file))
         original_open = Path.open
@@ -437,10 +411,9 @@ class TestWriteTextCleanup:
             with pytest.raises(StateError, match="inner text error"):
                 writer.write_text(text_file, "hello")
 
-    def test_write_text_wraps_generic_exception(self, tmp_path: Path) -> None:
+    def test_write_text_wraps_generic_exception(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 300-304: Generic exception wraps to StateError in write_text."""
         text_file = tmp_path / "output.md"
-        writer = FileStateWriter()
 
         original_open = Path.open
 
@@ -462,26 +435,22 @@ class TestWriteTextCleanup:
 class TestEnsureDirErrorPath:
     """Tests for ensure_dir error handling."""
 
-    def test_ensure_dir_raises_state_error_on_failure(self, tmp_path: Path) -> None:
+    def test_ensure_dir_raises_state_error_on_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Lines 317-318: mkdir failure wraps to StateError."""
-        writer = FileStateWriter()
-
         with patch.object(Path, "mkdir", side_effect=PermissionError("access denied")):
             with pytest.raises(StateError, match="Failed to create directory"):
                 writer.ensure_dir(tmp_path / "restricted" / "subdir")
 
-    def test_ensure_dir_success(self, tmp_path: Path) -> None:
+    def test_ensure_dir_success(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Happy path: directory is created."""
         target = tmp_path / "new" / "nested" / "dir"
-        writer = FileStateWriter()
         writer.ensure_dir(target)
         assert target.is_dir()
 
-    def test_ensure_dir_idempotent(self, tmp_path: Path) -> None:
+    def test_ensure_dir_idempotent(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """ensure_dir does not raise when directory already exists."""
         target = tmp_path / "existing"
         target.mkdir()
-        writer = FileStateWriter()
         writer.ensure_dir(target)  # Should not raise
         assert target.is_dir()
 

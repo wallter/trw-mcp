@@ -4,6 +4,7 @@
 
 {{imperative_opener}}
 {{ceremony_quick_ref}}
+{{framework_reference}}
 {{delegation_section}}
 {{agent_teams_section}}
 {{behavioral_protocol}}

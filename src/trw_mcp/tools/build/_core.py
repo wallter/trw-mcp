@@ -12,13 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from trw_mcp.models.build import BuildStatus
-from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.tools.build._runners import _run_mypy, _run_pytest
 from trw_mcp.tools.build._subprocess import _collect_failures, _MAX_FAILURES
-
-_config = get_config()
-_writer = FileStateWriter()
 
 
 def _cache_to_context(
@@ -36,10 +32,11 @@ def _cache_to_context(
     Returns:
         Path to the written file.
     """
+    writer = FileStateWriter()
     context_dir = trw_dir / "context"
-    _writer.ensure_dir(context_dir)
+    writer.ensure_dir(context_dir)
     cache_path = context_dir / filename
-    _writer.write_yaml(cache_path, data)
+    writer.write_yaml(cache_path, data)
     return cache_path
 
 
@@ -113,8 +110,9 @@ def cache_build_status(trw_dir: Path, status: BuildStatus) -> Path:
     Returns:
         Path to the cached file.
     """
+    writer = FileStateWriter()
     context_dir = trw_dir / "context"
-    _writer.ensure_dir(context_dir)
+    writer.ensure_dir(context_dir)
     cache_path = context_dir / "build-status.yaml"
-    _writer.write_yaml(cache_path, model_to_dict(status))
+    writer.write_yaml(cache_path, model_to_dict(status))
     return cache_path

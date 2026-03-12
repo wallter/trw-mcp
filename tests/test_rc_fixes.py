@@ -188,7 +188,7 @@ class TestStatusLastActivity:
 
         with (
             patch("trw_mcp.tools.orchestration.resolve_run_path", return_value=run_dir),
-            patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=project),
+            patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=project),
         ):
             result = status_fn()
 

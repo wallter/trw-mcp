@@ -23,6 +23,8 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.consolidation import (
     _archive_originals,
     _create_consolidated_entry,
+    _is_clusterable,
+    _load_active_entries,
     _mean_pairwise_similarity,
     _parse_consolidation_response,
     _rollback_archive,
@@ -117,8 +119,8 @@ class TestFindClusters:
         for i in range(5):
             write_entry(entries_dir, writer, f"entry{i:03d}", summary=f"summary {i}")
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=False):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[None] * 5):
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
+            with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[None] * 5):
                 result = find_clusters(entries_dir, reader)
         assert result == []
 
@@ -126,7 +128,7 @@ class TestFindClusters:
         self, tmp_path: Path, reader: FileStateReader
     ) -> None:
         """When entries_dir does not exist, returns []."""
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=False):
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
             result = find_clusters(tmp_path / "nonexistent", reader)
         assert result == []
 
@@ -142,8 +144,8 @@ class TestFindClusters:
         write_entry(entries_dir, writer, "e001")
         write_entry(entries_dir, writer, "e002")
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[None, None]):
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+            with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[None, None]):
                 result = find_clusters(entries_dir, reader, min_cluster_size=3)
         assert result == []
 
@@ -159,15 +161,16 @@ class TestFindClusters:
         write_entry(entries_dir, writer, "archived2", status="archived")
         # Only 2 active entries — below min_cluster_size=3
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch(
-                "trw_mcp.telemetry.embeddings.embed_batch",
-                return_value=[
-                    make_vec(1.0, 0.0, 0.0),
-                    make_vec(0.99, 0.1, 0.0),
-                ],
-            ):
-                result = find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch(
+                    "trw_mcp.state.memory_adapter.embed_text_batch",
+                    return_value=[
+                        make_vec(1.0, 0.0, 0.0),
+                        make_vec(0.99, 0.1, 0.0),
+                    ],
+                ):
+                    result = find_clusters(entries_dir, reader, min_cluster_size=3)
         assert result == []
 
     def test_skips_consolidated_source_type(
@@ -181,9 +184,10 @@ class TestFindClusters:
         write_entry(entries_dir, writer, "cons001", source_type="consolidated")
 
         vecs = [make_vec(1.0, 0.0, 0.0)] * 4  # 4 active non-consolidated
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result = find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result = find_clusters(entries_dir, reader, min_cluster_size=3)
         # All 4 active entries should be available for clustering (not the consolidated one)
         # embed_batch is called with 4 texts, not 5
         assert isinstance(result, list)
@@ -199,9 +203,10 @@ class TestFindClusters:
         write_entry(entries_dir, writer, "merged001", consolidated_into="L-abcdefgh")
 
         vecs = [make_vec(1.0, 0.0, 0.0)] * 3
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    find_clusters(entries_dir, reader, min_cluster_size=3)
         # Should not raise; merged entry not in the cluster candidates
 
     def test_single_batch_call_for_all_entries(
@@ -215,8 +220,8 @@ class TestFindClusters:
 
         mock_batch = MagicMock(return_value=[make_vec(1.0, 0.0, 0.0)] * 5)
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-                with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", mock_batch):
                     find_clusters(entries_dir, reader, min_cluster_size=3)
 
         assert mock_batch.call_count == 1
@@ -252,8 +257,8 @@ class TestFindClusters:
         all_vecs = similar_vecs + unrelated_vecs
 
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-                with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=all_vecs):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=all_vecs):
                     result = find_clusters(
                         entries_dir, reader,
                         similarity_threshold=0.9,
@@ -283,19 +288,20 @@ class TestFindClusters:
             make_vec(0.0, 1.0, 0.0),
         ]
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result_low = find_clusters(
-                    entries_dir, reader,
-                    similarity_threshold=0.5,
-                    min_cluster_size=3,
-                )
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result_high = find_clusters(
-                    entries_dir, reader,
-                    similarity_threshold=0.99,
-                    min_cluster_size=3,
-                )
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result_low = find_clusters(
+                        entries_dir, reader,
+                        similarity_threshold=0.5,
+                        min_cluster_size=3,
+                    )
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result_high = find_clusters(
+                        entries_dir, reader,
+                        similarity_threshold=0.99,
+                        min_cluster_size=3,
+                    )
 
         assert len(result_low) >= len(result_high)
 
@@ -310,8 +316,8 @@ class TestFindClusters:
 
         mock_batch = MagicMock(return_value=[make_vec(1.0, 0.0, 0.0)] * 3)
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-                with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", mock_batch):
                     find_clusters(entries_dir, reader, max_entries=3, min_cluster_size=3)
 
         # embed_batch should be called with at most 3 texts
@@ -327,9 +333,10 @@ class TestFindClusters:
         write_entry(entries_dir, writer, "e001")
         write_entry(entries_dir, writer, "e002")
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[None, None]):
-                result = find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[None, None]):
+                    result = find_clusters(entries_dir, reader, min_cluster_size=3)
         assert result == []
 
     def test_unreadable_yaml_skipped(
@@ -344,9 +351,10 @@ class TestFindClusters:
             write_entry(entries_dir, writer, f"ok{i:03d}")
 
         vecs = [make_vec(1.0, 0.0, 0.0)] * 4
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result = find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result = find_clusters(entries_dir, reader, min_cluster_size=3)
         assert isinstance(result, list)
 
     def test_cluster_discards_small_groups(
@@ -366,13 +374,14 @@ class TestFindClusters:
             make_vec(0.0, 0.0, 1.0),
             make_vec(-1.0, 0.0, 0.0),
         ]
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result = find_clusters(
-                    entries_dir, reader,
-                    similarity_threshold=0.9,
-                    min_cluster_size=3,
-                )
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result = find_clusters(
+                        entries_dir, reader,
+                        similarity_threshold=0.9,
+                        min_cluster_size=3,
+                    )
         # The pair (size 2) should be filtered out
         for cluster in result:
             assert len(cluster) >= 3
@@ -394,13 +403,14 @@ class TestFindClusters:
             make_vec(1.0, 0.0, 0.0),
             None,
         ]
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result = find_clusters(
-                    entries_dir, reader,
-                    similarity_threshold=0.9,
-                    min_cluster_size=4,
-                )
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result = find_clusters(
+                        entries_dir, reader,
+                        similarity_threshold=0.9,
+                        min_cluster_size=4,
+                    )
         assert result == []
 
     def test_entries_dir_nonexistent_with_embedding_available(
@@ -409,7 +419,7 @@ class TestFindClusters:
         """When embedding is available but entries_dir doesn't exist, returns []."""
         nonexistent = tmp_path / "no_such_dir"
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
             result = find_clusters(nonexistent, reader)
         assert result == []
 
@@ -1081,13 +1091,14 @@ class TestConsolidateCycle:
         vecs = [make_vec(1.0, 0.0, 0.0)] * 4
         cfg = self._make_config()
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result = consolidate_cycle(
-                    trw_dir,
-                    dry_run=True,
-                    config=cfg,
-                )
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result = consolidate_cycle(
+                        trw_dir,
+                        dry_run=True,
+                        config=cfg,
+                    )
 
         assert result["dry_run"] is True
         assert "clusters" in result
@@ -1108,9 +1119,10 @@ class TestConsolidateCycle:
         vecs = [make_vec(1.0, 0.0, 0.0)] * 4
         cfg = self._make_config()
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                result = consolidate_cycle(trw_dir, dry_run=True, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    result = consolidate_cycle(trw_dir, dry_run=True, config=cfg)
 
         clusters = list(result["clusters"])  # type: ignore[arg-type]
         if clusters:
@@ -1129,7 +1141,7 @@ class TestConsolidateCycle:
 
         cfg = self._make_config()
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=False):
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
             result = consolidate_cycle(trw_dir, dry_run=False, config=cfg)
 
         assert result["status"] == "no_clusters"
@@ -1151,10 +1163,11 @@ class TestConsolidateCycle:
         llm.available = True
         llm.ask_sync.return_value = '{"summary": "consolidated", "detail": "merged"}'
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
-                    result = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                        result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["consolidated_count"] >= 1
         assert result["status"] == "completed"
@@ -1185,10 +1198,11 @@ class TestConsolidateCycle:
         mock_llm = MagicMock()
         mock_llm.available = False
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=mock_llm):
-                    result = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=mock_llm):
+                        result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["status"] == "completed"
 
@@ -1211,17 +1225,17 @@ class TestConsolidateCycle:
         # Patch at the import point inside consolidate_cycle — the function does
         # `from trw_mcp.state.tiers import TierManager as _TierManager` internally.
         # We patch the module so the import raises, triggering graceful degradation.
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
-                    import trw_mcp.state.tiers as tiers_mod
-                    original_tm = tiers_mod.TierManager
-                    try:
-                        # Replace TierManager with one that raises on init
-                        tiers_mod.TierManager = MagicMock(side_effect=Exception("tiers unavailable"))  # type: ignore[misc]
-                        result = consolidate_cycle(trw_dir, config=cfg)
-                    finally:
-                        tiers_mod.TierManager = original_tm
+        import trw_mcp.state.tiers as tiers_mod
+        original_tm = tiers_mod.TierManager
+        try:
+            tiers_mod.TierManager = MagicMock(side_effect=Exception("tiers unavailable"))  # type: ignore[misc]
+            with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+                with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                    with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                        with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                            result = consolidate_cycle(trw_dir, config=cfg)
+        finally:
+            tiers_mod.TierManager = original_tm
 
         assert "status" in result
         assert result["status"] == "completed"
@@ -1238,11 +1252,12 @@ class TestConsolidateCycle:
         vecs = [make_vec(1.0, 0.0, 0.0)] * 3
         cfg = self._make_config()
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                # Make LLMClient constructor raise (lines 582-583)
-                with patch("trw_mcp.state.consolidation.LLMClient", side_effect=RuntimeError("no llm")):
-                    result = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    # Make LLMClient constructor raise (lines 582-583)
+                    with patch("trw_mcp.state.consolidation.LLMClient", side_effect=RuntimeError("no llm")):
+                        result = consolidate_cycle(trw_dir, config=cfg)
 
         # Should succeed with fallback summarization
         assert "status" in result
@@ -1265,10 +1280,11 @@ class TestConsolidateCycle:
         # Cause LLM to raise to trigger fallback path, but still proceed
         llm.ask_sync.side_effect = RuntimeError("llm error")
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
-                    result = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                        result = consolidate_cycle(trw_dir, config=cfg)
 
         # consolidate_cycle should not raise — errors collected or fallback used
         assert "status" in result
@@ -1289,10 +1305,11 @@ class TestConsolidateCycle:
         llm.available = True
         llm.ask_sync.return_value = '{"summary": "s", "detail": "d"}'
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
-                    result = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                        result = consolidate_cycle(trw_dir, config=cfg)
 
         assert "status" in result
         assert "clusters_found" in result
@@ -1310,13 +1327,13 @@ class TestMeanPairwiseSimilarity:
     def test_single_entry_returns_zero(self) -> None:
         """Single-entry cluster has no pairs — returns 0.0."""
         cluster = [{"id": "e1", "summary": "s", "detail": "d"}]
-        with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[make_vec(1.0, 0.0, 0.0)]):
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[make_vec(1.0, 0.0, 0.0)]):
             result = _mean_pairwise_similarity(cluster)
         assert result == 0.0
 
     def test_empty_cluster_returns_zero(self) -> None:
         """Empty cluster returns 0.0."""
-        with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[]):
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[]):
             result = _mean_pairwise_similarity([])
         assert result == 0.0
 
@@ -1327,7 +1344,7 @@ class TestMeanPairwiseSimilarity:
             {"id": "e2", "summary": "s2", "detail": "d2"},
         ]
         vecs = [make_vec(1.0, 0.0, 0.0), make_vec(1.0, 0.0, 0.0)]
-        with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
             result = _mean_pairwise_similarity(cluster)
         assert result == pytest.approx(1.0)
 
@@ -1338,7 +1355,7 @@ class TestMeanPairwiseSimilarity:
             {"id": "e2", "summary": "s2", "detail": "d2"},
         ]
         vecs = [make_vec(1.0, 0.0, 0.0), make_vec(0.0, 1.0, 0.0)]
-        with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
             result = _mean_pairwise_similarity(cluster)
         assert result == pytest.approx(0.0, abs=1e-9)
 
@@ -1354,7 +1371,7 @@ class TestMeanPairwiseSimilarity:
             None,
             make_vec(1.0, 0.0, 0.0),
         ]
-        with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
             result = _mean_pairwise_similarity(cluster)
         assert result == pytest.approx(1.0)
 
@@ -1364,7 +1381,7 @@ class TestMeanPairwiseSimilarity:
             {"id": "e1", "summary": "s1", "detail": "d1"},
             {"id": "e2", "summary": "s2", "detail": "d2"},
         ]
-        with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[None, None]):
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[None, None]):
             result = _mean_pairwise_similarity(cluster)
         assert result == 0.0
 
@@ -1690,10 +1707,11 @@ class TestConsolidationIntegration:
         mock_llm = MagicMock()
         mock_llm.available = False
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=mock_llm):
-                    result = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=mock_llm):
+                        result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["status"] == "completed"
         assert int(str(result["consolidated_count"])) >= 1
@@ -1742,10 +1760,11 @@ class TestConsolidationIntegration:
         llm.available = True
         llm.ask_sync.return_value = '{"summary": "llm summary", "detail": "llm detail"}'
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
-                    result = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                        result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["status"] == "completed"
 
@@ -1774,9 +1793,10 @@ class TestConsolidationIntegration:
         vecs = [make_vec(1.0, 0.0, 0.0)] * 3
         cfg = TRWConfig(memory_consolidation_min_cluster=3)
 
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                consolidate_cycle(trw_dir, dry_run=True, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    consolidate_cycle(trw_dir, dry_run=True, config=cfg)
 
         # Verify entries unchanged
         for i in range(3):
@@ -1814,19 +1834,21 @@ class TestIdempotency:
         llm.ask_sync.return_value = '{"summary": "consolidated", "detail": "merged"}'
 
         # First run — produces 1 consolidated entry
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=vecs):
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
-                    result1 = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                        result1 = consolidate_cycle(trw_dir, config=cfg)
 
         assert int(str(result1.get("consolidated_count", 0))) >= 1
 
         # Second run — originals have consolidated_into set; consolidated entry has
         # source_type="consolidated". find_clusters skips both categories.
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[]) as mock_batch:
-                with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
-                    result2 = consolidate_cycle(trw_dir, config=cfg)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[]) as mock_batch:
+                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                        result2 = consolidate_cycle(trw_dir, config=cfg)
 
         # No new consolidations — all eligible entries were already archived
         assert result2.get("consolidated_count", 0) == 0
@@ -1843,9 +1865,10 @@ class TestIdempotency:
         write_entry(entries_dir, writer, "active1")
 
         mock_batch = MagicMock(return_value=[make_vec(1.0, 0.0, 0.0)])
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
-                find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", mock_batch):
+                    find_clusters(entries_dir, reader, min_cluster_size=3)
 
         # Only 1 active entry should be embedded — below min_cluster_size
         if mock_batch.call_count > 0:
@@ -1865,9 +1888,10 @@ class TestIdempotency:
         write_entry(entries_dir, writer, "active2")
 
         mock_batch = MagicMock(return_value=[make_vec(1.0, 0.0, 0.0)] * 2)
-        with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-            with patch("trw_mcp.telemetry.embeddings.embed_batch", mock_batch):
-                find_clusters(entries_dir, reader, min_cluster_size=3)
+        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", mock_batch):
+                    find_clusters(entries_dir, reader, min_cluster_size=3)
 
         # Only 2 active entries should be embedded
         if mock_batch.call_count > 0:
@@ -1998,10 +2022,10 @@ class TestFindClustersSQLite:
             "trw_mcp.state.memory_adapter.list_active_learnings",
             return_value=fake_entries,
         ) as mock_sqlite, patch(
-            "trw_mcp.telemetry.embeddings.embedding_available",
+            "trw_mcp.state.memory_adapter.embedding_available",
             return_value=True,
         ), patch(
-            "trw_mcp.telemetry.embeddings.embed_batch",
+            "trw_mcp.state.memory_adapter.embed_text_batch",
             return_value=[make_vec(1.0, 0.0)] * 5,
         ):
             result = find_clusters(
@@ -2032,10 +2056,10 @@ class TestFindClustersSQLite:
             "trw_mcp.state.memory_adapter.list_active_learnings",
             side_effect=RuntimeError("SQLite unavailable"),
         ), patch(
-            "trw_mcp.telemetry.embeddings.embedding_available",
+            "trw_mcp.state.memory_adapter.embedding_available",
             return_value=True,
         ), patch(
-            "trw_mcp.telemetry.embeddings.embed_batch",
+            "trw_mcp.state.memory_adapter.embed_text_batch",
             return_value=[make_vec(1.0, 0.0)] * 4,
         ):
             result = find_clusters(
@@ -2067,10 +2091,10 @@ class TestFindClustersSQLite:
             "trw_mcp.state.memory_adapter.list_active_learnings",
             return_value=fake_entries,
         ), patch(
-            "trw_mcp.telemetry.embeddings.embedding_available",
+            "trw_mcp.state.memory_adapter.embedding_available",
             return_value=True,
         ), patch(
-            "trw_mcp.telemetry.embeddings.embed_batch",
+            "trw_mcp.state.memory_adapter.embed_text_batch",
             return_value=[make_vec(1.0, 0.0)],  # Only 1 entry passes filters
         ):
             result = find_clusters(
@@ -2081,3 +2105,758 @@ class TestFindClustersSQLite:
 
         # Only 1 entry passes filters (< min_cluster_size=2), so no clusters
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Direct tests for _is_clusterable
+# ---------------------------------------------------------------------------
+
+
+class TestIsClusterable:
+    """Direct unit tests for _is_clusterable filtering predicate."""
+
+    def test_active_entry_is_clusterable(self) -> None:
+        """A plain active entry with no special fields is clusterable."""
+        data: dict[str, object] = {"id": "e1", "status": "active", "summary": "test"}
+        assert _is_clusterable(data) is True
+
+    def test_consolidated_source_type_excluded(self) -> None:
+        """source_type='consolidated' makes entry non-clusterable."""
+        data: dict[str, object] = {"id": "e1", "source_type": "consolidated"}
+        assert _is_clusterable(data) is False
+
+    def test_agent_source_type_is_clusterable(self) -> None:
+        """source_type='agent' (non-consolidated) is still clusterable."""
+        data: dict[str, object] = {"id": "e1", "source_type": "agent"}
+        assert _is_clusterable(data) is True
+
+    def test_consolidated_into_set_excluded(self) -> None:
+        """Entry with consolidated_into set to a non-None value is excluded."""
+        data: dict[str, object] = {"id": "e1", "consolidated_into": "L-abc"}
+        assert _is_clusterable(data) is False
+
+    def test_consolidated_into_none_is_clusterable(self) -> None:
+        """Entry with consolidated_into=None is clusterable."""
+        data: dict[str, object] = {"id": "e1", "consolidated_into": None}
+        assert _is_clusterable(data) is True
+
+    def test_missing_source_type_is_clusterable(self) -> None:
+        """Entry missing source_type entirely is clusterable."""
+        data: dict[str, object] = {"id": "e1"}
+        assert _is_clusterable(data) is True
+
+    def test_missing_consolidated_into_is_clusterable(self) -> None:
+        """Entry missing consolidated_into entirely is clusterable."""
+        data: dict[str, object] = {"id": "e1", "source_type": "agent"}
+        assert _is_clusterable(data) is True
+
+    def test_empty_string_source_type_is_clusterable(self) -> None:
+        """source_type='' is not 'consolidated', so entry is clusterable."""
+        data: dict[str, object] = {"id": "e1", "source_type": ""}
+        assert _is_clusterable(data) is True
+
+    def test_both_exclusion_conditions_consolidated_source_type_wins(self) -> None:
+        """If both source_type='consolidated' and consolidated_into set, still excluded."""
+        data: dict[str, object] = {
+            "id": "e1",
+            "source_type": "consolidated",
+            "consolidated_into": "L-xyz",
+        }
+        assert _is_clusterable(data) is False
+
+    def test_empty_dict_is_clusterable(self) -> None:
+        """Completely empty dict has no exclusion fields, so is clusterable."""
+        assert _is_clusterable({}) is True
+
+
+# ---------------------------------------------------------------------------
+# Direct tests for _load_active_entries
+# ---------------------------------------------------------------------------
+
+
+class TestLoadActiveEntries:
+    """Direct unit tests for _load_active_entries."""
+
+    def test_sqlite_path_returns_entries(
+        self, tmp_path: Path, reader: FileStateReader
+    ) -> None:
+        """When SQLite succeeds, returns entries from list_active_learnings."""
+        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        fake_entries: list[dict[str, object]] = [
+            {"id": f"e{i}", "summary": f"s{i}", "status": "active"}
+            for i in range(4)
+        ]
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=fake_entries,
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=10)
+
+        assert len(result) == 4
+
+    def test_sqlite_path_respects_max_entries(
+        self, tmp_path: Path, reader: FileStateReader
+    ) -> None:
+        """SQLite path caps entries at max_entries."""
+        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        fake_entries: list[dict[str, object]] = [
+            {"id": f"e{i}", "summary": f"s{i}", "status": "active"}
+            for i in range(10)
+        ]
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=fake_entries,
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=3)
+
+        assert len(result) == 3
+
+    def test_sqlite_path_filters_consolidated(
+        self, tmp_path: Path, reader: FileStateReader
+    ) -> None:
+        """SQLite path filters out consolidated entries via _is_clusterable."""
+        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        fake_entries: list[dict[str, object]] = [
+            {"id": "e1", "summary": "s1", "source_type": "consolidated"},
+            {"id": "e2", "summary": "s2", "consolidated_into": "L-abc"},
+            {"id": "e3", "summary": "s3", "status": "active"},
+        ]
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=fake_entries,
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=10)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "e3"
+
+    def test_yaml_fallback_when_sqlite_raises(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """When SQLite raises, falls back to YAML glob and loads active entries."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        write_entry(entries_dir, writer, "e001", status="active")
+        write_entry(entries_dir, writer, "e002", status="active")
+        write_entry(entries_dir, writer, "e003", status="archived")
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            side_effect=ImportError("no adapter"),
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=10)
+
+        assert len(result) == 2
+
+    def test_yaml_fallback_respects_max_entries(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """YAML fallback caps at max_entries."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        for i in range(10):
+            write_entry(entries_dir, writer, f"e{i:03d}", status="active")
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            side_effect=RuntimeError("no sqlite"),
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=3)
+
+        assert len(result) == 3
+
+    def test_yaml_fallback_skips_index_yaml(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """YAML fallback skips index.yaml file."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        writer.write_yaml(entries_dir / "index.yaml", {"version": 1})
+        write_entry(entries_dir, writer, "e001", status="active")
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            side_effect=RuntimeError("no sqlite"),
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=10)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "e001"
+
+    def test_yaml_fallback_skips_unreadable_files(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """YAML fallback skips files that cannot be parsed."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        (entries_dir / "bad.yaml").write_text("{{invalid")
+        write_entry(entries_dir, writer, "e001", status="active")
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            side_effect=RuntimeError("no sqlite"),
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=10)
+
+        assert len(result) == 1
+
+    def test_yaml_fallback_filters_consolidated_entries(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """YAML fallback filters out consolidated source_type entries."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        write_entry(entries_dir, writer, "e001", status="active", source_type="consolidated")
+        write_entry(entries_dir, writer, "e002", status="active")
+
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            side_effect=RuntimeError("no sqlite"),
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=10)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "e002"
+
+    def test_sqlite_returns_empty_for_all_consolidated(
+        self, tmp_path: Path, reader: FileStateReader
+    ) -> None:
+        """When all SQLite entries are consolidated, returns empty list."""
+        entries_dir = tmp_path / ".trw" / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        fake_entries: list[dict[str, object]] = [
+            {"id": "e1", "source_type": "consolidated"},
+            {"id": "e2", "consolidated_into": "L-xxx"},
+        ]
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=fake_entries,
+        ):
+            result = _load_active_entries(entries_dir, reader, max_entries=10)
+
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Additional edge cases for _create_consolidated_entry
+# ---------------------------------------------------------------------------
+
+
+class TestCreateConsolidatedEntryEdgeCases:
+    """Edge cases for _create_consolidated_entry field aggregation."""
+
+    def test_entries_without_id_excluded_from_consolidated_from(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """Entries missing 'id' field are excluded from consolidated_from list."""
+        cluster = [
+            {"id": "e1", "summary": "s1"},
+            {"summary": "no id entry"},
+            {"id": "e3", "summary": "s3"},
+        ]
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
+        consolidated_from = list(entry["consolidated_from"])  # type: ignore[arg-type]
+        assert "e1" in consolidated_from
+        assert "e3" in consolidated_from
+        assert len(consolidated_from) == 2
+
+    def test_evidence_preserves_insertion_order(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """Deduplicated evidence preserves original insertion order."""
+        cluster = [
+            {"id": "e1", "evidence": ["third", "first"]},
+            {"id": "e2", "evidence": ["first", "second"]},
+        ]
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
+        evidence = list(entry["evidence"])  # type: ignore[arg-type]
+        # dict.fromkeys preserves insertion order: third, first, second
+        assert evidence == ["third", "first", "second"]
+
+    def test_tags_none_treated_as_empty(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """Entries with tags=None produce empty tag union."""
+        cluster = [
+            {"id": "e1", "tags": None},
+            {"id": "e2", "tags": None},
+            {"id": "e3"},
+        ]
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
+        assert entry["tags"] == []
+
+    def test_evidence_none_treated_as_empty(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """Entries with evidence=None produce empty evidence list."""
+        cluster = [
+            {"id": "e1", "evidence": None},
+            {"id": "e2"},
+        ]
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
+        assert list(entry["evidence"]) == []  # type: ignore[arg-type]
+
+    def test_single_entry_cluster_aggregation(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """Single-entry cluster uses that entry's values directly."""
+        cluster = [
+            {
+                "id": "only",
+                "impact": 0.9,
+                "tags": ["solo"],
+                "evidence": ["proof"],
+                "recurrence": 5,
+                "q_value": 0.7,
+            }
+        ]
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        entry = _create_consolidated_entry(cluster, "summary", "detail", entries_dir, writer)
+        assert entry["impact"] == pytest.approx(0.9)
+        assert entry["tags"] == ["solo"]
+        assert list(entry["evidence"]) == ["proof"]  # type: ignore[arg-type]
+        assert entry["recurrence"] == 5
+        assert entry["q_value"] == pytest.approx(0.7)
+
+    def test_date_fields_set_to_today(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """created, updated, last_accessed_at are set to today's date."""
+        from datetime import date
+
+        cluster = make_cluster(2)
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
+        today = date.today().isoformat()
+        assert entry["created"] == today
+        assert entry["updated"] == today
+        assert entry["last_accessed_at"] == today
+
+    def test_string_impact_values_parsed_correctly(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """Impact values stored as strings are parsed to floats for max()."""
+        cluster = [
+            {"id": "e1", "impact": "0.3"},
+            {"id": "e2", "impact": "0.9"},
+        ]
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
+        assert float(str(entry["impact"])) == pytest.approx(0.9)
+
+
+# ---------------------------------------------------------------------------
+# Additional edge cases for _summarize_cluster_llm
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeClusterLlmEdgeCases:
+    """Edge cases for _summarize_cluster_llm length checking and retry logic."""
+
+    def _make_llm(self, responses: list[str | None]) -> MagicMock:
+        llm = MagicMock()
+        llm.ask_sync.side_effect = responses
+        return llm
+
+    def test_summary_exactly_equals_total_input_triggers_retry(self) -> None:
+        """Summary with length == total_input_len triggers retry (not strictly less)."""
+        cluster = [
+            {"id": "e1", "summary": "abc", "detail": "d"},  # total_input_len = 3
+        ]
+        # First: summary len 3 == total 3 (not < total), so retry
+        first_json = '{"summary": "xyz", "detail": "d"}'
+        retry_json = '{"summary": "ok", "detail": "d"}'
+        llm = self._make_llm([first_json, retry_json])
+
+        result = _summarize_cluster_llm(cluster, llm)
+        assert result is not None
+        assert llm.ask_sync.call_count == 2
+
+    def test_summary_one_char_shorter_accepted_without_retry(self) -> None:
+        """Summary with length < total_input_len is accepted on first try."""
+        cluster = [
+            {"id": "e1", "summary": "abcd", "detail": "d"},  # total_input_len = 4
+        ]
+        # summary "abc" has len 3 < 4 -> accepted
+        json_resp = '{"summary": "abc", "detail": "detail"}'
+        llm = self._make_llm([json_resp])
+
+        result = _summarize_cluster_llm(cluster, llm)
+        assert result is not None
+        assert result["summary"] == "abc"
+        assert llm.ask_sync.call_count == 1
+
+    def test_default_llm_instantiated_when_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When llm=None, LLMClient(model='haiku') is instantiated."""
+        mock_client = MagicMock()
+        mock_client.ask_sync.return_value = '{"summary": "s", "detail": "d"}'
+
+        monkeypatch.setattr(
+            "trw_mcp.state.consolidation.LLMClient",
+            lambda model: mock_client,
+        )
+
+        cluster = make_cluster(2)
+        result = _summarize_cluster_llm(cluster, llm=None)
+        assert result is not None
+        mock_client.ask_sync.assert_called_once()
+
+    def test_retry_max_chars_at_least_50(self) -> None:
+        """Retry prompt max_chars is at least 50, even for very short inputs."""
+        cluster = [
+            {"id": "e1", "summary": "a", "detail": "d"},  # total_input_len = 1
+        ]
+        # summary "12" has len 2 >= 1, triggers retry
+        first_json = '{"summary": "12", "detail": "d"}'
+        retry_json = '{"summary": "ok", "detail": "d"}'
+        llm = self._make_llm([first_json, retry_json])
+
+        _summarize_cluster_llm(cluster, llm)
+
+        retry_prompt = llm.ask_sync.call_args_list[1][0][0]
+        # max_chars = max(50, 1 // 2) = 50
+        assert "50" in retry_prompt
+
+
+# ---------------------------------------------------------------------------
+# Additional edge cases for _archive_originals
+# ---------------------------------------------------------------------------
+
+
+class TestArchiveOriginalsEdgeCases:
+    """Edge cases for _archive_originals."""
+
+    def test_multiple_entries_some_missing_files(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """Entries with missing files are skipped; others are still archived."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        write_entry(entries_dir, writer, "exists1")
+        # "missing1" has no file on disk
+        write_entry(entries_dir, writer, "exists2")
+
+        cluster = [
+            {"id": "exists1", "summary": "s1"},
+            {"id": "missing1", "summary": "s2"},
+            {"id": "exists2", "summary": "s3"},
+        ]
+
+        _archive_originals(cluster, "L-cons", entries_dir, reader, writer)
+
+        # exists1 and exists2 should be archived
+        d1 = reader.read_yaml(entries_dir / "exists1.yaml")
+        assert d1["consolidated_into"] == "L-cons"
+        d2 = reader.read_yaml(entries_dir / "exists2.yaml")
+        assert d2["consolidated_into"] == "L-cons"
+
+    def test_entry_id_with_slash_slugified(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """Entry IDs with slashes are slugified (slash -> dash) for file lookup."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        # ID "a/b" slugifies to "a-b"
+        entry_path = entries_dir / "a-b.yaml"
+        writer.write_yaml(entry_path, {"id": "a/b", "summary": "test", "status": "active"})
+
+        cluster = [{"id": "a/b", "summary": "test"}]
+        _archive_originals(cluster, "L-cons", entries_dir, reader, writer)
+
+        data = reader.read_yaml(entry_path)
+        assert data["consolidated_into"] == "L-cons"
+
+    def test_tier_manager_without_cold_archive_method_falls_back(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """TierManager without cold_archive attr falls back to status='archived'."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        write_entry(entries_dir, writer, "e001")
+
+        cluster = [{"id": "e001", "summary": "s1"}]
+        tier_manager = MagicMock(spec=[])  # empty spec -> no cold_archive attr
+
+        _archive_originals(cluster, "L-cons", entries_dir, reader, writer, tier_manager=tier_manager)
+
+        data = reader.read_yaml(entries_dir / "e001.yaml")
+        assert data["status"] == "archived"
+        assert data["consolidated_into"] == "L-cons"
+
+
+# ---------------------------------------------------------------------------
+# Additional edge cases for _rollback_archive
+# ---------------------------------------------------------------------------
+
+
+class TestRollbackArchiveEdgeCases:
+    """Edge cases for _rollback_archive slug derivation and error handling."""
+
+    def test_consolidated_id_with_slash_slugified_for_deletion(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """consolidated_id with '/' chars is slugified when deriving file path."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        # Create file with slugified name
+        cons_path = entries_dir / "L-a-b.yaml"
+        writer.write_yaml(cons_path, {"id": "L-a/b"})
+
+        _rollback_archive([], "L-a/b", entries_dir, writer)
+
+        assert not cons_path.exists()
+
+    def test_rollback_multiple_entries_all_restored(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """All processed entries in the list are restored to originals."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+
+        paths_and_originals = []
+        for i in range(3):
+            path = entries_dir / f"e{i:03d}.yaml"
+            original: dict[str, object] = {"id": f"e{i:03d}", "summary": f"orig{i}"}
+            writer.write_yaml(path, {"id": f"e{i:03d}", "summary": f"orig{i}", "consolidated_into": "L-c"})
+            paths_and_originals.append((path, original))
+
+        _rollback_archive(paths_and_originals, "L-c", entries_dir, writer)
+
+        for path, original in paths_and_originals:
+            restored = reader.read_yaml(path)
+            assert "consolidated_into" not in restored
+            assert restored["summary"] == original["summary"]
+
+
+# ---------------------------------------------------------------------------
+# Additional edge cases for _summarize_cluster_fallback
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeClusterFallbackEdgeCases:
+    """Edge cases for _summarize_cluster_fallback selection logic."""
+
+    def test_tiebreaker_selects_first_max_length_entry(self) -> None:
+        """When multiple entries tie on length, max() selects the first."""
+        cluster = [
+            {"id": "e1", "summary": "12345", "detail": ""},
+            {"id": "e2", "summary": "abcde", "detail": ""},  # same length
+        ]
+        result = _summarize_cluster_fallback(cluster)
+        # Python's max() returns the first maximal element
+        assert result["summary"] == "12345"
+
+    def test_detail_contributes_to_length_selection(self) -> None:
+        """Entry with shorter summary but longer detail wins by total length."""
+        cluster = [
+            {"id": "e1", "summary": "short", "detail": "x"},              # len = 6
+            {"id": "e2", "summary": "s", "detail": "very long detail here"},  # len = 22
+        ]
+        result = _summarize_cluster_fallback(cluster)
+        assert result["summary"] == "s"
+        assert result["detail"] == "very long detail here"
+
+    def test_all_entries_empty_returns_empty_strings(self) -> None:
+        """Cluster where all entries have empty summary and detail returns empty."""
+        cluster = [{"id": "e1"}, {"id": "e2"}, {"id": "e3"}]
+        result = _summarize_cluster_fallback(cluster)
+        assert result["summary"] == ""
+        assert result["detail"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Additional edge cases for _mean_pairwise_similarity
+# ---------------------------------------------------------------------------
+
+
+class TestMeanPairwiseSimilarityEdgeCases:
+    """Edge cases for _mean_pairwise_similarity computation."""
+
+    def test_three_entries_computes_three_pairs(self) -> None:
+        """Three entries produce 3 pairwise comparisons."""
+        cluster = [
+            {"id": "e1", "summary": "a", "detail": ""},
+            {"id": "e2", "summary": "b", "detail": ""},
+            {"id": "e3", "summary": "c", "detail": ""},
+        ]
+        # 3 identical vectors -> all pairs have sim=1.0 -> mean=1.0
+        vecs = [make_vec(1.0, 0.0, 0.0)] * 3
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+            result = _mean_pairwise_similarity(cluster)
+        assert result == pytest.approx(1.0)
+
+    def test_one_none_vector_with_three_entries_uses_two_valid(self) -> None:
+        """One None among three entries: only the 2 valid vectors form 1 pair."""
+        cluster = [
+            {"id": "e1", "summary": "a", "detail": ""},
+            {"id": "e2", "summary": "b", "detail": ""},
+            {"id": "e3", "summary": "c", "detail": ""},
+        ]
+        vecs: list[list[float] | None] = [
+            make_vec(1.0, 0.0, 0.0),
+            None,
+            make_vec(0.0, 1.0, 0.0),
+        ]
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+            result = _mean_pairwise_similarity(cluster)
+        # cos([1,0,0], [0,1,0]) = 0.0
+        assert result == pytest.approx(0.0, abs=1e-9)
+
+    def test_mixed_similarity_returns_mean(self) -> None:
+        """Mean of mixed pair similarities is computed correctly."""
+        cluster = [
+            {"id": "e1", "summary": "a", "detail": ""},
+            {"id": "e2", "summary": "b", "detail": ""},
+            {"id": "e3", "summary": "c", "detail": ""},
+        ]
+        # e1=[1,0,0], e2=[1,0,0], e3=[0,1,0]
+        # pairs: (e1,e2)=1.0, (e1,e3)=0.0, (e2,e3)=0.0
+        # mean = 1.0/3 ~= 0.333
+        vecs = [
+            make_vec(1.0, 0.0, 0.0),
+            make_vec(1.0, 0.0, 0.0),
+            make_vec(0.0, 1.0, 0.0),
+        ]
+        with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
+            result = _mean_pairwise_similarity(cluster)
+        assert result == pytest.approx(1.0 / 3.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Additional edge cases for consolidate_cycle
+# ---------------------------------------------------------------------------
+
+
+class TestConsolidateCycleEdgeCases:
+    """Edge cases for consolidate_cycle orchestration."""
+
+    def test_uses_get_config_when_config_is_none(
+        self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When config=None, consolidate_cycle calls get_config() for defaults."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        cfg = TRWConfig(memory_consolidation_min_cluster=3)
+        monkeypatch.setattr("trw_mcp.state.consolidation.get_config", lambda: cfg)
+
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
+            result = consolidate_cycle(trw_dir, config=None)
+
+        assert result["status"] == "no_clusters"
+
+    def test_multiple_clusters_all_consolidated(
+        self, tmp_path: Path, writer: FileStateWriter, reader: FileStateReader
+    ) -> None:
+        """When find_clusters returns multiple clusters, all are processed."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        # Write 6 entries in 2 groups
+        for i in range(6):
+            write_entry(entries_dir, writer, f"e{i:03d}", summary=f"s{i}")
+
+        # Create two clusters manually
+        cluster1 = [
+            {"id": "e000", "summary": "s0", "detail": "d0"},
+            {"id": "e001", "summary": "s1", "detail": "d1"},
+            {"id": "e002", "summary": "s2", "detail": "d2"},
+        ]
+        cluster2 = [
+            {"id": "e003", "summary": "s3", "detail": "d3"},
+            {"id": "e004", "summary": "s4", "detail": "d4"},
+            {"id": "e005", "summary": "s5", "detail": "d5"},
+        ]
+
+        cfg = TRWConfig(memory_consolidation_min_cluster=3)
+
+        llm = MagicMock()
+        llm.available = True
+        llm.ask_sync.return_value = '{"summary": "s", "detail": "d"}'
+
+        with patch("trw_mcp.state.consolidation.find_clusters", return_value=[cluster1, cluster2]):
+            with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                result = consolidate_cycle(trw_dir, config=cfg)
+
+        assert result["status"] == "completed"
+        assert result["clusters_found"] == 2
+        assert result["consolidated_count"] == 2
+
+    def test_errors_list_populated_on_cluster_failure(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """When a cluster fails to process, its error is appended to errors list."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        bad_cluster: list[dict[str, object]] = [
+            {"id": "bad1", "summary": "s1"},
+            {"id": "bad2", "summary": "s2"},
+            {"id": "bad3", "summary": "s3"},
+        ]
+
+        cfg = TRWConfig(memory_consolidation_min_cluster=3)
+
+        # _summarize_cluster_llm returns None -> triggers fallback -> fallback raises
+        with patch("trw_mcp.state.consolidation.find_clusters", return_value=[bad_cluster]):
+            with patch("trw_mcp.state.consolidation.LLMClient", side_effect=RuntimeError("no llm")):
+                with patch(
+                    "trw_mcp.state.consolidation._summarize_cluster_llm",
+                    return_value=None,
+                ):
+                    with patch(
+                        "trw_mcp.state.consolidation._summarize_cluster_fallback",
+                        side_effect=ValueError("boom"),
+                    ):
+                        result = consolidate_cycle(trw_dir, config=cfg)
+
+        assert result["consolidated_count"] == 0
+        assert "errors" in result
+        errors = list(result["errors"])  # type: ignore[arg-type]
+        assert len(errors) == 1
+        assert "boom" in errors[0]
+
+    def test_dry_run_with_no_clusters_returns_empty_clusters_list(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """Dry run when no clusters found returns empty clusters list."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+
+        cfg = TRWConfig(memory_consolidation_min_cluster=3)
+
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
+            result = consolidate_cycle(trw_dir, dry_run=True, config=cfg)
+
+        assert result["dry_run"] is True
+        assert list(result["clusters"]) == []  # type: ignore[arg-type]
+        assert result["consolidated_count"] == 0

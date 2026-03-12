@@ -65,6 +65,11 @@ _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers --
 
 _MANIFEST_FILE = "managed-artifacts.yaml"
 
+
+def _coerce_manifest_list(value: object) -> list[str]:
+    """Coerce a manifest field to ``list[str]``, returning ``[]`` for non-lists."""
+    return [str(item) for item in value] if isinstance(value, list) else []
+
 # PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
 # Used by _migrate_prefix_predecessors() to remove stale predecessors during
 # update-project when the trw- prefixed successor is already installed.
@@ -511,19 +516,12 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
         data = reader.read_yaml(manifest_path)
         if not isinstance(data, dict):
             return None
-        skills_raw = data.get("skills", [])
-        agents_raw = data.get("agents", [])
-        hooks_raw = data.get("hooks", [])
-        custom_skills_raw = data.get("custom_skills", [])
-        custom_agents_raw = data.get("custom_agents", [])
-        custom_hooks_raw = data.get("custom_hooks", [])
         return {
-            "skills": [str(s) for s in skills_raw] if isinstance(skills_raw, list) else [],
-            "agents": [str(a) for a in agents_raw] if isinstance(agents_raw, list) else [],
-            "hooks": [str(h) for h in hooks_raw] if isinstance(hooks_raw, list) else [],
-            "custom_skills": [str(s) for s in custom_skills_raw] if isinstance(custom_skills_raw, list) else [],
-            "custom_agents": [str(a) for a in custom_agents_raw] if isinstance(custom_agents_raw, list) else [],
-            "custom_hooks": [str(h) for h in custom_hooks_raw] if isinstance(custom_hooks_raw, list) else [],
+            key: _coerce_manifest_list(data.get(key, []))
+            for key in (
+                "skills", "agents", "hooks",
+                "custom_skills", "custom_agents", "custom_hooks",
+            )
         }
     except OSError:
         return None
@@ -572,6 +570,47 @@ def _write_manifest(
 # ---------------------------------------------------------------------------
 
 
+def _migrate_predecessor_set(
+    parent_dir: Path,
+    name_map: dict[str, str],
+    result: dict[str, list[str]],
+    *,
+    is_dir_artifact: bool,
+    log_event: str,
+    dry_run: bool,
+) -> None:
+    """Remove predecessor artifacts when their ``trw-`` successor is installed.
+
+    Args:
+        parent_dir: Directory containing both predecessor and successor artifacts.
+        name_map: Mapping of old (predecessor) name to new (successor) name.
+        result: Mutable result dict.
+        is_dir_artifact: ``True`` for directory artifacts (skills), ``False`` for files (agents).
+        log_event: structlog event name on removal failure.
+        dry_run: When ``True``, only report without deleting.
+    """
+    for old_name, new_name in name_map.items():
+        predecessor = parent_dir / old_name
+        successor = parent_dir / new_name
+        if is_dir_artifact:
+            if not predecessor.is_dir() or not successor.is_dir():
+                continue
+        else:
+            if not predecessor.is_file() or not successor.is_file():
+                continue
+        if dry_run:
+            result["updated"].append(f"would migrate:{predecessor}")
+            continue
+        try:
+            if is_dir_artifact:
+                shutil.rmtree(predecessor)
+            else:
+                predecessor.unlink()
+            result["updated"].append(f"migrated:{predecessor}")
+        except OSError:
+            logger.debug(log_event, path=str(predecessor), exc_info=True)
+
+
 def _migrate_prefix_predecessors(
     target_dir: Path,
     result: dict[str, list[str]],
@@ -591,37 +630,60 @@ def _migrate_prefix_predecessors(
     skills_dir = target_dir / ".claude" / "skills"
     agents_dir = target_dir / ".claude" / "agents"
 
-    for old_name, new_name in PREDECESSOR_MAP["skills"].items():
-        predecessor = skills_dir / old_name
-        successor = skills_dir / new_name
-        if not predecessor.is_dir():
-            continue
-        if not successor.is_dir():
-            continue  # successor absent -- keep old version
-        if dry_run:
-            result["updated"].append(f"would migrate:{predecessor}")
-            continue
-        try:
-            shutil.rmtree(predecessor)
-            result["updated"].append(f"migrated:{predecessor}")
-        except OSError:
-            pass
+    _migrate_predecessor_set(
+        skills_dir, PREDECESSOR_MAP["skills"], result,
+        is_dir_artifact=True, log_event="predecessor_skill_removal_failed", dry_run=dry_run,
+    )
+    _migrate_predecessor_set(
+        agents_dir, PREDECESSOR_MAP["agents"], result,
+        is_dir_artifact=False, log_event="predecessor_agent_removal_failed", dry_run=dry_run,
+    )
 
-    for old_name, new_name in PREDECESSOR_MAP["agents"].items():
-        predecessor = agents_dir / old_name
-        successor = agents_dir / new_name
-        if not predecessor.is_file():
+
+def _remove_stale_set(
+    stale_names: set[str],
+    target_dir: Path,
+    prev_custom: set[str],
+    result: dict[str, list[str]],
+    *,
+    is_dir_artifact: bool,
+    log_event: str,
+    require_prefix: bool = True,
+) -> None:
+    """Remove a set of stale artifacts from *target_dir*.
+
+    Skips names that are in *prev_custom* (user-created).  When
+    *require_prefix* is ``True`` (the default), also skips names that do
+    not start with ``trw-`` (defense-in-depth for skills and agents).
+
+    Args:
+        stale_names: Artifact names to consider for removal.
+        target_dir: Directory containing the artifacts.
+        prev_custom: Names from the previous manifest's custom list.
+        result: Mutable result dict.
+        is_dir_artifact: ``True`` to use ``shutil.rmtree``, ``False`` to use ``unlink``.
+        log_event: structlog event name on removal failure.
+        require_prefix: When ``True``, only remove names starting with ``trw-``.
+    """
+    if not target_dir.is_dir():
+        return
+    for name in stale_names:
+        if name in prev_custom:
             continue
-        if not successor.is_file():
-            continue  # successor absent -- keep old version
-        if dry_run:
-            result["updated"].append(f"would migrate:{predecessor}")
+        if require_prefix and not name.startswith("trw-"):
+            continue
+        stale = target_dir / name
+        exists = stale.is_dir() if is_dir_artifact else stale.is_file()
+        if not exists:
             continue
         try:
-            predecessor.unlink()
-            result["updated"].append(f"migrated:{predecessor}")
+            if is_dir_artifact:
+                shutil.rmtree(stale)
+            else:
+                stale.unlink()
+            result["updated"].append(f"removed:{stale}")
         except OSError:
-            pass
+            logger.debug(log_event, path=str(stale), exc_info=True)
 
 
 def _remove_stale_artifacts(
@@ -657,56 +719,33 @@ def _remove_stale_artifacts(
     prev_custom_agents = set(prev_manifest.get("custom_agents", []))
     prev_custom_hooks = set(prev_manifest.get("custom_hooks", []))
 
-    # Stale skills: previously managed but no longer in current bundle
-    # Defense-in-depth: only remove trw-prefixed skills to protect custom artifacts
-    stale_skills = prev_skills - bundled_skills
-    target_skills = target_dir / ".claude" / "skills"
-    if target_skills.is_dir():
-        for skill_name in stale_skills:
-            if skill_name in prev_custom_skills:
-                continue
-            if not skill_name.startswith("trw-"):
-                continue
-            stale = target_skills / skill_name
-            if stale.is_dir():
-                try:
-                    shutil.rmtree(stale)
-                    result["updated"].append(f"removed:{stale}")
-                except OSError:
-                    pass
-
-    # Stale agents: previously managed but no longer in current bundle
-    # Defense-in-depth: only remove trw-prefixed agents to protect custom artifacts
-    stale_agents = prev_agents - bundled_agents
-    target_agents = target_dir / ".claude" / "agents"
-    if target_agents.is_dir():
-        for agent_name in stale_agents:
-            if agent_name in prev_custom_agents:
-                continue
-            if not agent_name.startswith("trw-"):
-                continue
-            stale = target_agents / agent_name
-            if stale.is_file():
-                try:
-                    stale.unlink()
-                    result["updated"].append(f"removed:{stale}")
-                except OSError:
-                    pass
-
-    # Stale hooks: previously managed but no longer in current bundle
-    stale_hooks = prev_hooks - bundled_hooks
-    target_hooks = target_dir / ".claude" / "hooks"
-    if target_hooks.is_dir():
-        for hook_name in stale_hooks:
-            if hook_name in prev_custom_hooks:
-                continue
-            stale = target_hooks / hook_name
-            if stale.is_file():
-                try:
-                    stale.unlink()
-                    result["updated"].append(f"removed:{stale}")
-                except OSError:
-                    pass
+    # Remove stale artifacts per category
+    # Defense-in-depth: only remove trw-prefixed items to protect custom artifacts
+    _remove_stale_set(
+        stale_names=prev_skills - bundled_skills,
+        target_dir=target_dir / ".claude" / "skills",
+        prev_custom=prev_custom_skills,
+        result=result,
+        is_dir_artifact=True,
+        log_event="stale_skill_removal_failed",
+    )
+    _remove_stale_set(
+        stale_names=prev_agents - bundled_agents,
+        target_dir=target_dir / ".claude" / "agents",
+        prev_custom=prev_custom_agents,
+        result=result,
+        is_dir_artifact=False,
+        log_event="stale_agent_removal_failed",
+    )
+    _remove_stale_set(
+        stale_names=prev_hooks - bundled_hooks,
+        target_dir=target_dir / ".claude" / "hooks",
+        prev_custom=prev_custom_hooks,
+        result=result,
+        is_dir_artifact=False,
+        log_event="stale_hook_removal_failed",
+        require_prefix=False,
+    )
 
     # Write updated manifest
     _write_manifest(target_dir, result, data_dir)
@@ -794,7 +833,7 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
         result["updated"].append(
             f"CLAUDE.md synced (learnings promoted: {sync_result.get('learnings_promoted', 0)})"
         )
-    except Exception as exc:
+    except Exception as exc:  # justified: fail-open, CLAUDE.md sync is best-effort
         result["warnings"].append(f"CLAUDE.md sync skipped: {exc}")
     finally:
         os.chdir(original_cwd)
@@ -802,8 +841,8 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
         try:
             from trw_mcp.models.config import _reset_config
             _reset_config()
-        except Exception:
-            pass
+        except Exception:  # justified: cleanup, config reset is best-effort during finally
+            logger.debug("config_reset_failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

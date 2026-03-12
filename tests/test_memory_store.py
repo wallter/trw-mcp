@@ -335,7 +335,7 @@ class TestMigrate:
             "status": "active",
         })
         try:
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=False):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
                 result = store.migrate(entries_dir, FileStateReader())
             assert result == {"migrated": 0, "skipped": 0, "total": 0}
         finally:
@@ -349,8 +349,8 @@ class TestMigrate:
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         try:
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-                with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[]):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[]):
                     result = store.migrate(entries_dir, FileStateReader())
             assert result == {"migrated": 0, "skipped": 0, "total": 0}
         finally:
@@ -378,8 +378,8 @@ class TestMigrate:
         })
         try:
             fake_embeds = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-                with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=fake_embeds):
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=fake_embeds):
                     result = store.migrate(entries_dir, FileStateReader())
             assert result["migrated"] == 2
             assert result["skipped"] == 0
@@ -403,8 +403,8 @@ class TestMigrate:
             "status": "resolved",
         })
         try:
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-                with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[]) as mock_batch:
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[]) as mock_batch:
                     result = store.migrate(entries_dir, FileStateReader())
             assert result == {"migrated": 0, "skipped": 0, "total": 0}
             mock_batch.assert_not_called()  # No entries to embed
@@ -426,9 +426,9 @@ class TestMigrate:
             "status": "active",
         })
         try:
-            # embed_batch returns [None] → 1 skipped, 0 migrated
-            with patch("trw_mcp.telemetry.embeddings.embedding_available", return_value=True):
-                with patch("trw_mcp.telemetry.embeddings.embed_batch", return_value=[None]):
+            # embed_text_batch returns [None] → 1 skipped, 0 migrated
+            with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
+                with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[None]):
                     result = store.migrate(entries_dir, FileStateReader())
             assert result["migrated"] == 0
             assert result["skipped"] == 1

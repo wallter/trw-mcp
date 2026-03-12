@@ -144,7 +144,7 @@ class TestCeremonyScoreBoolCompat:
 
     def test_bool_true_tests_passed(self) -> None:
         """Bool True in event data should set build_passed=True."""
-        from trw_mcp.state.analytics_report import compute_ceremony_score
+        from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
             {"event": "build_check_complete", "tests_passed": True},
@@ -154,7 +154,7 @@ class TestCeremonyScoreBoolCompat:
 
     def test_string_true_tests_passed(self) -> None:
         """String 'True' in event data should set build_passed=True."""
-        from trw_mcp.state.analytics_report import compute_ceremony_score
+        from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
             {"event": "build_check_complete", "tests_passed": "True"},
@@ -164,7 +164,7 @@ class TestCeremonyScoreBoolCompat:
 
     def test_bool_false_tests_passed(self) -> None:
         """Bool False in event data should set build_passed=False."""
-        from trw_mcp.state.analytics_report import compute_ceremony_score
+        from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
             {"event": "build_check_complete", "tests_passed": False},
@@ -174,7 +174,7 @@ class TestCeremonyScoreBoolCompat:
 
     def test_string_false_tests_passed(self) -> None:
         """String 'False' in event data should set build_passed=False."""
-        from trw_mcp.state.analytics_report import compute_ceremony_score
+        from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
             {"event": "build_check_complete", "tests_passed": "False"},
@@ -184,7 +184,7 @@ class TestCeremonyScoreBoolCompat:
 
     def test_tool_invocation_without_tests_passed_preserves_none(self) -> None:
         """tool_invocation event lacking tests_passed should not set build_passed."""
-        from trw_mcp.state.analytics_report import compute_ceremony_score
+        from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
             {"event": "tool_invocation", "tool_name": "trw_build_check"},
@@ -195,7 +195,7 @@ class TestCeremonyScoreBoolCompat:
 
     def test_tool_invocation_then_build_complete_uses_build_complete(self) -> None:
         """build_check_complete after tool_invocation should use the complete event."""
-        from trw_mcp.state.analytics_report import compute_ceremony_score
+        from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
             {"event": "tool_invocation", "tool_name": "trw_build_check"},

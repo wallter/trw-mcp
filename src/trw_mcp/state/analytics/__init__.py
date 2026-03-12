@@ -1,22 +1,22 @@
 """Learning analytics — re-export facade.
 
-This module re-exports all public names from the four analytics sub-modules
+This package re-exports all public names from the four analytics sub-modules
 so that existing ``from trw_mcp.state.analytics import X`` imports continue
 to work without modification.
 
 Sub-modules:
-- analytics_core: singletons, constants, shared helpers
-- analytics_entries: entry persistence, index management, status, extraction
-- analytics_counters: analytics.yaml counter updates, event pattern detection
-- analytics_dedup: deduplication, pruning, reflection quality scoring
+- analytics.core: singletons, constants, shared helpers
+- analytics.entries: entry persistence, index management, status, extraction
+- analytics.counters: analytics.yaml counter updates, event pattern detection
+- analytics.dedup: deduplication, pruning, reflection quality scoring
 """
 
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Module A — analytics_core (singletons, constants, shared helpers)
+# Module A — core (singletons, constants, shared helpers)
 # ---------------------------------------------------------------------------
-from trw_mcp.state.analytics_core import (
+from trw_mcp.state.analytics.core import (
     _entries_path as _entries_path,
     _ERROR_KEYWORDS as _ERROR_KEYWORDS,
     _get_event_type as _get_event_type,
@@ -35,11 +35,11 @@ from trw_mcp.state.analytics_core import (
 )
 
 # ---------------------------------------------------------------------------
-# Module B — analytics_entries (persistence, index, status, extraction)
+# Module B — entries (persistence, index, status, extraction)
 # ---------------------------------------------------------------------------
 from trw_mcp.tools._learning_helpers import is_noise_summary as is_noise_summary
 
-from trw_mcp.state.analytics_entries import (
+from trw_mcp.state.analytics.entries import (
     _save_and_record as _save_and_record,
     apply_status_update as apply_status_update,
     backfill_source_attribution as backfill_source_attribution,
@@ -55,9 +55,9 @@ from trw_mcp.state.analytics_entries import (
 )
 
 # ---------------------------------------------------------------------------
-# Module C — analytics_counters (counter updates, event patterns)
+# Module C — counters (counter updates, event patterns)
 # ---------------------------------------------------------------------------
-from trw_mcp.state.analytics_counters import (
+from trw_mcp.state.analytics.counters import (
     _read_analytics as _read_analytics,
     _update_core_counters as _update_core_counters,
     detect_tool_sequences as detect_tool_sequences,
@@ -69,9 +69,9 @@ from trw_mcp.state.analytics_counters import (
 )
 
 # ---------------------------------------------------------------------------
-# Module D — analytics_dedup (dedup, pruning, reflection quality)
+# Module D — dedup (dedup, pruning, reflection quality)
 # ---------------------------------------------------------------------------
-from trw_mcp.state.analytics_dedup import (
+from trw_mcp.state.analytics.dedup import (
     _compute_removal_scores as _compute_removal_scores,
     _compute_removal_scores_from_sqlite as _compute_removal_scores_from_sqlite,
     _score_impact_distribution as _score_impact_distribution,
@@ -85,21 +85,16 @@ from trw_mcp.state.analytics_dedup import (
 )
 
 # ---------------------------------------------------------------------------
-# __all__ — complete public API
+# __all__ — public API (FR04: private names removed from __all__)
 # ---------------------------------------------------------------------------
 __all__ = [
-    # analytics_core
+    # core
     "infer_topic_tags",
-    "_entries_path",
-    "_iter_entry_files",
-    "_get_event_type",
     "is_error_event",
     "is_success_event",
     "find_entry_by_id",
     "generate_learning_id",
-    "_safe_float",
-    "_safe_int",
-    # analytics_entries
+    # entries
     "surface_validated_learnings",
     "has_existing_success_learning",
     "has_existing_mechanical_learning",
@@ -108,28 +103,19 @@ __all__ = [
     "resync_learning_index",
     "mark_promoted",
     "apply_status_update",
-    "_save_and_record",
     "extract_learnings_mechanical",
     "extract_learnings_from_llm",
     "backfill_source_attribution",
-    # analytics_counters
+    # counters
     "find_repeated_operations",
     "find_success_patterns",
     "detect_tool_sequences",
-    "_read_analytics",
-    "_update_core_counters",
     "update_analytics",
     "update_analytics_sync",
     "update_analytics_extended",
-    # analytics_dedup
+    # dedup
     "compute_jaccard_similarity",
     "find_duplicate_learnings",
-    "_compute_removal_scores",
-    "_compute_removal_scores_from_sqlite",
-    "_select_removal_candidates",
     "auto_prune_excess_entries",
-    "_score_learning_diversity",
-    "_score_learning_depth",
-    "_score_impact_distribution",
     "compute_reflection_quality",
 ]

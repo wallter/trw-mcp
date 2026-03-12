@@ -132,7 +132,7 @@ def compute_impact_distribution(
     for yaml_file in entries_dir.glob("*.yaml"):
         try:
             data = reader.read_yaml(yaml_file)
-        except Exception:
+        except Exception:  # justified: fail-open, skip unreadable YAML entries
             continue
         if str(data.get("status", "active")) != "active":
             continue

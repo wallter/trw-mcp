@@ -125,19 +125,21 @@ class LLMClient:
                     input_tokens = int(response.usage.input_tokens)
                     output_tokens = int(response.usage.output_tokens)
                 except (TypeError, ValueError):
-                    pass
+                    logger.debug("usage_token_parse_failed", exc_info=True)
             self._append_usage_record(resolved_model, input_tokens, output_tokens, latency_ms, success=True)
 
             if response.content:
                 return str(response.content[0].text) if hasattr(response.content[0], "text") else None
             return None
 
-        except Exception:
+        except Exception:  # justified: boundary, external Anthropic API can raise arbitrary errors
             latency_ms = (time.monotonic() - start) * 1000
             self._append_usage_record(resolved_model, 0, 0, latency_ms, success=False)
+            from trw_mcp.telemetry.anonymizer import strip_pii
+
             logger.warning(
                 "llm_call_failed",
-                prompt_preview=prompt[:80],
+                prompt_preview=strip_pii(prompt[:80]),
                 exc_info=True,
             )
             return None
@@ -167,7 +169,7 @@ class LLMClient:
                 "success": success,
             }
             FileStateWriter().append_jsonl(usage_log_path, record)
-        except Exception:
+        except Exception:  # justified: fail-open telemetry, usage logging never blocks LLM calls
             logger.warning("llm_usage_log_failed", exc_info=True)
 
     def ask_sync(

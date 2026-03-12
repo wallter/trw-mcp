@@ -28,8 +28,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_config = get_config()
-
 
 def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
@@ -60,7 +58,8 @@ def register_build_tools(server: FastMCP) -> None:
                 coverage falls below this threshold, tests_passed is set to
                 False and a coverage_threshold_failed flag is added to the result.
         """
-        if not _config.build_check_enabled:
+        config = get_config()
+        if not config.build_check_enabled:
             return {
                 "status": "skipped",
                 "reason": "build_check_enabled is False",
@@ -69,7 +68,7 @@ def register_build_tools(server: FastMCP) -> None:
         trw_dir = resolve_trw_dir()
         project_root = resolve_project_root()
         effective_timeout = min(
-            timeout_secs or _config.build_check_timeout_secs,
+            timeout_secs or config.build_check_timeout_secs,
             600,
         )
 
@@ -83,28 +82,28 @@ def register_build_tools(server: FastMCP) -> None:
         # --- Standalone scopes (no pytest/mypy) ---
 
         if scope == "mutations":
-            if not _config.mutation_enabled:
+            if not config.mutation_enabled:
                 return {"status": "skipped", "reason": "mutation_enabled is False"}
             from trw_mcp.tools.mutations import (
                 cache_mutation_status,
                 run_mutation_check,
             )
 
-            mut_result = run_mutation_check(project_root, _config)
+            mut_result = run_mutation_check(project_root, config)
             cache_mutation_status(trw_dir, mut_result)
             return mut_result
 
         if scope == "deps":
-            if not _config.dep_audit_enabled:
+            if not config.dep_audit_enabled:
                 return {"status": "skipped", "reason": "dep_audit_enabled is False"}
-            dep_result = _run_dep_audit(project_root, _config)
+            dep_result = _run_dep_audit(project_root, config)
             _cache_to_context(trw_dir, _DEP_AUDIT_FILE, dep_result)
             return dep_result
 
         if scope == "api":
-            if not _config.api_fuzz_enabled:
+            if not config.api_fuzz_enabled:
                 return {"status": "skipped", "reason": "api_fuzz_enabled is False"}
-            fuzz_result = _run_api_fuzz(project_root, _config)
+            fuzz_result = _run_api_fuzz(project_root, config)
             _cache_to_context(trw_dir, _API_FUZZ_FILE, fuzz_result)
             return fuzz_result
 
@@ -114,8 +113,8 @@ def register_build_tools(server: FastMCP) -> None:
             project_root,
             scope=scope,
             timeout_secs=effective_timeout,
-            pytest_args=_config.build_check_pytest_args,
-            mypy_args=_config.build_check_mypy_args,
+            pytest_args=config.build_check_pytest_args,
+            mypy_args=config.build_check_mypy_args,
         )
 
         cache_path = cache_build_status(trw_dir, status)
@@ -155,8 +154,8 @@ def register_build_tools(server: FastMCP) -> None:
             from trw_mcp.scoring import process_outcome_for_event
             event_type = "build_passed" if status.tests_passed and status.mypy_clean else "build_failed"
             process_outcome_for_event(event_type)
-        except Exception:
-            pass  # Q-learning is best-effort, never block build check
+        except Exception:  # justified: fail-open, Q-learning is best-effort, never blocks build check
+            logger.debug("q_learning_reward_failed", exc_info=True)
 
         logger.info(
             "build_check_complete",
@@ -190,8 +189,8 @@ def register_build_tools(server: FastMCP) -> None:
             )
 
         # Dep audit on full scope (if enabled)
-        if scope == "full" and _config.dep_audit_enabled:
-            dep_result = _run_dep_audit(project_root, _config)
+        if scope == "full" and config.dep_audit_enabled:
+            dep_result = _run_dep_audit(project_root, config)
             _cache_to_context(trw_dir, _DEP_AUDIT_FILE, dep_result)
             result["dep_audit"] = dep_result
             if not bool(dep_result.get("dep_audit_passed", True)):

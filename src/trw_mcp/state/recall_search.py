@@ -6,175 +6,14 @@ logic from tool orchestration.
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
-
-
-def _matches_filters(
-    data: dict[str, object],
-    *,
-    tags: list[str] | None = None,
-    min_impact: float = 0.0,
-    status: str | None = None,
-) -> bool:
-    """Check whether a learning entry matches tag, impact, and status filters.
-
-    Shared by both the hybrid search path and keyword scan fallback to
-    eliminate duplicated filter logic.
-
-    Args:
-        data: Learning entry dictionary.
-        tags: Optional tag filter — entry must have at least one matching tag.
-        min_impact: Minimum impact score threshold.
-        status: Optional status filter (e.g. 'active').
-
-    Returns:
-        True if the entry passes all filters.
-    """
-    raw_impact = data.get("impact", 0.0)
-    entry_impact = float(str(raw_impact))
-    if entry_impact < min_impact:
-        return False
-    if status is not None:
-        entry_status = str(data.get("status", "active"))
-        if entry_status != status:
-            return False
-    if tags:
-        entry_tags = data.get("tags", [])
-        if not isinstance(entry_tags, list):
-            return False
-        if not any(t in entry_tags for t in tags):
-            return False
-    return True
-
-
-def _resolve_entry_file(entries_dir: Path, entry_id: str) -> Path:
-    """Resolve the file path for a learning entry by ID.
-
-    Checks for an exact filename match first, then falls back to
-    substring matching for dated filenames (e.g. ``2026-01-01-L-abc.yaml``).
-
-    Args:
-        entries_dir: Path to the entries directory.
-        entry_id: Learning entry ID to resolve.
-
-    Returns:
-        Path to the matching YAML file.
-    """
-    # Exact match first
-    exact = entries_dir / f"{entry_id}.yaml"
-    if exact.exists():
-        return exact
-    # Fallback: dated filenames where entry_id is embedded
-    for fname in sorted(entries_dir.glob("*.yaml")):
-        if entry_id in fname.name:
-            return fname
-    return exact
-
-
-def search_entries(
-    entries_dir: Path,
-    query_tokens: list[str],
-    reader: FileStateReader,
-    *,
-    tags: list[str] | None = None,
-    min_impact: float = 0.0,
-    status: str | None = None,
-) -> tuple[list[dict[str, object]], list[Path]]:
-    """Search learning entries matching query, tags, impact, and status filters.
-
-    Uses hybrid search (BM25 + RRF) when query_tokens are provided and the
-    retrieval module is available. Falls back to keyword scan when not.
-
-    Args:
-        entries_dir: Path to the learnings/entries/ directory.
-        query_tokens: Lowercased query tokens (empty list for wildcard).
-        reader: File state reader instance.
-        tags: Optional tag filter — entry must have at least one matching tag.
-        min_impact: Minimum impact score threshold.
-        status: Optional status filter (e.g. 'active').
-
-    Returns:
-        Tuple of (matching_entries, matched_file_paths).
-    """
-    matching: list[dict[str, object]] = []
-    matched_files: list[Path] = []
-
-    if not entries_dir.exists():
-        return matching, matched_files
-
-    # --- Hybrid search path (CORE-041) ---
-    if query_tokens:
-        try:
-            from trw_mcp.models.config import get_config
-            from trw_mcp.state.retrieval import hybrid_search
-
-            config = get_config()
-            query = " ".join(query_tokens)
-            hybrid_results = hybrid_search(query, entries_dir, reader, config=config)
-            if hybrid_results:
-                for data in hybrid_results:
-                    if not _matches_filters(data, tags=tags, min_impact=min_impact, status=status):
-                        continue
-                    matching.append(data)
-                    entry_id = str(data.get("id", ""))
-                    if entry_id:
-                        matched_files.append(_resolve_entry_file(entries_dir, entry_id))
-
-                logger.debug(
-                    "recall_search_hybrid_complete",
-                    query_tokens=query_tokens,
-                    results=len(matching),
-                )
-                return matching, matched_files
-        except Exception:
-            logger.warning(
-                "recall_search_hybrid_failed",
-                exc_info=True,
-                query_tokens=query_tokens,
-            )
-            # Fall through to keyword search
-
-    # --- Keyword scan fallback ---
-    for entry_file in sorted(entries_dir.glob("*.yaml")):
-        try:
-            data = reader.read_yaml(entry_file)
-            if not _matches_filters(data, tags=tags, min_impact=min_impact, status=status):
-                continue
-
-            # Check query match — all tokens must appear in summary, detail, or tags
-            summary = str(data.get("summary", "")).lower()
-            detail = str(data.get("detail", "")).lower()
-            entry_tags = data.get("tags", [])
-            tag_tokens: list[str] = []
-            if isinstance(entry_tags, list):
-                for t in entry_tags:
-                    tag_str = str(t).lower()
-                    tag_tokens.append(tag_str)
-                    if "-" in tag_str:
-                        tag_tokens.extend(tag_str.split("-"))
-            tag_text = " ".join(tag_tokens)
-            text = summary + " " + detail + " " + tag_text
-            if all(token in text for token in query_tokens):
-                matching.append(data)
-                matched_files.append(entry_file)
-        except (StateError, ValueError, TypeError):
-            continue
-
-    logger.debug(
-        "recall_search_complete",
-        query_tokens=query_tokens,
-        results=len(matching),
-        scanned=len(list(entries_dir.glob("*.yaml"))) if entries_dir.exists() else 0,
-    )
-    return matching, matched_files
 
 
 def search_patterns(
@@ -210,40 +49,6 @@ def search_patterns(
             continue
 
     return matching
-
-
-def update_access_tracking(
-    matched_files: list[Path],
-    reader: FileStateReader,
-    writer: FileStateWriter,
-) -> list[str]:
-    """Increment access count and last_accessed_at for matched entries.
-
-    Args:
-        matched_files: Paths to matched learning entry YAML files.
-        reader: File state reader instance.
-        writer: File state writer instance.
-
-    Returns:
-        List of learning IDs that were successfully tracked.
-    """
-    matched_ids: list[str] = []
-    today_iso = date.today().isoformat()
-
-    for entry_file in matched_files:
-        try:
-            data = reader.read_yaml(entry_file)
-            prev_count = int(str(data.get("access_count", 0)))
-            data["access_count"] = prev_count + 1
-            data["last_accessed_at"] = today_iso
-            writer.write_yaml(entry_file, data)
-            entry_id = str(data.get("id", ""))
-            if entry_id:
-                matched_ids.append(entry_id)
-        except (StateError, ValueError, TypeError):
-            continue
-
-    return matched_ids
 
 
 def collect_context(

@@ -162,7 +162,7 @@ def select_learnings_for_task(
             max_results=effective_max * 3,  # Over-fetch for re-ranking
             status="active",
         )
-    except Exception:
+    except Exception:  # justified: fail-open, recall failure degrades to empty injection
         logger.debug(
             "learning_injection_recall_failed",
             task=task_description[:80],
@@ -177,7 +177,7 @@ def select_learnings_for_task(
                 max_results=effective_max * 2,
                 status="active",
             )
-        except Exception:
+        except Exception:  # justified: fail-open, fallback recall failure returns empty list
             logger.debug(
                 "learning_injection_fallback_failed",
                 task=task_description[:80],

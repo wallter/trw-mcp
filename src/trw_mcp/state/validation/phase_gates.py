@@ -21,43 +21,43 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus, ValidationFailure, ValidationResult
 from trw_mcp.models.run import Phase
-from trw_mcp.state.event_helpers import (
+from trw_mcp.state.validation.event_helpers import (
     _REFLECTION_EVENTS,
     _SYNC_EVENTS,
     _events_contain,
     _is_validate_pass,
     _read_events,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _BUILD_STALENESS_SECS as _BUILD_STALENESS_SECS,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_build_check as _best_effort_build_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_integration_check as _best_effort_integration_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_orphan_check as _best_effort_orphan_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _check_build_status as _check_build_status,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_dry_check as _best_effort_dry_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_migration_check as _best_effort_migration_check,
 )
-from trw_mcp.state.phase_gates_build import (
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_semantic_check as _best_effort_semantic_check,
 )
 
 # Re-export from sub-modules for backward compatibility
-from trw_mcp.state.phase_gates_prd import (
+from trw_mcp.state.validation.phase_gates_prd import (
     _STATUS_ORDER as _STATUS_ORDER,
 )
-from trw_mcp.state.phase_gates_prd import (
+from trw_mcp.state.validation.phase_gates_prd import (
     _check_prd_enforcement as _check_prd_enforcement,
 )
 
@@ -319,7 +319,7 @@ def _check_review_exit(
                 )
             )
     except Exception:  # broad catch: best-effort advisory, never blocks
-        pass
+        logger.debug("reflection_quality_check_failed", exc_info=True)
 
     # Spec reconciliation advisory (non-blocking)
     try:
@@ -361,7 +361,7 @@ def _check_review_exit(
                     )
                 )
     except Exception:  # broad catch: best-effort advisory, never blocks
-        pass
+        logger.debug("spec_reconciliation_check_failed", exc_info=True)
 
 
 def _check_deliver_exit(
@@ -387,8 +387,8 @@ def _check_deliver_exit(
                         severity="warning",
                     )
                 )
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, run status check is advisory only
+            logger.debug("run_status_check_failed", exc_info=True)
 
     failures.append(
         ValidationFailure(

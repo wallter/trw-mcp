@@ -22,6 +22,7 @@ from trw_mcp.state.claude_md._promotion import (
 from trw_mcp.state.claude_md._static_sections import (
     render_ceremony_quick_ref,
     render_closing_reminder,
+    render_framework_reference,
     render_imperative_opener,
 )
 from trw_mcp.state.claude_md._templates import (
@@ -88,6 +89,7 @@ def execute_claude_md_sync(
     tpl_context: dict[str, str] = {
         "imperative_opener": render_imperative_opener(),
         "ceremony_quick_ref": render_ceremony_quick_ref(),
+        "framework_reference": render_framework_reference(),
         "closing_reminder": render_closing_reminder(),
         # Suppressed — moved to /trw-ceremony-guide skill
         "behavioral_protocol": "",

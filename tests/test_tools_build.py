@@ -559,7 +559,7 @@ class TestBuildConfigWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR01: Default config → cwd = project_root / 'trw-mcp'."""
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cwd = mock_run.call_args.kwargs["cwd"]
@@ -580,7 +580,7 @@ class TestBuildConfigWiring:
             tests_relative_path="tests",
             source_package_name="myapp",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cwd = mock_run.call_args.kwargs["cwd"]
@@ -597,7 +597,7 @@ class TestBuildConfigWiring:
     ) -> None:
         """FR01: source_package_name='myapp' → --cov=myapp."""
         config = TRWConfig(source_package_name="myapp")
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cmd = mock_run.call_args.args[0]
@@ -613,7 +613,7 @@ class TestBuildConfigWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR01: tests_relative_path='trw-mcp/tests' → stripped to 'tests/' for cwd."""
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cmd = mock_run.call_args.args[0]
@@ -630,7 +630,7 @@ class TestBuildConfigWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02: Default config → mypy cwd = project_root / 'trw-mcp'."""
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         run_build_check(tmp_path, scope="mypy")
         cwd = mock_run.call_args.kwargs["cwd"]
@@ -650,7 +650,7 @@ class TestBuildConfigWiring:
             source_package_path="src",
             source_package_name="myapp",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         run_build_check(tmp_path, scope="mypy")
         cmd = mock_run.call_args.args[0]
@@ -666,7 +666,7 @@ class TestBuildConfigWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02: Default config → src_target='src/trw_mcp/'."""
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", TRWConfig())
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         run_build_check(tmp_path, scope="mypy")
         cmd = mock_run.call_args.args[0]
@@ -679,7 +679,7 @@ class TestBuildConfigWiring:
     ) -> None:
         """FR03: source_package_path='src' → checks project_root/.venv/bin/."""
         config = TRWConfig(source_package_path="src")
-        monkeypatch.setattr("trw_mcp.tools.build._subprocess._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess.get_config", lambda: config)
         monkeypatch.setattr("trw_mcp.tools.build._subprocess.shutil.which", lambda _: None)
 
         venv_bin = tmp_path / ".venv" / "bin"
@@ -695,7 +695,7 @@ class TestBuildConfigWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR03: Default config → checks project_root/trw-mcp/.venv/bin/."""
-        monkeypatch.setattr("trw_mcp.tools.build._subprocess._config", TRWConfig())
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess.get_config", lambda: TRWConfig())
         monkeypatch.setattr("trw_mcp.tools.build._subprocess.shutil.which", lambda _: None)
 
         venv_bin = tmp_path / "trw-mcp" / ".venv" / "bin"
@@ -720,7 +720,7 @@ class TestBuildConfigWiring:
             tests_relative_path="",
             source_package_name="",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         status = run_build_check(tmp_path, scope="pytest")
         assert status.tests_passed is True
@@ -744,7 +744,7 @@ class TestBuildConfigWiring:
             source_package_path="",
             source_package_name="",
         )
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
         mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
         status = run_build_check(tmp_path, scope="mypy")
         assert status.mypy_clean is True
@@ -762,7 +762,7 @@ class TestBuildConfigWiring:
 class TestMinCoverageThreshold:
     """Tests for the min_coverage parameter on trw_build_check tool."""
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.build._registration.run_build_check")
@@ -771,7 +771,7 @@ class TestMinCoverageThreshold:
         mock_run: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """min_coverage=80 with 75% actual → tests_passed=False."""
@@ -780,10 +780,10 @@ class TestMinCoverageThreshold:
         (trw_dir / "context").mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 300
-        mock_config.build_check_pytest_args = ""
-        mock_config.build_check_mypy_args = "--strict"
+        mock_get_config.return_value = TRWConfig(
+            build_check_enabled=True, build_check_timeout_secs=300,
+            build_check_pytest_args="", build_check_mypy_args="--strict",
+        )
 
         mock_run.return_value = BuildStatus(
             tests_passed=True,
@@ -810,7 +810,7 @@ class TestMinCoverageThreshold:
         assert result["coverage_threshold"] == 80.0
         assert "75.0%" in str(result["coverage_threshold_message"])
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.build._registration.run_build_check")
@@ -819,7 +819,7 @@ class TestMinCoverageThreshold:
         mock_run: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """min_coverage=80 with 90% actual → tests_passed stays True."""
@@ -828,10 +828,10 @@ class TestMinCoverageThreshold:
         (trw_dir / "context").mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 300
-        mock_config.build_check_pytest_args = ""
-        mock_config.build_check_mypy_args = "--strict"
+        mock_get_config.return_value = TRWConfig(
+            build_check_enabled=True, build_check_timeout_secs=300,
+            build_check_pytest_args="", build_check_mypy_args="--strict",
+        )
 
         mock_run.return_value = BuildStatus(
             tests_passed=True,
@@ -855,7 +855,7 @@ class TestMinCoverageThreshold:
         assert result["tests_passed"] is True
         assert "coverage_threshold_failed" not in result
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.build._registration.run_build_check")
@@ -864,7 +864,7 @@ class TestMinCoverageThreshold:
         mock_run: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """min_coverage=None → no threshold enforcement."""
@@ -873,10 +873,10 @@ class TestMinCoverageThreshold:
         (trw_dir / "context").mkdir()
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
-        mock_config.build_check_enabled = True
-        mock_config.build_check_timeout_secs = 300
-        mock_config.build_check_pytest_args = ""
-        mock_config.build_check_mypy_args = "--strict"
+        mock_get_config.return_value = TRWConfig(
+            build_check_enabled=True, build_check_timeout_secs=300,
+            build_check_pytest_args="", build_check_mypy_args="--strict",
+        )
 
         mock_run.return_value = BuildStatus(
             tests_passed=True,

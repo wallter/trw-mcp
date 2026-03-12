@@ -12,41 +12,12 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.models.config import get_config
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import get_config
+from trw_mcp.state._helpers import safe_str
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
-
-
-def _safe_float(d: dict[str, object], key: str, default: float = 0.0) -> float:
-    """Safely extract a float from a dict, defaulting on missing/invalid."""
-    val = d.get(key)
-    if val is None:
-        return default
-    try:
-        return float(str(val))
-    except (ValueError, TypeError):
-        return default
-
-
-def _safe_int(d: dict[str, object], key: str, default: int = 0) -> int:
-    """Safely extract an int from a dict, defaulting on missing/invalid."""
-    val = d.get(key)
-    if val is None:
-        return default
-    try:
-        return int(float(str(val)))
-    except (ValueError, TypeError):
-        return default
-
-
-def _safe_str(d: dict[str, object], key: str, default: str = "") -> str:
-    """Safely extract a string from a dict."""
-    val = d.get(key)
-    if val is None:
-        return default
-    return str(val)
 
 
 def _linear_slope(values: list[float]) -> float | None:
@@ -160,7 +131,7 @@ def compute_review_trend(sessions: list[dict[str, object]]) -> dict[str, object]
     """
     counts: dict[str, int] = {"block": 0, "warn": 0, "pass": 0}
     for s in sessions:
-        verdict = _safe_str(s, "review_verdict").lower()
+        verdict = safe_str(s, "review_verdict").lower()
         if verdict in counts:
             counts[verdict] += 1
     return {
@@ -246,7 +217,7 @@ def detect_degradation(
 
 def _sprint_id(session: dict[str, object]) -> str:
     """Extract sprint ID from a session dict."""
-    task_name = _safe_str(session, "task_name")
+    task_name = safe_str(session, "task_name")
     if task_name:
         # Try to extract sprint-NN pattern
         lower = task_name.lower()
@@ -342,7 +313,7 @@ def aggregate_dashboard(
         try:
             analytics = reader.read_yaml(analytics_path)
         except (OSError, StateError):
-            pass
+            logger.debug("analytics_yaml_load_failed", path=str(analytics_path), exc_info=True)
 
     # Read session events from session-events.jsonl
     events_path = context_dir / "session-events.jsonl"
@@ -351,7 +322,7 @@ def aggregate_dashboard(
         try:
             raw_events = reader.read_jsonl(events_path)
         except (OSError, StateError):
-            pass
+            logger.debug("session_events_load_failed", path=str(events_path), exc_info=True)
 
     # Filter to window and extract session-like events
     cutoff = datetime.now(timezone.utc).timestamp() - (window_days * 86400)
@@ -360,7 +331,7 @@ def aggregate_dashboard(
 
     for evt in raw_events:
         # Try to parse timestamp
-        ts_str = _safe_str(evt, "timestamp") or _safe_str(evt, "ts")
+        ts_str = safe_str(evt, "timestamp") or safe_str(evt, "ts")
         if ts_str:
             try:
                 ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()

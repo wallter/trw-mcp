@@ -88,9 +88,3 @@ __all__ = [
     "resolve_trw_dir",
     "resolve_project_root",
 ]
-
-
-from trw_mcp.tools.build._core import (
-    _config,
-    _writer,
-)

@@ -181,7 +181,7 @@ def ensure_http_server(
 
         log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=30)
         return None
-    except Exception:
+    except Exception:  # justified: boundary, subprocess spawn can fail in many ways
         log.warning("mcp_server_start_failed", exc_info=True)
         return None
     finally:

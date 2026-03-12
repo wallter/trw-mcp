@@ -34,15 +34,11 @@ from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
     _FRONTMATTER_RE,
     extract_prd_refs,
-    next_prd_sequence,
-)
-from trw_mcp.state.prd_utils import (
     extract_sections as _extract_sections,
+    next_prd_sequence,
 )
 from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
-)
-from trw_mcp.state.validation import (
     validate_prd_quality_v2,
 )
 from trw_mcp.tools.telemetry import log_tool_call
@@ -52,11 +48,9 @@ logger = structlog.get_logger()
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    if name == "_config":
-        return get_config()
-    if name == "_writer":
-        return FileStateWriter()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from trw_mcp.state._helpers import _compat_getattr
+
+    return _compat_getattr(name)
 
 
 # Priority → base confidence score mapping
@@ -466,7 +460,7 @@ def _extract_prefill(input_text: str) -> dict[str, list[str]]:
             if _SLO_KW_RE.search(stripped):
                 prefill["slos"].append(stripped)
     except (re.error, TypeError):
-        pass
+        logger.debug("prefill_extraction_failed", exc_info=True)
 
     return prefill
 
@@ -616,6 +610,6 @@ def _auto_sync_index() -> bool:
 
         logger.debug("auto_index_sync_complete")
         return True
-    except Exception as exc:
+    except Exception as exc:  # justified: fail-open, index sync is best-effort after PRD changes
         logger.warning("auto_index_sync_failed", error=str(exc))
         return False

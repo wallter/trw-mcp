@@ -64,56 +64,9 @@ def _mock_urlopen_for_bytes(data: bytes) -> MagicMock:
 
 
 # ===================================================================
-# get_installed_version
+# get_installed_version — covered by test_coverage_misc.py
+# (TestGetInstalledVersionBranches: import error, attribute error, positive)
 # ===================================================================
-
-
-class TestGetInstalledVersion:
-    def test_returns_string(self) -> None:
-        version = get_installed_version()
-        assert isinstance(version, str)
-        assert len(version) > 0
-
-    def test_import_error_returns_fallback(self) -> None:
-        """Lines 30-31: ImportError on `from trw_mcp import __version__`."""
-        import sys
-        import types
-
-        # Temporarily replace trw_mcp in sys.modules with a module that
-        # raises ImportError on attribute access of __version__.
-        original = sys.modules["trw_mcp"]
-        fake = types.ModuleType("trw_mcp")
-
-        # __getattr__ on a module takes (name,) not (self, name)
-        def _raise_import(name: str) -> None:
-            raise ImportError(f"no attribute {name}")
-
-        fake.__getattr__ = _raise_import  # type: ignore[attr-defined]
-        sys.modules["trw_mcp"] = fake
-        try:
-            # The function does `from trw_mcp import __version__` which
-            # triggers ImportError from our fake module.
-            result = get_installed_version()
-            assert result == "0.0.0"
-        finally:
-            sys.modules["trw_mcp"] = original
-
-    def test_attribute_error_returns_fallback(self) -> None:
-        """Lines 30-31: AttributeError when __version__ is missing."""
-        import sys
-        import types
-
-        original = sys.modules["trw_mcp"]
-        fake = types.ModuleType("trw_mcp")
-        # Module exists but has no __version__
-        if hasattr(fake, "__version__"):
-            delattr(fake, "__version__")
-        sys.modules["trw_mcp"] = fake
-        try:
-            result = get_installed_version()
-            assert result == "0.0.0"
-        finally:
-            sys.modules["trw_mcp"] = original
 
 
 # ===================================================================
@@ -324,7 +277,9 @@ class TestFetchArtifactInfo:
         with patch("urllib.request.urlopen", return_value=mock_resp):
             result = _fetch_artifact_info("1.0.0")
         assert result is not None
+        assert isinstance(result, dict)
         assert result["artifact_url"] == "https://dl.example.com/v1.tar.gz"
+        assert result["artifact_checksum"] == "abc123"
 
     def test_network_error_returns_none(self) -> None:
         _reset_config(TRWConfig(platform_url="https://example.com"))
@@ -390,6 +345,7 @@ class TestFetchArtifactInfo:
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             result = _fetch_artifact_info("1.0.0")
         assert result is not None
+        assert isinstance(result, dict)
         assert result["artifact_url"] == "ok"
         assert call_count == 2
 
@@ -452,6 +408,7 @@ class TestDownloadReleaseArtifact:
                 )
 
         assert result is not None
+        assert isinstance(result, Path)
         assert result.is_dir()
 
     def test_checksum_mismatch_returns_none(self, tmp_path: Path) -> None:
@@ -801,3 +758,355 @@ class TestPerformUpgrade:
                     perform_upgrade(update_info)
 
         assert captured_kwargs[0]["expected_checksum"] is None
+
+
+# ===================================================================
+# Edge-case coverage additions
+# ===================================================================
+
+
+class TestGetInstalledVersionEdge:
+    """Cover the ImportError branch (line 32-33) directly in this file."""
+
+    def test_import_error_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When 'from trw_mcp import __version__' raises ImportError, returns '0.0.0'."""
+        import trw_mcp as _mod
+
+        monkeypatch.delattr(_mod, "__version__", raising=False)
+        result = get_installed_version()
+        assert result == "0.0.0"
+
+    def test_positive_returns_version_string(self) -> None:
+        """Happy path: returns a non-empty version string."""
+        result = get_installed_version()
+        assert isinstance(result, str)
+        assert len(result.split(".")) >= 3
+
+
+class TestCompareVersionsEdge:
+    """Extra edge cases for _compare_versions."""
+
+    def test_two_part_version_compared(self) -> None:
+        """Versions with fewer than 3 parts — only first 3 matter, short tuples compare by length."""
+        # "1.0" splits to (1, 0) vs "1.0.0" splits to (1, 0, 0)
+        # tuple comparison: (1,0) < (1,0,0) → True
+        assert _compare_versions("1.0", "1.0.0") is True
+
+    def test_two_part_version_same_prefix(self) -> None:
+        """Two-part current, three-part latest with same prefix."""
+        assert _compare_versions("1.0", "1.0.1") is True
+
+    def test_empty_string(self) -> None:
+        """Empty string causes ValueError — returns False."""
+        assert _compare_versions("", "1.0.0") is False
+
+    def test_both_empty(self) -> None:
+        assert _compare_versions("", "") is False
+
+
+class TestCheckForUpdateEdge:
+    """Edge cases for check_for_update."""
+
+    def test_response_missing_version_key(self) -> None:
+        """When JSON has no 'version' key, uses current as latest → not available."""
+        _reset_config(TRWConfig(platform_url="https://example.com", update_channel="latest"))
+        # Response with no "version" key
+        mock_resp = _mock_urlopen_for_bytes(json.dumps({"notes": "no version field"}).encode())
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = check_for_update()
+        assert result["available"] is False
+        # latest should fall back to current
+        assert result["latest"] == result["current"]
+
+    def test_http_error_is_caught(self) -> None:
+        """HTTPError (not just URLError) is caught — fail-open."""
+        _reset_config(TRWConfig(platform_url="https://example.com", update_channel="latest"))
+        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
+            "url", 500, "Internal Server Error", {}, None  # type: ignore[arg-type]
+        )):
+            result = check_for_update()
+        assert result["available"] is False
+
+    def test_oserror_is_caught(self) -> None:
+        """OSError during connection is caught — fail-open."""
+        _reset_config(TRWConfig(platform_url="https://example.com", update_channel="latest"))
+        with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
+            result = check_for_update()
+        assert result["available"] is False
+
+    def test_key_error_in_response_is_caught(self) -> None:
+        """KeyError during response parsing is caught — fail-open."""
+        _reset_config(TRWConfig(platform_url="https://example.com", update_channel="latest"))
+        mock_resp = _mock_urlopen_for_bytes(json.dumps({"version": "99.0.0"}).encode())
+        # Force a KeyError by making json.loads return something that triggers it
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with patch("json.loads", side_effect=KeyError("bad key")):
+                result = check_for_update()
+        assert result["available"] is False
+
+    def test_trailing_slash_stripped_from_url(self) -> None:
+        """Platform URL with trailing slash does not double-slash in the request."""
+        _reset_config(TRWConfig(platform_url="https://example.com/", update_channel="latest"))
+        captured: list[str] = []
+        orig_request = __import__("urllib.request", fromlist=["Request"]).Request
+
+        def fake_request(url: str, **kwargs: object) -> object:
+            captured.append(url)
+            return orig_request(url, **kwargs)
+
+        with patch("urllib.request.Request", side_effect=fake_request):
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no")):
+                check_for_update()
+        assert "//" not in captured[0].split("://")[1]  # no double-slash after scheme
+
+    def test_all_urls_fail_returns_fallback(self) -> None:
+        """When all platform_urls fail, returns not-available with current as latest."""
+        _reset_config(TRWConfig(
+            platform_url="",
+            platform_urls=["https://a.example.com", "https://b.example.com"],
+            update_channel="latest",
+        ))
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
+            result = check_for_update()
+        assert result["available"] is False
+        assert result["latest"] == result["current"]
+        assert result["advisory"] is None
+
+
+class TestDownloadReleaseArtifactEdge:
+    """Edge cases for download_release_artifact — specifically covering
+    lines 155-157 and 164-165 which require a valid checksum to reach.
+    """
+
+    def test_path_traversal_after_checksum_passes(self, tmp_path: Path) -> None:
+        """Lines 155-157: path traversal detected AFTER checksum verification passes."""
+        # Build archive with ".." member
+        archive_bytes = _make_tar_gz_bytes({"data/../etc/shadow": b"evil"})
+        expected_checksum = hashlib.sha256(archive_bytes).hexdigest()
+        mock_resp = _mock_urlopen_for_bytes(archive_bytes)
+
+        _reset_config(TRWConfig(platform_api_key=""))
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with patch("tempfile.mkdtemp", return_value=str(tmp_path / "dl")):
+                (tmp_path / "dl").mkdir()
+                result = download_release_artifact(
+                    "https://example.com/release.tar.gz",
+                    expected_checksum=expected_checksum,
+                )
+
+        assert result is None
+
+    def test_absolute_path_after_checksum_passes(self, tmp_path: Path) -> None:
+        """Lines 155-157: absolute path detected AFTER checksum verification passes."""
+        archive_bytes = _make_tar_gz_bytes({"/etc/passwd": b"root"})
+        expected_checksum = hashlib.sha256(archive_bytes).hexdigest()
+        mock_resp = _mock_urlopen_for_bytes(archive_bytes)
+
+        _reset_config(TRWConfig(platform_api_key=""))
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with patch("tempfile.mkdtemp", return_value=str(tmp_path / "dl")):
+                (tmp_path / "dl").mkdir()
+                result = download_release_artifact(
+                    "https://example.com/release.tar.gz",
+                    expected_checksum=expected_checksum,
+                )
+
+        assert result is None
+
+    def test_no_data_dir_after_checksum_passes(self, tmp_path: Path) -> None:
+        """Lines 164-165: archive passes checksum but has no data/ directory."""
+        archive_bytes = _make_tar_gz_bytes({"other/readme.txt": b"hello"})
+        expected_checksum = hashlib.sha256(archive_bytes).hexdigest()
+        mock_resp = _mock_urlopen_for_bytes(archive_bytes)
+
+        _reset_config(TRWConfig(platform_api_key=""))
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with patch("tempfile.mkdtemp", return_value=str(tmp_path / "dl")):
+                (tmp_path / "dl").mkdir()
+                result = download_release_artifact(
+                    "https://example.com/release.tar.gz",
+                    expected_checksum=expected_checksum,
+                )
+
+        assert result is None
+
+    def test_no_auth_header_when_key_empty(self, tmp_path: Path) -> None:
+        """When platform_api_key is empty, no Authorization header is sent."""
+        archive_bytes = _make_tar_gz_bytes({"data/f.txt": b"ok"})
+        _reset_config(TRWConfig(platform_api_key=""))
+        captured: list[object] = []
+
+        def fake_urlopen(req: object, timeout: int = 30) -> MagicMock:
+            captured.append(req)
+            return _mock_urlopen_for_bytes(archive_bytes)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with patch("tempfile.mkdtemp", return_value=str(tmp_path / "dl")):
+                (tmp_path / "dl").mkdir()
+                download_release_artifact("https://example.com/release.tar.gz")
+
+        assert captured[0].get_header("Authorization") is None
+
+
+class TestFetchArtifactInfoEdge:
+    """Edge cases for _fetch_artifact_info."""
+
+    def test_version_embedded_in_url(self) -> None:
+        """Verify the version string appears in the constructed URL."""
+        _reset_config(TRWConfig(platform_url="https://example.com"))
+        captured: list[str] = []
+        orig_request = __import__("urllib.request", fromlist=["Request"]).Request
+
+        def fake_request(url: str, **kwargs: object) -> object:
+            captured.append(url)
+            return orig_request(url, **kwargs)
+
+        with patch("urllib.request.Request", side_effect=fake_request):
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no")):
+                _fetch_artifact_info("3.2.1")
+        assert len(captured) == 1
+        assert "/v1/releases/3.2.1/artifact" in captured[0]
+
+    def test_json_decode_error_returns_none(self) -> None:
+        """JSONDecodeError specifically is caught and returns None."""
+        _reset_config(TRWConfig(platform_url="https://example.com"))
+        mock_resp = _mock_urlopen_for_bytes(b"{invalid json")
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = _fetch_artifact_info("1.0.0")
+        assert result is None
+
+    def test_trailing_slash_stripped(self) -> None:
+        """Platform URL trailing slash does not cause double-slash."""
+        _reset_config(TRWConfig(platform_url="https://example.com/"))
+        captured: list[str] = []
+        orig_request = __import__("urllib.request", fromlist=["Request"]).Request
+
+        def fake_request(url: str, **kwargs: object) -> object:
+            captured.append(url)
+            return orig_request(url, **kwargs)
+
+        with patch("urllib.request.Request", side_effect=fake_request):
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no")):
+                _fetch_artifact_info("1.0.0")
+        assert "//" not in captured[0].split("://")[1]
+
+
+class TestIsCompatibleEdge:
+    """Extra edge cases for _is_compatible."""
+
+    def test_two_part_version(self) -> None:
+        """Version with 2 parts only — tuple comparison still works."""
+        # "1.0" → (1,0); "1.0.0" → (1,0,0)
+        # (1,0) < (1,0,0) → incompatible
+        assert _is_compatible("1.0", "1.0.0") is False
+
+    def test_four_part_version_ignores_extra(self) -> None:
+        """Only first 3 parts are compared."""
+        assert _is_compatible("1.0.0.99", "1.0.0.1") is True
+
+    def test_empty_current_returns_true(self) -> None:
+        """Empty string triggers ValueError → fail-open returns True."""
+        assert _is_compatible("", "1.0.0") is True
+
+
+class TestPerformUpgradeEdge:
+    """Edge cases for perform_upgrade."""
+
+    def _setup_config(self, tmp_path: Path, api_key: str = "") -> None:
+        _reset_config(TRWConfig(
+            platform_url="https://example.com",
+            platform_api_key=api_key,
+            update_channel="latest",
+        ))
+
+    def test_missing_latest_key_in_update_info(self, tmp_path: Path) -> None:
+        """When update_info has no 'latest' key, version defaults to empty string."""
+        self._setup_config(tmp_path)
+        update_info: dict[str, object] = {}  # no "latest"
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=None):
+                result = perform_upgrade(update_info)
+
+        assert result["applied"] is False
+        assert result["version"] == ""
+
+    def test_min_compatible_version_none_defaults(self, tmp_path: Path) -> None:
+        """When min_compatible_version is None in artifact_info, defaults to '0.0.0' (compatible)."""
+        self._setup_config(tmp_path)
+        update_info: dict[str, object] = {"latest": "2.0.0"}
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        artifact_info: dict[str, object] = {
+            "artifact_url": "https://dl.example.com/v2.tar.gz",
+            "artifact_checksum": None,
+            "min_compatible_version": None,
+        }
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
+                with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
+                    with patch("trw_mcp.bootstrap.update_project", return_value={
+                        "errors": [],
+                        "updated": ["a.txt"],
+                        "created": [],
+                    }):
+                        result = perform_upgrade(update_info)
+
+        assert result["applied"] is True
+
+    def test_update_project_with_no_files_reports_zero(self, tmp_path: Path) -> None:
+        """When update_project returns empty updated and created lists."""
+        self._setup_config(tmp_path)
+        update_info: dict[str, object] = {"latest": "2.0.0"}
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        artifact_info: dict[str, object] = {
+            "artifact_url": "https://dl.example.com/v2.tar.gz",
+            "artifact_checksum": None,
+            "min_compatible_version": "0.0.0",
+        }
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
+                with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
+                    with patch("trw_mcp.bootstrap.update_project", return_value={
+                        "errors": [],
+                        "updated": [],
+                        "created": [],
+                    }):
+                        result = perform_upgrade(update_info)
+
+        assert result["applied"] is True
+        assert "0 files" in str(result["details"])
+
+    def test_multiple_update_errors_joined(self, tmp_path: Path) -> None:
+        """When update_project returns multiple errors, they are semicolon-joined."""
+        self._setup_config(tmp_path)
+        update_info: dict[str, object] = {"latest": "2.0.0"}
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        artifact_info: dict[str, object] = {
+            "artifact_url": "https://dl.example.com/v2.tar.gz",
+            "artifact_checksum": None,
+            "min_compatible_version": "0.0.0",
+        }
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
+                with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
+                    with patch("trw_mcp.bootstrap.update_project", return_value={
+                        "errors": ["err1", "err2", "err3"],
+                        "updated": [],
+                        "created": [],
+                    }):
+                        result = perform_upgrade(update_info)
+
+        assert result["applied"] is False
+        assert "err1" in str(result["details"])
+        assert "err2" in str(result["details"])
+        assert "err3" in str(result["details"])
+        assert "; " in str(result["details"])

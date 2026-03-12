@@ -25,7 +25,7 @@ from trw_mcp.models.run import (
 )
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
-from trw_mcp.state.analytics_report import count_stale_runs
+from trw_mcp.state.analytics.report import count_stale_runs
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -41,13 +41,9 @@ _events = FileEventLogger(FileStateWriter())
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    if name == "_config":
-        return get_config()
-    if name == "_reader":
-        return FileStateReader()
-    if name == "_writer":
-        return FileStateWriter()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from trw_mcp.state._helpers import _compat_getattr
+
+    return _compat_getattr(name)
 
 
 def register_orchestration_tools(server: FastMCP) -> None:
@@ -313,7 +309,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                         delta_hours = (now - last_dt).total_seconds() / 3600
                         result["hours_since_activity"] = round(delta_hours, 1)
                     except (ValueError, TypeError):
-                        pass
+                        logger.debug("checkpoint_timestamp_parse_failed", exc_info=True)
         if "last_activity_ts" not in result:
             # Fall back to run.yaml creation (run_init event)
             run_init_events = [
@@ -329,7 +325,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                         delta_hours = (now - init_dt).total_seconds() / 3600
                         result["hours_since_activity"] = round(delta_hours, 1)
                     except (ValueError, TypeError):
-                        pass
+                        logger.debug("init_timestamp_parse_failed", exc_info=True)
 
         # Stale framework version warning
         version_warning = _check_framework_version_staleness(
@@ -347,7 +343,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                     f"{stale} stale run(s) detected. "
                     f"Use trw_session_start to auto-close them."
                 )
-        except Exception:
+        except Exception:  # justified: fail-open, stale run count is advisory only
             result["stale_count_error"] = True
             logger.warning("stale_count_scan_failed", exc_info=True)
 
@@ -423,7 +419,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                         }
                         run_data["wave_status"] = wave_status
                         writer.write_yaml(run_yaml, run_data)
-            except Exception:
+            except Exception:  # justified: fail-open, wave status metadata update must not block checkpoint
                 logger.debug("wave_status_update_failed", wave_id=wave_id)
 
         logger.info("trw_checkpoint_created", message=message)
@@ -470,7 +466,7 @@ def _compute_wave_progress(
                         sid = str(s.get("id", ""))
                         shard_statuses[sid] = str(s.get("status", "pending"))
         except (StateError, OSError, ValueError, TypeError):
-            pass
+            logger.debug("shard_manifest_load_failed", exc_info=True)
 
     completed_waves = 0
     active_wave: int | None = None
@@ -607,7 +603,7 @@ def _get_package_version() -> str:
     try:
         from importlib.metadata import version as pkg_version
         return pkg_version("trw-mcp")
-    except Exception:
+    except Exception:  # justified: import-guard, package may not be installed in editable mode
         return "unknown"
 
 

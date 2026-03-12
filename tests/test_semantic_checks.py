@@ -300,7 +300,7 @@ class TestBestEffortSemanticCheck:
 
     def test_appends_findings_as_validation_failures(self) -> None:
         from trw_mcp.models.requirements import ValidationFailure
-        from trw_mcp.state.phase_gates_build import _best_effort_semantic_check
+        from trw_mcp.state.validation.phase_gates_build import _best_effort_semantic_check
 
         config = MagicMock()
         config.semantic_checks_enabled = True
@@ -331,7 +331,7 @@ class TestBestEffortSemanticCheck:
 
     def test_skipped_when_disabled(self) -> None:
         from trw_mcp.models.requirements import ValidationFailure
-        from trw_mcp.state.phase_gates_build import _best_effort_semantic_check
+        from trw_mcp.state.validation.phase_gates_build import _best_effort_semantic_check
 
         config = MagicMock()
         config.semantic_checks_enabled = False
@@ -342,7 +342,7 @@ class TestBestEffortSemanticCheck:
 
     def test_skips_info_severity(self) -> None:
         from trw_mcp.models.requirements import ValidationFailure
-        from trw_mcp.state.phase_gates_build import _best_effort_semantic_check
+        from trw_mcp.state.validation.phase_gates_build import _best_effort_semantic_check
 
         config = MagicMock()
         config.semantic_checks_enabled = True
@@ -370,7 +370,7 @@ class TestBestEffortSemanticCheck:
 
     def test_never_raises(self) -> None:
         from trw_mcp.models.requirements import ValidationFailure
-        from trw_mcp.state.phase_gates_build import _best_effort_semantic_check
+        from trw_mcp.state.validation.phase_gates_build import _best_effort_semantic_check
 
         config = MagicMock()
         config.semantic_checks_enabled = True
@@ -391,7 +391,7 @@ class TestBestEffortSemanticCheck:
 
     def test_caps_at_10_findings(self) -> None:
         from trw_mcp.models.requirements import ValidationFailure
-        from trw_mcp.state.phase_gates_build import _best_effort_semantic_check
+        from trw_mcp.state.validation.phase_gates_build import _best_effort_semantic_check
 
         config = MagicMock()
         config.semantic_checks_enabled = True
@@ -418,3 +418,469 @@ class TestBestEffortSemanticCheck:
                     _best_effort_semantic_check(config, failures)
 
         assert len(failures) == 10  # Capped at 10
+
+
+# ---------------------------------------------------------------------------
+# Edge-case and gap-filling tests
+# ---------------------------------------------------------------------------
+
+
+class TestLoadSemanticChecksEdgeCases:
+    """Edge cases for YAML rubric loading."""
+
+    def test_yaml_data_is_not_dict(self, tmp_path: Path) -> None:
+        """YAML that parses to a list instead of a dict should return empty."""
+        rubric = tmp_path / "list.yaml"
+        rubric.write_text("- one\n- two\n")
+        checks = load_semantic_checks(rubric)
+        assert checks == []
+
+    def test_yaml_data_is_scalar(self, tmp_path: Path) -> None:
+        """YAML that parses to a scalar should return empty."""
+        rubric = tmp_path / "scalar.yaml"
+        rubric.write_text("42\n")
+        checks = load_semantic_checks(rubric)
+        assert checks == []
+
+    def test_non_dict_items_in_checks_list_skipped(self, tmp_path: Path) -> None:
+        """Non-dict items inside the checks list are silently skipped."""
+        rubric = tmp_path / "mixed.yaml"
+        rubric.write_text(
+            "checks:\n"
+            "  - just a string\n"
+            "  - id: valid-check\n"
+            "    description: Good check\n"
+            "    severity: info\n"
+            "    automated: false\n"
+        )
+        checks = load_semantic_checks(rubric)
+        assert len(checks) == 1
+        assert checks[0].id == "valid-check"
+
+    def test_missing_fields_use_defaults(self, tmp_path: Path) -> None:
+        """Checks with missing optional fields get sensible defaults."""
+        rubric = tmp_path / "minimal.yaml"
+        rubric.write_text(
+            "checks:\n"
+            "  - id: minimal\n"
+            "    description: Minimal check\n"
+            "    severity: warning\n"
+            "    automated: true\n"
+        )
+        checks = load_semantic_checks(rubric)
+        assert len(checks) == 1
+        assert checks[0].pattern is None
+        assert checks[0].language == "any"
+
+    def test_empty_checks_list(self, tmp_path: Path) -> None:
+        """An empty checks list returns empty result."""
+        rubric = tmp_path / "empty_list.yaml"
+        rubric.write_text("checks: []\n")
+        checks = load_semantic_checks(rubric)
+        assert checks == []
+
+    def test_check_with_all_fields(self, tmp_path: Path) -> None:
+        """All fields are correctly populated from YAML."""
+        rubric = tmp_path / "full.yaml"
+        rubric.write_text(
+            "checks:\n"
+            "  - id: full-check\n"
+            "    description: Full description\n"
+            "    severity: error\n"
+            "    automated: true\n"
+            "    pattern: 'some_pattern'\n"
+            "    language: go\n"
+        )
+        checks = load_semantic_checks(rubric)
+        assert len(checks) == 1
+        c = checks[0]
+        assert c.id == "full-check"
+        assert c.description == "Full description"
+        assert c.severity == "error"
+        assert c.automated is True
+        assert c.pattern == "some_pattern"
+        assert c.language == "go"
+
+    def test_yaml_load_exception_returns_empty(self, tmp_path: Path) -> None:
+        """If YAML().load() raises, returns empty (fail-open)."""
+        rubric = tmp_path / "valid.yaml"
+        rubric.write_text("checks:\n  - id: x\n    description: x\n    severity: info\n    automated: false\n")
+        mock_yaml_cls = MagicMock()
+        mock_yaml_cls.return_value.load.side_effect = RuntimeError("parse boom")
+        with patch("ruamel.yaml.YAML", mock_yaml_cls):
+            checks = load_semantic_checks(rubric)
+        assert checks == []
+
+
+class TestGetLanguageForFileEdgeCases:
+    """Edge cases for file extension language detection."""
+
+    def test_path_with_multiple_dots(self) -> None:
+        """Only the final extension matters."""
+        assert _get_language_for_file("my.module.test.py") == "python"
+
+    def test_no_extension(self) -> None:
+        assert _get_language_for_file("Makefile") == "any"
+
+    def test_dotfile(self) -> None:
+        assert _get_language_for_file(".gitignore") == "any"
+
+    def test_path_with_directory(self) -> None:
+        """Full paths should still detect the extension."""
+        assert _get_language_for_file("/home/user/project/app.ts") == "typescript"
+        assert _get_language_for_file("src/trw_mcp/tools.py") == "python"
+
+
+class TestRunSemanticChecksEdgeCases:
+    """Edge cases for the main check runner."""
+
+    def test_empty_file_paths_list(self) -> None:
+        """Empty file list returns zero scanned, zero findings."""
+        checks = [
+            SemanticCheck(
+                id="test", description="d", severity="warning",
+                automated=True, pattern="x", language="any",
+            )
+        ]
+        result = run_semantic_checks([], checks=checks)
+        assert result.files_scanned == 0
+        assert result.checks_run == 1
+        assert len(result.findings) == 0
+
+    def test_multiple_files_multiple_findings(self, tmp_path: Path) -> None:
+        """Findings accumulate across multiple files."""
+        f1 = tmp_path / "a.py"
+        f1.write_text("try:\n    pass\nexcept:\n    pass\n")
+        f2 = tmp_path / "b.py"
+        f2.write_text("try:\n    pass\nexcept:\n    pass\n")
+
+        checks = [
+            SemanticCheck(
+                id="bare-except", description="Bare except",
+                severity="warning", automated=True,
+                pattern=r"except\s*:", language="python",
+            )
+        ]
+        result = run_semantic_checks([str(f1), str(f2)], checks=checks)
+        assert result.files_scanned == 2
+        assert len(result.findings) == 2
+
+    def test_language_any_matches_all_file_types(self, tmp_path: Path) -> None:
+        """A check with language='any' runs against all file types."""
+        py_file = tmp_path / "code.py"
+        py_file.write_text("# FIXME: broken\n")
+        ts_file = tmp_path / "code.ts"
+        ts_file.write_text("// FIXME: broken\n")
+        go_file = tmp_path / "code.go"
+        go_file.write_text("// FIXME: broken\n")
+
+        checks = [
+            SemanticCheck(
+                id="fixme", description="FIXME found",
+                severity="info", automated=True,
+                pattern=r"FIXME", language="any",
+            )
+        ]
+        result = run_semantic_checks(
+            [str(py_file), str(ts_file), str(go_file)], checks=checks
+        )
+        assert result.files_scanned == 3
+        assert len(result.findings) == 3
+
+    def test_automated_check_without_pattern_skipped(self, tmp_path: Path) -> None:
+        """Automated=True but pattern=None should not produce findings."""
+        f = tmp_path / "code.py"
+        f.write_text("anything\n")
+
+        checks = [
+            SemanticCheck(
+                id="no-pattern", description="Manual only",
+                severity="warning", automated=True,
+                pattern=None, language="any",
+            )
+        ]
+        result = run_semantic_checks([str(f)], checks=checks)
+        # Pattern is None so it's filtered out of auto_checks
+        assert result.checks_run == 0
+        assert len(result.findings) == 0
+
+    def test_language_mismatch_skips_check(self, tmp_path: Path) -> None:
+        """A go-specific check does not run on python files."""
+        f = tmp_path / "code.py"
+        f.write_text("goroutine something\n")
+
+        checks = [
+            SemanticCheck(
+                id="go-check", description="Go pattern",
+                severity="warning", automated=True,
+                pattern=r"goroutine", language="go",
+            )
+        ]
+        result = run_semantic_checks([str(f)], checks=checks)
+        assert result.files_scanned == 1
+        assert len(result.findings) == 0
+
+    def test_multiple_matches_same_file(self, tmp_path: Path) -> None:
+        """Multiple matches on different lines in the same file."""
+        f = tmp_path / "code.py"
+        f.write_text("# TODO: first\nx = 1\n# TODO: second\n")
+
+        checks = [
+            SemanticCheck(
+                id="todo", description="TODO found",
+                severity="info", automated=True,
+                pattern=r"TODO", language="any",
+            )
+        ]
+        result = run_semantic_checks([str(f)], checks=checks)
+        assert result.files_scanned == 1
+        assert len(result.findings) == 2
+        assert result.findings[0].line_number == 1
+        assert result.findings[1].line_number == 3
+
+    def test_empty_file_no_findings(self, tmp_path: Path) -> None:
+        """An empty file produces no findings."""
+        f = tmp_path / "empty.py"
+        f.write_text("")
+
+        checks = [
+            SemanticCheck(
+                id="test", description="d",
+                severity="warning", automated=True,
+                pattern=r"anything", language="any",
+            )
+        ]
+        result = run_semantic_checks([str(f)], checks=checks)
+        assert result.files_scanned == 1
+        assert len(result.findings) == 0
+
+    def test_loads_rubric_when_checks_not_provided(self, tmp_path: Path) -> None:
+        """When checks=None, loads from rubric_path."""
+        rubric = tmp_path / "rubric.yaml"
+        rubric.write_text(
+            "checks:\n"
+            "  - id: custom-id\n"
+            "    description: Custom check\n"
+            "    severity: warning\n"
+            "    automated: true\n"
+            "    pattern: 'CUSTOM_MARKER'\n"
+            "    language: any\n"
+        )
+        f = tmp_path / "code.py"
+        f.write_text("x = CUSTOM_MARKER\n")
+
+        result = run_semantic_checks([str(f)], rubric_path=rubric)
+        assert len(result.findings) == 1
+        assert result.findings[0].check_id == "custom-id"
+
+    def test_finding_attributes(self, tmp_path: Path) -> None:
+        """Verify all SemanticFinding attributes are populated correctly."""
+        f = tmp_path / "target.py"
+        f.write_text("line_one\nMATCH_HERE\nline_three\n")
+
+        checks = [
+            SemanticCheck(
+                id="attr-check", description="Attribute test",
+                severity="error", automated=True,
+                pattern=r"MATCH_HERE", language="python",
+            )
+        ]
+        result = run_semantic_checks([str(f)], checks=checks)
+        assert len(result.findings) == 1
+        finding = result.findings[0]
+        assert finding.check_id == "attr-check"
+        assert finding.description == "Attribute test"
+        assert finding.severity == "error"
+        assert finding.file_path == str(f)
+        assert finding.line_number == 2
+        assert finding.matched_text == "MATCH_HERE"
+
+
+class TestSemanticCheckResultEdgeCases:
+    """Edge cases for the result dataclass."""
+
+    def test_only_info_findings(self) -> None:
+        """Result with only info findings has 0 errors and 0 warnings."""
+        result = SemanticCheckResult(
+            findings=[
+                SemanticFinding("a", "d", "info", "f.py", 1, "x"),
+                SemanticFinding("b", "d", "info", "f.py", 2, "y"),
+            ]
+        )
+        assert result.error_count == 0
+        assert result.warning_count == 0
+        assert result.info_count == 2
+
+    def test_unknown_severity_not_counted(self) -> None:
+        """Findings with an unrecognized severity are not counted by any property."""
+        result = SemanticCheckResult(
+            findings=[
+                SemanticFinding("a", "d", "critical", "f.py", 1, "x"),
+            ]
+        )
+        assert result.error_count == 0
+        assert result.warning_count == 0
+        assert result.info_count == 0
+        # But the finding is still present
+        assert len(result.findings) == 1
+
+    def test_default_values(self) -> None:
+        """Default construction has zero counts and empty findings."""
+        result = SemanticCheckResult()
+        assert result.checks_run == 0
+        assert result.files_scanned == 0
+        assert result.findings == []
+
+
+class TestFormatSemanticReportEdgeCases:
+    """Edge cases for the markdown report formatter."""
+
+    def test_info_only_findings_no_error_warning_sections(self) -> None:
+        """Report with only info findings shows INFO section, no ERROR/WARNING."""
+        result = SemanticCheckResult(
+            checks_run=1,
+            files_scanned=1,
+            findings=[
+                SemanticFinding("todo", "TODO found", "info", "f.py", 1, "TODO"),
+            ],
+        )
+        report = format_semantic_report(result)
+        assert "INFO (1)" in report
+        assert "ERROR" not in report
+        assert "WARNING" not in report
+
+    def test_empty_matched_text_omits_code_block(self) -> None:
+        """When matched_text is empty, no inline code block is appended."""
+        result = SemanticCheckResult(
+            findings=[
+                SemanticFinding("test", "desc", "warning", "f.py", 1, ""),
+            ],
+        )
+        report = format_semantic_report(result)
+        # The finding line is present
+        assert "f.py:1" in report
+        # But no empty backtick block follows
+        lines = report.split("\n")
+        for i, line in enumerate(lines):
+            if "f.py:1" in line:
+                # Next non-empty line should NOT be just backticks with empty content
+                if i + 1 < len(lines) and lines[i + 1].strip():
+                    assert lines[i + 1].strip() != "``"
+                break
+
+    def test_long_matched_text_truncated_at_80_chars(self) -> None:
+        """Matched text longer than 80 chars is truncated in the report."""
+        long_text = "A" * 120
+        result = SemanticCheckResult(
+            findings=[
+                SemanticFinding("test", "desc", "error", "f.py", 1, long_text),
+            ],
+        )
+        report = format_semantic_report(result)
+        # The full 120-char string should NOT appear
+        assert long_text not in report
+        # But the truncated 80-char version should
+        assert "A" * 80 in report
+
+    def test_findings_capped_at_20_per_severity(self, tmp_path: Path) -> None:
+        """No more than 20 findings shown per severity group."""
+        findings = [
+            SemanticFinding(
+                f"check-{i}", "desc", "warning", "f.py", i, "match"
+            )
+            for i in range(30)
+        ]
+        result = SemanticCheckResult(
+            checks_run=1, files_scanned=1, findings=findings,
+        )
+        report = format_semantic_report(result)
+        # Count how many "check-" entries appear under WARNING
+        check_mentions = report.count("**check-")
+        assert check_mentions == 20
+
+    def test_severity_ordering_in_report(self) -> None:
+        """Errors appear before warnings, which appear before info."""
+        result = SemanticCheckResult(
+            checks_run=3,
+            files_scanned=1,
+            findings=[
+                SemanticFinding("info-1", "d", "info", "f.py", 3, "m"),
+                SemanticFinding("warn-1", "d", "warning", "f.py", 2, "m"),
+                SemanticFinding("err-1", "d", "error", "f.py", 1, "m"),
+            ],
+        )
+        report = format_semantic_report(result)
+        error_pos = report.index("ERROR")
+        warning_pos = report.index("WARNING")
+        info_pos = report.index("INFO")
+        assert error_pos < warning_pos < info_pos
+
+    def test_severity_icons(self) -> None:
+        """Each severity gets its correct icon prefix."""
+        result = SemanticCheckResult(
+            checks_run=3,
+            files_scanned=1,
+            findings=[
+                SemanticFinding("e", "d", "error", "f.py", 1, "m"),
+                SemanticFinding("w", "d", "warning", "f.py", 2, "m"),
+                SemanticFinding("i", "d", "info", "f.py", 3, "m"),
+            ],
+        )
+        report = format_semantic_report(result)
+        assert "[!!!]" in report  # error icon
+        assert "[!!]" in report   # warning icon
+        assert "[i]" in report    # info icon
+
+    def test_report_ends_with_newline(self) -> None:
+        """Both empty and non-empty reports end with a newline."""
+        empty = format_semantic_report(SemanticCheckResult(checks_run=1))
+        assert empty.endswith("\n")
+
+        non_empty = format_semantic_report(
+            SemanticCheckResult(
+                findings=[
+                    SemanticFinding("x", "d", "warning", "f.py", 1, "m"),
+                ],
+            )
+        )
+        assert non_empty.endswith("\n")
+
+
+class TestSemanticCheckDataclass:
+    """SemanticCheck dataclass field defaults."""
+
+    def test_defaults(self) -> None:
+        check = SemanticCheck(
+            id="test", description="desc", severity="info", automated=False,
+        )
+        assert check.pattern is None
+        assert check.language == "any"
+
+    def test_all_fields_set(self) -> None:
+        check = SemanticCheck(
+            id="test", description="desc", severity="error",
+            automated=True, pattern=r"\bfoo\b", language="go",
+        )
+        assert check.id == "test"
+        assert check.pattern == r"\bfoo\b"
+        assert check.language == "go"
+
+
+class TestSemanticFindingDataclass:
+    """SemanticFinding field access."""
+
+    def test_attributes(self) -> None:
+        f = SemanticFinding(
+            check_id="bare-except",
+            description="Bare except clause",
+            severity="warning",
+            file_path="app/main.py",
+            line_number=42,
+            matched_text="except:",
+        )
+        assert f.check_id == "bare-except"
+        assert f.description == "Bare except clause"
+        assert f.severity == "warning"
+        assert f.file_path == "app/main.py"
+        assert f.line_number == 42
+        assert f.matched_text == "except:"

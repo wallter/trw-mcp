@@ -558,12 +558,16 @@ class TestEnforceTierDistributionWithDates:
         result_with_dates = scoring_mod.enforce_tier_distribution(entries, entry_dates=entry_dates)
         result_without_dates = scoring_mod.enforce_tier_distribution(entries, entry_dates=None)
 
-        # With dates: only 2 fresh entries are in critical (2/10 = 20% < 5% cap is false)
-        # The key test: the demoted IDs should differ or counts should differ
-        # Both may produce demotions but from different tier classifications
-        # At minimum, the function runs without error
+        # With dates: old entries decay below tier thresholds, changing demotion behavior
         assert isinstance(result_with_dates, list)
         assert isinstance(result_without_dates, list)
+        # All items in result are (id, new_score) tuples
+        for entry_id, new_score in result_with_dates:
+            assert isinstance(entry_id, str)
+            assert isinstance(new_score, float)
+        for entry_id, new_score in result_without_dates:
+            assert isinstance(entry_id, str)
+            assert isinstance(new_score, float)
 
     def test_entry_dates_decays_tier_classification(self) -> None:
         """Entries classified critical via raw score get demoted when decayed below 0.9."""
@@ -621,6 +625,11 @@ class TestEnforceTierDistributionWithDates:
         # Should not raise — invalid dates fall back to raw score
         result = scoring_mod.enforce_tier_distribution(entries, entry_dates=entry_dates)
         assert isinstance(result, list)
+        # With raw scores all at 0.95 (critical), tier cap exceeded → demotions expected
+        result_no_dates = scoring_mod.enforce_tier_distribution(entries, entry_dates=None)
+        assert len(result) == len(result_no_dates), (
+            "Invalid dates should fall back to same behavior as no dates"
+        )
 
     def test_entry_dates_empty_string_falls_back_to_raw(self) -> None:
         """Empty string date in entry_dates uses raw score (no decay)."""
@@ -630,6 +639,11 @@ class TestEnforceTierDistributionWithDates:
         # No crash, empty string treated as "no date" → raw score used
         result = scoring_mod.enforce_tier_distribution(entries, entry_dates=entry_dates)
         assert isinstance(result, list)
+        # With raw scores all at 0.95 (critical), tier cap exceeded → demotions expected
+        result_no_dates = scoring_mod.enforce_tier_distribution(entries, entry_dates=None)
+        assert len(result) == len(result_no_dates), (
+            "Empty-string dates should fall back to same behavior as no dates"
+        )
 
     def test_entry_dates_fresh_entries_unchanged(self) -> None:
         """Very recent entries have near-zero decay — tier classification unchanged."""
@@ -733,7 +747,10 @@ class TestCorrelateRecallsPath:
 
         # Should find and parse the file (not look at old path)
         results = correlate_recalls(tmp_path / ".trw", window_minutes=60)
-        # The function returns a list — if path was wrong it would return []
-        # because the old path doesn't exist. We just need to verify no crash
-        # and the file is actually read.
+        # The function returns a list of (learning_id, recency_discount) tuples.
+        # If the path was wrong it would return [] because the old path doesn't exist.
         assert isinstance(results, list)
+        assert len(results) >= 1, "Should find the record we wrote"
+        found_id, discount = results[0]
+        assert found_id == "L-test001"
+        assert 0.0 < discount <= 1.0

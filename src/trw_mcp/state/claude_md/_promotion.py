@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.exceptions import StateError
+
+logger = structlog.get_logger()
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 
@@ -122,5 +126,5 @@ def collect_context_data(
         if reader.exists(context_dir / "conventions.yaml"):
             conv_data = reader.read_yaml(context_dir / "conventions.yaml")
     except (StateError, ValueError, TypeError):
-        pass
+        logger.debug("context_yaml_load_failed", exc_info=True)
     return arch_data, conv_data

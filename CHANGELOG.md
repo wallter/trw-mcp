@@ -4,6 +4,39 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Added — Code Quality & Test Coverage Hardening
+
+- **710 new tests across the monorepo** — trw-mcp +599 (3,927→4,526), backend +112 (725→837), trw-memory assertions strengthened (29 weak assertions replaced)
+- **12 new test files** covering previously untested modules:
+  - `test_scoring_edge_cases.py` (99 tests) — decay, correlation, complexity, recall algorithms
+  - `test_prd_utils_edge.py` (83 tests) — frontmatter parsing, sections, content density, transitions
+  - `test_memory_adapter_edge.py` (56 tests) — embed, convert, recall, store, reset paths
+  - `test_knowledge_topology_edge.py` (53 tests) — jaccard, clusters, merge, render functions
+  - `test_persistence_edge.py` (49 tests) — YAML roundtrip, locks, concurrency, events
+  - `test_learning_injection_edge.py` (29 tests) — domain tags, selection, formatting
+  - `test_recall_tracking_edge.py` (14 tests) — outcome recording, stats edge cases
+  - Backend: `test_admin_orgs.py` (33), `test_admin_users.py` (17), `test_admin_keys.py` (13), `test_edge_cases.py` (11)
+- **Modules at 100% coverage** — `recall_tracking.py`, `auto_upgrade.py`
+- **Expanded existing test files** — +45 consolidation, +37 validation gates, +33 semantic checks, +31 dashboard, +26 auto_upgrade, +23 tiers, +22 export, +29 backend SSE/telemetry
+
+### Changed
+
+- **`consolidation.py`** — function parameters changed from `list[dict[str, object]]` to `Sequence[dict[str, object]]` for Pyright covariance compatibility
+- **`_update_project.py`** — extracted `_coerce_manifest_list()`, `_remove_stale_set()`, `_migrate_predecessor_set()` DRY helpers reducing ~90 lines of duplication
+- **`sqlite_backend.py` (trw-memory)** — extracted `_build_filter_clause()` static method eliminating WHERE clause duplication between `search()` and `list_entries()`
+- **`learning.py`, `requirements.py`** — consolidated scattered imports from same modules into single blocks
+- **Backend `test_config.py`** — properly typed `_reload_config()` return as `BackendConfig`, removing 13 `type: ignore[attr-defined]`
+- **Backend `auth_2fa.py`** — bare `dict` changed to `dict[str, Any]` for PyJWT payloads, removing 2 `type: ignore[type-arg]`
+- **Backend test files** — added proper `TestClient` and `Session` type annotations, removing 6 `type: ignore[no-untyped-def]`
+- **Platform `VariationH.tsx`** — added `role="button"`, `tabIndex={0}`, `onKeyDown` to 6 interactive `<div>` elements for keyboard accessibility
+- **Platform `login/route.ts`** — added error logging to 3 silent catch blocks
+
+### Fixed
+
+- **trw-memory weak assertions** — replaced 29 instances of `assert x is True/False` with idiomatic `assert x` / `assert not x` across 11 test files
+
+---
+
 ### Added — Sprint 56: Agent Quality & Review Gaps
 
 - **Context-aware learning injection** (`state/learning_injection.py`) — `select_learnings_for_task()` ranks recall results by 60% tag overlap + 40% impact score; `infer_domain_tags()` maps path components to domain tags; `format_learning_injection()` renders markdown for prompt prepending

@@ -20,10 +20,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_reader = FileStateReader()
-_writer = FileStateWriter()
-_events = FileEventLogger(_writer)
-
 
 # --- Auto-checkpoint state (PRD-CORE-053, Item 3 of PRD-FIX-030) ---
 
@@ -70,23 +66,26 @@ def _maybe_auto_checkpoint() -> dict[str, object] | None:
         _do_checkpoint(run_dir, msg)
         logger.debug("checkpoint_created", tool_calls=count, run_dir=str(run_dir))
         return {"auto_checkpoint": True, "tool_calls": count}
-    except Exception:
+    except Exception:  # justified: fail-open, auto-checkpoint must not disrupt tool flow
         logger.debug("auto_checkpoint_failed", exc_info=True)
         return None
 
 
 def _do_checkpoint(run_dir: Path, message: str) -> None:
     """Append a checkpoint to the run's checkpoints.jsonl."""
+    writer = FileStateWriter()
+    events = FileEventLogger(writer)
+
     checkpoints_path = run_dir / "meta" / "checkpoints.jsonl"
     checkpoint_data: dict[str, object] = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "message": message,
     }
-    _writer.append_jsonl(checkpoints_path, checkpoint_data)
+    writer.append_jsonl(checkpoints_path, checkpoint_data)
 
     events_path = run_dir / "meta" / "events.jsonl"
     if events_path.parent.exists():
-        _events.log_event(events_path, "checkpoint", {"message": message})
+        events.log_event(events_path, "checkpoint", {"message": message})
 
 
 def register_checkpoint_tools(server: FastMCP) -> None:
@@ -115,6 +114,8 @@ def register_checkpoint_tools(server: FastMCP) -> None:
             # Enhanced state capture (PRD-CORE-066-FR05)
             import json
 
+            reader = FileStateReader()
+
             result: dict[str, object] = {
                 "status": "success",
                 "run_path": str(run_dir),
@@ -125,7 +126,7 @@ def register_checkpoint_tools(server: FastMCP) -> None:
             prd_scope: list[str] = []
             phase = ""
             if run_yaml.exists():
-                run_data = _reader.read_yaml(run_yaml)
+                run_data = reader.read_yaml(run_yaml)
                 if isinstance(run_data, dict):
                     raw_scope = run_data.get("prd_scope", [])
                     if isinstance(raw_scope, list):
@@ -146,14 +147,14 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                     try:
                         evt = json.loads(line)
                         last_5_events.append(str(evt.get("event_type", "")))
-                    except Exception:
-                        pass
+                    except Exception:  # justified: scan-resilience, skip malformed JSONL lines
+                        logger.debug("jsonl_line_parse_failed", exc_info=True)
 
             # Failing tests from build-status.yaml
             build_status_path = project_root / ".trw" / "context" / "build-status.yaml"
             failing_tests: list[str] = []
             if build_status_path.exists():
-                bs_data = _reader.read_yaml(build_status_path)
+                bs_data = reader.read_yaml(build_status_path)
                 if isinstance(bs_data, dict):
                     raw_ft = bs_data.get("failing_tests", [])
                     if isinstance(raw_ft, list):
@@ -206,5 +207,5 @@ def register_checkpoint_tools(server: FastMCP) -> None:
             result["prd_scope"] = prd_scope
             result["failing_tests"] = failing_tests
             return result
-        except Exception as exc:
+        except Exception as exc:  # justified: boundary, compact instructions generation may fail on I/O
             return {"status": "failed", "error": str(exc)}

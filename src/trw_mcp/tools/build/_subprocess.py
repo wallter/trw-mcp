@@ -14,8 +14,6 @@ from pathlib import Path
 
 from trw_mcp.models.config import get_config
 
-_config = get_config()
-
 # Strip ANSI escape codes from subprocess output (PRD-CORE-023 RISK-009)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -54,7 +52,8 @@ def _find_executable(name: str, project_root: Path) -> str | None:
             return str(candidate)
 
     # Legacy: check venv in build root (parent of source_package_path)
-    source_path = _config.source_package_path or "trw-mcp/src"
+    config = get_config()
+    source_path = config.source_package_path or "trw-mcp/src"
     pkg_dir = project_root / Path(source_path).parent
     venv_path = pkg_dir / ".venv" / "bin" / name
     if venv_path.exists():

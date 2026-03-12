@@ -1388,18 +1388,26 @@ class TestCacheApiFuzz:
 
 
 def _setup_build_tool_mocks(
-    mock_config: MagicMock,
+    mock_get_config: MagicMock,
     tmp_path: Path,
+    **overrides: object,
 ) -> tuple[Path, Path]:
-    """Configure mock_config with required build_check_enabled flag and paths."""
+    """Configure mock get_config to return a TRWConfig with build_check_enabled.
+
+    Any additional keyword arguments are passed to TRWConfig constructor.
+    """
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
     (trw_dir / "context").mkdir()
-    mock_config.build_check_enabled = True
-    mock_config.build_check_timeout_secs = 300
-    mock_config.build_check_pytest_args = ""
-    mock_config.build_check_mypy_args = "--strict"
-    mock_config.dep_audit_enabled = False
+    config_kwargs: dict[str, object] = {
+        "build_check_enabled": True,
+        "build_check_timeout_secs": 300,
+        "build_check_pytest_args": "",
+        "build_check_mypy_args": "--strict",
+        "dep_audit_enabled": False,
+    }
+    config_kwargs.update(overrides)
+    mock_get_config.return_value = TRWConfig(**config_kwargs)  # type: ignore[arg-type]
     return trw_dir, tmp_path
 
 
@@ -1415,7 +1423,7 @@ def _get_tool_fn(server: object) -> object:
 class TestBuildCheckScopeIntegration:
     """Integration tests: trw_build_check MCP tool with scope='mutations','deps','api'."""
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.mutations.run_mutation_check")
@@ -1426,12 +1434,11 @@ class TestBuildCheckScopeIntegration:
         mock_run: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """scope='mutations' → run_mutation_check + cache_mutation_status called."""
-        trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
-        mock_config.mutation_enabled = True
+        trw_dir, proj_root = _setup_build_tool_mocks(mock_get_config, tmp_path, mutation_enabled=True)
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = proj_root
 
@@ -1456,7 +1463,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache.assert_called_once()
         assert result.get("mutation_passed") is True
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.build._registration._run_dep_audit")
@@ -1467,12 +1474,11 @@ class TestBuildCheckScopeIntegration:
         mock_run: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """scope='deps' → _run_dep_audit + _cache_to_context called."""
-        trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
-        mock_config.dep_audit_enabled = True
+        trw_dir, proj_root = _setup_build_tool_mocks(mock_get_config, tmp_path, dep_audit_enabled=True)
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = proj_root
 
@@ -1496,7 +1502,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache.assert_called_once()
         assert result.get("dep_audit_passed") is True
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.build._registration._run_api_fuzz")
@@ -1507,12 +1513,11 @@ class TestBuildCheckScopeIntegration:
         mock_run: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """scope='api' → _run_api_fuzz + _cache_to_context called."""
-        trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
-        mock_config.api_fuzz_enabled = True
+        trw_dir, proj_root = _setup_build_tool_mocks(mock_get_config, tmp_path, api_fuzz_enabled=True)
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = proj_root
 
@@ -1536,7 +1541,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache.assert_called_once()
         assert result.get("api_fuzz_skipped") is True
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.build._registration.run_build_check")
@@ -1549,14 +1554,13 @@ class TestBuildCheckScopeIntegration:
         mock_build: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """scope='full' + dep_audit_enabled=True → _run_dep_audit is called."""
         from trw_mcp.models.build import BuildStatus
 
-        trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
-        mock_config.dep_audit_enabled = True  # override to True
+        trw_dir, proj_root = _setup_build_tool_mocks(mock_get_config, tmp_path, dep_audit_enabled=True)
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = proj_root
 
@@ -1586,7 +1590,7 @@ class TestBuildCheckScopeIntegration:
         mock_cache_dep.assert_called_once()
         assert "dep_audit" in result
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     @patch("trw_mcp.tools.build._registration.run_build_check")
@@ -1595,14 +1599,13 @@ class TestBuildCheckScopeIntegration:
         mock_build: MagicMock,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """scope='full' + dep_audit_enabled=False → _run_dep_audit NOT called."""
         from trw_mcp.models.build import BuildStatus
 
-        trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
-        mock_config.dep_audit_enabled = False
+        trw_dir, proj_root = _setup_build_tool_mocks(mock_get_config, tmp_path, dep_audit_enabled=False)
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = proj_root
 
@@ -1624,18 +1627,18 @@ class TestBuildCheckScopeIntegration:
         result = tool_fn(scope="full")
         assert "dep_audit" not in result
 
-    @patch("trw_mcp.tools.build._registration._config")
+    @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")
     @patch("trw_mcp.tools.build._registration.resolve_trw_dir")
     def test_scope_mutations_returns_skipped_when_disabled(
         self,
         mock_trw_dir: MagicMock,
         mock_proj_root: MagicMock,
-        mock_config: MagicMock,
+        mock_get_config: MagicMock,
         tmp_path: Path,
     ) -> None:
         """scope='mutations' returns result dict (even if skipped) without crashing."""
-        trw_dir, proj_root = _setup_build_tool_mocks(mock_config, tmp_path)
+        trw_dir, proj_root = _setup_build_tool_mocks(mock_get_config, tmp_path)
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = proj_root
 
@@ -1647,15 +1650,11 @@ class TestBuildCheckScopeIntegration:
         register_build_tools(server)
         tool_fn = _get_tool_fn(server)
 
-        # run_mutation_check will call _get_changed_files which calls subprocess
-        with patch("trw_mcp.tools.mutations._get_changed_files", return_value=[]):
-            with patch(
-                "trw_mcp.tools.mutations.cache_mutation_status",
-                return_value=trw_dir / "context" / "mutation-status.yaml",
-            ):
-                result = tool_fn(scope="mutations")
-        # Either mutation_skipped or mutation_passed should be present
-        assert "mutation_skipped" in result or "mutation_passed" in result
+        # mutation_enabled defaults to False in _setup_build_tool_mocks,
+        # so the tool returns a skipped status dict.
+        result = tool_fn(scope="mutations")
+        assert result["status"] == "skipped"
+        assert "mutation_enabled" in str(result["reason"])
 
 
 # ---------------------------------------------------------------------------

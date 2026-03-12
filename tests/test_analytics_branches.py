@@ -13,10 +13,10 @@ from unittest.mock import patch
 
 import pytest
 
-import trw_mcp.state.analytics_report as analytics_mod
+import trw_mcp.state.analytics.report as analytics_mod
 from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state import analytics as analytics_state
-from trw_mcp.state import analytics_core as analytics_core_mod
+from trw_mcp.state.analytics import core as analytics_core_mod
 from trw_mcp.state.analytics import (
     _iter_entry_files,
     apply_status_update,
@@ -31,7 +31,7 @@ from trw_mcp.state.analytics import (
     surface_validated_learnings,
     update_learning_index,
 )
-from trw_mcp.state.analytics_report import (
+from trw_mcp.state.analytics.report import (
     _analyze_single_run,
     compute_ceremony_score,
     scan_all_runs,
@@ -207,6 +207,8 @@ class TestFindEntryByIdExceptionHandling:
         assert result is not None
         path, data = result
         assert data["id"] == "L-target"
+        assert path.suffix == ".yaml"
+        assert "summary" in data
 
 
 class TestDetectToolSequences:
@@ -476,7 +478,7 @@ class TestUpdateLearningIndexOverflow:
         )
 
         # Patch get_config in analytics_entries where it's called
-        with patch("trw_mcp.state.analytics_entries.get_config", return_value=config_with_low_max):
+        with patch("trw_mcp.state.analytics.entries.get_config", return_value=config_with_low_max):
             # Create entries via LearningEntry objects
             from datetime import date
             entries = [
@@ -508,8 +510,10 @@ class TestMarkPromotedNoEntriesDir:
     def test_nonexistent_entries_dir_returns_silently(self, tmp_path: Path) -> None:
         """mark_promoted returns without error when entries_dir missing — line 607."""
         fake_trw = tmp_path / ".trw_no_entries"
-        # Should not raise
+        # Should not raise — early return when entries dir doesn't exist
         mark_promoted(fake_trw, "L-nonexistent")
+        # Confirm no entries dir was created as a side effect
+        assert not (fake_trw / "learnings" / "entries").exists()
 
     def test_mark_promoted_sets_flag(self, trw_dir: Path) -> None:
         """mark_promoted writes promoted_to_claude_md=True to entry file."""
@@ -527,6 +531,9 @@ class TestMarkPromotedNoEntriesDir:
         _write_entry(entries_dir, "some_entry", learning_id="L-some-entry")
         # Should not raise for missing ID
         mark_promoted(trw_dir, "L-nonexistent-id")
+        # Existing entry should remain unchanged (no promoted_to_claude_md added)
+        data = _reader.read_yaml(entries_dir / "some_entry.yaml")
+        assert data.get("promoted_to_claude_md") is not True
 
 
 class TestApplyStatusUpdateEdgeCases:
@@ -535,8 +542,10 @@ class TestApplyStatusUpdateEdgeCases:
     def test_nonexistent_entries_dir_returns_silently(self, tmp_path: Path) -> None:
         """apply_status_update returns early when entries_dir missing — line 626."""
         fake_trw = tmp_path / ".trw_no_entries"
-        # Should not raise
+        # Should not raise — early return when entries dir doesn't exist
         apply_status_update(fake_trw, "L-nonexistent", "resolved")
+        # Confirm no entries dir was created as a side effect
+        assert not (fake_trw / "learnings" / "entries").exists()
 
     def test_resolved_status_adds_resolved_at(self, trw_dir: Path) -> None:
         """Resolved status adds resolved_at field — line 634."""
@@ -638,7 +647,10 @@ class TestAutoPruneUtilityCandidates:
             )
 
         # No utility actions from these invalid-status candidates
-        assert result is not None  # completed without error
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "actions_taken" in result
+        assert result["actions_taken"] == 0
 
 
 class TestComputeReflectionQualityExceptionHandling:
@@ -821,7 +833,9 @@ class TestAnalyzeRunExceptionHandling:
 
         # Run should still be analyzed with score 0
         assert result is not None
+        assert isinstance(result, dict)
         assert result["score"] == 0
+        assert "run_id" in result
 
     def test_ceremony_score_exception_returns_null_score(self, tmp_path: Path) -> None:
         """compute_ceremony_score exception results in null score — lines 215-216."""
@@ -836,16 +850,18 @@ class TestAnalyzeRunExceptionHandling:
         })
 
         with patch(
-            "trw_mcp.state.analytics_report.compute_ceremony_score",
+            "trw_mcp.state.analytics.report.compute_ceremony_score",
             side_effect=RuntimeError("scoring exploded"),
         ):
             result = _analyze_single_run(run_dir)
 
         assert result is not None
+        assert isinstance(result, dict)
         # score should be None (from the except-clause fallback)
         assert result["score"] is None
         assert result["session_start"] is False
         assert result["deliver"] is False
+        assert "run_id" in result
 
 
 class TestScanAllRunsExceptionPaths:

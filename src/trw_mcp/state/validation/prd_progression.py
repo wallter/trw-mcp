@@ -160,8 +160,8 @@ def auto_progress_prds(
             aare_dir = prds_dir.parent
             sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
             sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
-        except Exception:
-            pass  # Best-effort — never fail auto-progression for sync issues
+        except Exception:  # justified: fail-open, index sync is best-effort after progression
+            logger.debug("index_sync_failed", exc_info=True)
 
     logger.info(
         "auto_progress_complete",

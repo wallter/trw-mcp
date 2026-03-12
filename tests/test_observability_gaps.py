@@ -43,9 +43,10 @@ class TestCorrelationID:
 
         wrapped = log_tool_call(mock_tool)
 
-        with patch("trw_mcp.tools.telemetry._config") as mock_cfg:
-            mock_cfg.telemetry_enabled = True
-            mock_cfg.telemetry = False
+        mock_cfg = MagicMock()
+        mock_cfg.telemetry_enabled = True
+        mock_cfg.telemetry = False
+        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
             with patch("trw_mcp.tools.telemetry._write_tool_event"):
                 wrapped()
 
@@ -64,9 +65,10 @@ class TestCorrelationID:
 
         wrapped = log_tool_call(mock_tool)
 
-        with patch("trw_mcp.tools.telemetry._config") as mock_cfg:
-            mock_cfg.telemetry_enabled = True
-            mock_cfg.telemetry = False
+        mock_cfg = MagicMock()
+        mock_cfg.telemetry_enabled = True
+        mock_cfg.telemetry = False
+        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
             with patch("trw_mcp.tools.telemetry._write_tool_event"):
                 wrapped()
 
@@ -84,9 +86,10 @@ class TestCorrelationID:
 
         wrapped = log_tool_call(mock_tool)
 
-        with patch("trw_mcp.tools.telemetry._config") as mock_cfg:
-            mock_cfg.telemetry_enabled = True
-            mock_cfg.telemetry = False
+        mock_cfg = MagicMock()
+        mock_cfg.telemetry_enabled = True
+        mock_cfg.telemetry = False
+        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
             with (
                 patch("trw_mcp.tools.telemetry._write_tool_event"),
                 pytest.raises(ValueError, match="boom"),
@@ -112,9 +115,10 @@ class TestCorrelationID:
 
         wrapped = log_tool_call(mock_tool)
 
-        with patch("trw_mcp.tools.telemetry._config") as mock_cfg:
-            mock_cfg.telemetry_enabled = True
-            mock_cfg.telemetry = False
+        mock_cfg = MagicMock()
+        mock_cfg.telemetry_enabled = True
+        mock_cfg.telemetry = False
+        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
             with patch("trw_mcp.tools.telemetry._write_tool_event"):
                 wrapped()
 
@@ -143,8 +147,9 @@ class TestCorrelationID:
 
         wrapped = log_tool_call(mock_tool)
 
-        with patch("trw_mcp.tools.telemetry._config") as mock_cfg:
-            mock_cfg.telemetry_enabled = False
+        mock_cfg = MagicMock()
+        mock_cfg.telemetry_enabled = False
+        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
             wrapped()
 
         assert "tool_call_id" not in captured_ctx
@@ -198,7 +203,7 @@ class TestDistinctEventNames:
                 return_value={"available": False},
             ),
             patch(
-                "trw_mcp.state.analytics_report.auto_close_stale_runs",
+                "trw_mcp.state.analytics.report.auto_close_stale_runs",
                 side_effect=Exception("stale runs error"),
             ),
             patch(

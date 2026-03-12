@@ -42,16 +42,9 @@ def _write_usage_record(
 
 def _get_report_tool_fn() -> Callable[..., Any]:
     """Extract the trw_usage_report fn from the FastMCP server."""
-    from tests.conftest import get_tools_sync
+    from tests.conftest import extract_tool_fn, make_test_server
 
-    from fastmcp import FastMCP
-
-    from trw_mcp.tools.usage import register_usage_tools
-
-    server = FastMCP("test")
-    register_usage_tools(server)
-    tools = get_tools_sync(server)
-    return tools["trw_usage_report"].fn  # type: ignore[return-value]
+    return extract_tool_fn(make_test_server("usage"), "trw_usage_report")  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------

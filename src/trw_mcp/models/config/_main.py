@@ -17,6 +17,15 @@ from functools import cached_property
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trw_mcp.models.config._defaults import (
+    DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
+    DEFAULT_LEARNING_MAX_ENTRIES,
+    DEFAULT_MUTATION_TIMEOUT_SECS,
+    DEFAULT_PARALLELISM_MAX,
+    DEFAULT_RECALL_MAX_RESULTS,
+    DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
+    DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
+)
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
@@ -103,7 +112,7 @@ class TRWConfig(BaseSettings):
     # -- 1. Orchestration --
 
     # Wave/shard execution limits
-    parallelism_max: int = 10
+    parallelism_max: int = DEFAULT_PARALLELISM_MAX
     timebox_hours: int = 8
     max_research_waves: int = 3
 
@@ -128,12 +137,12 @@ class TRWConfig(BaseSettings):
 
     # -- 3. Learning storage & retrieval --
 
-    learning_max_entries: int = 500
+    learning_max_entries: int = DEFAULT_LEARNING_MAX_ENTRIES
     learning_promotion_impact: float = 0.7
     learning_prune_age_days: int = 30
     learning_repeated_op_threshold: int = 3
-    recall_receipt_max_entries: int = 1000
-    recall_max_results: int = 25
+    recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
+    recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
     recall_compact_fields: frozenset[str] = frozenset(
         {"id", "summary", "impact", "tags", "status"}
     )
@@ -213,7 +222,7 @@ class TRWConfig(BaseSettings):
     # -- 12. Scoring subsystem --
     # Outcome-based utility, Sprint 8 extraction
 
-    scoring_default_days_unused: int = 30
+    scoring_default_days_unused: int = DEFAULT_SCORING_DEFAULT_DAYS_UNUSED
     scoring_recency_discount_floor: float = 0.5
     scoring_error_fallback_reward: float = -0.3
     scoring_error_keywords: tuple[str, ...] = (
@@ -416,7 +425,7 @@ class TRWConfig(BaseSettings):
     # PRD-CORE-023
 
     build_check_enabled: bool = True
-    build_check_timeout_secs: int = 300
+    build_check_timeout_secs: int = DEFAULT_BUILD_CHECK_TIMEOUT_SECS
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     build_check_pytest_args: str = ""
@@ -507,7 +516,7 @@ class TRWConfig(BaseSettings):
     mutation_threshold_experimental: float = 0.30      # experimental code threshold
     mutation_critical_paths: tuple[str, ...] = ("tools/", "state/", "models/")
     mutation_experimental_paths: tuple[str, ...] = ("scratch/",)
-    mutation_timeout_secs: int = 300
+    mutation_timeout_secs: int = DEFAULT_MUTATION_TIMEOUT_SECS
 
     # -- 42. Cross-model review (QUAL-026) --
     # Route git diff to external model family for independent review

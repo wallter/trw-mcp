@@ -30,6 +30,8 @@ def render_imperative_opener() -> str:
         "TRW tools help you build effectively and preserve your work across sessions:\n"
         "- **Start**: call `trw_session_start()` to load prior learnings"
         " and recover any active run\n"
+        "- **Start**: read `.trw/frameworks/FRAMEWORK.md` \u2014 it defines the methodology"
+        " your tools implement\n"
         "- **During**: call `trw_checkpoint(message)` after milestones"
         " so you resume here if context compacts\n"
         "- **Finish**: call `trw_deliver()` to persist your learnings"
@@ -244,6 +246,38 @@ def render_rationalization_watchlist() -> str:
         "- `trw_checkpoint()` \u2014 at milestones (you judge which)\n"
         "- `trw_learn()` \u2014 on discoveries/gotchas/errors\n"
         "- `trw_recall()` \u2014 recommended at start, skippable for repeat-domain\n"
+        "\n"
+    )
+
+
+def render_framework_reference() -> str:
+    """Render framework reference directive for CLAUDE.md.
+
+    Points agents to the methodology document and explains *why* reading it
+    matters. Kept compact (~6 lines) per PRD-CORE-061 progressive disclosure.
+
+    The framework (.trw/frameworks/FRAMEWORK.md) defines the methodology that
+    TRW tools implement. Without it, agents use tools correctly but miss the
+    process — phase gates, exit criteria, formations, quality rubrics — that
+    prevents rework. This section ensures agents know the framework exists and
+    understand why investing ~500 tokens to read it at session start pays for
+    itself in avoided rework.
+
+    Returns:
+        Markdown string with framework reference and reading schedule.
+    """
+    return (
+        "### Framework Reference\n"
+        "\n"
+        "**Read `.trw/frameworks/FRAMEWORK.md` at session start** — it defines the methodology "
+        "your tools implement.\n"
+        "\n"
+        "The framework covers: 6-phase execution model with exit criteria per phase, formation "
+        "selection for parallel work, quality gates with rubric scoring, phase reversion rules, "
+        "adaptive planning, anti-skip safeguards, and Agent Teams protocol. "
+        "Re-read after context compaction and at phase transitions. "
+        "Without it, tools work but methodology is missing — you'll pass tool checks while "
+        "skipping the process that prevents rework.\n"
         "\n"
     )
 

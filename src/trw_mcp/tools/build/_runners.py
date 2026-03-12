@@ -17,8 +17,6 @@ from trw_mcp.tools.build._subprocess import (
     _strip_ansi,
 )
 
-_config = get_config()
-
 # Parse pytest summary line: "X passed, Y failed, Z errors" etc.
 _PYTEST_SUMMARY_RE = re.compile(
     r"(\d+)\s+passed"
@@ -58,8 +56,9 @@ def _run_pytest(
     Returns:
         Dict with tests_passed, coverage_pct, test_count, failure_count, failures.
     """
+    config = get_config()
     # Custom test command takes precedence over auto-resolved pytest
-    custom_cmd = _config.build_check_pytest_cmd
+    custom_cmd = config.build_check_pytest_cmd
     if custom_cmd:
         result = _run_subprocess(
             custom_cmd.split(), project_root, timeout_secs,
@@ -80,17 +79,17 @@ def _run_pytest(
         return _pytest_error("pytest not found — install with: pip install pytest")
 
     # Derive build root and cwd from config (PRD-INFRA-011-FR01)
-    source_path = _config.source_package_path or "trw-mcp/src"
+    source_path = config.source_package_path or "trw-mcp/src"
     build_root = str(Path(source_path).parent)
     cwd = project_root / build_root
 
     # Test directory relative to cwd (strip build_root prefix)
-    tests_full = _config.tests_relative_path or "trw-mcp/tests"
+    tests_full = config.tests_relative_path or "trw-mcp/tests"
     test_dir = tests_full.removeprefix(build_root + "/") if build_root != "." else tests_full
     if not test_dir.endswith("/"):
         test_dir += "/"
 
-    cov_target = _config.source_package_name or "trw_mcp"
+    cov_target = config.source_package_name or "trw_mcp"
 
     cmd = [
         pytest_path,
@@ -151,6 +150,7 @@ def _run_mypy(
     Returns:
         Dict with mypy_clean and failures list.
     """
+    config = get_config()
     mypy_path = _find_executable("mypy", project_root)
     if mypy_path is None:
         return {
@@ -159,13 +159,13 @@ def _run_mypy(
         }
 
     # Derive build root and cwd from config (PRD-INFRA-011-FR02)
-    source_path = _config.source_package_path or "trw-mcp/src"
+    source_path = config.source_package_path or "trw-mcp/src"
     build_root = str(Path(source_path).parent)
     cwd = project_root / build_root
 
     # Source target relative to cwd
     src_rel = source_path.removeprefix(build_root + "/") if build_root != "." else source_path
-    pkg_name = _config.source_package_name or "trw_mcp"
+    pkg_name = config.source_package_name or "trw_mcp"
     src_target = f"{src_rel}/{pkg_name}/"
 
     cmd = [mypy_path]

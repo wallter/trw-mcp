@@ -13,8 +13,9 @@ from pathlib import Path
 
 import structlog
 
-import trw_mcp.state.analytics_core as _ac
+import trw_mcp.state.analytics.core as _ac
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state.persistence import (
     FileStateReader,
@@ -71,7 +72,7 @@ def surface_validated_learnings(
         validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
         return validated
     except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        pass  # Fall through to YAML
+        logger.debug("sqlite_fallback_to_yaml", op="surface_validated_learnings")
 
     # Fallback: YAML scan
     entries_dir = _ac._entries_path(trw_dir)
@@ -79,7 +80,7 @@ def surface_validated_learnings(
         return []
 
     for _path, data in _ac._iter_entry_files(entries_dir, sorted_order=True):
-        if str(data.get("status", "active")) != "active":
+        if not is_active_entry(data):
             continue
 
         q_value = _ac._safe_float(data, "q_value")
@@ -124,7 +125,7 @@ def has_existing_success_learning(
             if str(data.get("summary", ""))[:50].lower() == target:
                 return True
     except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        pass  # Fall through to YAML
+        logger.debug("sqlite_fallback_to_yaml", op="has_existing_success_learning")
 
     # Also check YAML (entries from save_learning_entry may only be in YAML)
     entries_dir = _ac._entries_path(trw_dir)
@@ -163,7 +164,7 @@ def has_existing_mechanical_learning(
             if summary.startswith(target):
                 return True
     except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        pass  # Fall through to YAML
+        logger.debug("sqlite_fallback_to_yaml", op="has_existing_mechanical_learning")
 
     # Also check YAML (entries from save_learning_entry may only be in YAML)
     entries_dir = _ac._entries_path(trw_dir)
@@ -171,7 +172,7 @@ def has_existing_mechanical_learning(
         return False
     target = prefix.lower()
     for _path, data in _ac._iter_entry_files(entries_dir):
-        if str(data.get("status", "active")) != "active":
+        if not is_active_entry(data):
             continue
         summary = str(data.get("summary", "")).lower()
         if summary.startswith(target):
@@ -312,8 +313,8 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
             metadata = dict(entry.metadata) if entry.metadata else {}
             metadata["promoted_to_claude_md"] = "true"
             backend.update(learning_id, metadata=metadata)
-    except Exception:
-        pass  # Fail-open
+    except Exception:  # justified: fail-open, promotion metadata update must not block caller
+        logger.debug("promotion_metadata_update_failed", learning_id=learning_id)
 
     # Fallback: also update YAML if it exists
     entries_dir = _ac._entries_path(trw_dir)

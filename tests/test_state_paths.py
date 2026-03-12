@@ -83,10 +83,15 @@ class TestResolveTrwDir:
 class TestResolveRunPath:
     """Tests for resolve_run_path() — PRD-FIX-007."""
 
-    def test_explicit_path_returns_given(self, tmp_path: Path) -> None:
+    def test_explicit_path_returns_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """FR02a: Explicit run_path resolves when it exists."""
         run = tmp_path / "myrun"
         run.mkdir()
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+        )
         assert resolve_run_path(str(run)) == run.resolve()
 
     def test_explicit_nonexistent_raises(self, tmp_path: Path) -> None:
@@ -198,10 +203,15 @@ class TestResolveRunPath:
         )
         assert resolve_run_path() == run2
 
-    def test_explicit_path_returns_absolute(self, tmp_path: Path) -> None:
+    def test_explicit_path_returns_absolute(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Explicit path is resolved to absolute."""
         run = tmp_path / "myrun"
         run.mkdir()
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+        )
         result = resolve_run_path(str(run))
         assert result.is_absolute()
 
@@ -219,7 +229,7 @@ class TestResolveRunPathConfigWiring:
     ) -> None:
         """FR04: task_root='work' → finds runs under work/ instead of docs/."""
         config = TRWConfig(task_root="work")
-        monkeypatch.setattr("trw_mcp.state._paths._config", config)
+        monkeypatch.setattr("trw_mcp.state._paths.get_config", lambda: config)
 
         project = tmp_path / "project"
         run = project / "work" / "task1" / "runs" / "run-001"
@@ -235,7 +245,7 @@ class TestResolveRunPathConfigWiring:
     ) -> None:
         """FR04: task_root='work' → error references 'work/' not 'docs/'."""
         config = TRWConfig(task_root="work")
-        monkeypatch.setattr("trw_mcp.state._paths._config", config)
+        monkeypatch.setattr("trw_mcp.state._paths.get_config", lambda: config)
 
         project = tmp_path / "project"
         project.mkdir()
@@ -250,7 +260,7 @@ class TestResolveRunPathConfigWiring:
     ) -> None:
         """FR04: task_root='work' → error references 'work/*/runs/'."""
         config = TRWConfig(task_root="work")
-        monkeypatch.setattr("trw_mcp.state._paths._config", config)
+        monkeypatch.setattr("trw_mcp.state._paths.get_config", lambda: config)
 
         project = tmp_path / "project"
         (project / "work" / "task1" / "runs").mkdir(parents=True)
@@ -451,6 +461,21 @@ class TestDetectCurrentPhase:
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = detect_current_phase()
         assert result == "validate"
+
+    def test_skips_completed_runs_returns_active(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter
+    ) -> None:
+        """Skips completed/failed runs and returns phase from latest active run."""
+        project = tmp_path / "project"
+        task_root = project / "docs"
+        _make_run(task_root, "task1", "20260219T100000Z-old", phase="implement", writer=writer)
+        _make_run(task_root, "task1", "20260220T100000Z-done", status="complete", phase="deliver", writer=writer)
+        _make_run(task_root, "task1", "20260221T100000Z-fail", status="failed", phase="validate", writer=writer)
+
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
+        result = detect_current_phase()
+        # Should skip the completed and failed runs, return the older active run's phase
+        assert result == "implement"
 
     def test_no_runs_returns_none(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

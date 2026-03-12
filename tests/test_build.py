@@ -91,7 +91,7 @@ class TestFindExecutable:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Legacy: source_package_path parent's .venv
-        monkeypatch.setattr("trw_mcp.tools.build._subprocess._config", TRWConfig())
+        monkeypatch.setattr("trw_mcp.tools.build._subprocess.get_config", lambda: TRWConfig())
         legacy_bin = tmp_path / "trw-mcp" / ".venv" / "bin"
         legacy_bin.mkdir(parents=True)
         pytest_bin = legacy_bin / "pytest"
@@ -117,19 +117,19 @@ class TestCustomTestCommand:
 
     def test_custom_cmd_success(self, tmp_path: Path) -> None:
         cfg = TRWConfig(build_check_pytest_cmd="echo all-tests-passed")
-        with patch("trw_mcp.tools.build._runners._config", cfg):
+        with patch("trw_mcp.tools.build._runners.get_config", return_value=cfg):
             result = _run_pytest(tmp_path, timeout_secs=30, extra_args="")
         assert result["tests_passed"] is True
 
     def test_custom_cmd_failure(self, tmp_path: Path) -> None:
         cfg = TRWConfig(build_check_pytest_cmd="false")
-        with patch("trw_mcp.tools.build._runners._config", cfg):
+        with patch("trw_mcp.tools.build._runners.get_config", return_value=cfg):
             result = _run_pytest(tmp_path, timeout_secs=30, extra_args="")
         assert result["tests_passed"] is False
 
     def test_custom_cmd_not_found(self, tmp_path: Path) -> None:
         cfg = TRWConfig(build_check_pytest_cmd="nonexistent_test_runner_xyz")
-        with patch("trw_mcp.tools.build._runners._config", cfg):
+        with patch("trw_mcp.tools.build._runners.get_config", return_value=cfg):
             result = _run_pytest(tmp_path, timeout_secs=30, extra_args="")
         assert result["tests_passed"] is False
         failures = result["failures"]
@@ -223,7 +223,7 @@ class TestCustomCmdErrorPath:
     ) -> None:
         """Line 209: custom_cmd path returns error string (OSError/timeout)."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --suite all")
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
 
         with patch(
             "trw_mcp.tools.build._runners._run_subprocess",
@@ -242,7 +242,7 @@ class TestCustomCmdErrorPath:
     ) -> None:
         """custom_cmd happy path -- returncode 0."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --fast")
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
 
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -260,7 +260,7 @@ class TestCustomCmdErrorPath:
     ) -> None:
         """custom_cmd failure -- returncode != 0 extracts FAILED lines."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --suite all")
-        monkeypatch.setattr("trw_mcp.tools.build._runners._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
 
         mock_result = MagicMock()
         mock_result.returncode = 1
@@ -389,7 +389,7 @@ class TestTrwBuildCheckTool:
     ) -> None:
         """Line 396-400: build_check_enabled=False returns skipped status."""
         config = TRWConfig(build_check_enabled=False)
-        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
 
         from fastmcp import FastMCP
 
@@ -419,7 +419,7 @@ class TestTrwBuildCheckTool:
         (tmp_path / ".trw").mkdir()
 
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
 
         from fastmcp import FastMCP
 
@@ -470,7 +470,7 @@ class TestTrwBuildCheckTool:
         meta_dir.mkdir(parents=True)
 
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
 
         from fastmcp import FastMCP
 
@@ -527,7 +527,7 @@ class TestTrwBuildCheckTool:
         # Do NOT create meta directory
 
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
 
         from fastmcp import FastMCP
 
@@ -574,7 +574,7 @@ class TestTrwBuildCheckTool:
         """Line 404-407: timeout_secs capped at 600."""
         (tmp_path / ".trw").mkdir()
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
 
         from fastmcp import FastMCP
 
@@ -619,7 +619,7 @@ class TestTrwBuildCheckTool:
         """Line 405: timeout_secs=None uses config default."""
         (tmp_path / ".trw").mkdir()
         config = TRWConfig(build_check_enabled=True, build_check_timeout_secs=120)
-        monkeypatch.setattr("trw_mcp.tools.build._registration._config", config)
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
 
         from fastmcp import FastMCP
 

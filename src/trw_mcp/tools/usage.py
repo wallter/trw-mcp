@@ -19,8 +19,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_config = get_config()
-_reader = FileStateReader()
 _progressive_middleware: ProgressiveDisclosureMiddleware | None = None
 
 _COST_RATES: dict[str, dict[str, float]] = {
@@ -74,10 +72,12 @@ def register_usage_tools(server: FastMCP) -> None:
                 f"group_by must be one of: {', '.join(sorted(_VALID_GROUP_BY))}"
             )
 
+        config = get_config()
+        reader = FileStateReader()
         trw_dir = resolve_trw_dir()
-        log_path = trw_dir / _config.logs_dir / _config.llm_usage_log_file
+        log_path = trw_dir / config.logs_dir / config.llm_usage_log_file
 
-        records = _reader.read_jsonl(log_path)
+        records = reader.read_jsonl(log_path)
 
         if not records:
             logger.info(

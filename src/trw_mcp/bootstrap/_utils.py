@@ -402,7 +402,14 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 TRW tools help you build effectively and preserve your work across sessions:
 - **Start**: call `trw_session_start()` to load prior learnings and recover any active run
+- **Start**: read `.trw/frameworks/FRAMEWORK.md` — it defines the methodology your tools implement
 - **Finish**: call `trw_deliver()` to persist your learnings for future sessions
+
+### Framework Reference
+
+**Read `.trw/frameworks/FRAMEWORK.md` at session start** — it defines the methodology your tools implement.
+
+The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and Agent Teams protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
 
 ## TRW Behavioral Protocol (Auto-Generated)
 

@@ -11,10 +11,11 @@ from pathlib import Path
 
 import structlog
 
-import trw_mcp.state.analytics_core as _ac
+import trw_mcp.state.analytics.core as _ac
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.state.analytics_entries import apply_status_update, resync_learning_index
+from trw_mcp.state._helpers import is_active_entry
+from trw_mcp.state.analytics.entries import apply_status_update, resync_learning_index
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
@@ -82,7 +83,7 @@ def find_duplicate_learnings(
             return []
         active_entries = []
         for _path, data in _ac._iter_entry_files(entries_dir, sorted_order=True):
-            if str(data.get("status", "active")) == "active":
+            if is_active_entry(data):
                 active_entries.append(data)
 
     duplicates: list[tuple[str, str, float]] = []
@@ -266,7 +267,7 @@ def auto_prune_excess_entries(
     active_count = 0
     for entry_file, data in _ac._iter_entry_files(entries_dir, sorted_order=True):
         all_entries.append((entry_file, data))
-        if str(data.get("status", "active")) == "active":
+        if is_active_entry(data):
             active_count += 1
 
     if active_count <= max_entries:
@@ -435,12 +436,13 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
                 source_types.add(src)
         _used_sqlite = True
     except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        pass  # Fall through to YAML
+        logger.debug("sqlite_fallback_to_yaml", op="collect_learning_metrics")
+        # Fall through to YAML
 
     if not _used_sqlite and entries_dir.is_dir():
         for _path, data in _ac._iter_entry_files(entries_dir):
             total_entries += 1
-            if str(data.get("status", "active")) == "active":
+            if is_active_entry(data):
                 active_entries += 1
             entries_for_metrics.append(data)
             src = str(data.get("source_type", ""))

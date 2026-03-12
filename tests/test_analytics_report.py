@@ -21,9 +21,9 @@ import pytest
 
 from tests.conftest import get_tools_sync
 
-import trw_mcp.state.analytics_report as analytics_mod
+import trw_mcp.state.analytics.report as analytics_mod
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.analytics_report import (
+from trw_mcp.state.analytics.report import (
     _get_last_activity_timestamp,
     _write_archive_summary,
     auto_close_stale_runs,
@@ -97,8 +97,8 @@ def _patch_config_and_root(tmp_path: Path, ttl_hours: int = 48):
     cfg = TRWConfig(run_stale_ttl_hours=ttl_hours)
     return (
         patch.object(analytics_mod, "_config", cfg),
-        patch("trw_mcp.state.analytics_report.resolve_project_root", return_value=tmp_path),
-        patch("trw_mcp.state.analytics_report.get_config", return_value=cfg),
+        patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
+        patch("trw_mcp.state.analytics.report.get_config", return_value=cfg),
     )
 
 

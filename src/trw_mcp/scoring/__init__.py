@@ -78,13 +78,9 @@ from trw_mcp.scoring._correlation import (
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    if name == "_config":
-        return get_config()
-    if name == "_reader":
-        return FileStateReader()
-    if name == "_writer":
-        return FileStateWriter()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from trw_mcp.state._helpers import _compat_getattr
+
+    return _compat_getattr(name)
 
 
 __all__ = [

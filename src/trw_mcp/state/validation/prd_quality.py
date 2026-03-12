@@ -24,7 +24,7 @@ from trw_mcp.models.requirements import (
     ValidationResult,
     ValidationResultV2,
 )
-from trw_mcp.state.risk_profiles import derive_risk_level, get_risk_scaled_config
+from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
 
 logger = structlog.get_logger()
 
@@ -620,7 +620,7 @@ def validate_prd_quality_v2(
     for dim_name, scorer, max_score in _active_dims:
         try:
             dimensions.append(scorer())
-        except Exception:
+        except Exception:  # justified: fail-open, one dimension failure must not block entire scoring
             logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
             dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 

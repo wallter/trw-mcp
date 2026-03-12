@@ -6,6 +6,7 @@ helpers in each test module.
 
 Usage:
     from tests._factories import make_entry_data, write_entry, make_run_dir
+    from tests._factories import make_run_dir_with_structure
 """
 
 from __future__ import annotations
@@ -150,3 +151,62 @@ def make_run_dir(
     )
 
     return run_path
+
+
+def make_run_dir_with_structure(
+    base: Path,
+    *,
+    task: str = "test-task",
+    framework: str = "v24.0_TRW",
+    run_id: str = "20260101T000000Z-test1234",
+    writer: FileStateWriter | None = None,
+    with_events: bool = False,
+    with_scratch_orchestrator: bool = False,
+) -> Path:
+    """Create a run directory with full subdirectory structure.
+
+    This is the shared factory that replaces the local ``_make_run_dir``
+    helpers in test_orchestration_branches, test_validation_branches,
+    and test_validation_gates.
+
+    Args:
+        base: Root path under which the run directory is created.
+        task: Task name written to run.yaml.
+        framework: Framework version written to run.yaml.
+        run_id: Run identifier used for dir name and run.yaml.
+        writer: Optional FileStateWriter; one is created if omitted.
+        with_events: If True, write an initial ``run_init`` event to events.jsonl.
+        with_scratch_orchestrator: If True, create ``scratch/_orchestrator/`` dir.
+
+    Returns:
+        The run directory Path.
+    """
+    w = writer or FileStateWriter()
+    run_dir = base / "runs" / run_id
+    meta = run_dir / "meta"
+    meta.mkdir(parents=True)
+    (run_dir / "shards").mkdir(parents=True, exist_ok=True)
+    (run_dir / "reports").mkdir()
+
+    if with_scratch_orchestrator:
+        (run_dir / "scratch" / "_orchestrator").mkdir(parents=True)
+    else:
+        (run_dir / "scratch").mkdir(exist_ok=True)
+
+    w.write_yaml(meta / "run.yaml", {
+        "run_id": run_id,
+        "task": task,
+        "framework": framework,
+        "status": "active",
+        "phase": "research",
+        "confidence": "medium",
+    })
+
+    if with_events:
+        w.append_jsonl(meta / "events.jsonl", {
+            "ts": "2026-02-06T12:00:00Z",
+            "event": "run_init",
+            "task": task,
+        })
+
+    return run_dir

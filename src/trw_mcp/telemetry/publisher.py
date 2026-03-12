@@ -184,7 +184,7 @@ def publish_learnings(
                 else:
                     errors += 1
 
-            except Exception:
+            except Exception:  # justified: fail-open, skip individual entry failures during publish
                 logger.debug("learning_file_processing_failed", file=yaml_file.name)
                 errors += 1
     finally:

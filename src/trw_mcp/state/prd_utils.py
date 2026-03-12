@@ -199,7 +199,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
 
     except StateError:
         raise
-    except Exception as exc:
+    except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
         raise StateError(
             f"Failed to update frontmatter: {exc}", path=str(path)
         ) from exc

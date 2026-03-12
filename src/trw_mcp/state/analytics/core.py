@@ -15,11 +15,8 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
-from trw_mcp.state._helpers import safe_float, safe_int
-from trw_mcp.state.persistence import (
-    FileStateReader,
-    FileStateWriter,
-)
+from trw_mcp.state._helpers import iter_yaml_entry_files, safe_float, safe_int
+from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
 
@@ -139,7 +136,7 @@ def infer_topic_tags(
                 if len(inferred) >= _TOPIC_TAG_MAX:
                     break
         return list(inferred.values())
-    except Exception:
+    except Exception:  # justified: fail-open, tag inference is best-effort enrichment
         return []
 
 
@@ -156,12 +153,14 @@ def _iter_entry_files(
 ) -> Iterator[tuple[Path, dict[str, object]]]:
     """Yield (file_path, data) for each valid YAML entry, skipping index.yaml.
 
+    Delegates path iteration to ``_helpers.iter_yaml_entry_files`` (which
+    always yields in sorted order) and adds YAML parsing on top.
     Silently skips files that fail to parse or have unexpected types.
     """
     reader = FileStateReader()
-    glob = entries_dir.glob("*.yaml")
-    for entry_file in (sorted(glob) if sorted_order else glob):
-        if entry_file.name == "index.yaml":
+    files = iter_yaml_entry_files(entries_dir) if sorted_order else entries_dir.glob("*.yaml")
+    for entry_file in files:
+        if not sorted_order and entry_file.name == "index.yaml":
             continue
         try:
             data = reader.read_yaml(entry_file)

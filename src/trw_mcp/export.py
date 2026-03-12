@@ -17,7 +17,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.exceptions import StateError
+
+logger = structlog.get_logger()
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state._helpers import load_project_config as _load_project_config
 from trw_mcp.state.analytics import (
@@ -26,7 +30,7 @@ from trw_mcp.state.analytics import (
     generate_learning_id,
     resync_learning_index,
 )
-from trw_mcp.state.analytics_report import scan_all_runs
+from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
@@ -135,7 +139,7 @@ def _collect_analytics(
         with temp_project_root(target_dir):
             analytics["reflection_quality"] = compute_reflection_quality(trw_dir)
     except (OSError, RuntimeError, StateError, ValueError, TypeError, ZeroDivisionError):
-        pass
+        logger.debug("reflection_quality_compute_failed", exc_info=True)
 
     # Ceremony aggregates (from cached report or fresh scan)
     report_path = trw_dir / config.context_dir / "analytics-report.yaml"
@@ -144,7 +148,7 @@ def _collect_analytics(
             cached = reader.read_yaml(report_path)
             analytics["ceremony_aggregates"] = cached.get("aggregate", {})
         except (OSError, StateError):
-            pass
+            logger.debug("ceremony_aggregates_load_failed", exc_info=True)
 
     return analytics
 

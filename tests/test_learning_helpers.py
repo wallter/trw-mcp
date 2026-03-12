@@ -290,6 +290,8 @@ class TestCheckAndHandleDedup:
             assert result is not None
             assert result["status"] == "merged"
             assert result["merged_into"] == "L-existing002"
+            assert result["new_id"] == "L-test004"
+            assert "message" in result
             assert mock_merge.called
 
     def test_merge_skips_index_yaml(self, tmp_path: Path) -> None:
@@ -337,6 +339,8 @@ class TestCheckAndHandleDedup:
 
         assert result is not None
         assert result["status"] == "merged"
+        assert result["merged_into"] == "L-existing010"
+        assert result["new_id"] == "L-test010"
         # merge_entries should have been called with real-entry.yaml, not index.yaml
         assert mock_merge.called
         actual_path = mock_merge.call_args[0][0]
@@ -385,6 +389,8 @@ class TestCheckAndHandleDedup:
         # Should succeed despite the corrupt file — continues past it
         assert result is not None
         assert result["status"] == "merged"
+        assert result["merged_into"] == "L-existing020"
+        assert result["new_id"] == "L-test020"
         assert mock_merge.called
 
     def test_fail_open_on_dedup_exception(self, tmp_path: Path) -> None:

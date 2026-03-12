@@ -18,6 +18,12 @@ from trw_mcp.state.persistence import (
 )
 
 
+def __getattr__(name: str) -> object:
+    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+    from trw_mcp.state._helpers import _compat_getattr
+
+    return _compat_getattr(name)
+
 
 def _receipt_path(trw_dir: Path) -> Path:
     """Return the path to the recall receipt log."""

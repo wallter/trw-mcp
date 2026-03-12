@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import get_tools_sync
+from tests.conftest import get_tools_sync, make_test_server
 
 
 @pytest.fixture(autouse=True)
@@ -27,13 +27,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
-    from fastmcp import FastMCP
-
-    from trw_mcp.tools.requirements import register_requirements_tools
-
-    srv = FastMCP("test")
-    register_requirements_tools(srv)
-    return get_tools_sync(srv)
+    return get_tools_sync(make_test_server("requirements"))
 
 
 class TestTrwPrdCreate:

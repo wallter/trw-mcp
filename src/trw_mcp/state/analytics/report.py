@@ -21,13 +21,9 @@ logger = structlog.get_logger()
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    if name == "_config":
-        return get_config()
-    if name == "_reader":
-        return FileStateReader()
-    if name == "_writer":
-        return FileStateWriter()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from trw_mcp.state._helpers import _compat_getattr
+
+    return _compat_getattr(name)
 
 
 # --- Ceremony Scoring (FR05) ---
@@ -154,7 +150,7 @@ def scan_all_runs(
                 run_data = _analyze_single_run(run_dir)
                 if run_data is not None:
                     runs.append(run_data)
-            except Exception as exc:
+            except Exception as exc:  # justified: scan-resilience, skip bad run dirs without aborting report
                 parse_errors.append(f"{run_dir.name}: {exc}")
 
     # Apply since filter (validate ISO date format)
@@ -188,7 +184,7 @@ def scan_all_runs(
         writer.ensure_dir(cache_dir)
         cache_path = cache_dir / "analytics-report.yaml"
         writer.write_yaml(cache_path, report)
-    except Exception:
+    except Exception:  # justified: fail-open, cache write is best-effort optimization
         logger.debug("analytics_report_cache_write_failed")
 
     return report
@@ -219,13 +215,13 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
     if events_path.exists():
         try:
             events = reader.read_jsonl(events_path)
-        except Exception:
+        except Exception:  # justified: scan-resilience, corrupt events file should not block run analysis
             logger.debug("events_read_failed", path=str(events_path))
 
     # Compute ceremony score
     try:
         ceremony = compute_ceremony_score(events)
-    except Exception:
+    except Exception:  # justified: fail-open, ceremony score computation must not block analytics
         ceremony = {
             "score": None,
             "session_start": False,
@@ -263,7 +259,7 @@ def _parse_run_id_timestamp(run_id: str) -> str:
             dt = datetime.strptime(ts_part, "%Y%m%dT%H%M%SZ")
             return dt.replace(tzinfo=timezone.utc).isoformat()
     except (ValueError, IndexError):
-        pass
+        logger.debug("run_id_timestamp_parse_failed", run_id=run_id, exc_info=True)
     return run_id
 
 

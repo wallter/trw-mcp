@@ -11,16 +11,20 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.exceptions import StateError
+
+logger = structlog.get_logger()
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader
 
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    if name == "_config":
-        return get_config()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from trw_mcp.state._helpers import _compat_getattr
+
+    return _compat_getattr(name)
 
 
 # --- Session identity (PRD-FIX-042 FR03) ---
@@ -201,8 +205,8 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
                 status = str(data.get("status", "active"))
                 if status in ("complete", "failed"):
                     continue
-            except Exception:
-                pass  # If can't read, treat as active (backward compat)
+            except Exception:  # justified: fail-open, unreadable run.yaml treated as active for backward compat
+                logger.debug("run_yaml_read_failed", path=str(run_yaml), exc_info=True)
             if run_dir.name > latest_name:
                 latest_name = run_dir.name
                 latest_dir = run_dir
@@ -302,6 +306,14 @@ def detect_current_phase() -> str | None:
         latest_name = ""
         latest_yaml: Path | None = None
         for run_dir, run_yaml in iter_run_dirs(task_root):
+            # Status-aware: skip completed/failed runs (matches find_active_run)
+            try:
+                data = reader.read_yaml(run_yaml)
+                status = str(data.get("status", "active"))
+                if status in ("complete", "failed"):
+                    continue
+            except Exception:  # justified: fail-open, unreadable run.yaml treated as active
+                logger.debug("run_yaml_read_failed", path=str(run_yaml), exc_info=True)
             if run_dir.name > latest_name:
                 latest_name = run_dir.name
                 latest_yaml = run_yaml

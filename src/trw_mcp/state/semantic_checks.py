@@ -83,7 +83,7 @@ def load_semantic_checks(rubric_path: Path | None = None) -> list[SemanticCheck]
 
         yaml = YAML(typ="safe")
         data = yaml.load(rubric_path)
-    except Exception:
+    except Exception:  # justified: fail-open, rubric parse failure degrades to no semantic checks
         logger.debug("semantic_checks_rubric_parse_error", path=str(rubric_path))
         return []
 

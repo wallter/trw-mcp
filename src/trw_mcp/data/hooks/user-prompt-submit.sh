@@ -18,7 +18,7 @@ _phase=$(infer_phase)
 
 case "$_phase" in
   none)
-    echo "TRW: Call trw_session_start(query='your task domain') to load context — prior sessions' learnings save you from re-discovering what's already known."
+    echo "TRW: Call trw_session_start(query='your task domain') to load context, then read .trw/frameworks/FRAMEWORK.md — it defines the methodology your tools implement."
     ;;
   early)
     echo "TRW [RESEARCH/PLAN]: PRD validation gates implementation — trw_prd_validate catches ambiguity before it becomes rework."

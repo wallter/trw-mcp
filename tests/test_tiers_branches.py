@@ -431,7 +431,9 @@ class TestColdPromoteEdgeCases:
         mgr = TierManager(trw_dir, reader=reader, writer=FileStateWriter())
         result = mgr.cold_promote("target-entry")
         assert result is not None
+        assert isinstance(result, dict)
         assert result["id"] == "target-entry"
+        assert "summary" in result
 
     def test_cold_promote_id_mismatch_skips_file(self, tmp_path: Path) -> None:
         """Line 518: entry whose ID does not match is skipped."""
@@ -452,7 +454,9 @@ class TestColdPromoteEdgeCases:
         mgr = TierManager(trw_dir)
         result = mgr.cold_promote("wanted-id")
         assert result is not None
+        assert isinstance(result, dict)
         assert result["id"] == "wanted-id"
+        assert result.get("summary") == "the target"
 
     def test_cold_promote_not_found_returns_none(self, tmp_path: Path) -> None:
         """Line 538: no matching entry in cold archive returns None."""
@@ -734,3 +738,440 @@ class TestSweepColdPurgeException:
                 result = mgr.sweep()
 
         assert result.errors >= 1
+
+
+# ---------------------------------------------------------------------------
+# compute_importance_score edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestImportanceScoreEdgeCases:
+    """Edge cases for compute_importance_score not covered by test_tiers.py."""
+
+    def test_zero_weights_returns_zero(self) -> None:
+        """All weights zero means total_w == 0; normalization skipped, score == 0."""
+        from trw_mcp.state.tiers import compute_importance_score
+
+        cfg = TRWConfig(memory_score_w1=0.0, memory_score_w2=0.0, memory_score_w3=0.0)
+        entry: dict[str, object] = {
+            "id": "z",
+            "summary": "test",
+            "detail": "",
+            "impact": 0.9,
+            "last_accessed_at": date.today().isoformat(),
+        }
+        score = compute_importance_score(entry, ["test"], config=cfg)
+        assert score == 0.0
+
+    def test_weights_exactly_one_no_normalization(self) -> None:
+        """Weights summing to exactly 1.0 skip normalization; score unchanged."""
+        from trw_mcp.state.tiers import compute_importance_score
+
+        cfg = TRWConfig(memory_score_w1=0.5, memory_score_w2=0.3, memory_score_w3=0.2)
+        today = date.today().isoformat()
+        entry: dict[str, object] = {
+            "id": "x",
+            "summary": "test keyword",
+            "detail": "",
+            "impact": 1.0,
+            "last_accessed_at": today,
+        }
+        # With w1=0.5, full token match, recent entry, impact=1.0
+        score = compute_importance_score(entry, ["test", "keyword"], config=cfg)
+        # relevance=1.0, recency~1.0, importance=1.0 => score ~= 0.5+0.3+0.2 = 1.0
+        assert 0.9 <= score <= 1.0
+
+    def test_zero_half_life_recency_is_one(self) -> None:
+        """When half_life is 0, decay_rate is 0 and recency always == 1.0."""
+        from trw_mcp.state.tiers import compute_importance_score
+
+        cfg = TRWConfig(
+            memory_score_w1=0.0,
+            memory_score_w2=1.0,
+            memory_score_w3=0.0,
+            learning_decay_half_life_days=0,
+        )
+        old_entry: dict[str, object] = {
+            "id": "old",
+            "summary": "",
+            "detail": "",
+            "impact": 0.5,
+            "last_accessed_at": (date.today() - timedelta(days=500)).isoformat(),
+        }
+        score = compute_importance_score(old_entry, [], config=cfg)
+        # decay_rate=0 => exp(0)=1.0, so recency=1.0 regardless of age
+        assert score == pytest.approx(1.0, abs=0.01)
+
+    def test_missing_impact_defaults_to_half(self) -> None:
+        """Entry without 'impact' field defaults to 0.5."""
+        from trw_mcp.state.tiers import compute_importance_score
+
+        cfg = TRWConfig(memory_score_w1=0.0, memory_score_w2=0.0, memory_score_w3=1.0)
+        entry: dict[str, object] = {
+            "id": "no-impact",
+            "summary": "",
+            "detail": "",
+            "last_accessed_at": date.today().isoformat(),
+        }
+        score = compute_importance_score(entry, [], config=cfg)
+        assert score == pytest.approx(0.5, abs=0.01)
+
+    def test_config_none_uses_get_config(self) -> None:
+        """config=None falls back to get_config() singleton."""
+        from trw_mcp.models.config import _reset_config
+        from trw_mcp.state.tiers import compute_importance_score
+
+        cfg = TRWConfig(memory_score_w1=0.0, memory_score_w2=0.0, memory_score_w3=1.0)
+        _reset_config(cfg)
+        entry: dict[str, object] = {
+            "id": "x",
+            "summary": "",
+            "detail": "",
+            "impact": 0.8,
+            "last_accessed_at": date.today().isoformat(),
+        }
+        score = compute_importance_score(entry, [], config=None)
+        assert score == pytest.approx(0.8, abs=0.01)
+
+    def test_impact_string_parsed_as_float(self) -> None:
+        """Impact stored as string (from raw YAML) is parsed correctly."""
+        from trw_mcp.state.tiers import compute_importance_score
+
+        cfg = TRWConfig(memory_score_w1=0.0, memory_score_w2=0.0, memory_score_w3=1.0)
+        entry: dict[str, object] = {
+            "id": "x",
+            "summary": "",
+            "detail": "",
+            "impact": "0.7",
+            "last_accessed_at": date.today().isoformat(),
+        }
+        score = compute_importance_score(entry, [], config=cfg)
+        assert score == pytest.approx(0.7, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Cold tier edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestColdPartitionExplicitTimestamp:
+    """Test _cold_partition with an explicit timestamp argument."""
+
+    def test_cold_partition_with_explicit_timestamp(self, tmp_path: Path) -> None:
+        """_cold_partition returns correct path for a specific datetime."""
+        from datetime import datetime, timezone
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+        ts = datetime(2025, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+        result = mgr._cold_partition(ts)
+        assert result == trw_dir / "memory" / "cold" / "2025" / "03"
+
+    def test_cold_partition_none_uses_now(self, tmp_path: Path) -> None:
+        """_cold_partition with None defaults to current UTC time."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+        result = mgr._cold_partition(None)
+        today = date.today()
+        assert str(today.year) in str(result)
+        assert f"{today.month:02d}" in str(result)
+
+
+class TestColdSearchEmptyQuery:
+    """Test cold_search with empty query tokens."""
+
+    def test_cold_search_empty_tokens_returns_empty(self, tmp_path: Path) -> None:
+        """Empty query_tokens returns [] even when cold entries exist."""
+        trw_dir = tmp_path / ".trw"
+        cold_dir = trw_dir / "memory" / "cold" / "2026" / "01"
+        cold_dir.mkdir(parents=True, exist_ok=True)
+
+        writer = FileStateWriter()
+        writer.write_yaml(
+            cold_dir / "entry.yaml",
+            {"id": "entry-1", "summary": "some content", "tags": ["tag"]},
+        )
+
+        mgr = TierManager(trw_dir)
+        assert mgr.cold_search([]) == []
+
+
+class TestColdPromoteNoColdDir:
+    """Test cold_promote when cold directory doesn't exist at all."""
+
+    def test_cold_promote_no_cold_dir_returns_none(self, tmp_path: Path) -> None:
+        """No cold directory means immediate None return."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        # Deliberately do NOT create memory/cold/
+        mgr = TierManager(trw_dir)
+        assert mgr.cold_promote("any-id") is None
+
+
+class TestColdArchiveReadFailureRaises:
+    """Test that cold_archive re-raises on read failure."""
+
+    def test_cold_archive_read_failure_raises(self, tmp_path: Path) -> None:
+        """When reader.read_yaml fails, cold_archive raises the exception."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        entry_path = entries_dir / "fail-entry.yaml"
+        entry_path.write_text("id: fail-entry\n", encoding="utf-8")
+
+        reader = MagicMock(spec=FileStateReader)
+        reader.read_yaml.side_effect = OSError("disk read failure")
+
+        mgr = TierManager(trw_dir, reader=reader, writer=FileStateWriter())
+        with pytest.raises(OSError, match="disk read failure"):
+            mgr.cold_archive("fail-entry", entry_path)
+
+
+# ---------------------------------------------------------------------------
+# Warm tier edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestWarmKeywordSearchTopK:
+    """Test _warm_keyword_search respects top_k limit."""
+
+    def test_keyword_search_respects_top_k(self, tmp_path: Path) -> None:
+        """Only top_k results returned when more matches exist."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+
+        # Add 5 entries all matching "test"
+        for i in range(5):
+            mgr._warm_sidecar_upsert(f"e{i}", {"summary": f"test entry {i}", "tags": []})
+
+        results = mgr._warm_keyword_search(["test"], top_k=2)
+        assert len(results) == 2
+
+    def test_keyword_search_empty_tokens_returns_empty(self, tmp_path: Path) -> None:
+        """Empty query_tokens returns [] even when sidecar has entries."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+        mgr._warm_sidecar_upsert("e1", {"summary": "test entry", "tags": []})
+        assert mgr._warm_keyword_search([], top_k=10) == []
+
+
+class TestWarmSearchTagMatching:
+    """Test that warm keyword search matches on tags, not just summary."""
+
+    def test_keyword_search_matches_tags(self, tmp_path: Path) -> None:
+        """Entries matched by tag content alone are returned."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+
+        # Entry with matching tag but no matching summary text
+        mgr._warm_sidecar_upsert(
+            "tagged",
+            {"summary": "unrelated summary", "tags": ["pytest", "fixture"]},
+        )
+        results = mgr._warm_keyword_search(["pytest"], top_k=10)
+        assert len(results) == 1
+        assert results[0]["id"] == "tagged"
+
+
+class TestWarmRemoveEmptySidecar:
+    """Test warm_remove when sidecar becomes empty after removal."""
+
+    def test_warm_remove_last_entry_empties_sidecar(self, tmp_path: Path) -> None:
+        """Removing the only entry leaves sidecar empty (not stale data)."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+
+        mgr._warm_sidecar_upsert("only-one", {"summary": "sole entry", "tags": []})
+        sidecar = mgr._warm_sidecar_path()
+        assert sidecar.exists()
+
+        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
+            mock_ms.available.return_value = False
+            mgr.warm_remove("only-one")
+
+        # Sidecar should be empty or contain no records
+        content = sidecar.read_text(encoding="utf-8").strip()
+        assert content == ""
+
+    def test_warm_remove_no_sidecar_no_error(self, tmp_path: Path) -> None:
+        """Removing when no sidecar file exists does not raise."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+
+        sidecar = mgr._warm_sidecar_path()
+        assert not sidecar.exists()
+
+        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
+            mock_ms.available.return_value = False
+            mgr.warm_remove("nonexistent")  # should not raise
+
+
+class TestWarmSearchFallbackPath:
+    """Test warm_search falls back to keyword search when MemoryStore unavailable."""
+
+    def test_warm_search_no_memorystore_uses_keyword_fallback(self, tmp_path: Path) -> None:
+        """When MemoryStore.available() is False, keyword search is used."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+
+        # Populate sidecar
+        mgr._warm_sidecar_upsert("w1", {"summary": "pytest patterns", "tags": []})
+        mgr._warm_sidecar_upsert("w2", {"summary": "docker setup", "tags": []})
+
+        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
+            mock_ms.available.return_value = False
+            results = mgr.warm_search(["pytest"], query_embedding=[0.1] * 384)
+
+        # Despite providing an embedding, keyword fallback is used
+        assert len(results) == 1
+        assert results[0]["id"] == "w1"
+
+    def test_warm_search_no_embedding_uses_keyword_fallback(self, tmp_path: Path) -> None:
+        """When query_embedding is None, keyword search is used even if store available."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+
+        mgr._warm_sidecar_upsert("w1", {"summary": "testing patterns", "tags": []})
+
+        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
+            mock_ms.available.return_value = True
+            results = mgr.warm_search(["testing"], query_embedding=None)
+
+        assert len(results) == 1
+        assert results[0]["id"] == "w1"
+
+
+# ---------------------------------------------------------------------------
+# Hot tier edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestFlushLastAccessedSanitization:
+    """Test _flush_last_accessed filename sanitization with special chars."""
+
+    def test_flush_sanitizes_special_chars_in_id(self, tmp_path: Path) -> None:
+        """Entry IDs with special characters are sanitized to dashes for filename."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create file with sanitized name (what the code would produce)
+        sanitized_path = entries_dir / "entry-with-spaces-.yaml"
+        writer = FileStateWriter()
+        writer.write_yaml(sanitized_path, {"id": "entry with spaces!", "summary": "test"})
+
+        mgr = TierManager(trw_dir, writer=writer)
+        # Should not raise — finds the sanitized filename
+        mgr._flush_last_accessed("entry with spaces!")
+
+        reader = FileStateReader()
+        data = reader.read_yaml(sanitized_path)
+        assert data["last_accessed_at"] == date.today().isoformat()
+
+    def test_flush_nonexistent_file_is_noop(self, tmp_path: Path) -> None:
+        """When YAML file for entry doesn't exist, flush silently returns."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TierManager(trw_dir)
+        # No file exists for this ID — should silently return
+        mgr._flush_last_accessed("nonexistent-entry")
+
+
+class TestHotTierMultipleEvictions:
+    """Test hot tier behavior with multiple sequential evictions."""
+
+    def test_hot_multiple_evictions_maintain_lru_order(self, tmp_path: Path) -> None:
+        """When capacity is 2 and we add 4 entries, the first 2 are evicted in LRU order."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+
+        cfg = TRWConfig(memory_hot_max_entries=2)
+        mgr = TierManager(trw_dir, config=cfg)
+
+        mgr.hot_put("e1", _make_entry("e1"))
+        mgr.hot_put("e2", _make_entry("e2"))
+        assert mgr.hot_size == 2
+
+        mgr.hot_put("e3", _make_entry("e3"))  # evicts e1
+        assert mgr.hot_get("e1") is None
+        assert mgr.hot_size == 2
+
+        mgr.hot_put("e4", _make_entry("e4"))  # evicts e2
+        assert mgr.hot_get("e2") is None
+        assert mgr.hot_size == 2
+        assert mgr.hot_get("e3") is not None
+        assert mgr.hot_get("e4") is not None
+
+    def test_hot_put_same_id_does_not_increase_size(self, tmp_path: Path) -> None:
+        """Putting the same entry ID repeatedly does not grow the cache."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TierManager(trw_dir)
+
+        for i in range(10):
+            mgr.hot_put("same-id", _make_entry("same-id", summary=f"version {i}"))
+
+        assert mgr.hot_size == 1
+        entry = mgr.hot_get("same-id")
+        assert entry is not None
+        assert entry.summary == "version 9"
+
+
+# ---------------------------------------------------------------------------
+# Sweep SQLite warm-to-cold exception on individual entry
+# ---------------------------------------------------------------------------
+
+
+class TestSweepSQLitePerEntryException:
+    """Test sweep warm-to-cold SQLite path handles per-entry exceptions."""
+
+    def test_sweep_sqlite_per_entry_exception_counted(self, tmp_path: Path) -> None:
+        """Exception on a single entry during SQLite warm-to-cold increments errors."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        old_date = (date.today() - timedelta(days=200)).isoformat()
+
+        mgr = TierManager(trw_dir)
+
+        with patch("trw_mcp.state.tiers.get_config") as mock_cfg:
+            cfg = TRWConfig()
+            object.__setattr__(cfg, "memory_hot_ttl_days", 999)
+            object.__setattr__(cfg, "memory_cold_threshold_days", 30)
+            mock_cfg.return_value = cfg
+
+            mock_list = MagicMock(return_value=[
+                {
+                    "id": "problematic",
+                    "summary": "will fail",
+                    "detail": "",
+                    "status": "active",
+                    "impact": 0.05,
+                    "tags": [],
+                    "last_accessed_at": old_date,
+                    "created": old_date,
+                },
+            ])
+            mock_find = MagicMock(return_value=entries_dir / "problematic.yaml")
+
+            with patch("trw_mcp.state.memory_adapter.list_active_learnings", mock_list):
+                with patch("trw_mcp.state.memory_adapter.find_yaml_path_for_entry", mock_find):
+                    with patch.object(mgr, "cold_archive", side_effect=RuntimeError("archive boom")):
+                        result = mgr.sweep()
+
+        assert result.errors >= 1
+        assert result.demoted == 0  # Failed to demote

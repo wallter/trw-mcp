@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import FastMCP
 
-from tests.conftest import get_tools_sync
+from tests.conftest import extract_tool_fn, get_tools_sync, make_test_server
 
 from trw_mcp.exceptions import StateError, ValidationError
 from trw_mcp.state.persistence import FileStateReader
@@ -45,15 +45,12 @@ from trw_mcp.tools.telemetry import _write_telemetry_record, _write_tool_event
 # ---------------------------------------------------------------------------
 
 def _make_server() -> FastMCP:
-    return FastMCP("test-server")
+    return make_test_server()
 
 
 def _extract_tool(server: FastMCP, name: str):
     """Return the raw callable registered under ``name``."""
-    tools = get_tools_sync(server)
-    if name in tools:
-        return tools[name].fn
-    raise KeyError(f"Tool {name!r} not found")
+    return extract_tool_fn(server, name)
 
 
 # ---------------------------------------------------------------------------
@@ -383,8 +380,11 @@ class TestRequirementsFailurePaths:
             )
         assert result["prd_id"] == "PRD-CORE-099"
 
-    def test_prd_validate_path_exists(self, tmp_path: Path) -> None:
+    def test_prd_validate_path_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 327: trw_prd_validate reads and validates an existing file."""
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+        )
         tool = self._register_and_get("trw_prd_validate")
 
         # Write a minimal PRD file
@@ -481,36 +481,34 @@ class TestTelemetryExceptionPaths:
 
     def test_fr04_telemetry_write_record_exception_suppressed(self, tmp_path: Path) -> None:
         """Lines 100-101: _write_telemetry_record raises but exception is swallowed."""
-        import trw_mcp.tools.telemetry as tel_mod
+        from trw_mcp.models.config import TRWConfig
 
-        old_config = tel_mod._config
-        try:
-            cfg = tel_mod._config.__class__()
-            object.__setattr__(cfg, "telemetry_enabled", True)
-            object.__setattr__(cfg, "telemetry", True)
-            tel_mod._config = cfg
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "telemetry_enabled", True)
+        object.__setattr__(cfg, "telemetry", True)
 
-            def bomb_fn() -> dict[str, object]:
-                return {"ok": True}
+        def bomb_fn() -> dict[str, object]:
+            return {"ok": True}
 
-            from trw_mcp.tools.telemetry import log_tool_call
-            wrapped = log_tool_call(bomb_fn)
+        from trw_mcp.tools.telemetry import log_tool_call
+        wrapped = log_tool_call(bomb_fn)
 
-            with patch(
-                "trw_mcp.tools.telemetry._get_cached_run_dir",
-                return_value=None,
-            ), patch(
-                "trw_mcp.tools.telemetry._write_tool_event",
-            ), patch(
-                "trw_mcp.tools.telemetry._write_telemetry_record",
-                side_effect=RuntimeError("telemetry write failed"),
-            ):
-                # Should not raise — exception in FR04 path is swallowed
-                result = wrapped()
+        with patch(
+            "trw_mcp.tools.telemetry.get_config",
+            return_value=cfg,
+        ), patch(
+            "trw_mcp.tools.telemetry._get_cached_run_dir",
+            return_value=None,
+        ), patch(
+            "trw_mcp.tools.telemetry._write_tool_event",
+        ), patch(
+            "trw_mcp.tools.telemetry._write_telemetry_record",
+            side_effect=RuntimeError("telemetry write failed"),
+        ):
+            # Should not raise — exception in FR04 path is swallowed
+            result = wrapped()
 
-            assert result == {"ok": True}
-        finally:
-            tel_mod._config = old_config
+        assert result == {"ok": True}
 
     def test_write_tool_event_fallback_exception_suppressed(self, tmp_path: Path) -> None:
         """Lines 135-136: fallback resolve_trw_dir raises, exception suppressed."""
@@ -540,7 +538,8 @@ class TestTelemetryExceptionPaths:
                 "my_tool", (), {}, 42.0, {"result": "ok"}, True,
             )
 
-        telemetry_file = trw_dir / "logs" / tel_mod._config.telemetry_file
+        from trw_mcp.models.config import get_config as _get_config
+        telemetry_file = trw_dir / "logs" / _get_config().telemetry_file
         assert telemetry_file.exists()
 
 
@@ -708,6 +707,8 @@ class TestValidationImplementPhaseInvalidStatus:
 
         # Should not raise; fallback to APPROVED ran
         assert result is not None
+        assert hasattr(result, "valid"), "ValidationResult must have 'valid' field"
+        assert isinstance(result.failures, list)
 
 
 class TestValidationReflectionQualityException:
@@ -745,8 +746,10 @@ class TestValidationReflectionQualityException:
         ):
             result = check_phase_exit(Phase.REVIEW, run_path, config)
 
-        # Should not raise
+        # Should not raise — exception is swallowed, result still valid
         assert result is not None
+        assert hasattr(result, "valid"), "ValidationResult must have 'valid' field"
+        assert isinstance(result.failures, list)
 
 
 class TestValidationDeliverRunYamlReadException:
@@ -788,8 +791,10 @@ class TestValidationDeliverRunYamlReadException:
         ):
             result = check_phase_exit(Phase.DELIVER, run_path, config)
 
-        # Exception in run.yaml read is swallowed
+        # Exception in run.yaml read is swallowed — result still valid
         assert result is not None
+        assert hasattr(result, "valid"), "ValidationResult must have 'valid' field"
+        assert isinstance(result.failures, list)
 
 
 class TestValidationIsSubstantiveLine:
@@ -1355,7 +1360,12 @@ class TestValidationBuildStatusTimestampParseError:
 class TestRequirementsValidateMissingFile:
     """trw_prd_validate raises StateError when file doesn't exist."""
 
-    def test_prd_validate_missing_file_raises(self, tmp_path: Path) -> None:
+    def test_prd_validate_missing_file_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+        )
         server = _make_server()
         register_requirements_tools(server)
         tool = _extract_tool(server, "trw_prd_validate")

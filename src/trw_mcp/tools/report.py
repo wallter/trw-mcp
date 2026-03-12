@@ -17,8 +17,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
-_reader = FileStateReader()
-
 
 def register_report_tools(server: FastMCP) -> None:
     """Register post-run analytics tools on the MCP server.
@@ -46,11 +44,12 @@ def register_report_tools(server: FastMCP) -> None:
 
         try:
             trw_dir = resolve_trw_dir()
-        except Exception:
+        except Exception:  # justified: fail-open, trw_dir resolution falls back to relative path
             trw_dir = resolved_path.parent.parent.parent / ".trw"
 
         try:
-            report = assemble_report(resolved_path, _reader, trw_dir)
+            reader = FileStateReader()
+            report = assemble_report(resolved_path, reader, trw_dir)
             logger.info("trw_run_report_generated", run_id=report.run_id)
             result: dict[str, object] = report.model_dump()
             return result
@@ -69,7 +68,7 @@ def register_report_tools(server: FastMCP) -> None:
         Args:
             since: Optional ISO date filter (YYYY-MM-DD). Only runs started on or after this date are included.
         """
-        from trw_mcp.state.analytics_report import scan_all_runs
+        from trw_mcp.state.analytics.report import scan_all_runs
 
         try:
             report = scan_all_runs(since=since)
@@ -78,5 +77,5 @@ def register_report_tools(server: FastMCP) -> None:
                 runs_scanned=report.get("runs_scanned", 0),
             )
             return report
-        except Exception as exc:
+        except Exception as exc:  # justified: boundary, scan_all_runs reads many run dirs
             return {"error": str(exc), "status": "failed"}

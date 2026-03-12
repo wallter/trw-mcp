@@ -47,6 +47,7 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "\n"
         "{{imperative_opener}}"
         "{{ceremony_quick_ref}}"
+        "{{framework_reference}}"
         "{{delegation_section}}"
         "{{agent_teams_section}}"
         "{{behavioral_protocol}}"

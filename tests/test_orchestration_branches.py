@@ -61,45 +61,6 @@ def orch_tools() -> dict[str, Any]:
     return _make_orch_tools()
 
 
-# ---------------------------------------------------------------------------
-# Helper: build a minimal run directory without calling trw_init
-# ---------------------------------------------------------------------------
-
-
-def _make_run_dir(
-    base: Path,
-    *,
-    task: str = "test-task",
-    framework: str = "v18.0_TRW",
-    writer: FileStateWriter | None = None,
-) -> Path:
-    """Create a minimal run directory structure for testing."""
-    w = writer or FileStateWriter()
-    run_dir = base / "docs" / task / "runs" / "20260206T120000Z-abcd1234"
-    meta = run_dir / "meta"
-    meta.mkdir(parents=True)
-    (run_dir / "shards").mkdir(parents=True, exist_ok=True)
-    (run_dir / "reports").mkdir()
-    (run_dir / "artifacts").mkdir()
-    (run_dir / "scratch").mkdir()
-    (run_dir / "validation").mkdir()
-
-    w.write_yaml(meta / "run.yaml", {
-        "run_id": "20260206T120000Z-abcd1234",
-        "task": task,
-        "framework": framework,
-        "status": "active",
-        "phase": "research",
-        "confidence": "medium",
-    })
-    w.append_jsonl(meta / "events.jsonl", {
-        "ts": "2026-02-06T12:00:00Z",
-        "event": "run_init",
-        "task": task,
-    })
-    return run_dir
-
-
 # ===========================================================================
 # 1. trw_init — config_overrides branch (line 103)
 # ===========================================================================
@@ -265,7 +226,7 @@ class TestTrwStatusVersionWarning:
 
         # Now patch the config so the deployed VERSION.yaml shows a newer version
         new_config = TRWConfig(framework_version="v99.0_TRW")
-        monkeypatch.setattr(orch_mod, "_config", new_config)
+        monkeypatch.setattr("trw_mcp.tools.orchestration.get_config", lambda: new_config)
 
         # Re-deploy frameworks at the patched version
         orch_mod._deploy_frameworks(tmp_path / ".trw")
@@ -602,6 +563,12 @@ class TestComputeWaveProgress:
 
         # Should still return a result (shard_statuses stays empty)
         assert result is not None
+        assert result["total_waves"] == 1
+        details = result["wave_details"]
+        assert isinstance(details, list)
+        assert len(details) == 1
+        # Shard status defaults to pending when manifest is corrupt
+        assert details[0]["shards"]["pending"] == 1
 
     def test_shard_manifest_read_error_is_caught(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -635,6 +602,11 @@ class TestComputeWaveProgress:
         # Should not raise; exception is swallowed
         result = _compute_wave_progress(wave_data, run_path)
         assert result is not None
+        assert result["total_waves"] == 1
+        # Shard status defaults to pending when manifest read fails
+        details = result["wave_details"]
+        assert isinstance(details, list)
+        assert details[0]["shards"]["pending"] == 1
 
 
 # ===========================================================================
@@ -956,15 +928,13 @@ class TestCheckFrameworkVersionStaleness:
             "framework_version: v99.0_TRW\n", encoding="utf-8",
         )
 
-        from trw_mcp.exceptions import StateError as TRWStateError
+        from unittest.mock import patch
 
-        original_exists = orch_mod._reader.exists
-        original_read = orch_mod._reader.read_yaml
+        from trw_mcp.exceptions import StateError as TRWStateError
 
         def exploding_read(path: Path) -> dict[str, object]:
             raise TRWStateError("simulated read failure")
 
-        monkeypatch.setattr(orch_mod._reader, "read_yaml", exploding_read)
-
-        result = _check_framework_version_staleness("v18.0_TRW")
+        with patch.object(FileStateReader, "read_yaml", side_effect=exploding_read):
+            result = _check_framework_version_staleness("v18.0_TRW")
         assert result is None

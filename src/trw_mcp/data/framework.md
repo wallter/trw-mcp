@@ -454,6 +454,7 @@ Use `TaskCreate` / `TaskUpdate`. P0: resolve immediately. P1: next wave shard. P
 
 Root CLAUDE.md: max 200 lines. Sub-CLAUDE.md: max 50 lines, max depth 3.
 CLAUDE.md MUST be read at: session start, every PLAN phase, after errors, before major refactors.
+THIS FRAMEWORK (`.trw/frameworks/FRAMEWORK.md`) MUST be read at session start. It defines the methodology your tools implement — without it, you have tools but no process.
 
 ---
 
@@ -476,13 +477,17 @@ Sub-agents inherit MCP tools. Use Write tool not heredocs (heredocs truncate >50
 
 ## FRAMEWORK ADHERENCE
 
+**This document (`.trw/frameworks/FRAMEWORK.md`) is the methodology your tools implement.** Reading it is not optional ceremony — it is the difference between using tools with purpose and using tools without understanding. Agents who skip reading this document produce work that passes tool checks but misses phase gates, skips formations, ignores exit criteria, and creates rework that costs more than the 500 tokens of reading.
+
 | Trigger | Action |
 |---------|--------|
+| Session start | Read this entire document before writing any code |
 | Every 5 waves | Re-read framework, log compliance |
-| After compact | IMMEDIATELY re-read before work |
-| Phase transition | Re-read relevant section |
+| After compact | IMMEDIATELY re-read this document before resuming work |
+| Phase transition | Re-read relevant section (phases, gates, formations) |
+| Before spawning Agent Teams | Re-read Agent Teams and File Ownership sections |
 
-On compact: persist state → commit green → reload FRAMEWORK.md + CLAUDE.md → `trw_session_start()` → resume from `wave_manifest.yaml`.
+On compact: persist state → commit green → **reload this FRAMEWORK.md** + CLAUDE.md → `trw_session_start()` → resume from `wave_manifest.yaml`.
 
 ### Mid-Stream User Input
 

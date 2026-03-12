@@ -24,7 +24,7 @@ from trw_mcp.state.analytics import (
     find_duplicate_learnings,
     resync_learning_index,
 )
-from trw_mcp.state.analytics_report import scan_all_runs
+from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader
 
 # Thresholds for PASS/WARN/FAIL verdicts
@@ -42,7 +42,7 @@ def _iter_entries(entries_dir: Path) -> list[dict[str, object]]:
     for f in iter_yaml_entry_files(entries_dir):
         try:
             entries.append(reader.read_yaml(f))
-        except Exception:
+        except Exception:  # justified: fail-open, skip malformed YAML entries
             continue
     return entries
 
@@ -173,7 +173,7 @@ def _audit_recall_effectiveness(
                 zero_match += 1
                 if len(zero_match_queries) < 5:
                     zero_match_queries.append(query)
-    except Exception:
+    except Exception:  # justified: fail-open, corrupt recall log degrades gracefully
         return {"total_queries": 0, "verdict": "SKIP"}
 
     named_queries = total - wildcard

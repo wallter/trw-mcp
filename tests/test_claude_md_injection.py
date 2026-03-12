@@ -145,6 +145,7 @@ class TestBundledTemplateKeysMatchSyncContext:
         sync_keys = {
             "imperative_opener",
             "ceremony_quick_ref",
+            "framework_reference",
             "closing_reminder",
             "behavioral_protocol",
             "delegation_section",

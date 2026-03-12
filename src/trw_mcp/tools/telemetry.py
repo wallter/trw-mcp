@@ -28,9 +28,6 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 
 logger = structlog.get_logger()
 
-_config = get_config()
-_writer = FileStateWriter()
-_events = FileEventLogger(_writer)
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -71,7 +68,8 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
 
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-        if not _config.telemetry_enabled:
+        config = get_config()
+        if not config.telemetry_enabled:
             return func(*args, **kwargs)
 
         # FR01 (PRD-CORE-082): Bind correlation ID for structured log tracing.
@@ -100,17 +98,17 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                 _write_tool_event(
                     func.__name__, duration_ms, success, error_msg,
                 )
-            except Exception:
+            except Exception:  # justified: fail-open telemetry, never blocks tool execution
                 logger.debug("telemetry_write_failed", tool=func.__name__)
 
             # FR04: Session-level telemetry to tool-telemetry.jsonl
-            if _config.telemetry:
+            if config.telemetry:
                 try:
                     _write_telemetry_record(
                         func.__name__, args, kwargs, duration_ms,
                         result_val if success else None, success,
                     )
-                except Exception as exc:
+                except Exception as exc:  # justified: fail-open telemetry, never blocks tool execution
                     logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
             # FR01: Clean up correlation ID (only if we bound it)
@@ -151,7 +149,7 @@ def _write_tool_event(
                 reader = FileStateReader()
                 run_data = reader.read_yaml(run_yaml)
                 phase = str(run_data.get("phase", "unknown"))
-            except Exception:
+            except Exception:  # justified: fail-open telemetry, phase read failure uses fallback
                 logger.debug("telemetry_phase_read_failed", exc_info=True)
     event_data["phase"] = phase
 
@@ -164,21 +162,25 @@ def _write_tool_event(
         "phase": phase,
     })
 
+    config = get_config()
+    writer = FileStateWriter()
+    events = FileEventLogger(writer)
+
     run_dir = _get_cached_run_dir()
     if run_dir is not None:
         events_path = run_dir / "meta" / "events.jsonl"
         if events_path.parent.exists():
-            _events.log_event(events_path, "tool_invocation", event_data)
+            events.log_event(events_path, "tool_invocation", event_data)
             return
 
     # Fallback: session-level events
     try:
         trw_dir = resolve_trw_dir()
-        context_dir = trw_dir / _config.context_dir
-        _writer.ensure_dir(context_dir)
+        context_dir = trw_dir / config.context_dir
+        writer.ensure_dir(context_dir)
         fallback = context_dir / "session-events.jsonl"
-        _events.log_event(fallback, "tool_invocation", event_data)
-    except Exception as exc:
+        events.log_event(fallback, "tool_invocation", event_data)
+    except Exception as exc:  # justified: fail-open telemetry, session-level fallback write
         logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
 
@@ -203,8 +205,11 @@ def _write_telemetry_record(
         "success": success,
     }
 
+    config = get_config()
+    writer = FileStateWriter()
+    events = FileEventLogger(writer)
     trw_dir = resolve_trw_dir()
-    logs_dir = trw_dir / _config.logs_dir
-    _writer.ensure_dir(logs_dir)
-    telemetry_path = logs_dir / _config.telemetry_file
-    _events.log_event(telemetry_path, "tool_call", record)
+    logs_dir = trw_dir / config.logs_dir
+    writer.ensure_dir(logs_dir)
+    telemetry_path = logs_dir / config.telemetry_file
+    events.log_event(telemetry_path, "tool_call", record)

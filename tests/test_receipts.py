@@ -139,7 +139,7 @@ class TestPruneRecallReceipts:
 
         # Set a high limit so no pruning occurs
         config = TRWConfig(recall_receipt_max_entries=100)
-        monkeypatch.setattr("trw_mcp.state.receipts._config", config)
+        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
 
         # Add 3 records
         for i in range(3):
@@ -155,7 +155,7 @@ class TestPruneRecallReceipts:
         trw_dir = tmp_project / ".trw"
 
         config = TRWConfig(recall_receipt_max_entries=3)
-        monkeypatch.setattr("trw_mcp.state.receipts._config", config)
+        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
 
         # Add 5 records
         for i in range(5):
@@ -182,7 +182,7 @@ class TestPruneRecallReceipts:
         trw_dir = tmp_project / ".trw"
 
         config = TRWConfig(recall_receipt_max_entries=3)
-        monkeypatch.setattr("trw_mcp.state.receipts._config", config)
+        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
 
         for i in range(3):
             log_recall_receipt(trw_dir, query=f"q{i}", matched_ids=[f"L-{i:03d}"])
@@ -197,7 +197,7 @@ class TestPruneRecallReceipts:
         trw_dir = tmp_project / ".trw"
 
         config = TRWConfig(recall_receipt_max_entries=1)
-        monkeypatch.setattr("trw_mcp.state.receipts._config", config)
+        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
 
         for i in range(4):
             log_recall_receipt(trw_dir, query=f"q{i}", matched_ids=[])

@@ -217,7 +217,7 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = _json.loads(resp.read().decode("utf-8"))
             print(f"  Published: v{data.get('version', '?')} to {backend_url}")
-    except Exception as exc:
+    except Exception as exc:  # justified: boundary, backend publish API call may fail
         print(f"  ERROR publishing: {exc}")
         sys.exit(1)
 

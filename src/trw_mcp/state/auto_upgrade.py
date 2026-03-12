@@ -164,7 +164,7 @@ def download_release_artifact(
         logger.warning("archive_missing_data_dir")
         return None
 
-    except Exception:
+    except Exception:  # justified: boundary, artifact download from remote may fail for many reasons
         logger.debug("artifact_download_failed", exc_info=True)
         return None
 

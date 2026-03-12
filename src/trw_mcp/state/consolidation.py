@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -185,7 +186,7 @@ def find_clusters(
 
 
 def _summarize_cluster_llm(
-    cluster: list[dict[str, object]],
+    cluster: Sequence[dict[str, object]],
     llm: LLMClient | None = None,
 ) -> dict[str, str] | None:
     """Summarize a cluster of entries into a single consolidated entry via LLM.
@@ -251,7 +252,7 @@ def _summarize_cluster_llm(
 
 
 def _create_consolidated_entry(
-    cluster: list[dict[str, object]],
+    cluster: Sequence[dict[str, object]],
     summary: str,
     detail: str,
     entries_dir: Path,
@@ -335,7 +336,7 @@ def _create_consolidated_entry(
 
 
 def _archive_originals(
-    cluster: list[dict[str, object]],
+    cluster: Sequence[dict[str, object]],
     consolidated_id: str,
     entries_dir: Path,
     reader: FileStateReader,
@@ -391,7 +392,7 @@ def _archive_originals(
             if tier_manager is not None and hasattr(tier_manager, "cold_archive"):
                 try:
                     tier_manager.cold_archive(entry_id, entry_path)
-                except Exception:
+                except Exception:  # justified: fail-open, cold archive failure falls back to status mark
                     # Cold archive failed — mark as archived instead
                     data["status"] = "archived"
                     writer.write_yaml(entry_path, data)
@@ -453,7 +454,7 @@ def _rollback_archive(
 
 
 def _summarize_cluster_fallback(
-    cluster: list[dict[str, object]],
+    cluster: Sequence[dict[str, object]],
 ) -> dict[str, str]:
     """Select the longest-content entry as the consolidated summary/detail.
 
@@ -605,7 +606,7 @@ def consolidate_cycle(
             )
             consolidated_count += 1
 
-        except Exception as exc:
+        except Exception as exc:  # justified: scan-resilience, one cluster failure must not abort others
             logger.exception(
                 "consolidation_cluster_failed",
                 cluster_ids=cluster_ids,
@@ -630,7 +631,7 @@ def consolidate_cycle(
     return result
 
 
-def _mean_pairwise_similarity(cluster: list[dict[str, object]]) -> float:
+def _mean_pairwise_similarity(cluster: Sequence[dict[str, object]]) -> float:
     """Compute mean pairwise cosine similarity for dry-run preview.
 
     Returns 0.0 when embeddings are unavailable or cluster is too small.

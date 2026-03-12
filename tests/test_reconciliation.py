@@ -603,7 +603,7 @@ class TestPhaseGateReconciliation:
     def test_review_no_reconciliation_advisory(self, tmp_path: Path) -> None:
         """When no reconciliation.yaml but PRDs exist -> info advisory."""
         from trw_mcp.models.run import Phase
-        from trw_mcp.state.phase_gates import check_phase_exit
+        from trw_mcp.state.validation.phase_gates import check_phase_exit
 
         run_d = tmp_path / "runs" / "20260304T120000Z-gate-test"
         meta = run_d / "meta"
@@ -638,7 +638,7 @@ class TestPhaseGateReconciliation:
     def test_review_drift_warning(self, tmp_path: Path) -> None:
         """When reconciliation.yaml has verdict='drift_detected' -> warning."""
         from trw_mcp.models.run import Phase
-        from trw_mcp.state.phase_gates import check_phase_exit
+        from trw_mcp.state.validation.phase_gates import check_phase_exit
 
         run_d = tmp_path / "runs" / "20260304T120000Z-gate-drift"
         meta = run_d / "meta"
@@ -680,7 +680,7 @@ class TestPhaseGateReconciliation:
     def test_review_clean_reconciliation_no_warning(self, tmp_path: Path) -> None:
         """When reconciliation.yaml has verdict='clean' -> no reconciliation failure."""
         from trw_mcp.models.run import Phase
-        from trw_mcp.state.phase_gates import check_phase_exit
+        from trw_mcp.state.validation.phase_gates import check_phase_exit
 
         run_d = tmp_path / "runs" / "20260304T120000Z-gate-clean"
         meta = run_d / "meta"
@@ -714,7 +714,7 @@ class TestPhaseGateReconciliation:
     def test_review_no_prds_no_advisory(self, tmp_path: Path) -> None:
         """When no reconciliation.yaml and no governing PRDs -> no advisory."""
         from trw_mcp.models.run import Phase
-        from trw_mcp.state.phase_gates import check_phase_exit
+        from trw_mcp.state.validation.phase_gates import check_phase_exit
 
         run_d = tmp_path / "runs" / "20260304T120000Z-gate-no-prds"
         meta = run_d / "meta"
