@@ -415,6 +415,69 @@ def _pip_install_package(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# IDE Detection and Adaptive Bootstrap (FR08 — PRD-CORE-074)
+# ---------------------------------------------------------------------------
+
+
+def detect_ide(target_dir: Path) -> list[str]:
+    """Detect which AI coding CLIs have configuration in the target directory.
+
+    Returns a list of IDE identifiers: "claude-code", "cursor", "opencode".
+    Detection is based on directory/file existence, not process detection.
+    """
+    detected: list[str] = []
+    if (target_dir / ".claude").is_dir():
+        detected.append("claude-code")
+    if (target_dir / ".cursor").is_dir():
+        detected.append("cursor")
+    if (target_dir / ".opencode").is_dir() or (target_dir / "opencode.json").is_file():
+        detected.append("opencode")
+    return detected
+
+
+def detect_installed_clis() -> list[str]:
+    """Detect which AI coding CLI binaries are installed on PATH.
+
+    Returns a list of IDE identifiers for CLIs found via shutil.which().
+    """
+    detected: list[str] = []
+    if shutil.which("claude"):
+        detected.append("claude-code")
+    if shutil.which("cursor"):
+        detected.append("cursor")
+    if shutil.which("opencode"):
+        detected.append("opencode")
+    return detected
+
+
+def resolve_ide_targets(
+    target_dir: Path,
+    ide_override: str | None = None,
+) -> list[str]:
+    """Resolve which IDEs to configure.
+
+    Args:
+        target_dir: Project directory to check for existing IDE configs.
+        ide_override: Explicit IDE selection ("claude-code", "cursor", "opencode", "all").
+            If provided, overrides auto-detection.
+
+    Returns:
+        List of IDE identifiers to configure.
+    """
+    if ide_override == "all":
+        return ["claude-code", "cursor", "opencode"]
+    if ide_override:
+        return [ide_override]
+    detected = detect_ide(target_dir)
+    return detected if detected else ["claude-code"]  # default to Claude Code
+
+
+# ---------------------------------------------------------------------------
+# CLAUDE.md content generators
+# ---------------------------------------------------------------------------
+
+
 def _minimal_claude_md() -> str:
     """Generate ``CLAUDE.md`` with behavioral protocol and tool reference."""
     return """\

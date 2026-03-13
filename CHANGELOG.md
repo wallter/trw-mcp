@@ -11,7 +11,8 @@ All notable changes to the TRW MCP server package.
 - **PRD pipeline consolidation** — `/trw-prd-groom`, `/trw-prd-review`, and `/trw-exec-plan` are now internal phases, no longer user-invocable. New `/trw-prd-ready` skill orchestrates the full pipeline (groom → review → exec plan) in one command. `/trw-prd-new` auto-chains into the full pipeline after creation.
 - **Framework v24.3** — updated lifecycle, skill table, and PRD lifecycle documentation to reflect consolidated pipeline
 - **Skill prompt quality** — added 0.70 floor gate to groom phase, `trw_learn` call to exec-plan, conditional advisory in review phase, explicit delegation model per pipeline phase
-- **Version DRY** — `trw-memory/_version.py` now uses `importlib.metadata` instead of hardcoded string
+- **Version DRY** — centralized version management: `TRWConfig` is single source of truth for framework/AARE-F versions, `pyproject.toml` for package versions. Tests derive versions from config instead of hardcoding. Bootstrap generates `VERSION.yaml` dynamically via `importlib.metadata`. `trw-memory/_version.py` also uses `importlib.metadata`.
+- **AARE-F version** — corrected `aaref_version` default from `v1.1.0` to `v2.0.0` (matching the actual document header)
 
 ## [0.11.5] — 2026-03-13
 

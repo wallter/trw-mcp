@@ -7,7 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.bootstrap import _DATA_DIR, init_project, update_project
+from trw_mcp.bootstrap import (
+    _DATA_DIR,
+    detect_ide,
+    detect_installed_clis,
+    init_project,
+    resolve_ide_targets,
+    update_project,
+)
 
 
 @pytest.fixture()
@@ -1342,3 +1349,91 @@ class TestPrefixMigration:
         # Not in any migrated entries
         migrated = [e for e in result["updated"] if "my-custom-tool" in e]
         assert migrated == []
+
+
+# --- FR08: IDE Detection (PRD-CORE-074) ---
+
+
+@pytest.mark.unit
+class TestIDEDetection:
+    """Tests for detect_ide, detect_installed_clis, and resolve_ide_targets."""
+
+    def test_fr08_detect_claude_code(self, tmp_path: Path) -> None:
+        (tmp_path / ".claude").mkdir()
+        result = detect_ide(tmp_path)
+        assert result == ["claude-code"]
+
+    def test_fr08_detect_cursor(self, tmp_path: Path) -> None:
+        (tmp_path / ".cursor").mkdir()
+        result = detect_ide(tmp_path)
+        assert result == ["cursor"]
+
+    def test_fr08_detect_opencode_dir(self, tmp_path: Path) -> None:
+        (tmp_path / ".opencode").mkdir()
+        result = detect_ide(tmp_path)
+        assert result == ["opencode"]
+
+    def test_fr08_detect_opencode_json(self, tmp_path: Path) -> None:
+        (tmp_path / "opencode.json").write_text("{}", encoding="utf-8")
+        result = detect_ide(tmp_path)
+        assert result == ["opencode"]
+
+    def test_fr08_detect_multiple(self, tmp_path: Path) -> None:
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".opencode").mkdir()
+        result = detect_ide(tmp_path)
+        assert "claude-code" in result
+        assert "opencode" in result
+
+    def test_fr08_detect_none(self, tmp_path: Path) -> None:
+        result = detect_ide(tmp_path)
+        assert result == []
+
+    def test_fr08_resolve_override(self, tmp_path: Path) -> None:
+        result = resolve_ide_targets(tmp_path, ide_override="opencode")
+        assert result == ["opencode"]
+
+    def test_fr08_resolve_all(self, tmp_path: Path) -> None:
+        result = resolve_ide_targets(tmp_path, ide_override="all")
+        assert "claude-code" in result
+        assert "opencode" in result
+        assert "cursor" in result
+
+    def test_fr08_resolve_default_claude(self, tmp_path: Path) -> None:
+        # No IDE detected → default to claude-code
+        result = resolve_ide_targets(tmp_path)
+        assert result == ["claude-code"]
+
+    def test_fr08_resolve_auto_detect(self, tmp_path: Path) -> None:
+        (tmp_path / ".opencode").mkdir()
+        result = resolve_ide_targets(tmp_path)
+        assert result == ["opencode"]
+
+    def test_fr08_detect_installed_clis_returns_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """detect_installed_clis returns only CLIs found on PATH."""
+        import shutil as _shutil
+
+        originals: dict[str, object] = {}
+
+        def fake_which(cmd: str) -> str | None:
+            return "/usr/bin/claude" if cmd == "claude" else None
+
+        monkeypatch.setattr(_shutil, "which", fake_which)
+        # Also patch the shutil reference inside the bootstrap module
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._utils.shutil.which", fake_which
+        )
+        result = detect_installed_clis()
+        assert result == ["claude-code"]
+
+    def test_fr08_detect_installed_clis_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """detect_installed_clis returns empty list when no CLIs found."""
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._utils.shutil.which", lambda _cmd: None
+        )
+        result = detect_installed_clis()
+        assert result == []

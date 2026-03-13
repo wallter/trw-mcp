@@ -14,9 +14,8 @@ import trw_mcp.tools.orchestration as orch_mod
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 
-# Single source of truth for the expected framework version in test assertions.
-# Must match the default in TRWConfig.framework_version.
-FRAMEWORK_VERSION = "v24.2_TRW"
+# Derive from TRWConfig so tests never go stale on version bumps.
+FRAMEWORK_VERSION = TRWConfig().framework_version
 
 
 @pytest.fixture(autouse=True)

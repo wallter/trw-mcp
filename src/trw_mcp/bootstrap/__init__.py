@@ -67,6 +67,9 @@ from ._utils import (
     _verify_installation as _verify_installation,
     _write_if_missing as _write_if_missing,
     _write_installer_metadata as _write_installer_metadata,
+    detect_ide as detect_ide,
+    detect_installed_clis as detect_installed_clis,
+    resolve_ide_targets as resolve_ide_targets,
 )
 
 # Directories to scaffold inside the target repo.
@@ -120,6 +123,10 @@ __all__ = [
     "_verify_installation",
     "_write_if_missing",
     "_write_installer_metadata",
+    # IDE detection (FR08 — PRD-CORE-074)
+    "detect_ide",
+    "detect_installed_clis",
+    "resolve_ide_targets",
     # Init project
     "_copy_bundled_data_files",
     "_create_directory_structure",
