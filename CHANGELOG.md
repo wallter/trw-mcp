@@ -4,6 +4,24 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Changed
+
+- **Memory audit/optimize skills** — replaced hardcoded "20-40 entries" target with dynamic sizing formula: (domain count) × 3-5 per domain. Adds consolidation depth limits (max 10-15 per compendium), domain coverage rules, and sub-topic granularity constraints. Prevents over-aggressive consolidation on large multi-domain projects.
+
+## [0.12.1] — 2026-03-13
+
+### Added
+
+- **Installer re-run intelligence** — when re-run in a directory with an existing TRW installation, the installer now:
+  - Reads prior settings from `.trw/config.yaml` (project name, API key, telemetry preferences)
+  - Detects already-installed optional extras (`anthropic`, `sqlite-vec`) via import probes
+  - Skips questions whose answers are already known, showing "reusing prior settings" feedback
+  - Skips IDE detection prompt when IDEs are already configured
+
+### Changed
+
+- **Version bump** — minor version bump reflecting multi-IDE support (PRD-CORE-074: OpenCode, Cursor, Layer 3 nudges)
+
 ## [0.11.7] — 2026-03-13
 
 ### Added

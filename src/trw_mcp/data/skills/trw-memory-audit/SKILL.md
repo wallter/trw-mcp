@@ -54,8 +54,21 @@ Analyze the health of TRW's self-learning memory layer and provide actionable re
    - Duplicate candidates
    - Top 5 recommendations
 
+## Sizing Guidelines
+
+The optimal learning count scales with project complexity — do NOT use a fixed target.
+
+**Formula**: Target = (distinct domain count) × 3-5 entries per domain, with a floor of 20.
+
+When reporting, include:
+- Distinct domain/topic count identified
+- Calculated target range based on formula
+- Current overshoot (active - target max)
+- Per-domain entry counts vs per-domain target
+
+A project with 12 distinct domains and 448 entries should target ~50-70, not 30.
+
 ## Notes
 
 - This skill is read-only — use `/trw-memory-optimize` to act on recommendations
 - Run periodically (every few sprints) to keep the learning layer healthy
-- The learning layer is most effective with 20-40 high-impact active entries

@@ -45,15 +45,32 @@ Optimize the TRW self-learning layer by pruning low-value entries, consolidating
    - Tags normalized
    - CLAUDE.md updated
 
+## Sizing Guidelines
+
+The optimal learning count scales with project complexity — do NOT use a fixed target.
+
+**Formula**: Target = (distinct domain count) × 3-5 entries per domain, with a floor of 20.
+
+**How to calculate**:
+1. Identify distinct topic clusters (e.g., "hallucination", "testing", "ollama", "transcription")
+2. Each cluster should consolidate to 3-5 entries depending on depth:
+   - Simple domain (few gotchas): 2-3 entries
+   - Complex domain (many patterns, edge cases): 5-8 entries
+3. A project with 12 domains should target ~50-70 active entries, not 30
+
+**Consolidation depth limit**: Never merge more than 10-15 entries into a single compendium. If a topic has 60+ entries, create 5-8 sub-topic compendiums (e.g., "hallucination-grounding", "hallucination-detection", "hallucination-mitigation") rather than one mega-entry.
+
+**Domain coverage rule**: Every distinct domain MUST retain at least 1 detailed entry after optimization. If consolidation would leave a domain with 0 entries, it's too aggressive.
+
 ## Constraints
 
 - NEVER delete learning YAML files — mark as `obsolete` status instead
 - ALWAYS present the plan and get user confirmation before any changes
 - ALWAYS preserve high-impact (>= 0.7) entries unless clearly outdated
 - ALWAYS run `trw_claude_md_sync` after changes to keep CLAUDE.md current
+- NEVER collapse all entries in a domain into a single compendium — maintain sub-topic granularity
 
 ## Notes
 
-- Optimal learning layer size: 20-40 active entries
 - Run after major milestones (strip-downs, sprint completions) when many entries may be stale
 - Use `/trw-memory-audit` first for a read-only preview
