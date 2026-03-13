@@ -4,6 +4,8 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.12.2] — 2026-03-13
+
 ### Changed
 
 - **Memory audit/optimize skills** — replaced hardcoded "20-40 entries" target with dynamic sizing formula: (domain count) × 3-5 per domain. Adds consolidation depth limits (max 10-15 per compendium), domain coverage rules, and sub-topic granularity constraints. Prevents over-aggressive consolidation on large multi-domain projects.
