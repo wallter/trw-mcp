@@ -4,10 +4,16 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.11.5] — 2026-03-13
+
 ### Removed
 
 - **Bash installer** (`install-trw.template.sh`) — redundant with the Python installer which the site recommends; removed template, build format option, and bash-specific codepath from `build_installer.py`
 - **`mcp-hmr` dev dependency** — incompatible with `fastmcp>=3.0` (requires `fastmcp<3`); removed from `[dev]` extras
+
+### Fixed
+
+- **Missing dev dependencies** — added `hypothesis`, `sqlite-vec`, and `rank-bm25` to `[dev]` extras so fresh venvs pass the full test suite
 
 ### Added — Code Quality & Test Coverage Hardening
 
