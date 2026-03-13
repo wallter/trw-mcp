@@ -30,7 +30,6 @@ DIST_DIR = PROJECT_ROOT / "dist"
 # Template paths
 TEMPLATES = {
     "py": (SCRIPT_DIR / "install-trw.template.py", "install-trw.py"),
-    "sh": (SCRIPT_DIR / "install-trw.template.sh", "install-trw.sh"),
 }
 DEFAULT_FORMAT = "py"
 
@@ -115,14 +114,9 @@ def build_installer(
     output = output.replace("{{WHEEL_FILENAME}}", wheel_path.name)
     output = output.replace("{{MEMORY_WHEEL_FILENAME}}", memory_wheel_path.name)
 
-    if fmt == "py":
-        # Python template: wheel data is in comment-prefixed lines
-        output = output.replace("# {{MEMORY_WHEEL_BASE64}}", _format_b64_for_python(memory_b64))
-        output = output.replace("# {{WHEEL_BASE64}}", _format_b64_for_python(wheel_b64))
-    else:
-        # Bash template: raw base64 data
-        output = output.replace("{{MEMORY_WHEEL_BASE64}}", memory_b64)
-        output = output.replace("{{WHEEL_BASE64}}", wheel_b64)
+    # Python template: wheel data is in comment-prefixed lines
+    output = output.replace("# {{MEMORY_WHEEL_BASE64}}", _format_b64_for_python(memory_b64))
+    output = output.replace("# {{WHEEL_BASE64}}", _format_b64_for_python(wheel_b64))
 
     # Write output
     DIST_DIR.mkdir(exist_ok=True)
@@ -208,8 +202,8 @@ def main() -> None:
         help="Path to trw-memory .whl file (default: latest in dist/)",
     )
     parser.add_argument(
-        "--format", choices=["py", "sh"], default=DEFAULT_FORMAT,
-        help=f"Output format: py (Python, default) or sh (bash)",
+        "--format", choices=["py"], default=DEFAULT_FORMAT,
+        help="Output format (default: py)",
     )
     args = parser.parse_args()
 

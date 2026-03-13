@@ -4,6 +4,11 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Removed
+
+- **Bash installer** (`install-trw.template.sh`) — redundant with the Python installer which the site recommends; removed template, build format option, and bash-specific codepath from `build_installer.py`
+- **`mcp-hmr` dev dependency** — incompatible with `fastmcp>=3.0` (requires `fastmcp<3`); removed from `[dev]` extras
+
 ### Added — Code Quality & Test Coverage Hardening
 
 - **710 new tests across the monorepo** — trw-mcp +599 (3,927→4,526), backend +112 (725→837), trw-memory assertions strengthened (29 weak assertions replaced)
