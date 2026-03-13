@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+import importlib.metadata
+from datetime import datetime
+
 from trw_mcp.bootstrap import (
     _DATA_DIR,
     detect_ide,
@@ -15,6 +18,9 @@ from trw_mcp.bootstrap import (
     resolve_ide_targets,
     update_project,
 )
+from trw_mcp.bootstrap._utils import _result_action_key, _write_version_yaml
+from trw_mcp.models.config import TRWConfig
+from trw_mcp.state.persistence import FileStateReader
 
 
 @pytest.fixture()
@@ -196,6 +202,7 @@ class TestHooks:
     """Test hook script copying."""
 
     EXPECTED_HOOKS = [
+        "lib-ide-adapter.sh",
         "lib-trw.sh",
         "post-tool-event.sh",
         "pre-compact.sh",
@@ -1015,6 +1022,135 @@ class TestManagedArtifactsManifest:
         assert len(hooks) > 0
 
 
+# ── _write_version_yaml Tests ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestWriteVersionYaml:
+    """Unit tests for _write_version_yaml — VERSION.yaml generation from metadata."""
+
+    def _make_init_result(self) -> dict[str, list[str]]:
+        """Return a result dict matching init_project's shape (no 'updated' key)."""
+        return {"created": [], "skipped": [], "errors": []}
+
+    def _make_update_result(self) -> dict[str, list[str]]:
+        """Return a result dict matching update_project's shape (has 'updated' key)."""
+        return {"created": [], "updated": [], "skipped": [], "errors": [], "preserved": []}
+
+    def test_writes_all_expected_keys(self, fake_git_repo: Path) -> None:
+        """Generated VERSION.yaml contains all four expected metadata keys."""
+        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
+        result = self._make_init_result()
+        _write_version_yaml(fake_git_repo, result)
+
+        version_path = fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml"
+        assert version_path.is_file()
+
+        data = FileStateReader().read_yaml(version_path)
+        assert isinstance(data, dict)
+        assert "framework_version" in data
+        assert "aaref_version" in data
+        assert "trw_mcp_version" in data
+        assert "deployed_at" in data
+
+    def test_framework_version_matches_config(self, fake_git_repo: Path) -> None:
+        """framework_version in VERSION.yaml matches TRWConfig default."""
+        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
+        result = self._make_init_result()
+        _write_version_yaml(fake_git_repo, result)
+
+        version_path = fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml"
+        data = FileStateReader().read_yaml(version_path)
+        assert isinstance(data, dict)
+        assert data["framework_version"] == TRWConfig().framework_version
+
+    def test_trw_mcp_version_matches_metadata(self, fake_git_repo: Path) -> None:
+        """trw_mcp_version in VERSION.yaml matches installed package metadata."""
+        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
+        result = self._make_init_result()
+        _write_version_yaml(fake_git_repo, result)
+
+        version_path = fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml"
+        data = FileStateReader().read_yaml(version_path)
+        assert isinstance(data, dict)
+        assert data["trw_mcp_version"] == importlib.metadata.version("trw-mcp")
+
+    def test_deployed_at_is_valid_iso(self, fake_git_repo: Path) -> None:
+        """deployed_at field parses as a valid ISO-8601 datetime without error."""
+        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
+        result = self._make_init_result()
+        _write_version_yaml(fake_git_repo, result)
+
+        version_path = fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml"
+        data = FileStateReader().read_yaml(version_path)
+        assert isinstance(data, dict)
+        deployed_at = data["deployed_at"]
+        # fromisoformat raises ValueError on invalid input — that's the assertion
+        parsed = datetime.fromisoformat(str(deployed_at))
+        assert parsed is not None
+
+    def test_appends_to_created_for_init_result(self, fake_git_repo: Path) -> None:
+        """On an init-style result (no 'updated' key), path is appended to result['created']."""
+        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
+        result = self._make_init_result()
+        _write_version_yaml(fake_git_repo, result)
+
+        version_path = str(fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml")
+        assert version_path in result["created"]
+        assert result["errors"] == []
+
+    def test_appends_to_updated_for_update_result(self, fake_git_repo: Path) -> None:
+        """On an update-style result (has 'updated' key), path is appended to result['updated']."""
+        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
+        result = self._make_update_result()
+        _write_version_yaml(fake_git_repo, result)
+
+        version_path = str(fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml")
+        assert version_path in result["updated"]
+        # Should NOT also appear in created
+        assert version_path not in result["created"]
+        assert result["errors"] == []
+
+    def test_oserror_captured_in_errors(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OSError from FileStateWriter.write_yaml is captured in result['errors']."""
+        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
+        result = self._make_init_result()
+
+        from trw_mcp.state import persistence as persistence_mod
+
+        def _raise_os_error(self: object, path: Path, data: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(
+            persistence_mod.FileStateWriter, "write_yaml", _raise_os_error
+        )
+        _write_version_yaml(fake_git_repo, result)
+
+        assert len(result["errors"]) == 1
+        assert "disk full" in result["errors"][0]
+        assert result["created"] == []
+
+
+# ── _result_action_key Tests ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestResultActionKey:
+    """Unit tests for _result_action_key — action-key selection helper."""
+
+    def test_returns_created_when_no_updated_key(self) -> None:
+        """Returns 'created' when result dict has no 'updated' key (init flow)."""
+        result: dict[str, list[str]] = {"created": [], "errors": []}
+        assert _result_action_key(result) == "created"
+
+    def test_returns_updated_when_updated_key_exists(self) -> None:
+        """Returns 'updated' when result dict contains an 'updated' key (update flow)."""
+        result: dict[str, list[str]] = {"created": [], "updated": [], "errors": []}
+        assert _result_action_key(result) == "updated"
+
+
 # ── Root FRAMEWORK.md Tests (PRD-FIX-025) ──────────────────────────────
 
 
@@ -1437,3 +1573,703 @@ class TestIDEDetection:
         )
         result = detect_installed_clis()
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# FR11 + FR16 — OpenCode Bootstrap (PRD-CORE-074)
+# ---------------------------------------------------------------------------
+
+from trw_mcp.bootstrap._opencode import (  # noqa: E402
+    _get_trw_mcp_entry,
+    _parse_jsonc,
+    generate_agents_md,
+    generate_opencode_config,
+    merge_opencode_json,
+)
+
+
+class TestOpenCodeBootstrap:
+    """FR11: OpenCode Bootstrap Configuration."""
+
+    def test_fr11_opencode_json_created(self, tmp_path: Path) -> None:
+        result = generate_opencode_config(tmp_path)
+        assert "opencode.json" in result["created"]
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert "trw" in config["mcp"]
+
+    def test_fr11_opencode_json_permissions(self, tmp_path: Path) -> None:
+        generate_opencode_config(tmp_path)
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert config["permission"]["bash"] == "ask"
+        assert config["permission"]["write"] == "ask"
+        assert config["permission"]["edit"] == "ask"
+
+    def test_fr11_opencode_json_mcp_local(self, tmp_path: Path) -> None:
+        generate_opencode_config(tmp_path)
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert config["mcp"]["trw"]["type"] == "local"
+        assert "command" in config["mcp"]["trw"]
+
+    def test_fr11_agents_md_created(self, tmp_path: Path) -> None:
+        result = generate_agents_md(tmp_path, "## TRW Section\nContent here")
+        assert "AGENTS.md" in result["created"]
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "<!-- trw:start -->" in content
+        assert "<!-- trw:end -->" in content
+
+    def test_fr11_agents_md_same_markers(self, tmp_path: Path) -> None:
+        generate_agents_md(tmp_path, "Test content")
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "<!-- trw:start -->" in content
+        assert "<!-- trw:end -->" in content
+
+    def test_fr11_agents_md_updates_existing(self, tmp_path: Path) -> None:
+        # Write initial
+        generate_agents_md(tmp_path, "Version 1")
+        # Update
+        generate_agents_md(tmp_path, "Version 2")
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "Version 2" in content
+        assert "Version 1" not in content
+
+    def test_fr11_agents_md_preserves_user_content(self, tmp_path: Path) -> None:
+        # Write file with user content + markers
+        (tmp_path / "AGENTS.md").write_text(
+            "# My Project\n\nUser content here\n\n"
+            "<!-- TRW AUTO-GENERATED — do not edit between markers -->\n"
+            "<!-- trw:start -->\nOld TRW\n<!-- trw:end -->\n\n"
+            "More user content\n"
+        )
+        generate_agents_md(tmp_path, "New TRW content")
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "User content here" in content
+        assert "More user content" in content
+        assert "New TRW content" in content
+        assert "Old TRW" not in content
+
+
+class TestOpenCodeJsonMerge:
+    """FR16: opencode.json Smart Merge."""
+
+    def test_fr16_merge_preserves_other_servers(self) -> None:
+        existing: dict[str, object] = {
+            "mcp": {"other-server": {"type": "remote", "url": "http://x"}}
+        }
+        trw: dict[str, object] = {"type": "local", "command": ["trw-mcp"]}
+        result = merge_opencode_json(existing, trw)
+        assert "other-server" in result["mcp"]
+        assert "trw" in result["mcp"]
+
+    def test_fr16_merge_preserves_user_permissions(self) -> None:
+        existing: dict[str, object] = {"permission": {"bash": "never"}, "mcp": {}}
+        trw: dict[str, object] = {"type": "local", "command": ["trw-mcp"]}
+        result = merge_opencode_json(existing, trw)
+        assert result["permission"]["bash"] == "never"
+
+    def test_fr16_merge_preserves_model(self) -> None:
+        existing: dict[str, object] = {
+            "model": "ollama/qwen3-coder-next",
+            "mcp": {},
+        }
+        trw: dict[str, object] = {"type": "local", "command": ["trw-mcp"]}
+        result = merge_opencode_json(existing, trw)
+        assert result["model"] == "ollama/qwen3-coder-next"
+
+    def test_fr16_merge_adds_trw_entry(self) -> None:
+        existing: dict[str, object] = {"mcp": {}}
+        trw: dict[str, object] = {"type": "local", "command": ["trw-mcp"]}
+        result = merge_opencode_json(existing, trw)
+        assert result["mcp"]["trw"] == trw
+
+    def test_fr16_merge_updates_existing_trw(self) -> None:
+        existing: dict[str, object] = {
+            "mcp": {"trw": {"type": "local", "command": ["old"]}}
+        }
+        trw: dict[str, object] = {
+            "type": "local",
+            "command": ["trw-mcp"],
+            "args": ["--debug"],
+        }
+        result = merge_opencode_json(existing, trw)
+        assert result["mcp"]["trw"]["command"] == ["trw-mcp"]
+
+    def test_fr16_fresh_install_full_template(self, tmp_path: Path) -> None:
+        result = generate_opencode_config(tmp_path)
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert "permission" in config
+        assert "mcp" in config
+        assert "trw" in config["mcp"]
+
+    def test_fr16_jsonc_line_comments(self) -> None:
+        jsonc = '{\n  // This is a comment\n  "key": "value"\n}'
+        result = _parse_jsonc(jsonc)
+        assert result["key"] == "value"
+
+    def test_fr16_jsonc_block_comments(self) -> None:
+        jsonc = '{\n  /* block\n  comment */\n  "key": "value"\n}'
+        result = _parse_jsonc(jsonc)
+        assert result["key"] == "value"
+
+    def test_fr16_smart_merge_existing_file(self, tmp_path: Path) -> None:
+        # Write existing opencode.json with another server
+        (tmp_path / "opencode.json").write_text(
+            json.dumps({
+                "model": "ollama/qwen3-coder-next",
+                "mcp": {"other": {"type": "remote", "url": "http://x"}},
+            })
+        )
+        result = generate_opencode_config(tmp_path)
+        assert "opencode.json" in result["updated"]
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert config["model"] == "ollama/qwen3-coder-next"
+        assert "other" in config["mcp"]
+        assert "trw" in config["mcp"]
+
+
+# ── FR15: Update-Project Multi-IDE Support ───────────────────────────────
+
+
+@pytest.mark.unit
+class TestUpdateProjectMultiIDE:
+    """FR15: Update-project supports multiple IDEs (PRD-CORE-074)."""
+
+    def test_fr15_update_detects_opencode_by_dir(self, tmp_path: Path) -> None:
+        """With .opencode/ present, update generates opencode.json."""
+        from unittest.mock import patch
+
+        # Set up a minimal existing TRW project
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".opencode").mkdir()
+
+        # Patch heavy update internals so we focus on opencode branch
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            result = update_project(tmp_path)
+
+        # opencode.json should be created (detected via .opencode/ dir)
+        assert (tmp_path / "opencode.json").exists()
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert "mcp" in config
+        assert "trw" in config["mcp"]
+
+    def test_fr15_update_detects_opencode_by_json(self, tmp_path: Path) -> None:
+        """With opencode.json present, update performs smart-merge."""
+        from unittest.mock import patch
+
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        # Create existing opencode.json (triggers detection)
+        (tmp_path / "opencode.json").write_text(
+            json.dumps({"model": "custom-model", "mcp": {}})
+        )
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            result = update_project(tmp_path)
+
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        # Preserved user key
+        assert config.get("model") == "custom-model"
+        # TRW entry injected
+        assert "trw" in config["mcp"]
+
+    def test_fr15_update_no_opencode_skips(self, tmp_path: Path) -> None:
+        """Without opencode indicators, update does not create opencode.json."""
+        from unittest.mock import patch
+
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        # Only Claude Code present
+        (tmp_path / ".claude").mkdir()
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            result = update_project(tmp_path)
+
+        assert not (tmp_path / "opencode.json").exists()
+
+    def test_fr15_update_ide_override_opencode(self, tmp_path: Path) -> None:
+        """update_project(ide='opencode') creates opencode.json even without detection."""
+        from unittest.mock import patch
+
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        # No .opencode/ dir, but explicit override
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            result = update_project(tmp_path, ide="opencode")
+
+        assert (tmp_path / "opencode.json").exists()
+
+    def test_fr15_init_with_ide_opencode(self, tmp_path: Path) -> None:
+        """init_project(ide='opencode') creates opencode.json and AGENTS.md."""
+        (tmp_path / ".git").mkdir()
+
+        result = init_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        # opencode.json created
+        assert (tmp_path / "opencode.json").exists()
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert "mcp" in config
+        assert "trw" in config["mcp"]
+        # AGENTS.md created
+        assert (tmp_path / "AGENTS.md").exists()
+        agents_content = (tmp_path / "AGENTS.md").read_text()
+        assert "<!-- trw:start -->" in agents_content
+        assert "<!-- trw:end -->" in agents_content
+
+    def test_fr15_init_creates_both_ide_all(self, tmp_path: Path) -> None:
+        """init_project(ide='all') creates both Claude Code and opencode artifacts."""
+        (tmp_path / ".git").mkdir()
+
+        result = init_project(tmp_path, ide="all")
+
+        assert not result["errors"], result["errors"]
+        # Claude Code artifacts
+        assert (tmp_path / ".claude").is_dir()
+        assert (tmp_path / "CLAUDE.md").exists()
+        # OpenCode artifacts
+        assert (tmp_path / "opencode.json").exists()
+        assert (tmp_path / "AGENTS.md").exists()
+
+    def test_fr15_init_default_no_opencode_artifacts(self, tmp_path: Path) -> None:
+        """init_project() without --ide does not create opencode artifacts by default."""
+        (tmp_path / ".git").mkdir()
+        # No opencode indicators — default auto-detect should fall back to claude-code
+
+        result = init_project(tmp_path)
+
+        assert not result["errors"], result["errors"]
+        # opencode artifacts should NOT exist (no .opencode/ dir present)
+        assert not (tmp_path / "opencode.json").exists()
+        assert not (tmp_path / "AGENTS.md").exists()
+
+    def test_fr15_agents_md_contains_trw_section(self, tmp_path: Path) -> None:
+        """AGENTS.md generated by init_project contains TRW tool reference."""
+        (tmp_path / ".git").mkdir()
+
+        result = init_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        agents_content = (tmp_path / "AGENTS.md").read_text()
+        # The TRW section should contain tool names
+        assert "trw_session_start" in agents_content or "TRW" in agents_content
+
+    def test_fr15_update_opencode_also_creates_agents_md(self, tmp_path: Path) -> None:
+        """update_project with opencode detected also creates/updates AGENTS.md."""
+        from unittest.mock import patch
+
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".opencode").mkdir()
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            result = update_project(tmp_path)
+
+        assert (tmp_path / "AGENTS.md").exists()
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "<!-- trw:start -->" in content
+
+
+# ── FR09: A/B Test Infrastructure (CORE-074) ─────────────────────────────
+
+
+@pytest.mark.unit
+class TestEnforcementVariant:
+    """FR09: A/B test infrastructure for ceremony enforcement variants."""
+
+    def test_fr09_default_baseline(self) -> None:
+        """Default enforcement_variant is 'baseline'."""
+        from trw_mcp.models.config import TRWConfig
+
+        config = TRWConfig()
+        assert config.enforcement_variant == "baseline"
+
+    def test_fr09_variant_configurable(self) -> None:
+        """enforcement_variant accepts valid values."""
+        from trw_mcp.models.config import TRWConfig
+
+        config = TRWConfig(enforcement_variant="nudge")
+        assert config.enforcement_variant == "nudge"
+
+    def test_fr09_all_valid_variants(self) -> None:
+        """enforcement_variant accepts all documented variant values."""
+        from trw_mcp.models.config import TRWConfig
+
+        for variant in ("baseline", "nudge", "nudge-only", "mcp-only", "none"):
+            config = TRWConfig(enforcement_variant=variant)
+            assert config.enforcement_variant == variant
+
+
+# ── FR05+FR06+FR07: Cursor IDE Bootstrap (CORE-074) ──────────────────────
+
+
+@pytest.mark.integration
+class TestCursorBootstrap:
+    """FR05+FR06+FR07: Cursor IDE bootstrap — hooks, rules, mcp config."""
+
+    def test_fr05_cursor_hooks_created(self, tmp_path: Path) -> None:
+        """FR05: generate_cursor_hooks creates .cursor/hooks.json with TRW hooks."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+        result = generate_cursor_hooks(tmp_path)
+
+        assert ".cursor/hooks.json" in result["created"]
+        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        assert len(config["hooks"]) == 3
+        events = {h["event"] for h in config["hooks"]}
+        assert "beforeSubmitPrompt" in events
+        assert "afterFileEdit" in events
+        assert "stop" in events
+
+    def test_fr05_cursor_hooks_all_have_trw_descriptions(self, tmp_path: Path) -> None:
+        """FR05: All generated hooks have descriptions starting with 'TRW'."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+        generate_cursor_hooks(tmp_path)
+        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        for hook in config["hooks"]:
+            assert hook["description"].startswith("TRW"), (
+                f"Hook {hook['event']} description does not start with 'TRW': "
+                f"{hook['description']}"
+            )
+
+    def test_fr05_cursor_hooks_smart_merge_preserves_user_hooks(self, tmp_path: Path) -> None:
+        """FR05: Smart merge preserves existing user hooks when file already exists."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        existing = {
+            "hooks": [
+                {"event": "custom", "command": "echo hi", "description": "User hook"}
+            ]
+        }
+        (cursor_dir / "hooks.json").write_text(json.dumps(existing))
+
+        result = generate_cursor_hooks(tmp_path)
+
+        assert ".cursor/hooks.json" in result["updated"]
+        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        # User hook preserved + 3 TRW hooks = 4 total
+        assert len(config["hooks"]) == 4
+        descriptions = [h["description"] for h in config["hooks"]]
+        assert "User hook" in descriptions
+
+    def test_fr05_cursor_hooks_smart_merge_replaces_trw_hooks(self, tmp_path: Path) -> None:
+        """FR05: Smart merge replaces stale TRW hooks without duplicating them."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        existing = {
+            "hooks": [
+                {"event": "old", "command": "echo old", "description": "TRW old hook"},
+                {"event": "custom", "command": "echo hi", "description": "User hook"},
+            ]
+        }
+        (cursor_dir / "hooks.json").write_text(json.dumps(existing))
+
+        generate_cursor_hooks(tmp_path)
+        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        # Old TRW hook removed, 3 new TRW hooks + user hook = 4
+        assert len(config["hooks"]) == 4
+        # Stale TRW hook gone
+        old_events = [h["event"] for h in config["hooks"]]
+        assert "old" not in old_events
+
+    def test_fr05_cursor_hooks_force_overwrites(self, tmp_path: Path) -> None:
+        """FR05: force=True overwrites existing hooks without merging."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        existing = {
+            "hooks": [
+                {"event": "custom", "command": "echo hi", "description": "User hook"}
+            ]
+        }
+        (cursor_dir / "hooks.json").write_text(json.dumps(existing))
+
+        result = generate_cursor_hooks(tmp_path, force=True)
+
+        assert ".cursor/hooks.json" in result["created"]
+        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        # Only TRW hooks — user hook not preserved
+        assert len(config["hooks"]) == 3
+
+    def test_fr05_cursor_hooks_malformed_json_fallback(self, tmp_path: Path) -> None:
+        """FR05: Malformed existing JSON is gracefully overwritten."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "hooks.json").write_text("not valid json {{")
+
+        result = generate_cursor_hooks(tmp_path)
+
+        assert ".cursor/hooks.json" in result["updated"]
+        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+        assert len(config["hooks"]) == 3
+
+    def test_fr06_cursor_rules_created(self, tmp_path: Path) -> None:
+        """FR06: generate_cursor_rules creates .cursor/rules/trw-ceremony.mdc."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_rules
+
+        result = generate_cursor_rules(tmp_path, "## TRW Protocol\nContent here")
+
+        assert ".cursor/rules/trw-ceremony.mdc" in result["created"]
+        rules_file = tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc"
+        assert rules_file.exists()
+        content = rules_file.read_text()
+        assert "alwaysApply: true" in content
+        assert "TRW Protocol" in content
+        assert "Content here" in content
+
+    def test_fr06_cursor_rules_frontmatter_valid(self, tmp_path: Path) -> None:
+        """FR06: Generated rules file has valid MDC frontmatter."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_rules
+
+        generate_cursor_rules(tmp_path, "## TRW\nBody")
+        content = (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").read_text()
+        assert content.startswith("---\n")
+        assert "alwaysApply: true" in content
+        assert "globs: []" in content
+        assert "description:" in content
+
+    def test_fr06_cursor_rules_under_500_lines(self, tmp_path: Path) -> None:
+        """FR06: Generated rules file stays under 500 lines."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_rules
+
+        generate_cursor_rules(tmp_path, "Short content")
+        content = (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").read_text()
+        assert len(content.splitlines()) < 500
+
+    def test_fr06_cursor_rules_update_on_existing(self, tmp_path: Path) -> None:
+        """FR06: Calling generate_cursor_rules on an existing file reports 'updated'."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_rules
+
+        generate_cursor_rules(tmp_path, "First content")
+        result = generate_cursor_rules(tmp_path, "Updated content")
+
+        assert ".cursor/rules/trw-ceremony.mdc" in result["updated"]
+        content = (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").read_text()
+        assert "Updated content" in content
+
+    def test_fr07_cursor_mcp_created(self, tmp_path: Path) -> None:
+        """FR07: generate_cursor_mcp_config creates .cursor/mcp.json with TRW entry."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+        result = generate_cursor_mcp_config(tmp_path)
+
+        assert ".cursor/mcp.json" in result["created"]
+        mcp_file = tmp_path / ".cursor" / "mcp.json"
+        assert mcp_file.exists()
+        config = json.loads(mcp_file.read_text())
+        assert "mcpServers" in config
+        assert "trw" in config["mcpServers"]
+
+    def test_fr07_cursor_mcp_entry_has_command(self, tmp_path: Path) -> None:
+        """FR07: TRW MCP entry has a command field."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+        generate_cursor_mcp_config(tmp_path)
+        config = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+        trw_entry = config["mcpServers"]["trw"]
+        assert "command" in trw_entry
+
+    def test_fr07_cursor_mcp_smart_merge_preserves_user_servers(self, tmp_path: Path) -> None:
+        """FR07: Smart merge preserves existing MCP servers in .cursor/mcp.json."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        existing = {"mcpServers": {"other-server": {"command": "other-mcp"}}}
+        (cursor_dir / "mcp.json").write_text(json.dumps(existing))
+
+        result = generate_cursor_mcp_config(tmp_path)
+
+        assert ".cursor/mcp.json" in result["updated"]
+        config = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+        assert "other-server" in config["mcpServers"]
+        assert "trw" in config["mcpServers"]
+
+    def test_fr07_cursor_mcp_smart_merge_updates_trw_entry(self, tmp_path: Path) -> None:
+        """FR07: Smart merge updates the trw entry even if it already exists."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        existing = {
+            "mcpServers": {
+                "trw": {"command": "old-command"},
+                "other": {"command": "other-mcp"},
+            }
+        }
+        (cursor_dir / "mcp.json").write_text(json.dumps(existing))
+
+        generate_cursor_mcp_config(tmp_path)
+        config = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+        # other server preserved
+        assert "other" in config["mcpServers"]
+        # trw entry refreshed
+        assert config["mcpServers"]["trw"]["command"] != "old-command"
+
+    def test_fr07_cursor_mcp_force_overwrites(self, tmp_path: Path) -> None:
+        """FR07: force=True writes a fresh mcp.json without merging."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        existing = {"mcpServers": {"other": {"command": "other-mcp"}}}
+        (cursor_dir / "mcp.json").write_text(json.dumps(existing))
+
+        result = generate_cursor_mcp_config(tmp_path, force=True)
+
+        assert ".cursor/mcp.json" in result["created"]
+        config = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+        # Only TRW — user server removed
+        assert "other" not in config["mcpServers"]
+        assert "trw" in config["mcpServers"]
+
+    def test_fr07_cursor_mcp_malformed_json_fallback(self, tmp_path: Path) -> None:
+        """FR07: Malformed existing JSON is gracefully overwritten."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "mcp.json").write_text("{{not valid json")
+
+        result = generate_cursor_mcp_config(tmp_path)
+
+        assert ".cursor/mcp.json" in result["updated"]
+        config = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+        assert "trw" in config["mcpServers"]
+
+    def test_fr05_fr06_fr07_cursor_dir_auto_created(self, tmp_path: Path) -> None:
+        """FR05+FR06+FR07: .cursor/ directory and subdirs are created automatically."""
+        import shutil as _shutil
+
+        from trw_mcp.bootstrap._cursor import (
+            generate_cursor_hooks,
+            generate_cursor_mcp_config,
+            generate_cursor_rules,
+        )
+
+        # FR05: .cursor/ created by generate_cursor_hooks
+        assert not (tmp_path / ".cursor").exists()
+        generate_cursor_hooks(tmp_path)
+        assert (tmp_path / ".cursor").is_dir()
+        assert (tmp_path / ".cursor" / "hooks.json").exists()
+
+        # FR07: .cursor/ created (or reused) by generate_cursor_mcp_config
+        _shutil.rmtree(tmp_path / ".cursor")
+        assert not (tmp_path / ".cursor").exists()
+        generate_cursor_mcp_config(tmp_path)
+        assert (tmp_path / ".cursor").is_dir()
+        assert (tmp_path / ".cursor" / "mcp.json").exists()
+
+        # FR06: .cursor/rules/ subdir auto-created by generate_cursor_rules
+        _shutil.rmtree(tmp_path / ".cursor")
+        generate_cursor_rules(tmp_path, "content")
+        assert (tmp_path / ".cursor" / "rules").is_dir()
+        assert (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").exists()
+
+    def test_fr05_fr07_init_project_cursor_ide(self, tmp_path: Path) -> None:
+        """FR05+FR07: init_project(ide='cursor') creates .cursor/ artifacts."""
+        (tmp_path / ".git").mkdir()
+
+        result = init_project(tmp_path, ide="cursor")
+
+        assert not result["errors"], result["errors"]
+        assert (tmp_path / ".cursor" / "hooks.json").exists()
+        assert (tmp_path / ".cursor" / "mcp.json").exists()
+        assert (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").exists()
+
+    def test_fr05_fr07_init_project_ide_all_includes_cursor(self, tmp_path: Path) -> None:
+        """FR05+FR07: init_project(ide='all') creates Cursor artifacts alongside others."""
+        (tmp_path / ".git").mkdir()
+
+        result = init_project(tmp_path, ide="all")
+
+        assert not result["errors"], result["errors"]
+        # Cursor artifacts
+        assert (tmp_path / ".cursor" / "hooks.json").exists()
+        assert (tmp_path / ".cursor" / "mcp.json").exists()
+        # Claude Code artifacts still present
+        assert (tmp_path / ".claude").is_dir()
+        assert (tmp_path / "CLAUDE.md").exists()
+
+    def test_fr05_fr07_update_project_cursor_ide(self, tmp_path: Path) -> None:
+        """FR05+FR07: update_project with cursor detected updates .cursor/ artifacts."""
+        from unittest.mock import patch
+
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".cursor").mkdir()  # Presence triggers cursor detection
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            result = update_project(tmp_path)
+
+        assert (tmp_path / ".cursor" / "hooks.json").exists()
+        assert (tmp_path / ".cursor" / "mcp.json").exists()
+        assert (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").exists()

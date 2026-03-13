@@ -23,9 +23,12 @@ from ._utils import (
     _merge_mcp_json,
     _minimal_claude_md,
     _pip_install_package,
+    _result_action_key,
     _verify_installation,
     _write_installer_metadata,
     _write_version_yaml,
+    detect_ide,
+    resolve_ide_targets,
 )
 
 logger = structlog.get_logger()
@@ -560,7 +563,7 @@ def _write_manifest(
 
         writer = FileStateWriter()
         writer.write_yaml(manifest_path, manifest)
-        key = "updated" if "updated" in result else "created"
+        key = _result_action_key(result)
         result[key].append(str(manifest_path))
     except OSError as exc:
         result["errors"].append(f"Failed to write manifest: {exc}")
@@ -847,6 +850,123 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# OpenCode update helper (FR15)
+# ---------------------------------------------------------------------------
+
+
+def _update_opencode_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    ide_override: str | None = None,
+) -> None:
+    """Update opencode artifacts when opencode is detected (FR15).
+
+    Checks IDE targets and, when opencode is included, calls
+    ``generate_opencode_config()`` to smart-merge ``opencode.json`` and
+    ``generate_agents_md()`` to sync ``AGENTS.md``.
+
+    Fail-open: errors are captured in ``result["warnings"]`` so they never
+    break the overall update flow.
+    """
+    from ._opencode import generate_agents_md, generate_opencode_config
+
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    if "opencode" not in ide_targets:
+        return
+
+    # Update opencode.json (smart merge)
+    try:
+        oc_result = generate_opencode_config(target_dir)
+        result["created"].extend(oc_result.get("created", []))
+        result["updated"].extend(oc_result.get("updated", []))
+        result["errors"].extend(oc_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, opencode update is best-effort
+        result["warnings"].append(f"opencode.json update skipped: {exc}")
+        return
+
+    # Update AGENTS.md with the same TRW section content
+    try:
+        trw_section = _extract_trw_section_content()
+        agents_result = generate_agents_md(target_dir, trw_section)
+        result["created"].extend(agents_result.get("created", []))
+        result["updated"].extend(agents_result.get("updated", []))
+        result["errors"].extend(agents_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
+        result["warnings"].append(f"AGENTS.md update skipped: {exc}")
+
+
+def _extract_trw_section_content() -> str:
+    """Extract the content between trw:start and trw:end from _minimal_claude_md."""
+    full = _minimal_claude_md()
+    start_idx = full.find(_TRW_START_MARKER)
+    end_idx = full.find(_TRW_END_MARKER)
+    if start_idx != -1 and end_idx != -1:
+        # Return content between the markers (exclusive)
+        inner_start = start_idx + len(_TRW_START_MARKER)
+        return full[inner_start:end_idx].strip()
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Cursor update helper (FR05, FR06, FR07)
+# ---------------------------------------------------------------------------
+
+
+def _update_cursor_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    ide_override: str | None = None,
+) -> None:
+    """Update Cursor artifacts when Cursor is detected (FR05, FR06, FR07).
+
+    Checks IDE targets and, when cursor is included, calls
+    ``generate_cursor_hooks()`` (FR05), ``generate_cursor_rules()`` (FR06),
+    and ``generate_cursor_mcp_config()`` (FR07) to smart-merge/update the
+    respective ``.cursor/`` files.
+
+    Fail-open: errors are captured in ``result["warnings"]`` so they never
+    break the overall update flow.
+    """
+    from ._cursor import (
+        generate_cursor_hooks,
+        generate_cursor_mcp_config,
+        generate_cursor_rules,
+    )
+
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    if "cursor" not in ide_targets:
+        return
+
+    # FR05: Update .cursor/hooks.json (smart merge)
+    try:
+        hooks_result = generate_cursor_hooks(target_dir)
+        result["created"].extend(hooks_result.get("created", []))
+        result["updated"].extend(hooks_result.get("updated", []))
+        result["errors"].extend(hooks_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, cursor update is best-effort
+        result["warnings"].append(f".cursor/hooks.json update skipped: {exc}")
+
+    # FR06: Update .cursor/rules/trw-ceremony.mdc
+    try:
+        trw_section = _extract_trw_section_content()
+        rules_result = generate_cursor_rules(target_dir, trw_section)
+        result["created"].extend(rules_result.get("created", []))
+        result["updated"].extend(rules_result.get("updated", []))
+        result["errors"].extend(rules_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, cursor rules update is best-effort
+        result["warnings"].append(f".cursor/rules/trw-ceremony.mdc update skipped: {exc}")
+
+    # FR07: Update .cursor/mcp.json (smart merge)
+    try:
+        mcp_result = generate_cursor_mcp_config(target_dir)
+        result["created"].extend(mcp_result.get("created", []))
+        result["updated"].extend(mcp_result.get("updated", []))
+        result["errors"].extend(mcp_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, cursor mcp update is best-effort
+        result["warnings"].append(f".cursor/mcp.json update skipped: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Main update_project entry point
 # ---------------------------------------------------------------------------
 
@@ -857,6 +977,7 @@ def update_project(
     pip_install: bool = False,
     dry_run: bool = False,
     data_dir: Path | None = None,
+    ide: str | None = None,
 ) -> dict[str, list[str]]:
     """Update TRW framework files in *target_dir* while preserving user config.
 
@@ -877,6 +998,8 @@ def update_project(
         dry_run: If True, report what would change without modifying files.
         data_dir: Optional override for the bundled data directory. When provided,
             artifact lookups use this path instead of the module-level ``_DATA_DIR``.
+        ide: Target IDE override ("claude-code", "cursor", "opencode", "all").
+            When None, auto-detect from existing IDE config directories.
 
     Returns:
         Dict with ``updated``, ``created``, ``preserved``, ``errors``,
@@ -938,6 +1061,14 @@ def update_project(
     # 13b. Post-update CLAUDE.md sync (resolve placeholders, promote learnings)
     if not dry_run:
         _run_claude_md_sync(target_dir, result)
+
+    # 13c. OpenCode updates (FR15: multi-IDE support)
+    if not dry_run:
+        _update_opencode_artifacts(target_dir, result, ide_override=ide)
+
+    # 13d. Cursor updates (FR05, FR06, FR07: Cursor IDE support)
+    if not dry_run:
+        _update_cursor_artifacts(target_dir, result, ide_override=ide)
 
     # 14. Remind about running sessions
     result["warnings"].append(

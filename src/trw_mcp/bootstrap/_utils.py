@@ -41,6 +41,11 @@ def _ensure_dir(path: Path, result: dict[str, list[str]]) -> None:
     # Already existing dirs are silently fine -- not worth reporting as "skipped".
 
 
+def _result_action_key(result: dict[str, list[str]]) -> str:
+    """Return the appropriate result key: ``'updated'`` for update flows, ``'created'`` for init."""
+    return "updated" if "updated" in result else "created"
+
+
 def _copy_file(
     src: Path,
     dest: Path,
@@ -181,7 +186,7 @@ def _merge_mcp_json(
             mcp_path.write_text(
                 json.dumps(data, indent=2) + "\n", encoding="utf-8",
             )
-            key = "updated" if "updated" in result else "created"
+            key = _result_action_key(result)
             if existed:
                 result[key].append(str(mcp_path))
             else:
@@ -230,7 +235,7 @@ def _write_version_yaml(
     from trw_mcp.models.config import get_config
 
     config = get_config()
-    version_data = {
+    version_data: dict[str, object] = {
         "framework_version": config.framework_version,
         "aaref_version": config.aaref_version,
         "trw_mcp_version": pkg_version,
@@ -242,9 +247,16 @@ def _write_version_yaml(
 
         writer = FileStateWriter()
         writer.write_yaml(version_path, version_data)
-        key = "updated" if "updated" in result else "created"
+        logger.debug(
+            "version_yaml_generated",
+            path=str(version_path),
+            framework=config.framework_version,
+            trw_mcp=pkg_version,
+        )
+        key = _result_action_key(result)
         result[key].append(str(version_path))
     except OSError as exc:  # justified: boundary, file write may fail
+        logger.warning("version_yaml_write_failed", path=str(version_path), error=str(exc))
         result["errors"].append(f"Failed to write {version_path}: {exc}")
 
 
@@ -292,7 +304,7 @@ def _write_installer_metadata(
         writer = FileStateWriter()
         writer.write_yaml(meta_path, meta)
         # init_project uses "created", update_project uses "updated"
-        key = "updated" if "updated" in result else "created"
+        key = _result_action_key(result)
         result[key].append(str(meta_path))
     except OSError as exc:
         result["errors"].append(f"Failed to write {meta_path}: {exc}")
@@ -408,11 +420,6 @@ def _pip_install_package(
             )
     except (subprocess.TimeoutExpired, OSError) as exc:
         result["errors"].append(f"pip install failed: {exc}")
-
-
-# ---------------------------------------------------------------------------
-# CLAUDE.md content generators
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
