@@ -19,6 +19,7 @@ from ._utils import (
     _minimal_claude_md,
     _write_if_missing,
     _write_installer_metadata,
+    _write_version_yaml,
 )
 
 logger = structlog.get_logger()
@@ -189,8 +190,9 @@ def init_project(
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)
 
-    # 9. Write installer metadata
+    # 9. Write installer metadata + VERSION.yaml
     _write_installer_metadata(target_dir, "init-project", result)
+    _write_version_yaml(target_dir, result)
 
     logger.info(
         "bootstrap_complete",

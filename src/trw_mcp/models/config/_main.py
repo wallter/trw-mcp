@@ -249,7 +249,7 @@ class TRWConfig(BaseSettings):
 
     # -- 14. Framework version & AARE-F --
 
-    framework_version: str = "v24.2_TRW"
+    framework_version: str = "v24.3_TRW"
     aaref_version: str = "v1.1.0"
 
     # -- 15. PRD quality gates --

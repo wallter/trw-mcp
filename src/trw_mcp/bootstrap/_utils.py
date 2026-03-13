@@ -210,6 +210,45 @@ def _generate_mcp_json() -> str:
 
 
 # ---------------------------------------------------------------------------
+# VERSION.yaml generation (DRY — derived from package metadata)
+# ---------------------------------------------------------------------------
+
+
+def _write_version_yaml(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Generate ``.trw/frameworks/VERSION.yaml`` from package metadata.
+
+    Derived values (no static file to maintain):
+    - ``framework_version``: from TRWConfig default
+    - ``aaref_version``: from TRWConfig default
+    - ``trw_mcp_version``: from installed package metadata
+    - ``deployed_at``: current UTC timestamp
+    """
+    from trw_mcp import __version__ as pkg_version
+    from trw_mcp.models.config import get_config
+
+    config = get_config()
+    version_data = {
+        "framework_version": config.framework_version,
+        "aaref_version": config.aaref_version,
+        "trw_mcp_version": pkg_version,
+        "deployed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    version_path = target_dir / ".trw" / "frameworks" / "VERSION.yaml"
+    try:
+        from trw_mcp.state.persistence import FileStateWriter
+
+        writer = FileStateWriter()
+        writer.write_yaml(version_path, version_data)
+        key = "updated" if "updated" in result else "created"
+        result[key].append(str(version_path))
+    except OSError as exc:  # justified: boundary, file write may fail
+        result["errors"].append(f"Failed to write {version_path}: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Installer metadata & verification
 # ---------------------------------------------------------------------------
 

@@ -25,6 +25,7 @@ from ._utils import (
     _pip_install_package,
     _verify_installation,
     _write_installer_metadata,
+    _write_version_yaml,
 )
 
 logger = structlog.get_logger()
@@ -925,9 +926,10 @@ def update_project(
     if pip_install and not dry_run:
         _pip_install_package(target_dir, result)
 
-    # 12. Write installer metadata
+    # 12. Write installer metadata + VERSION.yaml
     if not dry_run:
         _write_installer_metadata(target_dir, "update-project", result)
+        _write_version_yaml(target_dir, result)
 
     # 13. Post-update verification
     if not dry_run:
