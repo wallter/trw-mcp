@@ -47,7 +47,9 @@ dev = [
     "pytest-timeout>=2.3.0",
     "mypy>=1.11.0",
     "types-pyyaml>=6.0.0",
-    # mcp-hmr removed — incompatible with fastmcp>=3.0 (requires fastmcp<3)
+    "hypothesis>=6.0.0",
+    "sqlite-vec>=0.1.0",
+    "rank-bm25>=0.2.0",
 ]
 ai = [
     "anthropic>=0.40.0",
