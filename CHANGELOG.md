@@ -4,6 +4,28 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.11.7] — 2026-03-13
+
+### Added
+
+- **Multi-IDE support (PRD-CORE-074)** — OpenCode, Cursor, and future CLIs now supported alongside Claude Code
+  - IDE detection (`detect_ide`, `detect_installed_clis`, `resolve_ide_targets`)
+  - OpenCode bootstrap: `opencode.json` + `AGENTS.md` with smart merge
+  - Cursor bootstrap: `hooks.json` (4 events), `.cursor/rules/*.mdc`, `mcp.json` with smart merge
+  - `--ide` flag on `init-project` / `update-project` CLI commands
+  - Installer CLI detection with interactive opt-in prompt
+- **Layer 3 MCP Cooperative Nudges** — ceremony status in every `trw_*` tool response with progressive urgency (low→medium→high)
+  - `ceremony_nudge.py` — state tracker with atomic file persistence
+  - Wired into all production tools (session_start, checkpoint, deliver, build_check, learn)
+  - `compute_nudge_minimal()` for local models (≤200 chars)
+- **Instructions sync** — `trw_claude_md_sync` gains `client` param (auto/claude-code/opencode/all), writes to CLAUDE.md, AGENTS.md, or both
+- **IDE adapter hook** (`lib-ide-adapter.sh`) — routes ceremony enforcement across IDE variants
+- **+68 bootstrap tests** — `_write_version_yaml`, `_result_action_key`, OpenCode, Cursor, enforcement variants
+
+### Changed
+
+- **Bootstrap refactor** — extracted `_result_action_key()` helper (DRY, replaces 4 inline copies), added structured logging to `_write_version_yaml`, type annotation fix for mypy `--strict`
+
 ## [0.11.6] — 2026-03-13
 
 ### Changed
