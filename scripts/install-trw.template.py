@@ -548,6 +548,80 @@ def show_success_banner(ui: UI, platform_status: str, features: list[str]) -> No
         ui.info(f"Docs: {DOCS_BASE}/integration")
 
 
+# ── IDE detection and selection ──────────────────────────────────────
+
+def _detect_installed_clis() -> list[str]:
+    """Detect which AI coding CLI binaries are on PATH."""
+    detected = []
+    if shutil.which("claude"):
+        detected.append("claude-code")
+    if shutil.which("opencode"):
+        detected.append("opencode")
+    return detected
+
+
+def _detect_project_ides(project_dir: str) -> list[str]:
+    """Detect which IDE configs exist in the project."""
+    import os as _os
+    detected = []
+    if _os.path.isdir(_os.path.join(project_dir, ".claude")):
+        detected.append("claude-code")
+    if _os.path.isdir(_os.path.join(project_dir, ".opencode")) or _os.path.isfile(
+        _os.path.join(project_dir, "opencode.json")
+    ):
+        detected.append("opencode")
+    return detected
+
+
+def _prompt_ide_selection(detected_clis: list[str], detected_ides: list[str]) -> str | None:
+    """Prompt user to select which IDE(s) to configure.
+
+    Returns: "claude-code", "opencode", "all", or None (skip).
+    """
+    # Show what was detected
+    if detected_clis:
+        print(f"{GREEN}[TRW]{NC} Detected CLI(s): {', '.join(detected_clis)}")
+    if detected_ides:
+        print(f"{GREEN}[TRW]{NC} Existing IDE config: {', '.join(detected_ides)}")
+
+    # Build options list: key, label, value
+    options: list[tuple[str, str, str | None]] = []
+    has_claude = "claude-code" in detected_clis or "claude-code" in detected_ides
+    has_opencode = "opencode" in detected_clis or "opencode" in detected_ides
+
+    if has_claude:
+        options.append(("1", "Claude Code only", "claude-code"))
+    if has_opencode:
+        key = "2" if has_claude else "1"
+        options.append((key, "OpenCode only", "opencode"))
+
+    # Always offer "both" and "skip"
+    both_key = str(len(options) + 1)
+    options.append((both_key, "Both Claude Code and OpenCode", "all"))
+    skip_key = "s"
+    options.append((skip_key, "Skip (configure later)", None))
+
+    print("\nConfigure TRW for:")
+    for key, label, _ in options:
+        print(f"  [{key}] {label}")
+
+    default_key = options[0][0]
+    tty = _open_tty()
+    if tty is None:
+        return options[0][2]
+    try:
+        sys.stdout.write(f"\nSelection [default: {default_key}]: ")
+        sys.stdout.flush()
+        choice = tty.readline().strip().lower() or default_key
+    finally:
+        tty.close()
+
+    for key, _, value in options:
+        if choice == key:
+            return value
+    return options[0][2]  # default to first option
+
+
 # ── Find trw-mcp command ─────────────────────────────────────────────
 
 def find_trw_cmd(python: str) -> list[str]:
@@ -695,6 +769,8 @@ def phase_project_setup(
     python: str,
     target_dir: Path,
     upgrade_only: bool,
+    interactive: bool = False,
+    ide: str | None = None,
 ) -> None:
     """Set up or update the project scaffolding."""
     ui.step_header(step, total, "Setting up project")
@@ -708,12 +784,34 @@ def phase_project_setup(
         ui.step_warn("After git init, run: trw-mcp init-project .")
         return
 
+    # IDE detection and selection
+    detected_clis = _detect_installed_clis()
+    detected_ides = _detect_project_ides(str(target_dir))
+
+    resolved_ide: str | None = ide
+    if resolved_ide is None:
+        if interactive:
+            resolved_ide = _prompt_ide_selection(detected_clis, detected_ides)
+        else:
+            # Headless: auto-configure all detected CLIs; default to claude-code if none
+            all_detected = list(dict.fromkeys(detected_clis + detected_ides))
+            if len(all_detected) >= 2:
+                resolved_ide = "all"
+            elif len(all_detected) == 1:
+                resolved_ide = all_detected[0]
+            else:
+                resolved_ide = "claude-code"
+
     trw_cmd = find_trw_cmd(python)
     is_update = (target_dir / ".trw").is_dir()
     action = "update-project" if is_update else "init-project"
     label = "Updating" if is_update else "Initializing"
 
-    ok = run_with_progress(ui, f"{label} project...", trw_cmd + [action, str(target_dir)])
+    cmd = trw_cmd + [action, str(target_dir)]
+    if resolved_ide is not None:
+        cmd += ["--ide", resolved_ide]
+
+    ok = run_with_progress(ui, f"{label} project...", cmd)
     ui.stop_spinner(ok, f"Project {'updated' if is_update else 'initialized'}", f"Project {action} failed")
 
 
@@ -852,6 +950,12 @@ def main() -> None:
     parser.add_argument("--api-key", default="", help="Platform API key")
     parser.add_argument("--telemetry", dest="telemetry", action="store_true", default=None, help="Enable telemetry")
     parser.add_argument("--no-telemetry", dest="telemetry", action="store_false", help="Disable telemetry")
+    parser.add_argument(
+        "--ide",
+        choices=["claude-code", "opencode", "all"],
+        default=None,
+        help="Target IDE to configure (prompted if not specified in interactive mode)",
+    )
 
     args = parser.parse_args()
 
@@ -920,7 +1024,11 @@ def main() -> None:
         next_step, features = phase_install_extras(ui, 4, total, python, install_ai, install_vec)
 
         # Phase N: Project setup
-        phase_project_setup(ui, next_step, total, python, target_dir, args.upgrade)
+        phase_project_setup(
+            ui, next_step, total, python, target_dir, args.upgrade,
+            interactive=interactive,
+            ide=args.ide,
+        )
         next_step += 1
 
         # Phase N+1: Configure

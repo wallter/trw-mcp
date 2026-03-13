@@ -44,6 +44,7 @@ def execute_claude_md_sync(
     reader: FileStateReader,
     writer: FileStateWriter,
     llm: LLMClient,
+    client: str = "auto",
 ) -> dict[str, object]:
     """Execute the CLAUDE.md sync operation.
 
@@ -57,6 +58,11 @@ def execute_claude_md_sync(
         reader: File state reader.
         writer: File state writer.
         llm: LLM client instance.
+        client: Target client(s) to write instructions for.
+            "auto" (default) -- detect via IDE config dirs;
+            "claude-code" -- write CLAUDE.md only;
+            "opencode" -- write AGENTS.md only;
+            "all" -- write both CLAUDE.md and AGENTS.md.
 
     Returns:
         Result dictionary with sync metadata.
@@ -126,7 +132,32 @@ def execute_claude_md_sync(
         target = project_root / "CLAUDE.md"
         max_lines = config.claude_md_max_lines
 
-    total_lines = merge_trw_section(target, trw_section, max_lines)
+    # FR13: Determine write targets based on client parameter.
+    # "auto" uses detect_ide() to check for .opencode/ or opencode.json.
+    # The legacy config.agents_md_enabled flag is respected only in auto/all modes.
+    write_claude: bool = True
+    write_agents: bool = False
+
+    if client == "auto":
+        from trw_mcp.bootstrap._utils import detect_ide
+
+        ides = detect_ide(project_root)
+        write_claude = "claude-code" in ides or not ides  # default to claude when no IDE found
+        # Write AGENTS.md if opencode detected, gated by agents_md_enabled config flag
+        write_agents = "opencode" in ides and config.agents_md_enabled and scope == "root"
+    elif client == "claude-code":
+        write_claude, write_agents = True, False
+    elif client == "opencode":
+        write_claude, write_agents = False, True
+    elif client == "all":
+        write_claude = True
+        write_agents = config.agents_md_enabled and scope == "root"
+    # else: fallback to default (write_claude=True, write_agents=False)
+
+    total_lines = 0
+    if write_claude:
+        total_lines = merge_trw_section(target, trw_section, max_lines)
+
     update_analytics_sync(trw_dir)
 
     for learning in high_impact:
@@ -134,18 +165,25 @@ def execute_claude_md_sync(
         if isinstance(lid, str) and lid:
             mark_promoted(trw_dir, lid)
 
-    # PRD-INFRA-001: Sync AGENTS.md with same TRW section
+    # FR13: Write AGENTS.md with identical TRW section when opencode is targeted.
     agents_md_synced = False
     agents_md_path: str | None = None
-    if config.agents_md_enabled and scope == "root":
+    if write_agents:
         agents_target = project_root / "AGENTS.md"
         merge_trw_section(agents_target, trw_section, max_lines)
         agents_md_synced = True
         agents_md_path = str(agents_target)
 
     logger.info(
-        "trw_claude_md_synced", scope=scope, target=str(target),
-        learnings_promoted=len(high_impact), patterns_included=len(patterns),
+        "trw_claude_md_synced",
+        scope=scope,
+        target=str(target),
+        learnings_promoted=len(high_impact),
+        patterns_included=len(patterns),
+        client=client,
+        write_claude=write_claude,
+        write_agents=write_agents,
+        agents_md_path=agents_md_path if agents_md_synced else None,
     )
     return {
         "path": str(target),

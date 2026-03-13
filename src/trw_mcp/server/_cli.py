@@ -125,6 +125,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="",
         help="Test directory path relative to source (e.g., tests)",
     )
+    init_parser.add_argument(
+        "--ide",
+        choices=["claude-code", "cursor", "opencode", "all"],
+        default=None,
+        help="Target IDE (auto-detect if not specified)",
+    )
 
     # update-project
     update_parser = subparsers.add_parser(
@@ -146,6 +152,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Preview what would change without modifying files",
+    )
+    update_parser.add_argument(
+        "--ide",
+        choices=["claude-code", "cursor", "opencode", "all"],
+        default=None,
+        help="Target IDE (auto-detect if not specified)",
     )
 
     # audit

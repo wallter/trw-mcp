@@ -16,6 +16,7 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state.ceremony_nudge import compute_nudge, read_ceremony_state
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -24,6 +25,53 @@ from trw_mcp.state.persistence import (
 from trw_mcp.state.receipts import log_recall_receipt
 
 logger = structlog.get_logger()
+
+
+# ── FR01: Ceremony nudge injection ──────────────────────────────────────
+
+
+def append_ceremony_nudge(
+    response: dict[str, object],
+    trw_dir: Path | None = None,
+    available_learnings: int = 0,
+) -> dict[str, object]:
+    """Append ceremony nudge to a tool response dict.
+
+    Reads ceremony state, computes nudge, adds it under 'ceremony_status' key.
+    Fail-open: if anything fails, returns response unchanged.
+
+    Args:
+        response: The tool response dict to augment.
+        trw_dir: Override the .trw directory (defaults to resolve_trw_dir()).
+        available_learnings: Number of available learnings for nudge context.
+
+    Returns:
+        The response dict with 'ceremony_status' key added (or unchanged on error).
+    """
+    try:
+        from trw_mcp.state.ceremony_nudge import (
+            _highest_priority_pending_step,
+            increment_nudge_count,
+        )
+        effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
+        state = read_ceremony_state(effective_dir)
+        nudge = compute_nudge(state, available_learnings=available_learnings)
+        response["ceremony_status"] = nudge
+        # Increment nudge count for the pending step (tracks progressive urgency)
+        pending = _highest_priority_pending_step(state)
+        if pending:
+            try:
+                increment_nudge_count(effective_dir, pending)
+            except Exception:  # justified: fail-open, nudge count increment is best-effort
+                pass
+        logger.debug(
+            "append_ceremony_nudge",
+            phase=state.phase,
+            has_nudge=len(nudge) > 0,
+        )
+    except Exception:  # justified: fail-open — nudge injection must never raise or block
+        logger.warning("append_ceremony_nudge_failed", exc_info=True)
+    return response
 
 
 # ── Phase-contextual tag map (PRD-CORE-049) ──────────────────────────────

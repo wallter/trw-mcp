@@ -188,6 +188,14 @@ def register_build_tools(server: FastMCP) -> None:
                 f"required threshold {min_coverage:.1f}%"
             )
 
+        # Mark build check result in ceremony state tracker (PRD-CORE-074 FR04)
+        try:
+            from trw_mcp.state.ceremony_nudge import mark_build_check
+            _build_passed = bool(result.get("tests_passed", False))
+            mark_build_check(trw_dir, passed=_build_passed)
+        except Exception:  # justified: fail-open, ceremony state update must not block build check
+            pass
+
         # Dep audit on full scope (if enabled)
         if scope == "full" and config.dep_audit_enabled:
             dep_result = _run_dep_audit(project_root, config)

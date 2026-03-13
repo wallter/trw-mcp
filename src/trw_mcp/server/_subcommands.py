@@ -23,6 +23,7 @@ def _run_init_project(args: argparse.Namespace) -> None:
         force=args.force,
         source_package=args.source_package,
         test_path=args.test_path,
+        ide=getattr(args, "ide", None),
     )
 
     for f in result["created"]:
@@ -49,7 +50,12 @@ def _run_update_project(args: argparse.Namespace) -> None:
 
     target = Path(args.target_dir).resolve()
     dry_run: bool = getattr(args, "dry_run", False)
-    result = update_project(target, pip_install=args.pip_install, dry_run=dry_run)
+    result = update_project(
+        target,
+        pip_install=args.pip_install,
+        dry_run=dry_run,
+        ide=getattr(args, "ide", None),
+    )
 
     prefix = "[DRY RUN] " if dry_run else ""
     for f in result["updated"]:

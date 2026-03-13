@@ -560,6 +560,16 @@ class TRWConfig(BaseSettings):
     completion_hooks_blocking: bool = False
     self_review_blocking: bool = False
 
+    # -- A/B test enforcement variants (CORE-074-FR09) --
+    # Controls which ceremony enforcement layers are active across IDE variants.
+    # Values:
+    #   "baseline"  — Layer 1+2 (default: hooks + MCP enforcement)
+    #   "nudge"     — Layer 1+2+3 (hooks + MCP + extra nudges)
+    #   "nudge-only"— Layer 1+3 (no hooks, just Layer 1 + nudges)
+    #   "mcp-only"  — Layer 3 only (MCP enforcement, no hooks)
+    #   "none"      — Layer 1 only (minimal enforcement)
+    enforcement_variant: str = "baseline"
+
     # -- 48. PostToolUse validation (QUAL-030) --
     # Incremental type checking and security pattern detection after Edit/Write
 

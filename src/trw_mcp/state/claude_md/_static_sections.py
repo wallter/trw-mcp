@@ -101,7 +101,7 @@ def render_phase_descriptions() -> str:
         Markdown string with phase flow and descriptions.
     """
     phase_names = [p[0] for p in PHASE_DESCRIPTIONS]
-    lines: list[str] = [
+    lines = [
         "### Execution Phases",
         "",
         "```",
@@ -109,8 +109,7 @@ def render_phase_descriptions() -> str:
         "```",
         "",
     ]
-    for name, purpose in PHASE_DESCRIPTIONS:
-        lines.append(f"- **{name}**: {purpose}")
+    lines.extend(f"- **{name}**: {purpose}" for name, purpose in PHASE_DESCRIPTIONS)
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -121,16 +120,16 @@ def render_ceremony_table() -> str:
     Returns:
         Markdown table with Phase, Tool, When, What, Example columns.
     """
-    lines: list[str] = [
+    lines = [
         "### Tool Lifecycle",
         "",
         "| Phase | Tool | When to Use | What It Does | Example |",
         "|-------|------|-------------|--------------|---------|",
     ]
-    for ct in CEREMONY_TOOLS:
-        lines.append(
-            f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |"
-        )
+    lines.extend(
+        f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |"
+        for ct in CEREMONY_TOOLS
+    )
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -299,6 +298,20 @@ def render_closing_reminder() -> str:
         "should persist them at session end \u2014 this is how "
         "your work compounds across sessions instead of being lost.\n"
         "\n"
+    )
+
+
+def render_minimal_protocol() -> str:
+    """Render a shortened ceremony protocol for local model AGENTS.md.
+
+    Must be under 200 tokens. Contains only:
+    - Call trw_session_start() first
+    - Call trw_deliver() when done
+    """
+    return (
+        "TRW tools persist your work across sessions:\n"
+        "- **Start**: call `trw_session_start()` to load prior learnings\n"
+        "- **Finish**: call `trw_deliver()` to persist discoveries\n"
     )
 
 

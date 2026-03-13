@@ -1390,6 +1390,8 @@ class TestExecuteClaudeMdSyncAgentsMd:
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         (trw_dir / "context").mkdir(parents=True)
         (trw_dir / "patterns").mkdir(parents=True)
+        # FR13: AGENTS.md requires opencode IDE detection
+        (tmp_path / ".opencode").mkdir(exist_ok=True)
 
         config = TRWConfig(agents_md_enabled=True)
         reader = FileStateReader()

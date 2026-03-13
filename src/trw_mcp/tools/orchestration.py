@@ -205,6 +205,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # Framework version captured in run.yaml `framework` field.
         # Full snapshot removed — saves ~20 KB per run, reconstruct from git if needed.
 
+        # Reset ceremony state for new run (PRD-CORE-074 FR04, P0-3)
+        try:
+            from trw_mcp.state.ceremony_nudge import reset_ceremony_state
+            reset_ceremony_state(trw_dir)
+        except Exception:  # justified: fail-open, ceremony state reset must not block run init
+            pass
+
         logger.info(
             "trw_init_complete",
             task=task_name,
@@ -348,6 +355,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
             logger.warning("stale_count_scan_failed", exc_info=True)
 
         logger.info("trw_status_read", run_id=result["run_id"])
+
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        try:
+            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir3
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            result = append_ceremony_nudge(result, _resolve_trw_dir3())
+        except Exception:  # justified: fail-open, nudge injection must not block status
+            pass
+
         return result
 
     @server.tool()
@@ -430,6 +446,23 @@ def register_orchestration_tools(server: FastMCP) -> None:
         }
         if wave_id:
             result["wave_id"] = wave_id
+
+        # Mark checkpoint in ceremony state tracker (PRD-CORE-074 FR04)
+        try:
+            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
+            from trw_mcp.state.ceremony_nudge import mark_checkpoint
+            mark_checkpoint(_resolve_trw_dir())
+        except Exception:  # justified: fail-open, ceremony state update must not block checkpoint
+            pass
+
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        try:
+            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir2
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            result = append_ceremony_nudge(result, _resolve_trw_dir2())  # type: ignore[arg-type]
+        except Exception:  # justified: fail-open, nudge injection must not block checkpoint
+            pass
+
         return result
 
 

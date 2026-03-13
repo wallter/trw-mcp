@@ -210,6 +210,21 @@ def register_learning_tools(server: FastMCP) -> None:
         }
         if distribution_soft_cap_warning:
             result_dict["soft_cap_warning"] = distribution_soft_cap_warning
+
+        # Increment learnings count in ceremony state tracker (PRD-CORE-074 FR04)
+        try:
+            from trw_mcp.state.ceremony_nudge import increment_learnings
+            increment_learnings(trw_dir)
+        except Exception:  # justified: fail-open, ceremony state update must not block learning
+            pass
+
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        try:
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            result_dict = append_ceremony_nudge(result_dict, trw_dir)
+        except Exception:  # justified: fail-open, nudge injection must not block learning
+            pass
+
         return result_dict
 
     @server.tool()
@@ -402,7 +417,7 @@ def register_learning_tools(server: FastMCP) -> None:
             compact=use_compact,
         )
 
-        return {
+        recall_result: dict[str, object] = {
             "query": query,
             "learnings": ranked_learnings,
             "patterns": matching_patterns,
@@ -414,11 +429,21 @@ def register_learning_tools(server: FastMCP) -> None:
             "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
         }
 
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        try:
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            recall_result = append_ceremony_nudge(recall_result, trw_dir, available_learnings=total_available)
+        except Exception:  # justified: fail-open, nudge injection must not block recall
+            pass
+
+        return recall_result
+
     @server.tool()
     @log_tool_call
     def trw_claude_md_sync(
         scope: str = "root",
         target_dir: str | None = None,
+        client: str = "auto",
     ) -> dict[str, object]:
         """Promote your best learnings into CLAUDE.md — the next session starts with your insights built in.
 
@@ -426,12 +451,20 @@ def register_learning_tools(server: FastMCP) -> None:
         patterns into the auto-generated CLAUDE.md section. This is how individual
         session discoveries become permanent project instructions.
 
+        Also writes AGENTS.md for opencode users (FR13) when detected or explicitly
+        requested via the ``client`` parameter.
+
         Args:
             scope: Sync scope — "root" for project CLAUDE.md, "sub" for module-level.
             target_dir: Target directory for sub-CLAUDE.md generation.
+            client: Target client(s) to write instructions for.
+                "auto" (default) — detect via IDE config dirs (.claude/, .opencode/);
+                "claude-code" — write CLAUDE.md only;
+                "opencode" — write AGENTS.md only;
+                "all" — write both CLAUDE.md and AGENTS.md.
         """
         config = get_config()
         reader = FileStateReader()
         writer = FileStateWriter()
         llm = _create_llm_client()
-        return execute_claude_md_sync(scope, target_dir, config, reader, writer, llm)
+        return execute_claude_md_sync(scope, target_dir, config, reader, writer, llm, client)

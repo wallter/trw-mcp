@@ -409,6 +409,21 @@ def register_ceremony_tools(server: FastMCP) -> None:
             "context compaction."
         )
 
+        # Mark session started in ceremony state tracker (PRD-CORE-074 FR04)
+        try:
+            from trw_mcp.state.ceremony_nudge import mark_session_started
+            mark_session_started(resolve_trw_dir())
+        except Exception:  # justified: fail-open, ceremony state update must not block session start
+            pass
+
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        try:
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            available = int(str(results.get("learnings_count", 0)))
+            results = append_ceremony_nudge(results, resolve_trw_dir(), available_learnings=available)
+        except Exception:  # justified: fail-open, nudge injection must not block session start
+            pass
+
         logger.info(
             "trw_session_start_complete",
             learnings=results.get("learnings_count", 0),
@@ -528,6 +543,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     "errors": len(errors),
                 },
             )
+
+        # Mark deliver called in ceremony state tracker (PRD-CORE-074 FR04)
+        try:
+            from trw_mcp.state.ceremony_nudge import mark_deliver
+            mark_deliver(trw_dir)
+        except Exception:  # justified: fail-open, ceremony state update must not block delivery
+            pass
 
         logger.info(
             "trw_deliver_complete",

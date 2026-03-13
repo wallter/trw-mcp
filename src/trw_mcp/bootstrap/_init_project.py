@@ -20,6 +20,7 @@ from ._utils import (
     _write_if_missing,
     _write_installer_metadata,
     _write_version_yaml,
+    resolve_ide_targets,
 )
 
 logger = structlog.get_logger()
@@ -140,6 +141,7 @@ def init_project(
     force: bool = False,
     source_package: str = "",
     test_path: str = "",
+    ide: str | None = None,
 ) -> dict[str, list[str]]:
     """Bootstrap TRW framework in *target_dir*.
 
@@ -148,11 +150,14 @@ def init_project(
         force: If ``True``, overwrite existing files.
         source_package: Pre-populate ``source_package_name`` in config.
         test_path: Pre-populate ``tests_relative_path`` in config.
+        ide: Target IDE override ("claude-code", "cursor", "opencode", "all").
+            When None, auto-detect from existing IDE config directories.
 
     Returns:
         Dict with ``created``, ``skipped``, ``errors`` lists.
     """
-    from ._update_project import _write_manifest
+    from ._opencode import generate_agents_md, generate_opencode_config
+    from ._update_project import _extract_trw_section_content, _write_manifest
 
     result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
 
@@ -184,8 +189,44 @@ def init_project(
     # 6. Copy agents
     _install_agents(target_dir, force, result)
 
-    # 7. Generate root-level files
+    # 7. Generate root-level files (Claude Code: .mcp.json, CLAUDE.md)
     _generate_root_files(target_dir, force, result)
+
+    # 7b. OpenCode artifacts (FR15: multi-IDE support)
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
+    if "opencode" in ide_targets:
+        oc_result = generate_opencode_config(target_dir, force=force)
+        result["created"].extend(oc_result.get("created", []))
+        result["skipped"].extend(oc_result.get("preserved", []))
+        result["errors"].extend(oc_result.get("errors", []))
+
+        trw_section = _extract_trw_section_content()
+        agents_result = generate_agents_md(target_dir, trw_section, force=force)
+        result["created"].extend(agents_result.get("created", []))
+        result["skipped"].extend(agents_result.get("preserved", []))
+        result["errors"].extend(agents_result.get("errors", []))
+
+    # 7c. Cursor artifacts (FR05, FR06, FR07: Cursor IDE support)
+    if "cursor" in ide_targets:
+        from ._cursor import (
+            generate_cursor_hooks,
+            generate_cursor_mcp_config,
+            generate_cursor_rules,
+        )
+        from ._update_project import _extract_trw_section_content
+
+        cursor_hooks = generate_cursor_hooks(target_dir, force=force)
+        result["created"].extend(cursor_hooks.get("created", []))
+        result["skipped"].extend(cursor_hooks.get("preserved", []))
+
+        trw_section = _extract_trw_section_content()
+        cursor_rules = generate_cursor_rules(target_dir, trw_section, force=force)
+        result["created"].extend(cursor_rules.get("created", []))
+        result["skipped"].extend(cursor_rules.get("preserved", []))
+
+        cursor_mcp = generate_cursor_mcp_config(target_dir, force=force)
+        result["created"].extend(cursor_mcp.get("created", []))
+        result["skipped"].extend(cursor_mcp.get("preserved", []))
 
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)

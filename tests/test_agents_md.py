@@ -54,7 +54,9 @@ class TestAgentsMdCreation:
     """Test AGENTS.md file creation via trw_claude_md_sync."""
 
     def test_agents_md_created_on_root_sync(self, tmp_project: Path) -> None:
-        """AGENTS.md is created when scope='root' and agents_md_enabled=True."""
+        """AGENTS.md is created when scope='root', agents_md_enabled=True, and opencode detected."""
+        # FR13: AGENTS.md requires opencode IDE detection (via .opencode/ dir)
+        (tmp_project / ".opencode").mkdir(exist_ok=True)
         with _patched_learning_env(tmp_project, agents_md_enabled=True) as tools:
             result = tools["trw_claude_md_sync"].fn(scope="root")
 

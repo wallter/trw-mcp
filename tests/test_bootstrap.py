@@ -1965,8 +1965,9 @@ class TestCursorBootstrap:
 
         assert ".cursor/hooks.json" in result["created"]
         config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        assert len(config["hooks"]) == 3
+        assert len(config["hooks"]) == 4
         events = {h["event"] for h in config["hooks"]}
+        assert "beforeMCPExecution" in events
         assert "beforeSubmitPrompt" in events
         assert "afterFileEdit" in events
         assert "stop" in events
@@ -2000,8 +2001,8 @@ class TestCursorBootstrap:
 
         assert ".cursor/hooks.json" in result["updated"]
         config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        # User hook preserved + 3 TRW hooks = 4 total
-        assert len(config["hooks"]) == 4
+        # User hook preserved + 4 TRW hooks = 5 total
+        assert len(config["hooks"]) == 5
         descriptions = [h["description"] for h in config["hooks"]]
         assert "User hook" in descriptions
 
@@ -2021,8 +2022,8 @@ class TestCursorBootstrap:
 
         generate_cursor_hooks(tmp_path)
         config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        # Old TRW hook removed, 3 new TRW hooks + user hook = 4
-        assert len(config["hooks"]) == 4
+        # Old TRW hook removed, 4 new TRW hooks + user hook = 5
+        assert len(config["hooks"]) == 5
         # Stale TRW hook gone
         old_events = [h["event"] for h in config["hooks"]]
         assert "old" not in old_events
@@ -2045,7 +2046,7 @@ class TestCursorBootstrap:
         assert ".cursor/hooks.json" in result["created"]
         config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
         # Only TRW hooks — user hook not preserved
-        assert len(config["hooks"]) == 3
+        assert len(config["hooks"]) == 4
 
     def test_fr05_cursor_hooks_malformed_json_fallback(self, tmp_path: Path) -> None:
         """FR05: Malformed existing JSON is gracefully overwritten."""
@@ -2059,7 +2060,7 @@ class TestCursorBootstrap:
 
         assert ".cursor/hooks.json" in result["updated"]
         config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        assert len(config["hooks"]) == 3
+        assert len(config["hooks"]) == 4
 
     def test_fr06_cursor_rules_created(self, tmp_path: Path) -> None:
         """FR06: generate_cursor_rules creates .cursor/rules/trw-ceremony.mdc."""

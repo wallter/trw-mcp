@@ -190,6 +190,30 @@ check_ceremony_status() {
   return 0
 }
 
+# trw_enforcement_variant: Read enforcement_variant from .trw/config.yaml.
+# Prints the configured variant (default: "baseline").
+# CORE-074-FR09: A/B test infrastructure for ceremony enforcement.
+trw_enforcement_variant() {
+  _tev_config_file="$(git rev-parse --show-toplevel 2>/dev/null)/.trw/config.yaml"
+  if [ -f "$_tev_config_file" ]; then
+    _tev_val=$(grep 'enforcement_variant:' "$_tev_config_file" | head -1 \
+      | sed 's/^enforcement_variant:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '[:space:]')
+    [ -n "$_tev_val" ] && printf '%s' "$_tev_val" && return
+  fi
+  printf 'baseline'
+}
+
+# trw_should_run_hooks: Return 0 (true) if hooks should run, 1 (false) if disabled by variant.
+# Variants "mcp-only" and "none" disable hooks; all others allow them.
+# CORE-074-FR09: A/B test infrastructure for ceremony enforcement.
+trw_should_run_hooks() {
+  _tsrh_variant="$(trw_enforcement_variant)"
+  case "$_tsrh_variant" in
+    mcp-only|none) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 # cleanup_block_files: Remove stale per-teammate block count files.
 # Called by session-end.sh as housekeeping.
 # Args: $1=context_dir
