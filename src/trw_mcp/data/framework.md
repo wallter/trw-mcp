@@ -1,13 +1,13 @@
-v24.2_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
+v24.3_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
 Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven | Agent-Teams
-Version date: 2026-03-07 | Model: Opus 4.6
+Version date: 2026-03-13 | Model: Opus 4.6
 
 <trw-framework>
 
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v24.2_TRW | Opus 4.6 | 6 phases | 4+5 formations | 3 confidence levels | 11 MCP tools | 10 skills | 10 agents | Agent Teams**
+**v24.3_TRW | Opus 4.6 | 6 phases | 4+5 formations | 3 confidence levels | 11 MCP tools | 10 skills | 10 agents | Agent Teams**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN.
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
@@ -81,7 +81,7 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 | Phase | Exit Criteria | Skills | Cap |
 |-------|---------------|--------|-----|
 | RESEARCH | plan.md draft, >=3 evidence paths, formation selected. | `/trw-framework-check` | 25% |
-| PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/trw-sprint-init`, `/trw-prd-new`, `/trw-prd-groom`, `/trw-prd-review` | 15% |
+| PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/trw-sprint-init`, `/trw-prd-new`, `/trw-prd-ready` | 15% |
 | IMPLEMENT | Shards/waves complete OR checkpointed, tests written. | `/trw-test-strategy` | 35% |
 | VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | `/trw-test-strategy` | 10% |
 | REVIEW | Critic reviewed, simplifications applied, reflection completed. | `/trw-memory-audit` | 10% |
@@ -191,7 +191,7 @@ When `MCP_MODE: tool`, use these instead of manual equivalents. When `MCP_MODE: 
 | `trw_prd_validate(prd_path)` | PLAN | MUST | PRD quality gate check |
 | `trw_build_check(scope?)` | VALIDATE | MUST | Run pytest + mypy |
 
-Lifecycle: `trw_session_start → /trw-sprint-init → /trw-prd-new → /trw-prd-groom → /trw-prd-review → work + trw_checkpoint + trw_learn → trw_build_check → /trw-deliver → /trw-sprint-finish`
+Lifecycle: `trw_session_start → /trw-sprint-init → /trw-prd-new (auto-chains: groom → review → exec plan) → work + trw_checkpoint + trw_learn → trw_build_check → /trw-deliver → /trw-sprint-finish`
 
 Quick tasks: `trw_session_start → work → trw_learn [if discovery] → trw_deliver()`
 
@@ -206,9 +206,8 @@ Skills (`.claude/skills/`) are user-invocable workflows costing 0 tokens until t
 | Skill | Phase | What It Does |
 |-------|-------|--------------|
 | `/trw-sprint-init` | PLAN | Survey draft PRDs, create sprint doc, bootstrap run |
-| `/trw-prd-new` | PLAN | Generate AARE-F PRD from feature description |
-| `/trw-prd-groom` | PLAN | Research + draft to sprint-ready quality (>=0.85) |
-| `/trw-prd-review` | PLAN | 5-dimension quality review (READY/NEEDS WORK/BLOCK) |
+| `/trw-prd-new` | PLAN | Create PRD + auto-chain full pipeline (groom → review → exec plan) |
+| `/trw-prd-ready` | PLAN | Full PRD lifecycle for existing PRDs (groom → review → exec plan) |
 | `/trw-test-strategy` | IMPLEMENT | Audit coverage gaps, suggest targeted tests |
 | `/trw-deliver` | DELIVER | Build gate + `trw_deliver()` in one step |
 | `/trw-sprint-finish` | DELIVER | Validate PRDs, build gate, archive, deliver |
@@ -380,9 +379,9 @@ Before IMPLEMENT: source identified (PRD/issue/request), acceptance criteria in 
 
 Before DELIVER: each REQ maps to implementation files and test files with PASS status.
 
-PRD lifecycle via skills: `/trw-prd-new` → `/trw-prd-groom` → `/trw-prd-review`. Fallback: `trw_prd_create` + `trw_prd_validate`. Validation MUST pass before IMPLEMENT.
+PRD lifecycle: `/trw-prd-new "feature"` creates a PRD and automatically runs the full pipeline (groom → review → exec plan). For existing PRDs, use `/trw-prd-ready PRD-ID`. Fallback: `trw_prd_create` + `trw_prd_validate`. Validation MUST pass before IMPLEMENT.
 
-**Execution Plans** (optional, recommended for P0/P1 PRDs): After `/trw-prd-review` returns READY, generate an execution plan via `/trw-exec-plan` that decomposes FRs into micro-tasks with file paths, test names, and verification commands. Stored at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`. Consumed by `/trw-sprint-team` and `/trw-team-playbook` during PLAN phase.
+**Execution Plans** (generated automatically by `/trw-prd-new` and `/trw-prd-ready`): Decompose FRs into micro-tasks with file paths, test names, and verification commands. Stored at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`. Consumed by `/trw-sprint-team` and `/trw-team-playbook` during PLAN phase.
 
 ---
 

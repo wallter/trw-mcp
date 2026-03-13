@@ -1,13 +1,12 @@
 ---
 name: trw-exec-plan
 description: >
-  Generate an execution plan from a groomed PRD. Decomposes FRs into micro-tasks
-  with file paths, test names, verification commands, and dependency graphs.
-  Bridges PRDs to concrete implementation steps.
-  Use: /trw-exec-plan PRD-CORE-020
-user-invocable: true
+  Internal phase: Generate an execution plan from a groomed PRD. Decomposes FRs
+  into micro-tasks with file paths, test names, verification commands, and dependency graphs.
+  Called automatically by /trw-prd-ready and /trw-prd-new.
+user-invocable: false
 argument-hint: "[PRD-ID or file path]"
-allowed-tools: Read, Grep, Glob, Write, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_validate
+allowed-tools: Read, Grep, Glob, Write, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn
 ---
 
 # Execution Plan Generation Skill
@@ -36,7 +35,7 @@ Check `$ARGUMENTS` for a PRD ID or file path:
 ### Step 2: Validate PRD Readiness
 
 Call `trw_prd_validate(prd_path)` to check quality:
-- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /trw-prd-groom first."
+- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /trw-prd-ready {PRD-ID} first."
 - If score >= 0.85: continue
 
 ### Step 3: Research Context
@@ -155,17 +154,7 @@ FR02 ──┘          ├── FR05 (integration)
 | FR03 | Depends on FR01 interface | Medium | High | Define interface contract before implementation |
 ````
 
-### Step 9: Report
-
-Output a summary:
-- PRD ID and title
-- FR count and micro-task count
-- Wave count and estimated total time
-- File ownership summary
-- Execution plan file path
-- Test skeleton file path (if generated)
-
-### Step 10: Generate Test Skeletons
+### Step 9: Generate Test Skeletons
 
 Generate spec-first test stubs so tests exist BEFORE implementation. All tests SHOULD FAIL before code is written (TDD).
 
@@ -249,6 +238,18 @@ fr_coverage:
 total_tests: 6
 status: all_failing  # Expected — implementation has not started
 ```
+
+### Step 10: Report
+
+Output a summary:
+- PRD ID and title
+- FR count and micro-task count
+- Wave count and estimated total time
+- File ownership summary
+- Execution plan file path
+- Test skeleton file path (if generated)
+
+Call `trw_learn(summary="Exec plan generated: {PRD-ID} — {n} FRs → {m} micro-tasks in {w} waves", tags=["prd-workflow", "exec-plan"])`
 
 ## Rationalization Watchlist
 

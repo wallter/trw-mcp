@@ -1,10 +1,10 @@
 ---
 name: trw-prd-groom
 description: >
-  Groom a PRD to sprint-ready quality. Researches codebase,
+  Internal phase: Groom a PRD to sprint-ready quality. Researches codebase,
   drafts missing sections, iterates until validation passes.
-  Use: /trw-prd-groom PRD-CORE-020
-user-invocable: true
+  Called automatically by /trw-prd-ready and /trw-prd-new. Not intended for direct user invocation.
+user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 allowed-tools: Read, Grep, Glob, Edit, Write, WebSearch, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn
 ---
@@ -69,3 +69,4 @@ If you catch yourself thinking any of these, stop and follow the process:
 - ALWAYS use EARS patterns for functional requirements
 - ALWAYS include confidence scores on requirements
 - If hitting 0.85 requires inventing ungrounded content, stop and document gaps in Open Questions
+- If score remains below 0.70 after 3 iterations, STOP and report to the caller — the feature description likely needs more detail from the user

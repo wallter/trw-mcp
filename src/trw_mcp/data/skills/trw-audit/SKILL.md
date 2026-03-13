@@ -40,7 +40,7 @@ Check `$ARGUMENTS` for a PRD ID or file path:
 ### Step 2: Validate Readiness
 
 Call `trw_prd_validate(prd_path)` to check PRD quality:
-- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /trw-prd-groom first."
+- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /trw-prd-ready {PRD-ID} first."
 
 Verify implementation exists:
 - Use Grep/Glob to find source files referenced in the PRD's Technical Approach

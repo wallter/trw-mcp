@@ -1,10 +1,10 @@
 ---
 name: trw-prd-review
 description: >
-  Review a PRD for quality, returning a structured READY/NEEDS WORK/BLOCK
+  Internal phase: Review a PRD for quality, returning a structured READY/NEEDS WORK/BLOCK
   verdict with per-dimension scores. Read-only — never modifies files.
-  Use: /trw-prd-review PRD-CORE-020
-user-invocable: true
+  Called automatically by /trw-prd-ready and /trw-prd-new. Not intended for direct user invocation.
+user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 context: fork
 agent: trw-requirement-reviewer
@@ -42,9 +42,11 @@ The agent returns a structured review with:
 
 ## Execution Plan Readiness Advisory
 
-When the verdict is **READY**, include an advisory note:
+When the verdict is **READY** and this skill was invoked standalone (not as part of `/trw-prd-ready` pipeline), include an advisory note:
 
-> "This PRD is sprint-ready. For P0/P1 PRDs, consider generating an execution plan via `/trw-exec-plan {PRD-ID}` before implementation — this decomposes FRs into micro-tasks with file paths, test names, and verification commands."
+> "This PRD is sprint-ready. Use `/trw-prd-ready {PRD-ID}` to generate an execution plan, or proceed directly to implementation."
+
+When invoked as part of the `/trw-prd-ready` pipeline, return only the structured verdict and findings — omit the advisory.
 
 ## Notes
 

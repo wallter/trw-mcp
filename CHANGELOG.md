@@ -4,6 +4,15 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.11.6] — 2026-03-13
+
+### Changed
+
+- **PRD pipeline consolidation** — `/trw-prd-groom`, `/trw-prd-review`, and `/trw-exec-plan` are now internal phases, no longer user-invocable. New `/trw-prd-ready` skill orchestrates the full pipeline (groom → review → exec plan) in one command. `/trw-prd-new` auto-chains into the full pipeline after creation.
+- **Framework v24.3** — updated lifecycle, skill table, and PRD lifecycle documentation to reflect consolidated pipeline
+- **Skill prompt quality** — added 0.70 floor gate to groom phase, `trw_learn` call to exec-plan, conditional advisory in review phase, explicit delegation model per pipeline phase
+- **Version DRY** — `trw-memory/_version.py` now uses `importlib.metadata` instead of hardcoded string
+
 ## [0.11.5] — 2026-03-13
 
 ### Removed
