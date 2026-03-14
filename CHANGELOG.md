@@ -4,6 +4,18 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-03-14
+
+### Fixed
+
+- **mypy --strict clean for trw-mcp** — resolved all 10 pre-existing type errors by widening `LearningEntryDict` → `dict[str, object]` in function signatures (`_recall.py`, `_decay.py`, `learning.py`, `ceremony.py`, `_ceremony_helpers.py`, `learning_injection.py`, `tiers.py`) and TypedDict fields (`_tools.py`). 0 errors across 156 files.
+- **mypy --strict clean for trw-memory** — resolved all 13 pre-existing type errors: fixed `type: ignore` codes (`sqlite_backend.py`, `local.py`, `client.py`), widened formatter params to `Sequence[Mapping]` for TypedDict covariance (`cli_formatters.py`), added `_backend_or_raise` property for None safety (`llamaindex.py`). 0 errors across 77 files.
+- **WSL2 filesystem learning marked obsolete** — environment migrated to native Ubuntu 24.04.
+
+### Changed
+
+- **Node.js 24 available** — installed via nvm for ESLint and platform build. `platform/package-lock.json` updated.
+
 ## [0.15.0] — 2026-03-14
 
 ### Added
