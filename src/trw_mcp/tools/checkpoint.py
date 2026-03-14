@@ -42,6 +42,23 @@ def _reset_tool_call_counter() -> None:
     _checkpoint_state.counter = 0
 
 
+_CEREMONY_OBLIGATIONS: list[tuple[str, str, str]] = [
+    ("session_started", "trw_session_start()", "not yet called"),
+    ("build_checked", "trw_build_check()", "required before delivery"),
+    ("review_done", "trw_review()", "recommended before delivery"),
+    ("delivered", "trw_deliver()", "required at session end"),
+]
+
+
+def _compute_pending_ceremony(ceremony_state: dict[str, object]) -> list[str]:
+    """Return list of pending ceremony obligation descriptions."""
+    return [
+        f"{tool} — {desc}"
+        for key, tool, desc in _CEREMONY_OBLIGATIONS
+        if not ceremony_state.get(key)
+    ]
+
+
 def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
     """Increment tool call counter; create checkpoint at configured intervals.
 
@@ -172,18 +189,9 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                         ceremony_path.read_text(encoding="utf-8")
                     )
                 except Exception:  # justified: fail-open, ceremony state read
-                    logger.debug("ceremony_state_read_failed", exc_info=True)
+                    logger.warning("ceremony_state_read_failed", exc_info=True)
 
-            # Compute pending ceremony obligations
-            pending_ceremony: list[str] = []
-            if not ceremony_state.get("session_started"):
-                pending_ceremony.append("trw_session_start() — not yet called")
-            if not ceremony_state.get("build_checked"):
-                pending_ceremony.append("trw_build_check() — required before delivery")
-            if not ceremony_state.get("review_done"):
-                pending_ceremony.append("trw_review() — recommended before delivery")
-            if not ceremony_state.get("delivered"):
-                pending_ceremony.append("trw_deliver() — required at session end")
+            pending_ceremony = _compute_pending_ceremony(ceremony_state)
 
             # Write enhanced pre_compact_state.json
             state_file = project_root / ".trw" / "context" / "pre_compact_state.json"

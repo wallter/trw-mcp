@@ -280,6 +280,19 @@ def run_auto_maintenance(
 # ── Deliver helpers ──────────────────────────────────────────────────────
 
 
+def _read_complexity_class(run_path: Path, reader: FileStateReader) -> str:
+    """Read the complexity_class from run.yaml, or return empty string."""
+    run_yaml_path = run_path / "meta" / "run.yaml"
+    if not run_yaml_path.exists():
+        return ""
+    try:
+        run_data = reader.read_yaml(run_yaml_path)
+        return str(run_data.get("complexity_class", ""))
+    except Exception:  # justified: fail-open, complexity read must not block delivery
+        logger.warning("complexity_class_read_failed", run_path=str(run_path), exc_info=True)
+        return ""
+
+
 def check_delivery_gates(
     run_path: Path | None,
     reader: FileStateReader,
@@ -312,15 +325,8 @@ def check_delivery_gates(
         except Exception:  # justified: fail-open, review gate check must not block delivery
             logger.warning("maintenance_review_gate_failed", exc_info=True)
     else:
-        # Check complexity class — STANDARD+ tasks MUST have review (Sprint 68 enforcement)
-        complexity_class = ""
-        run_yaml_path = run_path / "meta" / "run.yaml"
-        if run_yaml_path.exists():
-            try:
-                run_data = reader.read_yaml(run_yaml_path)
-                complexity_class = str(run_data.get("complexity_class", ""))
-            except Exception:  # justified: fail-open, complexity read must not block
-                pass
+        # Check complexity — STANDARD+ tasks MUST have review (Sprint 68 enforcement)
+        complexity_class = _read_complexity_class(run_path, reader)
 
         if complexity_class in ("STANDARD", "COMPREHENSIVE"):
             result["review_warning"] = (
