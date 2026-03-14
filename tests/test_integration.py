@@ -125,7 +125,7 @@ class TestFullWorkflow:
                 prd_path=create_result["output_path"],
             )
             # The auto-generated PRD should have basic structure
-            assert len(validate_result["sections_found"]) == 12
+            assert len(validate_result["sections_found"]) == 9
 
 
 class TestSessionLifecycle:

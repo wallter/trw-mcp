@@ -12,6 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.typed_dicts import (
+    ApiFuzzResult,
+    DepAuditResult,
+    NpmAuditResult,
+    PipAuditResult,
+)
 from trw_mcp.tools.build._subprocess import (
     _extract_failures,
     _find_executable,
@@ -28,7 +34,7 @@ _API_FUZZ_FILE = "api-fuzz-status.yaml"
 def _run_pip_audit(
     project_root: Path,
     config: TRWConfig,
-) -> dict[str, object]:
+) -> PipAuditResult:
     """Run pip-audit and parse vulnerability results.
 
     Executes ``pip-audit --json`` and filters vulnerabilities by the
@@ -40,15 +46,15 @@ def _run_pip_audit(
         config: TRW configuration with audit settings.
 
     Returns:
-        Dict with pip_audit_passed, vulnerability count, and details.
+        PipAuditResult with pip_audit_passed, vulnerability count, and details.
         Includes pip_audit_skipped=True when pip-audit is not installed.
     """
     pip_audit_path = _find_executable("pip-audit", project_root)
     if pip_audit_path is None:
-        return {
-            "pip_audit_skipped": True,
-            "pip_audit_skip_reason": "pip-audit not installed",
-        }
+        return PipAuditResult(
+            pip_audit_skipped=True,
+            pip_audit_skip_reason="pip-audit not installed",
+        )
 
     data = _run_audit_tool(
         [pip_audit_path, "--json"],
@@ -59,7 +65,10 @@ def _run_pip_audit(
 
     # _run_audit_tool returns a skip dict on failure
     if isinstance(data, dict) and data.get("pip_audit_skipped"):
-        return data
+        return PipAuditResult(
+            pip_audit_skipped=True,
+            pip_audit_skip_reason=str(data.get("pip_audit_skip_reason", "")),
+        )
 
     # Severity ranking for filtering
     severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -120,19 +129,19 @@ def _run_pip_audit(
             else:
                 blocking_count += 1
 
-    return {
-        "pip_audit_passed": blocking_count == 0,
-        "pip_audit_vulnerability_count": len(vulnerabilities),
-        "pip_audit_blocking_count": blocking_count,
-        "pip_audit_vulnerabilities": vulnerabilities[:_MAX_FAILURES],
-    }
+    return PipAuditResult(
+        pip_audit_passed=blocking_count == 0,
+        pip_audit_vulnerability_count=len(vulnerabilities),
+        pip_audit_blocking_count=blocking_count,
+        pip_audit_vulnerabilities=vulnerabilities[:_MAX_FAILURES],
+    )
 
 
 def _run_npm_audit(
     project_root: Path,
     config: TRWConfig,
     changed_files: list[str],
-) -> dict[str, object]:
+) -> NpmAuditResult:
     """Run npm audit when platform/package.json is in the changeset.
 
     Only executes when ``platform/package.json`` appears in changed_files.
@@ -144,7 +153,7 @@ def _run_npm_audit(
         changed_files: List of changed file paths from git diff.
 
     Returns:
-        Dict with npm_audit results. Includes npm_audit_skipped=True
+        NpmAuditResult with npm_audit results. Includes npm_audit_skipped=True
         when skipping (no platform changes, npm not found, etc.).
     """
     # Only run when platform/package.json is changed
@@ -152,24 +161,24 @@ def _run_npm_audit(
         "platform/package.json" in f for f in changed_files
     )
     if not has_platform_changes:
-        return {
-            "npm_audit_skipped": True,
-            "npm_audit_skip_reason": "no platform/package.json changes",
-        }
+        return NpmAuditResult(
+            npm_audit_skipped=True,
+            npm_audit_skip_reason="no platform/package.json changes",
+        )
 
     platform_dir = project_root / "platform"
     if not platform_dir.exists():
-        return {
-            "npm_audit_skipped": True,
-            "npm_audit_skip_reason": "platform/ directory not found",
-        }
+        return NpmAuditResult(
+            npm_audit_skipped=True,
+            npm_audit_skip_reason="platform/ directory not found",
+        )
 
     npm_path = shutil.which("npm")
     if npm_path is None:
-        return {
-            "npm_audit_skipped": True,
-            "npm_audit_skip_reason": "npm not installed",
-        }
+        return NpmAuditResult(
+            npm_audit_skipped=True,
+            npm_audit_skip_reason="npm not installed",
+        )
 
     data = _run_audit_tool(
         [npm_path, "audit", "--audit-level=high", "--json"],
@@ -180,7 +189,10 @@ def _run_npm_audit(
 
     # _run_audit_tool returns a skip dict on failure
     if isinstance(data, dict) and data.get("npm_audit_skipped"):
-        return data
+        return NpmAuditResult(
+            npm_audit_skipped=True,
+            npm_audit_skip_reason=str(data.get("npm_audit_skip_reason", "")),
+        )
 
     # npm audit returns non-zero when vulnerabilities found -- that's expected
     vulnerabilities = data.get("vulnerabilities", {}) if isinstance(data, dict) else {}
@@ -200,11 +212,11 @@ def _run_npm_audit(
                     "via": str(info.get("via", ""))[:200],
                 })
 
-    return {
-        "npm_audit_passed": high_plus == 0,
-        "npm_audit_high_plus_count": high_plus,
-        "npm_audit_vulnerabilities": vuln_details[:_MAX_FAILURES],
-    }
+    return NpmAuditResult(
+        npm_audit_passed=high_plus == 0,
+        npm_audit_high_plus_count=high_plus,
+        npm_audit_vulnerabilities=vuln_details[:_MAX_FAILURES],
+    )
 
 
 def _detect_unlisted_imports(
@@ -312,7 +324,7 @@ def _detect_unlisted_imports(
 def _run_dep_audit(
     project_root: Path,
     config: TRWConfig,
-) -> dict[str, object]:
+) -> DepAuditResult:
     """Orchestrate dependency audit: pip-audit + npm audit + unlisted imports.
 
     Combines results from all three checks into a unified result dict
@@ -323,7 +335,7 @@ def _run_dep_audit(
         config: TRW configuration with audit settings.
 
     Returns:
-        Combined result dict with dep_audit_passed and sub-results.
+        DepAuditResult with dep_audit_passed and merged sub-results.
     """
     # Get changed files for npm audit and unlisted import detection
     try:
@@ -341,8 +353,8 @@ def _run_dep_audit(
     except (subprocess.TimeoutExpired, OSError):
         changed_files = []
 
-    pip_result = _run_pip_audit(project_root, config)
-    npm_result = _run_npm_audit(project_root, config, changed_files)
+    pip_result: PipAuditResult = _run_pip_audit(project_root, config)
+    npm_result: NpmAuditResult = _run_npm_audit(project_root, config, changed_files)
 
     py_changed = [f for f in changed_files if f.endswith(".py")]
     unlisted = _detect_unlisted_imports(project_root, py_changed)
@@ -352,16 +364,35 @@ def _run_dep_audit(
     npm_passed = bool(npm_result.get("npm_audit_passed", True))
     dep_audit_passed = pip_passed and npm_passed
 
-    result: dict[str, object] = {
-        "dep_audit_passed": dep_audit_passed,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    result: DepAuditResult = DepAuditResult(
+        dep_audit_passed=dep_audit_passed,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
 
-    # Merge sub-results
-    for key, value in pip_result.items():
-        result[key] = value
-    for key, value in npm_result.items():
-        result[key] = value
+    # Merge pip-audit sub-result keys
+    if "pip_audit_passed" in pip_result:
+        result["pip_audit_passed"] = pip_result["pip_audit_passed"]
+    if "pip_audit_vulnerability_count" in pip_result:
+        result["pip_audit_vulnerability_count"] = pip_result["pip_audit_vulnerability_count"]
+    if "pip_audit_blocking_count" in pip_result:
+        result["pip_audit_blocking_count"] = pip_result["pip_audit_blocking_count"]
+    if "pip_audit_vulnerabilities" in pip_result:
+        result["pip_audit_vulnerabilities"] = pip_result["pip_audit_vulnerabilities"]
+    if "pip_audit_skipped" in pip_result:
+        result["pip_audit_skipped"] = pip_result["pip_audit_skipped"]
+    if "pip_audit_skip_reason" in pip_result:
+        result["pip_audit_skip_reason"] = pip_result["pip_audit_skip_reason"]
+    # Merge npm-audit sub-result keys
+    if "npm_audit_passed" in npm_result:
+        result["npm_audit_passed"] = npm_result["npm_audit_passed"]
+    if "npm_audit_high_plus_count" in npm_result:
+        result["npm_audit_high_plus_count"] = npm_result["npm_audit_high_plus_count"]
+    if "npm_audit_vulnerabilities" in npm_result:
+        result["npm_audit_vulnerabilities"] = npm_result["npm_audit_vulnerabilities"]
+    if "npm_audit_skipped" in npm_result:
+        result["npm_audit_skipped"] = npm_result["npm_audit_skipped"]
+    if "npm_audit_skip_reason" in npm_result:
+        result["npm_audit_skip_reason"] = npm_result["npm_audit_skip_reason"]
 
     if unlisted:
         result["unlisted_imports"] = unlisted
@@ -373,7 +404,7 @@ def _run_dep_audit(
 def _run_api_fuzz(
     project_root: Path,
     config: TRWConfig,
-) -> dict[str, object]:
+) -> ApiFuzzResult:
     """Run schemathesis API fuzzing against the backend.
 
     Executes ``schemathesis run --checks all`` against the configured
@@ -385,17 +416,17 @@ def _run_api_fuzz(
         config: TRW configuration with API fuzz settings.
 
     Returns:
-        Dict with api_fuzz_passed and details. Includes
+        ApiFuzzResult with api_fuzz_passed and details. Includes
         api_fuzz_skipped=True when skipping.
     """
     schemathesis_path = _find_executable("schemathesis", project_root)
     if schemathesis_path is None:
         schemathesis_path = _find_executable("st", project_root)
     if schemathesis_path is None:
-        return {
-            "api_fuzz_skipped": True,
-            "api_fuzz_skip_reason": "schemathesis not installed",
-        }
+        return ApiFuzzResult(
+            api_fuzz_skipped=True,
+            api_fuzz_skip_reason="schemathesis not installed",
+        )
 
     base_url = config.api_fuzz_base_url
     openapi_url = f"{base_url}/openapi.json"
@@ -410,10 +441,10 @@ def _run_api_fuzz(
         )
         urllib.request.urlopen(req, timeout=5)
     except Exception:  # justified: boundary, backend reachability check may fail for many reasons
-        return {
-            "api_fuzz_skipped": True,
-            "api_fuzz_skip_reason": f"backend unreachable at {base_url}",
-        }
+        return ApiFuzzResult(
+            api_fuzz_skipped=True,
+            api_fuzz_skip_reason=f"backend unreachable at {base_url}",
+        )
 
     result = _run_subprocess(
         [schemathesis_path, "run", "--checks", "all",
@@ -423,10 +454,10 @@ def _run_api_fuzz(
     )
 
     if isinstance(result, str):
-        return {
-            "api_fuzz_skipped": True,
-            "api_fuzz_skip_reason": result,
-        }
+        return ApiFuzzResult(
+            api_fuzz_skipped=True,
+            api_fuzz_skip_reason=result,
+        )
 
     output = _strip_ansi(result.stdout + "\n" + result.stderr)
     passed = result.returncode == 0
@@ -437,10 +468,10 @@ def _run_api_fuzz(
         ("FAILED", "ERROR", "Failure", "Defect"),
     )
 
-    fuzz_result: dict[str, object] = {
-        "api_fuzz_passed": passed,
-        "api_fuzz_base_url": base_url,
-    }
+    fuzz_result: ApiFuzzResult = ApiFuzzResult(
+        api_fuzz_passed=passed,
+        api_fuzz_base_url=base_url,
+    )
     if failures:
         fuzz_result["api_fuzz_failures"] = failures
         fuzz_result["api_fuzz_failure_count"] = len(failures)

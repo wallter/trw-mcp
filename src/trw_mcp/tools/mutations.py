@@ -9,10 +9,17 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.typed_dicts import (
+    MutationCheckResult,
+    MutationSkippedResult,
+    ParseMutmutResultDict,
+    SurvivingMutantDict,
+)
 from trw_mcp.tools.build import _find_executable, _run_subprocess, _strip_ansi
 
 logger = structlog.get_logger()
@@ -86,7 +93,7 @@ def _classify_threshold_tier(
     return ("standard", config.mutation_threshold)
 
 
-def _parse_mutmut_results(json_output: str) -> dict[str, object]:
+def _parse_mutmut_results(json_output: str) -> ParseMutmutResultDict:
     """Parse mutmut JSON output into a structured result dict.
 
     Extracts killed, survived, timeout, and suspicious counts from
@@ -135,7 +142,7 @@ def _parse_mutmut_results(json_output: str) -> dict[str, object]:
         mutation_score = round(killed / total, 4)
 
     # Extract surviving mutant details (first 20, sorted by line)
-    surviving_mutants: list[dict[str, object]] = []
+    surviving_mutants: list[SurvivingMutantDict] = []
     if isinstance(survivors_raw, list):
         for mutant in survivors_raw[:20]:
             if isinstance(mutant, dict):
@@ -166,7 +173,7 @@ def _parse_mutmut_results(json_output: str) -> dict[str, object]:
 def run_mutation_check(
     project_root: Path,
     config: TRWConfig,
-) -> dict[str, object]:
+) -> MutationCheckResult | MutationSkippedResult:
     """Run mutation testing on changed files and evaluate thresholds.
 
     Orchestrates the full mutation testing pipeline: detect changed files,
@@ -251,22 +258,30 @@ def run_mutation_check(
     if score is not None:
         mutation_passed = float(str(score)) >= highest_threshold
 
-    return {
+    result: MutationCheckResult = {
         "mutation_passed": mutation_passed,
         "mutation_score": score,
         "mutation_tier": highest_tier,
         "mutation_threshold": highest_threshold,
         "changed_files": changed_files,
         "changed_file_count": len(changed_files),
-        **{k: v for k, v in parsed.items() if k != "mutation_score"},
+        "killed": parsed.get("killed", 0),
+        "survived": parsed.get("survived", 0),
+        "timeout": parsed.get("timeout", 0),
+        "suspicious": parsed.get("suspicious", 0),
+        "total_mutants": parsed.get("total_mutants", 0),
+        "surviving_mutants": parsed.get("surviving_mutants", []),
     }
+    if "parse_error" in parsed:
+        result["parse_error"] = parsed["parse_error"]
+    return result
 
 
 def cache_mutation_status(
     trw_dir: Path,
-    result: dict[str, object],
+    result: MutationCheckResult | MutationSkippedResult,
 ) -> Path:
     """Write mutation testing results to .trw/context/mutation-status.yaml."""
     from trw_mcp.tools.build import _cache_to_context
 
-    return _cache_to_context(trw_dir, "mutation-status.yaml", result)
+    return _cache_to_context(trw_dir, "mutation-status.yaml", cast(dict[str, object], result))

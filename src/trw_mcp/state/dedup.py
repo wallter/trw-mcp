@@ -17,6 +17,7 @@ import structlog
 from trw_memory.retrieval.dense import cosine_similarity
 
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.models.typed_dicts import BatchDedupResult
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.memory_adapter import embed_text as embed, embedding_available
@@ -270,7 +271,7 @@ def batch_dedup(
     writer: FileStateWriter,
     *,
     config: TRWConfig | None = None,
-) -> dict[str, object]:
+) -> BatchDedupResult:
     """One-time batch deduplication of existing learning entries — FR05.
 
     Scans all active entries, computes pairwise similarity, merges
@@ -291,14 +292,14 @@ def batch_dedup(
 
     # Respect embeddings_enabled config — batch dedup requires embeddings
     if not cfg.embeddings_enabled:
-        return {"status": "skipped", "reason": "embeddings not enabled in config"}
+        return BatchDedupResult(status="skipped", reason="embeddings not enabled in config")
 
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
     if not entries_dir.exists():
-        return {"status": "skipped", "reason": "no entries directory"}
+        return BatchDedupResult(status="skipped", reason="no entries directory")
 
     if not embedding_available():
-        return {"status": "skipped", "reason": "embeddings unavailable"}
+        return BatchDedupResult(status="skipped", reason="embeddings unavailable")
 
     # Load all active entries with their embeddings
     active_entries: list[tuple[Path, dict[str, object], list[float] | None]] = []
@@ -378,9 +379,9 @@ def batch_dedup(
         skipped=len(skipped_ids),
     )
 
-    return {
-        "status": "completed",
-        "entries_scanned": len(active_entries),
-        "entries_merged": merged_count,
-        "entries_skipped": len(skipped_ids),
-    }
+    return BatchDedupResult(
+        status="completed",
+        entries_scanned=len(active_entries),
+        entries_merged=merged_count,
+        entries_skipped=len(skipped_ids),
+    )

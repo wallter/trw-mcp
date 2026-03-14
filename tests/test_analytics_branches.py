@@ -928,11 +928,18 @@ class TestScanAllRunsExceptionPaths:
             events=[{"event": "session_start"}],
         )
 
-        # Make resolve_trw_dir raise to trigger the except block in the cache section
-        def _raising_resolve_trw_dir() -> Path:
+        # Make resolve_trw_dir succeed for the scan loop (call #1, passing trw_dir
+        # to _analyze_single_run) but raise for the cache write section (call #2).
+        # This ensures the run is analyzed successfully before the cache write fails.
+        _call_count = [0]
+
+        def _call_counted_resolve_trw_dir() -> Path:
+            _call_count[0] += 1
+            if _call_count[0] == 1:
+                return tmp_path / ".trw"
             raise RuntimeError("no trw dir available")
 
-        monkeypatch.setattr(analytics_mod, "resolve_trw_dir", _raising_resolve_trw_dir)
+        monkeypatch.setattr(analytics_mod, "resolve_trw_dir", _call_counted_resolve_trw_dir)
 
         # Should not raise even though cache write fails
         result = scan_all_runs()

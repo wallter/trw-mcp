@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import MypyResultDict, PytestResultDict
 from trw_mcp.tools.build._subprocess import (
     _extract_failures,
     _find_executable,
@@ -30,22 +31,22 @@ _COVERAGE_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%")
 _MAX_FAILURES = 10
 
 
-def _pytest_error(message: str) -> dict[str, object]:
+def _pytest_error(message: str) -> PytestResultDict:
     """Build a failed pytest result dict with the given error message."""
-    return {
-        "tests_passed": False,
-        "coverage_pct": 0.0,
-        "test_count": 0,
-        "failure_count": 0,
-        "failures": [message],
-    }
+    return PytestResultDict(
+        tests_passed=False,
+        coverage_pct=0.0,
+        test_count=0,
+        failure_count=0,
+        failures=[message],
+    )
 
 
 def _run_pytest(
     project_root: Path,
     timeout_secs: int,
     extra_args: str,
-) -> dict[str, object]:
+) -> PytestResultDict:
     """Run pytest via subprocess and parse results.
 
     Args:
@@ -66,13 +67,13 @@ def _run_pytest(
         if isinstance(result, str):
             return _pytest_error(result)
         output = _strip_ansi(result.stdout + "\n" + result.stderr)
-        return {
-            "tests_passed": result.returncode == 0,
-            "coverage_pct": 0.0,
-            "test_count": 0,
-            "failure_count": 0 if result.returncode == 0 else 1,
-            "failures": _extract_failures(output, ("FAILED ", "ERROR ")),
-        }
+        return PytestResultDict(
+            tests_passed=result.returncode == 0,
+            coverage_pct=0.0,
+            test_count=0,
+            failure_count=0 if result.returncode == 0 else 1,
+            failures=_extract_failures(output, ("FAILED ", "ERROR ")),
+        )
 
     pytest_path = _find_executable("pytest", project_root)
     if pytest_path is None:
@@ -126,20 +127,20 @@ def _run_pytest(
         test_count = passed + failed + errors
         failure_count = failed + errors
 
-    return {
-        "tests_passed": result.returncode == 0,
-        "coverage_pct": coverage_pct,
-        "test_count": test_count,
-        "failure_count": failure_count,
-        "failures": _extract_failures(output, ("FAILED ", "ERROR ")),
-    }
+    return PytestResultDict(
+        tests_passed=result.returncode == 0,
+        coverage_pct=coverage_pct,
+        test_count=test_count,
+        failure_count=failure_count,
+        failures=_extract_failures(output, ("FAILED ", "ERROR ")),
+    )
 
 
 def _run_mypy(
     project_root: Path,
     timeout_secs: int,
     extra_args: str,
-) -> dict[str, object]:
+) -> MypyResultDict:
     """Run mypy via subprocess and parse results.
 
     Args:
@@ -153,10 +154,11 @@ def _run_mypy(
     config = get_config()
     mypy_path = _find_executable("mypy", project_root)
     if mypy_path is None:
-        return {
-            "mypy_clean": False,
-            "failures": ["mypy not found — install with: pip install mypy"],
-        }
+        return MypyResultDict(
+            mypy_clean=False,
+            mypy_error_count=1,
+            failures=["mypy not found — install with: pip install mypy"],
+        )
 
     # Derive build root and cwd from config (PRD-INFRA-011-FR02)
     source_path = config.source_package_path or "trw-mcp/src"
@@ -175,9 +177,13 @@ def _run_mypy(
 
     result = _run_subprocess(cmd, cwd, timeout_secs)
     if isinstance(result, str):
-        return {"mypy_clean": False, "failures": [result]}
+        return MypyResultDict(mypy_clean=False, mypy_error_count=1, failures=[result])
 
     output = _strip_ansi(result.stdout + "\n" + result.stderr)
     mypy_clean = result.returncode == 0
     failures = _extract_failures(output, (": error:",)) if not mypy_clean else []
-    return {"mypy_clean": mypy_clean, "failures": failures}
+    return MypyResultDict(
+        mypy_clean=mypy_clean,
+        mypy_error_count=len(failures),
+        failures=failures,
+    )

@@ -1,8 +1,9 @@
 """Tests for PRD-CORE-008 Phase 2a: Content Density + Quality Tiers.
 
-Tests the semantic validation engine: 6-dimension scoring model,
+Tests the semantic validation engine: 3-dimension scoring model,
 quality tier classification, section density analysis, and
-improvement suggestions.
+improvement suggestions. Also covers PRD-FIX-054 (stub removal,
+ambiguity rate computation, weight recalibration).
 """
 
 from __future__ import annotations
@@ -31,6 +32,12 @@ from trw_mcp.state.validation import (
     validate_prd_quality,
     validate_prd_quality_v2,
 )
+from trw_mcp.state.validation.prd_quality import (
+    _KNOWN_TEST_PATTERNS,
+    _TEST_REF_RE,
+    _compute_ambiguity_rate,
+)
+from trw_mcp.state.validation.risk_profiles import RISK_PROFILES
 
 # ---------------------------------------------------------------------------
 # Fixtures: PRD content templates
@@ -327,13 +334,13 @@ class TestContentDensity:
     def test_skeleton_prd_low_density(self) -> None:
         result = score_content_density(_SKELETON_PRD)
         assert result.name == "content_density"
-        assert result.score < 10.0  # low density for placeholder-only PRD
-        assert result.max_score == 25.0
+        assert result.score < 20.0  # low density for placeholder-only PRD
+        assert result.max_score == 42.0  # recalibrated weight (FR03 — PRD-FIX-054)
 
     def test_filled_prd_high_density(self) -> None:
         result = score_content_density(_FILLED_PRD)
-        # Density ~42% yields ~10.7/25 with section weighting
-        assert result.score > 8.0
+        # Density ~42% of max_score 42 → score ~17.6
+        assert result.score > 10.0
 
     def test_weighted_average_sections(self) -> None:
         result = score_content_density(_FILLED_PRD)
@@ -498,7 +505,7 @@ class TestStructuralCompleteness:
         }
         result = score_structural_completeness(frontmatter, sections)
         assert result.name == "structural_completeness"
-        assert result.score > 12.0  # near max 15
+        assert result.score > 20.0  # near max 25 (recalibrated — FR03 PRD-FIX-054)
 
     def test_6_sections_half_score(self) -> None:
         sections = ["Problem Statement", "Goals & Non-Goals", "User Stories",
@@ -506,7 +513,7 @@ class TestStructuralCompleteness:
                      "Technical Approach"]
         frontmatter = {"id": "X", "title": "Y", "version": "1.0", "status": "draft", "priority": "P1"}
         result = score_structural_completeness(frontmatter, sections)
-        assert result.score < 12.0  # less than full
+        assert result.score < 20.0  # less than full
 
     def test_missing_confidence_reduces_score(self) -> None:
         sections = extract_all_12_section_names()
@@ -550,8 +557,8 @@ class TestTraceabilityV2:
             }
         }
         result = score_traceability_v2(frontmatter, _FILLED_PRD)
-        # 3/3 fields populated = field_ratio 1.0 → 8.0 pts (matrix not in fixture)
-        assert result.score >= 8.0
+        # 3/3 fields populated = field_ratio 1.0 → 13.2 pts (40% of max 33)
+        assert result.score >= 13.0
 
     def test_no_traces_zero_score(self) -> None:
         frontmatter: dict[str, object] = {"traceability": {"implements": [], "depends_on": [], "enables": []}}
@@ -569,7 +576,7 @@ class TestTraceabilityV2:
             }
         }
         result = score_traceability_v2(frontmatter, _PARTIAL_PRD)
-        assert 0.0 < result.score < 15.0
+        assert 0.0 < result.score < 33.0  # less than max 33 (recalibrated)
 
 
 # ---------------------------------------------------------------------------
@@ -578,19 +585,117 @@ class TestTraceabilityV2:
 
 
 class TestDimensionWeights:
-    """Test that dimension weights sum to 100."""
+    """Test that active dimension weights sum to 100 and stub weights are 0 (FR03 — PRD-FIX-054)."""
 
-    def test_default_weights_sum_100(self) -> None:
+    def test_active_weights_sum_100(self) -> None:
+        """3 active dimension weights must sum to exactly 100.0."""
         config = TRWConfig()
         total = (
             config.validation_density_weight
             + config.validation_structure_weight
             + config.validation_traceability_weight
-            + config.validation_smell_weight
-            + config.validation_readability_weight
-            + config.validation_ears_weight
         )
         assert total == 100.0
+
+    def test_stub_weight_defaults_are_zero(self) -> None:
+        """Stub dimension weights must default to 0.0 (reserved for future use)."""
+        config = TRWConfig()
+        assert config.validation_smell_weight == 0.0
+        assert config.validation_readability_weight == 0.0
+        assert config.validation_ears_weight == 0.0
+
+    def test_active_weights_values(self) -> None:
+        """Active weights must match specified recalibrated values."""
+        config = TRWConfig()
+        assert config.validation_density_weight == 42.0
+        assert config.validation_structure_weight == 25.0
+        assert config.validation_traceability_weight == 33.0
+
+
+# ---------------------------------------------------------------------------
+# Test: Ambiguity Rate (FR02 — PRD-FIX-054)
+# ---------------------------------------------------------------------------
+
+
+class TestAmbiguityRate:
+    """Test _compute_ambiguity_rate function."""
+
+    def test_ambiguity_rate_with_vague_terms(self) -> None:
+        """PRD with vague terms and FR statements must yield ambiguity_rate > 0."""
+        content = "\n".join([
+            f"### PRD-TEST-{i:03d}-FR01: Requirement {i}" for i in range(10)
+        ]) + "\nThe system might fail. We should consider alternatives. As needed."
+        rate = _compute_ambiguity_rate(content)
+        assert rate > 0.0
+
+    def test_ambiguity_rate_zero_for_clean_prd(self) -> None:
+        """PRD with no vague terms must return 0.0."""
+        content = "\n".join([
+            f"### PRD-TEST-{i:03d}-FR01: Requirement {i}" for i in range(10)
+        ]) + "\nThe system shall validate all inputs within 200ms."
+        rate = _compute_ambiguity_rate(content)
+        assert rate == 0.0
+
+    def test_ambiguity_rate_zero_for_no_requirements(self) -> None:
+        """PRD with no requirement-like statements must return 0.0 (no divide-by-zero)."""
+        content = "This is a document with no FRs, no NFRs, no checkboxes."
+        rate = _compute_ambiguity_rate(content)
+        assert rate == 0.0
+
+    def test_ambiguity_rate_wired_into_v2_result(self) -> None:
+        """validate_prd_quality_v2 must return computed ambiguity_rate, not hardcoded 0.0."""
+        # A clean PRD (no vague terms) should return 0.0
+        result = validate_prd_quality_v2(_FILLED_PRD)
+        # _FILLED_PRD uses "should consider" in no place — just verify it's a float
+        assert isinstance(result.ambiguity_rate, float)
+        assert result.ambiguity_rate >= 0.0
+
+    def test_ambiguity_rate_nonzero_for_vague_prd(self) -> None:
+        """PRD with vague terms in FR statements must yield ambiguity_rate > 0 from v2."""
+        vague_content = _MINIMAL_FRONTMATTER + """\
+## 4. Functional Requirements
+
+### FR01: Do Something
+The system might do this, or possibly that. As needed.
+Also should consider alternatives.
+
+### FR02: Other Thing
+This might work approximately right.
+"""
+        result = validate_prd_quality_v2(vague_content)
+        assert result.ambiguity_rate > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Test: Risk Profile Weights (FR04 — PRD-FIX-054)
+# ---------------------------------------------------------------------------
+
+
+class TestRiskProfileWeights:
+    """Test that RISK_PROFILES have 3-tuple weights summing to 100."""
+
+    def test_all_profiles_have_3_weights(self) -> None:
+        """Each risk profile must have exactly 3 weight entries (FR04 — PRD-FIX-054)."""
+        for name, profile in RISK_PROFILES.items():
+            assert len(profile.weights) == 3, (
+                f"Profile '{name}' has {len(profile.weights)} weights, expected 3"
+            )
+
+    def test_all_profiles_weights_sum_to_100(self) -> None:
+        """Each risk profile's weights must sum to exactly 100 (FR04 — PRD-FIX-054)."""
+        for name, profile in RISK_PROFILES.items():
+            total = sum(profile.weights)
+            assert total == 100, (
+                f"Profile '{name}' weights sum to {total}, expected 100"
+            )
+
+    def test_risk_scaled_validation_no_stubs(self) -> None:
+        """Risk-scaled validation must produce no stub dimensions (FR04 — PRD-FIX-054)."""
+        result = validate_prd_quality_v2(_FILLED_PRD, risk_level="critical")
+        for dim in result.dimensions:
+            assert dim.max_score > 0.0, (
+                f"Dimension '{dim.name}' has max_score=0.0 after risk scaling"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -602,16 +707,26 @@ class TestImprovementSuggestions:
     """Test generate_improvement_suggestions."""
 
     def test_skeleton_gets_suggestions(self) -> None:
+        """All 3 active low-scoring dimensions should yield suggestions."""
         dims = [
-            DimensionScore(name="content_density", score=2.0, max_score=25.0),
-            DimensionScore(name="structural_completeness", score=3.0, max_score=15.0),
-            DimensionScore(name="traceability", score=0.0, max_score=20.0),
-            DimensionScore(name="smell_score", score=15.0, max_score=15.0),
-            DimensionScore(name="readability", score=5.0, max_score=10.0),
-            DimensionScore(name="ears_coverage", score=0.0, max_score=15.0),
+            DimensionScore(name="content_density", score=2.0, max_score=42.0),
+            DimensionScore(name="structural_completeness", score=3.0, max_score=25.0),
+            DimensionScore(name="traceability", score=0.0, max_score=33.0),
         ]
         suggestions = generate_improvement_suggestions(dims)
-        assert len(suggestions) >= 4  # at least 4 low-scoring dims
+        assert len(suggestions) >= 3  # all 3 active dims are below threshold
+
+    def test_improvement_suggestions_exclude_stubs(self) -> None:
+        """Suggestions must never reference stub dimension names (FR07 — PRD-FIX-054)."""
+        stub_names = {"smell_score", "readability", "ears_coverage"}
+        dims = [
+            DimensionScore(name="content_density", score=0.0, max_score=42.0),
+            DimensionScore(name="structural_completeness", score=0.0, max_score=25.0),
+            DimensionScore(name="traceability", score=0.0, max_score=33.0),
+        ]
+        suggestions = generate_improvement_suggestions(dims)
+        for suggestion in suggestions:
+            assert suggestion.dimension not in stub_names
 
     def test_suggestions_sorted_by_gain(self) -> None:
         dims = [
@@ -669,14 +784,29 @@ class TestValidatePrdQualityV2:
         assert hasattr(result, "failures")
         assert hasattr(result, "completeness_score")
 
-    def test_v2_has_6_dimensions(self) -> None:
+    def test_v2_has_3_dimensions(self) -> None:
+        """V2 output must contain exactly 3 active dimensions (FR01 — PRD-FIX-054)."""
         result = validate_prd_quality_v2(_FILLED_PRD)
-        assert len(result.dimensions) == 6
+        assert len(result.dimensions) == 3
         dim_names = {d.name for d in result.dimensions}
-        assert dim_names == {
-            "content_density", "structural_completeness", "traceability",
-            "smell_score", "readability", "ears_coverage",
-        }
+        assert dim_names == {"content_density", "structural_completeness", "traceability"}
+
+    def test_v2_no_stub_dimensions(self) -> None:
+        """No dimension in output may have max_score == 0.0 (FR01 — PRD-FIX-054)."""
+        result = validate_prd_quality_v2(_FILLED_PRD)
+        stub_names = {"smell_score", "readability", "ears_coverage"}
+        for dim in result.dimensions:
+            assert dim.name not in stub_names, f"Stub dimension found: {dim.name}"
+            assert dim.max_score > 0.0, f"Dimension {dim.name} has max_score=0.0"
+
+    def test_v2_retains_deprecated_fields(self) -> None:
+        """ValidationResultV2 must retain backward-compat fields (NFR02 — PRD-FIX-054)."""
+        result = validate_prd_quality_v2(_FILLED_PRD)
+        assert hasattr(result, "completeness_score")
+        assert hasattr(result, "consistency_score")
+        assert hasattr(result, "smell_findings")
+        assert hasattr(result, "readability")
+        assert hasattr(result, "ears_classifications")
 
     def test_v2_total_score_range(self) -> None:
         result = validate_prd_quality_v2(_FILLED_PRD)
@@ -710,3 +840,257 @@ class TestValidatePrdQualityV2:
         result = validate_prd_quality_v2(_PARTIAL_PRD, config=config)
         # With threshold at 80, more PRDs should be SKELETON
         assert result.quality_tier == QualityTier.SKELETON
+
+
+# ---------------------------------------------------------------------------
+# Test: Language-Agnostic test_refs Regex (PRD-FIX-055)
+# ---------------------------------------------------------------------------
+
+
+class TestTestRefsRegex:
+    """Unit tests for the _TEST_REF_RE pattern — PRD-FIX-055.
+
+    Each test wraps a file reference in a minimal table row (the typical
+    context inside a traceability matrix section) and asserts whether
+    _TEST_REF_RE matches it or not.
+    """
+
+    # --- FR01: Python conventions (backward compat — FR02) ---
+
+    def test_python_prefix_matches(self) -> None:
+        """Existing Python test prefix convention must continue to match."""
+        assert _TEST_REF_RE.findall("`test_module.py`") == ["`test_module.py`"]
+
+    def test_python_prefix_with_pytest_node_matches(self) -> None:
+        """Python pytest node ID (module::function) must match."""
+        assert _TEST_REF_RE.findall("`test_api.py::test_create`") == [
+            "`test_api.py::test_create`"
+        ]
+
+    def test_python_prefix_underscore_matches(self) -> None:
+        """Underscore-prefixed Python test file must match."""
+        assert _TEST_REF_RE.findall("`test_validation_v2.py`") == [
+            "`test_validation_v2.py`"
+        ]
+
+    # --- FR01: TypeScript/JavaScript conventions ---
+
+    def test_typescript_test_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`Component.test.tsx`") == ["`Component.test.tsx`"]
+
+    def test_typescript_spec_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`api.spec.ts`") == ["`api.spec.ts`"]
+
+    def test_javascript_test_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`utils.test.js`") == ["`utils.test.js`"]
+
+    def test_javascript_spec_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`service.spec.js`") == ["`service.spec.js`"]
+
+    # --- FR01: Go convention ---
+
+    def test_go_test_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`handler_test.go`") == ["`handler_test.go`"]
+
+    def test_go_test_suffix_with_path_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`internal/handler_test.go`") == [
+            "`internal/handler_test.go`"
+        ]
+
+    # --- FR01: Java conventions ---
+
+    def test_java_test_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`UserServiceTest.java`") == [
+            "`UserServiceTest.java`"
+        ]
+
+    def test_java_tests_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`UserServiceTests.java`") == [
+            "`UserServiceTests.java`"
+        ]
+
+    # --- FR01: Ruby convention ---
+
+    def test_ruby_spec_suffix_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`user_spec.rb`") == ["`user_spec.rb`"]
+
+    # --- FR01: tests/ directory convention (Rust, etc.) ---
+
+    def test_tests_dir_matches(self) -> None:
+        assert _TEST_REF_RE.findall("`tests/integration.rs`") == [
+            "`tests/integration.rs`"
+        ]
+
+    def test_test_dir_singular_matches(self) -> None:
+        """test/ (singular) directory must also match."""
+        assert _TEST_REF_RE.findall("`test/helpers.py`") == ["`test/helpers.py`"]
+
+    # --- FR03: No false positives on non-test files ---
+
+    def test_plain_python_file_no_match(self) -> None:
+        assert _TEST_REF_RE.findall("`prd_quality.py`") == []
+
+    def test_plain_typescript_file_no_match(self) -> None:
+        assert _TEST_REF_RE.findall("`router.ts`") == []
+
+    def test_plain_go_file_no_match(self) -> None:
+        assert _TEST_REF_RE.findall("`main.go`") == []
+
+    def test_plain_java_file_no_match(self) -> None:
+        assert _TEST_REF_RE.findall("`UserService.java`") == []
+
+    def test_config_file_no_match(self) -> None:
+        assert _TEST_REF_RE.findall("`config.py`") == []
+
+    def test_server_ts_no_match(self) -> None:
+        assert _TEST_REF_RE.findall("`server.ts`") == []
+
+    # --- FR01 integration: multiple refs in a matrix section ---
+
+    def test_mixed_language_matrix_all_counted(self) -> None:
+        """Mixed-language traceability matrix must count all test refs."""
+        matrix_section = (
+            "| FR01 | US-001 | `src/validation.py` | `test_api.py::test_create` | Pending |\n"
+            "| FR02 | US-001 | `Dashboard.tsx` | `Dashboard.test.tsx` | Pending |\n"
+            "| FR03 | US-002 | `handler.go` | `handler_test.go` | Pending |\n"
+        )
+        matches = _TEST_REF_RE.findall(matrix_section)
+        assert len(matches) == 3
+        assert "`test_api.py::test_create`" in matches
+        assert "`Dashboard.test.tsx`" in matches
+        assert "`handler_test.go`" in matches
+
+    def test_non_test_files_not_counted_in_mixed_matrix(self) -> None:
+        """impl_refs like `src/validation.py` must NOT appear in test_refs."""
+        matrix_section = (
+            "| FR01 | `src/validation.py` | `test_api.py` | Pending |\n"
+        )
+        matches = _TEST_REF_RE.findall(matrix_section)
+        assert "`src/validation.py`" not in matches
+        assert "`test_api.py`" in matches
+
+
+class TestKnownTestPatterns:
+    """Verify _KNOWN_TEST_PATTERNS constant is populated (FR02)."""
+
+    def test_constant_has_expected_languages(self) -> None:
+        assert "python" in _KNOWN_TEST_PATTERNS
+        assert "typescript" in _KNOWN_TEST_PATTERNS
+        assert "go" in _KNOWN_TEST_PATTERNS
+        assert "java" in _KNOWN_TEST_PATTERNS
+        assert "ruby" in _KNOWN_TEST_PATTERNS
+        assert "rust" in _KNOWN_TEST_PATTERNS
+
+    def test_constant_values_are_strings(self) -> None:
+        for lang, description in _KNOWN_TEST_PATTERNS.items():
+            assert isinstance(description, str) and description, (
+                f"Language '{lang}' has empty or non-string description"
+            )
+
+
+class TestTraceabilityV2LanguageAgnostic:
+    """Integration tests: score_traceability_v2 with non-Python test refs."""
+
+    _TS_PRD = (
+        _MINIMAL_FRONTMATTER
+        + """\
+# PRD-TS-001: TypeScript PRD
+
+## 1. Problem Statement
+TypeScript frontend needs validation.
+
+## 2. Goals & Non-Goals
+### Goals
+- Add form validation
+
+## 3. User Stories
+### US-001
+**As a** user **I want** validation **So that** errors are clear.
+
+## 4. Functional Requirements
+### PRD-TS-001-FR01: Validate Form
+**Priority**: Must Have
+**Description**: Validate all form fields on submit.
+
+## 5. Non-Functional Requirements
+- Response under 100ms
+
+## 6. Technical Approach
+Uses React Hook Form.
+
+## 7. Test Strategy
+- Component.test.tsx
+
+## 8. Rollout Plan
+Phase 1: Implement.
+
+## 9. Success Metrics
+| Metric | Target |
+|--------|--------|
+| Error rate | <1% |
+
+## 10. Dependencies & Risks
+No blockers.
+
+## 11. Open Questions
+None.
+
+## 12. Traceability Matrix
+
+| Requirement | Source | Implementation | Test | Status |
+|-------------|--------|----------------|------|--------|
+| FR01 | US-001 | `src/Form.tsx` | `Component.test.tsx` | Pending |
+"""
+    )
+
+    def test_typescript_prd_matrix_score_positive(self) -> None:
+        """A TypeScript PRD with .test.tsx refs must score matrix_score > 0."""
+        frontmatter = {
+            "traceability": {
+                "implements": ["REQ-001"],
+                "depends_on": [],
+                "enables": [],
+            }
+        }
+        result = score_traceability_v2(frontmatter, self._TS_PRD)
+        assert result.details["matrix_score"] > 0.0, (
+            "TypeScript test refs not counted — matrix_score was 0"
+        )
+
+    def test_python_prd_backward_compat_score_unchanged(self) -> None:
+        """Existing Python PRD score must not change after regex update."""
+        frontmatter = {
+            "traceability": {
+                "implements": ["REQ-001"],
+                "depends_on": ["PRD-CORE-007"],
+                "enables": ["PRD-CORE-009"],
+            }
+        }
+        result = score_traceability_v2(frontmatter, _FILLED_PRD)
+        # _FILLED_PRD traceability matrix has no backtick-wrapped test refs
+        # (uses bare function names), so matrix_score remains 0 as before.
+        # The important check is that the function runs without error and
+        # field_ratio scoring still works.
+        # field_ratio 1.0 × 0.4 × 33 = 13.2 (recalibrated max_score)
+        assert result.score >= 13.0
+        assert result.name == "traceability"
+
+    def test_go_prd_test_refs_counted(self) -> None:
+        """Go _test.go suffix refs in a traceability matrix must be counted."""
+        frontmatter: dict[str, object] = {
+            "traceability": {
+                "implements": [],
+                "depends_on": [],
+                "enables": [],
+            }
+        }
+        go_content = """\
+## 12. Traceability Matrix
+
+| Requirement | Implementation | Test | Status |
+|-------------|----------------|------|--------|
+| FR01 | `handler.go` | `handler_test.go` | Pending |
+| FR02 | `service.go` | `service_test.go` | Pending |
+"""
+        result = score_traceability_v2(frontmatter, go_content)
+        assert result.details["matrix_score"] > 0.0

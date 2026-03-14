@@ -898,8 +898,11 @@ class TestValidationAutoProgressOSError:
 
     def test_auto_progress_index_sync_exception_swallowed(self, tmp_path: Path) -> None:
         """Lines 1957-1958: index sync exception after successful apply is swallowed."""
+        import yaml as _yaml
+
         run_path = tmp_path / "run"
-        (run_path / "meta").mkdir(parents=True)
+        meta_dir = run_path / "meta"
+        meta_dir.mkdir(parents=True)
 
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
@@ -909,23 +912,17 @@ class TestValidationAutoProgressOSError:
         prd_file = prds_dir / "PRD-CORE-002.md"
         prd_file.write_text(prd_content)
 
+        # Write run.yaml with prd_scope so discover_governing_prds finds the PRD
+        (meta_dir / "run.yaml").write_text(
+            _yaml.dump({"run_id": "test-run", "prd_scope": ["PRD-CORE-002"]})
+        )
+
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
-        # All of these are function-local imports inside auto_progress_prds
+        # Patch the consumer module (prd_progression) not the source module (prd_utils),
+        # since prd_progression imports these names at module load time.
         with patch(
-            "trw_mcp.state.prd_utils.discover_governing_prds",
-            return_value=["PRD-CORE-002"],
-        ), patch(
-            "trw_mcp.state.prd_utils.parse_frontmatter",
-            return_value={"status": "draft"},
-        ), patch(
-            "trw_mcp.state.prd_utils.is_valid_transition",
-            return_value=True,
-        ), patch(
-            "trw_mcp.state.prd_utils.check_transition_guards",
-            return_value=MagicMock(allowed=True),
-        ), patch(
-            "trw_mcp.state.prd_utils.update_frontmatter",
+            "trw_mcp.state.validation.prd_progression.update_frontmatter",
         ), patch(
             "trw_mcp.state.index_sync.sync_index_md",
             side_effect=RuntimeError("index sync failed"),

@@ -16,6 +16,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.models.typed_dicts import RoadmapSyncResult, SyncIndexMdResult
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.prd_utils import parse_frontmatter
 
@@ -358,7 +359,7 @@ def sync_index_md(
     prds_dir: Path,
     *,
     writer: FileStateWriter | None = None,
-) -> dict[str, object]:
+) -> SyncIndexMdResult:
     """Sync INDEX.md PRD catalogue from PRD frontmatter.
 
     Reads all PRD files, groups by status, and updates the
@@ -407,7 +408,7 @@ def sync_roadmap_md(
     prds_dir: Path,
     *,
     writer: FileStateWriter | None = None,
-) -> dict[str, object]:
+) -> RoadmapSyncResult:
     """Sync ROADMAP.md PRD catalogue table from PRD frontmatter.
 
     Reads all PRD files and updates the catalogue table between

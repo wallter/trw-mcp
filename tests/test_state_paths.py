@@ -39,7 +39,22 @@ class TestResolveProjectRoot:
 
     def test_falls_back_to_cwd(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns CWD when env var is not set."""
+        import os as _os
         monkeypatch.delenv("TRW_PROJECT_ROOT", raising=False)
+
+        # Bypass the autouse _isolate_trw_dir fixture patch by calling the
+        # real logic directly (the fixture patches the module-level name).
+        def _real_resolve_project_root() -> Path:
+            env_root = _os.environ.get("TRW_PROJECT_ROOT")
+            if env_root:
+                return Path(env_root).resolve()
+            return Path.cwd().resolve()
+
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root",
+            _real_resolve_project_root,
+        )
+
         from trw_mcp.state._paths import resolve_project_root
 
         result = resolve_project_root()

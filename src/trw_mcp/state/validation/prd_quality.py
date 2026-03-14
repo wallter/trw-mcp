@@ -1,8 +1,10 @@
 """PRD quality validation — V1, V2 scoring, and improvement suggestions.
 
 Implements both the simple V1 quality gate (validate_prd_quality) and the
-full 6-dimension semantic scorer (validate_prd_quality_v2) including content
-density, structural completeness, traceability, and placeholder dimensions.
+full 3-dimension semantic scorer (validate_prd_quality_v2) covering content
+density, structural completeness, and traceability. Stub dimensions
+(smell_score, readability, ears_coverage) are reserved for future implementation
+and are NOT included in scoring output.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from collections.abc import Callable
 import structlog
 
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.state.validation.template_variants import get_required_sections
 from trw_mcp.models.requirements import (
     DimensionScore,
     ImprovementSuggestion,
@@ -30,6 +33,16 @@ logger = structlog.get_logger()
 
 # Section heading pattern: ## N. Title
 _HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
+
+# Quick Reference prose status line pattern (PRD-FIX-056-FR01)
+# Matches: - **Status**: <word>  (in the Quick Reference block)
+_PROSE_STATUS_RE = re.compile(r"-\s*\*\*Status\*\*:\s*(\w+)", re.IGNORECASE)
+
+# FR section header pattern — e.g. "### PRD-CORE-008-FR01: Title"
+_FR_SECTION_RE = re.compile(r"^###\s+[\w-]+-FR\d+:", re.MULTILINE)
+
+# FR-level status annotation pattern (PRD-FIX-056-FR04)
+_FR_STATUS_RE = re.compile(r"\*\*Status\*\*:\s*(active|deferred|superseded|done)", re.IGNORECASE)
 
 # Placeholder patterns for content density (common template defaults)
 _PLACEHOLDER_RE = re.compile(
@@ -66,6 +79,75 @@ _HIGH_WEIGHT_SECTIONS: dict[str, float] = {
 _SECTION_WEIGHTS: dict[str, float] = _HIGH_WEIGHT_SECTIONS
 
 
+def _get_section_weights(config: TRWConfig) -> dict[str, float]:
+    """Build per-section weight map from TRWConfig (PRD-CORE-080-FR04).
+
+    Reads configurable per-section weights from TRWConfig flat fields
+    (``validation_section_weight_*``) and returns a dict ready for use
+    in weighted-average density computation. Falls back to module-level
+    ``_HIGH_WEIGHT_SECTIONS`` defaults when config fields are at default.
+
+    Args:
+        config: TRWConfig instance to read weight fields from.
+
+    Returns:
+        Dict mapping section name to weight multiplier (default 1.0 for
+        unlisted sections).
+    """
+    return {
+        "Problem Statement": config.density_weight_problem_statement,
+        "Functional Requirements": config.density_weight_functional_requirements,
+        "Traceability Matrix": config.density_weight_traceability_matrix,
+    }
+
+# Known test file naming conventions supported by _TEST_REF_RE.
+# Used for documentation and external introspection.
+_KNOWN_TEST_PATTERNS: dict[str, str] = {
+    "python": "test_*.py or test_*.py::test_func (pytest prefix convention)",
+    "typescript": "*.test.ts, *.test.tsx (Jest/Vitest suffix convention)",
+    "javascript": "*.test.js, *.spec.js (Jest/Jasmine conventions)",
+    "go": "*_test.go (Go testing suffix convention)",
+    "rust": "tests/*.rs (Rust integration tests directory convention)",
+    "java": "*Test.java, *Tests.java (JUnit suffix convention)",
+    "ruby": "*_spec.rb (RSpec suffix convention)",
+    "generic_spec": "*.spec.ts, *.spec.tsx (spec suffix, any extension)",
+}
+
+# Pre-compiled regexes for ambiguity rate computation (FR02 — PRD-FIX-054).
+# Using word-boundary matching to avoid false positives on substrings.
+# Compiled once at module load to prevent ReDoS.
+_VAGUE_TERMS_RE = re.compile(
+    r"\b(?:might|possibly|approximately|as needed|if possible|as appropriate)\b"
+    r"|should consider"
+    r"|etc\."
+    r"|and/or",
+    re.IGNORECASE,
+)
+
+# Lines that qualify as requirement-like statements
+_REQUIREMENT_LINE_RE = re.compile(
+    r"FR\d+|NFR\d+|- \[ \]|\bWhen\b|\bWhile\b|\bIf\b|\bWhere\b",
+)
+
+# Pre-compiled regex matching test file references (backtick-wrapped) for all
+# supported languages. Covers:
+#   - Python prefix:  `test_foo.py`, `test_foo.py::test_bar`
+#   - TS/JS suffix:   `Component.test.tsx`, `api.spec.ts`
+#   - Go suffix:      `handler_test.go`
+#   - Java suffix:    `UserServiceTest.java`, `UserServiceTests.java`
+#   - Ruby suffix:    `user_spec.rb`
+#   - tests/ dir:     `tests/integration.rs`
+_TEST_REF_RE = re.compile(
+    r"`(?:"
+    r"test[\w_]*\.[\w.]+[:\w]*"                    # Python: test_foo.py, test_foo.py::bar
+    r"|[\w/]+\.(?:test|spec)\.[\w]+[:\w]*"          # TS/JS: foo.test.ts, foo.spec.tsx
+    r"|[\w/]+(?:_test|_spec)\.[\w]+[:\w]*"          # Go/Ruby: foo_test.go, user_spec.rb
+    r"|[\w/]+(?:Test|Tests|Spec)\.[\w]+[:\w]*"      # Java: FooTest.java, FooTests.java
+    r"|tests?/[\w/]+\.[\w]+[:\w]*"                  # tests/ dir: tests/integration.rs
+    r")`",
+)
+
+
 # ---------------------------------------------------------------------------
 # V1 Quality Validation
 # ---------------------------------------------------------------------------
@@ -76,7 +158,15 @@ def validate_prd_quality(
     sections: list[str],
     gates: PRDQualityGates | None = None,
 ) -> ValidationResult:
-    """Validate a PRD against AARE-F quality gates.
+    """Validate a PRD against AARE-F quality gates (V1 — simple scorer).
+
+    .. deprecated::
+        Prefer ``validate_prd_quality_v2()`` which provides the full
+        3-dimension semantic scorer (content density, structural completeness,
+        traceability) and a ``total_score`` on a 0–100 scale. This V1
+        function is retained for backward compatibility and returns a
+        ``completeness_score`` (0.0–1.0) based on frontmatter field presence
+        and section count only.
 
     Args:
         frontmatter: Parsed YAML frontmatter dictionary.
@@ -186,6 +276,31 @@ def validate_prd_quality(
 # ---------------------------------------------------------------------------
 # V2 Semantic Validation (PRD-CORE-008)
 # ---------------------------------------------------------------------------
+
+
+def _compute_ambiguity_rate(content: str) -> float:
+    """Compute ambiguity rate: vague-term count / requirement-statement count.
+
+    Counts occurrences of vague terms (might, should consider, possibly,
+    approximately, as needed, etc., and/or, if possible, as appropriate)
+    divided by the total number of requirement-like lines (lines matching
+    FR\\d+, NFR\\d+, '- [ ]', or EARS keywords When/While/If/Where).
+
+    Returns 0.0 when no requirement-like statements are found to avoid
+    division by zero.
+
+    Args:
+        content: Full PRD markdown content.
+
+    Returns:
+        Ambiguity rate as a non-negative float (>= 0.0).
+    """
+    vague_count = len(_VAGUE_TERMS_RE.findall(content))
+    req_lines = [line for line in content.splitlines() if _REQUIREMENT_LINE_RE.search(line)]
+    total_req = len(req_lines)
+    if total_req == 0:
+        return 0.0
+    return vague_count / total_req
 
 
 def _parse_section_content(content: str) -> list[tuple[str, str]]:
@@ -309,11 +424,12 @@ def score_content_density(
     section_scores: list[SectionScore] = []
     weighted_sum = 0.0
     weight_total = 0.0
+    section_weights = _get_section_weights(_config)
 
     for name, body in sections:
         ss = score_section_density(name, body)
         section_scores.append(ss)
-        weight = _HIGH_WEIGHT_SECTIONS.get(name, 1.0)
+        weight = section_weights.get(name, _config.density_weight_default)
         weighted_sum += ss.density * weight
         weight_total += weight
 
@@ -335,16 +451,24 @@ def score_structural_completeness(
     frontmatter: dict[str, object],
     sections: list[str],
     config: TRWConfig | None = None,
+    category: str | None = None,
 ) -> DimensionScore:
     """Score the Structural Completeness dimension (15 points max).
 
-    Checks: 12 sections present, required frontmatter fields,
-    confidence scores present.
+    Checks: category-appropriate sections present, required frontmatter
+    fields, confidence scores present (PRD-CORE-080-FR05).
+
+    The expected section count is derived from the PRD's ``category``
+    field in frontmatter via the category-to-template-variant mapping.
+    Unknown or missing categories default to the 12-section Feature
+    template for backward compatibility.
 
     Args:
         frontmatter: Parsed YAML frontmatter.
         sections: List of section heading names found.
         config: Optional config for weight override.
+        category: Optional explicit category override. When ``None``,
+            extracted from ``frontmatter["category"]``.
 
     Returns:
         DimensionScore for structural completeness.
@@ -352,8 +476,12 @@ def score_structural_completeness(
     _config = config or get_config()
     max_score = _config.validation_structure_weight
 
-    # Section coverage: how many of the 12 expected sections are present
-    expected = 12
+    # Resolve category: explicit param > frontmatter field > default (feature=12)
+    resolved_category = category or str(frontmatter.get("category", ""))
+    required_sections = get_required_sections(resolved_category)
+
+    # Section coverage: how many of the category-specific expected sections are present
+    expected = len(required_sections)
     found = min(len(sections), expected)
     section_ratio = found / expected
 
@@ -429,7 +557,7 @@ def score_traceability_v2(
         matrix_section = content.split("Traceability Matrix")[-1]
         # Count rows with implementation file references
         impl_refs = re.findall(r"`[\w/]+\.\w+[:\w]*`", matrix_section)
-        test_refs = re.findall(r"`test[\w_]*\.\w+[:\w]*`", matrix_section)
+        test_refs = _TEST_REF_RE.findall(matrix_section)
         # Count FR references in matrix
         fr_refs = re.findall(r"FR\d+", matrix_section)
 
@@ -509,13 +637,13 @@ def generate_improvement_suggestions(
     Returns:
         List of suggestions sorted by potential gain descending.
     """
+    # Messages only for active (implemented) dimensions.
+    # Stub dimensions (smell_score, readability, ears_coverage) are excluded —
+    # they have no scorer and will never appear in the dimensions list.
     _messages: dict[str, str] = {
         "content_density": "Add substantive content to sections — replace template placeholders with actual requirements and details.",
         "structural_completeness": "Complete missing sections and frontmatter fields — ensure all 12 AARE-F sections are present.",
         "traceability": "Add traceability links (implements, depends_on, enables) and populate the Traceability Matrix with implementation and test references.",
-        "smell_score": "Fix requirement quality issues — remove vague terms, passive voice, and unbounded scope.",
-        "readability": "Improve readability — aim for Flesch-Kincaid grade 8-12 for technical documentation.",
-        "ears_coverage": "Classify functional requirements using EARS patterns — add trigger keywords (When/While/If/Where) to FR sections.",
     }
 
     suggestions: list[ImprovementSuggestion] = []
@@ -536,6 +664,138 @@ def generate_improvement_suggestions(
 
     suggestions.sort(key=lambda s: s.potential_gain, reverse=True)
     return suggestions[:max_suggestions]
+
+
+def _check_status_drift(
+    frontmatter: dict[str, object],
+    content: str,
+) -> list[str]:
+    """Compare frontmatter status with prose Quick Reference status line.
+
+    FR01 (PRD-FIX-056): If the YAML frontmatter ``status`` field differs from
+    the ``- **Status**: {value}`` line in the prose Quick Reference block, a
+    warning string is returned describing the drift.
+
+    The comparison is case-insensitive so ``done`` matches ``Done``.
+    If no Quick Reference block is found, the check is skipped gracefully.
+
+    Args:
+        frontmatter: Parsed YAML frontmatter dict (already flattened).
+        content: Full PRD markdown content.
+
+    Returns:
+        List of warning strings (empty when no drift detected).
+    """
+    warnings: list[str] = []
+
+    fm_status = frontmatter.get("status")
+    if fm_status is None:
+        return warnings
+
+    fm_status_str = str(fm_status).lower()
+
+    # Strip frontmatter block before searching for prose status
+    from trw_mcp.state.prd_utils import _FRONTMATTER_RE
+
+    fm_match = _FRONTMATTER_RE.match(content)
+    body = content[fm_match.end() :] if fm_match else content
+
+    match = _PROSE_STATUS_RE.search(body)
+    if match is None:
+        # No Quick Reference prose block — skip gracefully (NFR02)
+        return warnings
+
+    prose_status_str = match.group(1).lower()
+
+    if fm_status_str != prose_status_str:
+        warnings.append(
+            f"Status drift: frontmatter status='{fm_status_str}' "
+            f"differs from prose Quick Reference status='{prose_status_str}'. "
+            "Update the prose '- **Status**:' line to match the frontmatter."
+        )
+
+    return warnings
+
+
+def _check_fr_annotations(content: str) -> list[str]:
+    """Check that each FR section has a **Status**: annotation.
+
+    FR04 (PRD-FIX-056): Scans all FR section headers (### *-FRN: ...) in
+    the Functional Requirements section and warns for any that lack a
+    ``**Status**: active|deferred|superseded|done`` line.
+
+    Args:
+        content: Full PRD markdown content.
+
+    Returns:
+        List of warning strings (empty when all FRs have annotations).
+    """
+    warnings: list[str] = []
+
+    # Find the Functional Requirements section body
+    fr_section_match = re.search(
+        r"##\s+\d+\.\s+Functional Requirements(.*?)(?=^##\s+\d+\.|\Z)",
+        content,
+        re.DOTALL | re.MULTILINE,
+    )
+    if not fr_section_match:
+        return warnings
+
+    fr_body = fr_section_match.group(1)
+
+    # Find all FR subsection headers in the FR section
+    fr_headers = list(_FR_SECTION_RE.finditer(fr_body))
+    if not fr_headers:
+        return warnings
+
+    # For each FR block, check whether it contains a Status annotation
+    for i, header_match in enumerate(fr_headers):
+        block_start = header_match.end()
+        block_end = fr_headers[i + 1].start() if i + 1 < len(fr_headers) else len(fr_body)
+        block_body = fr_body[block_start:block_end]
+
+        if not _FR_STATUS_RE.search(block_body):
+            header_text = header_match.group(0).strip()
+            warnings.append(
+                f"FR annotation missing: '{header_text}' has no "
+                "'**Status**: active|deferred|superseded|done' line."
+            )
+
+    return warnings
+
+
+def _check_partially_implemented(
+    frontmatter: dict[str, object],
+) -> list[str]:
+    """Warn when a 'done' PRD has partially_implemented_frs listed.
+
+    FR05 (PRD-FIX-056): If the frontmatter status is 'done' and
+    ``partially_implemented_frs`` is a non-empty list, emit a warning
+    naming the deferred FRs.
+
+    Args:
+        frontmatter: Parsed YAML frontmatter dict.
+
+    Returns:
+        List of warning strings (empty when not applicable).
+    """
+    warnings: list[str] = []
+
+    fm_status = str(frontmatter.get("status", "")).lower()
+    if fm_status != "done":
+        return warnings
+
+    partial_frs = frontmatter.get("partially_implemented_frs", [])
+    if not isinstance(partial_frs, list) or not partial_frs:
+        return warnings
+
+    fr_list = ", ".join(str(fr) for fr in partial_frs)
+    warnings.append(
+        f"PRD marked done but has partially implemented FRs: {fr_list}. "
+        "Consider leaving status as 'implemented' until all FRs are complete."
+    )
+
+    return warnings
 
 
 def _coerce_v1_failures(raw: object) -> list[ValidationFailure]:
@@ -571,11 +831,14 @@ def validate_prd_quality_v2(
     v1_result: dict[str, object] | None = None,
     risk_level: str | None = None,
 ) -> ValidationResultV2:
-    """Validate a PRD with full 6-dimension semantic scoring.
+    """Validate a PRD with 3-dimension semantic scoring.
 
-    Orchestrates all dimension scorers, computes total score,
+    Orchestrates all active dimension scorers (content_density,
+    structural_completeness, traceability), computes total score,
     classifies quality tier, and generates improvement suggestions.
     Also populates V1-compatible fields for backward compatibility.
+    Stub dimensions (smell_score, readability, ears_coverage) are reserved
+    for future implementation and are NOT included in dimensions output.
 
     When risk_level is provided (or derived from frontmatter priority),
     thresholds and dimension weights are adjusted per RISK_PROFILES
@@ -609,11 +872,12 @@ def validate_prd_quality_v2(
     _config = get_risk_scaled_config(_config, effective_risk)
     is_risk_scaled = effective_risk != "medium" and _config.risk_scaling_enabled
 
-    # Score 3 active dimensions (Phase 2a) + 3 placeholders
-    # Each active dimension: (name, scorer_callable, max_score_from_config)
+    # Score 3 active dimensions — content density, structural completeness, traceability.
+    # Stub dimensions (smell_score, readability, ears_coverage) are reserved for future
+    # implementation and are NOT appended here (FR01 — PRD-FIX-054).
     _active_dims: list[tuple[str, Callable[[], DimensionScore], float]] = [
         ("content_density", lambda: score_content_density(content, _config), _config.validation_density_weight),
-        ("structural_completeness", lambda: score_structural_completeness(frontmatter, sections, _config), _config.validation_structure_weight),
+        ("structural_completeness", lambda: score_structural_completeness(frontmatter, sections, _config, str(frontmatter.get("category", ""))), _config.validation_structure_weight),
         ("traceability", lambda: score_traceability_v2(frontmatter, content, _config), _config.validation_traceability_weight),
     ]
     dimensions: list[DimensionScore] = []
@@ -624,12 +888,10 @@ def validate_prd_quality_v2(
             logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
             dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 
-    # Placeholder dimensions (modules removed in strip-down; 0-weight)
+    # Backward-compatible placeholder collections — remain empty (no scorer behind them)
     smell_findings: list[SmellFinding] = []
     readability_metrics: dict[str, float] = {}
     ears_classifications: list[dict[str, object]] = []
-    for placeholder_name in ("smell_score", "readability", "ears_coverage"):
-        dimensions.append(DimensionScore(name=placeholder_name, score=0.0, max_score=0.0))
 
     # Compute total score (normalized to 0-100 against active dimensions)
     max_possible = sum(d.max_score for d in dimensions)
@@ -671,11 +933,23 @@ def validate_prd_quality_v2(
         v1_completeness = v1.completeness_score
         v1_trace_coverage = v1.traceability_coverage
 
+    # Compute ambiguity rate from content (FR02 — PRD-FIX-054)
+    ambiguity_rate = _compute_ambiguity_rate(content)
+
+    # PRD-FIX-056: Status integrity checks (informational — never block scoring)
+    status_drift_warnings: list[str] = []
+    try:
+        status_drift_warnings.extend(_check_status_drift(frontmatter, content))
+        status_drift_warnings.extend(_check_fr_annotations(content))
+        status_drift_warnings.extend(_check_partially_implemented(frontmatter))
+    except Exception:  # justified: fail-open, integrity checks must not block scoring
+        logger.warning("status_integrity_check_failed", exc_info=True)
+
     result = ValidationResultV2(
         # V1 fields (computed inline)
         valid=is_valid,
         failures=v1_failures,
-        ambiguity_rate=0.0,
+        ambiguity_rate=ambiguity_rate,
         completeness_score=v1_completeness,
         traceability_coverage=v1_trace_coverage,
         consistency_score=0.0,
@@ -692,6 +966,8 @@ def validate_prd_quality_v2(
         # Risk scaling fields (PRD-QUAL-013)
         effective_risk_level=effective_risk,
         risk_scaled=is_risk_scaled,
+        # Status integrity warnings (PRD-FIX-056)
+        status_drift_warnings=status_drift_warnings,
     )
 
     logger.info(

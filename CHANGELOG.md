@@ -4,6 +4,35 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-03-14
+
+### Added
+
+- **AARE-F scoring truthfulness** (PRD-FIX-054) — removed 3 stub dimensions (`smell_score`, `readability`, `ears_coverage`) from V2 scorer output. Implemented `_compute_ambiguity_rate()` with pre-compiled regexes for vague term detection. Recalibrated dimension weights to sum to 100 across 3 active dimensions (density=42, structure=25, traceability=33). Risk profiles updated to 3-tuple weights.
+- **Language-agnostic traceability** (PRD-FIX-055) — `test_refs` regex now matches TypeScript `.test.ts`/`.spec.tsx`, Go `_test.go`, Java `*Test.java`, Ruby `_spec.rb`, and Rust conventions. 58 new tests verify all language conventions.
+- **PRD status integrity** (PRD-FIX-056) — status drift detection compares YAML frontmatter vs prose Quick Reference. `update_frontmatter()` auto-syncs prose status. `prd_status.py` state machine wired into `check_transition_guards()`. FR-level `**Status**: active` annotation injected into generated templates. Warns on null `approved_by` for terminal transitions.
+- **Category-specific template variants** (PRD-CORE-080) — `template_variants.py` defines 4 template variants (feature=12 sections, fix=7, infra=9, research=3). `score_structural_completeness()` now category-aware. `_generate_prd_body()` filters sections by category. Content density section weights configurable via `TRWConfig`. Decorative fields (`aaref_components`, `conflicts_with`) stripped from generated PRDs.
+- **TypedDict type system** — 79 TypedDict classes across 18 submodules in `models/typed_dicts/` replacing `dict[str, object]` at all major cross-module boundaries. Includes `StepResultBase` and `ReviewResultBase` inheritance hierarchies. Applied to 30+ source files (memory_adapter, tools/, scoring/, state/, build/, review/, ceremony/).
+- **~225 new Sprint 63 tests** — covering scoring truthfulness, traceability language support, status integrity, template variants.
+
+### Fixed
+
+- **Scoring total_score unreachable** — ceiling was 76-78 due to stub dimensions inflating the denominator. Now achievable up to 100.
+- **Non-Python PRDs penalized** — TypeScript/Go/Rust PRDs lost 6-8 traceability points from Python-only `test_refs` regex.
+- **Ambiguity rate always 0.0** — was hardcoded; now computed from vague term count / requirement statement count.
+- **Q-value convergence broken** — `process_outcome()` read from SQLite but wrote only to YAML. Subsequent calls got stale data. Fixed with SQLite writeback after Q-value computation.
+- **Status drift undetected** — no mechanism compared frontmatter status vs prose Quick Reference. Now warns on mismatch.
+- **32 pre-existing test failures** — root cause: `_isolate_trw_dir` fixture path mismatch between `isolated_project/.trw/` and `tmp_path/.trw/`. Fixed project root resolution consistency.
+- **`PublishResult` duplicate** — was identical to `PublishLearningsResult`; now an alias.
+
+### Changed
+
+- **Dimension weights** — `validation_density_weight=42.0`, `validation_structure_weight=25.0`, `validation_traceability_weight=33.0` (previously 25/15/20 out of 60 active).
+- **Risk profile weights** — all 4 profiles changed from 6-tuple to 3-tuple (density, structure, traceability).
+- **Stub config fields marked reserved** — `validation_smell_weight`, `validation_readability_weight`, `validation_ears_weight`, `consistency_validation_min` annotated as "reserved — not enforced".
+- **`completeness_score` deprecated** — field retained for backward compatibility with deprecation annotation; `total_score` is the sole authoritative metric.
+- **`typed_dicts.py` modularized** — 1,424-line monolith split into 18 focused submodules with backward-compatible re-exports via `__init__.py`.
+
 ## [0.13.0] — 2026-03-14
 
 ### Added

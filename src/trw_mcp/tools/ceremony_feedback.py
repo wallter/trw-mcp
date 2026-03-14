@@ -5,9 +5,16 @@ Tools for querying ceremony status, approving proposals, and reverting changes.
 
 from __future__ import annotations
 
+from typing import cast
+
 import structlog
 from fastmcp import FastMCP
 
+from trw_mcp.models.typed_dicts import (
+    CeremonyApproveResult,
+    CeremonyRevertResult,
+    CeremonyStatusResult,
+)
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -20,7 +27,7 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
     @log_tool_call
     def trw_ceremony_status(
         task_class: str | None = None,
-    ) -> dict[str, object]:
+    ) -> CeremonyStatusResult:
         """Check ceremony feedback status — proposals, escalations, and quality trends.
 
         Shows per-task-class ceremony quality metrics. When conditions are met,
@@ -34,13 +41,13 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         from trw_mcp.state.ceremony_feedback import get_ceremony_status
 
         trw_dir = resolve_trw_dir()
-        return get_ceremony_status(trw_dir, task_class)
+        return cast(CeremonyStatusResult, get_ceremony_status(trw_dir, task_class))
 
     @server.tool()
     @log_tool_call
     def trw_ceremony_approve(
         proposal_id: str,
-    ) -> dict[str, object]:
+    ) -> CeremonyApproveResult:
         """Approve a pending ceremony reduction proposal.
 
         Ceremony reductions require explicit human approval. This tool
@@ -54,13 +61,13 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         from trw_mcp.state.ceremony_feedback import approve_proposal
 
         trw_dir = resolve_trw_dir()
-        return approve_proposal(trw_dir, proposal_id)
+        return cast(CeremonyApproveResult, approve_proposal(trw_dir, proposal_id))
 
     @server.tool()
     @log_tool_call
     def trw_ceremony_revert(
         change_id: str,
-    ) -> dict[str, object]:
+    ) -> CeremonyRevertResult:
         """Revert a ceremony tier change by change_id.
 
         Restores the prior ceremony tier for a task class. Takes effect
@@ -73,4 +80,4 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         from trw_mcp.state.ceremony_feedback import revert_change
 
         trw_dir = resolve_trw_dir()
-        return revert_change(trw_dir, change_id)
+        return cast(CeremonyRevertResult, revert_change(trw_dir, change_id))

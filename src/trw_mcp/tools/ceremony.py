@@ -20,12 +20,22 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import (
+    ClaudeMdSyncResultDict,
+    DeliverResultDict,
+    LearningEntryDict,
+    ReflectResultDict,
+    RunStatusDict,
+    SessionStartResultDict,
+)
+from trw_mcp.models.types import EmbedHealthStatus
 from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
@@ -112,10 +122,10 @@ __all__ = [
 ]
 
 
-def _get_run_status(run_dir: Path) -> dict[str, object]:
+def _get_run_status(run_dir: Path) -> RunStatusDict:
     """Extract status summary from a run directory."""
     reader = FileStateReader()
-    result: dict[str, object] = {"active_run": str(run_dir)}
+    result: RunStatusDict = {"active_run": str(run_dir)}
     try:
         run_yaml = run_dir / "meta" / "run.yaml"
         if run_yaml.exists():
@@ -125,7 +135,8 @@ def _get_run_status(run_dir: Path) -> dict[str, object]:
             # FIX-050-FR03: RunState model uses field "task", not "task_name".
             result["task_name"] = str(data.get("task", ""))
             if "owner_session_id" in data:
-                result["owner_session_id"] = data["owner_session_id"]
+                sid = data["owner_session_id"]
+                result["owner_session_id"] = str(sid) if sid is not None else None
             # INFRA-036-FR05: Include wave status in session start
             wave_status = data.get("wave_status")
             if wave_status and isinstance(wave_status, dict):
@@ -183,7 +194,7 @@ def _run_step(
 def _do_reflect(
     trw_dir: Path,
     run_dir: Path | None,
-) -> dict[str, object]:
+) -> ReflectResultDict:
     """Execute reflection logic — extract learnings from events.
 
     Simplified version of the full trw_reflect tool, focused on
@@ -237,7 +248,7 @@ def _do_reflect(
     }
 
 
-def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
+def _do_claude_md_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     """Execute CLAUDE.md sync — delegates to the canonical implementation.
 
     Previously this function duplicated the template context dictionary
@@ -253,7 +264,7 @@ def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
     writer = FileStateWriter()
     # Use a no-op LLM client — deliver path doesn't need LLM summarisation.
     llm = LLMClient()
-    result = execute_claude_md_sync(
+    raw = execute_claude_md_sync(
         scope="root",
         target_dir=None,
         config=config,
@@ -262,8 +273,8 @@ def _do_claude_md_sync(trw_dir: Path) -> dict[str, object]:
         llm=llm,
     )
     # Normalise status for backward compatibility with deliver callers.
-    result["status"] = "success"
-    return result
+    raw["status"] = "success"
+    return cast(ClaudeMdSyncResultDict, raw)
 
 
 # ── Tool registration ─────────────────────────────────────────────────
@@ -274,7 +285,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_session_start(query: str = "") -> dict[str, object]:
+    def trw_session_start(query: str = "") -> SessionStartResultDict:
         """Load your prior learnings and any active run — gives you full context before writing code.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
@@ -297,7 +308,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         config = get_config()
         reader = FileStateReader()
         writer = FileStateWriter()
-        results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
+        results: SessionStartResultDict = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
 
@@ -309,7 +320,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
             )
             results["learnings"] = learnings
             results["learnings_count"] = len(learnings)
-            results.update(extra)
+            # Unpack extra fields (query, query_matched, total_available) individually
+            if "query" in extra:
+                results["query"] = str(extra["query"])
+            if "query_matched" in extra:
+                results["query_matched"] = int(str(extra["query_matched"]))
+            if "total_available" in extra:
+                results["total_available"] = int(str(extra["total_available"]))
         except Exception as exc:  # justified: fail-open, recall failure must not block session start
             errors.append(f"recall: {exc}")
             results["learnings"] = []
@@ -362,7 +379,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
             ))
             tel_client.flush()
             # Fire-and-forget batch send so new installations appear immediately
-            import threading
             def _bg_send() -> None:
                 try:
                     from trw_mcp.telemetry.sender import BatchSender
@@ -394,7 +410,17 @@ def register_ceremony_tools(server: FastMCP) -> None:
             maintenance = run_auto_maintenance(
                 resolve_trw_dir(), config, run_dir,
             )
-            results.update(maintenance)
+            # Unpack AutoMaintenanceDict keys explicitly (all declared in SessionStartResultDict)
+            if "update_advisory" in maintenance:
+                results["update_advisory"] = maintenance["update_advisory"]
+            if "auto_upgrade" in maintenance:
+                results["auto_upgrade"] = maintenance["auto_upgrade"]
+            if "stale_runs_closed" in maintenance:
+                results["stale_runs_closed"] = maintenance["stale_runs_closed"]
+            if "embeddings_advisory" in maintenance:
+                results["embeddings_advisory"] = maintenance["embeddings_advisory"]
+            if "embeddings_backfill" in maintenance:
+                results["embeddings_backfill"] = maintenance["embeddings_backfill"]
         except Exception:  # justified: fail-open, auto-maintenance must not block session start
             logger.debug("session_maintenance_failed", exc_info=True)
 
@@ -404,10 +430,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
 
                 trw_dir_ar = resolve_trw_dir()
-                run_status_obj = results.get("run", {})
-                rs = run_status_obj if isinstance(run_status_obj, dict) else None
+                run_status_obj: RunStatusDict | None = results.get("run")
                 phase_recalled = _phase_contextual_recall(
-                    trw_dir_ar, query, config, run_dir, rs,
+                    trw_dir_ar, query, config, run_dir,
+                    run_status_obj,
                 )
                 if phase_recalled:
                     results["auto_recalled"] = phase_recalled
@@ -419,7 +445,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # Always included — fail-open so advisory never blocks session start.
         try:
             from trw_mcp.state.memory_adapter import check_embeddings_status
-            results["embed_health"] = check_embeddings_status()
+            embed_status: EmbedHealthStatus = check_embeddings_status()
+            results["embed_health"] = cast(dict[str, object], embed_status)
         except Exception:  # justified: fail-open, embed health check must not block session start
             results["embed_health"] = {
                 "enabled": False,
@@ -448,7 +475,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
             available = int(str(results.get("learnings_count", 0)))
-            results = append_ceremony_nudge(results, resolve_trw_dir(), available_learnings=available)
+            append_ceremony_nudge(cast(dict[str, object], results), resolve_trw_dir(), available_learnings=available)
         except Exception:  # justified: fail-open, nudge injection must not block session start
             pass
 
@@ -465,7 +492,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         run_path: str | None = None,
         skip_reflect: bool = False,
         skip_index_sync: bool = False,
-    ) -> dict[str, object]:
+    ) -> DeliverResultDict:
         """Persist your learnings and progress for future sessions — without this, your work is invisible to the next agent.
 
         Runs critical steps synchronously (reflect, checkpoint, CLAUDE.md sync),
@@ -483,7 +510,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         reader = FileStateReader()
         writer = FileStateWriter()
         t0 = time.monotonic()
-        results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
+        results: DeliverResultDict = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
         trw_dir = resolve_trw_dir()
 
@@ -506,12 +533,29 @@ def register_ceremony_tools(server: FastMCP) -> None:
         from trw_mcp.tools._ceremony_helpers import check_delivery_gates
 
         gate_result = check_delivery_gates(resolved_run, reader)
-        results.update(gate_result)
+        # Unpack DeliveryGatesDict keys explicitly (all declared in DeliverResultDict)
+        if "review_warning" in gate_result:
+            results["review_warning"] = gate_result["review_warning"]
+        if "review_advisory" in gate_result:
+            results["review_advisory"] = gate_result["review_advisory"]
+        if "integration_review_block" in gate_result:
+            results["integration_review_block"] = gate_result["integration_review_block"]
+        if "integration_review_warning" in gate_result:
+            results["integration_review_warning"] = gate_result["integration_review_warning"]
+        if "untracked_warning" in gate_result:
+            results["untracked_warning"] = gate_result["untracked_warning"]
+        if "build_gate_warning" in gate_result:
+            results["build_gate_warning"] = gate_result["build_gate_warning"]
+        if "warning" in gate_result:
+            results["warning"] = gate_result["warning"]
 
         # Step 0c: Copy compliance artifacts (INFRA-027-FR05)
         from trw_mcp.tools._ceremony_helpers import copy_compliance_artifacts
         compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
-        results.update(compliance_result)
+        if "compliance_artifacts_copied" in compliance_result:
+            results["compliance_artifacts_copied"] = compliance_result["compliance_artifacts_copied"]
+        if "compliance_dir" in compliance_result:
+            results["compliance_dir"] = compliance_result["compliance_dir"]
 
         # Block delivery if integration review has blocking verdict
         if gate_result.get("integration_review_block"):
@@ -524,20 +568,23 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # These 3 steps must complete before returning — they produce the
         # artifacts the next session depends on.
 
+        # Use a typed accumulator view for _run_step (which operates on dict[str, object])
+        _results_view: dict[str, object] = cast(dict[str, object], results)
+
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:
-            _run_step("reflect", lambda: _do_reflect(trw_dir, resolved_run), results, errors)
+            _run_step("reflect", lambda: cast(dict[str, object], _do_reflect(trw_dir, resolved_run)), _results_view, errors)
         else:
             results["reflect"] = {"status": "skipped"}
 
         # Step 2: Checkpoint (delivery state snapshot)
         if resolved_run is not None:
-            _run_step("checkpoint", lambda: _step_checkpoint(resolved_run), results, errors)
+            _run_step("checkpoint", lambda: _step_checkpoint(resolved_run), _results_view, errors)
         else:
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
         # Step 3: CLAUDE.md sync
-        _run_step("claude_md_sync", lambda: _do_claude_md_sync(trw_dir), results, errors)
+        _run_step("claude_md_sync", lambda: cast(dict[str, object], _do_claude_md_sync(trw_dir)), _results_view, errors)
 
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
@@ -547,7 +594,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # affect the next session's startup and can run after we return.
         # Concurrency-safe: file lock prevents overlapping deferred batches.
         deferred_status = _launch_deferred(
-            trw_dir, resolved_run, results,
+            trw_dir, resolved_run, _results_view,
             skip_index_sync=skip_index_sync,
         )
         results["deferred"] = deferred_status

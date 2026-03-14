@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
 
 import structlog
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import BatchSendResult
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -60,7 +60,7 @@ class BatchSender:
             input_path=input_path,
         )
 
-    def send(self) -> dict[str, object]:
+    def send(self) -> BatchSendResult:
         """Send all queued events to all platform backends.
 
         Fan-out: sends to every configured URL. A batch is "sent" if
@@ -80,7 +80,7 @@ class BatchSender:
 
         total_sent = 0
         total_failed = 0
-        unsent: list[dict[str, Any]] = []
+        unsent: list[dict[str, object]] = []
 
         for i in range(0, len(records), self._batch_size):
             batch = records[i : i + self._batch_size]
@@ -104,7 +104,7 @@ class BatchSender:
             "skipped_reason": None,
         }
 
-    def _send_batch_fanout(self, batch: list[dict[str, Any]]) -> bool:
+    def _send_batch_fanout(self, batch: list[dict[str, object]]) -> bool:
         """Send a batch to all configured URLs in parallel.
 
         Each URL is attempted independently via ThreadPoolExecutor so that
@@ -133,7 +133,7 @@ class BatchSender:
                     logger.debug("batch_future_failed", exc_type=type(exc).__name__)
             return any_success
 
-    def _send_batch_to(self, base_url: str, batch: list[dict[str, Any]]) -> bool:
+    def _send_batch_to(self, base_url: str, batch: list[dict[str, object]]) -> bool:
         """Attempt to send a batch to one URL with exponential backoff retry."""
         url = f"{base_url.rstrip('/')}/v1/telemetry"
 
@@ -157,7 +157,7 @@ class BatchSender:
         logger.warning("batch_send_failed", batch_size=len(batch), url=url)
         return False
 
-    def _http_post(self, url: str, payload: list[dict[str, Any]]) -> bool:
+    def _http_post(self, url: str, payload: list[dict[str, object]]) -> bool:
         """POST payload to URL. Returns True on 2xx response.
 
         Uses urllib.request to avoid adding httpx as a hard dependency.
@@ -183,7 +183,7 @@ class BatchSender:
         except (urllib.error.URLError, urllib.error.HTTPError, OSError):
             return False
 
-    def _rewrite_queue(self, remaining: list[dict[str, Any]]) -> None:
+    def _rewrite_queue(self, remaining: list[dict[str, object]]) -> None:
         """Rewrite the JSONL queue with only remaining (unsent) events."""
         if not remaining:
             self._input_path.write_text("", encoding="utf-8")

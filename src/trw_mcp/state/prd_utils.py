@@ -180,6 +180,17 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
 
         # Reconstruct file: new frontmatter + original body
         body = content[match.end():]
+
+        # FR02 (PRD-FIX-056): Sync prose Quick Reference status line when status changes
+        if "status" in updates:
+            new_status = str(updates["status"])
+            body = re.sub(
+                r"(- \*\*Status\*\*:\s*)(\w+)",
+                lambda m: m.group(1) + new_status.capitalize(),
+                body,
+                count=1,
+            )
+
         new_content = f"---\n{new_fm}---{body}"
 
         # Atomic write: write to temp, then rename
@@ -268,12 +279,21 @@ def check_transition_guards(
         TransitionResult indicating whether guards passed.
     """
     from trw_mcp.models.config import get_config as _get_config
+    from trw_mcp.state.validation.prd_status import validate_status_transition
 
     _config = config or _get_config()
 
     # Identity transition — no guard needed
     if current == target:
         return TransitionResult(allowed=True, reason="Identity transition (no-op).")
+
+    # FR03 (PRD-FIX-056): Validate against the canonical state machine first
+    if not validate_status_transition(current.value, target.value):
+        return TransitionResult(
+            allowed=False,
+            reason=f"Transition '{current.value}' → '{target.value}' is not permitted by the state machine.",
+            guard_details={"current": current.value, "target": target.value},
+        )
 
     # PRD-QUAL-013: Apply risk-scaled config from frontmatter
     from trw_mcp.models.requirements import QualityTier
@@ -331,6 +351,17 @@ def check_transition_guards(
             reason="Quality validation passed.",
             guard_details=quality_details,
         )
+
+    # FR06 (PRD-FIX-056): Warn on null approved_by for terminal transitions
+    _TERMINAL_TARGETS = {PRDStatus.DONE, PRDStatus.DEPRECATED}
+    if target in _TERMINAL_TARGETS:
+        approved_by = fm.get("approved_by")
+        if not approved_by:
+            return TransitionResult(
+                allowed=True,
+                reason="No guard for this transition.",
+                guard_details={"approval_warning": "approved_by is null on terminal transition"},
+            )
 
     # All other transitions have no guards
     return TransitionResult(allowed=True, reason="No guard for this transition.")

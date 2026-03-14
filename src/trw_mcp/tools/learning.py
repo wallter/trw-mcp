@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -18,6 +19,7 @@ from fastmcp import FastMCP
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import LearningEntryDict, LearnResultDict, RecallResultDict
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.analytics import (
@@ -108,7 +110,7 @@ def register_learning_tools(server: FastMCP) -> None:
         source_type: str = "agent",
         source_identity: str = "",
         consolidated_from: list[str] | None = None,
-    ) -> dict[str, object]:
+    ) -> LearnResultDict:
         """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
         Writes a learning entry to .trw/learnings/ with utility scoring. High-impact
@@ -166,7 +168,7 @@ def register_learning_tools(server: FastMCP) -> None:
         all_active: list[dict[str, object]] = []
         # Fail-open: listing failure must not block learning recording
         with contextlib.suppress(OSError, StateError, ValueError, TypeError):
-            all_active = list_active_learnings(trw_dir)
+            all_active = [cast(dict[str, object], e) for e in list_active_learnings(trw_dir)]
 
         # Forced distribution soft-cap check (PRD-CORE-034-FR01)
         calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
@@ -193,7 +195,7 @@ def register_learning_tools(server: FastMCP) -> None:
             entries_dir, reader, writer, config,
         )
         if dedup_result is not None:
-            return dedup_result
+            return cast(LearnResultDict, dedup_result)
 
         # Store via SQLite adapter (primary path) — after dedup to avoid orphans
         adapter_store(
@@ -283,14 +285,14 @@ def register_learning_tools(server: FastMCP) -> None:
         )
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
-        result_dict: dict[str, object] = {
+        result_dict: LearnResultDict = {
             "learning_id": learning_id,
             "path": str(entry_path),
             "status": "recorded",
             "distribution_warning": distribution_warning,
         }
         if distribution_soft_cap_warning:
-            result_dict["soft_cap_warning"] = distribution_soft_cap_warning
+            result_dict["distribution_warning"] = distribution_soft_cap_warning
 
         # Increment learnings count in ceremony state tracker (PRD-CORE-074 FR04)
         try:
@@ -302,7 +304,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Inject ceremony nudge into response (PRD-CORE-074 FR01)
         try:
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            result_dict = append_ceremony_nudge(result_dict, trw_dir)
+            append_ceremony_nudge(cast(dict[str, object], result_dict), trw_dir)
         except Exception:  # justified: fail-open, nudge injection must not block learning
             pass
 
@@ -381,7 +383,7 @@ def register_learning_tools(server: FastMCP) -> None:
         max_results: int | None = None,
         compact: bool | None = None,
         topic: str | None = None,
-    ) -> dict[str, object]:
+    ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
 
         Searches the learning store by keyword, tags, and impact score. Results are
@@ -458,7 +460,8 @@ def register_learning_tools(server: FastMCP) -> None:
             from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
             remote = fetch_shared_learnings(query)
             if remote:
-                matching_learnings = list(matching_learnings) + remote
+                combined: list[LearningEntryDict] = list(matching_learnings) + cast(list[LearningEntryDict], remote)
+                matching_learnings = combined
         except Exception:  # noqa: BLE001 — fail-open for external service
             logger.debug("remote_recall_failed", exc_info=True)
 
@@ -466,7 +469,7 @@ def register_learning_tools(server: FastMCP) -> None:
         matching_patterns = search_patterns(
             trw_dir / config.patterns_dir, query_tokens, reader,
         )
-        ranked_learnings = rank_by_utility(
+        ranked_learnings: list[LearningEntryDict] = rank_by_utility(
             matching_learnings, query_tokens, config.recall_utility_lambda,
         )
 
@@ -498,9 +501,9 @@ def register_learning_tools(server: FastMCP) -> None:
             compact=use_compact,
         )
 
-        recall_result: dict[str, object] = {
+        recall_result: RecallResultDict = {
             "query": query,
-            "learnings": ranked_learnings,
+            "learnings": cast(list[LearningEntryDict], ranked_learnings),
             "patterns": matching_patterns,
             "context": context_data,
             "total_matches": len(ranked_learnings) + len(matching_patterns),
@@ -513,7 +516,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Inject ceremony nudge into response (PRD-CORE-074 FR01)
         try:
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            recall_result = append_ceremony_nudge(recall_result, trw_dir, available_learnings=total_available)
+            append_ceremony_nudge(cast(dict[str, object], recall_result), trw_dir, available_learnings=total_available)
         except Exception:  # justified: fail-open, nudge injection must not block recall
             pass
 

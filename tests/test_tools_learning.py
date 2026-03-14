@@ -1397,7 +1397,7 @@ class TestRecallCompactMode:
 class TestOutcomeCorrelation:
     """Tests for PRD-CORE-004 Phase 1c — automatic outcome correlation."""
 
-    def test_process_outcome_updates_q_values(self, tmp_path: Path, reader: FileStateReader) -> None:
+    def test_process_outcome_updates_q_values(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """_process_outcome updates Q-values for recently recalled learnings."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1407,25 +1407,32 @@ class TestOutcomeCorrelation:
         )
         lid = result["learning_id"]
 
-        # Recall the learning (creates receipt)
-        tools["trw_recall"].fn(query="outcome correlation q update")
+        trw_dir = tmp_path / _CFG.trw_dir
+
+        # Create {lid}.yaml so process_outcome can write back Q-values to disk.
+        # process_outcome only writes YAML when entries_dir/{id}.yaml exists.
+        entries_dir = _entries_dir(tmp_path)
+        writer.write_yaml(entries_dir / f"{lid}.yaml", {"id": lid})
+
+        # Write recall receipt directly to avoid recall_tracking path isolation issues.
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        writer.append_jsonl(
+            logs_dir / "recall_tracking.jsonl",
+            {"ts": datetime.now(timezone.utc).isoformat(), "matched_ids": [lid]},
+        )
 
         # Process a positive outcome
-        trw_dir = tmp_path / _CFG.trw_dir
         updated = process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
         assert lid in updated
 
-        # Verify Q-value was updated on disk
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                assert float(str(data.get("q_value", 0.5))) > 0.5
-                assert int(str(data.get("q_observations", 0))) == 1
-                break
+        # Verify Q-value was written back to {lid}.yaml
+        data = reader.read_yaml(entries_dir / f"{lid}.yaml")
+        assert float(str(data.get("q_value", 0.5))) > 0.5
+        assert int(str(data.get("q_observations", 0))) == 1
 
-    def test_process_outcome_writes_history(self, tmp_path: Path, reader: FileStateReader) -> None:
+    def test_process_outcome_writes_history(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Outcome processing appends to outcome_history."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1435,23 +1442,24 @@ class TestOutcomeCorrelation:
         )
         lid = result["learning_id"]
 
+        # Create {lid}.yaml so process_outcome can write outcome_history to disk.
+        entries_dir = _entries_dir(tmp_path)
+        writer.write_yaml(entries_dir / f"{lid}.yaml", {"id": lid})
+
         tools["trw_recall"].fn(query="outcome history write")
 
         trw_dir = tmp_path / _CFG.trw_dir
         process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                history = data.get("outcome_history", [])
-                assert len(history) == 1
-                assert "tests_passed" in history[0]
-                assert "+0.8" in history[0]
-                break
+        data = reader.read_yaml(entries_dir / f"{lid}.yaml")
+        history = data.get("outcome_history", [])
+        assert len(history) == 1
+        assert "tests_passed" in history[0]
+        assert "+0.8" in history[0]
 
     def test_process_outcome_caps_history(
-        self, tmp_path: Path, reader: FileStateReader, monkeypatch: pytest.MonkeyPatch,
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """outcome_history is capped to learning_outcome_history_cap."""
         # Set cap to 3 for testing — process_outcome reads get_config() in _correlation
@@ -1466,6 +1474,10 @@ class TestOutcomeCorrelation:
         )
         lid = result["learning_id"]
 
+        # Create {lid}.yaml so process_outcome can write outcome_history to disk.
+        entries_dir = _entries_dir(tmp_path)
+        writer.write_yaml(entries_dir / f"{lid}.yaml", {"id": lid})
+
         trw_dir = tmp_path / _CFG.trw_dir
 
         # Process 5 outcomes
@@ -1473,15 +1485,11 @@ class TestOutcomeCorrelation:
             tools["trw_recall"].fn(query="history cap test")
             process_outcome(trw_dir, reward=0.8, event_label=f"event_{i}")
 
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                history = data.get("outcome_history", [])
-                assert len(history) <= 3
-                # Should keep the most recent
-                assert "event_4" in history[-1]
-                break
+        data = reader.read_yaml(entries_dir / f"{lid}.yaml")
+        history = data.get("outcome_history", [])
+        assert len(history) <= 3
+        # Should keep the most recent
+        assert "event_4" in history[-1]
 
     def test_process_outcome_no_receipts(self, tmp_path: Path) -> None:
         """_process_outcome returns empty list when no receipts exist."""
@@ -1581,7 +1589,7 @@ class TestOutcomeCorrelation:
         updated = process_outcome_for_event("some_random_event")
         assert updated == []
 
-    def test_process_outcome_for_event_error_keyword(self, tmp_path: Path, reader: FileStateReader) -> None:
+    def test_process_outcome_for_event_error_keyword(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Events with error keywords get negative reward."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1591,20 +1599,20 @@ class TestOutcomeCorrelation:
         )
         lid = result["learning_id"]
 
+        # Create {lid}.yaml so process_outcome can write Q-value to disk.
+        entries_dir = _entries_dir(tmp_path)
+        writer.write_yaml(entries_dir / f"{lid}.yaml", {"id": lid, "q_value": 0.5})
+
         tools["trw_recall"].fn(query="error keyword correlation")
 
         updated = process_outcome_for_event("build_error_occurred")
         assert lid in updated
 
         # Verify Q-value decreased
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                assert float(str(data.get("q_value", 0.5))) < 0.5
-                break
+        data = reader.read_yaml(entries_dir / f"{lid}.yaml")
+        assert float(str(data.get("q_value", 0.5))) < 0.5
 
-    def test_negative_reward_decreases_q(self, tmp_path: Path, reader: FileStateReader) -> None:
+    def test_negative_reward_decreases_q(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Negative reward events decrease Q-value."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1614,20 +1622,20 @@ class TestOutcomeCorrelation:
         )
         lid = result["learning_id"]
 
+        # Create {lid}.yaml so process_outcome can write Q-value to disk.
+        entries_dir = _entries_dir(tmp_path)
+        writer.write_yaml(entries_dir / f"{lid}.yaml", {"id": lid, "q_value": 0.5})
+
         tools["trw_recall"].fn(query="negative reward q decrease")
 
         trw_dir = tmp_path / _CFG.trw_dir
         process_outcome(trw_dir, reward=-0.5, event_label="tests_failed")
 
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                q_val = float(str(data.get("q_value", 0.5)))
-                assert q_val < 0.5  # decreased from default
-                break
+        data = reader.read_yaml(entries_dir / f"{lid}.yaml")
+        q_val = float(str(data.get("q_value", 0.5)))
+        assert q_val < 0.5  # decreased from default
 
-    def test_multiple_outcomes_converge(self, tmp_path: Path, reader: FileStateReader) -> None:
+    def test_multiple_outcomes_converge(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Multiple positive outcomes increase Q-value progressively."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
@@ -1637,19 +1645,19 @@ class TestOutcomeCorrelation:
         )
         lid = result["learning_id"]
 
+        # Create {lid}.yaml so process_outcome can write Q-value to disk.
+        entries_dir = _entries_dir(tmp_path)
+        writer.write_yaml(entries_dir / f"{lid}.yaml", {"id": lid, "q_value": 0.5})
+
         trw_dir = tmp_path / _CFG.trw_dir
         for _ in range(5):
             tools["trw_recall"].fn(query="convergence outcome test")
             process_outcome(trw_dir, reward=0.8, event_label="tests_passed")
 
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == lid:
-                q_val = float(str(data.get("q_value", 0.5)))
-                assert q_val > 0.6  # moved toward 0.8
-                assert int(str(data.get("q_observations", 0))) == 5
-                break
+        data = reader.read_yaml(entries_dir / f"{lid}.yaml")
+        q_val = float(str(data.get("q_value", 0.5)))
+        assert q_val > 0.6  # moved toward 0.8
+        assert int(str(data.get("q_observations", 0))) == 5
 
     def test_only_matched_learnings_updated(self, tmp_path: Path) -> None:
         """Only learnings in recent receipts have Q-values updated."""

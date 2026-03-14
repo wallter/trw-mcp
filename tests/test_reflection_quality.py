@@ -273,7 +273,10 @@ class TestAnalyticsExtended:
         )
         update_analytics_extended(trw_dir, 3, is_reflection=True, is_success=True)
         data = _reader.read_yaml(trw_dir / "context" / "analytics.yaml")
-        assert data["sessions_tracked"] == 11
+        # sessions_tracked is preserved (incremented by session_start, not update_analytics_extended)
+        assert data["sessions_tracked"] == 10
+        # sessions_delivered is incremented by _update_core_counters
+        assert data["sessions_delivered"] == 1
         assert data["total_learnings"] == 23
         assert data["claude_md_syncs"] == 5  # untouched
         assert data["reflections_completed"] == 1

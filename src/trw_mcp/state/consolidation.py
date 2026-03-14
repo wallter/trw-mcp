@@ -20,6 +20,7 @@ import structlog
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -40,7 +41,7 @@ logger = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 
-def _is_clusterable(data: dict[str, object]) -> bool:
+def _is_clusterable(data: LearningEntryDict) -> bool:
     """Check if an entry is eligible for clustering (not consolidated/archived)."""
     if str(data.get("source_type", "")) == "consolidated":
         return False
@@ -53,7 +54,7 @@ def _load_active_entries(
     entries_dir: Path,
     reader: FileStateReader,
     max_entries: int,
-) -> list[dict[str, object]]:
+) -> list[LearningEntryDict]:
     """Load active learning entries for clustering, preferring SQLite.
 
     PRD-FIX-033-FR04: Attempts SQLite first, falls back to YAML glob.
@@ -67,7 +68,7 @@ def _load_active_entries(
     Returns:
         List of active entry dicts.
     """
-    entries: list[dict[str, object]] = []
+    entries: list[LearningEntryDict] = []
 
     # SQLite path
     try:
@@ -95,23 +96,24 @@ def _load_active_entries(
         if len(entries) >= max_entries:
             break
         try:
-            data = reader.read_yaml(yaml_file)
+            raw: dict[str, object] = reader.read_yaml(yaml_file)
         except (OSError, StateError):
             continue
-        if str(data.get("status", "active")) != "active":
+        if str(raw.get("status", "active")) != "active":
             continue
-        if _is_clusterable(data):
-            entries.append(data)
+        yaml_entry = cast("LearningEntryDict", raw)
+        if _is_clusterable(yaml_entry):
+            entries.append(yaml_entry)
 
     return entries
 
 
 def _tag_overlap_clusters(
-    entries: list[dict[str, object]],
+    entries: list[LearningEntryDict],
     *,
     min_cluster_size: int = 3,
     min_shared_tags: int = 2,
-) -> list[list[dict[str, object]]]:
+) -> list[list[LearningEntryDict]]:
     """Cluster entries by tag overlap using union-find.
 
     PRD-FIX-052-FR03: Fallback clustering when embeddings are unavailable.
@@ -153,7 +155,7 @@ def _tag_overlap_clusters(
                     parent[pi] = pj
 
     # Collect groups by root
-    groups: dict[int, list[dict[str, object]]] = {}
+    groups: dict[int, list[LearningEntryDict]] = {}
     for i, entry in enumerate(entries):
         root = find(i)
         groups.setdefault(root, []).append(entry)
@@ -169,7 +171,7 @@ def find_clusters(
     similarity_threshold: float = 0.75,
     min_cluster_size: int = 3,
     max_entries: int = 50,
-) -> list[list[dict[str, object]]]:
+) -> list[list[LearningEntryDict]]:
     """Detect clusters of semantically similar active learning entries.
 
     Loads up to *max_entries* active entries, generates embeddings in a
@@ -234,7 +236,7 @@ def find_clusters(
     vectors = embed_batch(texts)
 
     # Build (entry, vector) pairs, dropping entries with no embedding
-    indexed: list[tuple[dict[str, object], list[float]]] = []
+    indexed: list[tuple[LearningEntryDict, list[float]]] = []
     for i, vec in enumerate(vectors):
         if vec is not None:
             indexed.append((entries[i], vec))
@@ -265,7 +267,7 @@ def find_clusters(
 
 
 def _summarize_cluster_llm(
-    cluster: Sequence[dict[str, object]],
+    cluster: Sequence[LearningEntryDict],
     llm: LLMClient | None = None,
 ) -> dict[str, str] | None:
     """Summarize a cluster of entries into a single consolidated entry via LLM.
@@ -331,7 +333,7 @@ def _summarize_cluster_llm(
 
 
 def _create_consolidated_entry(
-    cluster: Sequence[dict[str, object]],
+    cluster: Sequence[LearningEntryDict],
     summary: str,
     detail: str,
     entries_dir: Path,
@@ -415,7 +417,7 @@ def _create_consolidated_entry(
 
 
 def _archive_originals(
-    cluster: Sequence[dict[str, object]],
+    cluster: Sequence[LearningEntryDict],
     consolidated_id: str,
     entries_dir: Path,
     reader: FileStateReader,
@@ -533,7 +535,7 @@ def _rollback_archive(
 
 
 def _summarize_cluster_fallback(
-    cluster: Sequence[dict[str, object]],
+    cluster: Sequence[LearningEntryDict],
 ) -> dict[str, str]:
     """Select the longest-content entry as the consolidated summary/detail.
 
@@ -710,7 +712,7 @@ def consolidate_cycle(
     return result
 
 
-def _mean_pairwise_similarity(cluster: Sequence[dict[str, object]]) -> float:
+def _mean_pairwise_similarity(cluster: Sequence[LearningEntryDict]) -> float:
     """Compute mean pairwise cosine similarity for dry-run preview.
 
     Returns 0.0 when embeddings are unavailable or cluster is too small.

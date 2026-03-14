@@ -23,14 +23,15 @@ class RiskProfile:
     review_threshold: float
     draft_threshold: float
     min_content_density: float
-    weights: tuple[float, ...]  # (density, structure, trace, smell, read, ears)
+    weights: tuple[float, ...]  # (density, structure, traceability) — 3 active dimensions, sum=100
 
 
 RISK_PROFILES: dict[str, RiskProfile] = {
-    "critical": RiskProfile(92.0, 75.0, 45.0, 0.50, (20, 15, 25, 20, 5, 15)),
-    "high":     RiskProfile(88.0, 70.0, 35.0, 0.40, (22, 15, 23, 18, 7, 15)),
-    "medium":   RiskProfile(85.0, 60.0, 30.0, 0.30, (25, 15, 20, 15, 10, 15)),
-    "low":      RiskProfile(75.0, 50.0, 20.0, 0.20, (30, 15, 15, 10, 15, 15)),
+    # weights: (density, structure, traceability) — must sum to 100, active dimensions only
+    "critical": RiskProfile(92.0, 75.0, 45.0, 0.50, (30, 25, 45)),
+    "high":     RiskProfile(88.0, 70.0, 35.0, 0.40, (35, 25, 40)),
+    "medium":   RiskProfile(85.0, 60.0, 30.0, 0.30, (42, 25, 33)),
+    "low":      RiskProfile(75.0, 50.0, 20.0, 0.20, (50, 25, 25)),
 }
 
 _PRIORITY_TO_RISK: dict[str, str] = {
@@ -85,11 +86,9 @@ def get_risk_scaled_config(config: TRWConfig, risk_level: str) -> TRWConfig:
         "validation_skeleton_threshold": profile.draft_threshold,
         # Content density minimum
         "prd_min_content_density": profile.min_content_density,
-        # Dimension weights
+        # Active dimension weights (density, structure, traceability) — sum=100
         "validation_density_weight": weights[0],
         "validation_structure_weight": weights[1],
         "validation_traceability_weight": weights[2],
-        "validation_smell_weight": weights[3],
-        "validation_readability_weight": weights[4],
-        "validation_ears_weight": weights[5],
+        # Stub dimension weights are not set — they remain 0.0 (reserved)
     })

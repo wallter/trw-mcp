@@ -12,6 +12,14 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts._tools import (
+    ProgressiveExpandResult,
+    UsageCallerEntryDict,
+    UsageGroupEntryDict,
+    UsageModelEntryDict,
+    UsageReportResult,
+)
+from trw_mcp.models.typed_dicts._trust import TrustLevelQueryResult
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
@@ -53,7 +61,7 @@ def register_usage_tools(server: FastMCP) -> None:
     def trw_usage_report(
         period: str = "all",
         group_by: str = "none",
-    ) -> dict[str, object]:
+    ) -> UsageReportResult:
         """Track your LLM API spend — total tokens, costs, and breakdowns by model and caller.
 
         Reads .trw/logs/llm_usage.jsonl and aggregates token usage, cost estimates,
@@ -101,8 +109,8 @@ def register_usage_tools(server: FastMCP) -> None:
         total_output_tokens = 0
         total_cost = 0.0
 
-        by_model: dict[str, dict[str, object]] = {}
-        by_caller: dict[str, dict[str, object]] = {}
+        by_model: dict[str, UsageModelEntryDict] = {}
+        by_caller: dict[str, UsageCallerEntryDict] = {}
 
         for record in records:
             model = str(record.get("model", "unknown"))
@@ -126,11 +134,11 @@ def register_usage_tools(server: FastMCP) -> None:
                     "cost_estimate_usd": 0.0,
                 }
             model_entry = by_model[model]
-            model_entry["calls"] = cast(int, model_entry["calls"]) + 1
-            model_entry["input_tokens"] = cast(int, model_entry["input_tokens"]) + input_tokens
-            model_entry["output_tokens"] = cast(int, model_entry["output_tokens"]) + output_tokens
+            model_entry["calls"] = model_entry["calls"] + 1
+            model_entry["input_tokens"] = model_entry["input_tokens"] + input_tokens
+            model_entry["output_tokens"] = model_entry["output_tokens"] + output_tokens
             model_entry["cost_estimate_usd"] = round(
-                cast(float, model_entry["cost_estimate_usd"]) + cost, 6
+                model_entry["cost_estimate_usd"] + cost, 6
             )
 
             # Aggregate by caller
@@ -141,9 +149,9 @@ def register_usage_tools(server: FastMCP) -> None:
                     "output_tokens": 0,
                 }
             caller_entry = by_caller[caller]
-            caller_entry["calls"] = cast(int, caller_entry["calls"]) + 1
-            caller_entry["input_tokens"] = cast(int, caller_entry["input_tokens"]) + input_tokens
-            caller_entry["output_tokens"] = cast(int, caller_entry["output_tokens"]) + output_tokens
+            caller_entry["calls"] = caller_entry["calls"] + 1
+            caller_entry["input_tokens"] = caller_entry["input_tokens"] + input_tokens
+            caller_entry["output_tokens"] = caller_entry["output_tokens"] + output_tokens
 
         total_cost_rounded = round(total_cost, 6)
 
@@ -155,7 +163,7 @@ def register_usage_tools(server: FastMCP) -> None:
             total_cost_estimate_usd=total_cost_rounded,
         )
 
-        result: dict[str, object] = {
+        result: UsageReportResult = {
             "period": period,
             "log_path": str(log_path),
             "total_calls": total_calls,
@@ -176,7 +184,7 @@ def register_usage_tools(server: FastMCP) -> None:
                 "task": "task",
             }
             field_key = field_map.get(group_by, group_by)
-            grouped: dict[str, dict[str, object]] = {}
+            grouped: dict[str, UsageGroupEntryDict] = {}
             for record in records:
                 bucket = str(record.get(field_key, "unknown"))
                 if bucket not in grouped:
@@ -190,11 +198,11 @@ def register_usage_tools(server: FastMCP) -> None:
                 rec_input = int(str(record.get("input_tokens", 0)))
                 rec_output = int(str(record.get("output_tokens", 0)))
                 rec_model = str(record.get("model", "unknown"))
-                entry["calls"] = cast(int, entry["calls"]) + 1
-                entry["input_tokens"] = cast(int, entry["input_tokens"]) + rec_input
-                entry["output_tokens"] = cast(int, entry["output_tokens"]) + rec_output
+                entry["calls"] = entry["calls"] + 1
+                entry["input_tokens"] = entry["input_tokens"] + rec_input
+                entry["output_tokens"] = entry["output_tokens"] + rec_output
                 entry["cost_estimate_usd"] = round(
-                    cast(float, entry["cost_estimate_usd"])
+                    entry["cost_estimate_usd"]
                     + _compute_cost(rec_model, rec_input, rec_output),
                     6,
                 )
@@ -205,7 +213,7 @@ def register_usage_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_progressive_expand(group: str) -> dict[str, object]:
+    def trw_progressive_expand(group: str) -> ProgressiveExpandResult:
         """Expand a capability group so its tools show full schemas.
 
         When progressive disclosure is enabled, non-hot-set tools only show
@@ -236,7 +244,7 @@ def register_usage_tools(server: FastMCP) -> None:
     @log_tool_call
     def trw_trust_level(
         security_tags: list[str] | None = None,
-    ) -> dict[str, object]:
+    ) -> TrustLevelQueryResult:
         """Query your project's trust tier — Crawl/Walk/Run graduated autonomy.
 
         Returns the current trust level based on accumulated successful sessions.
@@ -247,14 +255,21 @@ def register_usage_tools(server: FastMCP) -> None:
             security_tags: Optional list of security tags (e.g. ["auth", "secrets"])
                 to evaluate review requirements for a specific change.
         """
-        from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.trust import requires_human_review, trust_level_calculate
 
         trw_dir = resolve_trw_dir()
-        result = trust_level_calculate(trw_dir)
+        trust = trust_level_calculate(trw_dir)
+        result: TrustLevelQueryResult = {
+            "tier": trust["tier"],
+            "session_count": trust["session_count"],
+            "review_mode": trust["review_mode"],
+            "review_sample_rate": trust["review_sample_rate"],
+            "locked": trust["locked"],
+            "lock_reason": trust["lock_reason"],
+        }
 
         if security_tags:
-            review = requires_human_review(security_tags, [], result)
+            review = requires_human_review(security_tags, [], cast(dict[str, object], trust))
             result["review_required"] = review["required"]
             result["review_reason"] = review["reason"]
 

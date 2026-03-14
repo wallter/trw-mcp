@@ -14,6 +14,8 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import CheckpointResultDict, PreCompactResultDict
+from trw_mcp.models.typed_dicts._orchestration import CheckpointRecordDict
 from trw_mcp.state._paths import find_active_run, resolve_project_root
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools.telemetry import log_tool_call
@@ -39,7 +41,7 @@ def _reset_tool_call_counter() -> None:
     _checkpoint_state.counter = 0
 
 
-def _maybe_auto_checkpoint() -> dict[str, object] | None:
+def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
     """Increment tool call counter; create checkpoint at configured intervals.
 
     Returns checkpoint info dict if triggered, None otherwise.
@@ -77,7 +79,7 @@ def _do_checkpoint(run_dir: Path, message: str) -> None:
     events = FileEventLogger(writer)
 
     checkpoints_path = run_dir / "meta" / "checkpoints.jsonl"
-    checkpoint_data: dict[str, object] = {
+    checkpoint_data: CheckpointRecordDict = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "message": message,
     }
@@ -93,7 +95,7 @@ def register_checkpoint_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_pre_compact_checkpoint() -> dict[str, object]:
+    def trw_pre_compact_checkpoint() -> PreCompactResultDict:
         """Create a safety checkpoint before context compaction (PRD-CORE-053).
 
         Called by the PreCompact hook to preserve state before the LLM
@@ -116,7 +118,7 @@ def register_checkpoint_tools(server: FastMCP) -> None:
 
             reader = FileStateReader()
 
-            result: dict[str, object] = {
+            result: PreCompactResultDict = {
                 "status": "success",
                 "run_path": str(run_dir),
             }

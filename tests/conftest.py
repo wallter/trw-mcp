@@ -271,19 +271,14 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     The _step_ceremony_feedback function uses `import trw_mcp.tools.ceremony as _cer;
     _cer.resolve_trw_dir()` — this patch covers that code path via ceremony module.
     """
-    test_root = tmp_path / "isolated_project"
-    test_root.mkdir()
+    test_root = tmp_path
     test_trw_dir = test_root / ".trw"
-    test_trw_dir.mkdir()
-    (test_trw_dir / "context").mkdir()
-    (test_trw_dir / "logs").mkdir()
-    (test_trw_dir / "learnings" / "entries").mkdir(parents=True)
 
     def _fake_trw_dir() -> Path:
         return test_trw_dir
 
     def _fake_project_root() -> Path:
-        return tmp_path
+        return test_root
 
     # Patch source module
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", _fake_trw_dir)
@@ -300,6 +295,21 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
         pass  # Not yet imported
     try:
         monkeypatch.setattr("trw_mcp.tools.requirements.resolve_project_root", _fake_project_root)
+    except AttributeError:
+        pass  # Not yet imported
+
+    # Patch resources/ modules — they import resolve_project_root at module level,
+    # so the bound reference must be updated each test to point to the current tmp_path.
+    try:
+        monkeypatch.setattr(
+            "trw_mcp.resources.config.resolve_project_root", _fake_project_root
+        )
+    except AttributeError:
+        pass  # Not yet imported
+    try:
+        monkeypatch.setattr(
+            "trw_mcp.resources.run_state.resolve_project_root", _fake_project_root
+        )
     except AttributeError:
         pass  # Not yet imported
 

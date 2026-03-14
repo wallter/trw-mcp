@@ -14,11 +14,12 @@ import json
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import structlog
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import PublishResult
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import strip_pii
@@ -29,13 +30,27 @@ logger = structlog.get_logger()
 _HASH_FILE = ".publish_hashes.json"
 
 
-def _content_hash(data: dict[str, Any]) -> str:
+class _LearningPayload(TypedDict):
+    """Payload structure POSTed to the backend /v1/learnings endpoint."""
+
+    summary: str
+    detail: str
+    tags: list[str]
+    impact: float
+    embedding: list[float] | None
+    source_project: str
+    source_learning_id: str
+
+
+def _content_hash(data: dict[str, object]) -> str:
     """Deterministic hash of the publishable fields of a learning entry."""
+    raw_tags = data.get("tags")
+    tags_list: list[object] = raw_tags if isinstance(raw_tags, list) else []
     canonical = json.dumps(
         {
             "summary": str(data.get("summary", "")),
             "detail": str(data.get("detail", "")),
-            "tags": sorted(str(t) for t in (data.get("tags") or [])),
+            "tags": sorted(str(t) for t in tags_list),
             "impact": float(str(data.get("impact", 0.5))),
             "status": str(data.get("status", "active")),
         },
@@ -66,7 +81,7 @@ def _save_hashes(entries_dir: Path, hashes: dict[str, str]) -> None:
 
 def publish_learnings(
     min_impact: float = 0.5, *, force: bool = False
-) -> dict[str, object]:
+) -> PublishResult:
     """Publish high-impact learnings to the platform backend.
 
     Returns dict with: published, skipped, unchanged, errors, skipped_reason.
@@ -157,7 +172,7 @@ def publish_learnings(
                 if not isinstance(tags, list):
                     tags = []
 
-                payload: dict[str, Any] = {
+                payload: _LearningPayload = {
                     "summary": summary,
                     "detail": detail,
                     "tags": [str(t) for t in tags],
@@ -205,7 +220,7 @@ def publish_learnings(
     }
 
 
-def _post_learning(platform_url: str, payload: dict[str, Any], api_key: str = "") -> bool:
+def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = "") -> bool:
     """POST a learning to the backend. Returns True on 2xx.
 
     Retries up to 3 times on 429 (rate limit) with exponential backoff.

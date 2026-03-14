@@ -8,12 +8,14 @@ and composite reflection quality scoring.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import structlog
 
 import trw_mcp.state.analytics.core as _ac
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.state.analytics.entries import apply_status_update, resync_learning_index
 from trw_mcp.state.persistence import FileStateReader
@@ -51,7 +53,7 @@ def find_duplicate_learnings(
     entries_dir: Path,
     threshold: float = 0.8,
     *,
-    entries: list[dict[str, object]] | None = None,
+    entries: list[LearningEntryDict] | None = None,
 ) -> list[tuple[str, str, float]]:
     """Find duplicate learning entries by Jaccard similarity on summaries.
 
@@ -73,7 +75,7 @@ def find_duplicate_learnings(
     """
     if entries is not None:
         # PRD-FIX-033-FR03: Use pre-loaded entries (from SQLite)
-        active_entries = [
+        active_entries: list[LearningEntryDict] = [
             e for e in entries
             if str(e.get("status", "active")) == "active"
         ]
@@ -84,7 +86,7 @@ def find_duplicate_learnings(
         active_entries = []
         for _path, data in _ac._iter_entry_files(entries_dir, sorted_order=True):
             if is_active_entry(data):
-                active_entries.append(data)
+                active_entries.append(cast("LearningEntryDict", data))
 
     duplicates: list[tuple[str, str, float]] = []
     for i, entry_a in enumerate(active_entries):
@@ -127,7 +129,7 @@ def _compute_removal_scores(
 
 
 def _compute_removal_scores_from_sqlite(
-    sqlite_entries: list[dict[str, object]],
+    sqlite_entries: list[LearningEntryDict],
     entries_dir: Path,
     jaccard_threshold: float,
 ) -> tuple[list[tuple[str, str, float]], list[dict[str, object]]]:
@@ -151,7 +153,7 @@ def _compute_removal_scores_from_sqlite(
     )
     dummy_path = entries_dir / "_dummy.yaml"
     all_entries_tuples: list[tuple[Path, dict[str, object]]] = [
-        (dummy_path, e) for e in sqlite_entries
+        (dummy_path, cast("dict[str, object]", e)) for e in sqlite_entries
     ]
     utility_candidates = utility_based_prune_candidates(all_entries_tuples)
     return duplicates, utility_candidates
@@ -217,7 +219,7 @@ def auto_prune_excess_entries(
         return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0}
 
     # PRD-FIX-033-FR02: Try SQLite first, fall back to YAML
-    sqlite_entries: list[dict[str, object]] | None = None
+    sqlite_entries: list[LearningEntryDict] | None = None
     try:
         from trw_mcp.state.memory_adapter import list_entries_by_status
         sqlite_entries = list_entries_by_status(trw_dir, status="active")
@@ -310,7 +312,7 @@ def auto_prune_excess_entries(
 # ---------------------------------------------------------------------------
 
 
-def _score_learning_diversity(entries: list[dict[str, object]]) -> float:
+def _score_learning_diversity(entries: list[LearningEntryDict]) -> float:
     """Measure tag diversity across a list of learning entries.
 
     Counts unique tags across all entries and normalises to [0.0, 1.0]
@@ -331,7 +333,7 @@ def _score_learning_diversity(entries: list[dict[str, object]]) -> float:
 
 
 def _score_learning_depth(
-    entries: list[dict[str, object]],
+    entries: list[LearningEntryDict],
     total_entries: int,
 ) -> float:
     """Measure how deeply learnings are being accessed (access ratio).
@@ -356,7 +358,7 @@ def _score_learning_depth(
 
 
 def _score_impact_distribution(
-    entries: list[dict[str, object]],
+    entries: list[LearningEntryDict],
     total_entries: int,
 ) -> float:
     """Measure Q-learning activation rate across entries.
@@ -422,7 +424,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     # entries_for_metrics: the set of entries passed to sub-metric helpers.
     # SQLite path: active-only (list_active_learnings).
     # YAML path: all entries (original behaviour -- inactive entries counted too).
-    entries_for_metrics: list[dict[str, object]] = []
+    entries_for_metrics: list[LearningEntryDict] = []
 
     _used_sqlite = False
     try:
@@ -430,8 +432,8 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
         total_entries = count_entries(trw_dir)
         entries_for_metrics = list_active_learnings(trw_dir)
         active_entries = len(entries_for_metrics)
-        for data in entries_for_metrics:
-            src = str(data.get("source_type", ""))
+        for entry_data in entries_for_metrics:
+            src = str(entry_data.get("source_type", ""))
             if src:
                 source_types.add(src)
         _used_sqlite = True
@@ -444,7 +446,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
             total_entries += 1
             if is_active_entry(data):
                 active_entries += 1
-            entries_for_metrics.append(data)
+            entries_for_metrics.append(cast("LearningEntryDict", data))
             src = str(data.get("source_type", ""))
             if src:
                 source_types.add(src)
@@ -485,8 +487,8 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
         1 for data in entries_for_metrics if int(str(data.get("q_observations", 0))) > 0
     )
     unique_tags: set[str] = set()
-    for data in entries_for_metrics:
-        tags = data.get("tags", [])
+    for entry_data in entries_for_metrics:
+        tags = entry_data.get("tags", [])
         if isinstance(tags, list):
             unique_tags.update(str(t) for t in tags)
     unique_tags_count = len(unique_tags)

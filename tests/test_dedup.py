@@ -429,9 +429,7 @@ class TestTrwLearnDedup:
         # Patch module singletons
         mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
-        monkeypatch.setattr("trw_mcp.tools.learning._config", mock_config)
-        monkeypatch.setattr("trw_mcp.tools.learning._reader", reader)
-        monkeypatch.setattr("trw_mcp.tools.learning._writer", writer)
+        monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: mock_config)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",
@@ -1052,9 +1050,7 @@ class TestSkipUpdatesAccessCount:
 
         mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
-        monkeypatch.setattr("trw_mcp.tools.learning._config", mock_config)
-        monkeypatch.setattr("trw_mcp.tools.learning._reader", reader)
-        monkeypatch.setattr("trw_mcp.tools.learning._writer", writer)
+        monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: mock_config)
         monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr("trw_mcp.tools.learning.generate_learning_id", lambda: "L-skip-test")
 
@@ -1365,9 +1361,7 @@ class TestTrwLearnReturnDictKeys:
 
         cfg = TRWConfig(dedup_enabled=dedup_enabled, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
 
-        monkeypatch.setattr("trw_mcp.tools.learning._config", cfg)
-        monkeypatch.setattr("trw_mcp.tools.learning._reader", reader)
-        monkeypatch.setattr("trw_mcp.tools.learning._writer", writer)
+        monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: cfg)
         monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr("trw_mcp.tools.learning.generate_learning_id", lambda: "L-key-test")
         monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)

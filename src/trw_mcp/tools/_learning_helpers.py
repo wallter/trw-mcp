@@ -16,12 +16,14 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import structlog
 
 from trw_mcp.exceptions import StateError
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.typed_dicts import DedupHandleResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -82,7 +84,7 @@ def calibrate_impact(impact: float, config: TRWConfig) -> float:
         from trw_mcp.state.recall_tracking import get_recall_stats
 
         recall_stats = get_recall_stats()
-        user_weight = compute_calibration_accuracy(recall_stats)
+        user_weight = compute_calibration_accuracy(cast(dict[str, object], recall_stats))
         return bayesian_calibrate(
             user_impact=impact,
             user_weight=user_weight,
@@ -149,7 +151,7 @@ def check_and_handle_dedup(
     reader: FileStateReader,
     writer: FileStateWriter,
     config: TRWConfig,
-) -> dict[str, object] | None:
+) -> DedupHandleResult | None:
     """Check for semantic duplicates and handle skip/merge.
 
     When dedup is enabled and a near-duplicate is found:

@@ -15,6 +15,7 @@ from trw_mcp.models.run import (
     EventType,
     PhaseRequirements,
 )
+from trw_mcp.models.typed_dicts import TierCeremonyScoreResult
 from trw_mcp.scoring._utils import get_config
 
 # --- Adaptive Ceremony Depth (PRD-CORE-060) ---
@@ -179,7 +180,7 @@ _TIER_EXPECTATIONS: dict[str, _TierExpectation] = {
 def compute_tier_ceremony_score(
     events: list[dict[str, object]],
     complexity_class: ComplexityClass | str | None = None,
-) -> dict[str, object]:
+) -> TierCeremonyScoreResult:
     """Compute tier-aware ceremony score (PRD-CORE-060-FR03).
 
     Normalizes ceremony scores against tier-appropriate phase sets and
@@ -268,19 +269,19 @@ def compute_tier_ceremony_score(
     if tier_exp.review_mandatory and not has_review:
         score = max(0, score - tier_exp.missing_review_penalty)
 
-    return {
-        "score": score,
-        "tier": tier_str,
-        "matched_events": matched,
-        "expected_events": total_expected,
-        "has_recall": has_recall,
-        "has_init": has_init,
-        "checkpoint_count": checkpoint_count,
-        "has_learn": has_learn,
-        "has_build_check": has_build_check,
-        "has_deliver": has_deliver,
-        "has_review": has_review,
-    }
+    return TierCeremonyScoreResult(
+        score=score,
+        tier=tier_str,
+        matched_events=matched,
+        expected_events=total_expected,
+        has_recall=has_recall,
+        has_init=has_init,
+        checkpoint_count=checkpoint_count,
+        has_learn=has_learn,
+        has_build_check=has_build_check,
+        has_deliver=has_deliver,
+        has_review=has_review,
+    )
 
 
 __all__ = [

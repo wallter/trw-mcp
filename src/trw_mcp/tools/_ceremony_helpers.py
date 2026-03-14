@@ -10,10 +10,21 @@ Modularizes the two longest tool functions into focused, testable helpers:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.typed_dicts import (
+    AutoMaintenanceDict,
+    AutoRecalledItemDict,
+    ComplianceArtifactsDict,
+    DeliveryGatesDict,
+    FinalizeRunResult,
+    LearningEntryDict,
+    RunStatusDict,
+    SessionRecallExtrasDict,
+)
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_nudge import compute_nudge, read_ceremony_state
@@ -100,8 +111,8 @@ def perform_session_recalls(
     config: TRWConfig,
     reader: FileStateReader,
     run_dir: Path | None = None,
-    run_status: dict[str, object] | None = None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+    run_status: RunStatusDict | None = None,
+) -> tuple[list[LearningEntryDict], list[AutoRecalledItemDict], SessionRecallExtrasDict]:
     """Execute focused + baseline recalls, return merged results.
 
     Returns:
@@ -114,8 +125,8 @@ def perform_session_recalls(
     from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
 
     is_focused = query.strip() not in ("", "*")
-    extra: dict[str, object] = {}
-    learnings: list[dict[str, object]] = []
+    extra: SessionRecallExtrasDict = {}
+    learnings: list[LearningEntryDict] = []
 
     # Step 1: Core recall
     if is_focused:
@@ -152,7 +163,7 @@ def perform_session_recalls(
     extra["total_available"] = len(learnings)
 
     # Phase-contextual auto-recall (PRD-CORE-049) — only when caller passes run context
-    auto_recalled: list[dict[str, object]] = []
+    auto_recalled: list[AutoRecalledItemDict] = []
 
     return learnings, auto_recalled, extra
 
@@ -162,8 +173,8 @@ def _phase_contextual_recall(
     query: str,
     config: TRWConfig,
     run_dir: Path | None,
-    run_status: dict[str, object] | None,
-) -> list[dict[str, object]]:
+    run_status: RunStatusDict | None,
+) -> list[AutoRecalledItemDict]:
     """Execute phase-contextual auto-recall (PRD-CORE-049).
 
     Returns a list of auto-recalled learning summaries.
@@ -211,20 +222,20 @@ def run_auto_maintenance(
     trw_dir: Path,
     config: TRWConfig,
     run_dir: Path | None = None,
-) -> dict[str, object]:
+) -> AutoMaintenanceDict:
     """Run auto-upgrade check, stale run close, and embeddings backfill.
 
     Returns a dict with keys for each maintenance operation that produced results.
     All operations are fail-open — individual failures do not affect others.
     """
-    maintenance: dict[str, object] = {}
+    maintenance: AutoMaintenanceDict = {}
 
     # Auto-upgrade check (PRD-INFRA-014)
     try:
         from trw_mcp.state.auto_upgrade import check_for_update
         update_info = check_for_update()
         if update_info.get("available"):
-            maintenance["update_advisory"] = update_info.get("advisory")
+            maintenance["update_advisory"] = str(update_info.get("advisory", ""))
             if config.auto_upgrade:
                 from trw_mcp.state.auto_upgrade import perform_upgrade
                 upgrade_result = perform_upgrade(update_info)
@@ -272,7 +283,7 @@ def run_auto_maintenance(
 def check_delivery_gates(
     run_path: Path | None,
     reader: FileStateReader,
-) -> dict[str, object]:
+) -> DeliveryGatesDict:
     """Check review/build gates and premature delivery guard.
 
     Returns a dict with any warnings/advisories found:
@@ -281,7 +292,7 @@ def check_delivery_gates(
       - build_gate_warning: no successful build check found
       - warning: premature delivery (only ceremony events)
     """
-    result: dict[str, object] = {}
+    result: DeliveryGatesDict = {}
 
     if run_path is None:
         return result
@@ -415,7 +426,7 @@ def finalize_run(
     reader: FileStateReader,
     writer: FileStateWriter,
     events: FileEventLogger,
-) -> dict[str, object]:
+) -> FinalizeRunResult:
     """Post-delivery finalization — placeholder for future run status updates.
 
     Currently a no-op pass-through. Checkpoint and reflect are handled inline
@@ -431,9 +442,9 @@ def copy_compliance_artifacts(
     config: TRWConfig,
     reader: FileStateReader,
     writer: FileStateWriter,
-) -> dict[str, object]:
+) -> ComplianceArtifactsDict:
     """Copy review artifacts to compliance retention directory (INFRA-027-FR05)."""
-    result: dict[str, object] = {}
+    result: ComplianceArtifactsDict = {}
     if run_path is None:
         return result
 

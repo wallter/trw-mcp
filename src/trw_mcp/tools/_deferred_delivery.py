@@ -25,12 +25,26 @@ import io
 import json
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import structlog
 
+from trw_mcp.models.types import (
+    AutoProgressStepResult,
+    BatchSendResult,
+    CeremonyFeedbackStepResult,
+    ConsolidationStepResult,
+    IndexSyncResult,
+    OutcomeCorrelationStepResult,
+    PublishLearningsResult,
+    RecallOutcomeStepResult,
+    TelemetryStepResult,
+    TierSweepStepResult,
+    TrustIncrementResult,
+)
 from trw_mcp.state.persistence import (
     FileStateReader,
 )
@@ -40,7 +54,7 @@ logger = structlog.get_logger()
 
 def _run_step(
     name: str,
-    fn: Callable[[], dict[str, object] | None],
+    fn: Callable[[], Mapping[str, object] | None],
     results: dict[str, object],
     errors: list[str],
 ) -> None:
@@ -53,7 +67,7 @@ def _run_step(
     try:
         step_result = fn()
         if step_result is not None:
-            results[name] = step_result
+            results[name] = dict(step_result)
     except Exception as exc:  # justified: fail-open, individual delivery step must not block others
         errors.append(f"{name}: {exc}")
         results[name] = {"status": "failed", "error": str(exc)}
@@ -141,6 +155,19 @@ def _run_deferred_steps(
         logger.info("deferred_deliver_skipped", reason="another_batch_running")
         return
 
+    # Heterogeneous accumulator — each key holds a different TypedDict shape:
+    #   "auto_prune"         → dict[str, object] | None  (auto-prune result)
+    #   "consolidation"      → ConsolidationStepResult
+    #   "tier_sweep"         → TierSweepStepResult
+    #   "index_sync"         → IndexSyncResult
+    #   "auto_progress"      → AutoProgressStepResult
+    #   "publish_learnings"  → PublishLearningsResult
+    #   "outcome_correlation"→ OutcomeCorrelationStepResult
+    #   "recall_outcome"     → RecallOutcomeStepResult
+    #   "telemetry"          → TelemetryStepResult
+    #   "batch_send"         → BatchSendResult
+    #   "trust_increment"    → TrustIncrementResult | None
+    #   "ceremony_feedback"  → CeremonyFeedbackStepResult | None
     results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
     errors: list[str] = []
     t0 = time.monotonic()
@@ -276,20 +303,20 @@ def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
     return prune_result if pruned > 0 else None
 
 
-def _step_consolidation(trw_dir: Path) -> dict[str, object]:
+def _step_consolidation(trw_dir: Path) -> ConsolidationStepResult:
     """Step 2.6: Memory consolidation (PRD-CORE-044)."""
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
     config = _cer.get_config()
     if not config.memory_consolidation_enabled:
-        return {"status": "skipped", "reason": "disabled"}
+        return cast(ConsolidationStepResult, {"status": "skipped", "reason": "disabled"})
     from trw_mcp.state.consolidation import consolidate_cycle
-    return dict(consolidate_cycle(
+    return cast(ConsolidationStepResult, dict(consolidate_cycle(
         trw_dir,
         max_entries=config.memory_consolidation_max_per_cycle,
-    ))
+    )))
 
 
-def _step_tier_sweep(trw_dir: Path) -> dict[str, object]:
+def _step_tier_sweep(trw_dir: Path) -> TierSweepStepResult:
     """Step 2.7: Tier lifecycle sweep (PRD-CORE-043) + impact tier assignment (PRD-FIX-052-FR07)."""
     from trw_mcp.state.tiers import TierManager
     from trw_mcp.state.persistence import FileStateWriter
@@ -311,25 +338,25 @@ def _step_tier_sweep(trw_dir: Path) -> dict[str, object]:
     }
 
 
-def _step_auto_progress(resolved_run: Path | None) -> dict[str, object]:
+def _step_auto_progress(resolved_run: Path | None) -> AutoProgressStepResult:
     """Step 5: Auto-progress PRD statuses."""
     return _do_auto_progress(resolved_run)
 
 
-def _step_publish_learnings() -> dict[str, object]:
+def _step_publish_learnings() -> PublishLearningsResult:
     """Step 6: Publish high-impact learnings to platform backend."""
     from trw_mcp.telemetry.publisher import publish_learnings
-    return dict(publish_learnings())
+    return cast(PublishLearningsResult, dict(publish_learnings()))
 
 
-def _step_outcome_correlation() -> dict[str, object]:
+def _step_outcome_correlation() -> OutcomeCorrelationStepResult:
     """Step 6.5: Outcome correlation (G1)."""
     from trw_mcp.scoring import process_outcome_for_event
     outcome_ids = process_outcome_for_event("trw_deliver_complete")
     return {"status": "success", "updated": len(outcome_ids)}
 
 
-def _step_recall_outcome(resolved_run: Path | None) -> dict[str, object]:
+def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
     """Step 6.6: Recall outcome tracking (G6)."""
     from trw_mcp.state.recall_tracking import get_recall_stats, record_outcome
     recall_stats = get_recall_stats()
@@ -366,7 +393,7 @@ def _resolve_installation_id() -> str:
     return "inst-" + hashlib.sha256(project_root.encode()).hexdigest()[:12]
 
 
-def _step_telemetry(resolved_run: Path | None) -> dict[str, object]:
+def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     """Step 7: Telemetry events (G3 + G4)."""
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
     from trw_mcp.state.analytics.report import compute_ceremony_score
@@ -409,10 +436,10 @@ def _step_telemetry(resolved_run: Path | None) -> dict[str, object]:
     return {"status": "success", "events": 2, "ceremony_score": ceremony_score}
 
 
-def _step_batch_send() -> dict[str, object]:
+def _step_batch_send() -> BatchSendResult:
     """Step 8: Batch send (G2)."""
     from trw_mcp.telemetry.sender import BatchSender
-    return dict(BatchSender.from_config().send())
+    return cast(BatchSendResult, dict(BatchSender.from_config().send()))
 
 
 def _merge_session_events(
@@ -445,7 +472,7 @@ def _merge_session_events(
     return all_events
 
 
-def _step_trust_increment(resolved_run: Path | None) -> dict[str, object] | None:
+def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | None:
     """Step 9: Trust session increment (CORE-068-FR05).
 
     FR02 (PRD-FIX-053): Relaxed gate — fires when EITHER:
@@ -491,7 +518,7 @@ def _step_trust_increment(resolved_run: Path | None) -> dict[str, object] | None
             # Preserve existing return shape; add reason for observability
             if isinstance(result, dict) and "reason" not in result:
                 result["reason"] = "build_check_passed"
-            return result
+            return cast(TrustIncrementResult, result)
 
         # Check path (b): productive session (>= 3 learnings AND >= 1 checkpoint)
         learn_count = 0
@@ -522,7 +549,7 @@ def _step_trust_increment(resolved_run: Path | None) -> dict[str, object] | None
             result = increment_session_count(trw_dir, agent_id)
             if isinstance(result, dict):
                 result["reason"] = "productive_session"
-            return result
+            return cast(TrustIncrementResult, result)
 
         return {"skipped": True, "reason": "insufficient_session_activity"}
 
@@ -533,7 +560,7 @@ def _step_trust_increment(resolved_run: Path | None) -> dict[str, object] | None
 def _step_ceremony_feedback(
     resolved_run: Path | None,
     deliver_results: dict[str, object],
-) -> dict[str, object] | None:
+) -> CeremonyFeedbackStepResult | None:
     """Step 10: Ceremony feedback recording (CORE-069-FR02)."""
     try:
         from trw_mcp.state.ceremony_feedback import (
@@ -560,6 +587,9 @@ def _step_ceremony_feedback(
         # FIX-051-FR06: Pass objective for improved classification accuracy.
         task_description = str(run_state.get("objective", ""))
 
+        # deliver_results["telemetry"] has shape TelemetryStepResult
+        # (keys: status, events, ceremony_score) — .get() used because
+        # deliver_results itself is the untyped accumulator dict.
         ceremony_score_val = deliver_results.get("telemetry", {})
         if isinstance(ceremony_score_val, dict):
             score = float(ceremony_score_val.get("ceremony_score", 0))
@@ -650,14 +680,17 @@ def _step_ceremony_feedback(
 
         escalation = check_auto_escalation(task_class_str, data)
         if escalation:
-            apply_auto_escalation(trw_dir, task_class_str, escalation)
-            return {"recorded": True, "auto_escalation": escalation, "proposal": proposal}
-        return {"recorded": True, "proposal": proposal}
+            apply_auto_escalation(trw_dir, task_class_str, cast(dict[str, object], escalation))
+            return cast(
+                CeremonyFeedbackStepResult,
+                {"recorded": True, "auto_escalation": escalation, "proposal": proposal},
+            )
+        return cast(CeremonyFeedbackStepResult, {"recorded": True, "proposal": proposal})
     except Exception as exc:  # justified: fail-open, ceremony feedback is best-effort enrichment
-        return {"skipped": True, "reason": str(exc)}
+        return cast(CeremonyFeedbackStepResult, {"skipped": True, "reason": str(exc)})
 
 
-def _do_index_sync() -> dict[str, object]:
+def _do_index_sync() -> IndexSyncResult:
     """Execute INDEX.md and ROADMAP.md sync from PRD frontmatter.
 
     Note: ``resolve_project_root`` and ``get_config`` are resolved from
@@ -678,14 +711,14 @@ def _do_index_sync() -> dict[str, object]:
     index_result = sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
     roadmap_result = sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
 
-    return {
-        "status": "success",
-        "index": index_result,
-        "roadmap": roadmap_result,
-    }
+    return IndexSyncResult(
+        status="success",
+        index=cast(dict[str, object], index_result),
+        roadmap=cast(dict[str, object], roadmap_result),
+    )
 
 
-def _do_auto_progress(run_dir: Path | None) -> dict[str, object]:
+def _do_auto_progress(run_dir: Path | None) -> AutoProgressStepResult:
     """Auto-progress PRD statuses for the deliver phase.
 
     Calls ``auto_progress_prds`` with phase="deliver" for all PRDs

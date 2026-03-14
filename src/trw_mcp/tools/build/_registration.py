@@ -7,11 +7,13 @@ FastMCP server instance.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import ApiFuzzResult, DepAuditResult
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.tools.build._audit import (
     _DEP_AUDIT_FILE,
@@ -91,21 +93,21 @@ def register_build_tools(server: FastMCP) -> None:
 
             mut_result = run_mutation_check(project_root, config)
             cache_mutation_status(trw_dir, mut_result)
-            return mut_result
+            return cast(dict[str, object], mut_result)
 
         if scope == "deps":
             if not config.dep_audit_enabled:
                 return {"status": "skipped", "reason": "dep_audit_enabled is False"}
-            dep_result = _run_dep_audit(project_root, config)
-            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, dep_result)
-            return dep_result
+            dep_result: DepAuditResult = _run_dep_audit(project_root, config)
+            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast(dict[str, object], dep_result))
+            return cast(dict[str, object], dep_result)
 
         if scope == "api":
             if not config.api_fuzz_enabled:
                 return {"status": "skipped", "reason": "api_fuzz_enabled is False"}
-            fuzz_result = _run_api_fuzz(project_root, config)
-            _cache_to_context(trw_dir, _API_FUZZ_FILE, fuzz_result)
-            return fuzz_result
+            fuzz_result: ApiFuzzResult = _run_api_fuzz(project_root, config)
+            _cache_to_context(trw_dir, _API_FUZZ_FILE, cast(dict[str, object], fuzz_result))
+            return cast(dict[str, object], fuzz_result)
 
         # --- Standard scopes (pytest/mypy) ---
 
@@ -199,7 +201,7 @@ def register_build_tools(server: FastMCP) -> None:
         # Dep audit on full scope (if enabled)
         if scope == "full" and config.dep_audit_enabled:
             dep_result = _run_dep_audit(project_root, config)
-            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, dep_result)
+            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast(dict[str, object], dep_result))
             result["dep_audit"] = dep_result
             if not bool(dep_result.get("dep_audit_passed", True)):
                 result["dep_audit_blocking"] = True

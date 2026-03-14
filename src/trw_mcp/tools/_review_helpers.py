@@ -13,9 +13,19 @@ import hashlib
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
+
+from trw_mcp.models.typed_dicts import (
+    AutoReviewResult,
+    CrossModelReviewResult,
+    ManualReviewResult,
+    MultiReviewerAnalysisResult,
+    ReconcileReviewResult,
+    ReviewFindingDict,
+    ReviewModeResult,
+)
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -25,7 +35,7 @@ logger = structlog.get_logger()
 
 def validate_manual_findings(
     raw_findings: list[dict[str, str]],
-) -> list[dict[str, str]]:
+) -> list[ReviewFindingDict]:
     """Validate and normalize a list of manually-provided findings.
 
     Runs each finding through ReviewFinding model validation,
@@ -34,19 +44,19 @@ def validate_manual_findings(
     from trw_mcp.models.run import ReviewFinding
     from trw_mcp.tools.review import _normalize_severity
 
-    validated: list[dict[str, str]] = []
+    validated: list[ReviewFindingDict] = []
     for f in raw_findings:
         normalized = {**f, "severity": _normalize_severity(f.get("severity", "info"))}
         try:
             ReviewFinding(**normalized)  # type: ignore[arg-type]  # dict[str,str] coerced by Pydantic
         except Exception:  # justified: fail-open, include finding even if model validation fails
             pass  # Still include even if other fields fail validation
-        validated.append(normalized)
+        validated.append(cast(ReviewFindingDict, normalized))
     return validated
 
 
 def count_by_severity(
-    findings: list[dict[str, str]],
+    findings: list[ReviewFindingDict],
 ) -> tuple[int, int, int]:
     """Count findings by severity level.
 
@@ -64,15 +74,15 @@ def handle_manual_mode(
     resolved_run: Path | None,
     review_id: str,
     ts: str,
-) -> dict[str, object]:
+) -> ManualReviewResult:
     """Handle the manual review mode — validate findings, compute verdict, persist."""
     from trw_mcp.tools.review import _compute_verdict, _persist_review_artifact
 
     validated = validate_manual_findings(raw_findings)
     critical_count, warning_count, info_count = count_by_severity(validated)
-    verdict = _compute_verdict(validated)
+    verdict = _compute_verdict(cast(list[dict[str, str]], validated))
 
-    result: dict[str, object] = {
+    result: ManualReviewResult = {
         "review_id": review_id,
         "verdict": verdict,
         "total_findings": len(validated),
@@ -108,7 +118,7 @@ def handle_cross_model_mode(
     resolved_run: Path | None,
     review_id: str,
     ts: str,
-) -> dict[str, object]:
+) -> CrossModelReviewResult:
     """Handle the cross-model review mode — get diff, invoke provider, persist."""
     from trw_mcp.tools.review import (
         _compute_verdict,
@@ -144,7 +154,7 @@ def handle_cross_model_mode(
 
     verdict = _compute_verdict(cross_model_findings)
 
-    result: dict[str, object] = {
+    result: CrossModelReviewResult = {
         "review_id": review_id,
         "verdict": verdict,
         "mode": "cross_model",
@@ -260,7 +270,7 @@ def handle_reconcile_mode(
     review_id: str,
     ts: str,
     prd_ids: list[str] | None,
-) -> dict[str, object]:
+) -> ReconcileReviewResult:
     """Handle the reconcile review mode — compare PRD FRs against git diff."""
     from trw_mcp.state._paths import resolve_project_root
     from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
@@ -304,7 +314,7 @@ def handle_reconcile_mode(
 
     verdict = "drift_detected" if all_mismatches else "clean"
 
-    result: dict[str, object] = {
+    result: ReconcileReviewResult = {
         "review_id": review_id,
         "verdict": verdict,
         "mismatches": all_mismatches,
@@ -351,7 +361,7 @@ def handle_auto_mode(
     review_id: str,
     ts: str,
     reviewer_findings: list[dict[str, object]] | None,
-) -> dict[str, object]:
+) -> AutoReviewResult:
     """Handle the auto review mode — multi-reviewer analysis, filter, persist."""
     from trw_mcp.state.persistence import FileStateWriter
     from trw_mcp.tools.review import (
@@ -365,10 +375,10 @@ def handle_auto_mode(
     diff = _get_git_diff()
 
     if reviewer_findings is not None:
-        analysis: dict[str, object] = {
+        analysis: MultiReviewerAnalysisResult = {
             "reviewer_roles_run": list(REVIEWER_ROLES),
             "reviewer_errors": [],
-            "findings": reviewer_findings,
+            "findings": cast(list[dict[str, object]], reviewer_findings),
         }
     else:
         analysis = _run_multi_reviewer_analysis(diff, config)
@@ -400,11 +410,11 @@ def handle_auto_mode(
     ]
     verdict = _compute_verdict(surfaced_for_verdict)
 
-    result: dict[str, object] = {
+    result: AutoReviewResult = {
         "review_id": review_id,
         "verdict": verdict,
         "mode": "auto",
-        "reviewer_roles_run": analysis.get("reviewer_roles_run", []),
+        "reviewer_roles_run": cast(list[str], analysis.get("reviewer_roles_run", [])),
         "reviewer_errors": analysis.get("reviewer_errors", []),
         "surfaced_findings_count": len(surfaced),
         "total_findings_count": len(all_auto_findings),

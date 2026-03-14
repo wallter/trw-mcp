@@ -41,6 +41,7 @@ from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
     validate_prd_quality_v2,
 )
+from trw_mcp.models.typed_dicts import ValidateResultDict
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -217,7 +218,7 @@ def register_requirements_tools(server: FastMCP) -> None:
     @log_tool_call
     def trw_prd_validate(
         prd_path: str,
-    ) -> dict[str, object]:
+    ) -> ValidateResultDict:
         """Check your PRD quality before implementation — catches ambiguity, missing sections, and weak requirements early.
 
         Runs the full V2 validation suite: structure compliance, content quality,
@@ -267,7 +268,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             failures=len(v2_result.failures),
         )
 
-        return {
+        validate_result: ValidateResultDict = {
             # V1 fields (backward compatible, from V2 inline computation)
             "path": str(path),
             "valid": v2_result.valid,
@@ -318,6 +319,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             "effective_risk_level": v2_result.effective_risk_level,
             "risk_scaled": v2_result.risk_scaled,
         }
+        return validate_result
 
 
 # --- Private helpers ---
@@ -422,6 +424,17 @@ def _substitute_template(
         f"- **Implementation Confidence**: {confidence}",
     )
 
+    # FR04 (PRD-FIX-056): Inject **Status**: active after **Priority**: lines
+    # inside FR blocks (### *-FRN: headers).  Applies only to lines that are
+    # the FR-level Priority field (bold, not inside a table or list).
+    # The replacement inserts "**Status**: active\n" after each such line,
+    # but only when there is no **Status**: line already present in that block.
+    result = re.sub(
+        r"(\*\*Priority\*\*: Must Have \| Should Have \| Nice to Have)",
+        r"\1\n**Status**: active",
+        result,
+    )
+
     return result
 
 
@@ -509,6 +522,61 @@ def _apply_prefill(
     return body
 
 
+def _filter_sections_for_category(body: str, category: str) -> str:
+    """Remove numbered sections not required by the category variant.
+
+    Splits the body on ``## N. Section Name`` boundaries and retains only
+    those section blocks whose heading name appears in the required list for
+    the given category. Non-numbered blocks (the preamble, Appendix, Quality
+    Checklist) are always retained.
+
+    Section numbers are re-assigned sequentially after filtering so the
+    output is always numbered 1, 2, 3, … without gaps.
+
+    Args:
+        body: Template body (post variable-substitution).
+        category: PRD category (e.g. ``"FIX"``, ``"CORE"``).
+
+    Returns:
+        Body with only the required section blocks, renumbered.
+    """
+    from trw_mcp.state.validation.template_variants import get_required_sections
+
+    required = set(get_required_sections(category))
+
+    # Regex: split on lines that start a numbered section "## N. Heading"
+    _NUMBERED_SECTION_RE = re.compile(r"^(## \d+\. .+)$", re.MULTILINE)
+
+    # Split into (preamble | section_header | section_body) triples
+    parts = _NUMBERED_SECTION_RE.split(body)
+    # parts[0] is preamble (before first ## N. heading)
+    # parts[1], parts[2], parts[3], parts[4], ... alternate header, body pairs
+
+    preamble = parts[0]
+    kept_sections: list[tuple[str, str]] = []  # (header_line, body_text)
+
+    for i in range(1, len(parts) - 1, 2):
+        header_line = parts[i]          # e.g. "## 3. User Stories"
+        section_body = parts[i + 1] if i + 1 < len(parts) else ""
+
+        # Extract section name: strip "## N. " prefix
+        name_match = re.match(r"## \d+\. (.+)", header_line)
+        if name_match:
+            section_name = name_match.group(1).strip()
+            if section_name in required:
+                kept_sections.append((section_name, section_body))
+        else:
+            # Non-standard header — keep as-is (shouldn't occur in practice)
+            kept_sections.append((header_line, section_body))
+
+    # Rebuild with renumbered headings
+    result_parts = [preamble]
+    for idx, (section_name, section_body) in enumerate(kept_sections, start=1):
+        result_parts.append(f"## {idx}. {section_name}{section_body}")
+
+    return "".join(result_parts)
+
+
 def _generate_prd_body(
     prd_id: str,
     title: str,
@@ -520,7 +588,8 @@ def _generate_prd_body(
     """Generate PRD body content from template + input text.
 
     Loads the canonical template from ``data/prd_template.md``, substitutes
-    variables, and prefills content from the input text.
+    variables, prefills content from the input text, and filters sections
+    to only those required by the category variant (PRD-CORE-080-FR01).
 
     Args:
         prd_id: PRD identifier (e.g. ``PRD-CORE-007``).
@@ -531,7 +600,7 @@ def _generate_prd_body(
         confidence: Base confidence score derived from priority.
 
     Returns:
-        Markdown body content with all template sections.
+        Markdown body content with only the category-appropriate sections.
     """
     body = _load_template_body()
     body = _substitute_template(
@@ -539,6 +608,8 @@ def _generate_prd_body(
         int(prd_id.split("-")[-1]), priority, confidence,
     )
     body = _apply_prefill(body, _extract_prefill(input_text), input_text)
+    # PRD-CORE-080-FR01: filter to only sections required by category variant
+    body = _filter_sections_for_category(body, category)
     return body
 
 
@@ -568,8 +639,40 @@ _FALLBACK_BODY = """# PRD-CATEGORY-SEQ: Title
 """
 
 
+def _strip_deprecated_fields(frontmatter: dict[str, object]) -> dict[str, object]:
+    """Remove deprecated / null frontmatter fields before YAML output.
+
+    Strips ``None``-valued top-level keys and explicitly removes decorative
+    fields (``aaref_components``, ``conflicts_with``) that have 0% usage and
+    add no value to new PRDs (PRD-CORE-080-FR07).
+
+    Also removes ``conflicts_with`` from the nested ``traceability`` dict
+    if present, since it is always empty and decorative.
+
+    Existing PRDs that contain these fields remain parseable — the Pydantic
+    model accepts them as ``Optional`` for backward compatibility.
+
+    Args:
+        frontmatter: Raw frontmatter dict from ``model_to_dict``.
+
+    Returns:
+        Cleaned dict with deprecated/null fields removed.
+    """
+    _DEPRECATED_TOP_KEYS = frozenset({"aaref_components"})
+    result = {k: v for k, v in frontmatter.items() if v is not None and k not in _DEPRECATED_TOP_KEYS}
+    # Strip conflicts_with from nested traceability dict
+    traceability = result.get("traceability")
+    if isinstance(traceability, dict) and "conflicts_with" in traceability:
+        result["traceability"] = {k: v for k, v in traceability.items() if k != "conflicts_with"}
+    return result
+
+
 def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     """Render complete PRD with YAML frontmatter and markdown body.
+
+    Strips deprecated fields (``aaref_components``, ``conflicts_with``) and
+    ``None``-valued keys from frontmatter before YAML serialization so that
+    newly generated PRDs are clean and minimal (PRD-CORE-080-FR07).
 
     Args:
         frontmatter: Frontmatter dictionary to serialize as YAML.
@@ -581,7 +684,7 @@ def _render_prd(frontmatter: dict[str, object], body: str) -> str:
     yaml = YAML()
     yaml.default_flow_style = False
     stream = StringIO()
-    yaml.dump({"prd": frontmatter}, stream)
+    yaml.dump({"prd": _strip_deprecated_fields(frontmatter)}, stream)
     yaml_str = stream.getvalue()
 
     return f"---\n{yaml_str}---\n\n{body}\n"

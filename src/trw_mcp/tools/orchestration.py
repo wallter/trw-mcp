@@ -10,6 +10,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -31,6 +32,17 @@ from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
     model_to_dict,
+)
+from trw_mcp.models.typed_dicts import (
+    CheckpointEventDataDict,
+    CheckpointRecordDict,
+    DeployFrameworksVersionDataDict,
+    StatusReversionLatestDict,
+    StatusReversionMetricsDict,
+    TrwStatusDict,
+    WaveDetailDict,
+    WaveProgressDict,
+    WaveShardCountsDict,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -234,7 +246,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_status(run_path: str | None = None) -> dict[str, object]:
+    def trw_status(run_path: str | None = None) -> TrwStatusDict:
         """See your current phase, completed work, and what to do next — so you pick up where you left off instead of redoing work.
 
         Returns run state including phase, wave progress, shard status, confidence,
@@ -269,13 +281,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
             e.get("event") == "claude_md_synced" for e in events
         )
 
-        result: dict[str, object] = {
-            "run_id": state_data.get("run_id", "unknown"),
-            "task": state_data.get("task", "unknown"),
-            "phase": state_data.get("phase", "unknown"),
-            "status": state_data.get("status", "unknown"),
-            "confidence": state_data.get("confidence", "unknown"),
-            "framework": state_data.get("framework", "unknown"),
+        result: TrwStatusDict = {
+            "run_id": str(state_data.get("run_id", "unknown")),
+            "task": str(state_data.get("task", "unknown")),
+            "phase": str(state_data.get("phase", "unknown")),
+            "status": str(state_data.get("status", "unknown")),
+            "confidence": str(state_data.get("confidence", "unknown")),
+            "framework": str(state_data.get("framework", "unknown")),
             "event_count": len(events),
             "reflection": {
                 "count": reflection_count,
@@ -284,7 +296,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         }
 
         if wave_data:
-            result["waves"] = wave_data.get("waves", [])
+            raw_waves = wave_data.get("waves", [])
+            result["waves"] = raw_waves if isinstance(raw_waves, list) else []
 
             wave_progress = _compute_wave_progress(
                 wave_data, resolved_path,
@@ -360,7 +373,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir3
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            result = append_ceremony_nudge(result, _resolve_trw_dir3())
+            result = cast(TrwStatusDict, append_ceremony_nudge(cast(dict[str, object], result), _resolve_trw_dir3()))
         except Exception:  # justified: fail-open, nudge injection must not block status
             pass
 
@@ -395,7 +408,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         # Create checkpoint record
         ts = datetime.now(timezone.utc).isoformat()
-        checkpoint: dict[str, object] = {
+        checkpoint: CheckpointRecordDict = {
             "ts": ts,
             "message": message,
             "state": state_data,
@@ -406,9 +419,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
             checkpoint["wave_id"] = wave_id
 
         checkpoints_path = meta_path / "checkpoints.jsonl"
-        writer.append_jsonl(checkpoints_path, checkpoint)
+        writer.append_jsonl(checkpoints_path, cast(dict[str, object], checkpoint))
 
-        event_data: dict[str, object] = {"message": message}
+        event_data: CheckpointEventDataDict = {"message": message}
         if shard_id:
             event_data["shard_id"] = shard_id
         if wave_id:
@@ -416,7 +429,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         _events.log_event(
             meta_path / "events.jsonl",
             "checkpoint",
-            event_data,
+            cast(dict[str, object], event_data),
         )
 
         # Update wave status in run.yaml if wave_id provided (PRD-INFRA-036-FR02)
@@ -459,7 +472,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir2
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            result = append_ceremony_nudge(result, _resolve_trw_dir2())  # type: ignore[arg-type]
+            append_ceremony_nudge(cast(dict[str, object], result), _resolve_trw_dir2())
         except Exception:  # justified: fail-open, nudge injection must not block checkpoint
             pass
 
@@ -472,7 +485,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
 def _compute_wave_progress(
     wave_data: dict[str, object],
     run_path: Path,
-) -> dict[str, object] | None:
+) -> WaveProgressDict | None:
     """Compute wave-level and shard-level progress summary.
 
     Args:
@@ -503,12 +516,12 @@ def _compute_wave_progress(
 
     completed_waves = 0
     active_wave: int | None = None
-    wave_details: list[dict[str, object]] = []
+    wave_details: list[WaveDetailDict] = []
 
     for w in waves_raw:
         if not isinstance(w, dict):
             continue
-        wave_num = w.get("wave", 0)
+        wave_num = int(w.get("wave", 0))
         wave_status = str(w.get("status", "pending"))
         wave_shard_ids = w.get("shards", [])
         if not isinstance(wave_shard_ids, list):
@@ -528,14 +541,18 @@ def _compute_wave_progress(
         elif wave_status == "active" or counts["active"] > 0:
             active_wave = wave_num
 
-        wave_details.append({
-            "wave": wave_num,
-            "status": wave_status,
-            "shards": {
-                "total": len(wave_shard_ids),
-                **counts,
-            },
-        })
+        wave_details.append(WaveDetailDict(
+            wave=wave_num,
+            status=wave_status,
+            shards=WaveShardCountsDict(
+                total=len(wave_shard_ids),
+                complete=counts["complete"],
+                active=counts["active"],
+                pending=counts["pending"],
+                failed=counts["failed"],
+                partial=counts["partial"],
+            ),
+        ))
 
     return {
         "total_waves": len(waves_raw),
@@ -547,7 +564,7 @@ def _compute_wave_progress(
 
 def _compute_reversion_metrics(
     events: list[dict[str, object]],
-) -> dict[str, object]:
+) -> StatusReversionMetricsDict:
     """Compute reversion frequency metrics from events.
 
     Args:
@@ -582,16 +599,16 @@ def _compute_reversion_metrics(
         classification = "healthy"
 
     # Latest reversion
-    latest: dict[str, object] | None = None
+    latest: StatusReversionLatestDict | None = None
     if revert_events:
         last = revert_events[-1]
-        latest = {
-            "from_phase": last.get("from_phase", ""),
-            "to_phase": last.get("to_phase", ""),
-            "trigger": last.get("trigger_classified", last.get("trigger", "")),
-            "reason": last.get("reason", ""),
-            "ts": last.get("ts", ""),
-        }
+        latest = StatusReversionLatestDict(
+            from_phase=str(last.get("from_phase", "")),
+            to_phase=str(last.get("to_phase", "")),
+            trigger=str(last.get("trigger_classified", last.get("trigger", ""))),
+            reason=str(last.get("reason", "")),
+            ts=str(last.get("ts", "")),
+        )
 
     return {
         "count": revert_count,
@@ -693,13 +710,13 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         if content:
             (frameworks_dir / target_name).write_text(content, encoding="utf-8")
 
-    version_data: dict[str, object] = {
+    version_data: DeployFrameworksVersionDataDict = {
         "framework_version": current_fw_version,
         "aaref_version": current_aaref_version,
         "trw_mcp_version": current_pkg_version,
         "deployed_at": datetime.now(timezone.utc).isoformat(),
     }
-    writer.write_yaml(version_path, version_data)
+    writer.write_yaml(version_path, cast(dict[str, object], version_data))
 
     logger.info(
         "frameworks_deployed",

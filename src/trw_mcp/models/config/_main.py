@@ -258,17 +258,26 @@ class TRWConfig(BaseSettings):
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
     traceability_coverage_min: float = 0.90
-    consistency_validation_min: float = 0.95
+    consistency_validation_min: float = 0.95  # reserved — not enforced (consistency_score hardcoded 0.0)
 
     # -- 16. Semantic validation --
 
-    # Quality dimension weights (must sum to 100)
-    validation_density_weight: float = 25.0
-    validation_structure_weight: float = 15.0
-    validation_traceability_weight: float = 20.0
-    validation_smell_weight: float = 15.0
-    validation_readability_weight: float = 10.0
-    validation_ears_weight: float = 15.0
+    # Quality dimension weights — 3 active dimensions sum to 100.
+    # Stub weights are reserved at 0.0 for future implementation.
+    validation_density_weight: float = 42.0
+    validation_structure_weight: float = 25.0
+    validation_traceability_weight: float = 33.0
+    validation_smell_weight: float = 0.0       # reserved — not enforced (smell scorer not implemented)
+    validation_readability_weight: float = 0.0  # reserved — not enforced (readability scorer not implemented)
+    validation_ears_weight: float = 0.0         # reserved — not enforced (EARS scorer not implemented)
+
+    # Per-section content density weights (PRD-CORE-080-FR04)
+    # Configurable per-project via .trw/config.yaml using TRW_ env prefix.
+    # Pydantic Field bounds prevent score manipulation via extreme values.
+    density_weight_problem_statement: float = Field(default=2.0, ge=0.0, le=10.0)
+    density_weight_functional_requirements: float = Field(default=2.0, ge=0.0, le=10.0)
+    density_weight_traceability_matrix: float = Field(default=1.5, ge=0.0, le=10.0)
+    density_weight_default: float = Field(default=1.0, ge=0.0, le=10.0)
 
     # PRD status thresholds
     validation_skeleton_threshold: float = 30.0

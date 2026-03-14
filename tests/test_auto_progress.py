@@ -194,7 +194,7 @@ class TestAutoProgressPrds:
         result = auto_progress_prds(run_dir, "implement", prds_dir, config)
         assert len(result) == 1
         # BFS now finds a path — either applied or stopped at guard (not invalid_transition)
-        assert result[0]["reason"] != "invalid_transition"
+        assert result[0].get("reason", "") != "invalid_transition"
 
     def test_returns_empty_for_no_prd_scope(
         self, run_dir: Path, prds_dir: Path, config: TRWConfig,

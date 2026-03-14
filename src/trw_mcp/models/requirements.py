@@ -169,13 +169,19 @@ class PRDFrontmatter(BaseModel):
     complexity: ComplexityFactor | None = None
 
     # AARE-F nested metadata
-    aaref_components: list[str] = Field(default_factory=list)
+    # Deprecated: aaref_components — never validated or consumed by any tool (PRD-CORE-080-FR07).
+    # Present for backward compat with existing PRDs; omitted from new PRD generation.
+    aaref_components: list[str] | None = Field(default=None)
     evidence: PRDEvidence = Field(default_factory=PRDEvidence)
     confidence: PRDConfidence = Field(default_factory=PRDConfidence)
     traceability: PRDTraceability = Field(default_factory=PRDTraceability)
     metrics: PRDMetrics = Field(default_factory=PRDMetrics)
     quality_gates: PRDQualityGates = Field(default_factory=PRDQualityGates)
     dates: PRDDates = Field(default_factory=PRDDates)
+
+    # Lifecycle governance (PRD-FIX-056)
+    approved_by: str | None = None
+    partially_implemented_frs: list[str] = Field(default_factory=list)
 
     # Optional provenance
     template_version: str | None = None
@@ -292,9 +298,9 @@ class ValidationResultV2(BaseModel):
     valid: bool = True
     failures: list[ValidationFailure] = Field(default_factory=list)
     ambiguity_rate: float = 0.0
-    completeness_score: float = 0.0
+    completeness_score: float = 0.0  # deprecated: use total_score (V2) as the authoritative quality metric
     traceability_coverage: float = 0.0
-    consistency_score: float = 0.0
+    consistency_score: float = 0.0  # reserved — not enforced (consistency scorer not implemented)
 
     # V2 scoring
     total_score: float = Field(ge=0.0, le=100.0, default=0.0)
@@ -310,6 +316,9 @@ class ValidationResultV2(BaseModel):
     # Risk scaling (PRD-QUAL-013)
     effective_risk_level: str = ""
     risk_scaled: bool = False
+
+    # Status integrity warnings (PRD-FIX-056)
+    status_drift_warnings: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

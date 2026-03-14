@@ -38,23 +38,20 @@ class TestIsolation:
     def test_resolve_trw_dir_points_to_tmp(self, tmp_path: Path) -> None:
         """resolve_trw_dir() must NOT point at the real project .trw/ during tests.
 
-        P2-007 fix: Previous assertion checked for '/tmp' in path, which is
-        platform-fragile (macOS uses /var/folders/..., Windows uses C:\\Users\\...).
-        Instead we verify the path is under tmp_path or contains 'isolated_project',
-        and that it is NOT the real project .trw/.
+        The _isolate_trw_dir autouse fixture patches resolve_trw_dir() to return
+        tmp_path/.trw — verify that it does NOT return the real project .trw/.
         """
         from trw_mcp.state._paths import resolve_trw_dir
         result = resolve_trw_dir()
-        # The _isolate_trw_dir autouse fixture sets this to tmp_path/isolated_project/.trw
-        # Verify isolation by comparing resolved absolute paths
+        # Verify isolation: result must not be the real project .trw/
         real_project_trw = (Path(__file__).parent.parent / ".trw").resolve()
         result_resolved = result.resolve()
         assert result_resolved != real_project_trw, (
             f"resolve_trw_dir() returned the real project .trw/ during tests: {result}"
         )
-        # Verify it's a subdirectory of tmp_path (platform-neutral check)
-        assert "isolated_project" in str(result), (
-            f"Expected isolated_project path, got: {result}"
+        # Verify it's under tmp_path (platform-neutral isolation check)
+        assert result_resolved.is_relative_to(tmp_path.resolve()), (
+            f"Expected path under tmp_path {tmp_path}, got: {result}"
         )
 
     def test_ceremony_feedback_writes_to_tmp_not_real_project(self, tmp_path: Path) -> None:

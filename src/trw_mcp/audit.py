@@ -14,6 +14,7 @@ import os
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state._helpers import load_project_config as _load_project_config
@@ -26,6 +27,20 @@ from trw_mcp.state.analytics import (
 )
 from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.models.typed_dicts import (
+    AuditCeremonyComplianceResult,
+    AuditDuplicatePairDict,
+    AuditDuplicatesResult,
+    AuditFixActionsDict,
+    AuditHookVersionsResult,
+    AuditIndexConsistencyResult,
+    AuditLearningsResult,
+    AuditRecallEffectivenessResult,
+    AuditReflectionQualityResult,
+    AuditReport,
+    AuditTelemetryBloatDict,
+    LearningEntryDict,
+)
 
 # Thresholds for PASS/WARN/FAIL verdicts
 _BLOAT_WARN_PCT = 0.20
@@ -33,15 +48,15 @@ _CEREMONY_PASS_SCORE = 50
 _RECALL_MISS_WARN_PCT = 0.25
 
 
-def _iter_entries(entries_dir: Path) -> list[dict[str, object]]:
+def _iter_entries(entries_dir: Path) -> list[LearningEntryDict]:
     """Read all YAML entries from a directory (skipping index.yaml)."""
     from trw_mcp.state._helpers import iter_yaml_entry_files
 
     reader = FileStateReader()
-    entries: list[dict[str, object]] = []
+    entries: list[LearningEntryDict] = []
     for f in iter_yaml_entry_files(entries_dir):
         try:
-            entries.append(reader.read_yaml(f))
+            entries.append(cast(LearningEntryDict, reader.read_yaml(f)))
         except Exception:  # justified: fail-open, skip malformed YAML entries
             continue
     return entries
@@ -53,8 +68,8 @@ def _iter_entries(entries_dir: Path) -> list[dict[str, object]]:
 
 
 def _audit_learnings(
-    entries: list[dict[str, object]],
-) -> dict[str, object]:
+    entries: list[LearningEntryDict],
+) -> AuditLearningsResult:
     """Learning inventory: counts by status, impact, tags, source, bloat."""
     status_counts: Counter[str] = Counter()
     impact_buckets = {"high": 0, "medium": 0, "low": 0}
@@ -88,28 +103,30 @@ def _audit_learnings(
     total = len(entries)
     bloat_pct = bloat_count / max(total, 1)
 
+    bloat: AuditTelemetryBloatDict = {
+        "count": bloat_count,
+        "pct": round(bloat_pct, 3),
+        "verdict": "WARN" if bloat_pct > _BLOAT_WARN_PCT else "PASS",
+    }
     return {
         "total": total,
         "by_status": dict(status_counts),
         "by_impact": impact_buckets,
         "top_tags": tag_counts.most_common(10),
         "by_source": dict(source_counts),
-        "telemetry_bloat": {
-            "count": bloat_count,
-            "pct": round(bloat_pct, 3),
-            "verdict": "WARN" if bloat_pct > _BLOAT_WARN_PCT else "PASS",
-        },
+        "telemetry_bloat": bloat,
     }
 
 
-def _audit_duplicates(entries_dir: Path) -> dict[str, object]:
+def _audit_duplicates(entries_dir: Path) -> AuditDuplicatesResult:
     """Duplicate detection via Jaccard similarity."""
     duplicates = find_duplicate_learnings(entries_dir, threshold=0.8)
+    pairs: list[AuditDuplicatePairDict] = [
+        {"older_id": o, "newer_id": n, "similarity": s}
+        for o, n, s in duplicates
+    ]
     return {
-        "pairs": [
-            {"older_id": o, "newer_id": n, "similarity": s}
-            for o, n, s in duplicates
-        ],
+        "pairs": pairs,
         "count": len(duplicates),
         "verdict": "WARN" if duplicates else "PASS",
     }
@@ -119,7 +136,7 @@ def _audit_index_consistency(
     trw_dir: Path,
     config: TRWConfig,
     actual_count: int,
-) -> dict[str, object]:
+) -> AuditIndexConsistencyResult:
     """Check analytics.yaml total_learnings matches actual entry count."""
     reader = FileStateReader()
     analytics_path = trw_dir / config.context_dir / "analytics.yaml"
@@ -141,7 +158,7 @@ def _audit_index_consistency(
 def _audit_recall_effectiveness(
     trw_dir: Path,
     config: TRWConfig,
-) -> dict[str, object]:
+) -> AuditRecallEffectivenessResult:
     """Parse recall_log.jsonl for query effectiveness stats."""
     receipt_path = (
         trw_dir / config.learnings_dir / config.receipts_dir / "recall_log.jsonl"
@@ -192,7 +209,7 @@ def _audit_recall_effectiveness(
 
 def _audit_ceremony_compliance(
     target_dir: Path,
-) -> dict[str, object]:
+) -> AuditCeremonyComplianceResult:
     """Cross-run ceremony compliance via scan_all_runs (with env override)."""
     old_root = os.environ.get("TRW_PROJECT_ROOT")
     try:
@@ -220,7 +237,7 @@ def _audit_ceremony_compliance(
     }
 
 
-def _audit_reflection_quality(trw_dir: Path) -> dict[str, object]:
+def _audit_reflection_quality(trw_dir: Path) -> AuditReflectionQualityResult:
     """Reflection quality metrics."""
     old_root = os.environ.get("TRW_PROJECT_ROOT")
     try:
@@ -233,10 +250,10 @@ def _audit_reflection_quality(trw_dir: Path) -> dict[str, object]:
         else:
             os.environ.pop("TRW_PROJECT_ROOT", None)
         _reset_config()
-    return result
+    return cast(AuditReflectionQualityResult, result)
 
 
-def _audit_hook_versions(target_dir: Path) -> dict[str, object]:
+def _audit_hook_versions(target_dir: Path) -> AuditHookVersionsResult:
     """Compare deployed hooks against bundled data files by sha256."""
     from importlib.resources import files as pkg_files
 
@@ -281,7 +298,7 @@ def _audit_hook_versions(target_dir: Path) -> dict[str, object]:
 
 
 def _retire_telemetry_bloat(
-    entries: list[dict[str, object]],
+    entries: list[LearningEntryDict],
     trw_dir: Path,
 ) -> int:
     """Mark active telemetry-noise entries as obsolete.
@@ -319,7 +336,7 @@ def run_audit(
     target_dir: Path,
     *,
     fix: bool = False,
-) -> dict[str, object]:
+) -> AuditReport:
     """Run comprehensive TRW health audit on a project directory.
 
     Args:
@@ -337,7 +354,7 @@ def run_audit(
     entries_dir = trw_dir / config.learnings_dir / config.entries_dir
     entries = _iter_entries(entries_dir)
 
-    result: dict[str, object] = {
+    result: AuditReport = {
         "project": target_dir.name,
         "target_dir": str(target_dir),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -352,7 +369,7 @@ def run_audit(
     }
 
     if fix:
-        fix_actions: dict[str, object] = {}
+        fix_actions: AuditFixActionsDict = {}
 
         # Retire telemetry bloat entries (PRD-FIX-021)
         retired_count = _retire_telemetry_bloat(entries, trw_dir)
@@ -561,7 +578,7 @@ def _format_fix_actions_section(fix_actions: object) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def format_markdown(audit: dict[str, object]) -> str:
+def format_markdown(audit: AuditReport) -> str:
     """Format audit results as a human-readable markdown report."""
     lines: list[str] = [
         f"# TRW Audit Report — {audit.get('project', 'unknown')}",

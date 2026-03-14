@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import trw_mcp.scoring._utils as _su
+from trw_mcp.models.typed_dicts import ImpactDistributionResult, ImpactTierInfo, LearningEntryDict
 from trw_mcp.scoring._utils import (
     FileStateReader,
     TRWConfig,
@@ -32,7 +33,7 @@ from trw_mcp.scoring._utils import (
 
 
 def _days_since_access(
-    entry: dict[str, object],
+    entry: LearningEntryDict,
     today: date,
     fallback_days: int | None = None,
 ) -> int:
@@ -57,7 +58,7 @@ def _days_since_access(
 
 
 def _entry_utility(
-    entry: dict[str, object],
+    entry: LearningEntryDict,
     today: date,
     fallback_days: int | None = None,
 ) -> float:
@@ -103,7 +104,7 @@ def _entry_utility(
 
 def compute_impact_distribution(
     entries_dir: Path,
-) -> dict[str, object]:
+) -> ImpactDistributionResult:
     """Compute the current impact score distribution across active learnings.
 
     Returns:
@@ -116,14 +117,15 @@ def compute_impact_distribution(
             "low": {"count": int, "pct": float},        # 0.0-0.39
         }
     """
+    _zero: ImpactTierInfo = {"count": 0, "pct": 0.0}
     if not entries_dir.exists():
-        return {
-            "total_active": 0,
-            "critical": {"count": 0, "pct": 0.0},
-            "high": {"count": 0, "pct": 0.0},
-            "medium": {"count": 0, "pct": 0.0},
-            "low": {"count": 0, "pct": 0.0},
-        }
+        return ImpactDistributionResult(
+            total_active=0,
+            critical=_zero,
+            high=_zero,
+            medium=_zero,
+            low=_zero,
+        )
 
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     total = 0
@@ -150,13 +152,13 @@ def compute_impact_distribution(
     def _pct(n: int) -> float:
         return round(n / total, 4) if total > 0 else 0.0
 
-    return {
-        "total_active": total,
-        "critical": {"count": counts["critical"], "pct": _pct(counts["critical"])},
-        "high": {"count": counts["high"], "pct": _pct(counts["high"])},
-        "medium": {"count": counts["medium"], "pct": _pct(counts["medium"])},
-        "low": {"count": counts["low"], "pct": _pct(counts["low"])},
-    }
+    return ImpactDistributionResult(
+        total_active=total,
+        critical=ImpactTierInfo(count=counts["critical"], pct=_pct(counts["critical"])),
+        high=ImpactTierInfo(count=counts["high"], pct=_pct(counts["high"])),
+        medium=ImpactTierInfo(count=counts["medium"], pct=_pct(counts["medium"])),
+        low=ImpactTierInfo(count=counts["low"], pct=_pct(counts["low"])),
+    )
 
 
 # --- Forced distribution enforcement (PRD-CORE-034) ---
@@ -286,9 +288,9 @@ def enforce_tier_distribution(
 
 
 def apply_impact_decay(
-    entries: list[dict[str, object]],
+    entries: list[LearningEntryDict],
     half_life_days: int | None = None,
-) -> list[dict[str, object]]:
+) -> list[LearningEntryDict]:
     """Apply exponential impact decay to stale learnings (PRD-CORE-034-FR03).
 
     For each entry, reads ``last_accessed`` (or ``created``) date and computes

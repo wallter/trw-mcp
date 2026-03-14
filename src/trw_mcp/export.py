@@ -16,10 +16,19 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.typed_dicts import (
+    ExportAnalyticsSection,
+    ExportMetadata,
+    ExportRunsSection,
+    ExportSummary,
+    ImportLearningsResult,
+    LearningEntryDict,
+)
 
 logger = structlog.get_logger()
 from trw_mcp.models.config import TRWConfig, _reset_config
@@ -56,14 +65,14 @@ def _collect_learnings(
     *,
     min_impact: float = 0.0,
     since: str | None = None,
-) -> list[dict[str, object]]:
+) -> list[LearningEntryDict]:
     """Read all learning entries from a project, with optional filters."""
     entries_dir = trw_dir / config.learnings_dir / config.entries_dir
     if not entries_dir.is_dir():
         return []
 
     reader = FileStateReader()
-    results: list[dict[str, object]] = []
+    results: list[LearningEntryDict] = []
     for f in sorted(entries_dir.glob("*.yaml")):
         if f.name == "index.yaml":
             continue
@@ -81,12 +90,12 @@ def _collect_learnings(
             if created < since:
                 continue
 
-        results.append(data)
+        results.append(cast(LearningEntryDict, data))
 
     return results
 
 
-def _learnings_to_csv(entries: list[dict[str, object]]) -> str:
+def _learnings_to_csv(entries: list[LearningEntryDict]) -> str:
     """Convert learning entries to CSV string."""
     output = io.StringIO()
     fieldnames = [
@@ -113,7 +122,7 @@ def _learnings_to_csv(entries: list[dict[str, object]]) -> str:
     return output.getvalue()
 
 
-def _collect_runs(target_dir: Path) -> dict[str, object]:
+def _collect_runs(target_dir: Path) -> ExportRunsSection:
     """Collect all run analytics via scan_all_runs (with env override)."""
     with temp_project_root(target_dir):
         return scan_all_runs()
@@ -123,9 +132,9 @@ def _collect_analytics(
     target_dir: Path,
     trw_dir: Path,
     config: TRWConfig,
-) -> dict[str, object]:
+) -> ExportAnalyticsSection:
     """Merge analytics.yaml, reflection quality, and ceremony aggregates."""
-    analytics: dict[str, object] = {}
+    analytics: ExportAnalyticsSection = {}
 
     reader = FileStateReader()
     # Load analytics.yaml
@@ -146,7 +155,7 @@ def _collect_analytics(
     if report_path.exists():
         try:
             cached = reader.read_yaml(report_path)
-            analytics["ceremony_aggregates"] = cached.get("aggregate", {})
+            analytics["ceremony_aggregates"] = cast(dict[str, object], cached.get("aggregate", {}))
         except (OSError, StateError):
             logger.debug("ceremony_aggregates_load_failed", exc_info=True)
 
@@ -160,7 +169,7 @@ def export_data(
     fmt: str = "json",
     since: str | None = None,
     min_impact: float = 0.0,
-) -> dict[str, object]:
+) -> ExportSummary:
     """Export TRW data from a project directory.
 
     Args:
@@ -178,14 +187,15 @@ def export_data(
         return {"error": f"No .trw directory found at {target_dir}", "status": "failed"}
 
     config = _load_project_config(trw_dir)
-    result: dict[str, object] = {
-        "metadata": {
-            "project": target_dir.name,
-            "export_date": datetime.now(timezone.utc).isoformat(),
-            "trw_version": config.framework_version,
-            "scope": scope,
-            "format": fmt,
-        },
+    metadata: ExportMetadata = {
+        "project": target_dir.name,
+        "export_date": datetime.now(timezone.utc).isoformat(),
+        "trw_version": config.framework_version,
+        "scope": scope,
+        "format": fmt,
+    }
+    result: ExportSummary = {
+        "metadata": metadata,
         "status": "ok",
     }
 
@@ -198,9 +208,7 @@ def export_data(
         else:
             result["learnings"] = learnings
         # Update metadata counts
-        meta = result["metadata"]
-        if isinstance(meta, dict):
-            meta["learnings_count"] = len(learnings)
+        metadata["learnings_count"] = len(learnings)
 
     if scope in ("runs", "all"):
         result["runs"] = _collect_runs(target_dir)
@@ -218,7 +226,7 @@ def import_learnings(
     min_impact: float = 0.0,
     tags: list[str] | None = None,
     dry_run: bool = False,
-) -> dict[str, object]:
+) -> ImportLearningsResult:
     """Import learnings from an export file into a target project.
 
     Args:

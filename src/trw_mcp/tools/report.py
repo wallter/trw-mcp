@@ -6,6 +6,8 @@ as MCP tools that generate structured analytics.
 
 from __future__ import annotations
 
+from typing import cast
+
 import structlog
 from fastmcp import FastMCP
 
@@ -13,6 +15,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.state._paths import resolve_run_path, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.report import assemble_report
+from trw_mcp.models.typed_dicts import AnalyticsReport, RunReportResultDict
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -27,7 +30,7 @@ def register_report_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_run_report(run_path: str | None = None) -> dict[str, object]:
+    def trw_run_report(run_path: str | None = None) -> RunReportResultDict:
         """See what happened in a run — phase timing, event counts, learning yield, and build results.
 
         Reads run.yaml, events.jsonl, checkpoints.jsonl, and build-status.yaml to
@@ -51,14 +54,14 @@ def register_report_tools(server: FastMCP) -> None:
             reader = FileStateReader()
             report = assemble_report(resolved_path, reader, trw_dir)
             logger.info("trw_run_report_generated", run_id=report.run_id)
-            result: dict[str, object] = report.model_dump()
+            result: RunReportResultDict = cast(RunReportResultDict, report.model_dump())
             return result
         except StateError as exc:
             return {"error": str(exc), "status": "failed"}
 
     @server.tool()
     @log_tool_call
-    def trw_analytics_report(since: str | None = None) -> dict[str, object]:
+    def trw_analytics_report(since: str | None = None) -> AnalyticsReport:
         """See trends across all runs — build pass rate, ceremony compliance, and whether process is improving.
 
         Scans all run directories, computes per-run ceremony scores (0-100), and
@@ -71,11 +74,11 @@ def register_report_tools(server: FastMCP) -> None:
         from trw_mcp.state.analytics.report import scan_all_runs
 
         try:
-            report = scan_all_runs(since=since)
+            report: AnalyticsReport = scan_all_runs(since=since)
             logger.info(
                 "trw_analytics_report_generated",
                 runs_scanned=report.get("runs_scanned", 0),
             )
             return report
         except Exception as exc:  # justified: boundary, scan_all_runs reads many run dirs
-            return {"error": str(exc), "status": "failed"}
+            return cast(AnalyticsReport, {"error": str(exc), "status": "failed"})

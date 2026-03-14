@@ -715,7 +715,8 @@ class TestProcessOutcome:
         entries_dir.mkdir(parents=True, exist_ok=True)
 
         # Write an entry with outcome_history as a string (not a list) -> triggers line 890
-        writer.write_yaml(entries_dir / "2026-01-01-L-corrupt.yaml", {
+        # File named {id}.yaml so process_outcome can find it for write-back.
+        writer.write_yaml(entries_dir / "L-corrupt.yaml", {
             "id": "L-corrupt",
             "summary": "corrupt history",
             "detail": "d",
@@ -740,7 +741,8 @@ class TestProcessOutcome:
         assert "L-corrupt" in result
 
         # Verify the outcome_history was written as a list
-        updated = reader.read_yaml(entries_dir / "2026-01-01-L-corrupt.yaml")
+        # File is named {id}.yaml so process_outcome can find it for write-back.
+        updated = reader.read_yaml(entries_dir / "L-corrupt.yaml")
         assert isinstance(updated.get("outcome_history"), list)
 
 

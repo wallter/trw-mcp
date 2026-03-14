@@ -10,8 +10,10 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 from trw_mcp.models.build import BuildStatus
+from trw_mcp.models.typed_dicts import MypyResultDict, PytestResultDict
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.tools.build._runners import _run_mypy, _run_pytest
 from trw_mcp.tools.build._subprocess import _collect_failures, _MAX_FAILURES
@@ -73,17 +75,17 @@ def run_build_check(
     all_failures: list[str] = []
 
     if scope in ("full", "pytest", "quick"):
-        pytest_result = _run_pytest(project_root, timeout_secs, pytest_args)
-        tests_passed = bool(pytest_result["tests_passed"])
-        coverage_pct = float(str(pytest_result["coverage_pct"]))
-        test_count = int(str(pytest_result["test_count"]))
-        failure_count = int(str(pytest_result["failure_count"]))
-        all_failures.extend(_collect_failures(pytest_result))
+        pytest_result: PytestResultDict = _run_pytest(project_root, timeout_secs, pytest_args)
+        tests_passed = bool(pytest_result.get("tests_passed", False))
+        coverage_pct = float(pytest_result.get("coverage_pct", 0.0))
+        test_count = int(pytest_result.get("test_count", 0))
+        failure_count = int(pytest_result.get("failure_count", 0))
+        all_failures.extend(_collect_failures(cast("dict[str, object]", pytest_result)))
 
     if scope in ("full", "mypy"):
-        mypy_result = _run_mypy(project_root, timeout_secs, mypy_args)
-        mypy_clean = bool(mypy_result["mypy_clean"])
-        all_failures.extend(_collect_failures(mypy_result))
+        mypy_result: MypyResultDict = _run_mypy(project_root, timeout_secs, mypy_args)
+        mypy_clean = bool(mypy_result.get("mypy_clean", False))
+        all_failures.extend(_collect_failures(cast("dict[str, object]", mypy_result)))
 
     duration = time.monotonic() - start
 

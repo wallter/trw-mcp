@@ -12,10 +12,12 @@ import secrets
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
 
+from trw_mcp.models.typed_dicts import MultiReviewerAnalysisResult, ReviewFindingDict
 from trw_mcp.state._paths import find_active_run
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools.telemetry import log_tool_call
@@ -89,7 +91,7 @@ def _invoke_cross_model_review(
 def _run_multi_reviewer_analysis(
     diff: str,
     config: object,
-) -> dict[str, object]:
+) -> MultiReviewerAnalysisResult:
     """Run structured multi-perspective code review analysis.
 
     When called without pre-collected reviewer_findings, performs
@@ -103,7 +105,7 @@ def _run_multi_reviewer_analysis(
     Returns:
         Dict with reviewer_roles_run, findings, and errors.
     """
-    result: dict[str, object] = {
+    result: MultiReviewerAnalysisResult = {
         "reviewer_roles_run": list(REVIEWER_ROLES),
         "reviewer_errors": [],
         "findings": [],
@@ -114,7 +116,7 @@ def _run_multi_reviewer_analysis(
 
     # Basic structural analysis: detect obvious patterns in the diff.
     # Full multi-agent analysis is handled client-side via subagents.
-    findings: list[dict[str, object]] = []
+    findings: list[ReviewFindingDict] = []
 
     # Check for common issues detectable via diff text analysis
     lines = diff.split("\n")
@@ -134,7 +136,7 @@ def _run_multi_reviewer_analysis(
                     })
                     break
 
-    result["findings"] = findings
+    result["findings"] = cast(list[dict[str, object]], findings)
     return result
 
 
@@ -266,21 +268,21 @@ def register_review_tools(server: FastMCP) -> None:
         review_id = "review-" + secrets.token_hex(4)
 
         if effective_mode == "manual":
-            return handle_manual_mode(
+            return cast(dict[str, object], handle_manual_mode(
                 findings or [], resolved_run, review_id, ts,
-            )
+            ))
 
         if effective_mode == "reconcile":
-            return handle_reconcile_mode(
+            return cast(dict[str, object], handle_reconcile_mode(
                 config, resolved_run, review_id, ts, prd_ids,
-            )
+            ))
 
         if effective_mode == "cross_model":
-            return handle_cross_model_mode(
+            return cast(dict[str, object], handle_cross_model_mode(
                 config, resolved_run, review_id, ts,
-            )
+            ))
 
         # Auto mode (QUAL-027)
-        return handle_auto_mode(
+        return cast(dict[str, object], handle_auto_mode(
             config, resolved_run, review_id, ts, reviewer_findings,
-        )
+        ))
