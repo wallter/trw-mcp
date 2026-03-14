@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.12.7] — 2026-03-14
+
+### Changed
+
+- **trw-implementer agent upgraded to Opus** — changed model from `claude-sonnet-4-6` to `claude-opus-4-6` for higher-quality implementation output.
+
 ## [0.12.6] — 2026-03-14
 
 ### Added
