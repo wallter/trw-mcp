@@ -15,7 +15,7 @@ import structlog
 import trw_mcp.state.analytics.core as _ac
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.models.typed_dicts import LearningEntryDict
+from trw_mcp.models.typed_dicts import LearningEntryDict, PruneCandidateDict
 from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.state.analytics.entries import apply_status_update, resync_learning_index
 from trw_mcp.state.persistence import FileStateReader
@@ -105,7 +105,7 @@ def _compute_removal_scores(
     entries_tuples: list[tuple[Path, dict[str, object]]],
     entries_dir: Path,
     jaccard_threshold: float,
-) -> tuple[list[tuple[str, str, float]], list[dict[str, object]]]:
+) -> tuple[list[tuple[str, str, float]], list[PruneCandidateDict]]:
     """Compute removal scores for a set of entries.
 
     Step 1 identifies Jaccard duplicates; step 2 computes utility-based
@@ -124,7 +124,8 @@ def _compute_removal_scores(
     from trw_mcp.scoring import utility_based_prune_candidates
 
     duplicates = find_duplicate_learnings(entries_dir, jaccard_threshold)
-    utility_candidates = utility_based_prune_candidates(entries_tuples)
+    typed_tuples = cast(list[tuple[Path, LearningEntryDict]], entries_tuples)
+    utility_candidates = utility_based_prune_candidates(typed_tuples)
     return duplicates, utility_candidates
 
 
@@ -132,7 +133,7 @@ def _compute_removal_scores_from_sqlite(
     sqlite_entries: list[LearningEntryDict],
     entries_dir: Path,
     jaccard_threshold: float,
-) -> tuple[list[tuple[str, str, float]], list[dict[str, object]]]:
+) -> tuple[list[tuple[str, str, float]], list[PruneCandidateDict]]:
     """Compute removal scores using pre-loaded SQLite entries.
 
     Variant of ``_compute_removal_scores`` that accepts pre-loaded entry dicts
@@ -152,8 +153,8 @@ def _compute_removal_scores_from_sqlite(
         entries_dir, jaccard_threshold, entries=sqlite_entries,
     )
     dummy_path = entries_dir / "_dummy.yaml"
-    all_entries_tuples: list[tuple[Path, dict[str, object]]] = [
-        (dummy_path, cast("dict[str, object]", e)) for e in sqlite_entries
+    all_entries_tuples: list[tuple[Path, LearningEntryDict]] = [
+        (dummy_path, e) for e in sqlite_entries
     ]
     utility_candidates = utility_based_prune_candidates(all_entries_tuples)
     return duplicates, utility_candidates
@@ -161,7 +162,7 @@ def _compute_removal_scores_from_sqlite(
 
 def _select_removal_candidates(
     duplicates: list[tuple[str, str, float]],
-    utility_candidates: list[dict[str, object]],
+    utility_candidates: list[PruneCandidateDict],
 ) -> list[tuple[str, str]]:
     """Select the full set of entry IDs and their target statuses for removal.
 
@@ -219,11 +220,11 @@ def auto_prune_excess_entries(
         return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0}
 
     # PRD-FIX-033-FR02: Try SQLite first, fall back to YAML
-    sqlite_entries: list[LearningEntryDict] | None = None
+    sqlite_entries: list[dict[str, object]] | None = None
     try:
         from trw_mcp.state.memory_adapter import list_entries_by_status
         sqlite_entries = list_entries_by_status(trw_dir, status="active")
-    except Exception:  # broad catch: ImportError + SQLite/adapter failures
+    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures
         logger.warning("sqlite_read_fallback", step="auto_prune", reason="get_backend failed")
 
     if sqlite_entries is not None:
@@ -240,7 +241,7 @@ def auto_prune_excess_entries(
             }
 
         duplicates, utility_candidates = _compute_removal_scores_from_sqlite(
-            sqlite_entries, entries_dir, jaccard_threshold,
+            cast(list[LearningEntryDict], sqlite_entries), entries_dir, jaccard_threshold,
         )
         removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
 
@@ -424,7 +425,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     # entries_for_metrics: the set of entries passed to sub-metric helpers.
     # SQLite path: active-only (list_active_learnings).
     # YAML path: all entries (original behaviour -- inactive entries counted too).
-    entries_for_metrics: list[LearningEntryDict] = []
+    entries_for_metrics: list[dict[str, object]] = []
 
     _used_sqlite = False
     try:
@@ -437,8 +438,8 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
             if src:
                 source_types.add(src)
         _used_sqlite = True
-    except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        logger.debug("sqlite_fallback_to_yaml", op="collect_learning_metrics")
+    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures
+        logger.warning("sqlite_fallback_to_yaml", op="collect_learning_metrics", exc_info=True)
         # Fall through to YAML
 
     if not _used_sqlite and entries_dir.is_dir():
@@ -446,7 +447,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
             total_entries += 1
             if is_active_entry(data):
                 active_entries += 1
-            entries_for_metrics.append(cast("LearningEntryDict", data))
+            entries_for_metrics.append(data)
             src = str(data.get("source_type", ""))
             if src:
                 source_types.add(src)
@@ -461,13 +462,13 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     productivity = min(1.0, avg_learnings / 2.0)
 
     # 3. Diversity: tag variety (0 tags = 0.0, 10+ = 1.0)
-    diversity = _score_learning_diversity(entries_for_metrics)
+    diversity = _score_learning_diversity(cast(list[LearningEntryDict], entries_for_metrics))
 
     # 4. Access ratio: proportion of entries that have been accessed
-    access_ratio = _score_learning_depth(entries_for_metrics, total_entries)
+    access_ratio = _score_learning_depth(cast(list[LearningEntryDict], entries_for_metrics), total_entries)
 
     # 5. Q-learning activation: proportion of entries with Q observations
-    q_activation_rate = _score_impact_distribution(entries_for_metrics, total_entries)
+    q_activation_rate = _score_impact_distribution(cast(list[LearningEntryDict], entries_for_metrics), total_entries)
 
     # Weighted composite (reflection_freq 25%, productivity 25%,
     # diversity 15%, access 20%, Q-activation 15%)

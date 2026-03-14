@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from trw_mcp.state.persistence import FileStateReader
 
 import structlog
+from trw_mcp.state._helpers import iter_yaml_entry_files
 
 try:
     import sqlite_vec  # type: ignore[import-untyped]
@@ -201,7 +202,7 @@ class MemoryStore:
             return {"migrated": 0, "skipped": 0, "total": 0}
 
         entries: list[tuple[str, str]] = []
-        for yaml_file in sorted(entries_dir.glob("*.yaml")):
+        for yaml_file in iter_yaml_entry_files(entries_dir):
             try:
                 data = reader.read_yaml(yaml_file)
                 if str(data.get("status", "active")) != "active":
@@ -236,3 +237,35 @@ class MemoryStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton for connection reuse (PRD-FIX-046)
+# ---------------------------------------------------------------------------
+
+_store: MemoryStore | None = None
+_store_path: Path | None = None
+
+
+def get_memory_store(db_path: Path) -> MemoryStore:
+    """Return a shared MemoryStore instance, creating it lazily.
+
+    Re-creates the store if ``db_path`` differs from the cached instance.
+    """
+    global _store, _store_path  # noqa: PLW0603
+    if _store is not None and _store_path == db_path:
+        return _store
+    if _store is not None:
+        _store.close()
+    _store = MemoryStore(db_path)
+    _store_path = db_path
+    return _store
+
+
+def reset_memory_store() -> None:
+    """Close and discard the shared MemoryStore singleton."""
+    global _store, _store_path  # noqa: PLW0603
+    if _store is not None:
+        _store.close()
+    _store = None
+    _store_path = None

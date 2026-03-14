@@ -7,6 +7,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.state._helpers import iter_yaml_entry_files
 
 logger = structlog.get_logger()
 from trw_mcp.models.config import TRWConfig
@@ -91,9 +92,7 @@ def collect_patterns(
     if not patterns_dir.exists():
         return patterns
 
-    for pattern_file in sorted(patterns_dir.glob("*.yaml")):
-        if pattern_file.name == "index.yaml":
-            continue
+    for pattern_file in iter_yaml_entry_files(patterns_dir):
         try:
             patterns.append(reader.read_yaml(pattern_file))
         except (StateError, ValueError, TypeError):

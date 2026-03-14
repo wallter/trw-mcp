@@ -249,6 +249,7 @@ class TestMemoryToLearningDict:
             "detail", "evidence", "source_type", "source_identity",
             "created", "updated", "access_count", "last_accessed_at",
             "q_value", "q_observations", "recurrence", "shard_id",
+            "outcome_history",
         }
         assert expected_keys == set(result.keys())
 

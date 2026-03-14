@@ -7,6 +7,7 @@ Extracted from ceremony.py for single-responsibility.
 from __future__ import annotations
 
 import dataclasses
+from typing import cast
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -83,7 +84,7 @@ def _do_checkpoint(run_dir: Path, message: str) -> None:
         "ts": datetime.now(timezone.utc).isoformat(),
         "message": message,
     }
-    writer.append_jsonl(checkpoints_path, checkpoint_data)
+    writer.append_jsonl(checkpoints_path, cast(dict[str, object], checkpoint_data))
 
     events_path = run_dir / "meta" / "events.jsonl"
     if events_path.parent.exists():

@@ -112,7 +112,7 @@ class TelemetryClient:
             try:
                 self._writer.append_jsonl(self._output_path, record)
                 written += 1
-            except Exception:
+            except Exception:  # justified: fail-open, telemetry write errors must not block
                 # justified: telemetry is fail-open — individual write errors
                 # must not propagate, but we preserve the event for retry.
                 logger.warning(

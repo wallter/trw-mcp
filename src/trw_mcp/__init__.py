@@ -2,7 +2,7 @@
 
 Error Handling Policy (PRD-FIX-043)
 ------------------------------------
-Every ``except Exception`` block in this package MUST be annotated with a
+Every ``except Exception`` block in this package MUST be annotated with a  # justified: fail-open
 ``# justified: <category>, <rationale>`` comment. Recognised categories:
 
 - **fail-open** — telemetry, logging, or analytics that must never block
@@ -19,7 +19,7 @@ Every ``except Exception`` block in this package MUST be annotated with a
   JSONL lines) where a single malformed record must not abort the scan.
   Log at ``debug`` per-item, summarise at ``warning`` if any skipped.
 
-Bare ``except Exception: pass`` without logging is prohibited.
+Bare ``except Exception: pass`` without logging is prohibited.  # justified: fail-open
 New ``except Exception`` blocks require both the ``# justified:`` comment
 and a corresponding log call.
 """

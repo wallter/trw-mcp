@@ -42,7 +42,7 @@ class TestRenderAgentTeamsProtocol:
 
     def test_renders_when_enabled(self) -> None:
         """Agent Teams section renders when agent_teams_enabled=True."""
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
             result = render_agent_teams_protocol()
 
         assert "## TRW Agent Teams Protocol" in result
@@ -54,14 +54,14 @@ class TestRenderAgentTeamsProtocol:
 
     def test_empty_when_disabled(self) -> None:
         """Agent Teams section is empty when agent_teams_enabled=False."""
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=False)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)):
             result = render_agent_teams_protocol()
 
         assert result == ""
 
     def test_contains_all_five_roles(self) -> None:
         """All five teammate roles appear in the rendered table."""
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
             result = render_agent_teams_protocol()
 
         assert "trw-lead" in result
@@ -72,7 +72,7 @@ class TestRenderAgentTeamsProtocol:
 
     def test_contains_hook_names(self) -> None:
         """TeammateIdle and TaskCompleted hooks are documented."""
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
             result = render_agent_teams_protocol()
 
         assert "TeammateIdle" in result
@@ -80,7 +80,7 @@ class TestRenderAgentTeamsProtocol:
 
     def test_contains_dual_mode_table(self) -> None:
         """Dual-mode table lists both Subagents and Agent Teams."""
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
             result = render_agent_teams_protocol()
 
         assert "Subagents" in result
@@ -89,7 +89,7 @@ class TestRenderAgentTeamsProtocol:
 
     def test_lifecycle_steps_ordered(self) -> None:
         """Lifecycle steps appear in correct order (1-6)."""
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
             result = render_agent_teams_protocol()
 
         positions = []
@@ -142,7 +142,7 @@ class TestAgentTeamsTemplateIntegration:
         (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
 
         tools = _get_tools()
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=True)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
             result = tools["trw_claude_md_sync"].fn(scope="root")
 
         assert result["status"] == "synced"
@@ -159,7 +159,7 @@ class TestAgentTeamsTemplateIntegration:
         (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
 
         tools = _get_tools()
-        with patch("trw_mcp.state.claude_md._config", TRWConfig(agent_teams_enabled=False)):
+        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)):
             result = tools["trw_claude_md_sync"].fn(scope="root")
 
         assert result["status"] == "synced"
@@ -335,7 +335,7 @@ class TestAgentDefinitions:
         ("agent_name", "expected_model"),
         [
             ("trw-lead.md", "claude-opus-4-6"),
-            ("trw-implementer.md", "claude-sonnet-4-6"),
+            ("trw-implementer.md", "claude-opus-4-6"),
             ("trw-tester.md", "claude-sonnet-4-6"),
             ("trw-reviewer.md", "claude-sonnet-4-6"),
             ("trw-researcher.md", "claude-sonnet-4-6"),

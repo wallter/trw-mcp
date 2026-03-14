@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
 
 import structlog
 
+from trw_mcp.models.typed_dicts import RecallStats
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -32,7 +32,7 @@ def record_recall(learning_id: str, query: str) -> bool:
         tracking_path.parent.mkdir(parents=True, exist_ok=True)
 
         writer = FileStateWriter()
-        entry: dict[str, Any] = {
+        entry: dict[str, object] = {
             "learning_id": learning_id,
             "query": query,
             "timestamp": time.time(),
@@ -58,7 +58,7 @@ def record_outcome(learning_id: str, outcome: str) -> bool:
             return False
 
         writer = FileStateWriter()
-        entry: dict[str, Any] = {
+        entry: dict[str, object] = {
             "learning_id": learning_id,
             "outcome": outcome,
             "timestamp": time.time(),
@@ -70,23 +70,24 @@ def record_outcome(learning_id: str, outcome: str) -> bool:
         return False
 
 
-def get_recall_stats(entries_dir: Path | None = None) -> dict[str, Any]:
+def get_recall_stats(entries_dir: Path | None = None) -> RecallStats:
     """Get recall statistics for outcome-based calibration.
 
     Returns:
-        {total_recalls, unique_learnings, positive_outcomes, negative_outcomes, neutral_outcomes}
+        RecallStats with total_recalls, unique_learnings, positive_outcomes,
+        negative_outcomes, and neutral_outcomes.
     """
     try:
         trw_dir = resolve_trw_dir()
         tracking_path = trw_dir / _TRACKING_FILE
         if not tracking_path.exists():
-            return {
-                "total_recalls": 0,
-                "unique_learnings": 0,
-                "positive_outcomes": 0,
-                "negative_outcomes": 0,
-                "neutral_outcomes": 0,
-            }
+            return RecallStats(
+                total_recalls=0,
+                unique_learnings=0,
+                positive_outcomes=0,
+                negative_outcomes=0,
+                neutral_outcomes=0,
+            )
 
         reader = FileStateReader()
         records = reader.read_jsonl(tracking_path)
@@ -110,18 +111,18 @@ def get_recall_stats(entries_dir: Path | None = None) -> dict[str, Any]:
                 neutral += 1
             total += 1
 
-        return {
-            "total_recalls": total,
-            "unique_learnings": len(learning_ids),
-            "positive_outcomes": positive,
-            "negative_outcomes": negative,
-            "neutral_outcomes": neutral,
-        }
+        return RecallStats(
+            total_recalls=total,
+            unique_learnings=len(learning_ids),
+            positive_outcomes=positive,
+            negative_outcomes=negative,
+            neutral_outcomes=neutral,
+        )
     except Exception:  # justified: fail-open, stats computation failure returns zeroed defaults
-        return {
-            "total_recalls": 0,
-            "unique_learnings": 0,
-            "positive_outcomes": 0,
-            "negative_outcomes": 0,
-            "neutral_outcomes": 0,
-        }
+        return RecallStats(
+            total_recalls=0,
+            unique_learnings=0,
+            positive_outcomes=0,
+            negative_outcomes=0,
+            neutral_outcomes=0,
+        )

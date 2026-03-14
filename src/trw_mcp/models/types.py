@@ -1,5 +1,11 @@
 """Re-exports from typed_dicts for backward compatibility.
 
+.. deprecated::
+    All source-code imports from this module have been migrated to
+    ``trw_mcp.models.typed_dicts`` (the canonical location).  This shim is
+    retained **only** to avoid breaking external consumers.  Do NOT add new
+    imports here — import directly from ``trw_mcp.models.typed_dicts`` instead.
+
 All TypedDicts originally defined here have been consolidated into
 ``trw_mcp.models.typed_dicts``.  This module re-exports them so existing
 ``from trw_mcp.models.types import ...`` call-sites continue to work without
@@ -8,6 +14,7 @@ modification.
 
 from trw_mcp.models.typed_dicts import (
     AggregateMetrics,
+    RemoteSharedLearningDict,
     AnalyticsReport,
     AuditCeremonyComplianceResult,
     AutoRecalledItemDict,
@@ -94,6 +101,7 @@ from trw_mcp.models.typed_dicts import (
 
 __all__ = [
     "AggregateMetrics",
+    "RemoteSharedLearningDict",
     "AnalyticsReport",
     "AuditCeremonyComplianceResult",
     "AuditDuplicatePairDict",

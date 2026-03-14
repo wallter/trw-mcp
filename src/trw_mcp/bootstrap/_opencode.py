@@ -10,9 +10,14 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
 
 import structlog
+
+from trw_mcp.models.typed_dicts._opencode import (
+    OpencodeConfig,
+    OpencodeServerEntry,
+    OpencodeTemplateDict,
+)
 
 logger = structlog.get_logger()
 
@@ -35,7 +40,7 @@ _DEFAULT_PERMISSIONS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _get_trw_mcp_entry() -> dict[str, Any]:
+def _get_trw_mcp_entry() -> OpencodeServerEntry:
     """Return the TRW MCP server entry for opencode.json.
 
     Uses local stdio transport (one trw-mcp process per instance).
@@ -54,7 +59,7 @@ def _get_trw_mcp_entry() -> dict[str, Any]:
     }
 
 
-def _parse_jsonc(content: str) -> dict[str, Any]:
+def _parse_jsonc(content: str) -> OpencodeConfig:
     """Parse JSONC (JSON with comments) by stripping comments.
 
     Handles // line comments and /* block comments */.
@@ -94,7 +99,7 @@ def _parse_jsonc(content: str) -> dict[str, Any]:
         result_parts.append(ch)
         i += 1
     stripped = "".join(result_parts)
-    result: dict[str, Any] = json.loads(stripped)
+    result: OpencodeConfig = json.loads(stripped)
     return result
 
 
@@ -104,9 +109,9 @@ def _parse_jsonc(content: str) -> dict[str, Any]:
 
 
 def merge_opencode_json(
-    existing: dict[str, Any],
-    trw_entry: dict[str, Any],
-) -> dict[str, Any]:
+    existing: OpencodeConfig,
+    trw_entry: OpencodeServerEntry,
+) -> OpencodeConfig:
     """Smart merge TRW config into existing opencode.json (FR16).
 
     Rules:
@@ -115,10 +120,10 @@ def merge_opencode_json(
     - NEVER overwrite user's "model", "small_model", "agent", "instructions".
     - Preserve all other keys.
     """
-    result: dict[str, Any] = dict(existing)
+    result: OpencodeConfig = dict(existing)  # type: ignore[assignment]
 
     # Update "mcp" section: add/update "trw" key, preserve others
-    mcp: dict[str, Any] = dict(result.get("mcp", {}))
+    mcp: dict[str, OpencodeServerEntry] = dict(result.get("mcp", {}))
     mcp["trw"] = trw_entry
     result["mcp"] = mcp
 
@@ -130,7 +135,7 @@ def merge_opencode_json(
     # anything that might have modified them)
     for key in _PRESERVE_KEYS:
         if key in existing:
-            result[key] = existing[key]
+            result[key] = existing[key]  # type: ignore[literal-required]
 
     return result
 
@@ -182,7 +187,7 @@ def generate_opencode_config(
             result["errors"].append(f"Failed to write {config_path}: {exc}")
     else:
         # Fresh install: write full template
-        template: dict[str, Any] = {
+        template: OpencodeTemplateDict = {
             "$schema": "https://opencode.ai/config.json",
             "instructions": ["AGENTS.md"],
             "permission": dict(_DEFAULT_PERMISSIONS),

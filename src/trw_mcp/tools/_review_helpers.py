@@ -378,7 +378,7 @@ def handle_auto_mode(
         analysis: MultiReviewerAnalysisResult = {
             "reviewer_roles_run": list(REVIEWER_ROLES),
             "reviewer_errors": [],
-            "findings": cast(list[dict[str, object]], reviewer_findings),
+            "findings": reviewer_findings,
         }
     else:
         analysis = _run_multi_reviewer_analysis(diff, config)
@@ -414,7 +414,7 @@ def handle_auto_mode(
         "review_id": review_id,
         "verdict": verdict,
         "mode": "auto",
-        "reviewer_roles_run": cast(list[str], analysis.get("reviewer_roles_run", [])),
+        "reviewer_roles_run": analysis.get("reviewer_roles_run", []),
         "reviewer_errors": analysis.get("reviewer_errors", []),
         "surfaced_findings_count": len(surfaced),
         "total_findings_count": len(all_auto_findings),

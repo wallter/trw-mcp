@@ -40,6 +40,33 @@ class SectionScoreDict(TypedDict):
     substantive_lines: int
 
 
+class PrdFrontmatterDict(TypedDict, total=False):
+    """Serialized frontmatter dict produced by ``model_to_dict(PRDFrontmatter)``.
+
+    Used as the parameter/return type for ``_strip_deprecated_fields()`` and
+    as the ``frontmatter`` parameter in ``_render_prd()``.  All keys are
+    optional because ``_strip_deprecated_fields`` removes ``None``-valued and
+    deprecated keys before YAML serialization.
+    """
+
+    id: str
+    title: str
+    version: str
+    priority: str
+    category: str
+    risk_level: str | None
+    confidence: dict[str, object]
+    evidence: dict[str, object]
+    traceability: dict[str, object]
+    quality_gates: dict[str, object]
+    dates: dict[str, object]
+    template_version: str | None
+    wave_source: str | None
+    slos: list[str]
+    # Top-level deprecated keys (present pre-strip, absent post-strip)
+    aaref_components: object
+
+
 class PrdCreateResultDict(TypedDict):
     """Return shape of ``trw_prd_create`` MCP tool."""
 

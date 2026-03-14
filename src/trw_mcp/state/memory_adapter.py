@@ -16,7 +16,7 @@ import contextlib
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -28,8 +28,6 @@ from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.models.config import get_config
-from trw_mcp.models.typed_dicts import LearningEntryCompactDict, LearningEntryDict
-from trw_mcp.models.types import EmbedHealthStatus
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 
 logger = structlog.get_logger()
@@ -212,7 +210,7 @@ def reset_embed_failure_count() -> None:
     _embed_failures = 0
 
 
-def check_embeddings_status() -> EmbedHealthStatus:
+def check_embeddings_status() -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
 
     Returns a dict with:
@@ -223,25 +221,23 @@ def check_embeddings_status() -> EmbedHealthStatus:
     """
     cfg = get_config()
     if not cfg.embeddings_enabled:
-        disabled: EmbedHealthStatus = {
+        return {
             "enabled": False,
             "available": False,
             "advisory": "",
             "recent_failures": _embed_failures,
         }
-        return disabled
 
     embedder = get_embedder()
     if embedder is not None:
-        ok: EmbedHealthStatus = {
+        return {
             "enabled": True,
             "available": True,
             "advisory": "",
             "recent_failures": _embed_failures,
         }
-        return ok
 
-    missing: EmbedHealthStatus = {
+    return {
         "enabled": True,
         "available": False,
         "advisory": (
@@ -250,7 +246,6 @@ def check_embeddings_status() -> EmbedHealthStatus:
         ),
         "recent_failures": _embed_failures,
     }
-    return missing
 
 
 def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
@@ -351,9 +346,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
 # Field mapping helpers
 # ---------------------------------------------------------------------------
 
-def _memory_to_learning_dict(
-    entry: MemoryEntry, *, compact: bool = False
-) -> LearningEntryDict | LearningEntryCompactDict:
+def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> dict[str, object]:
     """Convert a :class:`MemoryEntry` to the dict shape returned by trw_recall.
 
     The returned dict matches the YAML-era learning entry format so callers
@@ -361,25 +354,22 @@ def _memory_to_learning_dict(
 
     Args:
         entry: Memory entry from SQLite.
-        compact: When True, return only essential fields (LearningEntryCompactDict).
+        compact: When True, return only essential fields.
 
     Returns:
-        LearningEntryCompactDict when compact=True, LearningEntryDict otherwise.
+        Dict with ``id``, ``summary``, ``tags``, ``impact``, ``status``, etc.
     """
-    base: LearningEntryCompactDict = {
+    base: dict[str, object] = {
         "id": entry.id,
         "summary": entry.content,
         "tags": entry.tags,
         "impact": entry.importance,
-        "status": (
-            entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status)
-        ),
+        "status": entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status),
     }
     if compact:
         return base
 
-    full: LearningEntryDict = {
-        **base,
+    base.update({
         "detail": entry.detail,
         "evidence": entry.evidence,
         "source_type": entry.source,
@@ -393,9 +383,10 @@ def _memory_to_learning_dict(
         "q_value": entry.q_value,
         "q_observations": entry.q_observations,
         "recurrence": entry.recurrence,
+        "outcome_history": entry.outcome_history,
         "shard_id": entry.metadata.get("shard_id", None),
-    }
-    return full
+    })
+    return base
 
 
 def _learning_to_memory_entry(
@@ -620,7 +611,7 @@ def recall_learnings(
     status: str | None = None,
     max_results: int = 25,
     compact: bool = False,
-) -> list[LearningEntryDict]:
+) -> list[dict[str, object]]:
     """Search learnings from SQLite and return dicts matching recall shape.
 
     For wildcard queries (``*`` or empty), lists all entries.
@@ -647,7 +638,7 @@ def recall_learnings(
             mem_status=mem_status, min_impact=min_impact,
         )
 
-    results: list[LearningEntryDict] = []
+    results: list[dict[str, object]] = []
     for entry in entries:
         d = _memory_to_learning_dict(entry, compact=compact)
         entry_impact = float(str(d.get("impact", 0.0)))
@@ -658,11 +649,7 @@ def recall_learnings(
             entry_tags = d.get("tags", [])
             if isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
                 continue
-        # compact=False → LearningEntryDict; compact=True → LearningEntryCompactDict.
-        # LearningEntryCompactDict is structurally a subset of LearningEntryDict
-        # (all required base fields present). The cast is safe for callers that
-        # treat the result as LearningEntryDict.
-        results.append(cast("LearningEntryDict", d))
+        results.append(d)
 
     return results
 
@@ -686,7 +673,7 @@ def update_learning(
     if existing is None:
         return {"error": f"Learning {learning_id} not found", "status": "not_found"}
 
-    fields: dict[str, str | float] = {}
+    fields: dict[str, Any] = {}
     changes: list[str] = []
 
     if status is not None:
@@ -726,7 +713,7 @@ def update_learning(
     }
 
 
-def find_entry_by_id(trw_dir: Path, learning_id: str) -> LearningEntryDict | None:
+def find_entry_by_id(trw_dir: Path, learning_id: str) -> dict[str, object] | None:
     """Look up a single learning entry by ID.
 
     Returns the dict in learning format, or None if not found.
@@ -735,8 +722,7 @@ def find_entry_by_id(trw_dir: Path, learning_id: str) -> LearningEntryDict | Non
     entry = backend.get(learning_id)
     if entry is None:
         return None
-    result = _memory_to_learning_dict(entry)
-    return cast("LearningEntryDict", result)
+    return _memory_to_learning_dict(entry)
 
 
 def list_active_learnings(
@@ -744,7 +730,7 @@ def list_active_learnings(
     *,
     min_impact: float = 0.0,
     limit: int = DEFAULT_LIST_LIMIT,
-) -> list[LearningEntryDict]:
+) -> list[dict[str, object]]:
     """List all active learning entries from SQLite.
 
     Used by claude_md.py for CLAUDE.md promotion and analytics.
@@ -755,11 +741,10 @@ def list_active_learnings(
         namespace=_NAMESPACE,
         limit=limit,
     )
-    results: list[LearningEntryDict] = []
+    results: list[dict[str, object]] = []
     for entry in entries:
         if entry.importance >= min_impact:
-            result = _memory_to_learning_dict(entry)
-            results.append(cast("LearningEntryDict", result))
+            results.append(_memory_to_learning_dict(entry))
     return results
 
 
@@ -769,7 +754,7 @@ def list_entries_by_status(
     status: str = "active",
     min_impact: float = 0.0,
     limit: int = DEFAULT_LIST_LIMIT,
-) -> list[LearningEntryDict]:
+) -> list[dict[str, object]]:
     """Return all entries with the given status as learning dicts.
 
     PRD-FIX-033-FR01: Single SQLite query for bulk entry retrieval.
@@ -784,11 +769,10 @@ def list_entries_by_status(
         namespace=_NAMESPACE,
         limit=limit,
     )
-    results: list[LearningEntryDict] = []
+    results: list[dict[str, object]] = []
     for entry in entries:
         if entry.importance >= min_impact:
-            result = _memory_to_learning_dict(entry)
-            results.append(cast("LearningEntryDict", result))
+            results.append(_memory_to_learning_dict(entry))
     return results
 
 

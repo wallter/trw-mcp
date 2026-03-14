@@ -19,7 +19,13 @@ from fastmcp import FastMCP
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
-from trw_mcp.models.typed_dicts import LearningEntryDict, LearnResultDict, RecallResultDict
+from trw_mcp.models.typed_dicts import (
+    ClaudeMdSyncResultDict,
+    LearningEntryDict,
+    LearnResultDict,
+    RecallContextDict,
+    RecallResultDict,
+)
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.analytics import (
@@ -165,14 +171,15 @@ def register_learning_tools(server: FastMCP) -> None:
         calibrated_impact = calibrate_impact(impact, config)
 
         # Fetch active learnings once — reused by soft-cap and distribution
-        all_active: list[dict[str, object]] = []
+        all_active: list[LearningEntryDict] = []
         # Fail-open: listing failure must not block learning recording
         with contextlib.suppress(OSError, StateError, ValueError, TypeError):
-            all_active = [cast(dict[str, object], e) for e in list_active_learnings(trw_dir)]
+            all_active = list_active_learnings(trw_dir)
 
         # Forced distribution soft-cap check (PRD-CORE-034-FR01)
+        all_active_objs = cast(list[dict[str, object]], all_active)
         calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
-            calibrated_impact, all_active, config,
+            calibrated_impact, all_active_objs, config,
         )
 
         learning_id = generate_learning_id()
@@ -250,7 +257,7 @@ def register_learning_tools(server: FastMCP) -> None:
                             ref_id=ref_id,
                             compendium_id=learning_id,
                         )
-                except Exception:  # noqa: BLE001 — NFR02-R5: best-effort per entry
+                except Exception:  # noqa: BLE001 — justified: fail-open, per-entry batch error
                     logger.warning(
                         "auto_obsolete_failed",
                         ref_id=ref_id,
@@ -281,7 +288,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Forced distribution enforcement (PRD-CORE-034)
         distribution_warning, _demoted_ids = enforce_distribution(
             impact, calibrated_impact, learning_id,
-            all_active, trw_dir, config,
+            all_active_objs, trw_dir, config,
         )
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
@@ -462,7 +469,7 @@ def register_learning_tools(server: FastMCP) -> None:
             if remote:
                 combined: list[LearningEntryDict] = list(matching_learnings) + cast(list[LearningEntryDict], remote)
                 matching_learnings = combined
-        except Exception:  # noqa: BLE001 — fail-open for external service
+        except Exception:  # noqa: BLE001 — justified: fail-open, per-entry batch error
             logger.debug("remote_recall_failed", exc_info=True)
 
         # Search patterns and rank all results by utility
@@ -483,15 +490,15 @@ def register_learning_tools(server: FastMCP) -> None:
         # Strip to compact fields when requested
         if use_compact:
             allowed = config.recall_compact_fields
-            ranked_learnings = [
+            ranked_learnings = cast(list[LearningEntryDict], [
                 {k: v for k, v in entry.items() if k in allowed}
                 for entry in ranked_learnings
-            ]
+            ])
 
         # Skip context collection for compact wildcard queries (saves I/O)
-        context_data: dict[str, object] = {}
+        context_data: RecallContextDict = {}
         if not (is_wildcard and use_compact):
-            context_data = collect_context(trw_dir, config.context_dir, reader)
+            context_data = cast(RecallContextDict, collect_context(trw_dir, config.context_dir, reader))
 
         logger.info(
             "trw_recall_searched",
@@ -503,7 +510,7 @@ def register_learning_tools(server: FastMCP) -> None:
 
         recall_result: RecallResultDict = {
             "query": query,
-            "learnings": cast(list[LearningEntryDict], ranked_learnings),
+            "learnings": ranked_learnings,
             "patterns": matching_patterns,
             "context": context_data,
             "total_matches": len(ranked_learnings) + len(matching_patterns),
@@ -528,7 +535,7 @@ def register_learning_tools(server: FastMCP) -> None:
         scope: str = "root",
         target_dir: str | None = None,
         client: str = "auto",
-    ) -> dict[str, object]:
+    ) -> ClaudeMdSyncResultDict:
         """Promote your best learnings into CLAUDE.md — the next session starts with your insights built in.
 
         Renders high-impact learnings, behavioral protocol, ceremony guidance, and
@@ -551,4 +558,4 @@ def register_learning_tools(server: FastMCP) -> None:
         reader = FileStateReader()
         writer = FileStateWriter()
         llm = _create_llm_client()
-        return execute_claude_md_sync(scope, target_dir, config, reader, writer, llm, client)
+        return cast(ClaudeMdSyncResultDict, execute_claude_md_sync(scope, target_dir, config, reader, writer, llm, client))

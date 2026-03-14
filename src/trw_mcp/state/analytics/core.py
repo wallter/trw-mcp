@@ -158,7 +158,7 @@ def _iter_entry_files(
     Silently skips files that fail to parse or have unexpected types.
     """
     reader = FileStateReader()
-    files = iter_yaml_entry_files(entries_dir) if sorted_order else entries_dir.glob("*.yaml")
+    files = iter_yaml_entry_files(entries_dir)
     for entry_file in files:
         if not sorted_order and entry_file.name == "index.yaml":
             continue
@@ -217,7 +217,7 @@ def find_entry_by_id(
         Tuple of (file_path, entry_data) if found, None otherwise.
     """
     reader = FileStateReader()
-    for entry_file in entries_dir.glob("*.yaml"):
+    for entry_file in iter_yaml_entry_files(entries_dir):
         try:
             data = reader.read_yaml(entry_file)
             if data.get("id") == learning_id:

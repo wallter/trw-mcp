@@ -101,7 +101,7 @@ def _release_deferred_lock(fd: object) -> None:
         if isinstance(fd, _io.TextIOWrapper):
             fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
             fd.close()
-    except Exception:
+    except Exception:  # justified: fail-open, lock release cleanup
         # justified: lock release is best-effort cleanup — failing here
         # only means the lock file persists until process exit.
         logger.debug("lock_release_failed", exc_info=True)
@@ -477,7 +477,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
             "session_summary",
             summary_data,
         )
-    except Exception:
+    except Exception:  # justified: fail-open, lock release cleanup
         logger.debug("session_summary_write_failed", exc_info=True)
 
     return {"status": "success", "events": 2, "ceremony_score": ceremony_score}

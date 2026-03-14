@@ -21,6 +21,7 @@ from trw_mcp.models.typed_dicts import BatchDedupResult
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.memory_adapter import embed_text as embed, embedding_available
+from trw_mcp.state._helpers import iter_yaml_entry_files
 
 logger = structlog.get_logger()
 
@@ -105,7 +106,7 @@ def check_duplicate(
     if not entries_dir.exists():
         return DedupResult("store", None, 0.0)
 
-    for yaml_file in sorted(entries_dir.glob("*.yaml")):
+    for yaml_file in iter_yaml_entry_files(entries_dir):
         if yaml_file.name == "index.yaml":
             continue
         try:
@@ -303,9 +304,7 @@ def batch_dedup(
 
     # Load all active entries with their embeddings
     active_entries: list[tuple[Path, dict[str, object], list[float] | None]] = []
-    for yaml_file in sorted(entries_dir.glob("*.yaml")):
-        if yaml_file.name == "index.yaml":
-            continue
+    for yaml_file in iter_yaml_entry_files(entries_dir):
         try:
             data = reader.read_yaml(yaml_file)
             if str(data.get("status", "active")) != "active":

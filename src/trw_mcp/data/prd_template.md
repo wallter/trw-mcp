@@ -114,6 +114,7 @@ quality_gates:
 
 ### PRD-{CAT}-{SEQ}-FR01: {Requirement Title}
 **Priority**: Must Have | Should Have | Nice to Have
+**Status**: active
 **Description**: {Detailed description}
 **Acceptance**: {Testable criteria}
 **Dependencies**: {Other requirements this depends on}
@@ -228,6 +229,85 @@ quality_gates:
 
 ---
 
+<!-- FIX category variant sections (retained when category=FIX) -->
+
+## 13. Root Cause Analysis
+
+### Root Cause
+{Identify the root cause of the defect or incident being fixed}
+
+### Contributing Factors
+- {Factor 1 — e.g., missing validation, race condition, stale cache}
+- {Factor 2}
+
+### Fix Verification
+- [ ] Root cause addressed (not just symptoms)
+- [ ] Regression test covers the exact failure mode
+- [ ] Related code paths reviewed for similar issues
+
+---
+
+## 14. Rollback Plan
+
+{Standalone rollback procedure — steps to revert this fix if it introduces new issues}
+
+- [ ] Database migration reversible (if applicable)
+- [ ] Feature flag available for kill switch (if applicable)
+- [ ] Rollback tested in staging
+
+---
+
+<!-- RESEARCH category variant sections (retained when category=RESEARCH) -->
+
+## 15. Background & Prior Art
+
+{Summary of existing research, prior attempts, and relevant literature}
+
+- {Prior art 1 — link or description}
+- {Prior art 2}
+
+---
+
+## 16. Research Questions
+
+- [ ] RQ1: {Primary research question} `[blocking: yes]`
+- [ ] RQ2: {Secondary research question} `[blocking: no]`
+
+---
+
+## 17. Methodology
+
+### Approach
+{Describe the research methodology — experiments, surveys, benchmarks, etc.}
+
+### Data Sources
+- {Source 1}
+- {Source 2}
+
+### Evaluation Criteria
+- {Criterion 1 — how findings will be assessed}
+
+---
+
+## 18. Findings
+
+{Document research findings here — updated as research progresses}
+
+| Finding | Evidence | Confidence | Impact |
+|---------|----------|------------|--------|
+| {Finding 1} | {Evidence} | High/Med/Low | {Impact on project} |
+
+---
+
+## 19. Recommendations
+
+{Actionable recommendations derived from findings}
+
+- [ ] Recommendation 1: {Description} `[priority: P1]`
+- [ ] Recommendation 2: {Description} `[priority: P2]`
+
+---
+
 ## Appendix
 
 ### Related PRDs
@@ -249,7 +329,7 @@ Before submitting this PRD for review, verify:
 
 ### Structure (AARE-F C7: Req-as-Code)
 - [ ] YAML frontmatter complete with all required fields
-- [ ] All 12 sections present
+- [ ] All category-required sections present (Feature: 12, FIX: 14, INFRA: 12, Research: 17)
 - [ ] Unique PRD ID assigned
 - [ ] Version documented
 
@@ -278,11 +358,11 @@ Before submitting this PRD for review, verify:
 
 ### Quality Gates
 - [ ] Ambiguity rate <= 5% (no vague terms)
-- [ ] Completeness >= 85% (all required sections)
+- [ ] V2 total_score >= 65 (REVIEW tier minimum)
 - [ ] Traceability >= 90% (linked requirements)
 
 ---
 
-*Template version: 2.1 (AARE-F v1.1.0 Enhanced)*
+*Template version: 2.2 (AARE-F v1.1.0 Enhanced — FIX/RESEARCH variants)*
 *Research basis: AARE-F Framework v1.1.0*
 *Prompts: docs/requirements-aare-f/prompts/prd-creation.md*

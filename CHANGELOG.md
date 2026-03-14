@@ -4,6 +4,37 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-03-14
+
+### Added
+
+- **MemoryStore connection singleton** (`state/memory_store.py`) — `get_memory_store()` / `reset_memory_store()` for connection reuse across warm tier operations (PRD-FIX-046-FR03)
+- **Batch SQL access tracking** (`state/memory_adapter.py`) — `update_access_tracking()` uses single `UPDATE ... WHERE id IN (...)` instead of N per-ID operations (PRD-FIX-046-FR01)
+- **Single-query keyword search** (`state/memory_adapter.py`) — `_keyword_search()` uses AND'd LIKE clauses in one SQL query for multi-token searches (PRD-FIX-046-FR02)
+- **Shared ThreadPoolExecutor** (`clients/llm.py`) — module-level `_get_executor()` replaces per-call pool creation (PRD-FIX-046-FR05)
+- **PRD template v2.2** — FIX/RESEARCH category variant sections (Root Cause Analysis, Rollback Plan, Background & Prior Art, etc.), FR Status annotations, category-aware Quality Checklist
+- **`_filter_sections_for_category()` trailing content fix** — Appendix and Quality Checklist preserved for all categories
+- **FIX-043 tests** — FR02 (unique ceremony event names via AST), FR03 (flush queue preservation), FR07 (mark_run_complete warning)
+- **FIX-044 tests** — module-level capture verification, submodule function-level config checks
+- **MemoryStore singleton tests** — same-path reuse, different-path recreation, reset cleanup
+
+### Changed
+
+- **Error handling policy enforced** (PRD-FIX-043) — all `except Exception` blocks now either log at `warning+` with `exc_info=True` or have `# justified: <reason>` comments. Zero non-compliant blocks remain.
+- **Module-level config capture eliminated** (PRD-FIX-044) — zero `_config = get_config()` or `_reader`/`_writer` module-scope assignments remain. `claude_md` submodules use function-level `get_config()` / `FileStateReader()` / `FileStateWriter()`.
+- **`scoring/__init__.py`** — `sys.modules` replacement hack removed, standard `__getattr__` shim
+- **DRY glob consolidation** (PRD-FIX-045) — zero raw `entries_dir.glob("*.yaml")` patterns remain; all use `iter_yaml_entry_files()` from `state/_helpers.py`
+- **`_safe_float`/`_safe_int` aliases removed** from `analytics/core.py` — consumers import directly from `state._helpers`
+- **`trw-prd-groom` skill** — updated from V1 "0.85 completeness" to V2 "total_score >= 65 (REVIEW tier)"
+- **`_reset_module_singletons` fixture** — removed (no longer needed)
+- **`__reload_hook__` functions** — removed from modules that only reset singletons
+
+### Fixed
+
+- **`_correlation.py` YAML path lookup** — used `yaml_find_entry_by_id()` instead of broken `{lid}.yaml` pattern (YAML files use date-slug names)
+- **`memory_adapter.py` `outcome_history` field** — added to `_memory_to_learning_dict()` output for SQLite-based reads
+- **Template filter dropping Appendix** — `_filter_sections_for_category()` now extracts trailing non-numbered sections and preserves them
+
 ## [0.13.3] — 2026-03-14
 
 ### Fixed

@@ -89,7 +89,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         try:
             result_val = func(*args, **kwargs)
             return result_val
-        except Exception as exc:
+        except Exception as exc:  # justified: re-raise, telemetry metering decorator
             success = False
             error_msg = str(exc)[:200]
             raise

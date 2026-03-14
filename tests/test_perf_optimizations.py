@@ -231,9 +231,12 @@ class TestSingleQueryKeywordSearch:
 
         backend.search = counting_search  # type: ignore[assignment]
         try:
-            _keyword_search(backend, "python testing gotcha")
-            # Multi-token search calls backend.search() once per token (3 tokens)
-            assert call_count == 3
+            results = _keyword_search(backend, "python testing gotcha")
+            # Batch SQL path bypasses backend.search() (call_count == 0).
+            # Fallback per-token path calls search() once per token (call_count == 3).
+            # Both paths must return correct results.
+            assert call_count <= 3, f"Expected at most 3 search calls, got {call_count}"
+            assert len(results) >= 1, "Expected at least 1 result for matching query"
         finally:
             backend.search = original_search  # type: ignore[assignment]
 

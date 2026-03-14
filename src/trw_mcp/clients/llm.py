@@ -24,6 +24,19 @@ logger = structlog.get_logger()
 
 _ASK_TIMEOUT_SECS = 120
 
+# FIX-046-FR05: Shared executor for sync-to-async bridge (avoids per-call creation)
+import concurrent.futures
+
+_SHARED_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Lazily create and cache a shared ThreadPoolExecutor."""
+    global _SHARED_EXECUTOR  # noqa: PLW0603
+    if _SHARED_EXECUTOR is None:
+        _SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    return _SHARED_EXECUTOR
+
 _MODEL_MAP: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-4-6",
@@ -64,7 +77,7 @@ class LLMClient:
         self._async_client: Any = None
 
         try:
-            import anthropic
+            import anthropic  # type: ignore[import-not-found]
 
             self._client = anthropic.Anthropic()
             self._async_client = anthropic.AsyncAnthropic()
@@ -204,8 +217,6 @@ class LLMClient:
         except RuntimeError:
             return asyncio.run(coro)
 
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result(timeout=_ASK_TIMEOUT_SECS)
+        executor = _get_executor()
+        future = executor.submit(asyncio.run, coro)
+        return future.result(timeout=_ASK_TIMEOUT_SECS)

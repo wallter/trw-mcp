@@ -257,7 +257,7 @@ class FileStateWriter:
                     finally:
                         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
                 tmp_path.rename(path)
-            except Exception:  # broad catch: cleanup temp file on any write failure
+            except Exception:  # justified: cleanup, temp file removal must not mask original error
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:
@@ -324,7 +324,7 @@ class FileStateWriter:
                     fh.write(content)
                     fh.flush()
                 tmp_path.rename(path)
-            except Exception:  # broad catch: cleanup temp file on any write failure
+            except Exception:  # justified: cleanup, temp file removal must not mask original error
                 tmp_path.unlink(missing_ok=True)
                 raise
             finally:

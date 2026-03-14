@@ -88,7 +88,7 @@ def write_ceremony_state(trw_dir: Path, state: CeremonyState) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         os.rename(tmp_path_str, path)
-    except Exception:
+    except Exception:  # justified: fail-open, ceremony state persistence is best-effort
         # Clean up the temp file on failure; do not propagate (fail-open)
         try:
             os.unlink(tmp_path_str)

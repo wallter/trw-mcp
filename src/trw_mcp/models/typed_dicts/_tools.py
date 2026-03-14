@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TypedDict
+from typing_extensions import NotRequired
 
 from trw_mcp.models.typed_dicts._ceremony import AutoRecalledItemDict
 from trw_mcp.models.typed_dicts._learning import LearningEntryDict
@@ -171,13 +172,25 @@ class RunReportResultDict(TypedDict, total=False):
 
 
 class LearnResultDict(TypedDict, total=False):
-    """Return shape of ``trw_learn`` MCP tool."""
+    """Return shape of ``trw_learn`` MCP tool.
+
+    Always-present key: ``status`` ("recorded" | "skipped" | "rejected").
+
+    Recorded path: ``learning_id``, ``path``.
+    Optional on recorded path: ``distribution_warning``, ``ceremony_status``,
+    ``impact``, ``tags``.
+    Present on skip (dedup): ``duplicate_of``, ``similarity``.
+    Present on rejection (noise filter): ``reason``, ``message``.
+    """
 
     learning_id: str
     status: str  # "recorded" | "skipped" | "rejected"
     path: str
     distribution_warning: str
     ceremony_status: str
+    # Populated when impact/tags are surface-returned (delivery path)
+    impact: NotRequired[float]
+    tags: NotRequired[list[str]]
     # Present on skip (dedup):
     duplicate_of: str
     similarity: float

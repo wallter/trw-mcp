@@ -12,6 +12,14 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import (
+    AggregateMetrics,
+    AnalyticsReport,
+    CeremonyScoreResult,
+    CeremonyTrendItem,
+    RunAnalysisResult,
+    TierMetrics,
+)
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -40,7 +48,7 @@ _CEREMONY_WEIGHTS: dict[str, int] = {
 def compute_ceremony_score(
     events: list[dict[str, object]],
     trw_dir: Path | None = None,
-) -> dict[str, object]:
+) -> CeremonyScoreResult:
     """Compute ceremony compliance score (0-100) from events.
 
     Scoring model (additive):
@@ -116,7 +124,7 @@ def compute_ceremony_score(
     if has_build_check:
         score += _CEREMONY_WEIGHTS["build_check"]
 
-    return {
+    result: CeremonyScoreResult = {
         "score": score,
         "session_start": has_session_start,
         "deliver": has_deliver,
@@ -125,6 +133,7 @@ def compute_ceremony_score(
         "build_check": has_build_check,
         "build_passed": build_passed,
     }
+    return result
 
 
 # --- Run Scanning (FR03) ---
@@ -132,7 +141,7 @@ def compute_ceremony_score(
 
 def scan_all_runs(
     since: str | None = None,
-) -> dict[str, object]:
+) -> AnalyticsReport:
     """Scan all run directories and compute per-run and aggregate metrics.
 
     Args:
@@ -149,7 +158,7 @@ def scan_all_runs(
     project_root = resolve_project_root()
     task_root = project_root / config.task_root
     parse_errors: list[str] = []
-    runs: list[dict[str, object]] = []
+    runs: list[RunAnalysisResult] = []
 
     if not task_root.exists():
         return _empty_report(parse_errors)
@@ -183,7 +192,7 @@ def scan_all_runs(
     aggregate = _compute_aggregates(runs)
 
     generated_at = datetime.now(timezone.utc).isoformat()
-    report: dict[str, object] = {
+    report: AnalyticsReport = {
         "runs": runs,
         "aggregate": aggregate,
         "generated_at": generated_at,
@@ -197,14 +206,14 @@ def scan_all_runs(
         cache_dir = trw_dir / config.context_dir
         writer.ensure_dir(cache_dir)
         cache_path = cache_dir / "analytics-report.yaml"
-        writer.write_yaml(cache_path, report)
+        writer.write_yaml(cache_path, dict(report))
     except Exception:  # justified: fail-open, cache write is best-effort optimization
-        logger.debug("analytics_report_cache_write_failed")
+        logger.warning("analytics_report_cache_write_failed", exc_info=True)
 
     return report
 
 
-def _analyze_single_run(run_dir: Path, trw_dir: Path | None = None) -> dict[str, object] | None:
+def _analyze_single_run(run_dir: Path, trw_dir: Path | None = None) -> RunAnalysisResult | None:
     """Analyze a single run directory and return per-run metrics.
 
     Returns None if run.yaml doesn't exist or cannot be read.
@@ -230,29 +239,47 @@ def _analyze_single_run(run_dir: Path, trw_dir: Path | None = None) -> dict[str,
         try:
             events = reader.read_jsonl(events_path)
         except Exception:  # justified: scan-resilience, corrupt events file should not block run analysis
-            logger.debug("events_read_failed", path=str(events_path))
+            logger.warning("events_read_failed", path=str(events_path), exc_info=True)
 
     # Compute ceremony score
+    score: int | None
+    session_start_flag: bool
+    deliver_flag: bool
+    checkpoint_count: int
+    learn_count: int
+    build_check_flag: bool
+    build_passed: bool | None
     try:
         ceremony = compute_ceremony_score(events, trw_dir=trw_dir)
+        score = ceremony["score"]
+        session_start_flag = ceremony["session_start"]
+        deliver_flag = ceremony["deliver"]
+        checkpoint_count = ceremony["checkpoint_count"]
+        learn_count = ceremony["learn_count"]
+        build_check_flag = ceremony["build_check"]
+        build_passed = ceremony["build_passed"]
     except Exception:  # justified: fail-open, ceremony score computation must not block analytics
-        ceremony = {
-            "score": None,
-            "session_start": False,
-            "deliver": False,
-            "checkpoint_count": 0,
-            "learn_count": 0,
-            "build_check": False,
-            "build_passed": None,
-        }
+        score = None
+        session_start_flag = False
+        deliver_flag = False
+        checkpoint_count = 0
+        learn_count = 0
+        build_check_flag = False
+        build_passed = None
 
-    result: dict[str, object] = {
+    result: RunAnalysisResult = {
         "run_id": run_id,
         "started_at": started_at,
         "task": str(state_data.get("task", "")),
         "status": str(state_data.get("status", "")),
         "phase": str(state_data.get("phase", "")),
-        **ceremony,
+        "score": score,
+        "session_start": session_start_flag,
+        "deliver": deliver_flag,
+        "checkpoint_count": checkpoint_count,
+        "learn_count": learn_count,
+        "build_check": build_check_flag,
+        "build_passed": build_passed,
     }
     # PRD-CORE-060-FR07: Include complexity_class for tier-based aggregation
     cc = state_data.get("complexity_class")
@@ -277,22 +304,22 @@ def _parse_run_id_timestamp(run_id: str) -> str:
     return run_id
 
 
-def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
+def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
     """Compute aggregate metrics from per-run data."""
     if not runs:
-        return {
-            "total_runs": 0,
-            "avg_ceremony_score": 0.0,
-            "build_pass_rate": 0.0,
-            "avg_learnings_per_run": 0.0,
-            "ceremony_trend": [],
-            "ceremony_by_tier": {},
-        }
+        return AggregateMetrics(
+            total_runs=0,
+            avg_ceremony_score=0.0,
+            build_pass_rate=0.0,
+            avg_learnings_per_run=0.0,
+            ceremony_trend=[],
+            ceremony_by_tier={},
+        )
 
     scores: list[int] = []
     build_results: list[bool] = []
     total_learnings = 0
-    ceremony_trend: list[dict[str, object]] = []
+    ceremony_trend: list[CeremonyTrendItem] = []
 
     # PRD-CORE-060-FR07: Tier-grouped ceremony scores
     tier_scores: dict[str, list[int]] = {}
@@ -301,11 +328,11 @@ def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
         score = run.get("score")
         if isinstance(score, int):
             scores.append(score)
-            ceremony_trend.append({
-                "run_id": run.get("run_id", ""),
-                "score": score,
-                "started_at": run.get("started_at", ""),
-            })
+            ceremony_trend.append(CeremonyTrendItem(
+                run_id=str(run.get("run_id", "")),
+                score=score,
+                started_at=str(run.get("started_at", "")),
+            ))
 
             # FR07: Group by complexity_class
             tier = str(run.get("complexity_class") or "unclassified")
@@ -327,27 +354,27 @@ def _compute_aggregates(runs: list[dict[str, object]]) -> dict[str, object]:
     avg_learnings = total_learnings / len(runs) if runs else 0.0
 
     # FR07: Build ceremony_by_tier breakdown
-    ceremony_by_tier: dict[str, dict[str, object]] = {}
+    ceremony_by_tier: dict[str, TierMetrics] = {}
     for tier_name, tier_score_list in tier_scores.items():
         count = len(tier_score_list)
         avg = round(sum(tier_score_list) / count, 1) if count else 0.0
         pass_rate = round(
             sum(1 for s in tier_score_list if s >= 70) / count, 2,
         ) if count else 0.0
-        ceremony_by_tier[tier_name] = {
-            "count": count,
-            "avg_score": avg,
-            "pass_rate": pass_rate,
-        }
+        ceremony_by_tier[tier_name] = TierMetrics(
+            count=count,
+            avg_score=avg,
+            pass_rate=pass_rate,
+        )
 
-    return {
-        "total_runs": len(runs),
-        "avg_ceremony_score": round(avg_score, 2),
-        "build_pass_rate": round(build_pass_rate, 4),
-        "avg_learnings_per_run": round(avg_learnings, 2),
-        "ceremony_trend": ceremony_trend,
-        "ceremony_by_tier": ceremony_by_tier,
-    }
+    return AggregateMetrics(
+        total_runs=len(runs),
+        avg_ceremony_score=round(avg_score, 2),
+        build_pass_rate=round(build_pass_rate, 4),
+        avg_learnings_per_run=round(avg_learnings, 2),
+        ceremony_trend=ceremony_trend,
+        ceremony_by_tier=ceremony_by_tier,
+    )
 
 
 # --- Stale Run Auto-Close (PRD-FIX-028) ---
@@ -590,19 +617,19 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
     return count
 
 
-def _empty_report(parse_errors: list[str]) -> dict[str, object]:
+def _empty_report(parse_errors: list[str]) -> AnalyticsReport:
     """Return an empty analytics report."""
-    return {
-        "runs": [],
-        "aggregate": {
-            "total_runs": 0,
-            "avg_ceremony_score": 0.0,
-            "build_pass_rate": 0.0,
-            "avg_learnings_per_run": 0.0,
-            "ceremony_trend": [],
-            "ceremony_by_tier": {},
-        },
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "runs_scanned": 0,
-        "parse_errors": parse_errors,
-    }
+    return AnalyticsReport(
+        runs=[],
+        aggregate=AggregateMetrics(
+            total_runs=0,
+            avg_ceremony_score=0.0,
+            build_pass_rate=0.0,
+            avg_learnings_per_run=0.0,
+            ceremony_trend=[],
+            ceremony_by_tier={},
+        ),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        runs_scanned=0,
+        parse_errors=parse_errors,
+    )

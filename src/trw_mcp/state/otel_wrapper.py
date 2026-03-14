@@ -49,5 +49,5 @@ def emit_tool_span(
                 for key, value in attributes.items():
                     span.set_attribute(f"trw.{key}", str(value))
 
-    except Exception:  # broad catch: telemetry never blocks tool execution
+    except Exception:  # justified: fail-open, telemetry never blocks tool execution
         logger.debug("otel_emit_failed", tool=tool_name)

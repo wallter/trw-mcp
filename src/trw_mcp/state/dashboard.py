@@ -14,6 +14,12 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import (
+    CeremonyTrendResult,
+    CoverageTrendResult,
+    DegradationAlertResult,
+    ReviewTrendResult,
+)
 from trw_mcp.state._helpers import safe_str
 from trw_mcp.state.persistence import FileStateReader
 
@@ -36,7 +42,7 @@ def _linear_slope(values: list[float]) -> float | None:
     return round((n * sum_xy - sum_x * sum_y) / denom, 4)
 
 
-def compute_ceremony_trend(sessions: list[dict[str, object]]) -> dict[str, object]:
+def compute_ceremony_trend(sessions: list[dict[str, object]]) -> CeremonyTrendResult:
     """Compute avg/min/max/slope/session_count/pass_rate for ceremony scores.
 
     Args:
@@ -79,7 +85,7 @@ def compute_ceremony_trend(sessions: list[dict[str, object]]) -> dict[str, objec
     }
 
 
-def compute_coverage_trend(sessions: list[dict[str, object]]) -> dict[str, object]:
+def compute_coverage_trend(sessions: list[dict[str, object]]) -> CoverageTrendResult:
     """Compute avg/min/max/below_threshold_count for coverage.
 
     Args:
@@ -120,7 +126,7 @@ def compute_coverage_trend(sessions: list[dict[str, object]]) -> dict[str, objec
     }
 
 
-def compute_review_trend(sessions: list[dict[str, object]]) -> dict[str, object]:
+def compute_review_trend(sessions: list[dict[str, object]]) -> ReviewTrendResult:
     """Count block/warn/pass verdicts from sessions.
 
     Args:
@@ -146,7 +152,7 @@ def detect_degradation(
     sessions: list[dict[str, object]],
     threshold: int = 40,
     consecutive: int = 3,
-) -> list[dict[str, object]]:
+) -> list[DegradationAlertResult]:
     """Alert when ceremony_score < threshold for N consecutive sessions.
 
     Args:
@@ -161,11 +167,11 @@ def detect_degradation(
     if consecutive <= 0:
         return []
 
-    alerts: list[dict[str, object]] = []
+    alerts: list[DegradationAlertResult] = []
     streak: list[float] = []
     streak_start = 0
 
-    def _make_alert(start: int, end: int, scores: list[float]) -> dict[str, object]:
+    def _make_alert(start: int, end: int, scores: list[float]) -> DegradationAlertResult:
         # Try to extract ISO timestamp from first session in streak
         first_session = sessions[start]
         ts_str = str(first_session.get("timestamp") or first_session.get("ts") or "")

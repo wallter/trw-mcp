@@ -24,6 +24,7 @@ from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_memory.lifecycle.consolidation import (
     _parse_consolidation_response,
     _redact_paths,
@@ -79,10 +80,10 @@ def _load_active_entries(
         for data in all_active:
             if len(entries) >= max_entries:
                 break
-            if _is_clusterable(data):
-                entries.append(data)
+            if _is_clusterable(cast(LearningEntryDict, data)):
+                entries.append(cast(LearningEntryDict, data))
         return entries
-    except Exception as exc:  # broad catch: ImportError + SQLite/adapter failures
+    except Exception as exc:  # justified: fail-open, consolidation errors must not block
         logger.warning(
             "sqlite_read_fallback",
             step="find_clusters",
@@ -90,7 +91,7 @@ def _load_active_entries(
         )
 
     # YAML fallback path
-    for yaml_file in sorted(entries_dir.glob("*.yaml")):
+    for yaml_file in iter_yaml_entry_files(entries_dir):
         if yaml_file.name == "index.yaml":
             continue
         if len(entries) >= max_entries:
@@ -210,7 +211,7 @@ def find_clusters(
                 min_cluster_size=min_cluster_size,
                 min_shared_tags=2,
             )
-        except Exception:  # noqa: BLE001 — NFR02-R3: fail-open
+        except Exception:  # noqa: BLE001 — justified: fail-open, consolidation errors must not block
             logger.warning("tag_overlap_clustering_failed", exc_info=True)
             return []
         logger.debug(
@@ -638,7 +639,7 @@ def consolidate_cycle(
     try:
         from trw_mcp.state.tiers import TierManager as _TierManager
         tier_manager = _TierManager(trw_dir, reader=reader, writer=writer, config=cfg)
-    except Exception:
+    except Exception:  # justified: fail-open, consolidation errors must not block
         # justified: TierManager is optional — consolidation works without cold
         # archival by falling back to status="archived" on the entry.
         logger.warning("consolidation_tier_manager_init_failed", exc_info=True)
@@ -649,7 +650,7 @@ def consolidate_cycle(
         candidate = LLMClient(model="haiku")
         if candidate.available:
             llm = candidate
-    except Exception:
+    except Exception:  # justified: fail-open, consolidation errors must not block
         # justified: LLM is optional — consolidation works without AI summaries
         # via the _summarize_cluster_fallback path.
         logger.warning("consolidation_llm_init_failed", exc_info=True)

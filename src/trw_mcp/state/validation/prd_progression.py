@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+from typing import cast
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
+from trw_mcp.models.typed_dicts import ProgressionItem
 from trw_mcp.state.prd_utils import (
     VALID_TRANSITIONS,
     check_transition_guards,
@@ -92,7 +94,7 @@ def auto_progress_prds(
     config: TRWConfig,
     *,
     dry_run: bool = False,
-) -> list[dict[str, object]]:
+) -> list[ProgressionItem]:
     """Automatically advance PRD statuses when a phase gate passes.
 
     PRD-CORE-025-FR02: For each PRD in the run's ``prd_scope``, evaluate the
@@ -123,7 +125,7 @@ def auto_progress_prds(
     if not prd_ids:
         return []
 
-    results: list[dict[str, object]] = []
+    results: list[ProgressionItem] = []
 
     for prd_id in prd_ids:
         prd_file = prds_dir / f"{prd_id}.md"
@@ -167,13 +169,14 @@ def auto_progress_prds(
                         from_status=current_str,
                         to_status=target_status.value,
                     )
-                    results.append({
+                    no_path_item: ProgressionItem = {
                         "prd_id": prd_id,
                         "from_status": current_str,
                         "to_status": target_status.value,
                         "applied": False,
                         "reason": "no_transition_path",
-                    })
+                    }
+                    results.append(no_path_item)
                     continue
                 transition_path = bfs_path
 
@@ -218,7 +221,7 @@ def auto_progress_prds(
                     entry["partial"] = True
                     entry["stopped_at"] = stopped_at
                     entry["stop_reason"] = stop_reason
-                results.append(entry)
+                results.append(cast(ProgressionItem, entry))
             elif stopped_at is not None:
                 # Guard failed on the very first step
                 entry = {
@@ -231,16 +234,16 @@ def auto_progress_prds(
                 }
                 if dry_run:
                     entry["would_apply"] = False
-                results.append(entry)
+                results.append(cast(ProgressionItem, entry))
             else:
                 # No steps were applied and no guard failed — shouldn't happen
-                results.append({
+                results.append(cast(ProgressionItem, {
                     "prd_id": prd_id,
                     "from_status": current_str,
                     "to_status": target_status.value,
                     "applied": False,
                     "reason": "no_steps_applied",
-                })
+                }))
 
         except (OSError, ValueError, TypeError) as exc:
             logger.warning(

@@ -292,14 +292,15 @@ def update_analytics_extended(
                 q_activations += 1
             if float(str(entry_data.get("impact", 0.5))) >= 0.7:
                 high_impact += 1
-    except Exception:  # broad catch: ImportError + SQLite/adapter failures
+    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
+        logger.warning("sqlite_fallback_to_yaml", op="update_analytics_extended", exc_info=True)
         # Fallback: YAML scan
         entries_dir = _ac._entries_path(trw_dir)
         if entries_dir.is_dir():
-            for _path, entry_data in _ac._iter_entry_files(entries_dir):
-                if _ac._safe_int(entry_data, "q_observations") > 0:
+            for _path, _entry_raw in _ac._iter_entry_files(entries_dir):
+                if _ac._safe_int(_entry_raw, "q_observations") > 0:
                     q_activations += 1
-                if _ac._safe_float(entry_data, "impact", 0.5) >= 0.7:
+                if _ac._safe_float(_entry_raw, "impact", 0.5) >= 0.7:
                     high_impact += 1
     data["q_learning_activations"] = q_activations
     data["high_impact_learnings"] = high_impact

@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import TypedDict
 
 import structlog
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import RemoteSharedLearningDict
 from trw_mcp.state.memory_adapter import embed_text as embed
 
 logger = structlog.get_logger()
@@ -21,7 +22,15 @@ logger = structlog.get_logger()
 REMOTE_RECALL_TIMEOUT = 3  # seconds
 
 
-def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[dict[str, Any]]:
+class _RecallSearchPayload(TypedDict):
+    """Payload structure for the /v1/learnings/search endpoint."""
+
+    query: str
+    embedding: list[float] | None
+    limit: int
+
+
+def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[RemoteSharedLearningDict]:
     """Fetch shared learnings from the platform backend.
 
     Returns list of learning dicts with [shared] label prefix.
@@ -35,7 +44,7 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[dict[str, An
     # Generate embedding for query
     embedding = embed(query) if query.strip() else None
 
-    payload: dict[str, Any] = {
+    payload: _RecallSearchPayload = {
         "query": query,
         "embedding": embedding,
         "limit": limit,
@@ -60,7 +69,7 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[dict[str, An
                 if 200 <= response.status < 300:
                     body = json.loads(response.read().decode("utf-8"))
                     # Backend may return a list directly or {"results": [...]}
-                    items: list[dict[str, Any]] = (
+                    items: list[RemoteSharedLearningDict] = (
                         body if isinstance(body, list) else body.get("results", [])
                     )
                     for r in items:

@@ -6,6 +6,9 @@ from typing import TypedDict
 from typing_extensions import NotRequired
 
 from trw_mcp.models.typed_dicts._analytics import TierDistribution
+# LearnResult was merged into LearnResultDict in _tools.py (PRD-CORE-080).
+# Re-exported here so existing ``from ... _delivery import LearnResult`` call-sites work.
+from trw_mcp.models.typed_dicts._tools import LearnResultDict as LearnResult  # noqa: F401
 
 
 class StepResultBase(TypedDict):
@@ -183,16 +186,3 @@ class IndexSyncResult(TypedDict):
     index: dict[str, object]
     roadmap: dict[str, object]
 
-
-class LearnResult(TypedDict):
-    """Return shape of ``trw_learn()`` on successful record."""
-
-    learning_id: str
-    status: str  # "recorded" | "skipped"
-    path: NotRequired[str]
-    impact: NotRequired[float]
-    tags: NotRequired[list[str]]
-    message: NotRequired[str]
-    distribution_soft_cap_warning: NotRequired[str]
-    duplicate_of: NotRequired[str]
-    similarity: NotRequired[float]

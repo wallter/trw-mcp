@@ -13,7 +13,7 @@ allowed-tools: Read, Grep, Glob, Edit, Write, WebSearch, Bash, mcp__trw__trw_rec
 
 # PRD Grooming Skill
 
-Groom a PRD to sprint-ready quality (>= 0.85 completeness) through systematic research and evidence-based drafting.
+Groom a PRD to sprint-ready quality (total_score >= 65, REVIEW tier) through systematic research and evidence-based drafting.
 
 ## Workflow
 
@@ -23,7 +23,7 @@ Groom a PRD to sprint-ready quality (>= 0.85 completeness) through systematic re
 
 2. **Read and baseline**: Read the PRD file completely. Call `trw_prd_validate(prd_path)` for baseline quality score.
 
-3. **Early exit**: If score >= 85% completeness, report "PRD already sprint-ready" and exit.
+3. **Early exit**: If total_score >= 65 (REVIEW tier), report "PRD already sprint-ready" and exit.
 
 4. **Research phase**:
    - Call `trw_recall` with keywords from the PRD Background section
@@ -59,7 +59,7 @@ If you catch yourself thinking any of these, stop and follow the process:
 
 | Thought | Why it's wrong | Consequence |
 |---------|---------------|-------------|
-| "The PRD is good enough at 0.75, close enough to 0.85" | The 0.85 threshold exists because lower scores correlate with implementation gaps | PRDs below 0.85 have 2x more "Open Questions" that become P0 blockers during implementation |
+| "The PRD is good enough at 55, close enough to 65" | The total_score >= 65 (REVIEW tier) threshold exists because lower scores correlate with implementation gaps | PRDs below REVIEW tier have 2x more "Open Questions" that become P0 blockers during implementation |
 | "I can fabricate this requirement to fill the gap" | Fabricated requirements create false confidence and wrong implementations | Agents implement the fabricated requirement faithfully — wrong code that passes all tests |
 | "The traceability matrix can be filled in later" | Traceability is how the lead validates FR coverage during REVIEW | Missing traceability means the lead can't verify implementation — delays delivery by a full review cycle |
 
@@ -70,5 +70,5 @@ If you catch yourself thinking any of these, stop and follow the process:
 - ALWAYS preserve PRD ID, frontmatter structure, and section numbering
 - ALWAYS use EARS patterns for functional requirements
 - ALWAYS include confidence scores on requirements
-- If hitting 0.85 requires inventing ungrounded content, stop and document gaps in Open Questions
-- If score remains below 0.70 after 3 iterations, STOP and report to the caller — the feature description likely needs more detail from the user
+- If hitting total_score >= 65 requires inventing ungrounded content, stop and document gaps in Open Questions
+- If total_score remains below 45 (DRAFT tier) after 3 iterations, STOP and report to the caller — the feature description likely needs more detail from the user

@@ -359,7 +359,7 @@ class TestTemplateVersionExtraction:
         from trw_mcp.tools.requirements import _load_template_body
 
         _load_template_body()
-        assert req_mod._CACHED_TEMPLATE_VERSION == "2.1"
+        assert req_mod._CACHED_TEMPLATE_VERSION == "2.2"
 
     def test_version_none_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.tools.requirements as req_mod
@@ -602,7 +602,7 @@ class TestIntegration:
             title="Version Test",
         )
         assert "template_version" in result["content"]
-        assert "2.1" in result["content"]
+        assert "2.2" in result["content"]
 
     def test_backward_compat_return_schema(self, tmp_path: Path) -> None:
         tools = _get_tools()

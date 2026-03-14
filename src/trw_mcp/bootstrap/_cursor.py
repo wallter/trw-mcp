@@ -10,11 +10,45 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import structlog
 
+from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
+
 logger = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# TypedDicts for Cursor JSON config structures
+# ---------------------------------------------------------------------------
+
+
+class CursorServerEntry(TypedDict, total=False):
+    """TRW MCP server entry within Cursor's mcp.json ``mcpServers`` section."""
+
+    command: str | list[str]
+    args: list[str]
+
+
+class CursorMcpConfig(TypedDict, total=False):
+    """Shape of a parsed .cursor/mcp.json document."""
+
+    mcpServers: dict[str, CursorServerEntry]
+
+
+class CursorHookEntry(TypedDict, total=False):
+    """Single hook entry within .cursor/hooks.json."""
+
+    event: str
+    command: str
+    description: str
+
+
+class CursorHooksConfig(TypedDict, total=False):
+    """Shape of a parsed .cursor/hooks.json document."""
+
+    hooks: list[CursorHookEntry]
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +56,7 @@ logger = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 
-def _get_trw_mcp_entry_cursor() -> dict[str, Any]:
+def _get_trw_mcp_entry_cursor() -> CursorServerEntry:
     """Return TRW MCP server entry for Cursor's mcp.json format.
 
     Uses the installed ``trw-mcp`` binary when available; falls back to
@@ -35,9 +69,9 @@ def _get_trw_mcp_entry_cursor() -> dict[str, Any]:
     return {"command": command, "args": ["--debug"]}
 
 
-def _write_fresh_mcp(path: Path, trw_entry: dict[str, Any]) -> None:
+def _write_fresh_mcp(path: Path, trw_entry: CursorServerEntry) -> None:
     """Write a fresh .cursor/mcp.json with only the TRW server entry."""
-    config: dict[str, Any] = {"mcpServers": {"trw": trw_entry}}
+    config: CursorMcpConfig = {"mcpServers": {"trw": trw_entry}}
     path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
 
@@ -50,7 +84,7 @@ def generate_cursor_hooks(
     target_dir: Path,
     *,
     force: bool = False,
-) -> dict[str, list[str]]:
+) -> BootstrapFileResult:
     """Generate .cursor/hooks.json with TRW hook configurations (FR05).
 
     Cursor supports hook events for IDE lifecycle integration. TRW uses 4:
@@ -65,12 +99,12 @@ def generate_cursor_hooks(
 
     Returns dict with 'created'/'updated'/'preserved' lists.
     """
-    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
     hooks_dir = target_dir / ".cursor"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hooks_file = hooks_dir / "hooks.json"
 
-    trw_hooks: list[dict[str, str]] = [
+    trw_hooks: list[CursorHookEntry] = [
         {
             "event": "beforeMCPExecution",
             "command": "bash -c 'echo \"TRW: Ensure trw_session_start() is called before other trw_* tools for full context.\"'",
@@ -96,10 +130,10 @@ def generate_cursor_hooks(
     if hooks_file.exists() and not force:
         # Smart merge: preserve user hooks, add/replace TRW hooks
         try:
-            existing: dict[str, Any] = json.loads(
+            existing: CursorHooksConfig = json.loads(
                 hooks_file.read_text(encoding="utf-8")
             )
-            existing_hooks: list[dict[str, Any]] = existing.get("hooks", [])
+            existing_hooks: list[CursorHookEntry] = existing.get("hooks", [])
             # Remove existing TRW hooks (identified by description prefix)
             non_trw = [
                 h for h in existing_hooks
@@ -139,7 +173,7 @@ def generate_cursor_rules(
     trw_section: str,
     *,
     force: bool = False,
-) -> dict[str, list[str]]:
+) -> BootstrapFileResult:
     """Generate .cursor/rules/trw-ceremony.mdc with TRW ceremony instructions (FR06).
 
     Creates an alwaysApply rule file so TRW ceremony instructions are always
@@ -160,7 +194,7 @@ def generate_cursor_rules(
     Returns:
         Dict with 'created'/'updated'/'preserved' lists.
     """
-    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
     rules_dir = target_dir / ".cursor" / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
     rules_file = rules_dir / "trw-ceremony.mdc"
@@ -199,7 +233,7 @@ def generate_cursor_mcp_config(
     target_dir: Path,
     *,
     force: bool = False,
-) -> dict[str, list[str]]:
+) -> BootstrapFileResult:
     """Generate .cursor/mcp.json with TRW MCP server entry (FR07).
 
     Smart merges with an existing config — preserves the user's other MCP
@@ -212,7 +246,7 @@ def generate_cursor_mcp_config(
     Returns:
         Dict with 'created'/'updated'/'preserved' lists.
     """
-    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
     cursor_dir = target_dir / ".cursor"
     cursor_dir.mkdir(parents=True, exist_ok=True)
     mcp_file = cursor_dir / "mcp.json"
@@ -222,10 +256,10 @@ def generate_cursor_mcp_config(
     if mcp_file.exists() and not force:
         # Smart merge: update only the trw key, preserve everything else
         try:
-            existing: dict[str, Any] = json.loads(
+            existing: CursorMcpConfig = json.loads(
                 mcp_file.read_text(encoding="utf-8")
             )
-            servers: dict[str, Any] = existing.get("mcpServers", {})
+            servers: dict[str, CursorServerEntry] = existing.get("mcpServers", {})
             servers["trw"] = trw_entry
             existing["mcpServers"] = servers
             mcp_file.write_text(

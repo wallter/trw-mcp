@@ -172,10 +172,11 @@ class TestWarmAddWithMemoryStore:
         mock_instance.upsert.assert_called_once_with(
             "entry-1", [0.1, 0.2, 0.3], {"source": "warm_tier"}
         )
-        mock_instance.close.assert_called_once()
+        # FIX-046: singleton pattern — no per-op close() call
+        mock_instance.close.assert_not_called()
 
-    def test_warm_add_memory_store_upsert_exception_still_closes(self, tmp_path: Path) -> None:
-        """Lines 288-292: MemoryStore.upsert raises, but close() still called (finally)."""
+    def test_warm_add_memory_store_upsert_exception_propagates(self, tmp_path: Path) -> None:
+        """Lines 288-292: MemoryStore.upsert raises — exception propagates."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         mgr = TierManager(trw_dir)
@@ -189,9 +190,6 @@ class TestWarmAddWithMemoryStore:
         with patch("trw_mcp.state.memory_store.MemoryStore", mock_ms):
             with pytest.raises(RuntimeError, match="vec error"):
                 mgr.warm_add("entry-1", {"summary": "test"}, [0.1, 0.2, 0.3])
-
-        # close() must still be called despite exception (finally block)
-        mock_instance.close.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

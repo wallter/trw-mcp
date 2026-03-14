@@ -21,6 +21,9 @@ from trw_memory.lifecycle.tiers import TierSweepResult as TierSweepResult
 
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry
+from trw_mcp.models.typed_dicts import LearningEntryDict
+from trw_mcp.models.typed_dicts import TierDistribution
+from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.scoring import _days_since_access
 from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.state.memory_adapter import list_active_learnings
@@ -92,7 +95,7 @@ def compute_importance_score(
 
     # Recency: exponential decay based on days since access
     today = date.today()
-    days = _days_since_access(entry, today)
+    days = _days_since_access(cast(LearningEntryDict, entry), today)
     half_life = cfg.learning_decay_half_life_days
     decay_rate = math.log(2) / half_life if half_life > 0 else 0.0
     recency = math.exp(-decay_rate * days)
@@ -225,7 +228,7 @@ class TierManager:
             data = self._reader.read_yaml(target)
             data["last_accessed_at"] = date.today().isoformat()
             self._writer.write_yaml(target, data)
-        except Exception:  # noqa: BLE001 — best-effort flush, must not raise
+        except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
             logger.warning(
                 "hot_tier_flush_failed",
                 entry_id=entry_id,
@@ -268,16 +271,13 @@ class TierManager:
             entry_data: Dict of entry fields (from YAML).
             embedding: Optional dense embedding vector.
         """
-        from trw_mcp.state.memory_store import MemoryStore
+        from trw_mcp.state.memory_store import MemoryStore, get_memory_store
 
         db_path = self._get_warm_db_path()
 
         if MemoryStore.available() and embedding is not None:
-            store = MemoryStore(db_path)
-            try:
-                store.upsert(entry_id, embedding, {"source": "warm_tier"})
-            finally:
-                store.close()
+            store = get_memory_store(db_path)
+            store.upsert(entry_id, embedding, {"source": "warm_tier"})
         else:
             # Fallback: write to a JSON sidecar for keyword search
             self._warm_sidecar_upsert(entry_id, entry_data)
@@ -323,15 +323,12 @@ class TierManager:
         Args:
             entry_id: Learning entry identifier to remove.
         """
-        from trw_mcp.state.memory_store import MemoryStore
+        from trw_mcp.state.memory_store import MemoryStore, get_memory_store
 
         db_path = self._get_warm_db_path()
         if MemoryStore.available():
-            store = MemoryStore(db_path)
-            try:
-                store.delete(entry_id)
-            finally:
-                store.close()
+            store = get_memory_store(db_path)
+            store.delete(entry_id)
 
         # Also purge from sidecar
         sidecar = self._warm_sidecar_path()
@@ -371,16 +368,13 @@ class TierManager:
         Returns:
             List of dicts with at minimum ``{"id": ..., "score": ...}``.
         """
-        from trw_mcp.state.memory_store import MemoryStore
+        from trw_mcp.state.memory_store import MemoryStore, get_memory_store
 
         db_path = self._get_warm_db_path()
 
         if MemoryStore.available() and query_embedding is not None:
-            store = MemoryStore(db_path)
-            try:
-                raw = store.search(query_embedding, top_k=top_k)
-            finally:
-                store.close()
+            store = get_memory_store(db_path)
+            raw = store.search(query_embedding, top_k=top_k)
             return [{"id": entry_id, "score": float(1.0 - dist)} for entry_id, dist in raw]
 
         # Keyword LIKE fallback via sidecar
@@ -498,7 +492,8 @@ class TierManager:
         for yaml_file in cold_base.rglob("*.yaml"):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:  # noqa: BLE001 — skip unreadable files in scan
+            except Exception:  # noqa: BLE001 — justified: scan-resilience, skip unreadable cold-tier files
+                logger.warning("cold_tier_file_unreadable", path=str(yaml_file), exc_info=True)
                 continue
             if str(data.get("id", "")) != entry_id:
                 continue
@@ -544,7 +539,8 @@ class TierManager:
         for yaml_file in sorted(cold_base.rglob("*.yaml")):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:  # noqa: BLE001 — skip unreadable files in scan
+            except Exception:  # noqa: BLE001 — justified: scan-resilience, skip unreadable cold-tier files
+                logger.warning("cold_tier_file_unreadable", path=str(yaml_file), exc_info=True)
                 continue
 
             text = str(data.get("summary", "")).lower()
@@ -584,7 +580,7 @@ class TierManager:
             return "medium"
         return "low"
 
-    def assign_impact_tiers(self, trw_dir: Path) -> dict[str, int]:
+    def assign_impact_tiers(self, trw_dir: Path) -> TierDistribution:
         """Assign impact_tier labels to all active learning entries.
 
         Iterates over active entries via list_active_learnings(), computes
@@ -603,12 +599,12 @@ class TierManager:
 
         cfg = self._config or get_config()
         entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-        distribution: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        distribution: TierDistribution = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         t0 = time.monotonic()
 
         try:
             active_entries = list_active_learnings(trw_dir)
-        except Exception:  # noqa: BLE001 — fail-open
+        except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
             logger.warning("assign_impact_tiers_list_failed", exc_info=True)
             return distribution
 
@@ -630,8 +626,8 @@ class TierManager:
                 file_data = self._reader.read_yaml(yaml_path)
                 file_data["impact_tier"] = tier
                 self._writer.write_yaml(yaml_path, file_data)
-                distribution[tier] += 1
-            except Exception:  # noqa: BLE001 — fail-open per-entry
+                cast(dict[str, int], distribution)[tier] += 1
+            except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
                 logger.warning(
                     "assign_impact_tiers_write_failed",
                     entry_id=entry_id,
@@ -668,7 +664,7 @@ class TierManager:
 
         stale_hot_ids: list[str] = []
         for entry_id, entry in list(self._hot.items()):
-            days = _days_since_access(entry.model_dump(), today)
+            days = _days_since_access(cast(LearningEntryDict, entry.model_dump()), today)
             if days > cfg.memory_hot_ttl_days:
                 stale_hot_ids.append(entry_id)
 
@@ -679,7 +675,7 @@ class TierManager:
                 self._flush_last_accessed(entry_id)
                 demoted += 1
                 logger.debug("sweep_hot_to_warm", entry_id=entry_id)
-            except Exception:  # noqa: BLE001 — sweep error counter, any failure increments
+            except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
                 logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
                 errors += 1
 
@@ -718,7 +714,7 @@ class TierManager:
                 if not entry_id:
                     continue
                 try:
-                    days = _days_since_access(data, today)
+                    days = _days_since_access(cast(LearningEntryDict, data), today)
                     importance = compute_importance_score(data, [], config=cfg)
                     if days > cfg.memory_cold_threshold_days and importance < 0.22:
                         # Resolve YAML path for cold_archive
@@ -737,7 +733,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:  # noqa: BLE001 — sweep error counter
+                except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
                     logger.warning(
                         "sweep_warm_to_cold_failed",
                         entry_id=entry_id,
@@ -754,19 +750,17 @@ class TierManager:
 
         if not _used_sqlite and entries_dir.exists():
             # YAML fallback path (original implementation)
-            for yaml_file in sorted(entries_dir.glob("*.yaml")):
-                if yaml_file.name == "index.yaml":
-                    continue
+            for yaml_file in iter_yaml_entry_files(entries_dir):
                 try:
-                    data = self._reader.read_yaml(yaml_file)
-                    entry_id = str(data.get("id", ""))
+                    yaml_data = self._reader.read_yaml(yaml_file)
+                    entry_id = str(yaml_data.get("id", ""))
                     if not entry_id:
                         continue
                     # Skip non-active entries
-                    if str(data.get("status", "active")) != "active":
+                    if str(yaml_data.get("status", "active")) != "active":
                         continue
-                    days = _days_since_access(data, today)
-                    importance = compute_importance_score(data, [], config=cfg)
+                    days = _days_since_access(cast(LearningEntryDict, yaml_data), today)
+                    importance = compute_importance_score(yaml_data, [], config=cfg)
                     if days > cfg.memory_cold_threshold_days and importance < 0.22:
                         self.cold_archive(entry_id, yaml_file)
                         demoted += 1
@@ -776,7 +770,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:  # noqa: BLE001 — sweep error counter
+                except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
                     logger.warning(
                         "sweep_warm_to_cold_failed",
                         path=str(yaml_file),
@@ -814,7 +808,7 @@ class TierManager:
                 try:
                     data = self._reader.read_yaml(yaml_file)
                     entry_id = str(data.get("id", ""))
-                    days = _days_since_access(data, today)
+                    days = _days_since_access(cast(LearningEntryDict, data), today)
                     importance = compute_importance_score(data, [], config=cfg)
                     if days > cfg.memory_retention_days and importance < 0.1:
                         # Append to purge audit log before deleting
@@ -837,7 +831,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:  # noqa: BLE001 — sweep error counter
+                except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
                     logger.warning(
                         "sweep_cold_purge_failed",
                         path=str(yaml_file),

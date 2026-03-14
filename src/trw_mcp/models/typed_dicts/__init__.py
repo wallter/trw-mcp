@@ -24,12 +24,13 @@ _delivery      — TrustIncrementResult, TelemetryStepResult, PublishLearningsRe
 _audit         — AuditReport, AuditLearningsResult, etc.
 _dashboard     — CeremonyTrendResult, CoverageTrendResult, ReviewTrendResult, etc.
 _orchestration — TrwStatusDict, WaveProgressDict, CheckpointRecordDict, etc.
-_trust         — TrustLevelResult, HumanReviewResult, TrustSessionIncrementResult
+_trust         — TrustLevelResult, HumanReviewResult, TrustSessionIncrementResult, TrustLevelQueryResult
 _export        — ExportSummary, ExportMetadata, SyncIndexMdResult, etc.
 _dedup         — DedupHandleResult
 _bootstrap     — BootstrapFileResult (IDE config generation return shapes)
 _opencode      — OpencodeServerEntry, OpencodeConfig, OpencodeTemplateDict
-""
+_telemetry     — RemoteSharedLearningDict
+"""
 
 from __future__ import annotations
 
@@ -45,6 +46,7 @@ from trw_mcp.models.typed_dicts._validation import (
     DimensionScoreDict,
     ImprovementSuggestionDict,
     PrdCreateResultDict,
+    PrdFrontmatterDict,
     SectionScoreDict,
     ValidateResultDict,
     ValidationFailureDict,
@@ -70,6 +72,10 @@ from trw_mcp.models.typed_dicts._tools import (
     UsageModelEntryDict,
     UsageReportResult,
 )
+
+# Backward-compat alias: LearnResult was merged into LearnResultDict (PRD-CORE-080).
+# Consumers that import `LearnResult` continue to work unchanged.
+LearnResult = LearnResultDict
 
 # _build
 from trw_mcp.models.typed_dicts._build import (
@@ -136,7 +142,6 @@ from trw_mcp.models.typed_dicts._delivery import (
     CeremonyFeedbackStepResult,
     ConsolidationStepResult,
     IndexSyncResult,
-    LearnResult,
     OutcomeCorrelationStepResult,
     ProgressionItem,
     PublishLearningsResult,
@@ -233,6 +238,11 @@ from trw_mcp.models.typed_dicts._opencode import (
     OpencodeTemplateDict,
 )
 
+# _telemetry
+from trw_mcp.models.typed_dicts._telemetry import (
+    RemoteSharedLearningDict,
+)
+
 __all__ = [
     # _learning
     "LearningEntryCompactDict",
@@ -242,6 +252,7 @@ __all__ = [
     "DimensionScoreDict",
     "ImprovementSuggestionDict",
     "PrdCreateResultDict",
+    "PrdFrontmatterDict",
     "SectionScoreDict",
     "ValidateResultDict",
     "ValidationFailureDict",
@@ -249,6 +260,7 @@ __all__ = [
     "CheckpointResultDict",
     "DeliverResultDict",
     "KnowledgeSyncResultDict",
+    "LearnResult",  # backward-compat alias for LearnResultDict
     "LearnResultDict",
     "PreCompactResultDict",
     "ProgressiveExpandResult",
@@ -315,7 +327,6 @@ __all__ = [
     "CeremonyFeedbackStepResult",
     "ConsolidationStepResult",
     "IndexSyncResult",
-    "LearnResult",
     "OutcomeCorrelationStepResult",
     "ProgressionItem",
     "PublishLearningsResult",
@@ -383,5 +394,6 @@ __all__ = [
     "OpencodeConfig",
     "OpencodeServerEntry",
     "OpencodeTemplateDict",
-
+    # _telemetry
+    "RemoteSharedLearningDict",
 ]

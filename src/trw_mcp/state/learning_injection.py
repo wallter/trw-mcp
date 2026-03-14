@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import cast
 
 import structlog
 
@@ -100,14 +101,14 @@ def recall_learnings(
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
 
     trw_dir = _resolve_trw_dir()
-    return adapter_recall(
+    return cast(list[dict[str, object]], adapter_recall(
         trw_dir,
         query=query,
         tags=tags,
         min_impact=min_impact,
         max_results=max_results,
         status=status,
-    )
+    ))
 
 
 def select_learnings_for_task(

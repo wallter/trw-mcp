@@ -70,5 +70,5 @@ def try_update_phase(run_path: Path | None, phase: Phase) -> None:
         return
     try:
         update_run_phase(run_path, phase)
-    except Exception:  # broad catch: best-effort wrapper, never raises
+    except Exception:  # justified: boundary, best-effort wrapper never raises
         logger.debug("try_update_phase_failed", phase=phase.value)

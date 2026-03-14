@@ -42,7 +42,7 @@ def _best_effort_check(
     """
     try:
         check_fn()
-    except Exception:  # broad catch: best-effort gate, never blocks
+    except Exception:  # justified: boundary, best-effort build gate
         logger.debug(f"{check_name}_failed", exc_info=True)
 
 # Build status staleness threshold (PRD-CORE-023-FR10)

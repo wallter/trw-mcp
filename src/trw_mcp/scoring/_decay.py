@@ -13,6 +13,7 @@ from pathlib import Path
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.models.typed_dicts import ImpactDistributionResult, ImpactTierInfo, LearningEntryDict
+from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.scoring._utils import (
     FileStateReader,
     TRWConfig,
@@ -131,7 +132,7 @@ def compute_impact_distribution(
     total = 0
 
     reader = FileStateReader()
-    for yaml_file in entries_dir.glob("*.yaml"):
+    for yaml_file in iter_yaml_entry_files(entries_dir):
         try:
             data = reader.read_yaml(yaml_file)
         except Exception:  # justified: fail-open, skip unreadable YAML entries

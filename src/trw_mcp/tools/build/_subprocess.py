@@ -116,7 +116,7 @@ def _extract_failures(
 def _collect_failures(result: dict[str, object]) -> list[str]:
     """Safely extract the failures list from a subprocess result dict.
 
-    Handles the dict[str, object] return type by checking isinstance
+    Handles the build result dict by checking isinstance
     before extending, as required by mypy --strict.
     """
     raw = result.get("failures", [])
@@ -130,7 +130,7 @@ def _run_audit_tool(
     cwd: Path,
     timeout_secs: int,
     tool_name: str,
-) -> dict[str, object] | object:
+) -> object:
     """Run an audit tool subprocess and parse its JSON output.
 
     Shared helper for pip-audit and npm audit -- handles subprocess
@@ -162,7 +162,7 @@ def _run_audit_tool(
         }
 
     try:
-        return json.loads(result.stdout)  # type: ignore[no-any-return]
+        return json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError):
         return {
             f"{prefix}_skipped": True,

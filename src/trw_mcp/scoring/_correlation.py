@@ -18,7 +18,6 @@ logger = structlog.get_logger()
 import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import EventType
-from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.scoring._utils import (
     FileStateReader,
     FileStateWriter,
@@ -280,18 +279,16 @@ def process_outcome(
     for lid, discount in best_discount.items():
         # PRD-FIX-053-FR03: Try SQLite O(1) lookup first; fall back to YAML scan
         entry_path: Path | None = None
-        # data is typed as dict[str, object] to satisfy safe_float/safe_int/write_yaml.
-        # sqlite_find_entry_by_id returns LearningEntryDict (a TypedDict), which is
-        # structurally a dict[str, object] at runtime. The cast below is intentional.
         data: dict[str, object] | None = None
 
         sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
         if sqlite_data is not None:
-            data = sqlite_data  # type: ignore[assignment]  # LearningEntryDict → dict
-            # Construct the expected YAML path for write-back (if entries_dir exists)
+            data = sqlite_data
+            # Look up the YAML file for dual-write back (file may have date-slug name)
             if entries_dir.exists():
-                candidate = entries_dir / f"{lid}.yaml"
-                entry_path = candidate if candidate.exists() else None
+                yaml_found = yaml_find_entry_by_id(entries_dir, lid)
+                if yaml_found is not None:
+                    entry_path = yaml_found[0]
         else:
             # YAML fallback for pre-migration entries not yet in SQLite
             if entries_dir.exists():
@@ -333,13 +330,19 @@ def process_outcome(
         if entry_path is not None:
             writer.write_yaml(entry_path, data)
 
-        # Sync Q-value back to SQLite so subsequent calls read updated values
+        # Sync Q-value and outcome_history back to SQLite so subsequent calls
+        # read updated values (best-effort — YAML is the authoritative write)
         try:
             from trw_mcp.state.memory_adapter import get_backend
             backend = get_backend(trw_dir)
-            backend.update(lid, q_value=round(q_new, 4), q_observations=q_obs + 1)
-        except Exception:  # noqa: BLE001
-            pass  # Best-effort — YAML is the authoritative write
+            backend.update(
+                lid,
+                q_value=round(q_new, 4),
+                q_observations=q_obs + 1,
+                outcome_history=history,
+            )
+        except Exception:  # noqa: BLE001 — justified: fail-open, correlation scoring is best-effort
+            pass
 
         updated_ids.append(lid)
 

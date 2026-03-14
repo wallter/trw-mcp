@@ -7,6 +7,7 @@ and generates topic documents in .trw/knowledge/.
 from __future__ import annotations
 
 import time
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -14,6 +15,7 @@ from fastmcp import FastMCP
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.knowledge_topology import execute_knowledge_sync
+from trw_mcp.models.typed_dicts import KnowledgeSyncResultDict
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -26,7 +28,7 @@ def register_knowledge_tools(server: FastMCP) -> None:
     @log_tool_call
     def trw_knowledge_sync(
         dry_run: bool = False,
-    ) -> dict[str, object]:
+    ) -> KnowledgeSyncResultDict:
         """Auto-generate topic documents from tag clusters in the learning store.
 
         Clusters learnings by Jaccard similarity on tag co-occurrence and
@@ -53,4 +55,4 @@ def register_knowledge_tools(server: FastMCP) -> None:
             threshold_met=result.get("threshold_met", False),
         )
 
-        return result
+        return cast(KnowledgeSyncResultDict, result)

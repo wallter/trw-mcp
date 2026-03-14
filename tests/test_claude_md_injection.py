@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md._parser import (
     TRW_AUTO_COMMENT,
     TRW_MARKER_END,
@@ -325,8 +326,7 @@ class TestProjectLocalTemplateOverrideKeys:
         )
 
         # Verify that the loaded template is the local one
-        with patch("trw_mcp.state.claude_md._config") as mock_config:
-            mock_config.templates_dir = "templates"
+        with patch("trw_mcp.state.claude_md._parser.get_config", return_value=TRWConfig()):
             template = load_claude_md_template(trw_dir)
 
         # The template won't have ceremony_quick_ref, so when rendered

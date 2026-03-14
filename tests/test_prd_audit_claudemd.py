@@ -813,8 +813,7 @@ class TestLoadClaudeMdTemplateInlineFallback:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         # No templates dir, no bundled template (patch bundled path to not exist)
-        with patch("trw_mcp.state.claude_md._config") as mock_cfg:
-            mock_cfg.templates_dir = "templates"
+        with patch("trw_mcp.state.claude_md._parser.get_config", return_value=TRWConfig()):
             # Mock bundled data dir to a nonexistent location
             with patch("trw_mcp.state.claude_md.Path") as mock_path_cls:
                 # Let the original Path work for trw_dir / templates_dir check
@@ -851,9 +850,8 @@ class TestLoadClaudeMdTemplateInlineFallback:
         custom = "# Custom Template\n{{behavioral_protocol}}\n"
         (templates_dir / "claude_md.md").write_text(custom, encoding="utf-8")
 
-        # Patch _config.templates_dir to match
-        with patch("trw_mcp.state.claude_md._config") as mock_cfg:
-            mock_cfg.templates_dir = "templates"
+        # Patch get_config to return default config with templates_dir="templates"
+        with patch("trw_mcp.state.claude_md._parser.get_config", return_value=TRWConfig()):
             result = load_claude_md_template(trw_dir)
         assert result == custom
 
@@ -1075,10 +1073,12 @@ class TestRenderBehavioralProtocol:
             ]
         })
 
-        # Reload _config to pick up new env
-        import trw_mcp.state.claude_md as cmd_module
-        with patch.object(cmd_module, "_config", TRWConfig()):
-            result = render_behavioral_protocol()
+        # Patch resolve_project_root in _static_sections to return tmp_path
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md._static_sections.resolve_project_root",
+            lambda: tmp_path,
+        )
+        result = render_behavioral_protocol()
 
         assert "trw_session_start" in result
         assert "trw_deliver" in result
@@ -1097,6 +1097,10 @@ class TestRenderBehavioralProtocol:
             ": invalid: [yaml\n", encoding="utf-8"
         )
 
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md._static_sections.resolve_project_root",
+            lambda: tmp_path,
+        )
         result = render_behavioral_protocol()
         assert result == ""
 
@@ -1656,9 +1660,11 @@ class TestRenderBehavioralProtocolEmptyDirectives:
             "directives": []  # empty list → line 376: return ""
         })
 
-        import trw_mcp.state.claude_md as cmd_module
-        with patch.object(cmd_module, "_config", TRWConfig()):
-            result = render_behavioral_protocol()
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md._static_sections.resolve_project_root",
+            lambda: tmp_path,
+        )
+        result = render_behavioral_protocol()
 
         assert result == ""
 
@@ -1678,9 +1684,11 @@ class TestRenderBehavioralProtocolEmptyDirectives:
             "directives": "not a list"  # not isinstance list → line 376: return ""
         })
 
-        import trw_mcp.state.claude_md as cmd_module
-        with patch.object(cmd_module, "_config", TRWConfig()):
-            result = render_behavioral_protocol()
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md._static_sections.resolve_project_root",
+            lambda: tmp_path,
+        )
+        result = render_behavioral_protocol()
 
         assert result == ""
 

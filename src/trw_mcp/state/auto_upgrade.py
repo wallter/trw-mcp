@@ -11,7 +11,6 @@ import json
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -64,7 +63,7 @@ def check_for_update() -> dict[str, object]:
             req = urllib.request.Request(url, method="GET", headers=headers)
             with urllib.request.urlopen(req, timeout=3) as response:
                 if 200 <= response.status < 300:
-                    data: Any = json.loads(response.read().decode("utf-8"))
+                    data: dict[str, object] = json.loads(response.read().decode("utf-8"))
                     latest = str(data.get("version", current))
                     available = _compare_versions(current, latest)
                     advisory: str | None = (
@@ -256,7 +255,7 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
                 with contextlib.suppress(OSError):
                     lock_path.unlink(missing_ok=True)
 
-    except Exception:  # broad catch: fail-open upgrade boundary
+    except Exception:  # justified: boundary, auto-upgrade is best-effort: fail-open upgrade boundary
         logger.debug("auto_upgrade_failed", exc_info=True)
         return {
             "applied": False,

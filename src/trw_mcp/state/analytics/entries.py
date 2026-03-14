@@ -58,21 +58,21 @@ def surface_validated_learnings(
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
         all_active = list_active_learnings(trw_dir)
-        for data in all_active:
-            q_value = float(str(data.get("q_value", 0.0)))
-            q_observations = int(str(data.get("q_observations", 0)))
+        for entry in all_active:
+            q_value = float(str(entry.get("q_value", 0.0)))
+            q_observations = int(str(entry.get("q_observations", 0)))
             if q_value >= q_threshold and q_observations >= cold_start_threshold:
                 validated.append({
-                    "learning_id": str(data.get("id", "")),
-                    "summary": str(data.get("summary", "")),
+                    "learning_id": str(entry.get("id", "")),
+                    "summary": str(entry.get("summary", "")),
                     "q_value": q_value,
                     "q_observations": q_observations,
-                    "tags": data.get("tags", []),
+                    "tags": entry.get("tags", []),
                 })
         validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
         return validated
-    except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        logger.debug("sqlite_fallback_to_yaml", op="surface_validated_learnings")
+    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
+        logger.warning("sqlite_fallback_to_yaml", op="surface_validated_learnings", exc_info=True)
 
     # Fallback: YAML scan
     entries_dir = _ac._entries_path(trw_dir)
@@ -121,11 +121,11 @@ def has_existing_success_learning(
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
         all_active = list_active_learnings(trw_dir)
-        for data in all_active:
-            if str(data.get("summary", ""))[:50].lower() == target:
+        for entry in all_active:
+            if str(entry.get("summary", ""))[:50].lower() == target:
                 return True
-    except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        logger.debug("sqlite_fallback_to_yaml", op="has_existing_success_learning")
+    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
+        logger.warning("sqlite_fallback_to_yaml", op="has_existing_success_learning", exc_info=True)
 
     # Also check YAML (entries from save_learning_entry may only be in YAML)
     entries_dir = _ac._entries_path(trw_dir)
@@ -159,12 +159,12 @@ def has_existing_mechanical_learning(
         from trw_mcp.state.memory_adapter import list_active_learnings
         all_active = list_active_learnings(trw_dir)
         target = prefix.lower()
-        for data in all_active:
-            summary = str(data.get("summary", "")).lower()
+        for entry in all_active:
+            summary = str(entry.get("summary", "")).lower()
             if summary.startswith(target):
                 return True
-    except Exception:  # broad catch: ImportError + SQLite/adapter failures
-        logger.debug("sqlite_fallback_to_yaml", op="has_existing_mechanical_learning")
+    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
+        logger.warning("sqlite_fallback_to_yaml", op="has_existing_mechanical_learning", exc_info=True)
 
     # Also check YAML (entries from save_learning_entry may only be in YAML)
     entries_dir = _ac._entries_path(trw_dir)
@@ -314,7 +314,7 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
             metadata["promoted_to_claude_md"] = "true"
             backend.update(learning_id, metadata=metadata)
     except Exception:  # justified: fail-open, promotion metadata update must not block caller
-        logger.debug("promotion_metadata_update_failed", learning_id=learning_id)
+        logger.warning("promotion_metadata_update_failed", learning_id=learning_id, exc_info=True)
 
     # Fallback: also update YAML if it exists
     entries_dir = _ac._entries_path(trw_dir)

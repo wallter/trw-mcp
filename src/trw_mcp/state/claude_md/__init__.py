@@ -12,7 +12,6 @@ All public symbols are re-exported here for backward compatibility.
 
 from pathlib import Path  # noqa: F401 — re-exported for test backward compat
 
-from trw_mcp.models.config import get_config as _get_config
 from trw_mcp.state._paths import (
     resolve_project_root,
     resolve_trw_dir,
@@ -60,16 +59,6 @@ from trw_mcp.state.claude_md._templates import (
     render_conventions,
     render_patterns,
 )
-
-# Backward-compat: tests monkeypatch _config/_reader on this module via patch.object.
-# These are no longer used by submodule functions (which call get_config() at invocation
-# time), but keeping them here prevents AttributeError in legacy test code.
-from trw_mcp.state.persistence import FileStateReader as _FileStateReader
-from trw_mcp.state.persistence import FileStateWriter as _FileStateWriter
-
-_config = _get_config()
-_reader = _FileStateReader()
-_writer = _FileStateWriter()
 
 __all__ = [
     # Constants

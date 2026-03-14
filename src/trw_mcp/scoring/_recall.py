@@ -11,6 +11,7 @@ from datetime import date
 from pathlib import Path
 
 import trw_mcp.scoring._utils as _su
+from trw_mcp.models.typed_dicts import LearningEntryDict, PruneCandidateDict
 from trw_mcp.scoring._decay import _entry_utility
 from trw_mcp.scoring._utils import TRWConfig, get_config, safe_float, safe_int
 
@@ -19,10 +20,10 @@ from trw_mcp.scoring._utils import TRWConfig, get_config, safe_float, safe_int
 
 
 def rank_by_utility(
-    matches: list[dict[str, object]],
+    matches: list[LearningEntryDict],
     query_tokens: list[str],
     lambda_weight: float,
-) -> list[dict[str, object]]:
+) -> list[LearningEntryDict]:
     """Re-rank matched learnings by combined relevance + utility score.
 
     Combined score = (1 - lambda) * relevance + lambda * utility
@@ -39,7 +40,7 @@ def rank_by_utility(
         return matches
 
     today = date.today()
-    scored: list[tuple[float, dict[str, object]]] = []
+    scored: list[tuple[float, LearningEntryDict]] = []
 
     for entry in matches:
         # Text relevance score (token overlap with field weighting)
@@ -72,8 +73,8 @@ def rank_by_utility(
 
 
 def utility_based_prune_candidates(
-    entries: list[tuple[Path, dict[str, object]]],
-) -> list[dict[str, object]]:
+    entries: list[tuple[Path, LearningEntryDict]],
+) -> list[PruneCandidateDict]:
     """Identify prune candidates using composite utility scoring.
 
     Three tiers:
@@ -89,7 +90,7 @@ def utility_based_prune_candidates(
     Returns:
         List of candidate dicts with id, summary, utility, and suggested_status.
     """
-    candidates: list[dict[str, object]] = []
+    candidates: list[PruneCandidateDict] = []
     seen_ids: set[str] = set()
     today = date.today()
     cfg: TRWConfig = get_config()

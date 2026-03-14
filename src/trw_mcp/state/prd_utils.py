@@ -202,7 +202,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
             os.close(tmp_fd)
             tmp_path.write_text(new_content, encoding="utf-8")
             tmp_path.rename(path)
-        except Exception:  # broad catch: cleanup temp file on any write failure
+        except Exception:  # justified: cleanup, temp file removal must not mask original error
             tmp_path.unlink(missing_ok=True)
             raise
 

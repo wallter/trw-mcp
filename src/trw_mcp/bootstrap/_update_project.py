@@ -837,6 +837,7 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
     """
     import io
     import os
+    import sys
 
     original_cwd = Path.cwd()
     try:

@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from trw_mcp.models.config import get_config
+from trw_mcp.state.persistence import FileStateWriter
+
 
 # CLAUDE.md TRW section markers (must stay consistent — parsing depends on these)
 TRW_AUTO_COMMENT = "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->"
@@ -26,10 +29,10 @@ def load_claude_md_template(trw_dir: Path) -> str:
     Returns:
         Template string with ``{{placeholder}}`` tokens.
     """
-    import trw_mcp.state.claude_md as _pkg
+    config = get_config()
 
     # 1. Project-local override
-    project_template = trw_dir / _pkg._config.templates_dir / "claude_md.md"
+    project_template = trw_dir / config.templates_dir / "claude_md.md"
     if project_template.exists():
         return project_template.read_text(encoding="utf-8")
 
@@ -168,8 +171,8 @@ def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
         content_lines = _truncate_with_markers(content_lines, max_lines)
         new_content = "\n".join(content_lines)
 
-    import trw_mcp.state.claude_md as _pkg
+    writer = FileStateWriter()
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    _pkg._writer.write_text(target, new_content)
+    writer.write_text(target, new_content)
     return len(new_content.split("\n"))

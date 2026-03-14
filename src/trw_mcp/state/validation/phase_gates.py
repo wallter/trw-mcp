@@ -318,7 +318,7 @@ def _check_review_exit(
                     severity="warning",
                 )
             )
-    except Exception:  # broad catch: best-effort advisory, never blocks
+    except Exception:  # justified: boundary, best-effort advisory check
         logger.debug("reflection_quality_check_failed", exc_info=True)
 
     # Spec reconciliation advisory (non-blocking)
@@ -360,7 +360,7 @@ def _check_review_exit(
                         severity="info",
                     )
                 )
-    except Exception:  # broad catch: best-effort advisory, never blocks
+    except Exception:  # justified: boundary, best-effort advisory check
         logger.debug("spec_reconciliation_check_failed", exc_info=True)
 
 

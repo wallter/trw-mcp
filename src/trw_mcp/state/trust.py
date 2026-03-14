@@ -13,6 +13,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.models.typed_dicts import HumanReviewResult, TrustLevelResult, TrustSessionIncrementResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -62,7 +63,7 @@ def write_trust_registry(trw_dir: Path, data: dict[str, object]) -> None:
 
 def trust_level_calculate(
     trw_dir: Path, config: TRWConfig | None = None
-) -> dict[str, object]:
+) -> TrustLevelResult:
     """Calculate current trust tier from session count.
 
     Returns dict with: tier, session_count, review_mode, review_sample_rate,
@@ -123,7 +124,7 @@ def requires_human_review(
     changed_files: list[str],
     trust_result: dict[str, object],
     config: TRWConfig | None = None,
-) -> dict[str, object]:
+) -> HumanReviewResult:
     """Determine if a change requires human review.
 
     Security-tagged changes ALWAYS require review regardless of tier.
@@ -175,7 +176,7 @@ def requires_human_review(
 
 def increment_session_count(
     trw_dir: Path, agent_id: str | None = None
-) -> dict[str, object]:
+) -> TrustSessionIncrementResult:
     """Increment session count after successful delivery.
 
     Called from trw_deliver when build_check passed.
@@ -208,7 +209,7 @@ def increment_session_count(
 
     write_trust_registry(trw_dir, registry)
 
-    result: dict[str, object] = {
+    result: TrustSessionIncrementResult = {
         "session_count": new_count,
         "previous_tier": old_tier,
         "new_tier": new_tier,

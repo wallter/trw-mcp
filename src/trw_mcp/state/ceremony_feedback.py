@@ -15,6 +15,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.models.typed_dicts import CeremonyFeedbackEntry, EscalationResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -223,7 +224,7 @@ def record_session_outcome(
     run_path: str,
     session_id: str,
     task_description: str = "",
-) -> dict[str, object]:
+) -> CeremonyFeedbackEntry:
     """Record a session outcome for ceremony feedback tracking.
 
     Returns the recorded entry.
@@ -240,7 +241,7 @@ def record_session_outcome(
         4,
     )
 
-    entry: dict[str, object] = {
+    entry: CeremonyFeedbackEntry = {
         "session_id": session_id,
         "run_path": run_path,
         "ceremony_score": ceremony_score,
@@ -366,7 +367,7 @@ def check_auto_escalation(
     task_class: str,
     feedback_data: dict[str, object],
     config: TRWConfig | None = None,
-) -> dict[str, object] | None:
+) -> EscalationResult | None:
     """Check if a task class should be auto-escalated due to quality regression.
 
     Returns escalation dict or None.

@@ -35,7 +35,7 @@ from trw_mcp.models.typed_dicts import (
     RunStatusDict,
     SessionStartResultDict,
 )
-from trw_mcp.models.types import EmbedHealthStatus
+from trw_mcp.models.typed_dicts import EmbedHealthStatus
 from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
@@ -157,7 +157,7 @@ def _mark_run_complete(run_dir: Path) -> None:
         data = reader.read_yaml(run_yaml)
         data["status"] = "complete"
         writer.write_yaml(run_yaml, data)
-    except Exception:
+    except Exception:  # justified: fail-open, ceremony completion is best-effort
         # justified: marking run complete is best-effort — failure must not
         # block session_start or deliver.
         logger.warning(
@@ -383,7 +383,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 try:
                     from trw_mcp.telemetry.sender import BatchSender
                     BatchSender.from_config().send()
-                except Exception:
+                except Exception:  # justified: fail-open, ceremony completion is best-effort
                     # justified: fail-open telemetry — batch send is fire-and-forget
                     # on a daemon thread; failure must never block session start.
                     pass

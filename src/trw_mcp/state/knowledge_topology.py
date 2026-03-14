@@ -14,7 +14,7 @@ import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import TypedDict, cast
 
 import structlog
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
@@ -25,6 +25,13 @@ from trw_mcp.state.memory_adapter import count_entries, get_backend
 from trw_mcp.state.persistence import FileStateWriter
 
 logger = structlog.get_logger()
+
+
+class _ClusterDict(TypedDict):
+    """Internal representation of a tag-based cluster during assembly."""
+
+    tag_set: set[str]
+    entry_list: list[MemoryEntry]
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +113,7 @@ def build_cooccurrence_matrix(
 def _assign_entries_to_clusters(
     entries: list[MemoryEntry],
     similarity_threshold: float,
-) -> list[dict[str, Any]]:
+) -> list[_ClusterDict]:
     """Assign each entry to its closest existing cluster or create a new one.
 
     Iterates over *entries* and computes Jaccard similarity against each
@@ -118,7 +125,7 @@ def _assign_entries_to_clusters(
     Returns the raw internal cluster list (each element has ``tag_set`` and
     ``entry_list`` keys).
     """
-    clusters: list[dict[str, Any]] = []
+    clusters: list[_ClusterDict] = []
 
     for entry in entries:
         entry_tags = set(entry.tags)
@@ -148,9 +155,9 @@ def _assign_entries_to_clusters(
 
 
 def _merge_small_clusters(
-    clusters: list[dict[str, Any]],
+    clusters: list[_ClusterDict],
     min_size: int,
-) -> list[dict[str, Any]]:
+) -> list[_ClusterDict]:
     """Merge undersized clusters into their closest neighbour, then drop stragglers.
 
     Repeatedly scans *clusters* in reverse order. When a cluster has fewer
@@ -504,7 +511,7 @@ def execute_knowledge_sync(
             with open(fd, "w", encoding="utf-8") as f:
                 json.dump(clusters_data, f, indent=2)
             Path(tmp_path_str).replace(clusters_path)
-        except Exception:  # broad catch: cleanup temp file on any write failure
+        except Exception:  # justified: cleanup, temp file removal must not mask original error
             with contextlib.suppress(OSError):
                 Path(tmp_path_str).unlink(missing_ok=True)
             raise

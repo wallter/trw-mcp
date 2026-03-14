@@ -9,7 +9,7 @@ avoid circular dependencies. It only depends on models/ and persistence.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,13 +26,13 @@ logger = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 
-def safe_int(data: dict[str, object], key: str, default: int = 0) -> int:
+def safe_int(data: Mapping[str, object], key: str, default: int = 0) -> int:
     """Safely extract an integer from a dict with heterogeneous values.
 
     Handles str, int, float, and None values without raising.
 
     Args:
-        data: Dictionary with mixed-type values.
+        data: Mapping with mixed-type values (dict or TypedDict).
         key: Key to extract.
         default: Fallback value if key is missing or conversion fails.
 
@@ -45,11 +45,11 @@ def safe_int(data: dict[str, object], key: str, default: int = 0) -> int:
         return default
 
 
-def safe_float(data: dict[str, object], key: str, default: float = 0.0) -> float:
+def safe_float(data: Mapping[str, object], key: str, default: float = 0.0) -> float:
     """Safely extract a float from a dict with heterogeneous values.
 
     Args:
-        data: Dictionary with mixed-type values.
+        data: Mapping with mixed-type values (dict or TypedDict).
         key: Key to extract.
         default: Fallback value if key is missing or conversion fails.
 
@@ -62,11 +62,11 @@ def safe_float(data: dict[str, object], key: str, default: float = 0.0) -> float
         return default
 
 
-def safe_str(data: dict[str, object], key: str, default: str = "") -> str:
+def safe_str(data: Mapping[str, object], key: str, default: str = "") -> str:
     """Safely extract a string from a dict with heterogeneous values.
 
     Args:
-        data: Dictionary with mixed-type values.
+        data: Mapping with mixed-type values (dict or TypedDict).
         key: Key to extract.
         default: Fallback value if key is missing.
 
@@ -102,14 +102,14 @@ def iter_yaml_entry_files(entries_dir: Path) -> Iterator[Path]:
         yield yaml_file
 
 
-def is_active_entry(data: dict[str, object]) -> bool:
+def is_active_entry(data: Mapping[str, object]) -> bool:
     """Check if a learning entry dict has active status.
 
     The default status is 'active' for entries that don't have an
     explicit status field.
 
     Args:
-        data: Entry dict loaded from YAML.
+        data: Entry mapping loaded from YAML (dict or TypedDict).
 
     Returns:
         True if the entry is active.

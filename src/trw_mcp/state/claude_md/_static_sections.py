@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root
+from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.claude_md._templates import (
     BEHAVIORAL_PROTOCOL_CAP,
     CEREMONY_TOOLS,
@@ -73,17 +75,18 @@ def render_behavioral_protocol() -> str:
     Returns:
         Markdown bullet list of directives, or empty string if file missing.
     """
-    import trw_mcp.state.claude_md as _pkg
-
     from trw_mcp.exceptions import StateError
 
+    config = get_config()
+    reader = FileStateReader()
+
     proto_path = (
-        resolve_project_root() / _pkg._config.trw_dir / _pkg._config.context_dir / "behavioral_protocol.yaml"
+        resolve_project_root() / config.trw_dir / config.context_dir / "behavioral_protocol.yaml"
     )
     if not proto_path.exists():
         return ""
     try:
-        data = _pkg._reader.read_yaml(proto_path)
+        data = reader.read_yaml(proto_path)
     except (StateError, ValueError, TypeError):
         return ""
     directives = data.get("directives", [])
@@ -325,9 +328,9 @@ def render_agent_teams_protocol() -> str:
         Markdown string with Agent Teams protocol, or empty string
         if the feature is not enabled.
     """
-    import trw_mcp.state.claude_md as _pkg
+    config = get_config()
 
-    if not _pkg._config.agent_teams_enabled:
+    if not config.agent_teams_enabled:
         return ""
 
     return (

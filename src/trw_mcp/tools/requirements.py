@@ -11,6 +11,7 @@ import re
 from datetime import date
 from io import StringIO
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -41,7 +42,7 @@ from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
     validate_prd_quality_v2,
 )
-from trw_mcp.models.typed_dicts import ValidateResultDict
+from trw_mcp.models.typed_dicts import PrdCreateResultDict, PrdFrontmatterDict, ValidateResultDict
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -76,7 +77,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         title: str = "",
         sequence: int = 1,
         risk_level: str = "",
-    ) -> dict[str, object]:
+    ) -> PrdCreateResultDict:
         """Turn a feature request into a structured PRD — ensures requirements are traceable, testable, and complete.
 
         Generates an AARE-F compliant PRD with YAML frontmatter, 12 standard sections,
@@ -179,7 +180,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             slos=prefill_slos,
         )
 
-        frontmatter_dict = model_to_dict(frontmatter)
+        frontmatter_dict = cast(PrdFrontmatterDict, model_to_dict(frontmatter))
         prd_content = _render_prd(frontmatter_dict, body)
 
         output_path = ""
@@ -569,10 +570,33 @@ def _filter_sections_for_category(body: str, category: str) -> str:
             # Non-standard header — keep as-is (shouldn't occur in practice)
             kept_sections.append((header_line, section_body))
 
+    # Extract trailing non-numbered content (Appendix, Quality Checklist)
+    # from the last numbered section's body.  Non-numbered ## headings
+    # (e.g. "## Appendix") are always preserved regardless of category.
+    trailing = ""
+    if kept_sections or parts:
+        # The last element in parts is the body after the final numbered heading.
+        # It may contain non-numbered sections like ## Appendix.
+        last_body = parts[-1] if len(parts) > 1 else ""
+        # Find the first non-numbered ## heading in the last body
+        _NON_NUMBERED_RE = re.compile(r"^(## (?!\d+\.).+)$", re.MULTILINE)
+        m = _NON_NUMBERED_RE.search(last_body)
+        if m:
+            trailing = last_body[m.start():]
+            # Trim trailing from the last section body if it was kept
+            if kept_sections:
+                last_name, last_body_text = kept_sections[-1]
+                cut_m = _NON_NUMBERED_RE.search(last_body_text)
+                if cut_m:
+                    kept_sections[-1] = (last_name, last_body_text[:cut_m.start()])
+
     # Rebuild with renumbered headings
     result_parts = [preamble]
     for idx, (section_name, section_body) in enumerate(kept_sections, start=1):
         result_parts.append(f"## {idx}. {section_name}{section_body}")
+
+    if trailing:
+        result_parts.append(trailing)
 
     return "".join(result_parts)
 
@@ -639,7 +663,7 @@ _FALLBACK_BODY = """# PRD-CATEGORY-SEQ: Title
 """
 
 
-def _strip_deprecated_fields(frontmatter: dict[str, object]) -> dict[str, object]:
+def _strip_deprecated_fields(frontmatter: PrdFrontmatterDict) -> PrdFrontmatterDict:
     """Remove deprecated / null frontmatter fields before YAML output.
 
     Strips ``None``-valued top-level keys and explicitly removes decorative
@@ -659,15 +683,15 @@ def _strip_deprecated_fields(frontmatter: dict[str, object]) -> dict[str, object
         Cleaned dict with deprecated/null fields removed.
     """
     _DEPRECATED_TOP_KEYS = frozenset({"aaref_components"})
-    result = {k: v for k, v in frontmatter.items() if v is not None and k not in _DEPRECATED_TOP_KEYS}
+    result: dict[str, object] = {k: v for k, v in frontmatter.items() if v is not None and k not in _DEPRECATED_TOP_KEYS}
     # Strip conflicts_with from nested traceability dict
     traceability = result.get("traceability")
     if isinstance(traceability, dict) and "conflicts_with" in traceability:
         result["traceability"] = {k: v for k, v in traceability.items() if k != "conflicts_with"}
-    return result
+    return cast(PrdFrontmatterDict, result)
 
 
-def _render_prd(frontmatter: dict[str, object], body: str) -> str:
+def _render_prd(frontmatter: PrdFrontmatterDict, body: str) -> str:
     """Render complete PRD with YAML frontmatter and markdown body.
 
     Strips deprecated fields (``aaref_components``, ``conflicts_with``) and
