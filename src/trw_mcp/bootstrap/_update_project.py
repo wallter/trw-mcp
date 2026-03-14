@@ -831,7 +831,11 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
     Temporarily changes cwd to the target project so that resolve_project_root()
     finds the correct .trw/ directory and learnings database.
     Fail-open: rendering errors are logged as warnings but never break the update.
+
+    Stdout/stderr are suppressed during sync to prevent structlog noise and
+    SDK error messages from leaking into the installer's progress pipe.
     """
+    import io
     import os
 
     original_cwd = Path.cwd()
@@ -848,16 +852,25 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
         config = get_config()
         reader = FileStateReader()
         writer = FileStateWriter()
-        llm = LLMClient()
 
-        sync_result = execute_claude_md_sync(
-            scope="root",
-            target_dir=None,
-            config=config,
-            reader=reader,
-            writer=writer,
-            llm=llm,
-        )
+        # Suppress stdout/stderr so structlog noise and SDK auth errors
+        # don't leak into the installer's subprocess pipe.
+        saved_stdout, saved_stderr = sys.stdout, sys.stderr
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+        try:
+            llm = LLMClient()
+            sync_result = execute_claude_md_sync(
+                scope="root",
+                target_dir=None,
+                config=config,
+                reader=reader,
+                writer=writer,
+                llm=llm,
+            )
+        finally:
+            sys.stdout, sys.stderr = saved_stdout, saved_stderr
+
         result["updated"].append(
             f"CLAUDE.md synced (learnings promoted: {sync_result.get('learnings_promoted', 0)})"
         )

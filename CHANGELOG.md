@@ -4,6 +4,17 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.12.5] — 2026-03-13
+
+### Fixed
+
+- **Auth error leaks into installer progress** — `_run_claude_md_sync` now suppresses stdout/stderr during LLMClient initialization and CLAUDE.md sync. Prevents `TypeError: "Could not resolve authentication"` from corrupting the installer's spinner output when no Anthropic API key is configured.
+- **Installer regex matched Python exceptions** — `re.search(r"Error")` matched `TypeError`, `ValueError`, etc. Changed to `re.match()` with line-start anchoring so only progress-format lines (e.g., `Error: path`) are parsed.
+
+### Added
+
+- **2 tests for CLAUDE.md sync auth failure** — verifies auth errors are captured as warnings (not errors) and don't leak to stdout.
+
 ## [0.12.4] — 2026-03-13
 
 ### Fixed

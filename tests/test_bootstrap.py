@@ -206,10 +206,12 @@ class TestHooks:
         "lib-trw.sh",
         "post-tool-event.sh",
         "pre-compact.sh",
+        "pre-tool-deliver-gate.sh",
         "session-end.sh",
         "session-start.sh",
         "stop-ceremony.sh",
         "subagent-start.sh",
+        "subagent-stop.sh",
         "task-completed.sh",
         "teammate-idle.sh",
         "user-prompt-submit.sh",
@@ -1149,6 +1151,65 @@ class TestResultActionKey:
         """Returns 'updated' when result dict contains an 'updated' key (update flow)."""
         result: dict[str, list[str]] = {"created": [], "updated": [], "errors": []}
         assert _result_action_key(result) == "updated"
+
+
+# ── _run_claude_md_sync Tests ────────────────────────────────────────────
+
+
+class TestRunClaudeMdSync:
+    """Tests for _run_claude_md_sync — fail-open + stdout suppression."""
+
+    @staticmethod
+    def _failing_llm_client() -> None:
+        """Simulate LLMClient raising TypeError (anthropic SDK with no API key)."""
+        raise TypeError("Could not resolve authentication")
+
+    def test_auth_error_captured_as_warning(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auth failures from LLMClient are captured as warnings, not errors."""
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        # Patch at the source module since _run_claude_md_sync imports locally
+        monkeypatch.setattr(
+            "trw_mcp.state.llm_helpers.LLMClient",
+            self._failing_llm_client,
+        )
+
+        result: dict[str, list[str]] = {
+            "updated": [], "created": [], "preserved": [],
+            "errors": [], "warnings": [],
+        }
+        init_project(fake_git_repo)
+
+        _run_claude_md_sync(fake_git_repo, result)
+
+        assert any("CLAUDE.md sync skipped" in w for w in result["warnings"])
+        assert result["errors"] == []
+
+    def test_auth_error_does_not_leak_to_stdout(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Auth errors must NOT leak to stdout (would corrupt installer progress pipe)."""
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        monkeypatch.setattr(
+            "trw_mcp.state.llm_helpers.LLMClient",
+            self._failing_llm_client,
+        )
+
+        result: dict[str, list[str]] = {
+            "updated": [], "created": [], "preserved": [],
+            "errors": [], "warnings": [],
+        }
+        init_project(fake_git_repo)
+
+        _run_claude_md_sync(fake_git_repo, result)
+
+        captured = capsys.readouterr()
+        assert "authentication" not in captured.out.lower()
+        assert "TypeError" not in captured.out
 
 
 # ── Root FRAMEWORK.md Tests (PRD-FIX-025) ──────────────────────────────
