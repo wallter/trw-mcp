@@ -69,6 +69,7 @@ def run_build_check(
     start = time.monotonic()
     tests_passed = True
     mypy_clean = True
+    timed_out = False
     coverage_pct = 0.0
     test_count = 0
     failure_count = 0
@@ -77,6 +78,8 @@ def run_build_check(
     if scope in ("full", "pytest", "quick"):
         pytest_result: PytestResultDict = _run_pytest(project_root, timeout_secs, pytest_args)
         tests_passed = bool(pytest_result.get("tests_passed", False))
+        if pytest_result.get("timed_out", False):
+            timed_out = True
         coverage_pct = float(pytest_result.get("coverage_pct", 0.0))
         test_count = int(pytest_result.get("test_count", 0))
         failure_count = int(pytest_result.get("failure_count", 0))
@@ -85,6 +88,8 @@ def run_build_check(
     if scope in ("full", "mypy"):
         mypy_result: MypyResultDict = _run_mypy(project_root, timeout_secs, mypy_args)
         mypy_clean = bool(mypy_result.get("mypy_clean", False))
+        if mypy_result.get("timed_out", False):
+            timed_out = True
         all_failures.extend(_collect_failures(cast("dict[str, object]", mypy_result)))
 
     duration = time.monotonic() - start
@@ -92,6 +97,7 @@ def run_build_check(
     return BuildStatus(
         tests_passed=tests_passed,
         mypy_clean=mypy_clean,
+        timed_out=timed_out,
         coverage_pct=coverage_pct,
         test_count=test_count,
         failure_count=failure_count,

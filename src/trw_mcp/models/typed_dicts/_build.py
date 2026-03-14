@@ -13,6 +13,7 @@ class PytestResultDict(TypedDict, total=False):
     test_count: int
     failure_count: int
     failures: list[str]
+    timed_out: bool
 
 
 class MypyResultDict(TypedDict, total=False):
@@ -21,6 +22,7 @@ class MypyResultDict(TypedDict, total=False):
     mypy_clean: bool
     mypy_error_count: int
     failures: list[str]
+    timed_out: bool
 
 
 class PipAuditResult(TypedDict, total=False):

@@ -4,6 +4,18 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-03-14
+
+### Fixed
+
+- **Build check timeout indistinguishable from failure** — `trw_build_check` subprocess timeouts wrote `tests_passed: false` to `build-status.yaml`, identical to actual test failures. Added `timed_out: bool` field to `BuildStatus` model, `PytestResultDict`, and `MypyResultDict`. The deliver gate hook now differentiates timeout from failure with distinct error messages.
+- **Deliver gate hook error messages lack motivation** — rewrote all 3 hook error paths (no build record, timeout, failure) with structured BLOCKED/WHY/ACTION format. Messages now explain *why* the gate exists (protect the user from broken code) and provide copy-pasteable next steps, including an escape hatch for timeouts when tests were verified manually.
+
+### Changed
+
+- **`BuildStatus` model** — added `timed_out` field (default `false`), propagated through `_runners.py` → `_core.py` → `_registration.py`.
+- **`pre-tool-deliver-gate.sh`** — both `.claude/hooks/` and bundled `data/hooks/` copies updated with prompt-engineered error messages.
+
 ## [0.13.1] — 2026-03-14
 
 ### Added

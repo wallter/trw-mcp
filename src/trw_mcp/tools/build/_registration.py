@@ -171,6 +171,7 @@ def register_build_tools(server: FastMCP) -> None:
         result: dict[str, object] = {
             "tests_passed": status.tests_passed,
             "mypy_clean": status.mypy_clean,
+            "timed_out": status.timed_out,
             "coverage_pct": status.coverage_pct,
             "test_count": status.test_count,
             "failure_count": status.failure_count,

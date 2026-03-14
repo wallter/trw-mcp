@@ -27,6 +27,10 @@ class BuildStatus(BaseModel):
         default=False,
         description="True if mypy exited with code 0 (no errors).",
     )
+    timed_out: bool = Field(
+        default=False,
+        description="True if the build check timed out before completing.",
+    )
     coverage_pct: float = Field(
         ge=0.0, le=100.0, default=0.0,
         description="Coverage percentage from pytest --cov output.",

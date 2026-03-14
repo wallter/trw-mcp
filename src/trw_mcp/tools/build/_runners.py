@@ -31,15 +31,18 @@ _COVERAGE_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%")
 _MAX_FAILURES = 10
 
 
-def _pytest_error(message: str) -> PytestResultDict:
+def _pytest_error(message: str, *, timed_out: bool = False) -> PytestResultDict:
     """Build a failed pytest result dict with the given error message."""
-    return PytestResultDict(
+    result = PytestResultDict(
         tests_passed=False,
         coverage_pct=0.0,
         test_count=0,
         failure_count=0,
         failures=[message],
     )
+    if timed_out:
+        result["timed_out"] = True
+    return result
 
 
 def _run_pytest(
@@ -65,14 +68,16 @@ def _run_pytest(
             custom_cmd.split(), project_root, timeout_secs,
         )
         if isinstance(result, str):
-            return _pytest_error(result)
+            is_timeout = "timed out" in result
+            return _pytest_error(result, timed_out=is_timeout)
         output = _strip_ansi(result.stdout + "\n" + result.stderr)
+        failures = _extract_failures(output, ("FAILED ", "ERROR "))
         return PytestResultDict(
-            tests_passed=result.returncode == 0,
+            tests_passed=result.returncode == 0 and len(failures) == 0,
             coverage_pct=0.0,
             test_count=0,
-            failure_count=0 if result.returncode == 0 else 1,
-            failures=_extract_failures(output, ("FAILED ", "ERROR ")),
+            failure_count=len(failures) if failures else (0 if result.returncode == 0 else 1),
+            failures=failures,
         )
 
     pytest_path = _find_executable("pytest", project_root)
@@ -106,7 +111,8 @@ def _run_pytest(
 
     result = _run_subprocess(cmd, cwd, timeout_secs)
     if isinstance(result, str):
-        return _pytest_error(result)
+        is_timeout = "timed out" in result
+        return _pytest_error(result, timed_out=is_timeout)
 
     output = _strip_ansi(result.stdout + "\n" + result.stderr)
 
@@ -128,7 +134,7 @@ def _run_pytest(
         failure_count = failed + errors
 
     return PytestResultDict(
-        tests_passed=result.returncode == 0,
+        tests_passed=result.returncode == 0 and failure_count == 0,
         coverage_pct=coverage_pct,
         test_count=test_count,
         failure_count=failure_count,
@@ -177,7 +183,11 @@ def _run_mypy(
 
     result = _run_subprocess(cmd, cwd, timeout_secs)
     if isinstance(result, str):
-        return MypyResultDict(mypy_clean=False, mypy_error_count=1, failures=[result])
+        is_timeout = "timed out" in result
+        d = MypyResultDict(mypy_clean=False, mypy_error_count=1, failures=[result])
+        if is_timeout:
+            d["timed_out"] = True
+        return d
 
     output = _strip_ansi(result.stdout + "\n" + result.stderr)
     mypy_clean = result.returncode == 0
