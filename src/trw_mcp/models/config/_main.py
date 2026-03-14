@@ -499,8 +499,8 @@ class TRWConfig(BaseSettings):
     # -- 39. Complexity classification (CORE-060) --
     # Tier boundaries and signal weights for classify_complexity()
 
-    complexity_tier_minimal: int = 3        # raw_score <= this -> MINIMAL
-    complexity_tier_comprehensive: int = 7   # raw_score >= this+1 -> COMPREHENSIVE
+    complexity_tier_minimal: int = 1        # raw_score <= this -> MINIMAL (only trivial 1-file fixes)
+    complexity_tier_comprehensive: int = 6   # raw_score >= this+1 -> COMPREHENSIVE
     complexity_weight_novel_patterns: int = 3
     complexity_weight_cross_cutting: int = 2
     complexity_weight_architecture_change: int = 3

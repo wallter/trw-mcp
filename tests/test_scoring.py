@@ -382,37 +382,37 @@ class TestClassifyComplexity:
         assert override is None
 
     def test_boundary_minimal_upper(self) -> None:
-        """FR01: raw_score=3 exactly -> MINIMAL (default boundary is 3)."""
-        signals = ComplexitySignals(files_affected=3)
+        """FR01: raw_score=1 exactly -> MINIMAL (default boundary is 1)."""
+        signals = ComplexitySignals(files_affected=1)
         tier, raw_score, _ = classify_complexity(signals)
-        assert raw_score == 3
+        assert raw_score == 1
         assert tier == ComplexityClass.MINIMAL
 
     def test_boundary_standard_lower(self) -> None:
-        """FR01: raw_score=4 -> STANDARD."""
-        signals = ComplexitySignals(files_affected=4)
+        """FR01: raw_score=2 -> STANDARD."""
+        signals = ComplexitySignals(files_affected=2)
         tier, raw_score, _ = classify_complexity(signals)
-        assert raw_score == 4
+        assert raw_score == 2
         assert tier == ComplexityClass.STANDARD
 
     def test_boundary_comprehensive_lower(self) -> None:
-        """FR01: raw_score=8 (comprehensive_tier=7, need >=8) -> COMPREHENSIVE."""
-        signals = ComplexitySignals(
-            files_affected=5, novel_patterns=True,
-        )
-        tier, raw_score, _ = classify_complexity(signals)
-        # 5 + 3 = 8
-        assert raw_score == 8
-        assert tier == ComplexityClass.COMPREHENSIVE
-
-    def test_boundary_standard_upper(self) -> None:
-        """FR01: raw_score=7 -> STANDARD (not yet COMPREHENSIVE)."""
+        """FR01: raw_score=7 (comprehensive_tier=6, need >=7) -> COMPREHENSIVE."""
         signals = ComplexitySignals(
             files_affected=5, cross_cutting=True,
         )
         tier, raw_score, _ = classify_complexity(signals)
         # 5 + 2 = 7
         assert raw_score == 7
+        assert tier == ComplexityClass.COMPREHENSIVE
+
+    def test_boundary_standard_upper(self) -> None:
+        """FR01: raw_score=6 -> STANDARD (not yet COMPREHENSIVE, need >=7)."""
+        signals = ComplexitySignals(
+            files_affected=4, cross_cutting=True,
+        )
+        tier, raw_score, _ = classify_complexity(signals)
+        # 4 + 2 = 6
+        assert raw_score == 6
         assert tier == ComplexityClass.STANDARD
 
     def test_files_affected_capped(self) -> None:
@@ -496,10 +496,10 @@ class TestPhaseRequirements:
     def test_minimal_phases(self) -> None:
         reqs = get_phase_requirements(ComplexityClass.MINIMAL)
         assert "IMPLEMENT" in reqs.mandatory
+        assert "VALIDATE" in reqs.mandatory
         assert "DELIVER" in reqs.mandatory
         assert "RESEARCH" in reqs.skipped
         assert "PLAN" in reqs.skipped
-        assert "VALIDATE" in reqs.skipped
         assert "REVIEW" in reqs.skipped
 
     def test_standard_phases(self) -> None:
@@ -507,8 +507,9 @@ class TestPhaseRequirements:
         assert "PLAN" in reqs.mandatory
         assert "IMPLEMENT" in reqs.mandatory
         assert "VALIDATE" in reqs.mandatory
+        assert "REVIEW" in reqs.mandatory
         assert "DELIVER" in reqs.mandatory
-        assert "REVIEW" in reqs.optional
+        assert reqs.optional == []
         assert "RESEARCH" in reqs.skipped
 
     def test_comprehensive_phases(self) -> None:
@@ -543,7 +544,7 @@ class TestTierCeremonyScore:
 
     def test_minimal_all_events_perfect(self) -> None:
         """FR03: MINIMAL with all 3 expected events -> 100."""
-        events = self._make_events(["trw_session_start", "trw_learn", "trw_deliver"])
+        events = self._make_events(["trw_session_start", "trw_build_check", "trw_deliver"])
         result = compute_tier_ceremony_score(events, ComplexityClass.MINIMAL)
         assert result["score"] == 100
 
@@ -558,23 +559,24 @@ class TestTierCeremonyScore:
         assert result["score"] <= 60
 
     def test_standard_with_review_bonus(self) -> None:
-        """FR03: STANDARD with review gets +10 bonus."""
+        """FR03: STANDARD with all events including review -> 100."""
         events = self._make_events([
             "trw_session_start", "trw_init", "trw_checkpoint",
             "trw_build_check", "trw_deliver", "trw_review",
         ])
         result = compute_tier_ceremony_score(events, ComplexityClass.STANDARD)
-        # 5/5 expected = 100, + 10 bonus capped at 100
+        # 6/6 expected = 100, review_mandatory=True satisfied, no penalty
         assert result["score"] == 100
 
-    def test_standard_without_review_no_penalty(self) -> None:
-        """FR03: STANDARD without review has no penalty (review is optional)."""
+    def test_standard_without_review_penalized(self) -> None:
+        """FR03: STANDARD without review incurs 15-point penalty (review is mandatory)."""
         events = self._make_events([
             "trw_session_start", "trw_init", "trw_checkpoint",
             "trw_build_check", "trw_deliver",
         ])
         result = compute_tier_ceremony_score(events, ComplexityClass.STANDARD)
-        assert result["score"] == 100
+        # 5/6 expected = round(83.33) = 83, minus 15 penalty = 68
+        assert result["score"] == 68
 
     def test_none_defaults_to_standard(self) -> None:
         """FR03: None complexity_class defaults to STANDARD."""
@@ -584,7 +586,8 @@ class TestTierCeremonyScore:
         ])
         result = compute_tier_ceremony_score(events, None)
         assert result["tier"] == "STANDARD"
-        assert result["score"] == 100
+        # 5/6 expected = 83, minus 15 missing_review_penalty = 68
+        assert result["score"] == 68
 
     def test_string_tier_accepted(self) -> None:
         """FR03: String tier values are accepted."""

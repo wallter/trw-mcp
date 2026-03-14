@@ -428,7 +428,7 @@ class TestTrwInitComplexity:
         run_yaml = reader.read_yaml(Path(result["run_path"]) / "meta" / "run.yaml")
         assert run_yaml["complexity_class"] == "MINIMAL"
         assert run_yaml["complexity_signals"]["files_affected"] == 1
-        assert run_yaml["phase_requirements"]["mandatory"] == ["IMPLEMENT", "DELIVER"]
+        assert run_yaml["phase_requirements"]["mandatory"] == ["IMPLEMENT", "VALIDATE", "DELIVER"]
         assert "RESEARCH" in run_yaml["phase_requirements"]["skipped"]
 
     def test_init_with_comprehensive_signals(

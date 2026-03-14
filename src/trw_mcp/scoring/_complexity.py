@@ -104,18 +104,22 @@ def get_phase_requirements(tier: ComplexityClass) -> PhaseRequirements:
         PhaseRequirements model.
     """
     if tier == ComplexityClass.MINIMAL:
+        # MINIMAL is for truly trivial tasks (1 file, typo fix).
+        # Still requires IMPLEMENT + VALIDATE + DELIVER — skipping tests is never OK.
         return PhaseRequirements(
-            mandatory=["IMPLEMENT", "DELIVER"],
+            mandatory=["IMPLEMENT", "VALIDATE", "DELIVER"],
             optional=[],
-            skipped=["RESEARCH", "PLAN", "VALIDATE", "REVIEW"],
+            skipped=["RESEARCH", "PLAN", "REVIEW"],
         )
     if tier == ComplexityClass.STANDARD:
+        # STANDARD is the default for most tasks. REVIEW is mandatory —
+        # independent verification before delivery prevents false completion.
         return PhaseRequirements(
-            mandatory=["PLAN", "IMPLEMENT", "VALIDATE", "DELIVER"],
-            optional=["REVIEW"],
+            mandatory=["PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"],
+            optional=[],
             skipped=["RESEARCH"],
         )
-    # COMPREHENSIVE
+    # COMPREHENSIVE — all phases mandatory
     return PhaseRequirements(
         mandatory=["RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"],
         optional=[],
@@ -151,20 +155,26 @@ class _TierExpectation:
 
 _TIER_EXPECTATIONS: dict[str, _TierExpectation] = {
     "MINIMAL": _TierExpectation(
-        events=frozenset({"trw_recall", "trw_learn", "trw_deliver"}),
+        # Truly trivial (1-file fix). Still requires build_check + deliver.
+        events=frozenset({"trw_recall", "trw_build_check", "trw_deliver"}),
         checkpoint_min=0,
         review_mandatory=False,
-        review_bonus=0,
+        review_bonus=5,
         missing_review_penalty=0,
     ),
     "STANDARD": _TierExpectation(
-        events=frozenset({"trw_recall", "trw_init", "trw_checkpoint", "trw_build_check", "trw_deliver"}),
+        # Most tasks. Review is mandatory — skipping it is a 15-point penalty.
+        events=frozenset({
+            "trw_recall", "trw_init", "trw_checkpoint",
+            "trw_build_check", "trw_deliver", "trw_review",
+        }),
         checkpoint_min=1,
-        review_mandatory=False,
-        review_bonus=10,
-        missing_review_penalty=0,
+        review_mandatory=True,
+        review_bonus=0,
+        missing_review_penalty=15,
     ),
     "COMPREHENSIVE": _TierExpectation(
+        # Complex multi-file work. All phases mandatory, heavy review penalty.
         events=frozenset({
             "trw_recall", "trw_init", "trw_checkpoint",
             "trw_build_check", "trw_deliver", "trw_review",

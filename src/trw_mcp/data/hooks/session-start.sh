@@ -51,15 +51,14 @@ _emit_tier_guidance() {
 
   case "$_tier" in
     MINIMAL)
-      echo "CEREMONY — Tier: MINIMAL | trw_recall only | No trw_init required"
-      echo "  Mandatory phases: IMPLEMENT, DELIVER"
-      echo "  Skip: RESEARCH, PLAN, VALIDATE, REVIEW"
+      echo "CEREMONY — Tier: MINIMAL | Trivial 1-file fix only"
+      echo "  Mandatory phases: IMPLEMENT, VALIDATE, DELIVER"
+      echo "  Skip: RESEARCH, PLAN, REVIEW"
       ;;
     STANDARD)
       echo "CEREMONY — Tier: STANDARD"
-      echo "  Mandatory phases: Plan, Implement, Validate, Deliver"
-      echo "  1 checkpoint minimum"
-      echo "  Review: optional (+10 bonus)"
+      echo "  Mandatory phases: Plan, Implement, Validate, Review, Deliver"
+      echo "  1 checkpoint minimum, review required before delivery"
       ;;
     COMPREHENSIVE)
       echo "CEREMONY — Tier: COMPREHENSIVE"

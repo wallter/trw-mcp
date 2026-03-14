@@ -591,7 +591,8 @@ class TestComputeTierCeremonyScoreRawEvents:
         assert result["checkpoint_count"] == 1
         assert result["has_build_check"] is True
         assert result["has_deliver"] is True
-        assert result["score"] == 100
+        # STANDARD expects 6 events (incl trw_review); 5/6 = 83, minus 15 penalty = 68
+        assert result["score"] == 68
 
     def test_tool_invocation_trw_reflect_counts_as_deliver(self) -> None:
         """tool_name='trw_reflect' counts as has_deliver."""
