@@ -73,11 +73,13 @@ For each teammate, derive their exclusive file set:
 - **Reviewer**: no owned files -- read-only access to all in-scope files.
 - **Researcher**: no owned files -- read-only access to all in-scope files.
 
-Validate zero overlap:
+Validate zero overlap (source AND test files):
 
-- Build a flat set of all files owned by all implementers and testers combined.
-- Check for any file appearing in more than one owner's set.
-- If overlap detected: STOP. Report which files overlap and which teammates claim them. Ask the user to resolve before proceeding.
+- Build a flat set of ALL ownership claims: `owns` + `test_owns` from every teammate.
+- Check for any file appearing in more than one teammate's `owns` OR `test_owns` lists.
+- If overlap detected in source files (`owns`): STOP. Report and ask user to resolve.
+- If overlap detected in test files (`test_owns`): STOP. Report and ask user to resolve. Common resolution: assign the test file to ONE teammate (typically the one whose PRD scope covers more of the file's test cases), and have the other teammate's tests go in a NEW test file (e.g., `test_module_fr01.py` and `test_module_fr02.py`).
+- Test files are NOT shared resources. Sprint 66 showed that two agents editing the same test file causes 4+ merge iterations and cascading failures.
 - If no overlap: continue.
 
 Also check: every source file in scope is assigned to exactly one owner. Report any unassigned files and ask the user whether to assign them or mark them as shared read-only.

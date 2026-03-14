@@ -126,6 +126,21 @@ Verify playbook artifacts exist before continuing:
 - Confirm `scratch/team-playbooks/file_ownership.yaml` exists
 - Confirm each `scratch/team-playbooks/playbooks/tm-{name}.md` exists for every proposed teammate
 
+### Step 6a: Pre-Worktree State Validation (MANDATORY)
+
+Before creating any git worktrees, validate the working directory state:
+
+1. **Check for uncommitted changes**: Run `git status --porcelain`
+   - If the output is empty: proceed to Step 7.
+   - If the output shows changes: report the count and affected directories, then:
+     a. **Recommend**: "Commit or stash all changes before creating worktrees. Worktrees fork from committed state — uncommitted changes will be invisible to all spawned agents."
+     b. **Ask the user**: "You have N uncommitted changes. Worktree agents will NOT see these changes. Options: (1) commit now and proceed, (2) stash and proceed, (3) skip worktrees (use shared directory), (4) abort team setup."
+     c. **Do NOT proceed** to worktree creation until changes are committed, stashed, or the user explicitly chooses shared directory mode.
+
+2. **Log the validation result** in events.jsonl.
+
+This step prevents the #1 worktree failure mode: agents operating on stale code, producing patches that conflict with uncommitted work. Sprint 64 lost 2 quality agents entirely and spent 4+ merge iterations due to this gap.
+
 ### Step 7: Create Team and Worktrees
 
 Call `TeamCreate` with:

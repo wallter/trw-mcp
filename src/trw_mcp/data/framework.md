@@ -84,7 +84,7 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 | PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/trw-sprint-init`, `/trw-prd-new`, `/trw-prd-ready` | 15% |
 | IMPLEMENT | Shards/waves complete OR checkpointed, tests written. | `/trw-test-strategy` | 35% |
 | VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | `/trw-test-strategy` | 10% |
-| REVIEW | Critic reviewed, simplifications applied, reflection completed. | `/trw-memory-audit` | 10% |
+| REVIEW | Critic reviewed OR adversarial audit passed, no P0 findings. Run `trw_review()` for STANDARD+. | `/trw-audit`, `/trw-memory-audit` | 10% |
 | DELIVER | PR created OR archived, final.md, CLAUDE.md synced. | `/trw-deliver`, `/trw-sprint-finish` | 5% |
 
 ORC tracks elapsed wall-clock against TIMEBOX_HOURS. ORC MUST NOT advance until exit criteria met OR cap exceeded with rationale. Refine plan until stable — fixing a plan is cheaper than rewriting code.
@@ -118,14 +118,17 @@ Tools are classified by discretion level. Rigid tools have zero discretion — e
 - `trw_session_start()` — always, first action of every session
 - `trw_deliver()` — always, last action of every session
 - `trw_build_check()` — always at VALIDATE and before DELIVER
+- `trw_review()` — always before DELIVER for STANDARD+ complexity tasks (adversarial audit catches false completions that self-review misses)
 - Completion artifacts — always before marking any task complete
 - File ownership validation — always before spawning Agent Teams
+- Worktree pre-spawn validation — always verify `git status` clean before `git worktree add`
 
 **Flexible (must happen, you pick when):**
 - `trw_checkpoint()` — must happen at milestones, you judge which milestones
 - `trw_learn()` — on discoveries, gotchas, errors (you judge significance)
 - `trw_recall()` — recommended at start, skippable for repeat-domain work
 - Phase reversion — you judge when reversion beats pushing through
+- `trw_review()` for MINIMAL complexity — optional but recommended
 
 Do NOT reason about whether to execute rigid tools. Execute them.
 
@@ -318,8 +321,21 @@ ALL Task() calls MUST block. NO `run_in_background: true`. TM shards MUST NOT sp
 Prevents the #1 Agent Teams failure: two teammates editing the same file.
 
 - Each file: at most ONE exclusive owner. Zero overlap. Validate before spawn.
+- **Test files are source files for ownership purposes** — `test_owns` follows the same zero-overlap rules as `owns`. Two agents editing the same test file causes unresolvable merge conflicts.
+- When two PRDs touch the same test file: split tests into separate files, one per owner.
 - New files: creating TM owns them. Shared files: assign to ONE TM, others message.
 - LEAD MUST generate `file_ownership.yaml` during PLAN and validate before TEAM-UP.
+- LEAD MUST validate zero overlap across BOTH `owns` AND `test_owns` — partial validation that skips test files is the #2 Agent Teams failure mode.
+
+### Worktree Safety
+
+Worktrees fork from COMMITTED state. Uncommitted changes are invisible to worktree agents.
+
+- LEAD MUST run `git status --porcelain` before creating worktrees
+- If uncommitted changes exist: commit or stash BEFORE `git worktree add`
+- This validation MUST NOT be waived silently — user acknowledgement required
+- Worktree agents who produce conflicting patches cost 3-4x the effort of a pre-commit
+- When projects have large uncommitted diffs, prefer non-worktree agents or commit first
 
 ### Teammate Playbooks
 

@@ -180,10 +180,19 @@ Optimal team size: 2-5 teammates. Better decomposition beats more headcount.
 The #1 failure mode in Agent Teams is two teammates editing the same file.
 
 - Generate `file_ownership.yaml` BEFORE spawning the team
-- Validate zero overlap: no file appears under two owners
+- Validate zero overlap across BOTH `owns` AND `test_owns` — test files are NOT shared resources
+- When two PRDs touch the same test file: split into separate test files, assign one per teammate
 - New files: creating teammate owns them exclusively
 - Shared config files: assign to ONE teammate, others message for changes
 - If a teammate needs a file they don't own: they message the owner, NEVER edit directly
+
+## Worktree Pre-Spawn Validation
+
+Worktrees fork from COMMITTED state — uncommitted changes are invisible to agents.
+
+- Before creating worktrees: run `git status --porcelain` to check for uncommitted changes
+- If changes exist: commit or stash BEFORE `git worktree add`. Ask user if unclear.
+- Do NOT silently create worktrees with dirty working directory — agents will produce conflicting patches
 
 ## Communication Protocol
 

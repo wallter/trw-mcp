@@ -312,10 +312,28 @@ def check_delivery_gates(
         except Exception:  # justified: fail-open, review gate check must not block delivery
             logger.warning("maintenance_review_gate_failed", exc_info=True)
     else:
-        result["review_advisory"] = (
-            "No trw_review was run before delivery. "
-            "Consider running trw_review for quality assurance."
-        )
+        # Check complexity class — STANDARD+ tasks MUST have review (Sprint 68 enforcement)
+        complexity_class = ""
+        run_yaml_path = run_path / "meta" / "run.yaml"
+        if run_yaml_path.exists():
+            try:
+                run_data = reader.read_yaml(run_yaml_path)
+                complexity_class = str(run_data.get("complexity_class", ""))
+            except Exception:  # justified: fail-open, complexity read must not block
+                pass
+
+        if complexity_class in ("STANDARD", "COMPREHENSIVE"):
+            result["review_warning"] = (
+                f"No trw_review was run before delivery (complexity: {complexity_class}). "
+                "Review is MANDATORY for STANDARD+ tasks — adversarial audit catches "
+                "false completions that self-review misses. "
+                "Run trw_review() or /trw-audit before delivering."
+            )
+        else:
+            result["review_advisory"] = (
+                "No trw_review was run before delivery. "
+                "Consider running trw_review for quality assurance."
+            )
 
     # Integration review gate (PRD-INFRA-027-FR06)
     integration_path = run_path / "meta" / "integration-review.yaml"

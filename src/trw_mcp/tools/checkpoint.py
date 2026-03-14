@@ -163,6 +163,28 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                     if isinstance(raw_ft, list):
                         failing_tests = [str(t) for t in raw_ft]
 
+            # Read ceremony state for recovery (Sprint 68 gap fix)
+            ceremony_state: dict[str, object] = {}
+            ceremony_path = project_root / ".trw" / "context" / "ceremony-state.json"
+            if ceremony_path.exists():
+                try:
+                    ceremony_state = json.loads(
+                        ceremony_path.read_text(encoding="utf-8")
+                    )
+                except Exception:  # justified: fail-open, ceremony state read
+                    logger.debug("ceremony_state_read_failed", exc_info=True)
+
+            # Compute pending ceremony obligations
+            pending_ceremony: list[str] = []
+            if not ceremony_state.get("session_started"):
+                pending_ceremony.append("trw_session_start() — not yet called")
+            if not ceremony_state.get("build_checked"):
+                pending_ceremony.append("trw_build_check() — required before delivery")
+            if not ceremony_state.get("review_done"):
+                pending_ceremony.append("trw_review() — recommended before delivery")
+            if not ceremony_state.get("delivered"):
+                pending_ceremony.append("trw_deliver() — required at session end")
+
             # Write enhanced pre_compact_state.json
             state_file = project_root / ".trw" / "context" / "pre_compact_state.json"
             state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -178,6 +200,8 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 "file_ownership_path": file_ownership_path,
                 "last_5_events": last_5_events,
                 "failing_tests": failing_tests,
+                "ceremony_state": ceremony_state,
+                "pending_ceremony": pending_ceremony,
             }
             state_file.write_text(json.dumps(state_data, indent=2))
 
@@ -193,7 +217,10 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                     "- File ownership: {file_ownership_path}\n"
                     "- Failing tests: {failing_tests}\n"
                     "DO NOT summarize run artifacts — reference their file paths only.\n"
-                    "Reference .trw/context/pre_compact_state.json for full state."
+                    "Reference .trw/context/pre_compact_state.json for full state.\n"
+                    "\n"
+                    "CEREMONY OBLIGATIONS (complete these before session ends):\n"
+                    "{ceremony_pending}"
                 )
             instructions = template.format(
                 phase=phase,
@@ -202,6 +229,7 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 last_checkpoint="pre-compaction safety checkpoint",
                 file_ownership_path=file_ownership_path or "not set",
                 failing_tests=", ".join(failing_tests) if failing_tests else "none",
+                ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony) if pending_ceremony else "- all complete",
             )
             instructions_path = project_root / ".trw" / "context" / "compact_instructions.txt"
             instructions_path.write_text(instructions)

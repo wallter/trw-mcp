@@ -35,15 +35,24 @@ Before creating a new sprint, check that the prior sprint (N-1) has been properl
    - Brief problem statement (1-2 sentences)
    - Estimated complexity (based on section count and requirement density)
 
-3. **Select PRDs**: Ask the user which PRDs to include in this sprint (or accept all drafts).
+3. **Pre-implementation state check**: For each candidate PRD, verify whether its FRs are already implemented:
+   a. Read each FR's Description and Acceptance sections.
+   b. Extract key identifiers (function names, class names, endpoint paths) from backtick-wrapped terms.
+   c. Grep the codebase for each identifier.
+   d. If >80% of identifiers for a PRD already exist: flag as `LIKELY IMPLEMENTED` in the candidate table.
+   e. If >50% exist: flag as `PARTIALLY IMPLEMENTED`.
+   f. Present the implementation status alongside each candidate.
+   This prevents wasting agent sessions on already-implemented PRDs. Sprint 64 caught 3 PRDs that were already done but still marked "groomed".
 
-4. **Create sprint document**: Write a sprint planning doc to the `sprints/active/` subdirectory (sibling of `prds_relative_path`) using the template below. Use the sprint name from `$ARGUMENTS` or generate one.
+4. **Select PRDs**: Ask the user which PRDs to include in this sprint (or accept all drafts).
 
-5. **Bootstrap run**: Call `trw_init(task_name="$ARGUMENTS", prd_scope=[selected_prd_ids])` to create the run directory with event tracking.
+5. **Create sprint document**: Write a sprint planning doc to the `sprints/active/` subdirectory (sibling of `prds_relative_path`) using the template below. Use the sprint name from `$ARGUMENTS` or generate one.
 
-6. **Checkpoint**: Call `trw_checkpoint(message="Sprint initialized: $ARGUMENTS")`.
+6. **Bootstrap run**: Call `trw_init(task_name="$ARGUMENTS", prd_scope=[selected_prd_ids])` to create the run directory with event tracking.
 
-7. **Report**: Output sprint doc path, run directory, selected PRDs, and suggested next steps (groom PRDs, begin implementation tracks).
+7. **Checkpoint**: Call `trw_checkpoint(message="Sprint initialized: $ARGUMENTS")`.
+
+8. **Report**: Output sprint doc path, run directory, selected PRDs, and suggested next steps (groom PRDs, begin implementation tracks).
 
 ## Sprint Document Template
 
