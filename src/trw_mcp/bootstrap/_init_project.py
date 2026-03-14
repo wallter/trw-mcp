@@ -12,6 +12,7 @@ import structlog
 
 from ._utils import (
     _DATA_DIR,
+    ProgressCallback,
     _copy_file,
     _default_config,
     _ensure_dir,
@@ -29,24 +30,26 @@ logger = structlog.get_logger()
 def _create_directory_structure(
     target_dir: Path,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Create the TRW directory scaffold inside *target_dir*."""
     from . import _TRW_DIRS
 
     for rel_dir in _TRW_DIRS:
-        _ensure_dir(target_dir / rel_dir, result)
+        _ensure_dir(target_dir / rel_dir, result, on_progress)
 
 
 def _copy_bundled_data_files(
     target_dir: Path,
     force: bool,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Copy all bundled data files from ``_DATA_FILE_MAP`` to *target_dir*."""
     from . import _DATA_FILE_MAP
 
     for data_name, dest_rel in _DATA_FILE_MAP:
-        _copy_file(_DATA_DIR / data_name, target_dir / dest_rel, force, result)
+        _copy_file(_DATA_DIR / data_name, target_dir / dest_rel, force, result, on_progress)
 
 
 def _write_initial_config(
@@ -56,6 +59,7 @@ def _write_initial_config(
     *,
     source_package: str = "",
     test_path: str = "",
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Write generated config.yaml and learnings index seed files."""
     _write_if_missing(
@@ -63,12 +67,14 @@ def _write_initial_config(
         _default_config(source_package=source_package, test_path=test_path),
         force,
         result,
+        on_progress,
     )
     _write_if_missing(
         target_dir / ".trw" / "learnings" / "index.yaml",
         "entries: []\n",
         force,
         result,
+        on_progress,
     )
 
 
@@ -76,6 +82,7 @@ def _install_hooks(
     target_dir: Path,
     force: bool,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Copy bundled hook scripts to ``.claude/hooks/``."""
     hooks_source = _DATA_DIR / "hooks"
@@ -87,6 +94,7 @@ def _install_hooks(
                     target_dir / ".claude" / "hooks" / hook_file.name,
                     force,
                     result,
+                    on_progress,
                 )
 
 
@@ -94,6 +102,7 @@ def _install_skills(
     target_dir: Path,
     force: bool,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Copy bundled skill directories to ``.claude/skills/``."""
     skills_source = _DATA_DIR / "skills"
@@ -101,16 +110,17 @@ def _install_skills(
         for skill_dir in sorted(skills_source.iterdir()):
             if skill_dir.is_dir():
                 dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
-                _ensure_dir(dest_skill, result)
+                _ensure_dir(dest_skill, result, on_progress)
                 for skill_file in sorted(skill_dir.iterdir()):
                     if skill_file.is_file():
-                        _copy_file(skill_file, dest_skill / skill_file.name, force, result)
+                        _copy_file(skill_file, dest_skill / skill_file.name, force, result, on_progress)
 
 
 def _install_agents(
     target_dir: Path,
     force: bool,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Copy bundled agent markdown files to ``.claude/agents/``."""
     agents_source = _DATA_DIR / "agents"
@@ -122,6 +132,7 @@ def _install_agents(
                     target_dir / ".claude" / "agents" / agent_file.name,
                     force,
                     result,
+                    on_progress,
                 )
 
 
@@ -129,10 +140,11 @@ def _generate_root_files(
     target_dir: Path,
     force: bool,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Generate root-level configuration files (``.mcp.json``, ``CLAUDE.md``)."""
-    _merge_mcp_json(target_dir, result)
-    _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result)
+    _merge_mcp_json(target_dir, result, on_progress)
+    _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result, on_progress)
 
 
 def init_project(
@@ -142,6 +154,7 @@ def init_project(
     source_package: str = "",
     test_path: str = "",
     ide: str | None = None,
+    on_progress: ProgressCallback = None,
 ) -> dict[str, list[str]]:
     """Bootstrap TRW framework in *target_dir*.
 
@@ -152,6 +165,8 @@ def init_project(
         test_path: Pre-populate ``tests_relative_path`` in config.
         ide: Target IDE override ("claude-code", "cursor", "opencode", "all").
             When None, auto-detect from existing IDE config directories.
+        on_progress: Optional callback called as ``on_progress(action, path)``
+            for each file processed. Enables real-time progress reporting.
 
     Returns:
         Dict with ``created``, ``skipped``, ``errors`` lists.
@@ -169,28 +184,29 @@ def init_project(
         return result
 
     # 1. Create directory structure
-    _create_directory_structure(target_dir, result)
+    _create_directory_structure(target_dir, result, on_progress)
 
     # 2. Copy bundled data files
-    _copy_bundled_data_files(target_dir, force, result)
+    _copy_bundled_data_files(target_dir, force, result, on_progress)
 
     # 3. Write generated config and seed files
     _write_initial_config(
         target_dir, force, result,
         source_package=source_package, test_path=test_path,
+        on_progress=on_progress,
     )
 
     # 4. Copy hook scripts
-    _install_hooks(target_dir, force, result)
+    _install_hooks(target_dir, force, result, on_progress)
 
     # 5. Copy skills
-    _install_skills(target_dir, force, result)
+    _install_skills(target_dir, force, result, on_progress)
 
     # 6. Copy agents
-    _install_agents(target_dir, force, result)
+    _install_agents(target_dir, force, result, on_progress)
 
     # 7. Generate root-level files (Claude Code: .mcp.json, CLAUDE.md)
-    _generate_root_files(target_dir, force, result)
+    _generate_root_files(target_dir, force, result, on_progress)
 
     # 7b. OpenCode artifacts (FR15: multi-IDE support)
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
@@ -232,8 +248,8 @@ def init_project(
     _write_manifest(target_dir, result)
 
     # 9. Write installer metadata + VERSION.yaml
-    _write_installer_metadata(target_dir, "init-project", result)
-    _write_version_yaml(target_dir, result)
+    _write_installer_metadata(target_dir, "init-project", result, on_progress)
+    _write_version_yaml(target_dir, result, on_progress)
 
     logger.info(
         "bootstrap_complete",

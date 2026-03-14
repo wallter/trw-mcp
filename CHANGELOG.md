@@ -4,6 +4,16 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.12.3] — 2026-03-13
+
+### Added
+
+- **Streaming progress output** — `init-project` and `update-project` now emit file-by-file progress lines to stdout in real time via `ProgressCallback`. The installer's spinner updates live (e.g., "Updating project... (23 files) .claude/hooks/pre-compact.sh") instead of showing a static "Updating project..." for the entire duration.
+
+### Changed
+
+- **Installer re-run UX** — removed unnecessary "Change project name?" prompt on re-install. Prior project name, API key, and telemetry settings are now silently reused without confirmation prompts.
+
 ## [0.12.2] — 2026-03-13
 
 ### Changed

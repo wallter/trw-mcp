@@ -17,6 +17,7 @@ import structlog
 
 from ._utils import (
     _DATA_DIR,
+    ProgressCallback,
     _check_package_version,
     _ensure_dir,
     _files_identical,
@@ -179,6 +180,7 @@ def _update_or_report(
     dry_run: bool,
     *,
     make_executable: bool = False,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Copy *src* to *dest* (or report what would change in dry-run mode).
 
@@ -188,6 +190,7 @@ def _update_or_report(
         result: Mutable result dict.
         dry_run: When ``True``, only report without writing.
         make_executable: When ``True``, set executable bits on *dest* after copy.
+        on_progress: Optional callback for real-time progress reporting.
     """
     if dry_run:
         if dest.exists():
@@ -204,10 +207,16 @@ def _update_or_report(
                 os.chmod(dest, os.stat(dest).st_mode | executable)
             if existed:
                 result["updated"].append(str(dest))
+                if on_progress:
+                    on_progress("Updated", str(dest))
             else:
                 result["created"].append(str(dest))
+                if on_progress:
+                    on_progress("Created", str(dest))
         except OSError as exc:
             result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+            if on_progress:
+                on_progress("Error", str(dest))
 
 
 def _update_always_overwrite_files(
@@ -215,12 +224,13 @@ def _update_always_overwrite_files(
     effective_data: Path,
     result: dict[str, list[str]],
     dry_run: bool,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Update framework files in ``_ALWAYS_UPDATE`` (always overwritten)."""
     for data_name, dest_rel in _ALWAYS_UPDATE:
         src = effective_data / data_name
         dest = target_dir / dest_rel
-        _update_or_report(src, dest, result, dry_run)
+        _update_or_report(src, dest, result, dry_run, on_progress=on_progress)
 
 
 def _report_preserved_files(
@@ -239,6 +249,7 @@ def _update_hooks(
     effective_data: Path,
     result: dict[str, list[str]],
     dry_run: bool,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Update hook ``.sh`` files (always overwritten, made executable)."""
     hooks_source = effective_data / "hooks"
@@ -249,6 +260,7 @@ def _update_hooks(
                 _update_or_report(
                     hook_file, dest, result, dry_run,
                     make_executable=True,
+                    on_progress=on_progress,
                 )
 
 
@@ -257,6 +269,7 @@ def _update_skills(
     effective_data: Path,
     result: dict[str, list[str]],
     dry_run: bool,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Update skill directories (always overwritten)."""
     skills_source = effective_data / "skills"
@@ -265,11 +278,11 @@ def _update_skills(
             if skill_dir.is_dir():
                 dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
                 if not dry_run:
-                    _ensure_dir(dest_skill, result)
+                    _ensure_dir(dest_skill, result, on_progress)
                 for skill_file in sorted(skill_dir.iterdir()):
                     if skill_file.is_file():
                         dest = dest_skill / skill_file.name
-                        _update_or_report(skill_file, dest, result, dry_run)
+                        _update_or_report(skill_file, dest, result, dry_run, on_progress=on_progress)
 
 
 def _update_agents(
@@ -277,6 +290,7 @@ def _update_agents(
     effective_data: Path,
     result: dict[str, list[str]],
     dry_run: bool,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Update agent ``.md`` files (always overwritten)."""
     agents_source = effective_data / "agents"
@@ -284,7 +298,7 @@ def _update_agents(
         for agent_file in sorted(agents_source.iterdir()):
             if agent_file.suffix == ".md":
                 dest = target_dir / ".claude" / "agents" / agent_file.name
-                _update_or_report(agent_file, dest, result, dry_run)
+                _update_or_report(agent_file, dest, result, dry_run, on_progress=on_progress)
 
 
 def _update_framework_files(
@@ -292,6 +306,7 @@ def _update_framework_files(
     effective_data: Path,
     result: dict[str, list[str]],
     dry_run: bool,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Copy/update all framework-managed files from bundled data.
 
@@ -309,12 +324,13 @@ def _update_framework_files(
         result: Mutable result dict accumulating ``updated``, ``created``,
             ``preserved``, and ``errors`` entries.
         dry_run: When ``True``, report what would change without writing files.
+        on_progress: Optional callback for real-time progress reporting.
     """
-    _update_always_overwrite_files(target_dir, effective_data, result, dry_run)
+    _update_always_overwrite_files(target_dir, effective_data, result, dry_run, on_progress)
     _report_preserved_files(target_dir, result)
-    _update_hooks(target_dir, effective_data, result, dry_run)
-    _update_skills(target_dir, effective_data, result, dry_run)
-    _update_agents(target_dir, effective_data, result, dry_run)
+    _update_hooks(target_dir, effective_data, result, dry_run, on_progress)
+    _update_skills(target_dir, effective_data, result, dry_run, on_progress)
+    _update_agents(target_dir, effective_data, result, dry_run, on_progress)
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +342,7 @@ def _update_mcp_config(
     target_dir: Path,
     result: dict[str, list[str]],
     dry_run: bool,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Update ``.mcp.json`` and ``CLAUDE.md`` configuration files.
 
@@ -339,10 +356,11 @@ def _update_mcp_config(
         result: Mutable result dict accumulating ``updated``, ``created``,
             ``preserved``, and ``errors`` entries.
         dry_run: When ``True``, report what would change without writing files.
+        on_progress: Optional callback for real-time progress reporting.
     """
     # Smart-merge .mcp.json (ensure trw entry, preserve user entries)
     if not dry_run:
-        _merge_mcp_json(target_dir, result)
+        _merge_mcp_json(target_dir, result, on_progress)
     else:
         mcp_path = target_dir / ".mcp.json"
         if mcp_path.exists():
@@ -368,12 +386,18 @@ def _update_mcp_config(
     else:
         if claude_md_path.exists():
             _update_claude_md_trw_section(claude_md_path, result)
+            if on_progress and str(claude_md_path) in result.get("updated", []):
+                on_progress("Updated", str(claude_md_path))
         else:
             try:
                 claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
                 result["created"].append(str(claude_md_path))
+                if on_progress:
+                    on_progress("Created", str(claude_md_path))
             except OSError as exc:
                 result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
+                if on_progress:
+                    on_progress("Error", str(claude_md_path))
 
 
 # ---------------------------------------------------------------------------
@@ -978,6 +1002,7 @@ def update_project(
     dry_run: bool = False,
     data_dir: Path | None = None,
     ide: str | None = None,
+    on_progress: ProgressCallback = None,
 ) -> dict[str, list[str]]:
     """Update TRW framework files in *target_dir* while preserving user config.
 
@@ -1000,6 +1025,8 @@ def update_project(
             artifact lookups use this path instead of the module-level ``_DATA_DIR``.
         ide: Target IDE override ("claude-code", "cursor", "opencode", "all").
             When None, auto-detect from existing IDE config directories.
+        on_progress: Optional callback called as ``on_progress(action, path)``
+            for each file processed. Enables real-time progress reporting.
 
     Returns:
         Dict with ``updated``, ``created``, ``preserved``, ``errors``,
@@ -1031,13 +1058,17 @@ def update_project(
     # 1. Ensure directories exist
     if not dry_run:
         for rel_dir in _TRW_DIRS:
-            _ensure_dir(target_dir / rel_dir, result)
+            _ensure_dir(target_dir / rel_dir, result, on_progress)
 
     # 2-6. Copy/update framework files, hooks, skills, agents
-    _update_framework_files(target_dir, effective_data, result, dry_run)
+    if on_progress:
+        on_progress("Phase", "Updating framework files...")
+    _update_framework_files(target_dir, effective_data, result, dry_run, on_progress)
 
     # 7-8. Update .mcp.json and CLAUDE.md configuration
-    _update_mcp_config(target_dir, result, dry_run)
+    if on_progress:
+        on_progress("Phase", "Updating configuration files...")
+    _update_mcp_config(target_dir, result, dry_run, on_progress)
 
     # 9a-9c. Remove stale and transient artifacts
     _cleanup_stale_artifacts(target_dir, result, data_dir, dry_run)
@@ -1051,8 +1082,10 @@ def update_project(
 
     # 12. Write installer metadata + VERSION.yaml
     if not dry_run:
-        _write_installer_metadata(target_dir, "update-project", result)
-        _write_version_yaml(target_dir, result)
+        if on_progress:
+            on_progress("Phase", "Writing metadata...")
+        _write_installer_metadata(target_dir, "update-project", result, on_progress)
+        _write_version_yaml(target_dir, result, on_progress)
 
     # 13. Post-update verification
     if not dry_run:
@@ -1060,6 +1093,8 @@ def update_project(
 
     # 13b. Post-update CLAUDE.md sync (resolve placeholders, promote learnings)
     if not dry_run:
+        if on_progress:
+            on_progress("Phase", "Syncing CLAUDE.md...")
         _run_claude_md_sync(target_dir, result)
 
     # 13c. OpenCode updates (FR15: multi-IDE support)

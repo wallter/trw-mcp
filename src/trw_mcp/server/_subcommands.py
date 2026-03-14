@@ -18,18 +18,19 @@ def _run_init_project(args: argparse.Namespace) -> None:
     from trw_mcp.bootstrap import init_project
 
     target = Path(args.target_dir).resolve()
+
+    def _progress(action: str, path: str) -> None:
+        print(f"  {action}: {path}", flush=True)
+
     result = init_project(
         target,
         force=args.force,
         source_package=args.source_package,
         test_path=args.test_path,
         ide=getattr(args, "ide", None),
+        on_progress=_progress,
     )
 
-    for f in result["created"]:
-        print(f"  Created: {f}")
-    for f in result["skipped"]:
-        print(f"  Skipped (exists): {f}")
     for e in result["errors"]:
         print(f"  ERROR: {e}")
 
@@ -50,20 +51,18 @@ def _run_update_project(args: argparse.Namespace) -> None:
 
     target = Path(args.target_dir).resolve()
     dry_run: bool = getattr(args, "dry_run", False)
+
+    def _progress(action: str, path: str) -> None:
+        print(f"  {action}: {path}", flush=True)
+
     result = update_project(
         target,
         pip_install=args.pip_install,
         dry_run=dry_run,
         ide=getattr(args, "ide", None),
+        on_progress=_progress,
     )
 
-    prefix = "[DRY RUN] " if dry_run else ""
-    for f in result["updated"]:
-        print(f"  {prefix}Updated: {f}")
-    for f in result["created"]:
-        print(f"  {prefix}Created (new): {f}")
-    for f in result["preserved"]:
-        print(f"  Preserved: {f}")
     for w in result.get("warnings", []):
         print(f"  WARNING: {w}")
     for e in result["errors"]:

@@ -74,6 +74,7 @@ from ._cursor import (
 )
 from ._utils import (
     _DATA_DIR as _DATA_DIR,
+    ProgressCallback as ProgressCallback,
     _check_package_version as _check_package_version,
     _copy_file as _copy_file,
     _default_config as _default_config,
@@ -121,6 +122,8 @@ _DATA_FILE_MAP: list[tuple[str, str]] = [
 ]
 
 __all__ = [
+    # Types
+    "ProgressCallback",
     # Constants
     "_DATA_DIR",
     "_DATA_FILE_MAP",

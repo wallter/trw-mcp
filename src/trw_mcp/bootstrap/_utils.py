@@ -14,12 +14,18 @@ import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
 
 logger = structlog.get_logger()
+
+# Type for streaming progress callback.
+# Called as: callback(action, path) where action is one of:
+# "Created", "Updated", "Skipped", "Preserved", "Error"
+ProgressCallback = Callable[[str, str], None] | None
 
 # Resolve to ``src/trw_mcp/data/``.
 # When this file lived at ``src/trw_mcp/bootstrap.py``, the path was
@@ -33,11 +39,17 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 # ---------------------------------------------------------------------------
 
 
-def _ensure_dir(path: Path, result: dict[str, list[str]]) -> None:
+def _ensure_dir(
+    path: Path,
+    result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
+) -> None:
     """Create directory if it doesn't exist."""
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
         result["created"].append(str(path) + "/")
+        if on_progress:
+            on_progress("Created", str(path) + "/")
     # Already existing dirs are silently fine -- not worth reporting as "skipped".
 
 
@@ -51,10 +63,13 @@ def _copy_file(
     dest: Path,
     force: bool,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Copy *src* to *dest* with idempotency."""
     if dest.exists() and not force:
         result["skipped"].append(str(dest))
+        if on_progress:
+            on_progress("Skipped", str(dest))
         return
     try:
         shutil.copy2(src, dest)
@@ -63,8 +78,12 @@ def _copy_file(
             executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
             os.chmod(dest, os.stat(dest).st_mode | executable)
         result["created"].append(str(dest))
+        if on_progress:
+            on_progress("Created", str(dest))
     except OSError as exc:
         result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+        if on_progress:
+            on_progress("Error", str(dest))
 
 
 def _write_if_missing(
@@ -72,16 +91,23 @@ def _write_if_missing(
     content: str,
     force: bool,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Write *content* to *dest* if it doesn't exist (or *force* is True)."""
     if dest.exists() and not force:
         result["skipped"].append(str(dest))
+        if on_progress:
+            on_progress("Skipped", str(dest))
         return
     try:
         dest.write_text(content, encoding="utf-8")
         result["created"].append(str(dest))
+        if on_progress:
+            on_progress("Created", str(dest))
     except OSError as exc:
         result["errors"].append(f"Failed to write {dest}: {exc}")
+        if on_progress:
+            on_progress("Error", str(dest))
 
 
 def _files_identical(a: Path, b: Path) -> bool:
@@ -158,6 +184,7 @@ def _trw_mcp_server_entry() -> dict[str, object]:
 def _merge_mcp_json(
     target_dir: Path,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Ensure ``.mcp.json`` has the ``trw`` server entry.
 
@@ -189,10 +216,16 @@ def _merge_mcp_json(
             key = _result_action_key(result)
             if existed:
                 result[key].append(str(mcp_path))
+                if on_progress:
+                    on_progress("Updated", str(mcp_path))
             else:
                 result[key].append(f"{mcp_path} (added trw entry)")
+                if on_progress:
+                    on_progress("Created", str(mcp_path))
         except OSError as exc:
             result["errors"].append(f"Failed to write {mcp_path}: {exc}")
+            if on_progress:
+                on_progress("Error", str(mcp_path))
     else:
         content = json.dumps(
             {"mcpServers": {"trw": trw_entry}}, indent=2,
@@ -200,8 +233,12 @@ def _merge_mcp_json(
         try:
             mcp_path.write_text(content, encoding="utf-8")
             result["created"].append(str(mcp_path))
+            if on_progress:
+                on_progress("Created", str(mcp_path))
         except OSError as exc:
             result["errors"].append(f"Failed to write {mcp_path}: {exc}")
+            if on_progress:
+                on_progress("Error", str(mcp_path))
 
 
 def _generate_mcp_json() -> str:
@@ -222,6 +259,7 @@ def _generate_mcp_json() -> str:
 def _write_version_yaml(
     target_dir: Path,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Generate ``.trw/frameworks/VERSION.yaml`` from package metadata.
 
@@ -255,9 +293,13 @@ def _write_version_yaml(
         )
         key = _result_action_key(result)
         result[key].append(str(version_path))
+        if on_progress:
+            on_progress("Created" if key == "created" else "Updated", str(version_path))
     except OSError as exc:  # justified: boundary, file write may fail
         logger.warning("version_yaml_write_failed", path=str(version_path), error=str(exc))
         result["errors"].append(f"Failed to write {version_path}: {exc}")
+        if on_progress:
+            on_progress("Error", str(version_path))
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +311,7 @@ def _write_installer_metadata(
     target_dir: Path,
     action: str,
     result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Write ``.trw/installer-meta.yaml`` with deployment metadata.
 
@@ -306,8 +349,12 @@ def _write_installer_metadata(
         # init_project uses "created", update_project uses "updated"
         key = _result_action_key(result)
         result[key].append(str(meta_path))
+        if on_progress:
+            on_progress("Created" if key == "created" else "Updated", str(meta_path))
     except OSError as exc:
         result["errors"].append(f"Failed to write {meta_path}: {exc}")
+        if on_progress:
+            on_progress("Error", str(meta_path))
 
 
 def _verify_installation(

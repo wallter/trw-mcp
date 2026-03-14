@@ -266,6 +266,48 @@ def prompt_choice(label: str, options: list[str], default: int = 0) -> int:
     return default
 
 
+# ── Prior installation detection ─────────────────────────────────────
+
+def _load_prior_config(target_dir: Path) -> dict[str, object]:
+    """Load prior installation config from .trw/config.yaml if it exists.
+
+    Returns a dict with keys that were previously configured, or empty dict
+    for first-time installs. Parses YAML manually — no pyyaml dependency.
+    """
+    config_path = target_dir / ".trw" / "config.yaml"
+    if not config_path.is_file():
+        return {}
+
+    prior: dict[str, object] = {}
+    try:
+        for line in config_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("#") or not line or ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key == "installation_id":
+                prior["project_name"] = value
+            elif key == "platform_api_key":
+                prior["api_key"] = value
+            elif key == "platform_telemetry_enabled":
+                prior["telemetry"] = value.lower() == "true"
+            elif key == "embeddings_enabled":
+                prior["embeddings"] = value.lower() == "true"
+    except OSError:
+        pass
+    return prior
+
+
+def _detect_installed_extras(python: str) -> dict[str, bool]:
+    """Detect which optional extras are already installed."""
+    extras: dict[str, bool] = {}
+    extras["ai"] = _run_quiet([python, "-c", "import anthropic"])
+    extras["sqlite_vec"] = _run_quiet([python, "-c", "import sqlite_vec"])
+    return extras
+
+
 # ── Validation / sanitization ────────────────────────────────────────
 
 def sanitize_project_name(name: str) -> str:
@@ -663,24 +705,36 @@ def phase_prompt_features(
     ui: UI,
     install_ai: bool | None,
     install_sqlitevec: bool | None,
+    prior_extras: dict[str, bool] | None = None,
 ) -> tuple[bool, bool]:
-    """Prompt for optional features (interactive only)."""
+    """Prompt for optional features (interactive only). Skips if already answered."""
+    if prior_extras is None:
+        prior_extras = {}
+
     if install_ai is None or install_sqlitevec is None:
         draw_divider("Optional Features")
 
     if install_ai is None:
-        print()
-        ui.hint("AI extras enable semantic search over your learnings")
-        ui.hint("and LLM-powered analysis of patterns across sessions.")
-        ui.doc_link("integration#ai-extras")
-        install_ai = prompt_yes_no("Install AI/LLM features?")
+        if prior_extras.get("ai"):
+            ui.step_ok("AI extras: already installed")
+            install_ai = True
+        else:
+            print()
+            ui.hint("AI extras enable semantic search over your learnings")
+            ui.hint("and LLM-powered analysis of patterns across sessions.")
+            ui.doc_link("integration#ai-extras")
+            install_ai = prompt_yes_no("Install AI/LLM features?")
 
     if install_sqlitevec is None:
-        print()
-        ui.hint("sqlite-vec adds vector similarity search for faster,")
-        ui.hint("more relevant recall of past learnings and discoveries.")
-        ui.doc_link("integration#vector-search")
-        install_sqlitevec = prompt_yes_no("Install sqlite-vec for vector search?")
+        if prior_extras.get("sqlite_vec"):
+            ui.step_ok("sqlite-vec: already installed")
+            install_sqlitevec = True
+        else:
+            print()
+            ui.hint("sqlite-vec adds vector similarity search for faster,")
+            ui.hint("more relevant recall of past learnings and discoveries.")
+            ui.doc_link("integration#vector-search")
+            install_sqlitevec = prompt_yes_no("Install sqlite-vec for vector search?")
 
     return bool(install_ai), bool(install_sqlitevec)
 
@@ -789,8 +843,13 @@ def phase_project_setup(
     detected_ides = _detect_project_ides(str(target_dir))
 
     resolved_ide: str | None = ide
+    is_update = (target_dir / ".trw").is_dir()
     if resolved_ide is None:
-        if interactive:
+        if is_update and interactive and detected_ides:
+            # Re-run: use previously configured IDEs without prompting
+            resolved_ide = "all" if len(detected_ides) >= 2 else detected_ides[0]
+            ui.step_ok(f"IDE config: {', '.join(detected_ides)} (from prior install)")
+        elif interactive:
             resolved_ide = _prompt_ide_selection(detected_clis, detected_ides)
         else:
             # Headless: auto-configure all detected CLIs; default to claude-code if none
@@ -803,7 +862,6 @@ def phase_project_setup(
                 resolved_ide = "claude-code"
 
     trw_cmd = find_trw_cmd(python)
-    is_update = (target_dir / ".trw").is_dir()
     action = "update-project" if is_update else "init-project"
     label = "Updating" if is_update else "Initializing"
 
@@ -824,9 +882,13 @@ def phase_configure(
     opt_name: str,
     opt_api_key: str,
     opt_telemetry: bool | None,
+    prior_config: dict[str, object] | None = None,
 ) -> str:
     """Configure project identity, API key, and telemetry. Returns platform_status."""
     ui.step_header(step, total, "Configure your project")
+
+    if prior_config is None:
+        prior_config = {}
 
     default_name = sanitize_project_name(target_dir.name)
     project_name = ""
@@ -834,28 +896,40 @@ def phase_configure(
     telemetry_enabled = False
 
     if interactive:
-        draw_divider("Project Identity")
-        print()
-        ui.hint("This name identifies your installation in the TRW platform.")
-        ui.hint("It appears in your analytics dashboard and team views.")
-        project_name = _prompt_project_name(ui, default_name)
+        if prior_config.get("project_name"):
+            project_name = str(prior_config["project_name"])
+            ui.step_ok(f"Project: {project_name} (from prior install)")
+        else:
+            draw_divider("Project Identity")
+            print()
+            ui.hint("This name identifies your installation in the TRW platform.")
+            ui.hint("It appears in your analytics dashboard and team views.")
+            project_name = _prompt_project_name(ui, default_name)
 
-        draw_divider("Platform Connection")
-        print()
-        ui.hint("Connect to trwframework.com to sync learnings across")
-        ui.hint("machines, view analytics, and collaborate with your team.")
-        ui.doc_link("integration#platform-connection")
-        api_key = _prompt_api_key(ui)
-
-        if api_key:
+        if prior_config.get("api_key"):
+            ui.step_ok("API key: configured (from prior install)")
+            api_key = str(prior_config["api_key"])
             telemetry_enabled = True
         else:
+            draw_divider("Platform Connection")
             print()
-            ui.hint("Anonymous telemetry helps us improve TRW for everyone.")
-            ui.hint("Only tool usage counts are shared — no code or learnings.")
-            ui.doc_link("integration#telemetry")
-            telemetry_enabled = prompt_yes_no("Enable anonymous usage telemetry?")
-            ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
+            ui.hint("Connect to trwframework.com to sync learnings across")
+            ui.hint("machines, view analytics, and collaborate with your team.")
+            ui.doc_link("integration#platform-connection")
+            api_key = _prompt_api_key(ui)
+
+            if api_key:
+                telemetry_enabled = True
+            elif "telemetry" in prior_config:
+                telemetry_enabled = bool(prior_config["telemetry"])
+                ui.step_ok(f"Telemetry: {'enabled' if telemetry_enabled else 'disabled'} (from prior install)")
+            else:
+                print()
+                ui.hint("Anonymous telemetry helps us improve TRW for everyone.")
+                ui.hint("Only tool usage counts are shared — no code or learnings.")
+                ui.doc_link("integration#telemetry")
+                telemetry_enabled = prompt_yes_no("Enable anonymous usage telemetry?")
+                ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
     else:
         # Script mode: use flags
         project_name = sanitize_project_name(opt_name) if opt_name else default_name
@@ -979,6 +1053,13 @@ def main() -> None:
 
     show_banner(ui)
 
+    # Load prior installation state (before python check — no python needed yet)
+    prior_config = _load_prior_config(target_dir)
+    is_reinstall = bool(prior_config)
+
+    if is_reinstall and interactive:
+        ui.info("Existing TRW installation detected — reusing prior settings")
+
     # Calculate step count
     total = 4  # python + extract + install + project-setup
     has_config = interactive or args.name or args.api_key
@@ -999,12 +1080,17 @@ def main() -> None:
         # Phase 1: Python check
         python = phase_check_python(ui, 1, total)
 
+        # Detect already-installed extras now that we have the python path
+        prior_extras: dict[str, bool] = _detect_installed_extras(python) if is_reinstall else {}
+
         # Phase 2: Extract wheels
         memory_whl, mcp_whl = phase_extract_wheels(ui, 2, total, tmpdir)
 
         # Feature prompts (between extract and install)
         if interactive:
-            install_ai, install_vec = phase_prompt_features(ui, install_ai, install_vec)
+            install_ai, install_vec = phase_prompt_features(
+                ui, install_ai, install_vec, prior_extras=prior_extras,
+            )
             # Recalculate total now that we know selections
             total = 4
             if install_ai:
@@ -1037,6 +1123,7 @@ def main() -> None:
             platform_status = phase_configure(
                 ui, next_step, total, target_dir, interactive,
                 args.name, args.api_key, args.telemetry,
+                prior_config=prior_config,
             )
 
         # Done!
