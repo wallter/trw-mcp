@@ -4,6 +4,16 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.13.3] — 2026-03-14
+
+### Fixed
+
+- **Telemetry events table empty on dashboard** (P0) — `getTelemetryEvents()` in `platform/src/lib/api.ts` expected a flat array but the backend returns a `PaginatedResponse` envelope. Now unwraps `.items` from the paginated response.
+- **`tests_passed: true` despite test failures** (P0) — `_run_pytest()` in `build/_runners.py` set `tests_passed` based only on pytest's return code, ignoring parsed `failure_count`. Now cross-checks `result.returncode == 0 and failure_count == 0` on both standard and custom command paths.
+- **`build_pass_rate` always null on analytics dashboard** (P1) — `pytest_passed`, `test_count`, `coverage_pct`, `mypy_passed` fields were not in `_MAPPED_FIELDS` in `backend/routers/telemetry.py`, so they fell into the `payload` JSON overflow bucket instead of their dedicated DB columns. Added `_bool()` helper and mapped all four fields.
+- **`trw_quality_dashboard` trends always null** (P1) — `dashboard.py:aggregate_dashboard()` reads `ceremony_score`, `coverage_pct`, `tests_passed` from `session-events.jsonl`, but no delivery step wrote those fields. Added session summary event in `_step_telemetry` that writes ceremony score, task, phase, and build results to `session-events.jsonl`.
+- **`config.telemetry` gate always truthy** (P2) — the `if config.telemetry:` check in `tools/telemetry.py` tested a `TelemetryConfig` Pydantic object (always truthy). Changed to check `config.telemetry.platform_telemetry_enabled` for proper two-tier gating of detailed telemetry records.
+
 ## [0.13.2] — 2026-03-14
 
 ### Fixed

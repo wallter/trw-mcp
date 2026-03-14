@@ -15,13 +15,14 @@ import hashlib
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import ParamSpec, TypeVar
+from typing import ParamSpec, TypeVar, cast
 from uuid import uuid4
 
 import structlog
 import structlog.contextvars
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import TelemetryRecordDict, ToolEventDataDict
 from trw_mcp.state._paths import find_active_run, resolve_trw_dir
 from trw_mcp.state.otel_wrapper import emit_tool_span
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
@@ -102,7 +103,19 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                 logger.debug("telemetry_write_failed", tool=func.__name__)
 
             # FR04: Session-level telemetry to tool-telemetry.jsonl
-            if config.telemetry:
+            # config.telemetry is a TelemetryConfig Pydantic model (always
+            # truthy as an object).  Check its platform_telemetry_enabled
+            # field for proper two-tier gating: telemetry_enabled gates
+            # basic events (line 73), platform_telemetry_enabled gates
+            # detailed records here.  The getattr fallback handles tests
+            # that override config.telemetry to a plain bool.
+            _tel = config.telemetry
+            _detailed = (
+                getattr(_tel, "platform_telemetry_enabled", False)
+                if not isinstance(_tel, bool)
+                else _tel
+            )
+            if _detailed:
                 try:
                     _write_telemetry_record(
                         func.__name__, args, kwargs, duration_ms,
@@ -129,7 +142,7 @@ def _write_tool_event(
 
     agent_id = os.environ.get("TRW_AGENT_ID", "default")
     agent_role = os.environ.get("TRW_AGENT_ROLE", "lead")
-    event_data: dict[str, object] = {
+    event_data: ToolEventDataDict = {
         "tool_name": tool_name,
         "duration_ms": duration_ms,
         "success": success,
@@ -170,7 +183,7 @@ def _write_tool_event(
     if run_dir is not None:
         events_path = run_dir / "meta" / "events.jsonl"
         if events_path.parent.exists():
-            events.log_event(events_path, "tool_invocation", event_data)
+            events.log_event(events_path, "tool_invocation", cast(dict[str, object], event_data))
             return
 
     # Fallback: session-level events
@@ -179,7 +192,7 @@ def _write_tool_event(
         context_dir = trw_dir / config.context_dir
         writer.ensure_dir(context_dir)
         fallback = context_dir / "session-events.jsonl"
-        events.log_event(fallback, "tool_invocation", event_data)
+        events.log_event(fallback, "tool_invocation", cast(dict[str, object], event_data))
     except Exception as exc:  # justified: fail-open telemetry, session-level fallback write
         logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
@@ -197,7 +210,7 @@ def _write_telemetry_record(
     args_hash = hashlib.sha256(args_repr.encode()).hexdigest()[:8]
     result_summary = repr(result)[:100] if result is not None else ""
 
-    record: dict[str, object] = {
+    record: TelemetryRecordDict = {
         "tool": tool_name,
         "args_hash": args_hash,
         "duration_ms": duration_ms,
@@ -212,4 +225,4 @@ def _write_telemetry_record(
     logs_dir = trw_dir / config.logs_dir
     writer.ensure_dir(logs_dir)
     telemetry_path = logs_dir / config.telemetry_file
-    events.log_event(telemetry_path, "tool_call", record)
+    events.log_event(telemetry_path, "tool_call", cast(dict[str, object], record))

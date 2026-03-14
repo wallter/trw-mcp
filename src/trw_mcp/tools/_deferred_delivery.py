@@ -32,7 +32,7 @@ from typing import cast
 
 import structlog
 
-from trw_mcp.models.types import (
+from trw_mcp.models.typed_dicts import (
     AutoProgressStepResult,
     BatchSendResult,
     CeremonyFeedbackStepResult,
@@ -433,6 +433,53 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
         score=ceremony_score,
     ))
     tel_client.flush()
+
+    # Write session summary to session-events.jsonl for trw_quality_dashboard
+    from trw_mcp.state.persistence import (
+        FileEventLogger,
+        FileStateReader as _BSR,
+        FileStateWriter as _FSW,
+    )
+
+    try:
+        trw_dir = _cer.resolve_trw_dir()
+        context_dir = trw_dir / cfg.context_dir
+
+        # Read run state for task/phase info
+        run_state: dict[str, object] = {}
+        if resolved_run is not None:
+            run_yaml = resolved_run / "meta" / "run.yaml"
+            if run_yaml.exists():
+                run_state = _BSR().read_yaml(run_yaml)
+
+        summary_data: dict[str, object] = {
+            "ceremony_score": ceremony_score,
+            "task_name": str(run_state.get("task", "")) if run_state else "",
+            "phase": str(run_state.get("phase", "")) if run_state else "",
+        }
+
+        # Include build results if available from build-status.yaml
+        build_status_path = trw_dir / cfg.context_dir / "build-status.yaml"
+        if build_status_path.exists():
+            bs_data = _BSR().read_yaml(build_status_path)
+            if bs_data:
+                if "coverage_pct" in bs_data:
+                    summary_data["coverage_pct"] = bs_data["coverage_pct"]
+                if "tests_passed" in bs_data:
+                    summary_data["tests_passed"] = bs_data["tests_passed"]
+                if "mypy_clean" in bs_data:
+                    summary_data["mypy_clean"] = bs_data["mypy_clean"]
+
+        summary_writer = _FSW()
+        summary_events = FileEventLogger(summary_writer)
+        summary_events.log_event(
+            context_dir / "session-events.jsonl",
+            "session_summary",
+            summary_data,
+        )
+    except Exception:
+        logger.debug("session_summary_write_failed", exc_info=True)
+
     return {"status": "success", "events": 2, "ceremony_score": ceremony_score}
 
 
