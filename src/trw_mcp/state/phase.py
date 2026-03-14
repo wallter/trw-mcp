@@ -46,15 +46,29 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     logger.info("phase_updated", run_path=str(run_path), old=current, new=new_phase.value)
 
     # Log phase_enter event (best-effort)
+    phase_event: dict[str, object] = {
+        "phase": new_phase.value,
+        "previous_phase": current,
+    }
     events_path = run_path / "meta" / "events.jsonl"
     if events_path.parent.exists():
         try:
-            event_logger.log_event(events_path, "phase_enter", {
-                "phase": new_phase.value,
-                "previous_phase": current,
-            })
+            event_logger.log_event(events_path, "phase_enter", phase_event)
         except (OSError, StateError):
             logger.debug("phase_event_log_failed", phase=new_phase.value)
+
+    # Route phase transition to the telemetry pipeline so the backend
+    # can track phase progression across all sessions.
+    try:
+        from trw_mcp.telemetry.pipeline import TelemetryPipeline
+
+        TelemetryPipeline.get_instance().enqueue({
+            "event_type": "phase_transition",
+            "phase": new_phase.value,
+            "previous_phase": current,
+        })
+    except Exception:  # justified: fail-open, pipeline may not be initialized
+        pass
 
     return True
 

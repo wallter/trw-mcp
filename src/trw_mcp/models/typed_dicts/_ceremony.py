@@ -87,6 +87,7 @@ class CeremonyScoreResult(TypedDict):
     learn_count: int
     build_check: bool
     build_passed: bool | None
+    review: bool
 
 
 class CeremonyFeedbackEntry(TypedDict):

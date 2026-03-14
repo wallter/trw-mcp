@@ -176,6 +176,24 @@ class TelemetryPipeline:
             if "event_type" not in event:
                 event["event_type"] = "tool_invocation"
 
+            # Auto-populate phase from active run when missing — ensures all
+            # events (not just tool_invocation) carry phase context for
+            # per-phase analytics at the backend.
+            if "phase" not in event:
+                try:
+                    from trw_mcp.state._paths import find_active_run
+
+                    run_dir = find_active_run()
+                    if run_dir is not None:
+                        run_yaml = run_dir / "meta" / "run.yaml"
+                        if run_yaml.exists():
+                            from trw_mcp.state.persistence import FileStateReader
+
+                            data = FileStateReader().read_yaml(run_yaml)
+                            event["phase"] = str(data.get("phase", "unknown"))
+                except Exception:  # justified: fail-open, phase enrichment non-critical
+                    pass
+
             if "ts" not in event:
                 event["ts"] = datetime.now(timezone.utc).isoformat()
 

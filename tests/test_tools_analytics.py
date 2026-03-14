@@ -80,15 +80,17 @@ class TestCeremonyScoring:
         assert result["learn_count"] == 0
         assert result["build_check"] is False
         assert result["build_passed"] is None
+        assert result["review"] is False
 
-    def test_all_five_event_types_score_100(self) -> None:
-        """T-11: All 5 event types present yields score of 100."""
+    def test_all_six_event_types_score_100(self) -> None:
+        """T-11: All 6 event types (including review) present yields score of 100."""
         events: list[dict[str, object]] = [
             {"event": "session_start"},
             {"event": "reflection_complete"},
             {"event": "checkpoint"},
             {"event": "learn_recorded"},
             {"event": "build_check_complete", "tests_passed": "true"},
+            {"event": "review_complete"},
         ]
         result = compute_ceremony_score(events)
         assert result["score"] == 100
@@ -98,46 +100,48 @@ class TestCeremonyScoring:
         assert result["learn_count"] == 1
         assert result["build_check"] is True
         assert result["build_passed"] is True
+        assert result["review"] is True
 
-    def test_session_start_only_score_30(self) -> None:
-        """T-12: Only session_start event yields score of 30."""
+    def test_session_start_only_score_25(self) -> None:
+        """T-12: Only session_start event yields score of 25."""
         events: list[dict[str, object]] = [{"event": "session_start"}]
         result = compute_ceremony_score(events)
-        assert result["score"] == 30
+        assert result["score"] == 25
         assert result["session_start"] is True
         assert result["deliver"] is False
         assert result["checkpoint_count"] == 0
+        assert result["review"] is False
 
     @pytest.mark.parametrize(
         "event_types, expected_score",
         [
             # 0 events
             ([], 0),
-            # Single component: session_start=30
-            (["session_start"], 30),
-            # Single component: deliver proxy (reflection_complete)=30
-            (["reflection_complete"], 30),
-            # Single component: deliver proxy (claude_md_synced)=30
-            (["claude_md_synced"], 30),
-            # Single component: checkpoint=20
-            (["checkpoint"], 20),
+            # Single component: session_start=25
+            (["session_start"], 25),
+            # Single component: deliver proxy (reflection_complete)=25
+            (["reflection_complete"], 25),
+            # Single component: deliver proxy (claude_md_synced)=25
+            (["claude_md_synced"], 25),
+            # Single component: checkpoint=15
+            (["checkpoint"], 15),
             # Single component: learn=10
             (["learn_recorded"], 10),
             # Single component: build_check=10
             (["build_check_complete"], 10),
-            # Two components: session_start + deliver = 60
-            (["session_start", "reflection_complete"], 60),
-            # Two components: session_start + checkpoint = 50
-            (["session_start", "checkpoint"], 50),
-            # Three components: session_start + deliver + learn = 70
-            (["session_start", "claude_md_synced", "learn_saved"], 70),
-            # Three components: checkpoint + learn + build_check = 40
-            (["checkpoint", "learn_recorded", "build_check_complete"], 40),
-            # Four components: all except deliver = 70
-            (["session_start", "checkpoint", "learn_recorded", "build_check_complete"], 70),
-            # Four components: all except build_check = 90
-            (["session_start", "reflection_complete", "checkpoint", "learn_recorded"], 90),
-            # All five components = 100
+            # Two components: session_start + deliver = 50
+            (["session_start", "reflection_complete"], 50),
+            # Two components: session_start + checkpoint = 40
+            (["session_start", "checkpoint"], 40),
+            # Three components: session_start + deliver + learn = 60
+            (["session_start", "claude_md_synced", "learn_saved"], 60),
+            # Three components: checkpoint + learn + build_check = 35
+            (["checkpoint", "learn_recorded", "build_check_complete"], 35),
+            # Four components: all except deliver = 60
+            (["session_start", "checkpoint", "learn_recorded", "build_check_complete"], 60),
+            # Four components: all except build_check = 75
+            (["session_start", "reflection_complete", "checkpoint", "learn_recorded"], 75),
+            # All five original components (no review) = 85
             (
                 [
                     "session_start",
@@ -145,6 +149,18 @@ class TestCeremonyScoring:
                     "checkpoint",
                     "learn_recorded",
                     "build_check_complete",
+                ],
+                85,
+            ),
+            # All six components (with review) = 100
+            (
+                [
+                    "session_start",
+                    "reflection_complete",
+                    "checkpoint",
+                    "learn_recorded",
+                    "build_check_complete",
+                    "review_complete",
                 ],
                 100,
             ),
@@ -171,7 +187,7 @@ class TestCeremonyScoring:
         ]
         result = compute_ceremony_score(events)
         assert result["checkpoint_count"] == 3
-        assert result["score"] == 20  # checkpoint component is capped at 20 pts
+        assert result["score"] == 15  # checkpoint component is capped at 15 pts
 
     def test_multiple_learn_events_counted(self) -> None:
         """Multiple learn events increment learn_count; score component still capped at 10 pts."""
@@ -204,7 +220,8 @@ class TestCeremonyScoring:
         events: list[dict[str, object]] = [{"event": "claude_md_synced"}]
         result = compute_ceremony_score(events)
         assert result["deliver"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
+        assert result["review"] is False
 
     def test_unrecognized_events_ignored(self) -> None:
         """Unknown event types do not contribute to the score."""
@@ -431,10 +448,10 @@ class TestScanAllRuns:
         """Aggregate avg_ceremony_score is computed correctly across all runs."""
         result = scan_all_runs()
         aggregate = result["aggregate"]
-        # Run 1: session_start(30) + checkpoint(20) = 50
-        # Run 2: session_start(30) + deliver(30) + learn(10) + build_check(10) = 80
-        # Run 3: session_start(30) = 30
-        expected_avg = round((50 + 80 + 30) / 3, 2)
+        # Run 1: session_start(25) + checkpoint(15) = 40
+        # Run 2: session_start(25) + deliver(25) + learn(10) + build_check(10) = 70
+        # Run 3: session_start(25) = 25
+        expected_avg = round((40 + 70 + 25) / 3, 2)
         assert aggregate["avg_ceremony_score"] == expected_avg  # type: ignore[index]
 
     def test_aggregate_build_pass_rate(

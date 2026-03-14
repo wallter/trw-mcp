@@ -37,11 +37,12 @@ def __getattr__(name: str) -> object:
 # --- Ceremony Scoring (FR05) ---
 
 _CEREMONY_WEIGHTS: dict[str, int] = {
-    "session_start": 30,
-    "deliver": 30,
-    "checkpoint": 20,
+    "session_start": 25,
+    "deliver": 25,
+    "checkpoint": 15,
     "learn": 10,
     "build_check": 10,
+    "review": 15,
 }
 
 
@@ -82,6 +83,7 @@ def compute_ceremony_score(
     checkpoint_count = 0
     learn_count = 0
     has_build_check = False
+    has_review = False
     build_passed: bool | None = None
 
     for evt in events:
@@ -111,6 +113,10 @@ def compute_ceremony_score(
             has_build_check = True
             if "tests_passed" in evt:
                 build_passed = str(evt["tests_passed"]).lower() == "true"
+        elif event_type in ("review_complete", "spec_reconciliation") or (
+            is_tool_invocation and tool_name == "trw_review"
+        ):
+            has_review = True
 
     score = 0
     if has_session_start:
@@ -123,6 +129,8 @@ def compute_ceremony_score(
         score += _CEREMONY_WEIGHTS["learn"]
     if has_build_check:
         score += _CEREMONY_WEIGHTS["build_check"]
+    if has_review:
+        score += _CEREMONY_WEIGHTS["review"]
 
     result: CeremonyScoreResult = {
         "score": score,
@@ -132,6 +140,7 @@ def compute_ceremony_score(
         "learn_count": learn_count,
         "build_check": has_build_check,
         "build_passed": build_passed,
+        "review": has_review,
     }
     return result
 

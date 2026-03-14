@@ -273,12 +273,13 @@ class TestCeremonyScoring:
     def test_direct_session_start_detected(self) -> None:
         result = self._score([{"event": "session_start"}])
         assert result["session_start"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
+        assert result["review"] is False
 
     def test_direct_deliver_via_reflection_complete(self) -> None:
         result = self._score([{"event": "reflection_complete"}])
         assert result["deliver"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
 
     def test_direct_deliver_via_claude_md_synced(self) -> None:
         result = self._score([{"event": "claude_md_synced"}])
@@ -290,7 +291,7 @@ class TestCeremonyScoring:
             {"event": "checkpoint"},
         ])
         assert result["checkpoint_count"] == 2
-        assert result["score"] == 20
+        assert result["score"] == 15
 
     def test_direct_learn_counted(self) -> None:
         result = self._score([{"event": "learn_recorded"}])
@@ -310,14 +311,14 @@ class TestCeremonyScoring:
             {"event": "tool_invocation", "tool_name": "trw_session_start"},
         ])
         assert result["session_start"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
 
     def test_tool_invocation_deliver_via_trw_deliver(self) -> None:
         result = self._score([
             {"event": "tool_invocation", "tool_name": "trw_deliver"},
         ])
         assert result["deliver"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
 
     def test_tool_invocation_deliver_via_trw_reflect(self) -> None:
         result = self._score([
@@ -332,7 +333,7 @@ class TestCeremonyScoring:
             {"event": "tool_invocation", "tool_name": "trw_checkpoint"},
         ])
         assert result["checkpoint_count"] == 3
-        assert result["score"] == 20
+        assert result["score"] == 15
 
     def test_tool_invocation_learn_counted(self) -> None:
         result = self._score([
@@ -354,7 +355,7 @@ class TestCeremonyScoring:
     def test_trw_deliver_complete_event_detected(self) -> None:
         result = self._score([{"event": "trw_deliver_complete"}])
         assert result["deliver"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
 
     # --- Mixed real-world scenario ---
 
@@ -367,6 +368,7 @@ class TestCeremonyScoring:
             {"event": "tool_invocation", "tool_name": "trw_checkpoint"},
             {"event": "tool_invocation", "tool_name": "trw_build_check"},
             {"event": "tool_invocation", "tool_name": "trw_deliver"},
+            {"event": "tool_invocation", "tool_name": "trw_review"},
         ]
         result = self._score(events)
         assert result["session_start"] is True
@@ -374,6 +376,7 @@ class TestCeremonyScoring:
         assert result["checkpoint_count"] == 1
         assert result["learn_count"] == 2
         assert result["build_check"] is True
+        assert result["review"] is True
         assert result["score"] == 100
 
     def test_unrelated_tool_invocation_ignored(self) -> None:
@@ -391,6 +394,7 @@ class TestCeremonyScoring:
         assert result["checkpoint_count"] == 0
         assert result["learn_count"] == 0
         assert result["build_check"] is False
+        assert result["review"] is False
 
 
 class TestTrwInitComplexity:
