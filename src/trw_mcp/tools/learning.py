@@ -171,15 +171,12 @@ def register_learning_tools(server: FastMCP) -> None:
         calibrated_impact = calibrate_impact(impact, config)
 
         # Fetch active learnings once — reused by soft-cap and distribution
-        all_active: list[LearningEntryDict] = []
+        all_active: list[dict[str, object]] = []
         # Fail-open: listing failure must not block learning recording
         with contextlib.suppress(OSError, StateError, ValueError, TypeError):
             all_active = list_active_learnings(trw_dir)
-
-        # Forced distribution soft-cap check (PRD-CORE-034-FR01)
-        all_active_objs = cast(list[dict[str, object]], all_active)
         calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
-            calibrated_impact, all_active_objs, config,
+            calibrated_impact, all_active, config,
         )
 
         learning_id = generate_learning_id()
@@ -288,7 +285,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Forced distribution enforcement (PRD-CORE-034)
         distribution_warning, _demoted_ids = enforce_distribution(
             impact, calibrated_impact, learning_id,
-            all_active_objs, trw_dir, config,
+            all_active, trw_dir, config,
         )
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
@@ -467,8 +464,7 @@ def register_learning_tools(server: FastMCP) -> None:
             from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
             remote = fetch_shared_learnings(query)
             if remote:
-                combined: list[LearningEntryDict] = list(matching_learnings) + cast(list[LearningEntryDict], remote)
-                matching_learnings = combined
+                matching_learnings = list(matching_learnings) + [dict(r) for r in remote]
         except Exception:  # noqa: BLE001 — justified: fail-open, per-entry batch error
             logger.debug("remote_recall_failed", exc_info=True)
 
@@ -476,7 +472,7 @@ def register_learning_tools(server: FastMCP) -> None:
         matching_patterns = search_patterns(
             trw_dir / config.patterns_dir, query_tokens, reader,
         )
-        ranked_learnings: list[LearningEntryDict] = rank_by_utility(
+        ranked_learnings: list[dict[str, object]] = rank_by_utility(
             matching_learnings, query_tokens, config.recall_utility_lambda,
         )
 
@@ -490,10 +486,10 @@ def register_learning_tools(server: FastMCP) -> None:
         # Strip to compact fields when requested
         if use_compact:
             allowed = config.recall_compact_fields
-            ranked_learnings = cast(list[LearningEntryDict], [
+            ranked_learnings = [
                 {k: v for k, v in entry.items() if k in allowed}
                 for entry in ranked_learnings
-            ])
+            ]
 
         # Skip context collection for compact wildcard queries (saves I/O)
         context_data: RecallContextDict = {}

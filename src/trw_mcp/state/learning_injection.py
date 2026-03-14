@@ -101,14 +101,14 @@ def recall_learnings(
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
 
     trw_dir = _resolve_trw_dir()
-    return cast(list[dict[str, object]], adapter_recall(
+    return adapter_recall(
         trw_dir,
         query=query,
         tags=tags,
         min_impact=min_impact,
         max_results=max_results,
         status=status,
-    ))
+    )
 
 
 def select_learnings_for_task(

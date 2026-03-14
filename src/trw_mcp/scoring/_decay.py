@@ -34,7 +34,7 @@ from trw_mcp.scoring._utils import (
 
 
 def _days_since_access(
-    entry: LearningEntryDict,
+    entry: dict[str, object],
     today: date,
     fallback_days: int | None = None,
 ) -> int:
@@ -59,7 +59,7 @@ def _days_since_access(
 
 
 def _entry_utility(
-    entry: LearningEntryDict,
+    entry: dict[str, object],
     today: date,
     fallback_days: int | None = None,
 ) -> float:

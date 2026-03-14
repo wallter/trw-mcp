@@ -20,10 +20,10 @@ from trw_mcp.scoring._utils import TRWConfig, get_config, safe_float, safe_int
 
 
 def rank_by_utility(
-    matches: list[LearningEntryDict],
+    matches: list[dict[str, object]],
     query_tokens: list[str],
     lambda_weight: float,
-) -> list[LearningEntryDict]:
+) -> list[dict[str, object]]:
     """Re-rank matched learnings by combined relevance + utility score.
 
     Combined score = (1 - lambda) * relevance + lambda * utility
@@ -40,7 +40,7 @@ def rank_by_utility(
         return matches
 
     today = date.today()
-    scored: list[tuple[float, LearningEntryDict]] = []
+    scored: list[tuple[float, dict[str, object]]] = []
 
     for entry in matches:
         # Text relevance score (token overlap with field weighting)
@@ -123,7 +123,7 @@ def utility_based_prune_candidates(
             seen_ids.add(entry_id)
             continue
 
-        utility = _entry_utility(data, today, fallback_days=age_days)
+        utility = _entry_utility(dict(data), today, fallback_days=age_days)
 
         # Tier 2: Delete-level utility (effectively forgotten)
         if utility < cfg.learning_utility_delete_threshold:

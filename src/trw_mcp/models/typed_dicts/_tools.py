@@ -95,7 +95,7 @@ class RecallResultDict(TypedDict, total=False):
     """Return shape of ``trw_recall`` MCP tool."""
 
     query: str
-    learnings: list[LearningEntryDict]
+    learnings: list[dict[str, object]]
     patterns: list[dict[str, object]]
     context: RecallContextDict
     total_matches: int
@@ -121,7 +121,7 @@ class SessionStartResultDict(TypedDict, total=False):
     """Return shape of ``trw_session_start`` MCP tool."""
 
     timestamp: str
-    learnings: list[LearningEntryDict]
+    learnings: list[dict[str, object]]
     learnings_count: int
     query: str
     query_matched: int

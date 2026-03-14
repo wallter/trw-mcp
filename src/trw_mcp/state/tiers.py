@@ -95,7 +95,7 @@ def compute_importance_score(
 
     # Recency: exponential decay based on days since access
     today = date.today()
-    days = _days_since_access(cast(LearningEntryDict, entry), today)
+    days = _days_since_access(entry, today)
     half_life = cfg.learning_decay_half_life_days
     decay_rate = math.log(2) / half_life if half_life > 0 else 0.0
     recency = math.exp(-decay_rate * days)
@@ -664,7 +664,7 @@ class TierManager:
 
         stale_hot_ids: list[str] = []
         for entry_id, entry in list(self._hot.items()):
-            days = _days_since_access(cast(LearningEntryDict, entry.model_dump()), today)
+            days = _days_since_access(entry.model_dump(), today)
             if days > cfg.memory_hot_ttl_days:
                 stale_hot_ids.append(entry_id)
 
@@ -714,7 +714,7 @@ class TierManager:
                 if not entry_id:
                     continue
                 try:
-                    days = _days_since_access(cast(LearningEntryDict, data), today)
+                    days = _days_since_access(data, today)
                     importance = compute_importance_score(data, [], config=cfg)
                     if days > cfg.memory_cold_threshold_days and importance < 0.22:
                         # Resolve YAML path for cold_archive
@@ -759,7 +759,7 @@ class TierManager:
                     # Skip non-active entries
                     if str(yaml_data.get("status", "active")) != "active":
                         continue
-                    days = _days_since_access(cast(LearningEntryDict, yaml_data), today)
+                    days = _days_since_access(yaml_data, today)
                     importance = compute_importance_score(yaml_data, [], config=cfg)
                     if days > cfg.memory_cold_threshold_days and importance < 0.22:
                         self.cold_archive(entry_id, yaml_file)
@@ -808,7 +808,7 @@ class TierManager:
                 try:
                     data = self._reader.read_yaml(yaml_file)
                     entry_id = str(data.get("id", ""))
-                    days = _days_since_access(cast(LearningEntryDict, data), today)
+                    days = _days_since_access(data, today)
                     importance = compute_importance_score(data, [], config=cfg)
                     if days > cfg.memory_retention_days and importance < 0.1:
                         # Append to purge audit log before deleting

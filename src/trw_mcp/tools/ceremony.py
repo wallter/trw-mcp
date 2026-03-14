@@ -445,8 +445,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # Always included — fail-open so advisory never blocks session start.
         try:
             from trw_mcp.state.memory_adapter import check_embeddings_status
-            embed_status: EmbedHealthStatus = check_embeddings_status()
-            results["embed_health"] = cast(dict[str, object], embed_status)
+            embed_status = check_embeddings_status()
+            results["embed_health"] = dict(embed_status)
         except Exception:  # justified: fail-open, embed health check must not block session start
             results["embed_health"] = {
                 "enabled": False,

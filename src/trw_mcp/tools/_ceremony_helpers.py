@@ -112,7 +112,7 @@ def perform_session_recalls(
     reader: FileStateReader,
     run_dir: Path | None = None,
     run_status: RunStatusDict | None = None,
-) -> tuple[list[LearningEntryDict], list[AutoRecalledItemDict], SessionRecallExtrasDict]:
+) -> tuple[list[dict[str, object]], list[AutoRecalledItemDict], SessionRecallExtrasDict]:
     """Execute focused + baseline recalls, return merged results.
 
     Returns:
@@ -126,7 +126,7 @@ def perform_session_recalls(
 
     is_focused = query.strip() not in ("", "*")
     extra: SessionRecallExtrasDict = {}
-    learnings: list[LearningEntryDict] = []
+    learnings: list[dict[str, object]] = []
 
     # Step 1: Core recall
     if is_focused:
@@ -213,7 +213,11 @@ def _phase_contextual_recall(
     )
     capped = ranked[:config.auto_recall_max_results]
     return [
-        {"id": e.get("id"), "summary": e.get("summary"), "impact": e.get("impact")}
+        {
+            "id": str(e.get("id", "")),
+            "summary": str(e.get("summary", "")),
+            "impact": float(str(e.get("impact", 0.0))),
+        }
         for e in capped
     ]
 
@@ -265,7 +269,7 @@ def run_auto_maintenance(
         from trw_mcp.state.memory_adapter import check_embeddings_status
         emb_status = check_embeddings_status()
         if emb_status.get("advisory"):
-            maintenance["embeddings_advisory"] = emb_status["advisory"]
+            maintenance["embeddings_advisory"] = str(emb_status["advisory"])
         elif emb_status.get("enabled") and emb_status.get("available"):
             from trw_mcp.state.memory_adapter import backfill_embeddings
             backfill = backfill_embeddings(resolve_trw_dir())
