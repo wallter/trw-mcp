@@ -4,6 +4,26 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-03-14
+
+### Added
+
+- **Worktree pre-spawn safety** — FRAMEWORK.md, `trw-lead` agent, and `/trw-sprint-team` skill now mandate `git status --porcelain` before `git worktree add`. Blocks on uncommitted changes with user options (commit/stash/abort). Prevents agents from operating on stale committed state.
+- **Test file ownership enforcement** — `test_owns` in `file_ownership.yaml` now follows the same zero-overlap rules as `owns`. FRAMEWORK.md, `trw-lead`, and `/trw-team-playbook` skill updated. Two agents editing the same test file caused 4 merge iterations in Sprint 66.
+- **Adversarial audit enforcement** — `trw_review()` moved from Flexible to Rigid for STANDARD+ complexity tasks. `_ceremony_helpers.py` emits `review_warning` (not `review_advisory`) when review is missing on STANDARD/COMPREHENSIVE runs.
+- **Ceremony recovery after compaction** — `trw_pre_compact_checkpoint` now reads `.trw/context/ceremony-state.json` and includes ceremony state + pending obligations in `pre_compact_state.json` and `compact_instructions.txt`.
+- **Pre-implementation state verification** — `/trw-sprint-init` skill now greps the codebase for FR identifiers before sprint planning. Flags PRDs that are >80% already implemented as `LIKELY IMPLEMENTED`.
+- **`_read_complexity_class()` helper** — extracted from `check_delivery_gates()` for testability
+- **`_compute_pending_ceremony()` helper** — data-driven via `_CEREMONY_OBLIGATIONS` table, replaces 4 imperative if-blocks
+
+### Changed
+
+- **FRAMEWORK.md v24.3** — Worktree Safety subsection added to Agent Teams. File Ownership expanded to include test files. RIGID tool classification updated with `trw_review()` and worktree validation.
+- **`trw-lead` agent** — File Ownership Enforcement and Worktree Pre-Spawn Validation sections added.
+- **`/trw-sprint-team` skill** — Step 6a (Pre-Worktree State Validation) added before worktree creation.
+- **`/trw-team-playbook` skill** — Zero-overlap validation expanded to cross-check `test_owns` across all teammates.
+- **`/trw-sprint-init` skill** — Step 3 (Pre-implementation state check) added after PRD survey.
+
 ## [0.14.0] — 2026-03-14
 
 ### Added
