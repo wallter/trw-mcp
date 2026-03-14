@@ -1,21 +1,431 @@
 task_classes:
   documentation:
     sessions:
-    - session_id: advisory-test
+    - session_id: 20260227T100000Z-aaaa
       run_path: 
-        /tmp/pytest-of-wallter/pytest-102/test_deliver_review_advisory0/docs/task/runs/20260226T120000Z-advisory-test
+        /tmp/pytest-of-wallter/pytest-153/test_deliver_warns_no_build_ch0/project/docs/my-task/runs/20260227T100000Z-aaaa
       ceremony_score: 0.0
       outcome_quality: 0.6000000000000001
       current_tier: STANDARD
       task_name: ''
       task_class: documentation
-      completed_at: '2026-03-10T18:03:39.562116+00:00'
+      completed_at: '2026-03-13T21:45:08.271062+00:00'
+    - session_id: 20260227T100000Z-aaaa
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-153/test_deliver_no_warning_when_b0/project/docs/my-task/runs/20260227T100000Z-aaaa
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:11.399122+00:00'
     - session_id: gate-test
       run_path: 
-        /tmp/pytest-of-wallter/pytest-102/test_deliver_review_soft_gate_0/docs/task/runs/20260226T120000Z-gate-test
+        /tmp/pytest-of-wallter/pytest-153/test_deliver_review_soft_gate_0/docs/task/runs/20260226T120000Z-gate-test
       ceremony_score: 0.0
       outcome_quality: 0.6000000000000001
       current_tier: STANDARD
       task_name: ''
       task_class: documentation
-      completed_at: '2026-03-10T18:03:39.669615+00:00'
+      completed_at: '2026-03-13T21:45:14.696104+00:00'
+    - session_id: advisory-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-153/test_deliver_review_advisory0/docs/task/runs/20260226T120000Z-advisory-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:14.824188+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:14.931342+00:00'
+    - session_id: pass-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-153/test_deliver_review_gate_pass_0/docs/task/runs/20260226T120000Z-pass-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:15.046297+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-153/test_reflect_failure_does_not_0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:22.647585+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-153/test_checkpoint_failure_does_n0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:22.777476+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:22.912661+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:45:23.167588+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-183/test_reflect_failure_does_not_0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:55:58.455199+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-183/test_checkpoint_failure_does_n0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:55:58.577505+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:55:58.691412+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:55:59.071035+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-188/test_reflect_failure_does_not_0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:56:33.883986+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-188/test_checkpoint_failure_does_n0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:56:34.008624+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:56:34.146369+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:56:34.641289+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:57:19.897824+00:00'
+    - session_id: 20260313T215724Z-27cb60be
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-190/test_full_session_lifecycle0/docs/lifecycle-test/runs/20260313T215724Z-27cb60be
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:57:24.776057+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:57:32.263031+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:57:35.562535+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:25.689036+00:00'
+    - session_id: 20260313T215830Z-f53004f4
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_full_session_lifecycle0/docs/lifecycle-test/runs/20260313T215830Z-f53004f4
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:30.215106+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:37.234973+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:40.372333+00:00'
+    - session_id: 20260227T100000Z-aaaa
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_deliver_warns_no_build_ch0/project/docs/my-task/runs/20260227T100000Z-aaaa
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:49.929665+00:00'
+    - session_id: 20260227T100000Z-aaaa
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_deliver_no_warning_when_b0/project/docs/my-task/runs/20260227T100000Z-aaaa
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:53.069311+00:00'
+    - session_id: gate-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_deliver_review_soft_gate_0/docs/task/runs/20260226T120000Z-gate-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:56.389746+00:00'
+    - session_id: advisory-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_deliver_review_advisory0/docs/task/runs/20260226T120000Z-advisory-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:56.695322+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:56.825840+00:00'
+    - session_id: pass-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_deliver_review_gate_pass_0/docs/task/runs/20260226T120000Z-pass-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:58:56.957742+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_reflect_failure_does_not_0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:59:04.959365+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-193/test_checkpoint_failure_does_n0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:59:05.084686+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:59:05.222996+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-13T21:59:05.465695+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:26.557157+00:00'
+    - session_id: 20260314T001330Z-72d0b49d
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_full_session_lifecycle0/docs/lifecycle-test/runs/20260314T001330Z-72d0b49d
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:30.866275+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:37.657426+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:40.794776+00:00'
+    - session_id: 20260227T100000Z-aaaa
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_deliver_warns_no_build_ch0/project/docs/my-task/runs/20260227T100000Z-aaaa
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:49.606360+00:00'
+    - session_id: 20260227T100000Z-aaaa
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_deliver_no_warning_when_b0/project/docs/my-task/runs/20260227T100000Z-aaaa
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:52.825015+00:00'
+    - session_id: gate-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_deliver_review_soft_gate_0/docs/task/runs/20260226T120000Z-gate-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:56.050642+00:00'
+    - session_id: advisory-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_deliver_review_advisory0/docs/task/runs/20260226T120000Z-advisory-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:56.168957+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:56.281890+00:00'
+    - session_id: pass-test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_deliver_review_gate_pass_0/docs/task/runs/20260226T120000Z-pass-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:13:56.508857+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_reflect_failure_does_not_0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:14:04.154930+00:00'
+    - session_id: test
+      run_path: 
+        /tmp/pytest-of-wallter/pytest-219/test_checkpoint_failure_does_n0/docs/task/runs/20260214T000000Z-test
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:14:04.277119+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:14:04.402021+00:00'
+    - session_id: unknown
+      run_path: ''
+      ceremony_score: 0.0
+      outcome_quality: 0.6000000000000001
+      current_tier: STANDARD
+      task_name: ''
+      task_class: documentation
+      completed_at: '2026-03-14T00:14:04.639231+00:00'

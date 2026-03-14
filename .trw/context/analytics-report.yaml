@@ -25,6 +25,6 @@ aggregate:
       count: 1
       avg_score: 0.0
       pass_rate: 0.0
-generated_at: '2026-03-08T16:45:51.785757+00:00'
+generated_at: '2026-03-14T00:14:09.051753+00:00'
 runs_scanned: 1
 parse_errors: []
