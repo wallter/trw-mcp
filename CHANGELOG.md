@@ -4,6 +4,13 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.12.4] — 2026-03-13
+
+### Fixed
+
+- **Installer progress stalls at "70 files"** — the spinner stopped updating during slow post-file phases (cleanup, verification, CLAUDE.md sync). Now emits `Phase:` progress lines for all 7 update stages, and the installer parses them to update the spinner message (e.g., "Updating project... (70 files) Syncing CLAUDE.md...").
+- **Installer regex missed `Skipped`/`Error` progress lines** — expanded `run_with_progress` regex to match all action types from the progress callback.
+
 ## [0.12.3] — 2026-03-13
 
 ### Added

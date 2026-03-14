@@ -442,9 +442,13 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str]) -> bool:
         file_count = 0
         for line in proc.stdout:
             line = line.strip()
-            if re.search(r"(Updated|Created|Preserved|synced|WARNING):?", line):
+            # Phase markers update the status message (e.g., "Phase: Syncing CLAUDE.md...")
+            if line.startswith("Phase:"):
+                phase_label = line.partition(":")[2].strip()
+                ui.update_spinner(f"{fallback_msg} ({file_count} files) {phase_label}")
+            elif re.search(r"(Updated|Created|Preserved|Skipped|synced|WARNING|Error):?", line):
                 file_count += 1
-                short = re.sub(r"^(Updated: |Created \(new\): |Preserved: )", "", line)[:60]
+                short = re.sub(r"^  *(Updated|Created|Created \(new\)|Preserved|Skipped|Error): ", "", line)[:60]
                 ui.update_spinner(f"{fallback_msg} ({file_count} files) {DIM}{short}{NC}")
     else:
         for line in proc.stdout:

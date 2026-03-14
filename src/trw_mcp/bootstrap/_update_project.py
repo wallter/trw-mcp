@@ -1071,6 +1071,8 @@ def update_project(
     _update_mcp_config(target_dir, result, dry_run, on_progress)
 
     # 9a-9c. Remove stale and transient artifacts
+    if on_progress:
+        on_progress("Phase", "Cleaning stale artifacts...")
     _cleanup_stale_artifacts(target_dir, result, data_dir, dry_run)
 
     # 10. Check installed package version
@@ -1078,6 +1080,8 @@ def update_project(
 
     # 11. Reinstall package if requested
     if pip_install and not dry_run:
+        if on_progress:
+            on_progress("Phase", "Reinstalling package...")
         _pip_install_package(target_dir, result)
 
     # 12. Write installer metadata + VERSION.yaml
@@ -1089,6 +1093,8 @@ def update_project(
 
     # 13. Post-update verification
     if not dry_run:
+        if on_progress:
+            on_progress("Phase", "Verifying installation...")
         _verify_installation(target_dir, result)
 
     # 13b. Post-update CLAUDE.md sync (resolve placeholders, promote learnings)
@@ -1099,6 +1105,8 @@ def update_project(
 
     # 13c. OpenCode updates (FR15: multi-IDE support)
     if not dry_run:
+        if on_progress:
+            on_progress("Phase", "Updating IDE configs...")
         _update_opencode_artifacts(target_dir, result, ide_override=ide)
 
     # 13d. Cursor updates (FR05, FR06, FR07: Cursor IDE support)
