@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,78 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
+# FR04 (PRD-FIX-053): Hash file name within .trw/context/
+_HASH_FILE_NAME = "claude_md_hash.txt"
+
+
+def _compute_sync_hash(
+    high_impact: list[dict[str, object]],
+    patterns: list[dict[str, object]],
+) -> str:
+    """Compute a stable SHA-256 hash of the sync inputs.
+
+    FR04 (PRD-FIX-053): Hash only deterministic inputs — sorted learning
+    summaries and pattern filenames. Exclude timestamps and rendered output
+    to avoid false cache invalidations.
+
+    Returns:
+        64-character hex SHA-256 digest.
+    """
+    h = hashlib.sha256()
+
+    # Sorted learning summaries (deterministic order)
+    learning_summaries = sorted(
+        str(entry.get("summary", "")) for entry in high_impact
+    )
+    for summary in learning_summaries:
+        h.update(summary.encode("utf-8"))
+        h.update(b"\x00")  # null separator
+
+    # Sorted pattern names
+    pattern_names = sorted(str(p.get("name", p.get("id", ""))) for p in patterns)
+    for name in pattern_names:
+        h.update(name.encode("utf-8"))
+        h.update(b"\x00")
+
+    return h.hexdigest()
+
+
+def _hash_file_path(trw_dir: Path) -> Path:
+    """Return the hash file path."""
+    return trw_dir / "context" / _HASH_FILE_NAME
+
+
+def _read_stored_hash(trw_dir: Path) -> str | None:
+    """Read the stored hash from .trw/context/claude_md_hash.txt."""
+    hash_file = _hash_file_path(trw_dir)
+    try:
+        return hash_file.read_text(encoding="utf-8").strip() if hash_file.exists() else None
+    except OSError:
+        return None
+
+
+def _write_stored_hash(trw_dir: Path, digest: str) -> None:
+    """Write the hash to .trw/context/claude_md_hash.txt."""
+    hash_file = _hash_file_path(trw_dir)
+    try:
+        hash_file.parent.mkdir(parents=True, exist_ok=True)
+        hash_file.write_text(digest, encoding="utf-8")
+    except OSError:
+        logger.debug("claude_md_hash_write_failed", path=str(hash_file))
+
+
+def invalidate_claude_md_hash(trw_dir: Path) -> None:
+    """Delete the stored hash to force re-render on next sync.
+
+    FR04 (PRD-FIX-053): Called by store_learning, update_learning, and
+    auto_prune_excess_entries to ensure the cache never serves stale content.
+    """
+    hash_file = _hash_file_path(trw_dir)
+    try:
+        hash_file.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("claude_md_hash_invalidate_failed", path=str(hash_file))
+
 
 def execute_claude_md_sync(
     scope: str,
@@ -50,6 +123,10 @@ def execute_claude_md_sync(
 
     Core logic extracted from the ``trw_claude_md_sync`` tool to keep
     ``tools/learning.py`` under 400 lines (Sprint 12 GAP-FR-001).
+
+    FR04 (PRD-FIX-053): Computes a SHA-256 hash of the sync inputs before
+    rendering. If the hash matches the stored hash, returns immediately with
+    ``{"status": "unchanged"}`` without re-rendering the full CLAUDE.md.
 
     Args:
         scope: Sync scope -- "root" or "sub".
@@ -78,6 +155,29 @@ def execute_claude_md_sync(
     high_impact = collect_promotable_learnings(trw_dir, config, reader)
     patterns = collect_patterns(trw_dir, config, reader)
     _arch_data, _conv_data = collect_context_data(trw_dir, config, reader)
+
+    # FR04 (PRD-FIX-053): Content-hash change detection.
+    # Only applies to root scope — sub-CLAUDE.md generation always renders.
+    if scope != "sub":
+        current_hash = _compute_sync_hash(high_impact, patterns)
+        stored_hash = _read_stored_hash(trw_dir)
+        if stored_hash is not None and stored_hash == current_hash:
+            logger.debug("claude_md_sync_cache_hit", hash=current_hash[:12])
+            # Determine target path for the response (consistent with full render)
+            target = project_root / "CLAUDE.md"
+            return {
+                "path": str(target),
+                "scope": scope,
+                "status": "unchanged",
+                "hash": current_hash,
+                "learnings_promoted": len(high_impact),
+                "patterns_included": len(patterns),
+                "total_lines": 0,
+                "llm_used": False,
+                "agents_md_synced": False,
+                "agents_md_path": None,
+                "bounded_contexts_synced": 0,
+            }
 
     llm_summary: str | None = None
     if (high_impact or patterns) and config.llm_enabled and llm.available:  # pragma: no cover
@@ -173,6 +273,11 @@ def execute_claude_md_sync(
         merge_trw_section(agents_target, trw_section, max_lines)
         agents_md_synced = True
         agents_md_path = str(agents_target)
+
+    # FR04 (PRD-FIX-053): Store hash after successful render (root scope only).
+    if scope != "sub":
+        rendered_hash = _compute_sync_hash(high_impact, patterns)
+        _write_stored_hash(trw_dir, rendered_hash)
 
     logger.info(
         "trw_claude_md_synced",

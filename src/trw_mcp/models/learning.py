@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -78,6 +79,9 @@ class LearningEntry(BaseModel):
         description="IDs of learnings consolidated into this entry (source entries).",
     )
     consolidated_into: str | None = None
+
+    # PRD-FIX-052-FR02: Impact tier label (assigned during deliver tier sweep)
+    impact_tier: Literal["critical", "high", "medium", "low", "?"] = "?"
 
 
 class LearningIndex(BaseModel):

@@ -7,6 +7,7 @@ All state persistence goes through this module. Writes are atomic
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import fcntl
 import json
 import os
@@ -25,6 +26,28 @@ from trw_mcp.exceptions import StateError
 # PRD-CORE-001: Base MCP tool suite — atomic file state persistence
 
 logger = structlog.get_logger()
+
+# PRD-FIX-053-FR06: Contextvars flag to suppress FileEventLogger.log_event()
+# during internal persistence operations. Set True inside write_yaml/append_jsonl
+# so that any log_event calls triggered by those paths don't write to
+# session-events.jsonl. Implemented via contextvars so it is thread-safe and
+# call-stack scoped (resets automatically on context exit).
+_suppress_internal_events: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_suppress_internal_events", default=False,
+)
+
+# Internal event types that are suppressed when _suppress_internal_events is set.
+# User-facing tool events (tool_invocation, session_start, checkpoint, etc.) are
+# NOT in this list and will never be suppressed.
+INTERNAL_EVENT_TYPES: frozenset[str] = frozenset({
+    "jsonl_appended",
+    "yaml_written",
+    "vector_upserted",
+    "index_synced",
+    "dedup_run",
+    "tier_updated",
+})
+
 
 def _new_yaml() -> YAML:
     """Create a thread-safe YAML instance.
@@ -334,6 +357,29 @@ class FileStateWriter:
 
 
 @contextlib.contextmanager
+def suppress_internal_events() -> Generator[None, None, None]:
+    """Context manager that suppresses internal event types in FileEventLogger.
+
+    PRD-FIX-053-FR06: Set inside internal persistence operations so that any
+    FileEventLogger.log_event() calls triggered by those paths skip writing
+    INTERNAL_EVENT_TYPES to session-events.jsonl.
+
+    Uses contextvars so the flag is thread-safe and call-stack scoped —
+    it resets automatically when the with-block exits.
+
+    Example::
+
+        with suppress_internal_events():
+            writer.write_yaml(path, data)  # no yaml_written event emitted
+    """
+    token = _suppress_internal_events.set(True)
+    try:
+        yield
+    finally:
+        _suppress_internal_events.reset(token)
+
+
+@contextlib.contextmanager
 def lock_for_rmw(path: Path) -> Generator[Path, None, None]:
     """Advisory exclusive lock for read-modify-write cycles.
 
@@ -377,11 +423,17 @@ class FileEventLogger:
     ) -> None:
         """Log a structured event to events.jsonl.
 
+        PRD-FIX-053-FR06: When _suppress_internal_events is True in the current
+        context and event_type is in INTERNAL_EVENT_TYPES, the event is not
+        written to disk. User-facing tool events are never suppressed.
+
         Args:
             events_path: Path to events.jsonl file.
             event_type: Event type identifier (e.g., "run_init", "phase_enter").
             data: Additional event data.
         """
+        if _suppress_internal_events.get() and event_type in INTERNAL_EVENT_TYPES:
+            return
         record: dict[str, object] = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "event": event_type,

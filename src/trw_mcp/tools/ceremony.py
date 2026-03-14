@@ -122,7 +122,8 @@ def _get_run_status(run_dir: Path) -> dict[str, object]:
             data = reader.read_yaml(run_yaml)
             result["phase"] = str(data.get("phase", "unknown"))
             result["status"] = str(data.get("status", "unknown"))
-            result["task_name"] = str(data.get("task_name", ""))
+            # FIX-050-FR03: RunState model uses field "task", not "task_name".
+            result["task_name"] = str(data.get("task", ""))
             if "owner_session_id" in data:
                 result["owner_session_id"] = data["owner_session_id"]
             # INFRA-036-FR05: Include wave status in session start
@@ -374,6 +375,20 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, telemetry publish must not block session start
             logger.debug("session_telemetry_failed", exc_info=True)
 
+        # Step 3c: Increment sessions_tracked counter (FIX-050-FR06)
+        try:
+            from trw_mcp.state.analytics.counters import increment_session_start_counter
+            increment_session_start_counter(resolve_trw_dir())
+        except Exception:  # justified: fail-open, counter increment must not block session start
+            logger.debug("session_counter_increment_failed", exc_info=True)
+
+        # Step 3d: One-time sanitization of test-polluted ceremony feedback (FIX-050-FR07)
+        try:
+            from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
+            sanitize_ceremony_feedback(resolve_trw_dir())
+        except Exception:  # justified: fail-open, sanitization must not block session start
+            logger.debug("ceremony_feedback_sanitize_failed", exc_info=True)
+
         # Steps 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings)
         try:
             maintenance = run_auto_maintenance(
@@ -399,6 +414,19 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     results["auto_recall_count"] = len(phase_recalled)
         except Exception:  # justified: fail-open, auto-recall must not block session start
             logger.debug("session_auto_recall_failed", exc_info=True)
+
+        # FR01 (PRD-FIX-053): Embed health advisory for agents.
+        # Always included — fail-open so advisory never blocks session start.
+        try:
+            from trw_mcp.state.memory_adapter import check_embeddings_status
+            results["embed_health"] = check_embeddings_status()
+        except Exception:  # justified: fail-open, embed health check must not block session start
+            results["embed_health"] = {
+                "enabled": False,
+                "available": False,
+                "advisory": "",
+                "recent_failures": 0,
+            }
 
         results["errors"] = errors
         results["success"] = len(errors) == 0

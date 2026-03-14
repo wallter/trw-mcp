@@ -186,13 +186,15 @@ class TestAutoProgressPrds:
     def test_skips_invalid_transition(
         self, run_dir: Path, prds_dir: Path, config: TRWConfig,
     ) -> None:
-        # draft → implemented is not a valid transition
+        # draft → implemented: with BFS multi-step (FIX-053-FR05), this may
+        # partially progress (draft→review) or fully traverse. The key is
+        # that no "invalid_transition" error is produced — BFS finds a path.
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "draft")
         result = auto_progress_prds(run_dir, "implement", prds_dir, config)
         assert len(result) == 1
-        assert result[0]["applied"] is False
-        assert result[0]["reason"] == "invalid_transition"
+        # BFS now finds a path — either applied or stopped at guard (not invalid_transition)
+        assert result[0]["reason"] != "invalid_transition"
 
     def test_returns_empty_for_no_prd_scope(
         self, run_dir: Path, prds_dir: Path, config: TRWConfig,

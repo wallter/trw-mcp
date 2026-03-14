@@ -23,6 +23,7 @@ from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.scoring import _days_since_access
 from trw_mcp.state.dedup import cosine_similarity
+from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -554,6 +555,93 @@ class TierManager:
                 results.append(data)
 
         return results
+
+    # -----------------------------------------------------------------------
+    # PRD-FIX-052-FR01: Impact Tier Label Assignment
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_impact_tier(impact: float) -> str:
+        """Return the impact tier label for a given impact score.
+
+        Thresholds per PRD-FIX-052-FR01:
+          critical >= 0.9
+          high     >= 0.7
+          medium   >= 0.4
+          low      < 0.4
+
+        Args:
+            impact: Entry impact score in [0.0, 1.0].
+
+        Returns:
+            One of {"critical", "high", "medium", "low"}.
+        """
+        if impact >= 0.9:
+            return "critical"
+        if impact >= 0.7:
+            return "high"
+        if impact >= 0.4:
+            return "medium"
+        return "low"
+
+    def assign_impact_tiers(self, trw_dir: Path) -> dict[str, int]:
+        """Assign impact_tier labels to all active learning entries.
+
+        Iterates over active entries via list_active_learnings(), computes
+        the tier from the impact score, and writes the impact_tier field
+        back to the YAML file atomically. Skips entries with no YAML file.
+
+        Per-entry failures are logged but do not abort the pass (fail-open).
+
+        Args:
+            trw_dir: Path to the .trw directory.
+
+        Returns:
+            Dict with per-tier counts: {"critical": N, "high": N, "medium": N, "low": N}.
+        """
+        import time
+
+        cfg = self._config or get_config()
+        entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
+        distribution: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        t0 = time.monotonic()
+
+        try:
+            active_entries = list_active_learnings(trw_dir)
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.warning("assign_impact_tiers_list_failed", exc_info=True)
+            return distribution
+
+        for data in active_entries:
+            entry_id = str(data.get("id", ""))
+            if not entry_id:
+                continue
+
+            impact = max(0.0, min(1.0, float(str(data.get("impact", 0.5)))))
+            tier = self._compute_impact_tier(impact)
+
+            # Derive YAML path using same slug convention as rest of codebase
+            yaml_path = entries_dir / f"{re.sub(r'[^a-zA-Z0-9_\-]', '-', entry_id)}.yaml"
+            if not yaml_path.exists():
+                logger.debug("assign_impact_tiers_no_yaml", entry_id=entry_id)
+                continue
+
+            try:
+                file_data = self._reader.read_yaml(yaml_path)
+                file_data["impact_tier"] = tier
+                self._writer.write_yaml(yaml_path, file_data)
+                distribution[tier] += 1
+            except Exception:  # noqa: BLE001 — fail-open per-entry
+                logger.warning(
+                    "assign_impact_tiers_write_failed",
+                    entry_id=entry_id,
+                    path=str(yaml_path),
+                    exc_info=True,
+                )
+
+        duration_ms = round((time.monotonic() - t0) * 1000, 2)
+        logger.info("tier_assignment_complete", distribution=distribution, duration_ms=duration_ms)
+        return distribution
 
     # -----------------------------------------------------------------------
     # Sweep — FR04 / FR06

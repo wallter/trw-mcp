@@ -50,6 +50,31 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
 
+# PRD-FIX-052-FR05: Solution-indicator patterns for auto-'pattern' tag suggestion
+import re as _re
+
+_SOLUTION_PATTERNS = _re.compile(
+    r"(?:use .+ instead|prefer |always |best practice|"
+    r"recommended approach|the fix is|pattern:)",
+    flags=_re.IGNORECASE | _re.VERBOSE,
+)
+
+
+def _is_solution_summary(summary: str) -> bool:
+    """Return True if the summary matches solution-indicator patterns (FR05).
+
+    Heuristic keyword detection: checks for patterns like 'use X instead of Y',
+    'prefer X', 'always X', 'best practice', 'recommended approach', 'the fix is',
+    or 'pattern:'.
+
+    Args:
+        summary: The learning summary text to analyze.
+
+    Returns:
+        True if summary appears to describe a solution/best practice.
+    """
+    return bool(_SOLUTION_PATTERNS.search(summary))
+
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
@@ -82,6 +107,7 @@ def register_learning_tools(server: FastMCP) -> None:
         shard_id: str | None = None,
         source_type: str = "agent",
         source_identity: str = "",
+        consolidated_from: list[str] | None = None,
     ) -> dict[str, object]:
         """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
@@ -98,6 +124,7 @@ def register_learning_tools(server: FastMCP) -> None:
             shard_id: Optional shard identifier for sub-agent attribution.
             source_type: Learning provenance — "human" or "agent".
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
+            consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
         """
         # Input validation (PRD-QUAL-042-FR06): impact bounds
         impact = max(0.0, min(1.0, impact))
@@ -126,6 +153,12 @@ def register_learning_tools(server: FastMCP) -> None:
             except (ImportError, OSError, ValueError, TypeError):
                 logger.debug("learning_migration_failed", exc_info=True)
 
+        # PRD-FIX-052-FR05: Pattern tag auto-suggestion for solution summaries
+        safe_tags = list(tags or [])
+        if _is_solution_summary(summary) and "pattern" not in safe_tags:
+            safe_tags.append("pattern")
+            logger.debug("pattern_tag_auto_added", summary=summary[:60])
+
         # Bayesian calibration of impact score (PRD-CORE-034)
         calibrated_impact = calibrate_impact(impact, config)
 
@@ -143,7 +176,7 @@ def register_learning_tools(server: FastMCP) -> None:
         learning_id = generate_learning_id()
 
         # Semantic dedup check (PRD-CORE-042) — must run BEFORE storing
-        safe_tags = tags or []
+        # safe_tags already set above (with optional pattern tag auto-suggestion)
         safe_evidence = evidence or []
         dedup_result = check_and_handle_dedup(
             LearningParams(
@@ -176,6 +209,53 @@ def register_learning_tools(server: FastMCP) -> None:
             source_identity=source_identity,
         )
 
+        # PRD-FIX-052-FR04: Auto-obsolete superseded entries on compendium creation
+        # Best-effort: each entry is processed independently; failures are logged and skipped.
+        if consolidated_from:
+            from datetime import date as _date
+            from trw_mcp.state.analytics import find_entry_by_id
+            for ref_id in consolidated_from:
+                try:
+                    update_result = adapter_update(
+                        trw_dir,
+                        learning_id=ref_id,
+                        status="obsolete",
+                    )
+                    if update_result.get("status") == "updated":
+                        # Dual-write: also update the YAML backup
+                        try:
+                            found = find_entry_by_id(entries_dir, ref_id)
+                            if found is not None:
+                                entry_path_ref, data_ref = found
+                                data_ref["status"] = "obsolete"
+                                data_ref["resolved_at"] = _date.today().isoformat()
+                                data_ref["updated"] = _date.today().isoformat()
+                                writer.write_yaml(entry_path_ref, data_ref)
+                        except (OSError, ValueError, TypeError):
+                            logger.debug(
+                                "auto_obsolete_yaml_backup_failed",
+                                ref_id=ref_id,
+                                exc_info=True,
+                            )
+                        logger.info(
+                            "auto_obsolete_marked",
+                            ref_id=ref_id,
+                            compendium_id=learning_id,
+                        )
+                    else:
+                        logger.warning(
+                            "auto_obsolete_not_found",
+                            ref_id=ref_id,
+                            compendium_id=learning_id,
+                        )
+                except Exception:  # noqa: BLE001 — NFR02-R5: best-effort per entry
+                    logger.warning(
+                        "auto_obsolete_failed",
+                        ref_id=ref_id,
+                        compendium_id=learning_id,
+                        exc_info=True,
+                    )
+
         # Save YAML backup via analytics (dual-write for rollback safety)
         try:
             from trw_mcp.models.learning import LearningEntry
@@ -189,6 +269,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 shard_id=shard_id,
                 source_type=source_type,
                 source_identity=source_identity,
+                consolidated_from=consolidated_from or [],
             )
             entry_path = save_learning_entry(trw_dir, entry)
             update_analytics(trw_dir, 1)

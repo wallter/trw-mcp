@@ -70,7 +70,7 @@ def run_dir(tmp_path: Path) -> Path:
     meta = d / "meta"
     meta.mkdir(parents=True)
     (meta / "run.yaml").write_text(
-        "run_id: test-run\nstatus: active\nphase: implement\ntask_name: test-task\n",
+        "run_id: test-run\nstatus: active\nphase: implement\ntask: test-task\n",
         encoding="utf-8",
     )
     # Create empty events.jsonl
@@ -1067,6 +1067,49 @@ class TestDeliverTelemetryIntegration:
         assert "batch boom" in log_entry["results"]["batch_send"]["error"]
         # Other steps still ran
         assert log_entry["results"]["telemetry"]["status"] == "skipped"
+
+    def test_step_tier_sweep_includes_impact_tier_distribution(
+        self, tmp_path: Path,
+    ) -> None:
+        """PRD-FIX-052-FR07: _step_tier_sweep result includes impact_tier_distribution dict."""
+        from unittest.mock import MagicMock
+        from trw_mcp.tools._deferred_delivery import _step_tier_sweep
+
+        trw_dir = _make_deferred_trw_dir(tmp_path)
+        fake_sweep_result = MagicMock()
+        fake_sweep_result.promoted = 0
+        fake_sweep_result.demoted = 1
+        fake_sweep_result.purged = 0
+        fake_sweep_result.errors = 0
+
+        fake_distribution: dict[str, int] = {
+            "critical": 2,
+            "high": 5,
+            "medium": 10,
+            "low": 3,
+        }
+
+        with (
+            patch(
+                "trw_mcp.state.tiers.TierManager.sweep",
+                return_value=fake_sweep_result,
+            ),
+            patch(
+                "trw_mcp.state.tiers.TierManager.assign_impact_tiers",
+                return_value=fake_distribution,
+            ),
+        ):
+            result = _step_tier_sweep(trw_dir)
+
+        assert result["status"] == "success"
+        assert "impact_tier_distribution" in result, "FR07: distribution must be in result"
+        dist = result["impact_tier_distribution"]
+        assert isinstance(dist, dict)
+        assert set(dist.keys()) == {"critical", "high", "medium", "low"}
+        assert dist["critical"] == 2
+        assert dist["high"] == 5
+        assert dist["medium"] == 10
+        assert dist["low"] == 3
 
     def test_deliver_critical_steps_completed_count(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,

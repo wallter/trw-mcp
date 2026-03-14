@@ -169,6 +169,8 @@ _UNIT_FILES: frozenset[str] = frozenset({
     "test_telemetry_remote_recall.py",
     "test_validation_v2.py",
     "test_prd_utils_edge.py",
+    "test_fix055_traceability_lang.py",
+    "test_core080_template_variants.py",
 })
 
 _SLOW_FILES: frozenset[str] = frozenset({
@@ -256,6 +258,52 @@ def _reset_memory_backend() -> Iterator[None]:
     yield
     _join_and_reset_deferred()
     reset_backend()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Redirect all resolve_trw_dir() and resolve_project_root() calls to tmp dirs.
+
+    Prevents test runs from writing ceremony-feedback.yaml, tool-telemetry.jsonl,
+    and analytics.yaml to the real project's .trw/ directory (PRD-FIX-050-FR01/FR02).
+
+    Patches both the source module (_paths) and all late-import consumers in tools/.
+    The _step_ceremony_feedback function uses `import trw_mcp.tools.ceremony as _cer;
+    _cer.resolve_trw_dir()` — this patch covers that code path via ceremony module.
+    """
+    test_root = tmp_path / "isolated_project"
+    test_root.mkdir()
+    test_trw_dir = test_root / ".trw"
+    test_trw_dir.mkdir()
+    (test_trw_dir / "context").mkdir()
+    (test_trw_dir / "logs").mkdir()
+    (test_trw_dir / "learnings" / "entries").mkdir(parents=True)
+
+    def _fake_trw_dir() -> Path:
+        return test_trw_dir
+
+    def _fake_project_root() -> Path:
+        return tmp_path
+
+    # Patch source module
+    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", _fake_trw_dir)
+    monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", _fake_project_root)
+
+    # Patch late-import consumers in tools/ (critical for _step_ceremony_feedback)
+    monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", _fake_trw_dir)
+    monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_project_root", _fake_project_root)
+
+    # Also patch tools/learning and tools/requirements to stay consistent
+    try:
+        monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", _fake_trw_dir)
+    except AttributeError:
+        pass  # Not yet imported
+    try:
+        monkeypatch.setattr("trw_mcp.tools.requirements.resolve_project_root", _fake_project_root)
+    except AttributeError:
+        pass  # Not yet imported
+
+    yield
 
 
 @pytest.fixture

@@ -106,6 +106,62 @@ def _load_active_entries(
     return entries
 
 
+def _tag_overlap_clusters(
+    entries: list[dict[str, object]],
+    *,
+    min_cluster_size: int = 3,
+    min_shared_tags: int = 2,
+) -> list[list[dict[str, object]]]:
+    """Cluster entries by tag overlap using union-find.
+
+    PRD-FIX-052-FR03: Fallback clustering when embeddings are unavailable.
+    Two entries are considered similar if they share >= *min_shared_tags* tags.
+    Clusters smaller than *min_cluster_size* are discarded.
+
+    Args:
+        entries: List of entry dicts with "tags" field.
+        min_cluster_size: Minimum cluster size to keep (default 3).
+        min_shared_tags: Minimum number of shared tags to merge entries (default 2).
+
+    Returns:
+        List of clusters; each cluster is a list of entry dicts.
+    """
+    n = len(entries)
+    if n < min_cluster_size:
+        return []
+
+    # Pre-compute tag sets for each entry
+    tag_sets: list[set[str]] = [
+        {str(t) for t in (e.get("tags") or [] if isinstance(e.get("tags"), list) else [])}
+        for e in entries
+    ]
+
+    # Union-Find parent array with path compression
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        if parent[i] != i:
+            parent[i] = find(parent[i])  # recursive path compression
+        return parent[i]
+
+    # Union entries with sufficient tag overlap
+    for i in range(n):
+        for j in range(i + 1, n):
+            if len(tag_sets[i] & tag_sets[j]) >= min_shared_tags:
+                pi, pj = find(i), find(j)
+                if pi != pj:
+                    parent[pi] = pj
+
+    # Collect groups by root
+    groups: dict[int, list[dict[str, object]]] = {}
+    for i, entry in enumerate(entries):
+        root = find(i)
+        groups.setdefault(root, []).append(entry)
+
+    # Return clusters above minimum size
+    return [cluster for cluster in groups.values() if len(cluster) >= min_cluster_size]
+
+
 def find_clusters(
     entries_dir: Path,
     reader: FileStateReader,
@@ -121,24 +177,47 @@ def find_clusters(
     clustering: two entries belong to the same cluster when every pair
     in the group has cosine similarity >= *similarity_threshold*.
 
+    When embeddings are unavailable, falls back to tag-overlap clustering
+    (PRD-FIX-052-FR03): entries sharing >= 2 tags are considered similar.
+    The max_entries cap is NOT applied to the tag-based path (cap was for
+    embedding API cost, irrelevant for local tag comparison).
+
     Args:
         entries_dir: Path to the learnings/entries/ directory.
         reader: FileStateReader for loading YAML entry files.
         similarity_threshold: Minimum pairwise similarity to merge into cluster.
         min_cluster_size: Clusters smaller than this are discarded.
-        max_entries: Cap on number of entries loaded (sorted alphabetically).
+        max_entries: Cap on number of entries loaded for the embedding path.
 
     Returns:
         List of clusters; each cluster is a list of entry dicts.
-        Returns [] when embeddings are unavailable.
     """
     from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch, embedding_available
 
     _t0 = time.monotonic()
 
     if not embedding_available():
-        logger.debug("consolidation_embed_unavailable")
-        return []
+        logger.debug("consolidation_embed_unavailable_using_tag_fallback")
+        if not entries_dir.exists():
+            return []
+        # Tag-fallback: load ALL active entries (no max_entries cap)
+        all_entries = _load_active_entries(entries_dir, reader, max_entries=10_000)
+        try:
+            clusters = _tag_overlap_clusters(
+                all_entries,
+                min_cluster_size=min_cluster_size,
+                min_shared_tags=2,
+            )
+        except Exception:  # noqa: BLE001 — NFR02-R3: fail-open
+            logger.warning("tag_overlap_clustering_failed", exc_info=True)
+            return []
+        logger.debug(
+            "find_clusters_tag_fallback_complete",
+            duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+            cluster_count=len(clusters),
+            entry_count=len(all_entries),
+        )
+        return clusters
 
     if not entries_dir.exists():
         return []

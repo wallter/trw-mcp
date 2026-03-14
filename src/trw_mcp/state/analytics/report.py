@@ -39,6 +39,7 @@ _CEREMONY_WEIGHTS: dict[str, int] = {
 
 def compute_ceremony_score(
     events: list[dict[str, object]],
+    trw_dir: Path | None = None,
 ) -> dict[str, object]:
     """Compute ceremony compliance score (0-100) from events.
 
@@ -50,11 +51,24 @@ def compute_ceremony_score(
     - build_check_complete present: 10 points
 
     Args:
-        events: List of event dicts from events.jsonl.
+        events: List of event dicts from events.jsonl (run-level).
+        trw_dir: Optional .trw directory path. When provided, also reads
+            ``{trw_dir}/context/session-events.jsonl`` and merges those events
+            with the run-level events before scoring. This is required because
+            ``trw_session_start`` fires before ``trw_init`` creates the run
+            directory, so the session_start event is written to the fallback
+            session-events.jsonl path (FIX-051-FR01/FR05).
 
     Returns:
         Dict with score, per-component booleans, and counts.
     """
+    # FIX-051-FR01/FR05: Merge session-level events from the fallback path.
+    # Extracted to shared helper _merge_session_events in _deferred_delivery.py
+    if trw_dir is not None:
+        from trw_mcp.tools._deferred_delivery import _merge_session_events
+        events = _merge_session_events(list(events), trw_dir)
+    else:
+        events = list(events)
     has_session_start = False
     has_deliver = False
     checkpoint_count = 0
@@ -147,7 +161,7 @@ def scan_all_runs(
             continue
         for run_dir in sorted(runs_dir.iterdir()):
             try:
-                run_data = _analyze_single_run(run_dir)
+                run_data = _analyze_single_run(run_dir, trw_dir=resolve_trw_dir())
                 if run_data is not None:
                     runs.append(run_data)
             except Exception as exc:  # justified: scan-resilience, skip bad run dirs without aborting report
@@ -190,7 +204,7 @@ def scan_all_runs(
     return report
 
 
-def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
+def _analyze_single_run(run_dir: Path, trw_dir: Path | None = None) -> dict[str, object] | None:
     """Analyze a single run directory and return per-run metrics.
 
     Returns None if run.yaml doesn't exist or cannot be read.
@@ -220,7 +234,7 @@ def _analyze_single_run(run_dir: Path) -> dict[str, object] | None:
 
     # Compute ceremony score
     try:
-        ceremony = compute_ceremony_score(events)
+        ceremony = compute_ceremony_score(events, trw_dir=trw_dir)
     except Exception:  # justified: fail-open, ceremony score computation must not block analytics
         ceremony = {
             "score": None,

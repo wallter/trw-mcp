@@ -2,16 +2,29 @@
 
 Implements auto_progress_prds() which evaluates state-machine transitions
 for governing PRDs when a phase gate is passed (PRD-CORE-025).
+
+FR05 (PRD-FIX-053): Multi-step BFS traversal — when the target status is
+not directly reachable, compute the shortest valid path and apply each
+intermediate transition in sequence, stopping at the first guard failure.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
+from trw_mcp.state.prd_utils import (
+    VALID_TRANSITIONS,
+    check_transition_guards,
+    discover_governing_prds,
+    is_valid_transition,
+    parse_frontmatter,
+    update_frontmatter,
+)
 
 logger = structlog.get_logger()
 
@@ -29,6 +42,49 @@ _TERMINAL_STATUSES: frozenset[PRDStatus] = frozenset(
 )
 
 
+def _compute_transition_path(
+    current: PRDStatus,
+    target: PRDStatus,
+) -> list[PRDStatus] | None:
+    """BFS to find the shortest path from current to target via VALID_TRANSITIONS.
+
+    FR05 (PRD-FIX-053): Used when ``is_valid_transition(current, target)``
+    returns False — finds the sequence of intermediate states to step through.
+
+    Only follows forward-progression edges (skips backwards/merge/deprecate
+    edges like REVIEW→DRAFT) to avoid unintended regressions.
+
+    Args:
+        current: Starting PRD status.
+        target: Desired PRD status.
+
+    Returns:
+        List of intermediate statuses to traverse (NOT including current,
+        but INCLUDING target), or None if no path exists.
+    """
+    # Forward-only edges: statuses that represent genuine progression
+    _FORWARD_STATUSES = {PRDStatus.REVIEW, PRDStatus.APPROVED, PRDStatus.IMPLEMENTED, PRDStatus.DONE}
+
+    # BFS: queue of (node, path_to_node)
+    queue: deque[tuple[PRDStatus, list[PRDStatus]]] = deque([(current, [])])
+    visited: set[PRDStatus] = {current}
+
+    while queue:
+        node, path = queue.popleft()
+        for neighbor in VALID_TRANSITIONS.get(node, set()):
+            if neighbor in visited:
+                continue
+            new_path = path + [neighbor]
+            if neighbor == target:
+                return new_path
+            # Only continue through forward-progression statuses
+            if neighbor in _FORWARD_STATUSES:
+                visited.add(neighbor)
+                queue.append((neighbor, new_path))
+
+    return None
+
+
 def auto_progress_prds(
     run_path: Path,
     phase: str,
@@ -43,6 +99,11 @@ def auto_progress_prds(
     state-machine transition implied by the completed phase exit, check
     transition guards, and (unless *dry_run*) write the new status.
 
+    FR05 (PRD-FIX-053): When the target status is not directly reachable from
+    the current status, compute the BFS shortest path and apply each
+    intermediate transition in sequence. Stops at the first guard failure and
+    reports the partial progression result.
+
     Args:
         run_path: Path to the active run directory.
         phase: Phase that just passed exit (e.g., ``"plan"``).
@@ -54,14 +115,6 @@ def auto_progress_prds(
         List of dicts with keys ``prd_id``, ``from_status``, ``to_status``,
         ``applied``, and optionally ``guard_failed``, ``would_apply``, ``reason``.
     """
-    from trw_mcp.state.prd_utils import (
-        check_transition_guards,
-        discover_governing_prds,
-        is_valid_transition,
-        parse_frontmatter,
-        update_frontmatter,
-    )
-
     target_status = PHASE_STATUS_MAPPING.get(phase)
     if target_status is None:
         return []
@@ -98,50 +151,95 @@ def auto_progress_prds(
             if current_status == target_status:
                 continue
 
-            # Check state machine validity
-            if not is_valid_transition(current_status, target_status):
-                results.append({
+            # Determine the transition path to apply
+            transition_path: list[PRDStatus]
+            if is_valid_transition(current_status, target_status):
+                # Direct transition available — single step
+                transition_path = [target_status]
+            else:
+                # FR05 (PRD-FIX-053): Compute multi-step path via BFS
+                bfs_path = _compute_transition_path(current_status, target_status)
+                if bfs_path is None:
+                    # No path found — log and skip
+                    logger.warning(
+                        "auto_progress_no_path",
+                        prd_id=prd_id,
+                        from_status=current_str,
+                        to_status=target_status.value,
+                    )
+                    results.append({
+                        "prd_id": prd_id,
+                        "from_status": current_str,
+                        "to_status": target_status.value,
+                        "applied": False,
+                        "reason": "no_transition_path",
+                    })
+                    continue
+                transition_path = bfs_path
+
+            # Apply each step in the path
+            step_current = current_status
+            step_current_str = current_str
+            final_applied = False
+            stopped_at: str | None = None
+            stop_reason: str | None = None
+
+            for step_target in transition_path:
+                # Re-read content for accurate guard check at each step
+                content = prd_file.read_text(encoding="utf-8")
+                guard = check_transition_guards(
+                    step_current, step_target, content, config,
+                )
+                if not guard.allowed:
+                    # Guard failed — stop here (partial progression)
+                    stopped_at = step_current.value
+                    stop_reason = guard.reason
+                    break
+
+                if not dry_run:
+                    update_frontmatter(prd_file, {"status": step_target.value})
+
+                step_current = step_target
+                step_current_str = step_target.value
+                final_applied = True
+
+            if final_applied:
+                entry: dict[str, object] = {
                     "prd_id": prd_id,
                     "from_status": current_str,
-                    "to_status": target_status.value,
-                    "applied": False,
-                    "reason": "invalid_transition",
-                })
-                continue
-
-            # Check transition guards
-            guard = check_transition_guards(
-                current_status, target_status, content, config,
-            )
-            if not guard.allowed:
-                entry: dict[str, object] = {
+                    "to_status": step_current_str,
+                    "applied": True,
+                }
+                if dry_run:
+                    entry["applied"] = False
+                    entry["would_apply"] = True
+                # Report partial progression if stopped before target
+                if stopped_at is not None:
+                    entry["partial"] = True
+                    entry["stopped_at"] = stopped_at
+                    entry["stop_reason"] = stop_reason
+                results.append(entry)
+            elif stopped_at is not None:
+                # Guard failed on the very first step
+                entry = {
                     "prd_id": prd_id,
                     "from_status": current_str,
                     "to_status": target_status.value,
                     "applied": False,
                     "guard_failed": True,
-                    "reason": guard.reason,
+                    "reason": stop_reason or "guard_failed",
                 }
                 if dry_run:
                     entry["would_apply"] = False
                 results.append(entry)
-                continue
-
-            if dry_run:
+            else:
+                # No steps were applied and no guard failed — shouldn't happen
                 results.append({
                     "prd_id": prd_id,
                     "from_status": current_str,
                     "to_status": target_status.value,
                     "applied": False,
-                    "would_apply": True,
-                })
-            else:
-                update_frontmatter(prd_file, {"status": target_status.value})
-                results.append({
-                    "prd_id": prd_id,
-                    "from_status": current_str,
-                    "to_status": target_status.value,
-                    "applied": True,
+                    "reason": "no_steps_applied",
                 })
 
         except (OSError, ValueError, TypeError) as exc:

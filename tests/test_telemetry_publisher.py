@@ -109,7 +109,7 @@ class TestPublishNoEntriesDir:
 
 class TestPublishFiltering:
     def test_publish_skips_low_impact(self, tmp_path: Path) -> None:
-        """Learnings with impact < 0.7 are skipped."""
+        """Learnings with impact < 0.5 are skipped (PRD-FIX-052-FR06: threshold is now 0.5)."""
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -118,7 +118,7 @@ class TestPublishFiltering:
         )
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
-        _write_learning(entries_dir, "low-impact.yaml", _make_learning(impact=0.5))
+        _write_learning(entries_dir, "low-impact.yaml", _make_learning(impact=0.4))
 
         with (
             patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
@@ -131,6 +131,30 @@ class TestPublishFiltering:
         assert result["skipped"] == 1
         assert result["errors"] == 0
         assert result["skipped_reason"] is None
+
+    def test_publish_threshold_lowered_publishes_mid_impact(self, tmp_path: Path) -> None:
+        """PRD-FIX-052-FR06: entries with impact 0.5-0.69 are now published (threshold lowered from 0.7)."""
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig(
+            platform_url="https://api.example.com",
+            platform_telemetry_enabled=True,
+        )
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        # Two entries in the formerly-skipped 0.5-0.69 band
+        _write_learning(entries_dir, "mid-a.yaml", _make_learning(impact=0.5))
+        _write_learning(entries_dir, "mid-b.yaml", _make_learning(impact=0.65))
+
+        with (
+            patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
+            patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", return_value=True),
+        ):
+            result = publish_learnings()
+
+        assert result["published"] == 2, "entries with impact >= 0.5 should now be published"
+        assert result["skipped"] == 0
 
     def test_publish_skips_non_active_resolved(self, tmp_path: Path) -> None:
         """Resolved learnings are skipped."""

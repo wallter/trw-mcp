@@ -4,6 +4,46 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-03-14
+
+### Added
+
+- **Test isolation autouse fixture** (PRD-FIX-050-FR01/FR02) — prevents pytest runs from polluting production `.trw/context/` analytics files. Patches `resolve_trw_dir()` and `resolve_project_root()` across all late-import consumers.
+- **Ceremony scoring reads session-events.jsonl** (PRD-FIX-051-FR01/FR05) — `compute_ceremony_score()` now merges events from both run-level `events.jsonl` and the fallback `session-events.jsonl`, fixing scores that were always 0.0 because `trw_session_start` fires before `trw_init`.
+- **Zero-score escalation guard** (PRD-FIX-051-FR04) — `check_auto_escalation()` returns `None` when all scores are 0.0 (corrupted data), preventing spurious STANDARD→COMPREHENSIVE escalations.
+- **De-escalation wiring** (PRD-FIX-051-FR03) — ceremony reduction proposals are now generated during delivery and persisted to `ceremony-overrides.yaml` on disk (thread-safe across daemon/main threads).
+- **Task description pass-through** (PRD-FIX-051-FR06) — `classify_task_class()` now accepts `task_description` parameter, using objective keywords for more accurate classification beyond task name alone.
+- **Impact tier auto-assignment** (PRD-FIX-052-FR01/FR02) — `assign_impact_tiers()` labels entries as `critical/high/medium/low` based on impact score. Uses `Literal` type enforcement on `LearningEntry.impact_tier`.
+- **Tag-based consolidation fallback** (PRD-FIX-052-FR03) — when embeddings are unavailable, consolidation uses Jaccard similarity on tag overlap (no `max_entries` cap for the tag path).
+- **Auto-obsolete on compendium** (PRD-FIX-052-FR04) — when `consolidated_from` is provided to `trw_learn`, source entries are automatically marked obsolete.
+- **Pattern tag auto-suggestion** (PRD-FIX-052-FR05) — heuristic keyword detection adds `"pattern"` tag to solution-oriented learnings (e.g., "use X instead of Y").
+- **Tier distribution in deliver results** (PRD-FIX-052-FR07) — delivery output now includes `impact_tier_distribution` counts.
+- **Embedding health advisory** (PRD-FIX-053-FR01/FR07) — `trw_session_start` response includes `embed_health` dict with `enabled`, `available`, `advisory`, and `recent_failures` fields.
+- **Relaxed trust increment** (PRD-FIX-053-FR02) — trust fires on "productive session" (≥3 learnings + ≥1 checkpoint) even without `build_check`, reading both event files.
+- **claude_md_sync content hash** (PRD-FIX-053-FR04) — SHA-256 hash of inputs skips redundant 50-second renders when nothing changed.
+- **BFS PRD auto-progression** (PRD-FIX-053-FR05) — `auto_progress_prds` uses BFS to find valid multi-step transition paths, stopping at first guard failure instead of returning `invalid_transition`.
+- **Telemetry event separation** (PRD-FIX-053-FR06) — `suppress_internal_events()` context manager via `contextvars` suppresses bookkeeping events (`jsonl_appended`, `yaml_written`, `vector_upserted`) from telemetry logs.
+- **SQLite outcome correlation** (PRD-FIX-053-FR03) — O(1) indexed lookup via `memory_adapter` with YAML fallback for pre-migration entries.
+- **~111 new tests** — zero regressions, +88 net new passing tests vs baseline.
+
+### Fixed
+
+- **Ceremony scoring always 0.0** — root cause: `trw_session_start` event written to `session-events.jsonl` (fallback path) was never read by scoring function.
+- **Task classification always "documentation"** — root cause: `run_state.get("task_name")` used wrong field key (`task_name` vs `task` in RunState model).
+- **Auto-escalation one-way ratchet** — zero-score guard + de-escalation proposal wiring.
+- **outcome_quality hardcoded 0.6** — now derived from build_passed, coverage_delta, critical_findings, mutation_score.
+- **agent_id always "unknown"** — derived from `TRW_AGENT_ID` env, run_id, or `pid-{N}`.
+- **sessions_count always 0** — migrated to `sessions_tracked` (session_start) + `sessions_delivered` (deliver) split.
+- **Test-polluted production data** — `sanitize_ceremony_feedback()` one-time migration removes pytest entries.
+- **Publish threshold too restrictive** — `min_impact` lowered from 0.7 to 0.5.
+- **"add" keyword too broad** in task classification — replaced with "add feature".
+
+### Changed
+
+- **`_merge_session_events()` DRY helper** — extracted shared session-events.jsonl merge logic used by both ceremony scoring and trust increment.
+- **`scan_all_runs` passes `trw_dir`** to `compute_ceremony_score` for accurate analytics reports.
+- **Consolidation `max_entries` cap removed** for tag-based fallback path (cap was for embedding API costs, irrelevant for local tag comparison).
+
 ## [0.12.7] — 2026-03-14
 
 ### Changed

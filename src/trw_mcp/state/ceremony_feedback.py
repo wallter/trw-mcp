@@ -20,6 +20,99 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 logger = structlog.get_logger()
 
 
+def _derive_agent_id(run_id: str | None = None) -> str:
+    """Derive agent_id using priority chain: env var > run_id > pid fallback.
+
+    FIX-050-FR05: Replaces the previous os.environ.get("TRW_AGENT_ID", "unknown")
+    pattern that always returned "unknown".
+
+    Priority:
+    1. TRW_AGENT_ID env var (explicit operator override)
+    2. run_id parameter (from run context, already public in run.yaml)
+    3. f"pid-{os.getpid()}" (ephemeral but non-sensitive fallback)
+    """
+    env_val = os.environ.get("TRW_AGENT_ID", "")
+    if env_val:
+        return env_val
+    if run_id:
+        return run_id
+    return f"pid-{os.getpid()}"
+
+
+def _sanitize_flag_path(trw_dir: Path) -> Path:
+    return trw_dir / "context" / ".sanitized_ceremony_v1"
+
+
+def sanitize_ceremony_feedback(trw_dir: Path) -> dict[str, object]:
+    """Remove test-polluted entries from ceremony-feedback.yaml (FIX-050-FR07).
+
+    Removes entries where run_path contains '/tmp/' or 'pytest', or where
+    session_id is one of the known test sentinel values.
+
+    Uses a flag file to run only once (idempotent). The flag file is written
+    to .trw/context/.sanitized_ceremony_v1 — NOT a field in the YAML.
+
+    Returns a dict with removed_count and skipped (if already run).
+    """
+    flag_path = _sanitize_flag_path(trw_dir)
+    if flag_path.exists():
+        return {"skipped": True, "reason": "already_sanitized"}
+
+    feedback_path = _feedback_path(trw_dir)
+    if not feedback_path.exists():
+        # Write flag so we don't check again
+        writer = FileStateWriter()
+        writer.ensure_dir(flag_path.parent)
+        flag_path.touch()
+        return {"removed_count": 0}
+
+    reader = FileStateReader()
+    writer = FileStateWriter()
+    data = reader.read_yaml(feedback_path)
+
+    if not isinstance(data, dict):
+        flag_path.touch()
+        return {"removed_count": 0}
+
+    _TEST_SESSION_IDS = {"test", "gate-test", "advisory-test"}
+    removed_count = 0
+
+    task_classes = data.get("task_classes", {})
+    if isinstance(task_classes, dict):
+        for class_key, class_data in task_classes.items():
+            if not isinstance(class_data, dict):
+                continue
+            sessions = class_data.get("sessions", [])
+            if not isinstance(sessions, list):
+                continue
+            cleaned: list[dict[str, object]] = []
+            for entry in sessions:
+                if not isinstance(entry, dict):
+                    cleaned.append(entry)
+                    continue
+                run_path = str(entry.get("run_path", ""))
+                session_id = str(entry.get("session_id", ""))
+                if "/tmp/" in run_path or "pytest" in run_path or session_id in _TEST_SESSION_IDS:
+                    removed_count += 1
+                else:
+                    cleaned.append(entry)
+            class_data["sessions"] = cleaned
+
+    writer.ensure_dir(feedback_path.parent)
+    writer.write_yaml(feedback_path, data)
+
+    # Write idempotency flag
+    writer.ensure_dir(flag_path.parent)
+    flag_path.touch()
+
+    logger.info(
+        "ceremony_feedback_sanitized",
+        removed_count=removed_count,
+        trw_dir=str(trw_dir),
+    )
+    return {"removed_count": removed_count}
+
+
 def _get_class_sessions(
     task_class: str,
     feedback_data: dict[str, object],
@@ -63,7 +156,7 @@ _DEFAULT_KEYWORDS: dict[str, list[str]] = {
     ],
     "infrastructure": ["deploy", "migration", "infra", "docker", "ci", "pipeline"],
     "refactor": ["refactor", "cleanup", "simplify", "rename", "extract"],
-    "feature": ["feat", "feature", "add", "implement", "new"],
+    "feature": ["feat", "feature", "add feature", "implement", "new"],
 }
 
 # Priority order for classification
@@ -129,19 +222,22 @@ def record_session_outcome(
     current_tier: str,
     run_path: str,
     session_id: str,
+    task_description: str = "",
 ) -> dict[str, object]:
     """Record a session outcome for ceremony feedback tracking.
 
     Returns the recorded entry.
     """
-    task_class = classify_task_class(task_name)
+    task_class = classify_task_class(task_name, task_description=task_description)
 
-    # Compute outcome_quality (FR02 formula)
-    outcome_quality = (
+    # Compute outcome_quality (FR02 formula).
+    # round(..., 4) avoids IEEE 754 artifacts like 0.6000000000000001 (FIX-050-FR04).
+    outcome_quality = round(
         (0.4 if build_passed else 0.0)
         + (0.2 if coverage_delta >= 0 else 0.0)
         + (0.2 if critical_findings == 0 else 0.0)
-        + (0.2 if mutation_score_ok else 0.0)
+        + (0.2 if mutation_score_ok else 0.0),
+        4,
     )
 
     entry: dict[str, object] = {
@@ -288,6 +384,18 @@ def check_auto_escalation(
     recent = sessions[-window:]
     scores = [_float_field(s, "ceremony_score") for s in recent]
 
+    # FIX-051-FR04: Guard against corrupted all-zero score history.
+    # When ALL window scores are exactly 0.0, this indicates missing/corrupt data
+    # (e.g., session_start events written to session-events.jsonl instead of
+    # events.jsonl), not genuine low ceremony compliance. Skip escalation.
+    if all(s == 0.0 for s in scores):
+        logger.debug(
+            "auto_escalation_skipped_zero_scores",
+            task_class=task_class,
+            window=window,
+        )
+        return None
+
     if all(s < threshold for s in scores):
         current_tier = str(recent[-1].get("current_tier", "STANDARD")).upper()
         if current_tier == "COMPREHENSIVE":
@@ -326,7 +434,7 @@ def apply_auto_escalation(
         new_tier=str(escalation.get("new_tier", "COMPREHENSIVE")),
         triggered_by="auto_escalation",
         proposal_id=None,
-        agent_id=os.environ.get("TRW_AGENT_ID", "unknown"),
+        agent_id=_derive_agent_id(),
     )
 
 
@@ -372,7 +480,7 @@ def approve_proposal(trw_dir: Path, proposal_id: str) -> dict[str, object]:
         new_tier=new_tier,
         triggered_by="human_approved",
         proposal_id=proposal_id,
-        agent_id=os.environ.get("TRW_AGENT_ID", "unknown"),
+        agent_id=_derive_agent_id(),
         change_id=change_id,
     )
 
@@ -420,7 +528,7 @@ def revert_change(trw_dir: Path, change_id: str) -> dict[str, object]:
         new_tier=to_tier,
         triggered_by="human_reverted",
         proposal_id=str(original_entry.get("proposal_id")),
-        agent_id=os.environ.get("TRW_AGENT_ID", "unknown"),
+        agent_id=_derive_agent_id(),
     )
 
     return {"status": "reverted", "task_class": task_class, "restored_tier": to_tier}
@@ -461,7 +569,8 @@ def get_ceremony_status(
     results: list[dict[str, object]] = []
     for tc in classes_to_check:
         tc_str = str(tc)
-        tc_data = _get_class_status(tc_str, feedback_data, config)
+        # Pass trw_dir so disk-persisted proposals from the deferred thread are surfaced.
+        tc_data = _get_class_status(tc_str, feedback_data, config, trw_dir=trw_dir)
         results.append(tc_data)
 
     return {"task_classes": results}
@@ -471,6 +580,7 @@ def _get_class_status(
     task_class: str,
     feedback_data: dict[str, object],
     config: TRWConfig,
+    trw_dir: Path | None = None,
 ) -> dict[str, object]:
     """Get status for a single task class."""
     sessions = _get_class_sessions(task_class, feedback_data)
@@ -488,12 +598,28 @@ def _get_class_status(
 
     current_tier = str(sessions[-1].get("current_tier", "STANDARD")) if sessions else "STANDARD"
 
-    # Check for proposals
+    # Check for proposals — merge in-memory with any persisted to disk
+    # (FIX-051-FR03: deferred thread writes proposals to disk; main thread reads them here).
     proposals: list[dict[str, object]] = []
     proposal = generate_reduction_proposal(task_class, feedback_data, config)
     if proposal:
         register_proposal(proposal)
         proposals.append(proposal)
+
+    # Also surface any disk-persisted proposals from the deferred delivery thread.
+    if trw_dir is not None:
+        disk_overrides = read_overrides(trw_dir)
+        disk_proposals = disk_overrides.get("_pending_proposals", {})
+        if isinstance(disk_proposals, dict):
+            for pid, disk_prop in disk_proposals.items():
+                if not isinstance(disk_prop, dict):
+                    continue
+                if str(disk_prop.get("task_class", "")) != task_class:
+                    continue
+                # Don't duplicate if already in _pending_proposals memory
+                if pid not in _pending_proposals:
+                    register_proposal(disk_prop)
+                    proposals.append(disk_prop)
 
     # Check for escalation
     escalation = check_auto_escalation(task_class, feedback_data, config)

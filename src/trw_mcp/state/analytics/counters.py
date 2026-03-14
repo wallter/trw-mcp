@@ -156,6 +156,8 @@ def _read_analytics(trw_dir: Path) -> tuple[Path, dict[str, object]]:
     """Read analytics.yaml, returning the path and data dict.
 
     Creates the context directory if it does not exist.
+    Migrates legacy ``sessions_count`` field to ``sessions_tracked`` on read
+    (FIX-050-FR06): takes the max of both values to avoid data loss.
     """
     cfg: TRWConfig = get_config()
     writer = FileStateWriter()
@@ -164,10 +166,42 @@ def _read_analytics(trw_dir: Path) -> tuple[Path, dict[str, object]]:
     writer.ensure_dir(context_dir)
     analytics_path = context_dir / "analytics.yaml"
 
-    data: dict[str, object] = {}
-    if reader.exists(analytics_path):
-        data = reader.read_yaml(analytics_path)
+    data: dict[str, object] = reader.read_yaml(analytics_path) if reader.exists(analytics_path) else {}
+
+    # FIX-050-FR06: Migrate legacy sessions_count -> sessions_tracked.
+    # sessions_count was a dead field that was never updated (counter code
+    # always wrote to sessions_tracked). On first read, we take the max of
+    # both values to ensure no data loss, then remove sessions_count.
+    if "sessions_count" in data:
+        legacy_count = _ac._safe_int(data, "sessions_count")
+        tracked = _ac._safe_int(data, "sessions_tracked")
+        data["sessions_tracked"] = max(legacy_count, tracked)
+        del data["sessions_count"]
+        writer.write_yaml(analytics_path, data)
+        logger.debug(
+            "analytics_sessions_count_migrated",
+            legacy=legacy_count,
+            tracked=data["sessions_tracked"],
+        )
+
     return analytics_path, data
+
+
+def increment_session_start_counter(trw_dir: Path) -> None:
+    """Increment sessions_tracked when a session starts (FIX-050-FR06).
+
+    Called from trw_session_start after the session_start event is logged.
+    This ensures sessions_tracked reflects actual session starts, not just
+    completed deliveries (which is when update_analytics was previously called).
+
+    Args:
+        trw_dir: Path to .trw directory.
+    """
+    analytics_path, data = _read_analytics(trw_dir)
+    tracked = _ac._safe_int(data, "sessions_tracked") + 1
+    data["sessions_tracked"] = tracked
+    FileStateWriter().write_yaml(analytics_path, data)
+    logger.debug("session_start_counter_incremented", sessions_tracked=tracked)
 
 
 def _update_core_counters(
@@ -179,9 +213,9 @@ def _update_core_counters(
     Returns:
         Tuple of (sessions, total_learnings) after update.
     """
-    sessions = _ac._safe_int(data, "sessions_tracked") + 1
+    sessions = _ac._safe_int(data, "sessions_delivered") + 1
     total_learnings = _ac._safe_int(data, "total_learnings") + new_learnings_count
-    data["sessions_tracked"] = sessions
+    data["sessions_delivered"] = sessions
     data["total_learnings"] = total_learnings
     data["avg_learnings_per_session"] = round(total_learnings / max(sessions, 1), 2)
     return sessions, total_learnings

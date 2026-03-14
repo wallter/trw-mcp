@@ -155,7 +155,7 @@ class TestAutoRecallWithActiveRun:
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
         (meta / "run.yaml").write_text(
-            "run_id: test-run\nstatus: active\nphase: implement\ntask_name: fix-scoring\n",
+            "run_id: test-run\nstatus: active\nphase: implement\ntask: fix-scoring\n",
             encoding="utf-8",
         )
         (meta / "events.jsonl").write_text("", encoding="utf-8")

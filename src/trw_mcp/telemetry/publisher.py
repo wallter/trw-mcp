@@ -65,14 +65,17 @@ def _save_hashes(entries_dir: Path, hashes: dict[str, str]) -> None:
 
 
 def publish_learnings(
-    min_impact: float = 0.7, *, force: bool = False
+    min_impact: float = 0.5, *, force: bool = False
 ) -> dict[str, object]:
     """Publish high-impact learnings to the platform backend.
 
     Returns dict with: published, skipped, unchanged, errors, skipped_reason.
 
     Args:
-        min_impact: Minimum impact threshold for publishing.
+        min_impact: Minimum impact threshold for publishing. Default lowered from
+            0.7 to 0.5 (PRD-FIX-052-FR06) to compensate for Bayesian calibration
+            pulling scores toward 0.5 — entries that survive calibration at 0.5+
+            are genuinely noteworthy.
         force: If True, ignore content hashes and re-publish everything.
 
     Fail-open: never raises exceptions.

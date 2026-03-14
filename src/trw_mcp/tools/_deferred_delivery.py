@@ -290,19 +290,24 @@ def _step_consolidation(trw_dir: Path) -> dict[str, object]:
 
 
 def _step_tier_sweep(trw_dir: Path) -> dict[str, object]:
-    """Step 2.7: Tier lifecycle sweep (PRD-CORE-043)."""
+    """Step 2.7: Tier lifecycle sweep (PRD-CORE-043) + impact tier assignment (PRD-FIX-052-FR07)."""
     from trw_mcp.state.tiers import TierManager
     from trw_mcp.state.persistence import FileStateWriter
     reader = FileStateReader()
     writer = FileStateWriter()
     tier_mgr = TierManager(trw_dir, reader, writer)
     sweep_result = tier_mgr.sweep()
+
+    # PRD-FIX-052-FR07: assign impact_tier labels to all active entries post-sweep
+    tier_distribution = tier_mgr.assign_impact_tiers(trw_dir)
+
     return {
         "status": "success",
         "promoted": sweep_result.promoted,
         "demoted": sweep_result.demoted,
         "purged": sweep_result.purged,
         "errors": sweep_result.errors,
+        "impact_tier_distribution": tier_distribution,
     }
 
 
@@ -381,8 +386,10 @@ def _step_telemetry(resolved_run: Path | None) -> dict[str, object]:
             ev_reader = _FSR2()
             events = ev_reader.read_jsonl(ev_path)
 
-    # Compute actual ceremony score from run events
-    ceremony = compute_ceremony_score(events)
+    # FIX-051-FR05: Pass trw_dir so compute_ceremony_score can also read
+    # session-events.jsonl (where trw_session_start events land before trw_init).
+    trw_dir_for_score = _cer.resolve_trw_dir()
+    ceremony = compute_ceremony_score(events, trw_dir=trw_dir_for_score)
     ceremony_score = int(str(ceremony.get("score", 0)))
 
     tel_client.record_event(SessionEndEvent(
@@ -408,34 +415,117 @@ def _step_batch_send() -> dict[str, object]:
     return dict(BatchSender.from_config().send())
 
 
+def _merge_session_events(
+    run_events: list[dict[str, object]],
+    trw_dir: Path,
+) -> list[dict[str, object]]:
+    """Merge run-level and session-level events from fallback path.
+
+    FIX-051-FR01/FR05 & FIX-053-FR02: trw_session_start fires before trw_init
+    creates the run directory, so its events land in session-events.jsonl instead
+    of events.jsonl. This helper merges both sources for ceremony scoring and
+    trust increment checks.
+
+    Args:
+        run_events: Events from run-level events.jsonl.
+        trw_dir: Path to .trw directory for session-events.jsonl lookup.
+
+    Returns:
+        Merged event list (session events prepended).
+    """
+    all_events = list(run_events)
+    session_events_path = trw_dir / "context" / "session-events.jsonl"
+    if session_events_path.exists():
+        try:
+            reader = FileStateReader()
+            session_events = reader.read_jsonl(session_events_path)
+            all_events = list(session_events) + all_events
+        except Exception:  # justified: fail-open, session-events read is best-effort
+            logger.debug("session_events_merge_failed", path=str(session_events_path))
+    return all_events
+
+
 def _step_trust_increment(resolved_run: Path | None) -> dict[str, object] | None:
-    """Step 9: Trust session increment (CORE-068-FR05)."""
+    """Step 9: Trust session increment (CORE-068-FR05).
+
+    FR02 (PRD-FIX-053): Relaxed gate — fires when EITHER:
+      (a) build_check passed (existing behavior), OR
+      (b) session has >= 3 learnings AND >= 1 checkpoint (productive_session).
+
+    Also reads {trw_dir}/context/session-events.jsonl for events that landed
+    before trw_init created the run directory (same pattern as ceremony scoring).
+    """
     try:
+        import os
+
+        import trw_mcp.tools.ceremony as _cer  # late import for test compat
         from trw_mcp.state.trust import increment_session_count
 
+        reader = FileStateReader()
+
+        # Collect all events: run-level events.jsonl + session-level session-events.jsonl
+        run_events: list[dict[str, object]] = []
         events_path = resolved_run / "meta" / "events.jsonl" if resolved_run else None
-        build_passed = False
         if events_path and events_path.exists():
-            reader = FileStateReader()
-            events = reader.read_jsonl(events_path)
-            for ev in events:
-                ev_type = str(ev.get("event", ""))
-                ev_data = ev.get("data", {})
-                if not isinstance(ev_data, dict):
-                    ev_data = {}
-                tool_name = str(ev_data.get("tool_name", ""))
-                if ev_type == "build_check_complete" or tool_name == "trw_build_check":
-                    if ev_data.get("result") == "pass" or ev_data.get("build_passed") is True:
-                        build_passed = True
-                        break
+            run_events.extend(reader.read_jsonl(events_path))
+
+        trw_dir = _cer.resolve_trw_dir()
+        all_events = _merge_session_events(run_events, trw_dir)
+
+        # Check path (a): build_check passed
+        build_passed = False
+        for ev in all_events:
+            ev_type = str(ev.get("event", ""))
+            ev_data = ev.get("data", {})
+            if not isinstance(ev_data, dict):
+                ev_data = {}
+            tool_name = str(ev_data.get("tool_name", ""))
+            if ev_type == "build_check_complete" or tool_name == "trw_build_check":
+                if ev_data.get("result") == "pass" or ev_data.get("build_passed") is True:
+                    build_passed = True
+                    break
 
         if build_passed:
-            import os
-            import trw_mcp.tools.ceremony as _cer  # late import for test compat
             agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
-            trw_dir = _cer.resolve_trw_dir()
-            return increment_session_count(trw_dir, agent_id)
-        return {"skipped": True, "reason": "build_check_not_passed"}
+            result = increment_session_count(trw_dir, agent_id)
+            # Preserve existing return shape; add reason for observability
+            if isinstance(result, dict) and "reason" not in result:
+                result["reason"] = "build_check_passed"
+            return result
+
+        # Check path (b): productive session (>= 3 learnings AND >= 1 checkpoint)
+        learn_count = 0
+        checkpoint_count = 0
+        for ev in all_events:
+            ev_type = str(ev.get("event", ""))
+            ev_data = ev.get("data", {})
+            if not isinstance(ev_data, dict):
+                ev_data = {}
+            tool_name = str(ev_data.get("tool_name", ""))
+            is_tool_invocation = ev_type == "tool_invocation"
+
+            # Count learn events
+            if ev_type in ("learn", "trw_learn") or (
+                is_tool_invocation and "trw_learn" in tool_name
+            ):
+                learn_count += 1
+
+            # Count checkpoint events
+            if ev_type in ("checkpoint", "trw_checkpoint") or (
+                is_tool_invocation and "trw_checkpoint" in tool_name
+            ):
+                checkpoint_count += 1
+
+        # Thresholds: >= 3 learnings AND >= 1 checkpoint
+        if learn_count >= 3 and checkpoint_count >= 1:
+            agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
+            result = increment_session_count(trw_dir, agent_id)
+            if isinstance(result, dict):
+                result["reason"] = "productive_session"
+            return result
+
+        return {"skipped": True, "reason": "insufficient_session_activity"}
+
     except Exception as exc:  # justified: fail-open, session count increment is best-effort
         return {"skipped": True, "reason": str(exc)}
 
@@ -447,9 +537,11 @@ def _step_ceremony_feedback(
     """Step 10: Ceremony feedback recording (CORE-069-FR02)."""
     try:
         from trw_mcp.state.ceremony_feedback import (
+            _derive_agent_id,
             apply_auto_escalation,
             check_auto_escalation,
             classify_task_class,
+            generate_reduction_proposal,
             read_feedback_data,
             record_session_outcome,
         )
@@ -463,23 +555,56 @@ def _step_ceremony_feedback(
                 reader = FileStateReader()
                 run_state = reader.read_yaml(run_yaml)
 
-        task_name = str(run_state.get("task_name", ""))
+        # FIX-050-FR03 / FIX-051-FR02: RunState model uses field "task", not "task_name".
+        task_name = str(run_state.get("task", ""))
+        # FIX-051-FR06: Pass objective for improved classification accuracy.
+        task_description = str(run_state.get("objective", ""))
+
         ceremony_score_val = deliver_results.get("telemetry", {})
         if isinstance(ceremony_score_val, dict):
             score = float(ceremony_score_val.get("ceremony_score", 0))
         else:
             score = 0.0
 
-        build_passed = False
-        tel_data = deliver_results.get("telemetry", {})
-        if isinstance(tel_data, dict):
-            build_passed = bool(tel_data.get("build_passed", False))
+        # FIX-050-FR04: Extract real build outcome instead of hardcoded defaults.
+        # build_passed: from build_check step result (if ran)
+        build_check_data = deliver_results.get("build_check", {})
+        if isinstance(build_check_data, dict):
+            build_passed = bool(build_check_data.get("build_passed", False)) or bool(
+                build_check_data.get("tests_passed", False)
+            )
+        else:
+            build_passed = False
+
+        # coverage_delta: from build_check if available; default 0.0 until
+        # trw_build_check returns coverage_delta directly (OQ-002).
+        coverage_delta = 0.0
+        if isinstance(build_check_data, dict):
+            raw_delta = build_check_data.get("coverage_delta")
+            if raw_delta is not None:
+                try:
+                    coverage_delta = float(str(raw_delta))
+                except (ValueError, TypeError):
+                    coverage_delta = 0.0
+
+        # critical_findings: from review step if it ran
+        review_data = deliver_results.get("review", {})
+        critical_findings = 0
+        if isinstance(review_data, dict):
+            raw_cf = review_data.get("critical_findings")
+            if raw_cf is not None:
+                try:
+                    critical_findings = int(str(raw_cf))
+                except (ValueError, TypeError):
+                    critical_findings = 0
 
         current_tier = "STANDARD"
         if run_state.get("complexity_class"):
             current_tier = str(run_state["complexity_class"])
 
-        session_id = str(run_state.get("run_id", "unknown"))
+        # FIX-050-FR05: Use _derive_agent_id instead of always "unknown".
+        session_id = str(run_state.get("run_id", ""))
+        agent_id = _derive_agent_id(run_id=session_id or None)
         run_p = str(resolved_run) if resolved_run else ""
 
         entry = record_session_outcome(
@@ -487,21 +612,47 @@ def _step_ceremony_feedback(
             task_name=task_name,
             ceremony_score=score,
             build_passed=build_passed,
-            coverage_delta=0.0,
-            critical_findings=0,
-            mutation_score_ok=True,
+            coverage_delta=coverage_delta,
+            critical_findings=critical_findings,
+            mutation_score_ok=True,  # OQ-002: keep True until mutmut integration
             current_tier=current_tier,
             run_path=run_p,
-            session_id=session_id,
+            session_id=session_id or agent_id,
+            task_description=task_description,
         )
 
-        task_class = classify_task_class(task_name)
+        # FIX-051-FR06: Use the task_class from the recorded entry (now objective-enriched).
+        task_class_str = str(entry.get("task_class", "documentation"))
         data = read_feedback_data(trw_dir)
-        escalation = check_auto_escalation(task_class.value, data)
+
+        # FIX-051-FR03: De-escalation path — generate proposal and persist to disk.
+        # Proposals are persisted (not just in _pending_proposals memory) because
+        # this runs in a daemon thread invisible to the main MCP thread.
+        proposal = generate_reduction_proposal(task_class_str, data)
+        if proposal:
+            from trw_mcp.state.ceremony_feedback import (
+                _overrides_path,
+                read_overrides,
+                register_proposal,
+            )
+            from trw_mcp.state.persistence import FileStateWriter as _FSW
+            register_proposal(proposal)
+            # Persist pending proposals to ceremony-overrides.yaml so
+            # trw_ceremony_status (on main thread) can read them on restart.
+            overrides = read_overrides(trw_dir)
+            pending_proposals = overrides.get("_pending_proposals", {})
+            if not isinstance(pending_proposals, dict):
+                pending_proposals = {}
+            pid = str(proposal.get("proposal_id", ""))
+            pending_proposals[pid] = proposal
+            overrides["_pending_proposals"] = pending_proposals
+            _FSW().write_yaml(_overrides_path(trw_dir), overrides)
+
+        escalation = check_auto_escalation(task_class_str, data)
         if escalation:
-            apply_auto_escalation(trw_dir, task_class.value, escalation)
-            return {"recorded": True, "auto_escalation": escalation}
-        return {"recorded": True}
+            apply_auto_escalation(trw_dir, task_class_str, escalation)
+            return {"recorded": True, "auto_escalation": escalation, "proposal": proposal}
+        return {"recorded": True, "proposal": proposal}
     except Exception as exc:  # justified: fail-open, ceremony feedback is best-effort enrichment
         return {"skipped": True, "reason": str(exc)}
 

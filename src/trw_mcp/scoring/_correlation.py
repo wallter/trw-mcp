@@ -100,36 +100,33 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
     project_root = trw_dir.parent
     cfg: TRWConfig = get_config()
     task_root = project_root / cfg.task_root
-    latest_ts: datetime | None = None
 
     if not task_root.exists():
         return None
 
     reader = FileStateReader()
-    for task_dir in task_root.iterdir():
+    for task_dir in sorted(task_root.iterdir()):
         runs_dir = task_dir / "runs"
         if not runs_dir.is_dir():
             continue
+        # Check the most recent run only
         for run_dir in sorted(runs_dir.iterdir(), reverse=True):
             events_path = run_dir / "meta" / "events.jsonl"
             if not events_path.exists():
                 continue
             records = reader.read_jsonl(events_path)
             for record in reversed(records):
-                event_type = str(record.get("event", ""))
-                if event_type in ("run_init", "session_start"):
+                if str(record.get("event", "")) in ("run_init", "session_start"):
                     ts_str = str(record.get("ts", ""))
                     if ts_str:
                         try:
-                            ts = _ensure_utc(datetime.fromisoformat(ts_str))
-                            if latest_ts is None or ts > latest_ts:
-                                latest_ts = ts
+                            return _ensure_utc(datetime.fromisoformat(ts_str))
                         except ValueError:
                             continue
-            # Only check the most recent run
+            # Only check the most recent run directory
             break
 
-    return latest_ts
+    return None
 
 
 def correlate_recalls(
@@ -238,6 +235,10 @@ def process_outcome(
 ) -> list[str]:
     """Update Q-values for learnings correlated with a recent outcome.
 
+    PRD-FIX-053-FR03: Uses SQLite (O(1)) lookup via memory_adapter.find_entry_by_id()
+    instead of scanning all YAML files. Falls back to analytics.find_entry_by_id()
+    (YAML glob scan) when SQLite returns None for pre-migration entries.
+
     Time-windowed correlation: only receipts from the last N minutes
     (configured via learning_outcome_correlation_window_minutes) are
     considered. Recency discount is applied to the reward.
@@ -250,7 +251,8 @@ def process_outcome(
     Returns:
         List of learning IDs whose Q-values were updated.
     """
-    from trw_mcp.state.analytics import find_entry_by_id
+    from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
+    from trw_mcp.state.memory_adapter import find_entry_by_id as sqlite_find_entry_by_id
 
     cfg: TRWConfig = get_config()
     correlated = correlate_recalls(
@@ -268,8 +270,6 @@ def process_outcome(
             best_discount[lid] = discount
 
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-    if not entries_dir.exists():
-        return []
 
     updated_ids: list[str] = []
     today_iso = date.today().isoformat()
@@ -277,11 +277,27 @@ def process_outcome(
     writer = FileStateWriter()
 
     for lid, discount in best_discount.items():
-        found = find_entry_by_id(entries_dir, lid)
-        if found is None:
+        # PRD-FIX-053-FR03: Try SQLite O(1) lookup first; fall back to YAML scan
+        entry_path: Path | None = None
+        data: dict[str, object] | None = None
+
+        sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
+        if sqlite_data is not None:
+            data = sqlite_data
+            # Construct the expected YAML path for write-back (if entries_dir exists)
+            if entries_dir.exists():
+                candidate = entries_dir / f"{lid}.yaml"
+                entry_path = candidate if candidate.exists() else None
+        else:
+            # YAML fallback for pre-migration entries not yet in SQLite
+            if entries_dir.exists():
+                yaml_found = yaml_find_entry_by_id(entries_dir, lid)
+                if yaml_found is not None:
+                    entry_path, data = yaml_found
+
+        if data is None:
             continue
 
-        entry_path, data = found
         q_old = safe_float(data, "q_value", safe_float(data, "impact", 0.5))
         q_obs = safe_int(data, "q_observations", 0)
         recurrence = safe_int(data, "recurrence", 1)
@@ -309,7 +325,9 @@ def process_outcome(
             history = history[-history_cap:]
         data["outcome_history"] = history
 
-        writer.write_yaml(entry_path, data)
+        # Write YAML back only when we have a valid path on disk
+        if entry_path is not None:
+            writer.write_yaml(entry_path, data)
         updated_ids.append(lid)
 
     if updated_ids:

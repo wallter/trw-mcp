@@ -40,6 +40,9 @@ _embedder: LocalEmbeddingProvider | None = None
 _embedder_lock = threading.Lock()
 _embedder_checked: bool = False
 
+# FR07 (PRD-FIX-053): Embed failure counter — resets on process restart.
+_embed_failures: int = 0
+
 _SENTINEL_NAME = ".migrated"
 _NAMESPACE = DEFAULT_NAMESPACE
 _MAX_ENTRIES = DEFAULT_LIST_LIMIT
@@ -192,6 +195,21 @@ def embed_text_batch(texts: list[str]) -> list[list[float] | None]:
         return [None] * len(texts)
 
 
+def get_embed_failure_count() -> int:
+    """Return the number of embed failures since process start (FR07).
+
+    This counter increments each time ``_embed_and_store()`` finds no embedder
+    or encounters an error. It resets on process restart and is not persisted.
+    """
+    return _embed_failures
+
+
+def reset_embed_failure_count() -> None:
+    """Reset the embed failure counter to zero (for tests)."""
+    global _embed_failures
+    _embed_failures = 0
+
+
 def check_embeddings_status() -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
 
@@ -199,14 +217,25 @@ def check_embeddings_status() -> dict[str, object]:
     - ``enabled``: whether config has embeddings_enabled=True
     - ``available``: whether deps are installed and model loads
     - ``advisory``: human-readable message (empty when everything is fine)
+    - ``recent_failures``: count of embed failures since process start (FR07)
     """
     cfg = get_config()
     if not cfg.embeddings_enabled:
-        return {"enabled": False, "available": False, "advisory": ""}
+        return {
+            "enabled": False,
+            "available": False,
+            "advisory": "",
+            "recent_failures": _embed_failures,
+        }
 
     embedder = get_embedder()
     if embedder is not None:
-        return {"enabled": True, "available": True, "advisory": ""}
+        return {
+            "enabled": True,
+            "available": True,
+            "advisory": "",
+            "recent_failures": _embed_failures,
+        }
 
     return {
         "enabled": True,
@@ -215,13 +244,21 @@ def check_embeddings_status() -> dict[str, object]:
             "Embeddings enabled but sentence-transformers not installed. "
             "Run: pip install trw-memory[embeddings]"
         ),
+        "recent_failures": _embed_failures,
     }
 
 
 def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
-    """Generate embedding for text and upsert into vector table. Fail-silent."""
+    """Generate embedding for text and upsert into vector table. Fail-silent.
+
+    FR07 (PRD-FIX-053): Increments ``_embed_failures`` when embedder is
+    unavailable or the embed call fails, so ``get_embed_failure_count()``
+    can surface this to agents via ``check_embeddings_status()``.
+    """
+    global _embed_failures
     embedder = get_embedder()
     if embedder is None:
+        _embed_failures += 1
         return
     try:
         vector = embedder.embed(text)
@@ -229,6 +266,7 @@ def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
             backend.upsert_vector(entry_id, vector)
     except (OSError, ValueError, RuntimeError):
         # justified: embedding is optional enrichment — store succeeds without it.
+        _embed_failures += 1
         logger.debug("embed_and_store_failed", entry_id=entry_id)
 
 
