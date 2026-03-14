@@ -1,5 +1,6 @@
 ---
 name: trw-sprint-init
+model: claude-opus-4-6
 description: >
   Initialize a new sprint. Lists draft PRDs, creates sprint doc,
   bootstraps run directory, sets up tracking.
@@ -8,6 +9,7 @@ user-invocable: true
 argument-hint: "[sprint name]"
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash, mcp__trw__trw_init, mcp__trw__trw_checkpoint
 ---
+<!-- ultrathink -->
 
 # Sprint Initialization Skill
 

@@ -1,0 +1,9 @@
+{
+  "name": "trw",
+  "version": "0.12.2",
+  "minClaudeCodeVersion": "2.1.32",
+  "description": "TRW (The Real Work) — Prompt-based operational framework for orchestrating AI agent swarms with self-improving memory",
+  "author": "TRW Framework",
+  "license": "CC-BY-NC-SA-4.0",
+  "homepage": "https://trwframework.com"
+}

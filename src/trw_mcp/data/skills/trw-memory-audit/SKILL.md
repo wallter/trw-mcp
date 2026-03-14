@@ -1,5 +1,8 @@
 ---
 name: trw-memory-audit
+model: claude-sonnet-4-6
+context: fork
+agent: Explore
 description: >
   Audit learning memory health. Shows tag distribution, impact spread,
   staleness, duplicate candidates, and recommendations. Read-only.

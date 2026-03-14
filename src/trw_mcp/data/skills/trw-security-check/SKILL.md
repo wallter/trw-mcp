@@ -1,5 +1,8 @@
 ---
 name: trw-security-check
+model: claude-sonnet-4-6
+context: fork
+agent: Explore
 description: >
   OWASP-focused security audit of the trw-mcp codebase. Checks for
   command injection, YAML deserialization, path traversal, secrets,

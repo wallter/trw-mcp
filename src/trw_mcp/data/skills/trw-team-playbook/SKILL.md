@@ -1,5 +1,6 @@
 ---
 name: trw-team-playbook
+model: claude-opus-4-6
 description: >
   Generate structured teammate playbooks with file ownership and YAML interface
   contracts for Agent Teams. Produces per-teammate playbook files and a validated

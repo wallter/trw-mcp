@@ -1,5 +1,6 @@
 ---
 name: trw-memory-optimize
+model: claude-sonnet-4-6
 description: >
   Optimize learning memory. Prunes stale entries, consolidates duplicates,
   rebalances tags. Interactive — confirms before deleting.

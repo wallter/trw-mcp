@@ -5,6 +5,8 @@ description: >
   proposes team structure with file ownership, and spawns teammates with generated
   playbooks. Use: /trw-sprint-team [sprint-doc-path]
 user-invocable: true
+model: claude-opus-4-6
+disable-model-invocation: true
 argument-hint: "[sprint-doc-path]"
 allowed-tools: Read, Write, Glob, Grep, Bash, Edit, mcp__trw__trw_recall, mcp__trw__trw_status, mcp__trw__trw_init, mcp__trw__trw_checkpoint
 ---

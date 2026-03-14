@@ -12,6 +12,10 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
+# Read stdin payload (needed for telemetry agent_type extraction)
+_payload=$(cat) || exit 0
+
+_project_root="$(get_repo_root)" || true
 _run_dir=$(find_active_run) || true
 _phase=""
 
@@ -50,6 +54,20 @@ case "$_phase" in
     echo "REVIEW PHASE: Review the diff for quality (DRY/KISS/SOLID). Fix incomplete integrations. Record learnings."
     ;;
 esac
+
+# FR06: Telemetry event for paired start/stop analysis
+_log_file="${_project_root:+$_project_root/.trw/logs/subagent-events.jsonl}"
+if [ -n "$_log_file" ] && [ -d "$(dirname "$_log_file")" ]; then
+  _ts_telem="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts_telem="unknown"
+  if command -v jq >/dev/null 2>&1; then
+    _agent_type_telem=$(printf '%s' "$_payload" | jq -r '.agent_type // .subagent_type // "unknown"' 2>/dev/null) || _agent_type_telem="unknown"
+    jq -n --arg ts "$_ts_telem" --arg event "subagent_start" --arg agent_type "$_agent_type_telem" \
+      '{ts: $ts, event: $event, agent_type: $agent_type}' >> "$_log_file" 2>/dev/null
+  else
+    printf '{"ts":"%s","event":"subagent_start","agent_type":"unknown"}\n' \
+      "$_ts_telem" >> "$_log_file" 2>/dev/null
+  fi
+fi
 
 log_hook_execution "SubagentStart" "" "0"
 

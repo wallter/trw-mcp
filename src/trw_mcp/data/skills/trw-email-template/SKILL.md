@@ -1,5 +1,6 @@
 ---
 name: trw-email-template
+model: claude-sonnet-4-6
 description: >
   Create branded, responsive HTML email templates for transactional emails.
   Generates Jinja2 templates with table-based layout, dark mode support,

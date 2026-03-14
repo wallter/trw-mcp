@@ -1,5 +1,8 @@
 ---
 name: trw-audit
+model: claude-sonnet-4-6
+context: fork
+agent: general-purpose
 description: >
   Adversarial spec-vs-code audit. Verifies implementation against PRD acceptance
   criteria, runs mandatory NFR checklist, assesses test quality. Independent from

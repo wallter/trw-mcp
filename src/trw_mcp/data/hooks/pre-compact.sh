@@ -32,6 +32,9 @@ _run_path=""
 _phase=""
 _event_count=0
 _last_checkpoint=""
+_wave_manifest=""
+_active_tasks=0
+_pending_decisions=""
 
 if [ -n "$_run_dir" ]; then
   _run_path="$_run_dir"
@@ -53,6 +56,26 @@ if [ -n "$_run_dir" ]; then
   if [ -f "$_cp_path" ] && command -v jq >/dev/null 2>&1; then
     _last_checkpoint=$(tail -1 "$_cp_path" 2>/dev/null | jq -r '.message // empty' 2>/dev/null) || true
   fi
+
+  # FR02: wave_manifest — read wave status from wave_manifest.yaml or run.yaml
+  _wave_yaml="${_run_dir}meta/wave_manifest.yaml"
+  if [ -f "$_wave_yaml" ]; then
+    _wave_manifest=$(grep '^status:' "$_wave_yaml" | head -1 | sed 's/^status:[[:space:]]*//' | tr -d "'" | tr -d '"') || true
+    [ -z "$_wave_manifest" ] && _wave_manifest="present"
+  elif [ -f "$_run_yaml" ]; then
+    _wave_manifest=$(grep '^wave:' "$_run_yaml" | head -1 | sed 's/^wave:[[:space:]]*//' | tr -d "'" | tr -d '"') || true
+  fi
+
+  # FR02: active_tasks — count in-progress tasks from task directory
+  _task_dir="${_run_dir}tasks"
+  if [ -d "$_task_dir" ]; then
+    _active_tasks=$(grep -rl '"status"[[:space:]]*:[[:space:]]*"in_progress"\|^status:[[:space:]]*in_progress' "$_task_dir" 2>/dev/null | wc -l | tr -d ' ') || _active_tasks=0
+  fi
+
+  # FR02: pending_decisions — open questions from last checkpoint
+  if [ -f "$_cp_path" ] && command -v jq >/dev/null 2>&1; then
+    _pending_decisions=$(tail -1 "$_cp_path" 2>/dev/null | jq -r '.pending_decisions // .open_questions // empty' 2>/dev/null) || true
+  fi
 fi
 
 # Write state snapshot
@@ -65,12 +88,15 @@ if command -v jq >/dev/null 2>&1; then
     --arg phase "$_phase" \
     --argjson event_count "${_event_count:-0}" \
     --arg last_checkpoint "$_last_checkpoint" \
-    '{timestamp: $ts, trigger: $trigger, run_path: $run_path, phase: $phase, events_logged: $event_count, last_checkpoint: $last_checkpoint}' \
+    --arg wave_manifest "$_wave_manifest" \
+    --argjson active_tasks "${_active_tasks:-0}" \
+    --arg pending_decisions "$_pending_decisions" \
+    '{ts: $ts, trigger: $trigger, run_path: $run_path, phase: $phase, events_logged: $event_count, last_checkpoint: $last_checkpoint, wave_manifest: $wave_manifest, active_tasks: $active_tasks, pending_decisions: $pending_decisions}' \
     > "$_state_file" 2>/dev/null
 else
-  # Fallback: manual JSON construction
-  printf '{"timestamp":"%s","trigger":"%s","run_path":"%s","phase":"%s","events_logged":%s,"last_checkpoint":"%s"}\n' \
-    "$_ts" "$_trigger" "$_run_path" "$_phase" "${_event_count:-0}" "$_last_checkpoint" \
+  # Fallback: minimal JSON (no user-controlled strings to avoid injection)
+  printf '{"ts":"%s","trigger":"%s","run_path":"%s","phase":"%s","events_logged":%s}\n' \
+    "$_ts" "$_trigger" "$_run_path" "$_phase" "${_event_count:-0}" \
     > "$_state_file" 2>/dev/null
 fi
 

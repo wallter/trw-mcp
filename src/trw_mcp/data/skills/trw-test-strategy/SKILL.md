@@ -1,5 +1,8 @@
 ---
 name: trw-test-strategy
+model: claude-sonnet-4-6
+context: fork
+agent: Explore
 description: >
   Audit test coverage and strategy. Identifies untested modules,
   coverage gaps, and suggests test improvements. Use before or

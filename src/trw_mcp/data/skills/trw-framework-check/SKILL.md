@@ -1,5 +1,8 @@
 ---
 name: trw-framework-check
+model: claude-sonnet-4-6
+context: fork
+agent: Explore
 description: >
   Check TRW framework compliance. Reports ceremony adherence,
   phase gate status, and active run health. Use when unsure if

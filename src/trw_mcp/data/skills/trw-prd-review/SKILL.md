@@ -1,5 +1,6 @@
 ---
 name: trw-prd-review
+model: claude-opus-4-6
 description: >
   Internal phase: Review a PRD for quality, returning a structured READY/NEEDS WORK/BLOCK
   verdict with per-dimension scores. Read-only — never modifies files.
@@ -9,6 +10,7 @@ argument-hint: "[PRD-ID or file path]"
 context: fork
 agent: trw-requirement-reviewer
 ---
+<!-- ultrathink -->
 
 # PRD Review Skill
 

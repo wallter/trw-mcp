@@ -1,5 +1,6 @@
 ---
 name: trw-project-health
+model: claude-sonnet-4-6
 description: >
   Audit TRW health in the current or target project. Summarizes tool usage,
   ceremony compliance, hook enforcement, active runs, learnings, and issues.

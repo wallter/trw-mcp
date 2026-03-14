@@ -4,6 +4,37 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.12.6] — 2026-03-14
+
+### Added
+
+- **Skills v2 frontmatter migration** (PRD-INFRA-037) — all 24 skills now declare `model` (8 opus, 16 sonnet), 5 destructive skills have `disable-model-invocation: true`, 7 read-only skills use `context: fork`, 4 PLAN-phase skills include `ultrathink` for deep reasoning.
+- **PreToolUse deliver gate** (PRD-INFRA-038) — new `pre-tool-deliver-gate.sh` blocks `trw_deliver()` unless `build-status.yaml` shows `tests_passed: true`. Fail-open pattern with actionable error messages.
+- **SubagentStop telemetry** (PRD-INFRA-038) — new `subagent-stop.sh` hook emits structured JSONL to `.trw/logs/subagent-events.jsonl` for paired start/stop lifecycle tracking.
+- **SubagentStart telemetry** (PRD-INFRA-038) — enhanced `subagent-start.sh` with matching JSONL telemetry for paired analysis.
+- **Path-scoped rules** (PRD-INFRA-039) — 3 new `.claude/rules/` files (`backend-python.md`, `platform-tsx.md`, `trw-mcp-python.md`) that only load when Claude touches matching files, reducing per-session token consumption.
+- **Plugin packaging** (PRD-INFRA-040) — `make plugin` builds a Claude Code plugin directory with all skills, agents, hooks, and MCP config. Testable via `claude --plugin-dir build/trw-plugin`.
+- **Plugin manifest** — `.claude-plugin/plugin.json` with `minClaudeCodeVersion: 2.1.32`, CC-BY-NC-SA-4.0 license.
+- **Plugin hooks.json** — all 11 hook events registered with `${CLAUDE_PLUGIN_ROOT}` path resolution.
+
+### Changed
+
+- **CLAUDE.md slimmed** — 337 → 181 lines by extracting package-specific content into path-scoped rules. Restored missing deployment commands, release workflow details, and `opusplan` note.
+- **data/settings.json** — added PreToolUse (deliver gate) and SubagentStop hook registrations to the bootstrap template so new projects get them automatically.
+- **Timestamp key standardized** — all hook JSONL output now uses `"ts"` key (matching lib-trw.sh `append_event` convention), replacing inconsistent `"timestamp"` usage.
+- **pre-compact.sh enhanced** — captures wave_manifest, active_tasks, and pending_decisions in the pre-compaction state snapshot for better recovery.
+- **pre-compact.sh no-jq fallback** — simplified to emit minimal JSON without user-controlled strings to prevent injection in degraded mode.
+- **Framework version** — updated reference in CLAUDE.md from v24.2 to v24.3 to match TRWConfig source of truth.
+- **trw-simplify SKILL.md** — fixed non-standard `allowed_tools` (underscore) to `allowed-tools` (hyphen), added missing `name`, `description`, `user-invocable` fields.
+- **trw-dry-check SKILL.md** — added missing `user-invocable`, `allowed-tools`, `argument-hint`, `description` fields.
+
+### Documentation
+
+- **3 research documents** — `skills-v2-reference.md` (complete Skills v2 spec), `claude-code-march-2026-updates.md` (hooks, MCP, settings), `prompting-claude-4-6.md` (anti-overtriggering, adaptive thinking).
+- **Agent Teams prerequisite** — documented `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` env var requirement in CLAUDE.md.
+- **MCP Tool Search** — documented `ENABLE_TOOL_SEARCH` env var and auto-deferral threshold.
+- **Worktree isolation exclusion** — documented rationale for not adopting `isolation: worktree` on agents.
+
 ## [0.12.5] — 2026-03-13
 
 ### Fixed

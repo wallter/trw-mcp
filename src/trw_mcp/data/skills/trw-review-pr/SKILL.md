@@ -1,5 +1,6 @@
 ---
 name: trw-review-pr
+model: claude-sonnet-4-6
 description: >
   Structured code review using the FRAMEWORK.md rubric. Scores
   correctness, tests, security, performance, maintainability,

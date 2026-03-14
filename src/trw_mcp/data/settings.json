@@ -90,6 +90,18 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__trw__trw_deliver",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/pre-tool-deliver-gate.sh\"",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "matcher": "",
@@ -97,6 +109,18 @@
           {
             "type": "command",
             "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/subagent-start.sh\"",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/.claude/hooks/subagent-stop.sh\"",
             "timeout": 5000
           }
         ]
