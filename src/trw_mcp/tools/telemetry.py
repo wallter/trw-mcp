@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -36,6 +37,7 @@ T = TypeVar("T")
 # --- Run directory cache (RISK-002: avoid N+1 disk reads) ---
 
 _cached_run_dir: tuple[float, Path | None] = (0.0, None)
+_cached_run_dir_lock = threading.Lock()
 _RUN_DIR_CACHE_TTL: float = 5.0
 
 
@@ -46,9 +48,25 @@ def _get_cached_run_dir() -> Path | None:
     ts, run_dir = _cached_run_dir
     if now - ts < _RUN_DIR_CACHE_TTL:
         return run_dir
-    run_dir = find_active_run()
-    _cached_run_dir = (now, run_dir)
-    return run_dir
+    with _cached_run_dir_lock:
+        # Re-check after acquiring lock (double-checked pattern)
+        ts, run_dir = _cached_run_dir
+        if now - ts < _RUN_DIR_CACHE_TTL:
+            return run_dir
+        run_dir = find_active_run()
+        _cached_run_dir = (now, run_dir)
+        return run_dir
+
+
+def _enqueue_to_pipeline(event_data: dict[str, object]) -> None:
+    """Enqueue a tool event to the telemetry pipeline. Fail-open."""
+    try:
+        from trw_mcp.telemetry.pipeline import TelemetryPipeline
+
+        pipeline = TelemetryPipeline.get_instance()
+        pipeline.enqueue(dict(event_data))
+    except Exception:  # noqa: BLE001 — fail-open: pipeline must never block tool execution
+        pass
 
 
 def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
@@ -174,6 +192,10 @@ def _write_tool_event(
         "agent_id": agent_id,
         "phase": phase,
     })
+
+    # Pipeline enqueue — BEFORE any early return so events always reach the
+    # backend, not just when there's no active run directory.
+    _enqueue_to_pipeline(cast(dict[str, object], event_data))
 
     config = get_config()
     writer = FileStateWriter()

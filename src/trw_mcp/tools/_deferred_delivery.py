@@ -400,6 +400,13 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     from trw_mcp.telemetry.client import TelemetryClient
     from trw_mcp.telemetry.models import CeremonyComplianceEvent, SessionEndEvent
 
+    # Drain the telemetry pipeline (flushes remaining tool events to backend).
+    try:
+        from trw_mcp.telemetry.pipeline import TelemetryPipeline
+        TelemetryPipeline.get_instance().stop(drain=True, timeout=10.0)
+    except Exception:  # justified: fail-open — pipeline drain must not block delivery
+        logger.debug("pipeline_drain_failed", exc_info=True)
+
     cfg = _cer.get_config()
     inst_id = _resolve_installation_id()
     tel_client = TelemetryClient.from_config()

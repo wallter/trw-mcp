@@ -261,6 +261,17 @@ def _reset_memory_backend() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_telemetry_pipeline() -> Iterator[None]:
+    """Reset TelemetryPipeline singleton between tests for isolation."""
+    yield
+    try:
+        from trw_mcp.telemetry.pipeline import TelemetryPipeline
+        TelemetryPipeline.reset()
+    except Exception:  # justified: fail-open — pipeline may not be importable in all test configs
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Redirect all resolve_trw_dir() and resolve_project_root() calls to tmp dirs.
 

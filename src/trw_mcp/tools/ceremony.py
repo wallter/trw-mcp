@@ -378,16 +378,19 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 run_id=str(run_dir.name) if run_dir else None,
             ))
             tel_client.flush()
-            # Fire-and-forget batch send so new installations appear immediately
-            def _bg_send() -> None:
-                try:
-                    from trw_mcp.telemetry.sender import BatchSender
-                    BatchSender.from_config().send()
-                except Exception:  # justified: fail-open, ceremony completion is best-effort
-                    # justified: fail-open telemetry — batch send is fire-and-forget
-                    # on a daemon thread; failure must never block session start.
-                    pass
-            threading.Thread(target=_bg_send, daemon=True).start()
+            # Start the unified telemetry pipeline (periodic background flush
+            # replaces the old fire-and-forget BatchSender thread).
+            try:
+                from trw_mcp.telemetry.pipeline import TelemetryPipeline
+                pipeline = TelemetryPipeline.get_instance()
+                pipeline.start()
+                pipeline.enqueue({
+                    "event_type": "session_start",
+                    "learnings_loaded": int(str(results.get("learnings_count", 0))),
+                    "run_id": str(run_dir.name) if run_dir else None,
+                })
+            except Exception:  # justified: fail-open, pipeline start must not block session start
+                logger.debug("pipeline_start_failed", exc_info=True)
         except Exception:  # justified: fail-open, telemetry publish must not block session start
             logger.debug("session_telemetry_failed", exc_info=True)
 
