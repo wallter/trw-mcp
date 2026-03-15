@@ -57,7 +57,7 @@ class ReflectResultDict(TypedDict):
 
 
 class ClaudeMdSyncResultDict(TypedDict, total=False):
-    """Return shape of ``_do_claude_md_sync()`` / ``execute_claude_md_sync()``.
+    """Return shape of ``_do_instruction_sync()`` / ``execute_claude_md_sync()``.
 
     All keys are present on both the ``"synced"`` and ``"unchanged"`` paths.
     ``hash`` is only present on the ``"unchanged"`` (cache-hit) path.

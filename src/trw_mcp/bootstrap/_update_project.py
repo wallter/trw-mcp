@@ -1023,6 +1023,42 @@ def _update_cursor_artifacts(
 
 
 # ---------------------------------------------------------------------------
+# Config target_platforms update helper
+# ---------------------------------------------------------------------------
+
+
+def _update_config_target_platforms(
+    target_dir: Path,
+    ide_targets: list[str],
+    result: dict[str, list[str]],
+) -> None:
+    """Update target_platforms in config.yaml to match detected/override IDE targets.
+
+    Preserves all other config fields. Fail-open: errors go to result["warnings"].
+    """
+    import yaml
+
+    config_path = target_dir / ".trw" / "config.yaml"
+    if not config_path.exists():
+        return
+
+    try:
+        content = config_path.read_text()
+        data = yaml.safe_load(content) or {}
+        current: list[str] = data.get("target_platforms", ["claude-code"])
+        if sorted(current) == sorted(ide_targets):
+            result["preserved"].append(str(config_path))
+            return
+        data["target_platforms"] = ide_targets
+        config_path.write_text(
+            yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+        )
+        result["updated"].append(str(config_path))
+    except Exception as exc:  # justified: fail-open, config update is best-effort
+        result["warnings"].append(f"target_platforms config update skipped: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Main update_project entry point
 # ---------------------------------------------------------------------------
 
@@ -1122,6 +1158,11 @@ def update_project(
             on_progress("Phase", "Writing metadata...")
         _write_installer_metadata(target_dir, "update-project", result, on_progress)
         _write_version_yaml(target_dir, result, on_progress)
+
+    # 12b. Update target_platforms in config.yaml based on detected IDEs
+    if not dry_run:
+        ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
+        _update_config_target_platforms(target_dir, ide_targets, result)
 
     # 13. Post-update verification
     if not dry_run:

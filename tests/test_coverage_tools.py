@@ -134,7 +134,7 @@ class TestCeremonyDeliverSubStepFailures:
             "trw_mcp.tools.ceremony._do_reflect",
             return_value={"status": "success", "learnings_produced": 0},
         ), patch(
-            "trw_mcp.tools.ceremony._do_claude_md_sync",
+            "trw_mcp.tools.ceremony._do_instruction_sync",
             side_effect=RuntimeError("sync failed"),
         ), patch(
             "trw_mcp.tools.ceremony._do_index_sync",

@@ -60,12 +60,17 @@ def _write_initial_config(
     *,
     source_package: str = "",
     test_path: str = "",
+    target_platforms: list[str] | None = None,
     on_progress: ProgressCallback = None,
 ) -> None:
     """Write generated config.yaml and learnings index seed files."""
     _write_if_missing(
         target_dir / ".trw" / "config.yaml",
-        _default_config(source_package=source_package, test_path=test_path),
+        _default_config(
+            source_package=source_package,
+            test_path=test_path,
+            target_platforms=target_platforms,
+        ),
         force,
         result,
         on_progress,
@@ -191,10 +196,14 @@ def init_project(
     # 2. Copy bundled data files
     _copy_bundled_data_files(target_dir, force, result, on_progress)
 
-    # 3. Write generated config and seed files
+    # Resolve IDE targets early — needed for both config and artifact generation.
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
+
+    # 3. Write generated config and seed files (includes target_platforms)
     _write_initial_config(
         target_dir, force, result,
         source_package=source_package, test_path=test_path,
+        target_platforms=ide_targets,
         on_progress=on_progress,
     )
 
@@ -211,7 +220,6 @@ def init_project(
     _generate_root_files(target_dir, force, result, on_progress)
 
     # 7b. OpenCode artifacts (FR15: multi-IDE support)
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
     if "opencode" in ide_targets:
         oc_result = generate_opencode_config(target_dir, force=force)
         result["created"].extend(oc_result.get("created", []))

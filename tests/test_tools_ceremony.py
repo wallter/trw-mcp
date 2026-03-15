@@ -4,7 +4,7 @@ Covers:
 - trw_session_start: recall + status bundling, partial failure resilience
 - trw_deliver: reflect + checkpoint + claude_md_sync + index_sync bundling
 - _find_active_run helper
-- _do_checkpoint, _do_reflect, _do_claude_md_sync, _do_index_sync internals
+- _do_checkpoint, _do_reflect, _do_instruction_sync, _do_index_sync internals
 - _do_auto_progress: PRD auto-progression during delivery (GAP-PROC-001)
 - Integration tests for partial failure resilience (Sprint 13, GAP-TEST-003)
 """
@@ -23,7 +23,7 @@ from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools.ceremony import (
     _do_auto_progress,
     _do_checkpoint,
-    _do_claude_md_sync,
+    _do_instruction_sync,
     _do_index_sync,
     _do_reflect,
     _get_run_status,
@@ -229,7 +229,7 @@ class TestDoReflect:
             )
 
 
-# --- _do_claude_md_sync ---
+# --- _do_instruction_sync ---
 
 
 class TestDoClaudeMdSync:
@@ -242,7 +242,7 @@ class TestDoClaudeMdSync:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=trw_project),
         ):
-            result = _do_claude_md_sync(trw_dir)
+            result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"
         assert "learnings_promoted" in result
 
@@ -259,7 +259,7 @@ class TestDoClaudeMdSync:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=trw_project),
         ):
-            result = _do_claude_md_sync(trw_dir)
+            result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"
 
         claude_md = trw_project / "CLAUDE.md"
@@ -486,7 +486,7 @@ class TestDeliverPartialFailure:
             ),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch(
-                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                "trw_mcp.tools.ceremony._do_instruction_sync",
                 return_value={"status": "success", "learnings_promoted": 0,
                               "path": "", "total_lines": 0},
             ),
@@ -534,7 +534,7 @@ class TestDeliverPartialFailure:
                 side_effect=Exception("checkpoint boom"),
             ),
             patch(
-                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                "trw_mcp.tools.ceremony._do_instruction_sync",
                 return_value={"status": "success", "learnings_promoted": 0,
                               "path": "", "total_lines": 0},
             ),
@@ -635,7 +635,7 @@ class TestDeliverPartialFailure:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
-                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                "trw_mcp.tools.ceremony._do_instruction_sync",
                 return_value={"status": "success", "learnings_promoted": 0,
                               "path": "", "total_lines": 0},
             ),
@@ -1128,7 +1128,7 @@ class TestDeliverTelemetryIntegration:
                 return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0},
             ),
             patch(
-                "trw_mcp.tools.ceremony._do_claude_md_sync",
+                "trw_mcp.tools.ceremony._do_instruction_sync",
                 return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
             ),
         ):

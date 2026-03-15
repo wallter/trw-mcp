@@ -71,7 +71,7 @@ def _make_deliver_with_stubs(
         lambda *_a, **_kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0},
     )
     monkeypatch.setattr(
-        "trw_mcp.tools.ceremony._do_claude_md_sync",
+        "trw_mcp.tools.ceremony._do_instruction_sync",
         lambda *_a, **_kw: {"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
     )
     monkeypatch.setattr(

@@ -4,6 +4,17 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-03-14
+
+### Added
+
+- **Multi-platform instruction sync** — new `target_platforms` config field controls which instruction files (CLAUDE.md, AGENTS.md, etc.) are written during `trw_deliver()` and `trw_claude_md_sync()`. Supports `claude-code`, `opencode`, `cursor`, `codex`, `aider` as a list. Installer auto-detects platforms and writes config; updater keeps it in sync when IDEs are added/removed.
+- **Updater config sync** — `update-project` now detects IDE changes and updates `target_platforms` in `.trw/config.yaml` via selective YAML merge (preserves all other user config).
+
+### Changed
+
+- **Renamed `_do_claude_md_sync` → `_do_instruction_sync`** — internal function name and comments updated to be platform-generic, reflecting multi-platform support.
+
 ## [0.17.0] — 2026-03-14
 
 ### Fixed

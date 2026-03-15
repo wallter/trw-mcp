@@ -538,7 +538,7 @@ class TestDeliverAutoPrune:
             "trw_mcp.tools.ceremony.find_active_run": lambda: None,
             "trw_mcp.tools.ceremony._do_reflect": lambda *a, **kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0},
             "trw_mcp.tools.ceremony._do_checkpoint": lambda *a, **kw: None,
-            "trw_mcp.tools.ceremony._do_claude_md_sync": lambda *a, **kw: {"status": "success", "learnings_promoted": 0, "total_lines": 0},
+            "trw_mcp.tools.ceremony._do_instruction_sync": lambda *a, **kw: {"status": "success", "learnings_promoted": 0, "total_lines": 0},
             "trw_mcp.tools.ceremony._do_index_sync": lambda: {"status": "success"},
             "trw_mcp.tools.ceremony._do_auto_progress": lambda *a, **kw: {"status": "skipped"},
         }
@@ -609,7 +609,7 @@ class TestDeliverAutoPrune:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.tools.ceremony._do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}),
-            patch("trw_mcp.tools.ceremony._do_claude_md_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0}),
+            patch("trw_mcp.tools.ceremony._do_instruction_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0}),
             patch("trw_mcp.tools.ceremony._do_index_sync", return_value={"status": "success"}),
             patch("trw_mcp.tools.ceremony._do_auto_progress", return_value={"status": "skipped"}),
         ):
@@ -692,7 +692,7 @@ class TestDeliverAutoPrune:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.tools.ceremony._do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}),
-            patch("trw_mcp.tools.ceremony._do_claude_md_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0}),
+            patch("trw_mcp.tools.ceremony._do_instruction_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0}),
             patch("trw_mcp.tools.ceremony._do_index_sync", return_value={"status": "success"}),
             patch("trw_mcp.tools.ceremony._do_auto_progress", return_value={"status": "skipped"}),
         ):

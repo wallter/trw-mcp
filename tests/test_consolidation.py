@@ -1401,7 +1401,7 @@ def _patch_trw_deliver_deps(trw_dir: Path) -> Any:
     stack.enter_context(patch.object(ceremony_mod, "_do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}))
     stack.enter_context(patch.object(ceremony_mod, "find_active_run", return_value=None))
     stack.enter_context(patch.object(ceremony_mod, "resolve_trw_dir", return_value=trw_dir))
-    stack.enter_context(patch.object(ceremony_mod, "_do_claude_md_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0, "path": ""}))
+    stack.enter_context(patch.object(ceremony_mod, "_do_instruction_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0, "path": ""}))
     stack.enter_context(patch.object(ceremony_mod, "_do_index_sync", return_value={"status": "success"}))
     stack.enter_context(patch.object(ceremony_mod, "_do_auto_progress", return_value={"status": "skipped"}))
     stack.enter_context(patch("trw_mcp.telemetry.publisher.publish_learnings", return_value={"status": "skipped"}))

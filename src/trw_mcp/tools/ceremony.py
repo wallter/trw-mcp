@@ -248,14 +248,12 @@ def _do_reflect(
     }
 
 
-def _do_claude_md_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
-    """Execute CLAUDE.md sync — delegates to the canonical implementation.
+def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
+    """Sync platform instruction files (CLAUDE.md, AGENTS.md, etc.).
 
-    Previously this function duplicated the template context dictionary
-    from ``claude_md.execute_claude_md_sync``, causing key drift (e.g.
-    missing ``ceremony_quick_ref``, stale progressive-disclosure policy).
-    Now it delegates entirely to the single canonical implementation in
-    ``claude_md.py``.
+    Writes to one or more instruction files based on ``config.target_platforms``.
+    Delegates to the canonical ``execute_claude_md_sync`` implementation which
+    handles per-platform file generation.
     """
     from trw_mcp.clients.llm import LLMClient
 
@@ -264,6 +262,17 @@ def _do_claude_md_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     writer = FileStateWriter()
     # Use a no-op LLM client — deliver path doesn't need LLM summarisation.
     llm = LLMClient()
+
+    # Derive client param from config.target_platforms so deliver writes
+    # to the correct instruction files (CLAUDE.md, AGENTS.md, or both).
+    platforms = config.target_platforms
+    if len(platforms) == 1 and platforms[0] in ("claude-code", "opencode"):
+        client = platforms[0]
+    elif len(platforms) > 1:
+        client = "all"
+    else:
+        client = "auto"
+
     raw = execute_claude_md_sync(
         scope="root",
         target_dir=None,
@@ -271,6 +280,7 @@ def _do_claude_md_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
         reader=reader,
         writer=writer,
         llm=llm,
+        client=client,
     )
     # Normalise status for backward compatibility with deliver callers.
     raw["status"] = "success"
@@ -474,11 +484,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, ceremony state update must not block session start
             pass
 
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
             available = int(str(results.get("learnings_count", 0)))
-            append_ceremony_nudge(cast(dict[str, object], results), resolve_trw_dir(), available_learnings=available)
+            ctx = NudgeContext(tool_name=ToolName.SESSION_START)
+            append_ceremony_nudge(cast(dict[str, object], results), resolve_trw_dir(), available_learnings=available, context=ctx)
         except Exception:  # justified: fail-open, nudge injection must not block session start
             pass
 
@@ -586,8 +598,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
         else:
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
-        # Step 3: CLAUDE.md sync
-        _run_step("claude_md_sync", lambda: cast(dict[str, object], _do_claude_md_sync(trw_dir)), _results_view, errors)
+        # Step 3: Sync platform instruction files (CLAUDE.md, AGENTS.md, etc.)
+        _run_step("claude_md_sync", lambda: cast(dict[str, object], _do_instruction_sync(trw_dir)), _results_view, errors)
 
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
@@ -627,6 +639,15 @@ def register_ceremony_tools(server: FastMCP) -> None:
             from trw_mcp.state.ceremony_nudge import mark_deliver
             mark_deliver(trw_dir)
         except Exception:  # justified: fail-open, ceremony state update must not block delivery
+            pass
+
+        # Inject ceremony nudge into response (PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            ctx = NudgeContext(tool_name=ToolName.DELIVER)
+            append_ceremony_nudge(cast(dict[str, object], results), trw_dir, context=ctx)
+        except Exception:  # justified: fail-open, nudge injection must not block delivery
             pass
 
         logger.info(

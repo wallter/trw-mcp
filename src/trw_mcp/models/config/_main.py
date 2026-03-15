@@ -218,6 +218,14 @@ class TRWConfig(BaseSettings):
     max_auto_lines: int = 80
     agents_md_enabled: bool = True
     agent_teams_enabled: bool = True
+    target_platforms: list[str] = Field(
+        default_factory=lambda: ["claude-code"],
+        description=(
+            "Platforms to sync instruction files for during deliver/claude_md_sync. "
+            "Supported: claude-code, opencode, cursor, codex, aider. "
+            "Controls which files are written (CLAUDE.md, AGENTS.md, .cursorrules, etc)."
+        ),
+    )
 
     # -- 12. Scoring subsystem --
     # Outcome-based utility, Sprint 8 extraction

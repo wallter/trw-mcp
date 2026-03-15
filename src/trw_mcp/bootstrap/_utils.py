@@ -129,16 +129,20 @@ def _default_config(
     *,
     source_package: str = "",
     test_path: str = "",
+    target_platforms: list[str] | None = None,
 ) -> str:
     """Generate default ``.trw/config.yaml``.
 
     Args:
         source_package: If set, adds ``source_package_name`` field.
         test_path: If set, adds ``tests_relative_path`` field.
+        target_platforms: Platforms to sync instruction files for.
+            e.g. ``["claude-code", "opencode"]``. Defaults to ``["claude-code"]``.
     """
     from trw_mcp.models.config import get_config
 
     config = get_config()
+    platforms = target_platforms or ["claude-code"]
     lines = [
         "# TRW Framework Configuration",
         "# See trw://config resource for all available fields.",
@@ -151,6 +155,16 @@ def _default_config(
         lines.append(f"source_package_name: {source_package}")
     if test_path:
         lines.append(f"tests_relative_path: {test_path}")
+
+    # Target platforms — controls which instruction files are written
+    # (CLAUDE.md, AGENTS.md, .cursorrules, etc.) during deliver/sync.
+    # Supported: claude-code, opencode, cursor, codex, aider
+    lines.append("")
+    lines.append("# Target platforms for instruction file sync")
+    lines.append("target_platforms:")
+    for p in platforms:
+        lines.append(f'  - "{p}"')
+
     lines.extend([
         "",
         "# Platform telemetry — set platform_api_key to enable",
