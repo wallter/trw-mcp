@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-03-14
+
+### Added
+
+- **REVIEW.md created during install** — `init-project` now generates `REVIEW.md` alongside `CLAUDE.md` so Anthropic's agentic reviewer has review instructions immediately after installation. Previously only created during `update-project` or `trw_deliver()`. Uses `_write_if_missing` so user edits are preserved on re-run.
+
 ## [0.15.2] — 2026-03-15
 
 ### Added

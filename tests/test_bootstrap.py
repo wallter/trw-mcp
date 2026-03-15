@@ -67,6 +67,7 @@ class TestInitProjectStructure:
             ".claude/settings.json",
             ".mcp.json",
             "CLAUDE.md",
+            "REVIEW.md",
         ]
         for f in expected_files:
             assert (fake_git_repo / f).is_file(), f"Missing file: {f}"

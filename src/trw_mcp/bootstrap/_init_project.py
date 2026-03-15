@@ -18,6 +18,7 @@ from ._utils import (
     _ensure_dir,
     _merge_mcp_json,
     _minimal_claude_md,
+    _minimal_review_md,
     _write_if_missing,
     _write_installer_metadata,
     _write_version_yaml,
@@ -142,9 +143,10 @@ def _generate_root_files(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
 ) -> None:
-    """Generate root-level configuration files (``.mcp.json``, ``CLAUDE.md``)."""
+    """Generate root-level configuration files (``.mcp.json``, ``CLAUDE.md``, ``REVIEW.md``)."""
     _merge_mcp_json(target_dir, result, on_progress)
     _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result, on_progress)
+    _write_if_missing(target_dir / "REVIEW.md", _minimal_review_md(), force, result, on_progress)
 
 
 def init_project(
