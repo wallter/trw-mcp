@@ -266,7 +266,7 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     # Derive client param from config.target_platforms so deliver writes
     # to the correct instruction files (CLAUDE.md, AGENTS.md, or both).
     platforms = config.target_platforms
-    if len(platforms) == 1 and platforms[0] in ("claude-code", "opencode"):
+    if len(platforms) == 1:
         client = platforms[0]
     elif len(platforms) > 1:
         client = "all"

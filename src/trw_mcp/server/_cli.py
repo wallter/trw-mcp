@@ -131,6 +131,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )
+    init_parser.add_argument(
+        "--runs-root",
+        default=".trw/runs",
+        help="Directory for run artifacts (default: .trw/runs)",
+    )
 
     # update-project
     update_parser = subparsers.add_parser(

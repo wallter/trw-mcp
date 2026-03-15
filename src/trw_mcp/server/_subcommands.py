@@ -27,6 +27,7 @@ def _run_init_project(args: argparse.Namespace) -> None:
         force=args.force,
         source_package=args.source_package,
         test_path=args.test_path,
+        runs_root=getattr(args, "runs_root", ".trw/runs"),
         ide=getattr(args, "ide", None),
         on_progress=_progress,
     )

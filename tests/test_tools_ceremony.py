@@ -66,7 +66,7 @@ def trw_project(tmp_path: Path) -> Path:
 @pytest.fixture()
 def run_dir(tmp_path: Path) -> Path:
     """Create a minimal run directory structure."""
-    d = tmp_path / "docs" / "task" / "runs" / "20260211T120000Z-test"
+    d = tmp_path / ".trw" / "runs" / "task" / "20260211T120000Z-test"
     meta = d / "meta"
     meta.mkdir(parents=True)
     (meta / "run.yaml").write_text(
@@ -84,17 +84,23 @@ def run_dir(tmp_path: Path) -> Path:
 class TestFindActiveRun:
     """Helper function for locating active runs."""
 
-    def test_returns_none_when_no_task_root(self, tmp_path: Path) -> None:
+    def test_returns_none_when_no_runs_root(self, tmp_path: Path) -> None:
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "runs_root", "nonexistent")
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-            with patch("trw_mcp.state._paths._config") as mock_config:
-                mock_config.task_root = "nonexistent"
+            with patch("trw_mcp.state._paths.get_config", return_value=cfg):
                 result = find_active_run()
         assert result is None
 
     def test_finds_run_directory(self, tmp_path: Path, run_dir: Path) -> None:
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "runs_root", ".trw/runs")
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-            with patch("trw_mcp.state._paths._config") as mock_config:
-                mock_config.task_root = "docs"
+            with patch("trw_mcp.state._paths.get_config", return_value=cfg):
                 result = find_active_run()
         assert result is not None
         assert "20260211T120000Z-test" in str(result)

@@ -251,18 +251,18 @@ def multi_run_project(
     writer: FileStateWriter,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Path:
-    """Create 3 run directories spread across 2 tasks under tmp_path/docs/.
+    """Create 3 run directories spread across 2 tasks under tmp_path/.trw/runs/.
 
     Layout:
-        tmp_path/docs/task-a/runs/20260101T000000Z-aaaa1111/meta/{run.yaml,events.jsonl}
-        tmp_path/docs/task-a/runs/20260102T000000Z-bbbb2222/meta/{run.yaml,events.jsonl}
-        tmp_path/docs/task-b/runs/20260103T000000Z-cccc3333/meta/{run.yaml,events.jsonl}
+        tmp_path/.trw/runs/task-a/20260101T000000Z-aaaa1111/meta/{run.yaml,events.jsonl}
+        tmp_path/.trw/runs/task-a/20260102T000000Z-bbbb2222/meta/{run.yaml,events.jsonl}
+        tmp_path/.trw/runs/task-b/20260103T000000Z-cccc3333/meta/{run.yaml,events.jsonl}
 
     Returns:
         tmp_path (project root).
     """
     monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-    monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+    monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
     # Prevent cache writes from touching .trw dirs that don't exist in tmp_path
     monkeypatch.setattr(
         analytics_mod,
@@ -343,7 +343,7 @@ class TestScanAllRuns:
     ) -> None:
         """T-16: Corrupt run.yaml surfaces in parse_errors, does not raise."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
             analytics_mod,
             "resolve_trw_dir",
@@ -351,7 +351,7 @@ class TestScanAllRuns:
         )
 
         # Create a run dir with an unparseable run.yaml
-        corrupt_run_dir = tmp_path / "docs" / "bad-task" / "runs" / "20260101T000000Z-bad00000" / "meta"
+        corrupt_run_dir = tmp_path / ".trw" / "runs" / "bad-task" / "20260101T000000Z-bad00000" / "meta"
         corrupt_run_dir.mkdir(parents=True)
         corrupt_yaml = corrupt_run_dir / "run.yaml"
         # Write binary garbage that will fail YAML parsing
@@ -373,7 +373,7 @@ class TestScanAllRuns:
     ) -> None:
         """T-16 extended: corrupt run alongside a valid run — valid run still returned."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
             analytics_mod,
             "resolve_trw_dir",
@@ -391,7 +391,7 @@ class TestScanAllRuns:
 
         # Corrupt run (directory exists but run.yaml is binary garbage)
         corrupt_run_dir = (
-            tmp_path / "docs" / "bad-task" / "runs" / "20260102T000000Z-bad00001" / "meta"
+            tmp_path / ".trw" / "runs" / "bad-task" / "20260102T000000Z-bad00001" / "meta"
         )
         corrupt_run_dir.mkdir(parents=True)
         (corrupt_run_dir / "run.yaml").write_bytes(b"\xff\xfe INVALID\x00")
@@ -431,11 +431,11 @@ class TestScanAllRuns:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """scan_all_runs returns empty report when task_root directory does not exist."""
+        """scan_all_runs returns empty report when runs_root directory does not exist."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
 
-        # docs/ directory does NOT exist
+        # .trw/runs/ directory does NOT exist
         result = scan_all_runs()
         assert result["runs_scanned"] == 0
         assert result["runs"] == []
@@ -504,7 +504,7 @@ class TestScanAllRuns:
     ) -> None:
         """Task directory without a 'runs' subdirectory is silently skipped."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
             analytics_mod,
             "resolve_trw_dir",
@@ -512,7 +512,7 @@ class TestScanAllRuns:
         )
 
         # Create a task dir with no 'runs' subdirectory
-        (tmp_path / "docs" / "orphan-task").mkdir(parents=True)
+        (tmp_path / ".trw" / "runs" / "orphan-task").mkdir(parents=True)
 
         result = scan_all_runs()
         assert result["runs_scanned"] == 0
@@ -525,7 +525,7 @@ class TestScanAllRuns:
     ) -> None:
         """A run with missing events.jsonl is still scanned (score 0)."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
             analytics_mod,
             "resolve_trw_dir",
@@ -631,7 +631,7 @@ class TestAnalyticsReportToolLayer:
 
         # Patch config and path resolution so scan_all_runs finds nothing
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
             analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw",
         )
@@ -665,7 +665,7 @@ class TestAnalyticsIntegration:
         (trw_dir / "context").mkdir(parents=True)
 
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: trw_dir)
 
         _write_run(writer, tmp_path, "cache-task", "20260101T000000Z-cache000", events=[
@@ -689,7 +689,7 @@ class TestAnalyticsIntegration:
     ) -> None:
         """Malformed since filter surfaces in parse_errors rather than crashing."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "task_root", "docs")
+        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
             analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw",
         )

@@ -479,13 +479,14 @@ def execute_claude_md_sync(
                     status="active",
                     max_results=config.agents_md_learning_max,
                 )
-                if learning_entries:
-                    lines: list[str] = ["\n## Key Learnings\n"]
-                    for entry in learning_entries:
-                        summary = _sanitize_summary(str(entry.get("summary", "")))
-                        if summary:
-                            lines.append(f"- {summary}")
-                    agents_body += "\n".join(lines) + "\n"
+                # Build bullet lines first, then only add header if there are actual bullets
+                bullet_lines: list[str] = []
+                for entry in learning_entries:
+                    summary = _sanitize_summary(str(entry.get("summary", "")))
+                    if summary:
+                        bullet_lines.append(f"- {summary}")
+                if bullet_lines:
+                    agents_body += "\n## Key Learnings\n\n" + "\n".join(bullet_lines) + "\n"
             except Exception:
                 # Fail-open: render AGENTS.md without learnings on error.
                 logger.warning("agents_md_learning_injection_failed", exc_info=True)
@@ -497,6 +498,13 @@ def execute_claude_md_sync(
             f"{agents_body}\n"
             f"{TRW_MARKER_END}\n"
         )
+        agents_lines = agents_section.count("\n")
+        if agents_lines > config.max_auto_lines:
+            logger.warning(
+                "agents_md_section_oversized",
+                lines=agents_lines,
+                limit=config.max_auto_lines,
+            )
         merge_trw_section(agents_target, agents_section, max_lines)
         agents_md_synced = True
         agents_md_path = str(agents_target)

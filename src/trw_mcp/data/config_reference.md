@@ -152,7 +152,8 @@ agents_md_enabled: false
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `task_root` | `str` | `"docs"` | Root directory for task/run artifacts |
+| `task_root` | `str` | `"docs"` | Root directory for task documentation |
+| `runs_root` | `str` | `".trw/runs"` | Where run artifacts are stored (`{runs_root}/{task}/{run_id}/`) |
 | `trw_dir` | `str` | `".trw"` | TRW data directory name |
 | `worktree_dir` | `str` | `".trees"` | Git worktree directory name |
 | `learnings_dir` | `str` | `"learnings"` | Learnings subdirectory |
@@ -172,6 +173,7 @@ agents_md_enabled: false
 Example:
 ```yaml
 task_root: docs
+runs_root: .trw/runs    # run artifacts: {runs_root}/{task}/{run_id}/
 trw_dir: .trw
 ```
 

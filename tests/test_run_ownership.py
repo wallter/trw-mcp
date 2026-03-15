@@ -30,7 +30,7 @@ def _make_run(
     """Create a minimal run directory with run.yaml."""
     import yaml
 
-    run_dir = base / task / "runs" / run_id
+    run_dir = base / task / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     data: dict[str, object] = {
@@ -119,9 +119,9 @@ class TestPerSessionPinning:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
-        task_root = project / "docs"
-        filesystem_run = _make_run(task_root, "task1", "20260220T100000Z-fs", writer=writer)
-        pinned_run = _make_run(task_root, "task1", "20260219T100000Z-old", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        filesystem_run = _make_run(runs_root, "task1", "20260220T100000Z-fs", writer=writer)
+        pinned_run = _make_run(runs_root, "task1", "20260219T100000Z-old", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
@@ -143,13 +143,13 @@ class TestStatusAwareDiscovery:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
-        task_root = project / "docs"
+        runs_root = project / ".trw" / "runs"
         active_run = _make_run(
-            task_root, "task1", "20260219T100000Z-active",
+            runs_root, "task1", "20260219T100000Z-active",
             status="active", writer=writer,
         )
         _make_run(
-            task_root, "task1", "20260220T100000Z-done",
+            runs_root, "task1", "20260220T100000Z-done",
             status="complete", writer=writer,
         )
 
@@ -161,13 +161,13 @@ class TestStatusAwareDiscovery:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
-        task_root = project / "docs"
+        runs_root = project / ".trw" / "runs"
         active_run = _make_run(
-            task_root, "task1", "20260219T100000Z-active",
+            runs_root, "task1", "20260219T100000Z-active",
             status="active", writer=writer,
         )
         _make_run(
-            task_root, "task1", "20260220T100000Z-fail",
+            runs_root, "task1", "20260220T100000Z-fail",
             status="failed", writer=writer,
         )
 
@@ -179,13 +179,13 @@ class TestStatusAwareDiscovery:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
-        task_root = project / "docs"
+        runs_root = project / ".trw" / "runs"
         _make_run(
-            task_root, "task1", "20260219T100000Z-done1",
+            runs_root, "task1", "20260219T100000Z-done1",
             status="complete", writer=writer,
         )
         _make_run(
-            task_root, "task1", "20260220T100000Z-done2",
+            runs_root, "task1", "20260220T100000Z-done2",
             status="complete", writer=writer,
         )
 
@@ -198,8 +198,8 @@ class TestStatusAwareDiscovery:
     ) -> None:
         """Backward compat: runs without status field are active."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        run_dir = task_root / "task1" / "runs" / "20260219T100000Z-legacy"
+        runs_root = project / ".trw" / "runs"
+        run_dir = runs_root / "task1" / "20260219T100000Z-legacy"
         (run_dir / "meta").mkdir(parents=True)
         # No status field at all
         (run_dir / "meta" / "run.yaml").write_text("run_id: legacy\n")
@@ -274,8 +274,8 @@ class TestMarkRunComplete:
         from trw_mcp.tools.ceremony import _mark_run_complete
 
         project = tmp_path / "project"
-        task_root = project / "docs"
-        run = _make_run(task_root, "task1", "20260220T100000Z-test", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        run = _make_run(runs_root, "task1", "20260220T100000Z-test", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         assert find_active_run() == run

@@ -822,55 +822,56 @@ class TestPathsCoverage:
     """Lines 58, 172: _find_latest_run_dir and detect_current_phase."""
 
     def test_find_latest_run_dir_skips_non_dir_runs(self, tmp_path: Path) -> None:
-        """Line 58: task_dir without 'runs' subdir is skipped."""
+        """iter_run_dirs skips task_dirs without valid run subdirectories."""
         from trw_mcp.state._paths import _find_latest_run_dir
 
-        base_dir = tmp_path / "docs"
-        base_dir.mkdir()
+        runs_root = tmp_path / ".trw" / "runs"
+        runs_root.mkdir(parents=True)
 
-        # Create a task_dir that has NO 'runs' subdirectory
-        task_no_runs = base_dir / "task-no-runs"
+        # Create a task_dir that has NO run subdirectories
+        task_no_runs = runs_root / "task-no-runs"
         task_no_runs.mkdir()
-        # No 'runs' dir inside — should be skipped (line 57-58)
+        # No run dirs inside — should be skipped
 
         # Create another task_dir that HAS a valid run
-        task_with_run = base_dir / "task-with-run"
-        run_dir = task_with_run / "runs" / "20260206T120000Z-abc1"
+        task_with_run = runs_root / "task-with-run"
+        run_dir = task_with_run / "20260206T120000Z-abc1"
         (run_dir / "meta").mkdir(parents=True)
         (run_dir / "meta" / "run.yaml").write_text("run_id: abc1\n", encoding="utf-8")
 
-        result = _find_latest_run_dir(base_dir)
+        result = _find_latest_run_dir(runs_root)
         assert result is not None
         assert result.name == "20260206T120000Z-abc1"
 
     def test_detect_current_phase_skips_non_dir_runs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Line 172: detect_current_phase skips task_dirs without 'runs' subdir."""
+        """detect_current_phase skips task_dirs without valid run subdirectories."""
         from trw_mcp.state import _paths
 
-        task_root = tmp_path / "docs"
-        task_root.mkdir()
+        runs_root = tmp_path / ".trw" / "runs"
+        runs_root.mkdir(parents=True)
 
-        # task_dir with no 'runs' subdirectory — line 171-172 hit
-        no_runs_dir = task_root / "no-runs-task"
+        # task_dir with no run subdirectories — should be skipped
+        no_runs_dir = runs_root / "no-runs-task"
         no_runs_dir.mkdir()
-        # No 'runs' inside
 
         # Valid task with a completed (not active) run
-        valid_task = task_root / "valid-task"
-        run_dir = valid_task / "runs" / "20260206T120000Z-xyz1"
+        valid_task = runs_root / "valid-task"
+        run_dir = valid_task / "20260206T120000Z-xyz1"
         (run_dir / "meta").mkdir(parents=True)
         run_yaml = run_dir / "meta" / "run.yaml"
         # Status is "complete", not "active"
         run_yaml.write_text("run_id: xyz1\nphase: deliver\nstatus: complete\n", encoding="utf-8")
 
-        fake_cfg = MagicMock()
-        fake_cfg.task_root = "docs"
-        monkeypatch.setattr("trw_mcp.state._paths._config", fake_cfg)
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "runs_root", ".trw/runs")
 
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-            result = _paths.detect_current_phase()
+            with patch("trw_mcp.state._paths.get_config", return_value=cfg):
+                result = _paths.detect_current_phase()
 
         # Status is "complete", not "active" → returns None
         assert result is None
@@ -878,26 +879,26 @@ class TestPathsCoverage:
     def test_detect_current_phase_inactive_run_returns_none(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Line 184: detect_current_phase returns None when status != active."""
+        """detect_current_phase returns None when status != active."""
         from trw_mcp.state import _paths
 
-        task_root = tmp_path / "docs"
-        task_root.mkdir()
-
-        task_dir = task_root / "my-task"
-        run_dir = task_dir / "runs" / "20260206T120000Z-xyz1"
+        runs_root = tmp_path / ".trw" / "runs"
+        task_dir = runs_root / "my-task"
+        run_dir = task_dir / "20260206T120000Z-xyz1"
         (run_dir / "meta").mkdir(parents=True)
         run_yaml = run_dir / "meta" / "run.yaml"
         run_yaml.write_text(
             "run_id: xyz1\nphase: deliver\nstatus: complete\n", encoding="utf-8"
         )
 
-        fake_cfg = MagicMock()
-        fake_cfg.task_root = "docs"
-        monkeypatch.setattr("trw_mcp.state._paths._config", fake_cfg)
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "runs_root", ".trw/runs")
 
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-            result = _paths.detect_current_phase()
+            with patch("trw_mcp.state._paths.get_config", return_value=cfg):
+                result = _paths.detect_current_phase()
 
         assert result is None
 
@@ -907,22 +908,22 @@ class TestPathsCoverage:
         """Positive: detect_current_phase returns phase when status == active."""
         from trw_mcp.state import _paths
 
-        task_root = tmp_path / "docs"
-        task_root.mkdir()
-
-        task_dir = task_root / "my-task"
-        run_dir = task_dir / "runs" / "20260206T120000Z-xyz2"
+        runs_root = tmp_path / ".trw" / "runs"
+        task_dir = runs_root / "my-task"
+        run_dir = task_dir / "20260206T120000Z-xyz2"
         (run_dir / "meta").mkdir(parents=True)
         run_yaml = run_dir / "meta" / "run.yaml"
         run_yaml.write_text(
             "run_id: xyz2\nphase: implement\nstatus: active\n", encoding="utf-8"
         )
 
-        fake_cfg = MagicMock()
-        fake_cfg.task_root = "docs"
-        monkeypatch.setattr("trw_mcp.state._paths._config", fake_cfg)
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "runs_root", ".trw/runs")
 
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
-            result = _paths.detect_current_phase()
+            with patch("trw_mcp.state._paths.get_config", return_value=cfg):
+                result = _paths.detect_current_phase()
 
         assert result == "implement"

@@ -12,6 +12,13 @@ from trw_mcp.state.claude_md._templates import (
 )
 
 
+_SESSION_BOUNDARY_TEXT = (
+    "Every session that loads learnings via `trw_session_start()` should persist "
+    "them at session end \u2014 this is how your work compounds across sessions "
+    "instead of being lost.\n"
+)
+
+
 def render_imperative_opener() -> str:
     """Render the value-oriented opener for the TRW auto-generated section.
 
@@ -297,10 +304,8 @@ def render_closing_reminder() -> str:
     return (
         "### Session Boundaries\n"
         "\n"
-        "Every session that loads learnings via `trw_session_start()` "
-        "should persist them at session end \u2014 this is how "
-        "your work compounds across sessions instead of being lost.\n"
-        "\n"
+        + _SESSION_BOUNDARY_TEXT
+        + "\n"
     )
 
 
@@ -315,6 +320,8 @@ def render_minimal_protocol() -> str:
         "TRW tools persist your work across sessions:\n"
         "- **Start**: call `trw_session_start()` to load prior learnings\n"
         "- **Finish**: call `trw_deliver()` to persist discoveries\n"
+        "\n"
+        + _SESSION_BOUNDARY_TEXT
     )
 
 
@@ -357,9 +364,7 @@ def render_agents_trw_section() -> str:
         "\n"
         "## Session Boundaries\n"
         "\n"
-        "Every session that loads learnings via `trw_session_start()` should persist "
-        "them at session end \u2014 this is how your work compounds across sessions "
-        "instead of being lost.\n"
+        + _SESSION_BOUNDARY_TEXT
     )
 
 

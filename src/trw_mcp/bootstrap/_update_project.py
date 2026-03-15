@@ -1045,7 +1045,7 @@ def _update_config_target_platforms(
         return
 
     try:
-        content = config_path.read_text()
+        content = config_path.read_text(encoding="utf-8")
         data = yaml.safe_load(content) or {}
         current: list[str] = data.get("target_platforms", ["claude-code"])
         if sorted(current) == sorted(ide_targets):
@@ -1053,7 +1053,8 @@ def _update_config_target_platforms(
             return
         data["target_platforms"] = ide_targets
         config_path.write_text(
-            yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+            yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
         )
         result["updated"].append(str(config_path))
     except Exception as exc:  # justified: fail-open, config update is best-effort

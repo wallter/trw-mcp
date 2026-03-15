@@ -60,6 +60,7 @@ def _write_initial_config(
     *,
     source_package: str = "",
     test_path: str = "",
+    runs_root: str = ".trw/runs",
     target_platforms: list[str] | None = None,
     on_progress: ProgressCallback = None,
 ) -> None:
@@ -69,6 +70,7 @@ def _write_initial_config(
         _default_config(
             source_package=source_package,
             test_path=test_path,
+            runs_root=runs_root,
             target_platforms=target_platforms,
         ),
         force,
@@ -160,6 +162,7 @@ def init_project(
     force: bool = False,
     source_package: str = "",
     test_path: str = "",
+    runs_root: str = ".trw/runs",
     ide: str | None = None,
     on_progress: ProgressCallback = None,
 ) -> dict[str, list[str]]:
@@ -203,6 +206,7 @@ def init_project(
     _write_initial_config(
         target_dir, force, result,
         source_package=source_package, test_path=test_path,
+        runs_root=runs_root,
         target_platforms=ide_targets,
         on_progress=on_progress,
     )

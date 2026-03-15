@@ -144,8 +144,7 @@ class TestUpdateTargetPlatforms:
 
         config_path = str(initialized_repo / ".trw" / "config.yaml")
         # Should be in "preserved" (not "updated") when targets haven't changed
-        assert config_path in result.get("preserved", []) or \
-               config_path not in result.get("updated", [])
+        assert config_path in result.get("preserved", [])
 
         platforms = _read_target_platforms(initialized_repo)
         assert "claude-code" in platforms
@@ -287,26 +286,13 @@ class TestDeliverTargetPlatforms:
         assert call_kwargs.get("client") == "all"
 
     def test_cursor_only_passes_cursor_client(self, tmp_path: Path) -> None:
-        """target_platforms: ['cursor'] -> client='cursor' (single non-claude-code/opencode).
-
-        'cursor' is not in the special-cased set, so it falls through to the else branch
-        producing client='auto'. This test validates the actual branch behavior.
-        """
-        # According to the implementation:
-        # if len(platforms) == 1 and platforms[0] in ("claude-code", "opencode"):
-        #     client = platforms[0]
-        # elif len(platforms) > 1:
-        #     client = "all"
-        # else:
-        #     client = "auto"
-        # So ["cursor"] alone -> client="auto"
+        """target_platforms: ['cursor'] -> client='cursor' (single platform passed directly)."""
         client_val, mock_sync = self._run_instruction_sync_with_platforms(
             tmp_path, ["cursor"]
         )
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
-        # cursor alone falls to the else branch -> "auto"
-        assert call_kwargs.get("client") == "auto"
+        assert call_kwargs.get("client") == "cursor"
 
     def test_instruction_sync_returns_success_status(self, tmp_path: Path) -> None:
         """_do_instruction_sync always normalises status to 'success'."""

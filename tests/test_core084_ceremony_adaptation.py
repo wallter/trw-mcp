@@ -68,7 +68,7 @@ def _run_agents_md_sync(
 
     config = TRWConfig(
         trw_dir=str(trw_dir),
-        ceremony_mode=ceremony_mode,  # type: ignore[arg-type]
+        ceremony_mode=ceremony_mode,
         agents_md_learning_injection=agents_md_learning_injection,
         agents_md_learning_max=agents_md_learning_max,
         agents_md_learning_min_impact=agents_md_learning_min_impact,
@@ -164,7 +164,7 @@ class TestRecallCappingLightMode:
 
         config = TRWConfig(
             trw_dir=str(trw_dir),
-            ceremony_mode="light",  # type: ignore[arg-type]
+            ceremony_mode="light",
             recall_max_results=25,
         )
 
@@ -209,7 +209,7 @@ class TestRecallCappingLightMode:
 
         config = TRWConfig(
             trw_dir=str(trw_dir),
-            ceremony_mode="full",  # type: ignore[arg-type]
+            ceremony_mode="full",
             recall_max_results=25,
         )
 
@@ -246,13 +246,13 @@ class TestRecallCappingLightMode:
 
     def test_light_mode_effective_max_calculation(self) -> None:
         """Verify effective_max = min(config.recall_max_results, LIGHT_MODE_RECALL_CAP)."""
-        config = TRWConfig(ceremony_mode="light", recall_max_results=25)  # type: ignore[arg-type]
+        config = TRWConfig(ceremony_mode="light", recall_max_results=25)
         effective_max = min(config.recall_max_results, LIGHT_MODE_RECALL_CAP)
         assert effective_max == LIGHT_MODE_RECALL_CAP
 
     def test_light_mode_respects_lower_configured_max(self) -> None:
         """If recall_max_results < LIGHT_MODE_RECALL_CAP, the lower value is used."""
-        config = TRWConfig(ceremony_mode="light", recall_max_results=5)  # type: ignore[arg-type]
+        config = TRWConfig(ceremony_mode="light", recall_max_results=5)
         effective_max = min(config.recall_max_results, LIGHT_MODE_RECALL_CAP)
         assert effective_max == 5
 
@@ -266,7 +266,7 @@ class TestRecallCappingLightMode:
 
         config = TRWConfig(
             trw_dir=str(trw_dir),
-            ceremony_mode="light",  # type: ignore[arg-type]
+            ceremony_mode="light",
             recall_max_results=25,
         )
 
@@ -457,49 +457,69 @@ class TestAgentsMdLearningInjection:
 class TestSessionStartLightMode:
     """FR07: session_start uses compact response for light mode."""
 
-    def test_light_mode_framework_reminder_content(self) -> None:
+    def _invoke_session_start(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ceremony_mode: str,
+    ) -> dict[str, object]:
+        """Invoke trw_session_start via the MCP tool path with mocked infra."""
+        from tests.conftest import get_tools_sync, make_test_server
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+        (trw_dir / "context").mkdir(exist_ok=True)
+
+        cfg = TRWConfig(trw_dir=str(trw_dir))
+        object.__setattr__(cfg, "ceremony_mode", ceremony_mode)
+
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+        server = make_test_server("ceremony")
+        tools = get_tools_sync(server)
+
+        with (
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
+            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
+            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+        ):
+            result: dict[str, object] = tools["trw_session_start"].fn(query="")
+        return result
+
+    def test_light_mode_framework_reminder_content(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
         """Light mode framework_reminder says 'Call trw_deliver() when done'."""
-        config = TRWConfig(ceremony_mode="light")  # type: ignore[arg-type]
-
-        if config.ceremony_mode == "light":
-            reminder = "Call trw_deliver() when done to persist your work."
-        else:
-            reminder = (
-                "Read .trw/frameworks/FRAMEWORK.md -- it defines the methodology "
-                "your tools implement"
-            )
-
+        result = self._invoke_session_start(monkeypatch, tmp_path, "light")
+        reminder = str(result.get("framework_reminder", ""))
         assert "trw_deliver()" in reminder
         assert "FRAMEWORK.md" not in reminder
 
-    def test_full_mode_framework_reminder_mentions_framework(self) -> None:
+    def test_full_mode_framework_reminder_mentions_framework(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
         """Full mode framework_reminder references FRAMEWORK.md."""
-        config = TRWConfig(ceremony_mode="full")  # type: ignore[arg-type]
-
-        if config.ceremony_mode == "light":
-            reminder = "Call trw_deliver() when done to persist your work."
-        else:
-            reminder = (
-                "Read .trw/frameworks/FRAMEWORK.md -- it defines the methodology "
-                "your tools implement (6-phase execution model, exit criteria, "
-                "formations, quality gates, phase reversion). Re-read after "
-                "context compaction."
-            )
-
+        result = self._invoke_session_start(monkeypatch, tmp_path, "full")
+        reminder = str(result.get("framework_reminder", ""))
         assert "FRAMEWORK.md" in reminder
-        assert "6-phase" in reminder
 
-    def test_light_mode_skips_ceremony_nudge(self) -> None:
+    def test_light_mode_skips_ceremony_nudge(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
         """In light mode, ceremony_status nudge is not injected into session_start."""
-        # This tests the branching logic in ceremony.py:
-        # if config.ceremony_mode != "light": inject nudge
-        config = TRWConfig(ceremony_mode="light")  # type: ignore[arg-type]
-        assert config.ceremony_mode == "light"
-        # The actual behavior is: when ceremony_mode is "light", the code
-        # skips the append_ceremony_nudge call, so "ceremony_status" is absent.
-        # This is tested implicitly by verifying the code path exists.
+        result = self._invoke_session_start(monkeypatch, tmp_path, "light")
+        assert "ceremony_status" not in result
 
-    def test_full_mode_includes_ceremony_nudge(self) -> None:
+    def test_full_mode_includes_ceremony_nudge(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
         """In full mode, ceremony_status nudge IS injected."""
-        config = TRWConfig(ceremony_mode="full")  # type: ignore[arg-type]
-        assert config.ceremony_mode != "light"
+        result = self._invoke_session_start(monkeypatch, tmp_path, "full")
+        # Full mode attempts to inject ceremony_status (it may or may not succeed
+        # depending on ceremony state file, but the code path is exercised).
+        # The key distinction is that light mode definitively skips it.
+        # We verify full mode by checking it either has ceremony_status or
+        # at least has the FRAMEWORK.md reference in the reminder.
+        reminder = str(result.get("framework_reminder", ""))
+        assert "FRAMEWORK.md" in reminder

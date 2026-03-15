@@ -4,6 +4,20 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-03-15
+
+### Added
+
+- **Configurable `runs_root`** — new config field `runs_root` (default: `.trw/runs`) controls where run artifacts (events, checkpoints, reports) are stored. Each `trw_init` creates `{runs_root}/{task_name}/{run_id}/`. Previously runs were nested under `{task_root}/{task_name}/runs/` which mixed run artifacts with documentation.
+- **`--runs-root` CLI flag** — `trw-mcp init-project --runs-root <path>` sets the run directory at install time. The generated `.trw/config.yaml` includes inline comments explaining the field.
+- **`.trw/runs` bootstrapped at install** — the directory is now created during `init-project` alongside other `.trw/` subdirectories.
+- **Config reference updated** — `runs_root` documented in `config_reference.md` with description and example.
+
+### Changed
+
+- **Run directory structure simplified** — runs now live at `.trw/runs/{task}/{run_id}/` instead of `docs/{task}/runs/{run_id}/`. Removes the redundant intermediate `runs/` directory since the root is already semantically a runs directory.
+- **FRAMEWORK.md variables updated** — `RUNS_ROOT` added, `RUN_ROOT` redefined as `{RUNS_ROOT}/{TASK}/{RUN_ID}`.
+
 ## [0.18.0] — 2026-03-14
 
 ### Added

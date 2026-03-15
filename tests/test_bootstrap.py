@@ -951,6 +951,21 @@ class TestDefaultConfig:
         default_model = TRWConfig()
         assert f"claude_md_max_lines: {default_model.claude_md_max_lines}" in config_text
 
+    def test_default_config_includes_runs_root(self) -> None:
+        """_default_config() includes runs_root with the default value."""
+        from trw_mcp.bootstrap import _default_config
+
+        config_text = _default_config()
+        assert "runs_root: .trw/runs" in config_text
+
+    def test_default_config_custom_runs_root(self) -> None:
+        """_default_config(runs_root=...) emits the custom value."""
+        from trw_mcp.bootstrap import _default_config
+
+        config_text = _default_config(runs_root="docs/runs")
+        assert "runs_root: docs/runs" in config_text
+        assert ".trw/runs" not in config_text
+
 
 # ── Verification Tests ───────────────────────────────────────────────────
 

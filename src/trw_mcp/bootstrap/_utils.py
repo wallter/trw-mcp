@@ -129,6 +129,7 @@ def _default_config(
     *,
     source_package: str = "",
     test_path: str = "",
+    runs_root: str = ".trw/runs",
     target_platforms: list[str] | None = None,
 ) -> str:
     """Generate default ``.trw/config.yaml``.
@@ -136,6 +137,7 @@ def _default_config(
     Args:
         source_package: If set, adds ``source_package_name`` field.
         test_path: If set, adds ``tests_relative_path`` field.
+        runs_root: Base directory for run artifacts (relative to project root).
         target_platforms: Platforms to sync instruction files for.
             e.g. ``["claude-code", "opencode"]``. Defaults to ``["claude-code"]``.
     """
@@ -147,7 +149,11 @@ def _default_config(
         "# TRW Framework Configuration",
         "# See trw://config resource for all available fields.",
         "task_root: docs",
-        "runs_root: .trw/runs",
+        "",
+        "# Where run artifacts (events, checkpoints, reports) are stored.",
+        "# Each trw_init creates: {runs_root}/{task_name}/{run_id}/",
+        f"runs_root: {runs_root}",
+        "",
         "debug: false",
         "claude_md_max_lines: 500",
         f"framework_version: {config.framework_version}",

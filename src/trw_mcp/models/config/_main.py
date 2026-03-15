@@ -231,7 +231,7 @@ class TRWConfig(BaseSettings):
     ceremony_mode: Literal["full", "light"] = "full"
 
     # AGENTS.md learning injection (CORE-084-FR06)
-    agents_md_learning_injection: bool = False
+    agents_md_learning_injection: bool = False  # opt-in: adds token overhead in AGENTS.md — not for eval variants
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 

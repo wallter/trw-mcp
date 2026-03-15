@@ -148,6 +148,8 @@ def perform_session_recalls(
             trw_dir, query="*", min_impact=0.7,
             max_results=effective_max, compact=True,
         )
+        extra["query"] = query
+        extra["query_matched"] = len(focused)
         seen_ids: set[str] = set()
         for entry in focused + baseline:
             lid = str(entry.get("id", ""))
@@ -155,10 +157,6 @@ def perform_session_recalls(
                 seen_ids.add(lid)
                 learnings.append(entry)
         learnings = learnings[:effective_max]
-        extra["query"] = query
-        extra["query_matched"] = len([
-            e for e in focused if str(e.get("id", "")) in seen_ids
-        ])
     else:
         learnings = adapter_recall(
             trw_dir, query="*", min_impact=0.7,

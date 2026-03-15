@@ -266,7 +266,7 @@ class TestAnalyticsReportTool:
         tool = get_tools_sync(report_server)["trw_analytics_report"]
 
         # Create a run directory
-        run_dir = tmp_path / "docs" / "task1" / "runs" / "20260219T100000Z-abcd1234"
+        run_dir = tmp_path / ".trw" / "runs" / "task1" / "20260219T100000Z-abcd1234"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
         writer.write_yaml(meta / "run.yaml", {
