@@ -10,9 +10,8 @@ PRD-CORE-071 Phase 1: Domain sub-configs provide type-narrowed access
 
 from __future__ import annotations
 
-from typing import Literal
-
 from functools import cached_property
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,7 +24,6 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_RECALL_MAX_RESULTS,
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
-    LIGHT_MODE_RECALL_CAP,
 )
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
@@ -145,9 +143,7 @@ class TRWConfig(BaseSettings):
     learning_repeated_op_threshold: int = 3
     recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
     recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
-    recall_compact_fields: frozenset[str] = frozenset(
-        {"id", "summary", "impact", "tags", "status"}
-    )
+    recall_compact_fields: frozenset[str] = frozenset({"id", "summary", "impact", "tags", "status"})
 
     # -- 4. Hybrid retrieval (CORE-041) --
 
@@ -181,17 +177,17 @@ class TRWConfig(BaseSettings):
     memory_hot_ttl_days: int = 7
     memory_cold_threshold_days: int = 90
     memory_retention_days: int = 365
-    memory_score_w1: float = 0.4   # relevance weight
-    memory_score_w2: float = 0.3   # recency weight
-    memory_score_w3: float = 0.3   # importance weight
+    memory_score_w1: float = 0.4  # relevance weight
+    memory_score_w2: float = 0.3  # recency weight
+    memory_score_w3: float = 0.3  # importance weight
 
     # -- 8. Impact score distribution (CORE-034) --
 
     impact_forced_distribution_enabled: bool = True
-    impact_tier_critical_cap: float = 0.05   # max 5% at 0.9-1.0
-    impact_tier_high_cap: float = 0.20       # max 20% at 0.7-0.89
+    impact_tier_critical_cap: float = 0.05  # max 5% at 0.9-1.0
+    impact_tier_high_cap: float = 0.20  # max 20% at 0.7-0.89
     impact_high_threshold_pct: float = 20.0  # soft-cap: max % of learnings >= 0.8
-    impact_decay_half_life_days: int = 90    # half-life for batch impact decay
+    impact_decay_half_life_days: int = 90  # half-life for batch impact decay
 
     # -- 9. Utility scoring & decay --
     # Q-learning + Ebbinghaus decay (PRD-CORE-004, PRD-CORE-026)
@@ -231,7 +227,7 @@ class TRWConfig(BaseSettings):
     ceremony_mode: Literal["full", "light"] = "full"
 
     # AGENTS.md learning injection (CORE-084-FR06)
-    agents_md_learning_injection: bool = False  # opt-in: adds token overhead in AGENTS.md — not for eval variants
+    agents_md_learning_injection: bool = True  # inject high-impact learnings into AGENTS.md (set False in eval variants)
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
@@ -242,7 +238,11 @@ class TRWConfig(BaseSettings):
     scoring_recency_discount_floor: float = 0.5
     scoring_error_fallback_reward: float = -0.3
     scoring_error_keywords: tuple[str, ...] = (
-        "error", "fail", "exception", "crash", "timeout",
+        "error",
+        "fail",
+        "exception",
+        "crash",
+        "timeout",
     )
 
     # -- 13. Directory structure & paths --
@@ -284,9 +284,9 @@ class TRWConfig(BaseSettings):
     validation_density_weight: float = 42.0
     validation_structure_weight: float = 25.0
     validation_traceability_weight: float = 33.0
-    validation_smell_weight: float = 0.0       # reserved — not enforced (smell scorer not implemented)
+    validation_smell_weight: float = 0.0  # reserved — not enforced (smell scorer not implemented)
     validation_readability_weight: float = 0.0  # reserved — not enforced (readability scorer not implemented)
-    validation_ears_weight: float = 0.0         # reserved — not enforced (EARS scorer not implemented)
+    validation_ears_weight: float = 0.0  # reserved — not enforced (EARS scorer not implemented)
 
     # Per-section content density weights (PRD-CORE-080-FR04)
     # Configurable per-project via .trw/config.yaml using TRW_ env prefix.
@@ -488,8 +488,8 @@ class TRWConfig(BaseSettings):
 
     debug: bool = False
     logs_dir: str = "logs"
-    telemetry: bool = False          # session-level flag; consumed by trw_session_start
-    telemetry_enabled: bool = True   # per-tool toggle (reserved for future use)
+    telemetry: bool = False  # session-level flag; consumed by trw_session_start
+    telemetry_enabled: bool = True  # per-tool toggle (reserved for future use)
     telemetry_file: str = "tool-telemetry.jsonl"
     llm_usage_log_enabled: bool = True
     llm_usage_log_file: str = "llm_usage.jsonl"
@@ -498,12 +498,12 @@ class TRWConfig(BaseSettings):
     # PRD-CORE-031, PRD-INFRA-014, PRD-INFRA-016
 
     platform_telemetry_enabled: bool = False  # opt-in; sends anonymized usage to trwframework.com
-    update_channel: str = "latest"            # update channel: latest | lts
-    platform_url: str = ""                    # single backend URL (backward compat, empty = offline)
+    update_channel: str = "latest"  # update channel: latest | lts
+    platform_url: str = ""  # single backend URL (backward compat, empty = offline)
     platform_urls: list[str] = Field(default_factory=list)  # multi-backend: fan-out writes, first-success reads
     platform_api_key: SecretStr = SecretStr("")  # API key for platform backend (PRD-QUAL-042-FR07)
-    installation_id: str = ""                 # anonymized installation identifier
-    auto_upgrade: bool = False                # auto-install updates on session start (PRD-INFRA-014)
+    installation_id: str = ""  # anonymized installation identifier
+    auto_upgrade: bool = False  # auto-install updates on session start (PRD-INFRA-014)
 
     # -- 38. Knowledge topology (CORE-021) --
     # Tag-based clustering for auto-generated topic documents
@@ -516,8 +516,8 @@ class TRWConfig(BaseSettings):
     # -- 39. Complexity classification (CORE-060) --
     # Tier boundaries and signal weights for classify_complexity()
 
-    complexity_tier_minimal: int = 1        # raw_score <= this -> MINIMAL (only trivial 1-file fixes)
-    complexity_tier_comprehensive: int = 6   # raw_score >= this+1 -> COMPREHENSIVE
+    complexity_tier_minimal: int = 1  # raw_score <= this -> MINIMAL (only trivial 1-file fixes)
+    complexity_tier_comprehensive: int = 6  # raw_score >= this+1 -> COMPREHENSIVE
     complexity_weight_novel_patterns: int = 3
     complexity_weight_cross_cutting: int = 2
     complexity_weight_architecture_change: int = 3
@@ -529,17 +529,17 @@ class TRWConfig(BaseSettings):
     # -- 40. MCP transport --
     # Shared HTTP server: multiple Claude Code instances connect to one process
 
-    mcp_transport: str = "stdio"        # stdio | sse | streamable-http
-    mcp_host: str = "127.0.0.1"         # bind address for HTTP transport
-    mcp_port: int = 8100                # port for HTTP transport
+    mcp_transport: str = "stdio"  # stdio | sse | streamable-http
+    mcp_host: str = "127.0.0.1"  # bind address for HTTP transport
+    mcp_port: int = 8100  # port for HTTP transport
 
     # -- 41. Mutation testing (QUAL-025) --
     # Optional VALIDATE phase gate -- runs mutmut on changed files
 
     mutation_enabled: bool = False
-    mutation_threshold: float = 0.50                   # standard feature threshold
-    mutation_threshold_critical: float = 0.70          # critical path threshold
-    mutation_threshold_experimental: float = 0.30      # experimental code threshold
+    mutation_threshold: float = 0.50  # standard feature threshold
+    mutation_threshold_critical: float = 0.70  # critical path threshold
+    mutation_threshold_experimental: float = 0.30  # experimental code threshold
     mutation_critical_paths: tuple[str, ...] = ("tools/", "state/", "models/")
     mutation_experimental_paths: tuple[str, ...] = ("scratch/",)
     mutation_timeout_secs: int = DEFAULT_MUTATION_TIMEOUT_SECS
@@ -555,15 +555,15 @@ class TRWConfig(BaseSettings):
     # -- 43. Multi-agent review (QUAL-027) --
     # Confidence-scored parallel review with threshold filtering
 
-    review_confidence_threshold: int = 80              # 0-100; findings below are in review-all.yaml only
+    review_confidence_threshold: int = 80  # 0-100; findings below are in review-all.yaml only
 
     # -- 44. Dependency audit (QUAL-028) --
     # pip-audit / npm audit gate for agent dependency changes
 
     dep_audit_enabled: bool = True
-    dep_audit_level: str = "high"                      # critical | high | medium | low
+    dep_audit_level: str = "high"  # critical | high | medium | low
     dep_audit_timeout_secs: int = 30
-    dep_audit_block_on_patchable_only: bool = True     # only block when fix_versions available
+    dep_audit_block_on_patchable_only: bool = True  # only block when fix_versions available
 
     # -- 45. API fuzz & comment check (QUAL-029) --
     # Schemathesis API fuzzing + placeholder comment detection hook
@@ -571,7 +571,7 @@ class TRWConfig(BaseSettings):
     comment_check_enabled: bool = True
     api_fuzz_enabled: bool = False
     api_fuzz_base_url: str = "http://localhost:8000"
-    api_fuzz_level: str = "strict"                     # strict | lenient
+    api_fuzz_level: str = "strict"  # strict | lenient
     api_fuzz_timeout_secs: int = 120
 
     # -- 46. ATDD (CORE-064) --
@@ -632,7 +632,12 @@ class TRWConfig(BaseSettings):
     trust_walk_boundary: int = 200
     trust_walk_sample_rate: float = 0.3
     trust_security_tags: tuple[str, ...] = (
-        "auth", "secrets", "permissions", "encryption", "oauth", "jwt",
+        "auth",
+        "secrets",
+        "permissions",
+        "encryption",
+        "oauth",
+        "jwt",
     )
     trust_locked: bool = False
 
@@ -675,74 +680,50 @@ class TRWConfig(BaseSettings):
     @cached_property
     def build(self) -> BuildConfig:
         """Build verification and mutation testing sub-config."""
-        return BuildConfig(**{
-            name: getattr(self, name)
-            for name in BuildConfig.model_fields
-            if hasattr(self, name)
-        })
+        return BuildConfig(**{name: getattr(self, name) for name in BuildConfig.model_fields if hasattr(self, name)})
 
     @cached_property
     def memory(self) -> MemoryConfig:
         """Learning storage and retrieval sub-config."""
-        return MemoryConfig(**{
-            name: getattr(self, name)
-            for name in MemoryConfig.model_fields
-            if hasattr(self, name)
-        })
+        return MemoryConfig(**{name: getattr(self, name) for name in MemoryConfig.model_fields if hasattr(self, name)})
 
     @cached_property
     def telemetry_settings(self) -> TelemetryConfig:
         """Telemetry and OTEL sub-config (avoids ``telemetry`` field conflict)."""
-        return TelemetryConfig(**{
-            name: getattr(self, name)
-            for name in TelemetryConfig.model_fields
-            if hasattr(self, name)
-        })
+        return TelemetryConfig(
+            **{name: getattr(self, name) for name in TelemetryConfig.model_fields if hasattr(self, name)}
+        )
 
     @cached_property
     def orchestration(self) -> OrchestrationConfig:
         """Wave/shard orchestration sub-config."""
-        return OrchestrationConfig(**{
-            name: getattr(self, name)
-            for name in OrchestrationConfig.model_fields
-            if hasattr(self, name)
-        })
+        return OrchestrationConfig(
+            **{name: getattr(self, name) for name in OrchestrationConfig.model_fields if hasattr(self, name)}
+        )
 
     @cached_property
     def scoring(self) -> ScoringConfig:
         """Scoring weights and decay parameters sub-config."""
-        return ScoringConfig(**{
-            name: getattr(self, name)
-            for name in ScoringConfig.model_fields
-            if hasattr(self, name)
-        })
+        return ScoringConfig(
+            **{name: getattr(self, name) for name in ScoringConfig.model_fields if hasattr(self, name)}
+        )
 
     @cached_property
     def trust(self) -> TrustConfig:
         """Progressive trust model sub-config."""
-        return TrustConfig(**{
-            name: getattr(self, name)
-            for name in TrustConfig.model_fields
-            if hasattr(self, name)
-        })
+        return TrustConfig(**{name: getattr(self, name) for name in TrustConfig.model_fields if hasattr(self, name)})
 
     @cached_property
     def ceremony_feedback(self) -> CeremonyFeedbackConfig:
         """Self-improving ceremony feedback sub-config."""
-        return CeremonyFeedbackConfig(**{
-            name: getattr(self, name)
-            for name in CeremonyFeedbackConfig.model_fields
-            if hasattr(self, name)
-        })
+        return CeremonyFeedbackConfig(
+            **{name: getattr(self, name) for name in CeremonyFeedbackConfig.model_fields if hasattr(self, name)}
+        )
 
     @cached_property
     def paths(self) -> PathsConfig:
         """Directory structure and path defaults sub-config."""
-        return PathsConfig(**{
-            name: getattr(self, name)
-            for name in PathsConfig.model_fields
-            if hasattr(self, name)
-        })
+        return PathsConfig(**{name: getattr(self, name) for name in PathsConfig.model_fields if hasattr(self, name)})
 
     @property
     def effective_platform_urls(self) -> list[str]:
