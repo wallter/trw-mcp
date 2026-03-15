@@ -27,7 +27,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.state.ceremony_nudge import compute_nudge, read_ceremony_state
+from trw_mcp.state.ceremony_nudge import NudgeContext, compute_nudge, read_ceremony_state
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -45,6 +45,7 @@ def append_ceremony_nudge(
     response: dict[str, object],
     trw_dir: Path | None = None,
     available_learnings: int = 0,
+    context: NudgeContext | None = None,
 ) -> dict[str, object]:
     """Append ceremony nudge to a tool response dict.
 
@@ -55,6 +56,7 @@ def append_ceremony_nudge(
         response: The tool response dict to augment.
         trw_dir: Override the .trw directory (defaults to resolve_trw_dir()).
         available_learnings: Number of available learnings for nudge context.
+        context: Optional NudgeContext for context-reactive messages (PRD-CORE-084).
 
     Returns:
         The response dict with 'ceremony_status' key added (or unchanged on error).
@@ -66,7 +68,7 @@ def append_ceremony_nudge(
         )
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
         state = read_ceremony_state(effective_dir)
-        nudge = compute_nudge(state, available_learnings=available_learnings)
+        nudge = compute_nudge(state, available_learnings=available_learnings, context=context)
         response["ceremony_status"] = nudge
         # Increment nudge count for the pending step (tracks progressive urgency)
         pending = _highest_priority_pending_step(state)

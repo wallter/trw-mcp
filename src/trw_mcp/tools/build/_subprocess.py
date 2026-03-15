@@ -26,13 +26,18 @@ def _strip_ansi(text: str) -> str:
 
 
 def _find_executable(name: str, project_root: Path) -> str | None:
-    """Locate a tool on PATH or in the project venv.
+    """Locate a tool in the project venv first, then fallback to PATH.
+
+    Venv-first resolution prevents using a system-level binary that
+    lacks project dependencies (e.g., system pytest without trw_mcp).
 
     Resolution order:
-    1. PATH lookup (shutil.which)
+    1. {source_package_path}/../.venv/bin/{name} (monorepo package venv)
     2. {project_root}/.venv/bin/{name}
     3. {project_root}/venv/bin/{name}
-    4. {source_package_path}/../.venv/bin/{name} (legacy)
+    4. PATH lookup (shutil.which) — last resort
+
+    Cross-platform: on Windows, also checks Scripts/{name}.exe.
 
     Args:
         name: Executable name (e.g. "pytest", "mypy").
@@ -41,23 +46,39 @@ def _find_executable(name: str, project_root: Path) -> str | None:
     Returns:
         Resolved path string, or None if not found.
     """
+    import sys
+
+    config = get_config()
+    source_path = config.source_package_path or "trw-mcp/src"
+
+    # 1. Monorepo package venv (e.g., trw-mcp/.venv/bin/pytest)
+    pkg_dir = project_root / Path(source_path).parent
+    for bin_dir in ("bin", "Scripts"):
+        venv_path = pkg_dir / ".venv" / bin_dir / name
+        if venv_path.exists():
+            return str(venv_path)
+        # Windows .exe variant
+        if sys.platform == "win32":
+            exe_path = pkg_dir / ".venv" / bin_dir / f"{name}.exe"
+            if exe_path.exists():
+                return str(exe_path)
+
+    # 2-3. Project root venv
+    for venv_name in (".venv", "venv"):
+        for bin_dir in ("bin", "Scripts"):
+            candidate = project_root / venv_name / bin_dir / name
+            if candidate.exists():
+                return str(candidate)
+            if sys.platform == "win32":
+                exe_candidate = project_root / venv_name / bin_dir / f"{name}.exe"
+                if exe_candidate.exists():
+                    return str(exe_candidate)
+
+    # 4. PATH fallback (may find system-level binary)
     path = shutil.which(name)
     if path is not None:
         return path
 
-    # Check common venv locations in project root
-    for venv_name in (".venv", "venv"):
-        candidate = project_root / venv_name / "bin" / name
-        if candidate.exists():
-            return str(candidate)
-
-    # Legacy: check venv in build root (parent of source_package_path)
-    config = get_config()
-    source_path = config.source_package_path or "trw-mcp/src"
-    pkg_dir = project_root / Path(source_path).parent
-    venv_path = pkg_dir / ".venv" / "bin" / name
-    if venv_path.exists():
-        return str(venv_path)
     return None
 
 
