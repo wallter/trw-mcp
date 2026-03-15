@@ -3,6 +3,7 @@
 FR11: OpenCode Bootstrap Configuration (PRD-CORE-074)
 FR16: opencode.json Smart Merge (PRD-CORE-074)
 """
+
 from __future__ import annotations
 
 import json
@@ -172,16 +173,12 @@ def generate_opencode_config(
             raw = config_path.read_text(encoding="utf-8")
             existing = _parse_jsonc(raw)
         except (json.JSONDecodeError, OSError) as exc:
-            result["errors"].append(
-                f"Failed to read/parse {config_path}: {exc}"
-            )
+            result["errors"].append(f"Failed to read/parse {config_path}: {exc}")
             return result
 
         merged = merge_opencode_json(existing, trw_entry)
         try:
-            config_path.write_text(
-                json.dumps(merged, indent=2) + "\n", encoding="utf-8"
-            )
+            config_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
             result["updated"].append(str(config_path.name))
         except OSError as exc:
             result["errors"].append(f"Failed to write {config_path}: {exc}")
@@ -195,9 +192,7 @@ def generate_opencode_config(
             "mcp": {"trw": trw_entry},
         }
         try:
-            config_path.write_text(
-                json.dumps(template, indent=2) + "\n", encoding="utf-8"
-            )
+            config_path.write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
             result["created"].append(str(config_path.name))
         except OSError as exc:
             result["errors"].append(f"Failed to write {config_path}: {exc}")
@@ -235,12 +230,7 @@ def generate_agents_md(
     }
     agents_md_path = target_dir / "AGENTS.md"
 
-    new_block = (
-        f"{_TRW_HEADER}\n"
-        f"{_TRW_START_MARKER}\n"
-        f"{trw_section}\n"
-        f"{_TRW_END_MARKER}\n"
-    )
+    new_block = f"{_TRW_HEADER}\n{_TRW_START_MARKER}\n{trw_section}\n{_TRW_END_MARKER}\n"
 
     if agents_md_path.exists() and not force:
         content = agents_md_path.read_text(encoding="utf-8")
@@ -258,9 +248,7 @@ def generate_agents_md(
                 agents_md_path.write_text(updated, encoding="utf-8")
                 result["updated"].append(str(agents_md_path.name))
             except OSError as exc:
-                result["errors"].append(
-                    f"Failed to update {agents_md_path}: {exc}"
-                )
+                result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
         elif start_idx == -1:
             # No TRW section yet — append it
             if not content.endswith("\n"):
@@ -270,13 +258,9 @@ def generate_agents_md(
                 agents_md_path.write_text(content, encoding="utf-8")
                 result["updated"].append(str(agents_md_path.name))
             except OSError as exc:
-                result["errors"].append(
-                    f"Failed to update {agents_md_path}: {exc}"
-                )
+                result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
         else:
-            result["errors"].append(
-                "AGENTS.md has malformed TRW markers — found start but not end"
-            )
+            result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")
     else:
         # Create new file
         try:

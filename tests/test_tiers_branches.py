@@ -20,7 +20,7 @@ Covers previously uncovered lines:
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -45,7 +45,7 @@ def _make_entry(
     created: str | None = None,
 ) -> LearningEntry:
     """Build a minimal LearningEntry for testing."""
-    today = date.today().isoformat()
+    today = datetime.now(tz=timezone.utc).date().isoformat()
     return LearningEntry(
         id=entry_id,
         summary=summary,
@@ -62,7 +62,7 @@ def _make_entry(
 
 def _make_old_entry(entry_id: str = "old-001", days_ago: int = 60) -> LearningEntry:
     """Build a LearningEntry with an old last_accessed_at date."""
-    old_date = (date.today() - timedelta(days=days_ago)).isoformat()
+    old_date = (datetime.now(tz=timezone.utc).date() - timedelta(days=days_ago)).isoformat()
     return _make_entry(
         entry_id=entry_id,
         last_accessed_at=old_date,
@@ -89,7 +89,7 @@ def _write_yaml_entry(
     q_observations: int = 0,
 ) -> Path:
     """Write a minimal YAML entry file to disk."""
-    today = date.today().isoformat()
+    today = datetime.now(tz=timezone.utc).date().isoformat()
     data = {
         "id": entry_id,
         "summary": summary,
@@ -154,7 +154,7 @@ class TestWarmAddWithMemoryStore:
 
         with patch("trw_mcp.state.tiers.MemoryStore", mock_store_cls, create=True):
             # Patch the local import
-            original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+            original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
 
             # Use a simpler approach — patch at the module function level
             with patch.dict("sys.modules", {}):
@@ -169,9 +169,7 @@ class TestWarmAddWithMemoryStore:
         with patch("trw_mcp.state.memory_store.MemoryStore", mock_ms):
             mgr.warm_add("entry-1", {"summary": "test"}, [0.1, 0.2, 0.3])
 
-        mock_instance.upsert.assert_called_once_with(
-            "entry-1", [0.1, 0.2, 0.3], {"source": "warm_tier"}
-        )
+        mock_instance.upsert.assert_called_once_with("entry-1", [0.1, 0.2, 0.3], {"source": "warm_tier"})
         # FIX-046: singleton pattern — no per-op close() call
         mock_instance.close.assert_not_called()
 
@@ -210,20 +208,19 @@ class TestWarmSidecarUpsertEdgeCases:
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         # Write sidecar with blank lines interspersed
         sidecar.write_text(
-            json.dumps({"id": "keep-me", "summary": "keep"}) + "\n"
+            json.dumps({"id": "keep-me", "summary": "keep"})
+            + "\n"
             + "\n"  # blank line
             + "   \n"  # whitespace-only line
-            + json.dumps({"id": "also-keep", "summary": "also"}) + "\n",
+            + json.dumps({"id": "also-keep", "summary": "also"})
+            + "\n",
             encoding="utf-8",
         )
 
         mgr._warm_sidecar_upsert("new-entry", {"summary": "new"})
 
         # Read back — should have keep-me, also-keep, new-entry
-        lines = [
-            l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines()
-            if l.strip()
-        ]
+        lines = [l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines() if l.strip()]
         ids = [json.loads(l)["id"] for l in lines]
         assert "keep-me" in ids
         assert "also-keep" in ids
@@ -238,18 +235,17 @@ class TestWarmSidecarUpsertEdgeCases:
         sidecar = mgr._warm_sidecar_path()
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(
-            json.dumps({"id": "good", "summary": "good"}) + "\n"
+            json.dumps({"id": "good", "summary": "good"})
+            + "\n"
             + "{not valid json\n"
-            + json.dumps({"id": "also-good", "summary": "also"}) + "\n",
+            + json.dumps({"id": "also-good", "summary": "also"})
+            + "\n",
             encoding="utf-8",
         )
 
         mgr._warm_sidecar_upsert("new-entry", {"summary": "new"})
 
-        lines = [
-            l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines()
-            if l.strip()
-        ]
+        lines = [l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines() if l.strip()]
         ids = [json.loads(l)["id"] for l in lines]
         assert "good" in ids
         assert "also-good" in ids
@@ -273,9 +269,11 @@ class TestWarmRemoveSidecarEdgeCases:
         sidecar = mgr._warm_sidecar_path()
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(
-            json.dumps({"id": "remove-me", "summary": "bye"}) + "\n"
+            json.dumps({"id": "remove-me", "summary": "bye"})
+            + "\n"
             + "\n"  # blank line
-            + json.dumps({"id": "keep-me", "summary": "stay"}) + "\n",
+            + json.dumps({"id": "keep-me", "summary": "stay"})
+            + "\n",
             encoding="utf-8",
         )
 
@@ -283,10 +281,7 @@ class TestWarmRemoveSidecarEdgeCases:
             mock_ms.available.return_value = False
             mgr.warm_remove("remove-me")
 
-        lines = [
-            l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines()
-            if l.strip()
-        ]
+        lines = [l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines() if l.strip()]
         ids = [json.loads(l)["id"] for l in lines]
         assert "remove-me" not in ids
         assert "keep-me" in ids
@@ -300,9 +295,11 @@ class TestWarmRemoveSidecarEdgeCases:
         sidecar = mgr._warm_sidecar_path()
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(
-            json.dumps({"id": "keep", "summary": "stay"}) + "\n"
+            json.dumps({"id": "keep", "summary": "stay"})
+            + "\n"
             + "{broken json\n"
-            + json.dumps({"id": "remove-me", "summary": "bye"}) + "\n",
+            + json.dumps({"id": "remove-me", "summary": "bye"})
+            + "\n",
             encoding="utf-8",
         )
 
@@ -310,10 +307,7 @@ class TestWarmRemoveSidecarEdgeCases:
             mock_ms.available.return_value = False
             mgr.warm_remove("remove-me")
 
-        lines = [
-            l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines()
-            if l.strip()
-        ]
+        lines = [l.strip() for l in sidecar.read_text(encoding="utf-8").splitlines() if l.strip()]
         ids = [json.loads(l)["id"] for l in lines]
         assert "keep" in ids
         assert "remove-me" not in ids
@@ -336,10 +330,12 @@ class TestWarmKeywordSearchEdgeCases:
         sidecar = mgr._warm_sidecar_path()
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(
-            json.dumps({"id": "entry-1", "summary": "testing coverage", "tags": []}) + "\n"
+            json.dumps({"id": "entry-1", "summary": "testing coverage", "tags": []})
+            + "\n"
             + "\n"  # blank line
             + "  \n"  # whitespace-only
-            + json.dumps({"id": "entry-2", "summary": "another test", "tags": ["foo"]}) + "\n",
+            + json.dumps({"id": "entry-2", "summary": "another test", "tags": ["foo"]})
+            + "\n",
             encoding="utf-8",
         )
 
@@ -356,9 +352,11 @@ class TestWarmKeywordSearchEdgeCases:
         sidecar = mgr._warm_sidecar_path()
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(
-            json.dumps({"id": "entry-1", "summary": "testing coverage", "tags": []}) + "\n"
+            json.dumps({"id": "entry-1", "summary": "testing coverage", "tags": []})
+            + "\n"
             + "{corrupt json here\n"
-            + json.dumps({"id": "entry-2", "summary": "other topic", "tags": []}) + "\n",
+            + json.dumps({"id": "entry-2", "summary": "other topic", "tags": []})
+            + "\n",
             encoding="utf-8",
         )
 
@@ -582,10 +580,12 @@ class TestSweepWarmToColdSkipEmpty:
             object.__setattr__(cfg, "memory_hot_ttl_days", 999)
             mock_cfg.return_value = cfg
 
-            mock_list = MagicMock(return_value=[
-                {"id": "", "summary": "empty id entry"},
-                {"id": "valid-id", "summary": "valid entry", "last_accessed_at": date.today().isoformat()},
-            ])
+            mock_list = MagicMock(
+                return_value=[
+                    {"id": "", "summary": "empty id entry"},
+                    {"id": "valid-id", "summary": "valid entry", "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat()},
+                ]
+            )
             with patch(
                 "trw_mcp.state.memory_adapter.list_active_learnings",
                 mock_list,
@@ -604,9 +604,7 @@ class TestSweepWarmToColdSkipEmpty:
 class TestSweepYamlFallbackSkips:
     """Test sweep YAML fallback filters out irrelevant entries."""
 
-    def test_sweep_yaml_fallback_skips_index_and_empty_id_and_non_active(
-        self, tmp_path: Path
-    ) -> None:
+    def test_sweep_yaml_fallback_skips_index_and_empty_id_and_non_active(self, tmp_path: Path) -> None:
         """Lines 676, 681, 684: YAML fallback skips index.yaml, empty ID, non-active."""
         trw_dir = tmp_path / ".trw"
         entries_dir = _setup_entries_dir(trw_dir)
@@ -619,14 +617,18 @@ class TestSweepYamlFallbackSkips:
         # Entry without ID — should be skipped (line 681)
         writer.write_yaml(
             entries_dir / "no-id.yaml",
-            {"summary": "no id entry", "status": "active", "last_accessed_at": date.today().isoformat()},
+            {"summary": "no id entry", "status": "active", "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat()},
         )
 
         # Non-active entry — should be skipped (line 684)
         writer.write_yaml(
             entries_dir / "resolved.yaml",
-            {"id": "resolved-1", "summary": "resolved entry", "status": "resolved",
-             "last_accessed_at": date.today().isoformat()},
+            {
+                "id": "resolved-1",
+                "summary": "resolved entry",
+                "status": "resolved",
+                "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
+            },
         )
 
         # Valid active entry (recent, won't be demoted)
@@ -665,9 +667,10 @@ class TestSweepYamlFallbackWarmToColdException:
         entries_dir = _setup_entries_dir(trw_dir)
 
         # Write an old, low-impact entry that would trigger cold archival
-        old_date = (date.today() - timedelta(days=200)).isoformat()
+        old_date = (datetime.now(tz=timezone.utc).date() - timedelta(days=200)).isoformat()
         _write_yaml_entry(
-            entries_dir, "old-entry",
+            entries_dir,
+            "old-entry",
             impact=0.05,
             last_accessed_at=old_date,
         )
@@ -709,11 +712,10 @@ class TestSweepColdPurgeException:
         cold_dir.mkdir(parents=True, exist_ok=True)
 
         writer = FileStateWriter()
-        old_date = (date.today() - timedelta(days=500)).isoformat()
+        old_date = (datetime.now(tz=timezone.utc).date() - timedelta(days=500)).isoformat()
         writer.write_yaml(
             cold_dir / "ancient.yaml",
-            {"id": "ancient", "summary": "very old", "impact": 0.01,
-             "last_accessed_at": old_date, "created": old_date},
+            {"id": "ancient", "summary": "very old", "impact": 0.01, "last_accessed_at": old_date, "created": old_date},
         )
 
         # Use a reader that fails on the cold file
@@ -756,7 +758,7 @@ class TestImportanceScoreEdgeCases:
             "summary": "test",
             "detail": "",
             "impact": 0.9,
-            "last_accessed_at": date.today().isoformat(),
+            "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
         }
         score = compute_importance_score(entry, ["test"], config=cfg)
         assert score == 0.0
@@ -766,7 +768,7 @@ class TestImportanceScoreEdgeCases:
         from trw_mcp.state.tiers import compute_importance_score
 
         cfg = TRWConfig(memory_score_w1=0.5, memory_score_w2=0.3, memory_score_w3=0.2)
-        today = date.today().isoformat()
+        today = datetime.now(tz=timezone.utc).date().isoformat()
         entry: dict[str, object] = {
             "id": "x",
             "summary": "test keyword",
@@ -794,7 +796,7 @@ class TestImportanceScoreEdgeCases:
             "summary": "",
             "detail": "",
             "impact": 0.5,
-            "last_accessed_at": (date.today() - timedelta(days=500)).isoformat(),
+            "last_accessed_at": (datetime.now(tz=timezone.utc).date() - timedelta(days=500)).isoformat(),
         }
         score = compute_importance_score(old_entry, [], config=cfg)
         # decay_rate=0 => exp(0)=1.0, so recency=1.0 regardless of age
@@ -809,7 +811,7 @@ class TestImportanceScoreEdgeCases:
             "id": "no-impact",
             "summary": "",
             "detail": "",
-            "last_accessed_at": date.today().isoformat(),
+            "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
         }
         score = compute_importance_score(entry, [], config=cfg)
         assert score == pytest.approx(0.5, abs=0.01)
@@ -826,7 +828,7 @@ class TestImportanceScoreEdgeCases:
             "summary": "",
             "detail": "",
             "impact": 0.8,
-            "last_accessed_at": date.today().isoformat(),
+            "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
         }
         score = compute_importance_score(entry, [], config=None)
         assert score == pytest.approx(0.8, abs=0.01)
@@ -841,7 +843,7 @@ class TestImportanceScoreEdgeCases:
             "summary": "",
             "detail": "",
             "impact": "0.7",
-            "last_accessed_at": date.today().isoformat(),
+            "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
         }
         score = compute_importance_score(entry, [], config=cfg)
         assert score == pytest.approx(0.7, abs=0.01)
@@ -872,7 +874,7 @@ class TestColdPartitionExplicitTimestamp:
         trw_dir.mkdir(parents=True, exist_ok=True)
         mgr = TierManager(trw_dir)
         result = mgr._cold_partition(None)
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         assert str(today.year) in str(result)
         assert f"{today.month:02d}" in str(result)
 
@@ -1074,7 +1076,7 @@ class TestFlushLastAccessedSanitization:
 
         reader = FileStateReader()
         data = reader.read_yaml(sanitized_path)
-        assert data["last_accessed_at"] == date.today().isoformat()
+        assert data["last_accessed_at"] == datetime.now(tz=timezone.utc).date().isoformat()
 
     def test_flush_nonexistent_file_is_noop(self, tmp_path: Path) -> None:
         """When YAML file for entry doesn't exist, flush silently returns."""
@@ -1142,7 +1144,7 @@ class TestSweepSQLitePerEntryException:
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True, exist_ok=True)
 
-        old_date = (date.today() - timedelta(days=200)).isoformat()
+        old_date = (datetime.now(tz=timezone.utc).date() - timedelta(days=200)).isoformat()
 
         mgr = TierManager(trw_dir)
 
@@ -1152,18 +1154,20 @@ class TestSweepSQLitePerEntryException:
             object.__setattr__(cfg, "memory_cold_threshold_days", 30)
             mock_cfg.return_value = cfg
 
-            mock_list = MagicMock(return_value=[
-                {
-                    "id": "problematic",
-                    "summary": "will fail",
-                    "detail": "",
-                    "status": "active",
-                    "impact": 0.05,
-                    "tags": [],
-                    "last_accessed_at": old_date,
-                    "created": old_date,
-                },
-            ])
+            mock_list = MagicMock(
+                return_value=[
+                    {
+                        "id": "problematic",
+                        "summary": "will fail",
+                        "detail": "",
+                        "status": "active",
+                        "impact": 0.05,
+                        "tags": [],
+                        "last_accessed_at": old_date,
+                        "created": old_date,
+                    },
+                ]
+            )
             mock_find = MagicMock(return_value=entries_dir / "problematic.yaml")
 
             with patch("trw_mcp.state.memory_adapter.list_active_learnings", mock_list):

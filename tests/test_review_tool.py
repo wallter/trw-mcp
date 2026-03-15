@@ -29,7 +29,8 @@ def trw_project(tmp_path: Path) -> Path:
     (trw_dir / "reflections").mkdir()
     (trw_dir / "context").mkdir()
     (trw_dir / "learnings" / "index.yaml").write_text(
-        "total_entries: 0\n", encoding="utf-8",
+        "total_entries: 0\n",
+        encoding="utf-8",
     )
     return tmp_path
 
@@ -128,7 +129,10 @@ class TestReviewCreatesArtifact:
     """trw_review creates review.yaml artifact in run directory."""
 
     def test_review_creates_artifact(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Call trw_review with findings, verify review.yaml is created."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -149,6 +153,7 @@ class TestReviewCreatesArtifact:
 
         # Read back the artifact and verify structure
         from trw_mcp.state.persistence import FileStateReader
+
         data = FileStateReader().read_yaml(review_path)
         assert "review_id" in data
         assert data["verdict"] == "warn"
@@ -160,7 +165,10 @@ class TestReviewVerdictPass:
     """trw_review produces 'pass' verdict when no findings."""
 
     def test_review_verdict_pass(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
 
@@ -173,7 +181,10 @@ class TestReviewVerdictPass:
         assert result["total_findings"] == 0
 
     def test_review_verdict_pass_with_info_only(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Info-only findings should produce 'pass' verdict."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -193,7 +204,10 @@ class TestReviewVerdictWarn:
     """trw_review produces 'warn' verdict for warning findings."""
 
     def test_review_verdict_warn(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
 
@@ -214,7 +228,10 @@ class TestReviewVerdictBlock:
     """trw_review produces 'block' verdict for critical findings."""
 
     def test_review_verdict_block(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
 
@@ -235,7 +252,10 @@ class TestReviewLogsEvent:
     """trw_review logs review_complete event to events.jsonl."""
 
     def test_review_logs_event(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
 
@@ -247,10 +267,7 @@ class TestReviewLogsEvent:
             )
 
         events_path = run_dir / "meta" / "events.jsonl"
-        lines = [
-            line for line in events_path.read_text(encoding="utf-8").strip().split("\n")
-            if line
-        ]
+        lines = [line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line]
         assert len(lines) >= 1
         event = json.loads(lines[-1])
         assert event["event"] == "review_complete"
@@ -262,7 +279,10 @@ class TestReviewAutoDetectRun:
     """trw_review auto-detects run directory when run_path is None."""
 
     def test_review_auto_detect_run(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
 
@@ -273,7 +293,10 @@ class TestReviewAutoDetectRun:
         assert result["verdict"] == "pass"
 
     def test_review_explicit_run_path(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
 
@@ -283,7 +306,9 @@ class TestReviewAutoDetectRun:
         assert (run_dir / "meta" / "review.yaml").exists()
 
     def test_review_no_run_available(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When no run is available, review still returns a result but no artifact."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -308,7 +333,9 @@ class TestDeliverReviewSoftGate:
     """trw_deliver soft gate checks for review.yaml before delivery."""
 
     def test_deliver_review_soft_gate_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Deliver with critical review verdict produces review_warning."""
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260226T120000Z-gate-test"
@@ -321,14 +348,18 @@ class TestDeliverReviewSoftGate:
 
         # Write a review.yaml with block verdict
         from trw_mcp.state.persistence import FileStateWriter
+
         writer = FileStateWriter()
-        writer.write_yaml(run_dir / "meta" / "review.yaml", {
-            "review_id": "review-test123",
-            "verdict": "block",
-            "critical_count": 2,
-            "warning_count": 0,
-            "findings": [],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "review.yaml",
+            {
+                "review_id": "review-test123",
+                "verdict": "block",
+                "critical_count": 2,
+                "warning_count": 0,
+                "findings": [],
+            },
+        )
 
         tools = _make_deliver_with_stubs(monkeypatch, tmp_path, run_dir=run_dir)
 
@@ -338,7 +369,9 @@ class TestDeliverReviewSoftGate:
         assert "critical findings" in str(result["review_warning"])
 
     def test_deliver_review_advisory(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Deliver without review.yaml produces review_advisory."""
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260226T120000Z-advisory-test"
@@ -358,7 +391,9 @@ class TestDeliverReviewSoftGate:
         assert "trw_review" in str(result["review_advisory"])
 
     def test_deliver_no_review_gate_when_no_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Deliver without active run skips review gate entirely."""
         tools = _make_deliver_with_stubs(monkeypatch, tmp_path, run_dir=None)
@@ -370,7 +405,9 @@ class TestDeliverReviewSoftGate:
         assert "review_advisory" not in result
 
     def test_deliver_review_gate_pass_no_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Deliver with passing review produces no warning or advisory."""
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260226T120000Z-pass-test"
@@ -382,14 +419,18 @@ class TestDeliverReviewSoftGate:
         (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
 
         from trw_mcp.state.persistence import FileStateWriter
+
         writer = FileStateWriter()
-        writer.write_yaml(run_dir / "meta" / "review.yaml", {
-            "review_id": "review-pass",
-            "verdict": "pass",
-            "critical_count": 0,
-            "warning_count": 0,
-            "findings": [],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "review.yaml",
+            {
+                "review_id": "review-pass",
+                "verdict": "pass",
+                "critical_count": 0,
+                "warning_count": 0,
+                "findings": [],
+            },
+        )
 
         tools = _make_deliver_with_stubs(monkeypatch, tmp_path, run_dir=run_dir)
 

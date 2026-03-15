@@ -53,6 +53,7 @@ _MAX_ENTRIES = DEFAULT_LIST_LIMIT
 # Backend lifecycle
 # ---------------------------------------------------------------------------
 
+
 def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
     """Return the singleton SQLiteBackend, creating it on first call.
 
@@ -75,6 +76,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
 
         if trw_dir is None:
             from trw_mcp.state._paths import resolve_trw_dir
+
             trw_dir = resolve_trw_dir()
 
         memory_dir = trw_dir / "memory"
@@ -102,6 +104,7 @@ def reset_backend() -> None:
 # Embedder lifecycle
 # ---------------------------------------------------------------------------
 
+
 def get_embedder() -> LocalEmbeddingProvider | None:
     """Return the singleton LocalEmbeddingProvider, or None if unavailable.
 
@@ -123,6 +126,7 @@ def get_embedder() -> LocalEmbeddingProvider | None:
 
         try:
             from trw_memory.embeddings.local import LocalEmbeddingProvider
+
             provider = LocalEmbeddingProvider(
                 model_name=cfg.retrieval_embedding_model,
                 dim=cfg.retrieval_embedding_dim,
@@ -242,8 +246,7 @@ def check_embeddings_status() -> dict[str, object]:
         "enabled": True,
         "available": False,
         "advisory": (
-            "Embeddings enabled but sentence-transformers not installed. "
-            "Run: pip install trw-memory[embeddings]"
+            "Embeddings enabled but sentence-transformers not installed. Run: pip install trw-memory[embeddings]"
         ),
         "recent_failures": _embed_failures,
     }
@@ -274,6 +277,7 @@ def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
 # ---------------------------------------------------------------------------
 # Migration
 # ---------------------------------------------------------------------------
+
 
 def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
     """One-time migration of YAML learning entries into SQLite.
@@ -320,7 +324,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
                 entry = entry.model_copy(update={"namespace": _NAMESPACE})
             backend.store(entry)
             migrated += 1
-        except Exception:  # justified: scan-resilience, one bad entry must not abort migration
+        except Exception:  # per-item error handling: one bad entry must not abort migration  # noqa: PERF203
             skipped += 1
             logger.warning(
                 "memory_migration_entry_skipped",
@@ -331,8 +335,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
     # Only write sentinel on success
     sentinel.parent.mkdir(parents=True, exist_ok=True)
     sentinel.write_text(
-        f"migrated_at={datetime.now(timezone.utc).isoformat()}\n"
-        f"migrated={migrated}\nskipped={skipped}\n"
+        f"migrated_at={datetime.now(timezone.utc).isoformat()}\nmigrated={migrated}\nskipped={skipped}\n"
     )
 
     logger.info(
@@ -346,6 +349,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 # Field mapping helpers
 # ---------------------------------------------------------------------------
+
 
 def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> dict[str, object]:
     """Convert a :class:`MemoryEntry` to the dict shape returned by trw_recall.
@@ -370,23 +374,23 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
     if compact:
         return base
 
-    base.update({
-        "detail": entry.detail,
-        "evidence": entry.evidence,
-        "source_type": entry.source,
-        "source_identity": entry.source_identity,
-        "created": entry.created_at.date().isoformat() if entry.created_at else "",
-        "updated": entry.updated_at.date().isoformat() if entry.updated_at else "",
-        "access_count": entry.access_count,
-        "last_accessed_at": (
-            entry.last_accessed_at.date().isoformat() if entry.last_accessed_at else None
-        ),
-        "q_value": entry.q_value,
-        "q_observations": entry.q_observations,
-        "recurrence": entry.recurrence,
-        "outcome_history": entry.outcome_history,
-        "shard_id": entry.metadata.get("shard_id", None),
-    })
+    base.update(
+        {
+            "detail": entry.detail,
+            "evidence": entry.evidence,
+            "source_type": entry.source,
+            "source_identity": entry.source_identity,
+            "created": entry.created_at.date().isoformat() if entry.created_at else "",
+            "updated": entry.updated_at.date().isoformat() if entry.updated_at else "",
+            "access_count": entry.access_count,
+            "last_accessed_at": (entry.last_accessed_at.date().isoformat() if entry.last_accessed_at else None),
+            "q_value": entry.q_value,
+            "q_observations": entry.q_observations,
+            "recurrence": entry.recurrence,
+            "outcome_history": entry.outcome_history,
+            "shard_id": entry.metadata.get("shard_id", None),
+        }
+    )
     return base
 
 
@@ -425,6 +429,7 @@ def _learning_to_memory_entry(
 # CRUD operations (return shapes match original YAML tools)
 # ---------------------------------------------------------------------------
 
+
 def store_learning(
     trw_dir: Path,
     learning_id: str,
@@ -455,9 +460,14 @@ def store_learning(
 
     backend = get_backend(trw_dir)
     entry = _learning_to_memory_entry(
-        learning_id, summary, detail,
-        tags=enriched_tags, evidence=evidence, impact=impact,
-        shard_id=shard_id, source_type=source_type,
+        learning_id,
+        summary,
+        detail,
+        tags=enriched_tags,
+        evidence=evidence,
+        impact=impact,
+        shard_id=shard_id,
+        source_type=source_type,
         source_identity=source_identity,
     )
     backend.store(entry)
@@ -492,8 +502,12 @@ def _search_entries(
     """
     # Always run keyword search
     keyword_results = _keyword_search(
-        backend, query, top_k=top_k, tags=tags,
-        mem_status=mem_status, min_impact=min_impact,
+        backend,
+        query,
+        top_k=top_k,
+        tags=tags,
+        mem_status=mem_status,
+        min_impact=min_impact,
     )
 
     # Try vector search when embedder is available
@@ -516,6 +530,7 @@ def _search_entries(
         vector_ranking = [(eid, score) for eid, score in vector_hits]
 
         from trw_memory.retrieval.fusion import rrf_fuse
+
         fused = rrf_fuse([keyword_ranking, vector_ranking], k=cfg.hybrid_rrf_k)
 
         # Build id→entry map from keyword results + vector-matched entries
@@ -555,7 +570,7 @@ def _search_entries(
 _LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
 
 
-def _keyword_search(
+def _keyword_search(  # noqa: C901
     backend: SQLiteBackend,
     query: str,
     *,
@@ -702,8 +717,12 @@ def recall_learnings(
     else:
         top_k = max_results if max_results > 0 else _MAX_ENTRIES
         entries = _search_entries(
-            backend, query, top_k=top_k, tags=tags,
-            mem_status=mem_status, min_impact=min_impact,
+            backend,
+            query,
+            top_k=top_k,
+            tags=tags,
+            mem_status=mem_status,
+            min_impact=min_impact,
         )
 
     results: list[dict[str, object]] = []
@@ -809,10 +828,11 @@ def list_active_learnings(
         namespace=_NAMESPACE,
         limit=limit,
     )
-    results: list[dict[str, object]] = []
-    for entry in entries:
-        if entry.importance >= min_impact:
-            results.append(_memory_to_learning_dict(entry))
+    results: list[dict[str, object]] = [
+        _memory_to_learning_dict(entry)
+        for entry in entries
+        if entry.importance >= min_impact
+    ]
     return results
 
 
@@ -837,10 +857,11 @@ def list_entries_by_status(
         namespace=_NAMESPACE,
         limit=limit,
     )
-    results: list[dict[str, object]] = []
-    for entry in entries:
-        if entry.importance >= min_impact:
-            results.append(_memory_to_learning_dict(entry))
+    results: list[dict[str, object]] = [
+        _memory_to_learning_dict(entry)
+        for entry in entries
+        if entry.importance >= min_impact
+    ]
     return results
 
 
@@ -892,9 +913,7 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                     access_count=entry.access_count + 1,
                     last_accessed_at=now,
                 )
-        except Exception:
-            # justified: access tracking is best-effort maintenance — failing
-            # to increment a counter must not break recall results.
+        except Exception:  # per-item error handling: access tracking is best-effort, one failure must not break recall results  # noqa: PERF203
             logger.warning(
                 "access_tracking_update_failed",
                 exc_info=True,

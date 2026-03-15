@@ -9,7 +9,7 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -18,7 +18,6 @@ from trw_mcp.bootstrap._init_project import init_project
 from trw_mcp.bootstrap._update_project import update_project
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.ceremony import _do_instruction_sync
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -244,27 +243,21 @@ class TestDeliverTargetPlatforms:
 
     def test_single_claude_code_passes_claude_code_client(self, tmp_path: Path) -> None:
         """target_platforms: ['claude-code'] -> execute_claude_md_sync called with client='claude-code'."""
-        client_val, mock_sync = self._run_instruction_sync_with_platforms(
-            tmp_path, ["claude-code"]
-        )
+        client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["claude-code"])
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
         assert call_kwargs.get("client") == "claude-code"
 
     def test_single_opencode_passes_opencode_client(self, tmp_path: Path) -> None:
         """target_platforms: ['opencode'] -> execute_claude_md_sync called with client='opencode'."""
-        client_val, mock_sync = self._run_instruction_sync_with_platforms(
-            tmp_path, ["opencode"]
-        )
+        client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["opencode"])
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
         assert call_kwargs.get("client") == "opencode"
 
     def test_multiple_platforms_passes_all_client(self, tmp_path: Path) -> None:
         """target_platforms: ['claude-code', 'opencode'] -> execute_claude_md_sync called with client='all'."""
-        client_val, mock_sync = self._run_instruction_sync_with_platforms(
-            tmp_path, ["claude-code", "opencode"]
-        )
+        client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["claude-code", "opencode"])
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
         assert call_kwargs.get("client") == "all"
@@ -287,9 +280,7 @@ class TestDeliverTargetPlatforms:
 
     def test_cursor_only_passes_cursor_client(self, tmp_path: Path) -> None:
         """target_platforms: ['cursor'] -> client='cursor' (single platform passed directly)."""
-        client_val, mock_sync = self._run_instruction_sync_with_platforms(
-            tmp_path, ["cursor"]
-        )
+        client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["cursor"])
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
         assert call_kwargs.get("client") == "cursor"

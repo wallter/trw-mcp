@@ -7,9 +7,9 @@ Extracted from ceremony.py for single-responsibility.
 from __future__ import annotations
 
 import dataclasses
-from typing import cast
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -52,11 +52,7 @@ _CEREMONY_OBLIGATIONS: list[tuple[str, str, str]] = [
 
 def _compute_pending_ceremony(ceremony_state: dict[str, object]) -> list[str]:
     """Return list of pending ceremony obligation descriptions."""
-    return [
-        f"{tool} — {desc}"
-        for key, tool, desc in _CEREMONY_OBLIGATIONS
-        if not ceremony_state.get(key)
-    ]
+    return [f"{tool} — {desc}" for key, tool, desc in _CEREMONY_OBLIGATIONS if not ceremony_state.get(key)]
 
 
 def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
@@ -101,11 +97,161 @@ def _do_checkpoint(run_dir: Path, message: str) -> None:
         "ts": datetime.now(timezone.utc).isoformat(),
         "message": message,
     }
-    writer.append_jsonl(checkpoints_path, cast(dict[str, object], checkpoint_data))
+    writer.append_jsonl(checkpoints_path, cast("dict[str, object]", checkpoint_data))
 
     events_path = run_dir / "meta" / "events.jsonl"
     if events_path.parent.exists():
         events.log_event(events_path, "checkpoint", {"message": message})
+
+
+def _read_pre_compact_state(run_dir: Path, project_root: Path) -> dict[str, object]:
+    """Read PRD scope, phase, and other state from run.yaml."""
+    reader = FileStateReader()
+    prd_scope: list[str] = []
+    phase = ""
+
+    run_yaml = run_dir / "meta" / "run.yaml"
+    if run_yaml.exists():
+        run_data = reader.read_yaml(run_yaml)
+        if isinstance(run_data, dict):
+            raw_scope = run_data.get("prd_scope", [])
+            if isinstance(raw_scope, list):
+                prd_scope = [str(s) for s in raw_scope]
+            phase = str(run_data.get("phase", ""))
+
+    ownership_path = project_root / ".trw" / "context" / "file_ownership.yaml"
+    file_ownership_path = str(ownership_path) if ownership_path.exists() else ""
+
+    return {
+        "prd_scope": prd_scope,
+        "phase": phase,
+        "file_ownership_path": file_ownership_path,
+    }
+
+
+def _read_last_events(events_path: Path) -> list[str]:
+    """Extract last 5 event types from events.jsonl."""
+    import json
+
+    last_5_events: list[str] = []
+    if events_path.exists():
+        lines = events_path.read_text().strip().split("\n")
+        for line in lines[-5:]:
+            try:
+                evt = json.loads(line)
+                last_5_events.append(str(evt.get("event_type", "")))
+            except Exception:  # per-item error handling: skip malformed JSONL lines, scan-resilience  # noqa: PERF203
+                logger.debug("jsonl_line_parse_failed", exc_info=True)
+    return last_5_events
+
+
+def _read_failing_tests(project_root: Path) -> list[str]:
+    """Extract failing tests from build-status.yaml."""
+    reader = FileStateReader()
+    failing_tests: list[str] = []
+
+    build_status_path = project_root / ".trw" / "context" / "build-status.yaml"
+    if build_status_path.exists():
+        bs_data = reader.read_yaml(build_status_path)
+        if isinstance(bs_data, dict):
+            raw_ft = bs_data.get("failing_tests", [])
+            if isinstance(raw_ft, list):
+                failing_tests = [str(t) for t in raw_ft]
+    return failing_tests
+
+
+def _read_ceremony_state(project_root: Path) -> dict[str, object]:
+    """Read ceremony state for recovery."""
+    import json
+
+    ceremony_state: dict[str, object] = {}
+    ceremony_path = project_root / ".trw" / "context" / "ceremony-state.json"
+    if ceremony_path.exists():
+        try:
+            ceremony_state = json.loads(ceremony_path.read_text(encoding="utf-8"))
+        except Exception:  # justified: fail-open, ceremony state read
+            logger.warning("ceremony_state_read_failed", exc_info=True)
+    return ceremony_state
+
+
+def _write_compact_state(
+    project_root: Path,
+    run_dir: Path,
+    events_path: Path,
+    prd_scope: list[str],
+    phase: str,
+    file_ownership_path: str,
+    failing_tests: list[str],
+    ceremony_state: dict[str, object],
+) -> None:
+    """Write pre_compact_state.json with enhanced checkpoint metadata."""
+    import json
+
+    state_file = project_root / ".trw" / "context" / "pre_compact_state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+
+    _evt_text = events_path.read_text().strip() if events_path.exists() else ""
+    pending_ceremony = _compute_pending_ceremony(ceremony_state)
+
+    state_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "trigger": "mcp_tool",
+        "run_path": str(run_dir),
+        "phase": phase,
+        "events_logged": len(_evt_text.split("\n")) if _evt_text else 0,
+        "last_checkpoint": "pre-compaction safety checkpoint",
+        "prd_scope": prd_scope,
+        "file_ownership_path": file_ownership_path,
+        "last_5_events": _read_last_events(events_path),
+        "failing_tests": failing_tests,
+        "ceremony_state": ceremony_state,
+        "pending_ceremony": pending_ceremony,
+    }
+    state_file.write_text(json.dumps(state_data, indent=2))
+
+
+def _write_compact_instructions(
+    cfg: object,
+    project_root: Path,
+    run_dir: Path,
+    phase: str,
+    prd_scope: list[str],
+    file_ownership_path: str,
+    failing_tests: list[str],
+    ceremony_state: dict[str, object],
+) -> Path:
+    """Write compact_instructions.txt with ceremony recovery guidance."""
+    template = cfg.compact_instructions_template  # type: ignore[attr-defined]
+    if not template:
+        template = (
+            "Preserve exactly:\n"
+            "- TRW phase: {phase}\n"
+            "- TRW run_id: {run_id}\n"
+            "- TRW PRD scope: {prd_scope}\n"
+            "- Last checkpoint: {last_checkpoint}\n"
+            "- File ownership: {file_ownership_path}\n"
+            "- Failing tests: {failing_tests}\n"
+            "DO NOT summarize run artifacts — reference their file paths only.\n"
+            "Reference .trw/context/pre_compact_state.json for full state.\n"
+            "\n"
+            "CEREMONY OBLIGATIONS (complete these before session ends):\n"
+            "{ceremony_pending}"
+        )
+    pending_ceremony = _compute_pending_ceremony(ceremony_state)
+    instructions = template.format(
+        phase=phase,
+        run_id=str(run_dir.name),
+        prd_scope=", ".join(prd_scope) if prd_scope else "none",
+        last_checkpoint="pre-compaction safety checkpoint",
+        file_ownership_path=file_ownership_path or "not set",
+        failing_tests=", ".join(failing_tests) if failing_tests else "none",
+        ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony)
+        if pending_ceremony
+        else "- all complete",
+    )
+    instructions_path = project_root / ".trw" / "context" / "compact_instructions.txt"
+    instructions_path.write_text(instructions)
+    return instructions_path
 
 
 def register_checkpoint_tools(server: FastMCP) -> None:
@@ -131,120 +277,47 @@ def register_checkpoint_tools(server: FastMCP) -> None:
 
             _do_checkpoint(run_dir, "pre-compaction safety checkpoint")
 
-            # Enhanced state capture (PRD-CORE-066-FR05)
-            import json
+            project_root = resolve_project_root()
+            events_path = run_dir / "meta" / "events.jsonl"
 
-            reader = FileStateReader()
+            # Read state snapshots
+            state_dict = _read_pre_compact_state(run_dir, project_root)
+            prd_scope: list[str] = cast("list[str]", state_dict["prd_scope"])
+            phase: str = cast("str", state_dict["phase"])
+            file_ownership_path: str = cast("str", state_dict["file_ownership_path"])
+
+            failing_tests = _read_failing_tests(project_root)
+            ceremony_state = _read_ceremony_state(project_root)
+
+            # Write artifacts
+            _write_compact_state(
+                project_root,
+                run_dir,
+                events_path,
+                prd_scope,
+                phase,
+                file_ownership_path,
+                failing_tests,
+                ceremony_state,
+            )
+            instructions_path = _write_compact_instructions(
+                cfg,
+                project_root,
+                run_dir,
+                phase,
+                prd_scope,
+                file_ownership_path,
+                failing_tests,
+                ceremony_state,
+            )
 
             result: PreCompactResultDict = {
                 "status": "success",
                 "run_path": str(run_dir),
-            }
-
-            # Read prd_scope from run.yaml
-            run_yaml = run_dir / "meta" / "run.yaml"
-            prd_scope: list[str] = []
-            phase = ""
-            if run_yaml.exists():
-                run_data = reader.read_yaml(run_yaml)
-                if isinstance(run_data, dict):
-                    raw_scope = run_data.get("prd_scope", [])
-                    if isinstance(raw_scope, list):
-                        prd_scope = [str(s) for s in raw_scope]
-                    phase = str(run_data.get("phase", ""))
-
-            # Check file_ownership.yaml
-            project_root = resolve_project_root()
-            ownership_path = project_root / ".trw" / "context" / "file_ownership.yaml"
-            file_ownership_path = str(ownership_path) if ownership_path.exists() else ""
-
-            # Last 5 events
-            events_path = run_dir / "meta" / "events.jsonl"
-            last_5_events: list[str] = []
-            if events_path.exists():
-                lines = events_path.read_text().strip().split("\n")
-                for line in lines[-5:]:
-                    try:
-                        evt = json.loads(line)
-                        last_5_events.append(str(evt.get("event_type", "")))
-                    except Exception:  # justified: scan-resilience, skip malformed JSONL lines
-                        logger.debug("jsonl_line_parse_failed", exc_info=True)
-
-            # Failing tests from build-status.yaml
-            build_status_path = project_root / ".trw" / "context" / "build-status.yaml"
-            failing_tests: list[str] = []
-            if build_status_path.exists():
-                bs_data = reader.read_yaml(build_status_path)
-                if isinstance(bs_data, dict):
-                    raw_ft = bs_data.get("failing_tests", [])
-                    if isinstance(raw_ft, list):
-                        failing_tests = [str(t) for t in raw_ft]
-
-            # Read ceremony state for recovery (Sprint 68 gap fix)
-            ceremony_state: dict[str, object] = {}
-            ceremony_path = project_root / ".trw" / "context" / "ceremony-state.json"
-            if ceremony_path.exists():
-                try:
-                    ceremony_state = json.loads(
-                        ceremony_path.read_text(encoding="utf-8")
-                    )
-                except Exception:  # justified: fail-open, ceremony state read
-                    logger.warning("ceremony_state_read_failed", exc_info=True)
-
-            pending_ceremony = _compute_pending_ceremony(ceremony_state)
-
-            # Write enhanced pre_compact_state.json
-            state_file = project_root / ".trw" / "context" / "pre_compact_state.json"
-            state_file.parent.mkdir(parents=True, exist_ok=True)
-            _evt_text = events_path.read_text().strip() if events_path.exists() else ""
-            state_data = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "trigger": "mcp_tool",
-                "run_path": str(run_dir),
-                "phase": phase,
-                "events_logged": len(_evt_text.split("\n")) if _evt_text else 0,
-                "last_checkpoint": "pre-compaction safety checkpoint",
+                "compact_instructions_path": str(instructions_path),
                 "prd_scope": prd_scope,
-                "file_ownership_path": file_ownership_path,
-                "last_5_events": last_5_events,
                 "failing_tests": failing_tests,
-                "ceremony_state": ceremony_state,
-                "pending_ceremony": pending_ceremony,
             }
-            state_file.write_text(json.dumps(state_data, indent=2))
-
-            # Write compact_instructions.txt (PRD-CORE-066-FR02)
-            template = cfg.compact_instructions_template
-            if not template:
-                template = (
-                    "Preserve exactly:\n"
-                    "- TRW phase: {phase}\n"
-                    "- TRW run_id: {run_id}\n"
-                    "- TRW PRD scope: {prd_scope}\n"
-                    "- Last checkpoint: {last_checkpoint}\n"
-                    "- File ownership: {file_ownership_path}\n"
-                    "- Failing tests: {failing_tests}\n"
-                    "DO NOT summarize run artifacts — reference their file paths only.\n"
-                    "Reference .trw/context/pre_compact_state.json for full state.\n"
-                    "\n"
-                    "CEREMONY OBLIGATIONS (complete these before session ends):\n"
-                    "{ceremony_pending}"
-                )
-            instructions = template.format(
-                phase=phase,
-                run_id=str(run_dir.name),
-                prd_scope=", ".join(prd_scope) if prd_scope else "none",
-                last_checkpoint="pre-compaction safety checkpoint",
-                file_ownership_path=file_ownership_path or "not set",
-                failing_tests=", ".join(failing_tests) if failing_tests else "none",
-                ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony) if pending_ceremony else "- all complete",
-            )
-            instructions_path = project_root / ".trw" / "context" / "compact_instructions.txt"
-            instructions_path.write_text(instructions)
-
-            result["compact_instructions_path"] = str(instructions_path)
-            result["prd_scope"] = prd_scope
-            result["failing_tests"] = failing_tests
             return result
         except Exception as exc:  # justified: boundary, compact instructions generation may fail on I/O
             return {"status": "failed", "error": str(exc)}

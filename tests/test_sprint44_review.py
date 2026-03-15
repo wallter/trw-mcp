@@ -24,10 +24,34 @@ class TestConfidenceThresholdFiltering:
 
     def _make_findings(self) -> list[dict[str, object]]:
         return [
-            {"category": "quality", "severity": "info", "description": "low conf", "confidence": 50, "reviewer_role": "quality"},
-            {"category": "security", "severity": "warning", "description": "mid conf", "confidence": 75, "reviewer_role": "security"},
-            {"category": "security", "severity": "critical", "description": "high conf", "confidence": 90, "reviewer_role": "security"},
-            {"category": "quality", "severity": "info", "description": "exact threshold", "confidence": 80, "reviewer_role": "quality"},
+            {
+                "category": "quality",
+                "severity": "info",
+                "description": "low conf",
+                "confidence": 50,
+                "reviewer_role": "quality",
+            },
+            {
+                "category": "security",
+                "severity": "warning",
+                "description": "mid conf",
+                "confidence": 75,
+                "reviewer_role": "security",
+            },
+            {
+                "category": "security",
+                "severity": "critical",
+                "description": "high conf",
+                "confidence": 90,
+                "reviewer_role": "security",
+            },
+            {
+                "category": "quality",
+                "severity": "info",
+                "description": "exact threshold",
+                "confidence": 80,
+                "reviewer_role": "quality",
+            },
         ]
 
     @patch("trw_mcp.tools.review._get_git_diff", return_value="diff content")

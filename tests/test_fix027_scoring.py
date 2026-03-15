@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring import EVENT_ALIASES, REWARD_MAP, apply_time_decay
@@ -25,6 +24,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 # ============================================================================
 # Bug 1: EventType.DELIVER_COMPLETE exists and is wired into scoring
 # ============================================================================
+
 
 class TestDeliverCompleteEventType:
     """Bug 1: DELIVER_COMPLETE must exist in EventType and REWARD_MAP."""
@@ -50,9 +50,7 @@ class TestDeliverCompleteEventType:
         reward = REWARD_MAP[EventType.DELIVER_COMPLETE]
         assert reward == 1.0, f"Expected 1.0, got {reward}"
 
-    def test_process_outcome_returns_nonempty_for_deliver_complete(
-        self, tmp_path: Path
-    ) -> None:
+    def test_process_outcome_returns_nonempty_for_deliver_complete(self, tmp_path: Path) -> None:
         """process_outcome_for_event("trw_deliver_complete") must not silently fail.
 
         Without DELIVER_COMPLETE in EventType/REWARD_MAP, the function returns []
@@ -100,6 +98,7 @@ class TestDeliverCompleteEventType:
 # ============================================================================
 # Bug 2: trw_build_check Q-learning wiring
 # ============================================================================
+
 
 class TestBuildCheckQLearningWiring:
     """Bug 2: trw_build_check must call process_outcome_for_event after each run."""
@@ -152,9 +151,7 @@ class TestBuildCheckQLearningWiring:
             return tools["trw_build_check"].fn
         return None
 
-    def test_build_check_calls_process_outcome_on_pass(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_calls_process_outcome_on_pass(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When build passes, process_outcome_for_event('build_passed') must be called."""
         called_events: list[str] = []
 
@@ -174,9 +171,7 @@ class TestBuildCheckQLearningWiring:
             "Q-learning gets no reward signal from successful builds"
         )
 
-    def test_build_check_calls_process_outcome_on_fail(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_calls_process_outcome_on_fail(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When build fails, process_outcome_for_event('build_failed') must be called."""
         called_events: list[str] = []
 
@@ -199,6 +194,7 @@ class TestBuildCheckQLearningWiring:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Q-learning errors must be swallowed — never block build check results."""
+
         def exploding_process(event_type: str) -> list[str]:
             raise RuntimeError("Q-learning exploded!")
 
@@ -215,6 +211,7 @@ class TestBuildCheckQLearningWiring:
 # ============================================================================
 # Bug 3: collect_promotable_learnings applies time decay
 # ============================================================================
+
 
 class TestPromotableLearnungsTimeDecay:
     """Bug 3: time decay must be applied before comparing against promotion threshold."""
@@ -241,9 +238,7 @@ class TestPromotableLearnungsTimeDecay:
         }
         writer.write_yaml(entries_dir / f"{filename}.yaml", data)
 
-    def test_old_learning_with_high_impact_filtered_by_decay(
-        self, tmp_path: Path
-    ) -> None:
+    def test_old_learning_with_high_impact_filtered_by_decay(self, tmp_path: Path) -> None:
         """An entry created 1 year ago with impact=0.8 should be filtered out.
 
         Without decay: 0.8 >= 0.7 threshold → promoted
@@ -267,9 +262,7 @@ class TestPromotableLearnungsTimeDecay:
             "time decay was not applied before threshold comparison"
         )
 
-    def test_new_learning_with_high_impact_is_promoted(
-        self, tmp_path: Path
-    ) -> None:
+    def test_new_learning_with_high_impact_is_promoted(self, tmp_path: Path) -> None:
         """An entry created today with impact=0.8 should still pass the threshold."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -284,13 +277,9 @@ class TestPromotableLearnungsTimeDecay:
 
         result = collect_promotable_learnings(trw_dir, config, reader)
         ids = [str(d.get("id", "")) for d in result]
-        assert "L-new-entry" in ids, (
-            "New learning with impact=0.8 should be promoted"
-        )
+        assert "L-new-entry" in ids, "New learning with impact=0.8 should be promoted"
 
-    def test_decay_not_applied_when_no_created_at(
-        self, tmp_path: Path
-    ) -> None:
+    def test_decay_not_applied_when_no_created_at(self, tmp_path: Path) -> None:
         """Entries without created_at fall back to raw impact (no crash)."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -318,9 +307,7 @@ class TestPromotableLearnungsTimeDecay:
         # With impact=0.9 and no date, raw impact should pass (0.9 >= 0.7)
         assert "L-no-date" in ids
 
-    def test_old_high_impact_vs_new_same_impact(
-        self, tmp_path: Path
-    ) -> None:
+    def test_old_high_impact_vs_new_same_impact(self, tmp_path: Path) -> None:
         """Two entries with same impact=0.8 — old one filtered, new one promoted."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -342,9 +329,7 @@ class TestPromotableLearnungsTimeDecay:
         assert "L-bbb-new" in ids, "New entry should be promoted"
         assert "L-aaa-old" not in ids, "Year-old entry with same impact should be filtered by decay"
 
-    def test_malformed_created_at_falls_back_to_raw_score(
-        self, tmp_path: Path
-    ) -> None:
+    def test_malformed_created_at_falls_back_to_raw_score(self, tmp_path: Path) -> None:
         """Malformed 'created' date in list_active_learnings falls back to raw score."""
         from unittest.mock import patch
 
@@ -394,9 +379,7 @@ class TestPromotableLearnungsTimeDecay:
         decayed_6m = apply_time_decay(0.7, six_months_ago)
         assert decayed_6m < 0.7  # Should be less due to decay
 
-    def test_q_cold_start_uses_q_value_when_mature(
-        self, tmp_path: Path
-    ) -> None:
+    def test_q_cold_start_uses_q_value_when_mature(self, tmp_path: Path) -> None:
         """When q_observations >= threshold, q_value is used instead of impact."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -426,9 +409,7 @@ class TestPromotableLearnungsTimeDecay:
         # q_value=0.9 with full decay (now) = 0.9 >= 0.7 → should be promoted
         assert "L-mature" in ids
 
-    def test_collect_promotable_returns_empty_when_no_entries_dir(
-        self, tmp_path: Path
-    ) -> None:
+    def test_collect_promotable_returns_empty_when_no_entries_dir(self, tmp_path: Path) -> None:
         """collect_promotable_learnings returns [] when entries_dir doesn't exist."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -445,21 +426,23 @@ class TestPromotableLearnungsTimeDecay:
 # apply_time_decay: parametrized edge cases
 # ============================================================================
 
+
 class TestApplyTimeDecay:
     """Parametrized edge cases for apply_time_decay."""
 
-    @pytest.mark.parametrize("days,impact,expected_min,expected_max", [
-        (0, 1.0, 1.0, 1.0),         # Brand new: no decay
-        (182, 1.0, 0.848, 0.852),    # 6 months: 1.0-(182/365)*0.3 ~ 0.8504
-        (365, 1.0, 0.699, 0.701),    # 1 year: 1.0 - 0.3 = 0.7
-        (486, 1.0, 0.598, 0.602),    # ~16 months: 1.0-(486/365)*0.3 ~ 0.600
-        (730, 1.0, 0.399, 0.401),    # 2 years: 1.0-(730/365)*0.3 = 0.4
-        (1460, 1.0, 0.299, 0.301),   # 4 years: floored at 0.3
-        (0, 0.0, 0.0, 0.0),          # Zero impact stays zero
-    ])
-    def test_decay_parametrized(
-        self, days: int, impact: float, expected_min: float, expected_max: float
-    ) -> None:
+    @pytest.mark.parametrize(
+        "days,impact,expected_min,expected_max",
+        [
+            (0, 1.0, 1.0, 1.0),  # Brand new: no decay
+            (182, 1.0, 0.848, 0.852),  # 6 months: 1.0-(182/365)*0.3 ~ 0.8504
+            (365, 1.0, 0.699, 0.701),  # 1 year: 1.0 - 0.3 = 0.7
+            (486, 1.0, 0.598, 0.602),  # ~16 months: 1.0-(486/365)*0.3 ~ 0.600
+            (730, 1.0, 0.399, 0.401),  # 2 years: 1.0-(730/365)*0.3 = 0.4
+            (1460, 1.0, 0.299, 0.301),  # 4 years: floored at 0.3
+            (0, 0.0, 0.0, 0.0),  # Zero impact stays zero
+        ],
+    )
+    def test_decay_parametrized(self, days: int, impact: float, expected_min: float, expected_max: float) -> None:
         from trw_mcp.scoring import apply_time_decay
 
         created = datetime.now(timezone.utc) - timedelta(days=days)
@@ -472,7 +455,7 @@ class TestApplyTimeDecay:
         """Naive datetime (no tzinfo) is treated as UTC — no exception."""
         from trw_mcp.scoring import apply_time_decay
 
-        naive_now = datetime.now()  # No timezone info
+        naive_now = datetime.now(tz=timezone.utc).replace(tzinfo=None)  # intentionally naive for backward-compat test
         result = apply_time_decay(0.8, naive_now)
         # Brand new, so minimal decay
         assert result >= 0.79
@@ -482,23 +465,27 @@ class TestApplyTimeDecay:
 # FR02/FR05: REWARD_MAP completeness and scoring values
 # ============================================================================
 
+
 class TestRewardMapCompleteness:
     """FR02/FR05: REWARD_MAP values are correct and immutable in tests."""
 
     def test_all_reward_values_in_range(self) -> None:
         """All rewards in REWARD_MAP must be in [-1.0, 1.0]."""
         from trw_mcp.scoring import REWARD_MAP as rmap
+
         for event_type, reward in rmap.items():
             assert -1.0 <= reward <= 1.0, f"{event_type} reward {reward} out of range"
 
     def test_reward_map_total_count(self) -> None:
         """REWARD_MAP has at least 15 entries (including new Sprint 31 entries)."""
         from trw_mcp.scoring import REWARD_MAP as rmap
+
         assert len(rmap) >= 15
 
     def test_positive_events_have_positive_rewards(self) -> None:
         """Key positive events have positive rewards."""
         from trw_mcp.scoring import REWARD_MAP as rmap
+
         positive = [
             EventType.TESTS_PASSED,
             EventType.TASK_COMPLETE,
@@ -512,6 +499,7 @@ class TestRewardMapCompleteness:
     def test_failure_events_have_negative_rewards(self) -> None:
         """Failure events have negative rewards."""
         from trw_mcp.scoring import REWARD_MAP as rmap
+
         negative = [
             EventType.TESTS_FAILED,
             EventType.PHASE_GATE_FAILED,
@@ -523,6 +511,7 @@ class TestRewardMapCompleteness:
     def test_build_passed_higher_than_tests_passed_parity(self) -> None:
         """build_passed (0.6) < tests_passed (0.8) — build includes coverage check."""
         from trw_mcp.scoring import REWARD_MAP as rmap
+
         assert rmap[EventType.BUILD_PASSED] > 0
         assert rmap[EventType.TESTS_PASSED] > 0
 
@@ -531,18 +520,21 @@ class TestRewardMapCompleteness:
 # FR03/FR04: process_outcome_for_event behavior
 # ============================================================================
 
+
 class TestProcessOutcomeForEvent:
     """FR03/FR04: process_outcome_for_event integration tests."""
 
     def test_returns_list(self) -> None:
         """process_outcome_for_event always returns a list."""
         from trw_mcp.scoring import process_outcome_for_event as poe
+
         result = poe(EventType.SHARD_STARTED)
         assert isinstance(result, list)
 
     def test_returns_list_for_unknown_event(self) -> None:
         """Unknown events return empty list (no reward)."""
         from trw_mcp.scoring import process_outcome_for_event as poe
+
         result = poe("totally_unknown_xyz_event")
         assert result == []
 
@@ -558,6 +550,7 @@ class TestProcessOutcomeForEvent:
         """Outcome history grows with each process_outcome call."""
         import trw_mcp.scoring as _sc
         from trw_mcp.scoring import process_outcome as po
+
         writer = FileStateWriter()
         reader = FileStateReader()
 
@@ -595,6 +588,7 @@ class TestProcessOutcomeForEvent:
         old_reader = _sc._reader
         old_writer = _sc._writer
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_outcome_correlation_window_minutes", 9999)
         object.__setattr__(cfg, "learning_outcome_correlation_scope", "window")
@@ -617,6 +611,7 @@ class TestProcessOutcomeForEvent:
         """Negative reward (build_failed) decreases q_value for correlated entries."""
         import trw_mcp.scoring as _sc
         from trw_mcp.scoring import process_outcome as po
+
         writer = FileStateWriter()
         reader = FileStateReader()
 
@@ -653,6 +648,7 @@ class TestProcessOutcomeForEvent:
         old_reader = _sc._reader
         old_writer = _sc._writer
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_outcome_correlation_window_minutes", 9999)
         object.__setattr__(cfg, "learning_outcome_correlation_scope", "window")
@@ -675,12 +671,14 @@ class TestProcessOutcomeForEvent:
 # NFR03: Stored impact immutability (additional scenarios)
 # ============================================================================
 
+
 class TestStoredImpactImmutabilityAdditional:
     """NFR03: Additional tests verifying stored impact is never mutated at query time."""
 
     def test_rank_by_utility_does_not_mutate_entry_dict(self) -> None:
         """rank_by_utility must not mutate the entry dicts passed to it."""
         from trw_mcp.scoring import rank_by_utility as rbu
+
         created_old = (datetime.now(timezone.utc) - timedelta(days=300)).date().isoformat()
         entry: dict[str, object] = {
             "id": "L-mut001",
@@ -695,6 +693,7 @@ class TestStoredImpactImmutabilityAdditional:
             "tags": ["test"],
         }
         import copy
+
         entry_copy = copy.deepcopy(entry)
 
         rbu([entry], ["mutation"], 0.5)
@@ -716,6 +715,7 @@ class TestStoredImpactImmutabilityAdditional:
 # FR01: Static purity check — apply_time_decay has no write calls
 # ============================================================================
 
+
 class TestApplyTimeDecayPurity:
     """FR01: apply_time_decay must be a pure compute function with no write side effects."""
 
@@ -728,6 +728,7 @@ class TestApplyTimeDecayPurity:
         import inspect
 
         from trw_mcp.scoring import apply_time_decay as atd
+
         source = inspect.getsource(atd)
         assert "_writer" not in source, (
             "apply_time_decay body calls _writer — this would mutate stored impact scores at query time"
@@ -757,10 +758,10 @@ class TestApplyTimeDecayPurity:
         # This is a pure function — it should not do filesystem I/O
 
 
-
 # ============================================================================
 # FR05: BUILD_PASSED and BUILD_FAILED are in REWARD_MAP, not EVENT_ALIASES
 # ============================================================================
+
 
 class TestBuildEventsInRewardMap:
     """FR05: BUILD_PASSED and BUILD_FAILED must be direct REWARD_MAP entries."""
@@ -806,6 +807,7 @@ class TestBuildEventsInRewardMap:
 # FR03: mypy-only scope fires Q-learning event (implementation behavior)
 # ============================================================================
 
+
 class TestBuildCheckMypyOnlyScope:
     """FR03: Verify build_check behavior for mypy-only scope.
 
@@ -816,7 +818,7 @@ class TestBuildCheckMypyOnlyScope:
 
     def _make_mypy_status(self, mypy_clean: bool) -> MagicMock:
         mock_status = MagicMock()
-        mock_status.tests_passed = True   # Default — no pytest run for mypy scope
+        mock_status.tests_passed = True  # Default — no pytest run for mypy scope
         mock_status.mypy_clean = mypy_clean
         mock_status.coverage_pct = 0.0
         mock_status.test_count = 0
@@ -826,9 +828,7 @@ class TestBuildCheckMypyOnlyScope:
         mock_status.duration_secs = 0.5
         return mock_status
 
-    def test_mypy_only_scope_fires_build_event(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_mypy_only_scope_fires_build_event(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR03 (impl): For scope='mypy' with clean results, build_passed event fires.
 
         Note: PRD specifies mypy-only should NOT fire. Implementation fires 'build_passed'.
@@ -867,13 +867,9 @@ class TestBuildCheckMypyOnlyScope:
 
         # Current implementation fires build_passed even for mypy-only scope
         # (tests_passed=True default + mypy_clean=True => "build_passed")
-        assert "build_passed" in called_events, (
-            "scope='mypy' fires 'build_passed' event in current implementation"
-        )
+        assert "build_passed" in called_events, "scope='mypy' fires 'build_passed' event in current implementation"
 
-    def test_q_observations_increments_in_yaml(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_q_observations_increments_in_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR04: After build_check, correlated learning's q_observations increments in YAML.
 
         Full integration: write entry + receipt, patch scoring module, run build_check,
@@ -881,7 +877,6 @@ class TestBuildCheckMypyOnlyScope:
         """
         from fastmcp import FastMCP
 
-        import trw_mcp.scoring as scoring_mod
         import trw_mcp.tools.build as build_mod
         import trw_mcp.tools.build._registration as reg_mod
 
@@ -957,6 +952,4 @@ class TestBuildCheckMypyOnlyScope:
 
         stored = reader.read_yaml(entry_path)
         q_obs = int(str(stored.get("q_observations", 0)))
-        assert q_obs >= 1, (
-            f"FR04: q_observations should be >= 1 after build_check, got {q_obs}"
-        )
+        assert q_obs >= 1, f"FR04: q_observations should be >= 1 after build_check, got {q_obs}"

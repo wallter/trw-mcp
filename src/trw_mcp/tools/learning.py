@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re as _re
 from pathlib import Path
 from typing import cast
 
@@ -21,7 +22,6 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     ClaudeMdSyncResultDict,
-    LearningEntryDict,
     LearnResultDict,
     RecallContextDict,
     RecallResultDict,
@@ -36,9 +36,17 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     list_active_learnings,
+)
+from trw_mcp.state.memory_adapter import (
     recall_learnings as adapter_recall,
+)
+from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
+)
+from trw_mcp.state.memory_adapter import (
     update_access_tracking as adapter_update_access,
+)
+from trw_mcp.state.memory_adapter import (
     update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -59,8 +67,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger()
 
 # PRD-FIX-052-FR05: Solution-indicator patterns for auto-'pattern' tag suggestion
-import re as _re
-
 _SOLUTION_PATTERNS = _re.compile(
     r"(?:use .+ instead|prefer |always |best practice|"
     r"recommended approach|the fix is|pattern:)",
@@ -101,7 +107,66 @@ def _create_llm_client() -> LLMClient:
     return LLMClient(model=config.llm_default_model, usage_log_path=llm_usage_path)
 
 
-def register_learning_tools(server: FastMCP) -> None:
+def _learn_handle_consolidation(
+    learning_id: str,
+    consolidated_from: list[str] | None,
+    entries_dir: Path,
+    reader: FileStateReader,
+    writer: FileStateWriter,
+    trw_dir: Path,
+) -> None:
+    """Handle auto-obsolete of superseded entries (PRD-FIX-052-FR04)."""
+    if not consolidated_from:
+        return
+
+    from datetime import datetime, timezone
+
+    from trw_mcp.state.analytics import find_entry_by_id
+
+    for ref_id in consolidated_from:
+        try:
+            update_result = adapter_update(
+                trw_dir,
+                learning_id=ref_id,
+                status="obsolete",
+            )
+            if update_result.get("status") == "updated":
+                try:
+                    found = find_entry_by_id(entries_dir, ref_id)
+                    if found is not None:
+                        entry_path_ref, data_ref = found
+                        data_ref["status"] = "obsolete"
+                        _today = datetime.now(tz=timezone.utc).date().isoformat()
+                        data_ref["resolved_at"] = _today
+                        data_ref["updated"] = _today
+                        writer.write_yaml(entry_path_ref, data_ref)
+                except (OSError, ValueError, TypeError):
+                    logger.debug(
+                        "auto_obsolete_yaml_backup_failed",
+                        ref_id=ref_id,
+                        exc_info=True,
+                    )
+                logger.info(
+                    "auto_obsolete_marked",
+                    ref_id=ref_id,
+                    compendium_id=learning_id,
+                )
+            else:
+                logger.warning(
+                    "auto_obsolete_not_found",
+                    ref_id=ref_id,
+                    compendium_id=learning_id,
+                )
+        except Exception:  # per-item error handling: skip failing obsolete-mark, continue with next ref  # noqa: PERF203
+            logger.warning(
+                "auto_obsolete_failed",
+                ref_id=ref_id,
+                compendium_id=learning_id,
+                exc_info=True,
+            )
+
+
+def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool registration with 4 nested tool defs
     """Register self-learning tools on the MCP server."""
 
     @server.tool()
@@ -156,6 +221,7 @@ def register_learning_tools(server: FastMCP) -> None:
         if config.dedup_enabled:
             try:
                 from trw_mcp.state.dedup import batch_dedup, is_migration_needed
+
                 if is_migration_needed(trw_dir):
                     batch_dedup(trw_dir, reader, writer, config=config)
             except (ImportError, OSError, ValueError, TypeError):
@@ -176,7 +242,9 @@ def register_learning_tools(server: FastMCP) -> None:
         with contextlib.suppress(OSError, StateError, ValueError, TypeError):
             all_active = list_active_learnings(trw_dir)
         calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
-            calibrated_impact, all_active, config,
+            calibrated_impact,
+            all_active,
+            config,
         )
 
         learning_id = generate_learning_id()
@@ -196,10 +264,13 @@ def register_learning_tools(server: FastMCP) -> None:
                 source_type=source_type,
                 source_identity=source_identity,
             ),
-            entries_dir, reader, writer, config,
+            entries_dir,
+            reader,
+            writer,
+            config,
         )
         if dedup_result is not None:
-            return cast(LearnResultDict, dedup_result)
+            return cast("LearnResultDict", dedup_result)
 
         # Store via SQLite adapter (primary path) — after dedup to avoid orphans
         adapter_store(
@@ -216,55 +287,12 @@ def register_learning_tools(server: FastMCP) -> None:
         )
 
         # PRD-FIX-052-FR04: Auto-obsolete superseded entries on compendium creation
-        # Best-effort: each entry is processed independently; failures are logged and skipped.
-        if consolidated_from:
-            from datetime import date as _date
-            from trw_mcp.state.analytics import find_entry_by_id
-            for ref_id in consolidated_from:
-                try:
-                    update_result = adapter_update(
-                        trw_dir,
-                        learning_id=ref_id,
-                        status="obsolete",
-                    )
-                    if update_result.get("status") == "updated":
-                        # Dual-write: also update the YAML backup
-                        try:
-                            found = find_entry_by_id(entries_dir, ref_id)
-                            if found is not None:
-                                entry_path_ref, data_ref = found
-                                data_ref["status"] = "obsolete"
-                                data_ref["resolved_at"] = _date.today().isoformat()
-                                data_ref["updated"] = _date.today().isoformat()
-                                writer.write_yaml(entry_path_ref, data_ref)
-                        except (OSError, ValueError, TypeError):
-                            logger.debug(
-                                "auto_obsolete_yaml_backup_failed",
-                                ref_id=ref_id,
-                                exc_info=True,
-                            )
-                        logger.info(
-                            "auto_obsolete_marked",
-                            ref_id=ref_id,
-                            compendium_id=learning_id,
-                        )
-                    else:
-                        logger.warning(
-                            "auto_obsolete_not_found",
-                            ref_id=ref_id,
-                            compendium_id=learning_id,
-                        )
-                except Exception:  # noqa: BLE001 — justified: fail-open, per-entry batch error
-                    logger.warning(
-                        "auto_obsolete_failed",
-                        ref_id=ref_id,
-                        compendium_id=learning_id,
-                        exc_info=True,
-                    )
+        _learn_handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
 
         # Save YAML backup via analytics (dual-write for rollback safety)
         try:
             from trw_mcp.models.learning import LearningEntry
+
             entry = LearningEntry(
                 id=learning_id,
                 summary=summary,
@@ -284,8 +312,12 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Forced distribution enforcement (PRD-CORE-034)
         distribution_warning, _demoted_ids = enforce_distribution(
-            impact, calibrated_impact, learning_id,
-            all_active, trw_dir, config,
+            impact,
+            calibrated_impact,
+            learning_id,
+            all_active,
+            trw_dir,
+            config,
         )
 
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
@@ -301,17 +333,19 @@ def register_learning_tools(server: FastMCP) -> None:
         # Increment learnings count in ceremony state tracker (PRD-CORE-074 FR04)
         try:
             from trw_mcp.state.ceremony_nudge import increment_learnings
+
             increment_learnings(trw_dir)
-        except Exception:  # justified: fail-open, ceremony state update must not block learning
+        except Exception:  # justified: fail-open, ceremony state update must not block learning  # noqa: S110
             pass
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
             ctx = NudgeContext(tool_name=ToolName.LEARN)
-            append_ceremony_nudge(cast(dict[str, object], result_dict), trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block learning
+            append_ceremony_nudge(cast("dict[str, object]", result_dict), trw_dir, context=ctx)
+        except Exception:  # justified: fail-open, nudge injection must not block learning  # noqa: S110
             pass
 
         return result_dict
@@ -353,24 +387,26 @@ def register_learning_tools(server: FastMCP) -> None:
         # Dual-write: also update YAML backup for rollback safety
         if result.get("status") == "updated":
             try:
-                from datetime import date as date_type
+                from datetime import datetime, timezone
 
                 from trw_mcp.state.analytics import find_entry_by_id, resync_learning_index
+
                 entries_dir = trw_dir / config.learnings_dir / config.entries_dir
                 found = find_entry_by_id(entries_dir, learning_id)
                 if found is not None:
                     entry_path, data = found
+                    _today_iso = datetime.now(tz=timezone.utc).date().isoformat()
                     if status is not None:
                         data["status"] = status
                         if status in ("resolved", "obsolete"):
-                            data["resolved_at"] = date_type.today().isoformat()
+                            data["resolved_at"] = _today_iso
                     if detail is not None:
                         data["detail"] = detail
                     if summary is not None:
                         data["summary"] = summary
                     if impact is not None:
                         data["impact"] = impact
-                    data["updated"] = date_type.today().isoformat()
+                    data["updated"] = _today_iso
                     writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
             except (OSError, ValueError, TypeError):
@@ -423,8 +459,13 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Search entries via SQLite adapter (returns list of dicts directly)
         matching_learnings = adapter_recall(
-            trw_dir, query=query, tags=tags, min_impact=min_impact,
-            status=status, max_results=0, compact=False,  # get all, we rank locally
+            trw_dir,
+            query=query,
+            tags=tags,
+            min_impact=min_impact,
+            status=status,
+            max_results=0,
+            compact=False,  # get all, we rank locally
         )
 
         # Topic-scoped pre-filter (PRD-CORE-021-FR07)
@@ -436,10 +477,7 @@ def register_learning_tools(server: FastMCP) -> None:
                     clusters_data = json.loads(clusters_path.read_text(encoding="utf-8"))
                     if topic in clusters_data:
                         allowed_ids = set(clusters_data[topic])
-                        matching_learnings = [
-                            e for e in matching_learnings
-                            if str(e.get("id", "")) in allowed_ids
-                        ]
+                        matching_learnings = [e for e in matching_learnings if str(e.get("id", "")) in allowed_ids]
                     else:
                         topic_filter_ignored = True
                 else:
@@ -454,6 +492,7 @@ def register_learning_tools(server: FastMCP) -> None:
         # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
         try:
             from trw_mcp.state.recall_tracking import record_recall as _record_recall
+
             for lid in matched_ids:
                 _record_recall(lid, query)
         except (ImportError, OSError, RuntimeError, ValueError, TypeError):
@@ -464,18 +503,23 @@ def register_learning_tools(server: FastMCP) -> None:
         # that can raise arbitrary exceptions (network, auth, serialization).
         try:
             from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
+
             remote = fetch_shared_learnings(query)
             if remote:
                 matching_learnings = list(matching_learnings) + [dict(r) for r in remote]
-        except Exception:  # noqa: BLE001 — justified: fail-open, per-entry batch error
+        except Exception:
             logger.debug("remote_recall_failed", exc_info=True)
 
         # Search patterns and rank all results by utility
         matching_patterns = search_patterns(
-            trw_dir / config.patterns_dir, query_tokens, reader,
+            trw_dir / config.patterns_dir,
+            query_tokens,
+            reader,
         )
         ranked_learnings: list[dict[str, object]] = rank_by_utility(
-            matching_learnings, query_tokens, config.recall_utility_lambda,
+            matching_learnings,
+            query_tokens,
+            config.recall_utility_lambda,
         )
 
         # Capture pre-cap counts for the total_available response field
@@ -488,15 +532,12 @@ def register_learning_tools(server: FastMCP) -> None:
         # Strip to compact fields when requested
         if use_compact:
             allowed = config.recall_compact_fields
-            ranked_learnings = [
-                {k: v for k, v in entry.items() if k in allowed}
-                for entry in ranked_learnings
-            ]
+            ranked_learnings = [{k: v for k, v in entry.items() if k in allowed} for entry in ranked_learnings]
 
         # Skip context collection for compact wildcard queries (saves I/O)
         context_data: RecallContextDict = {}
         if not (is_wildcard and use_compact):
-            context_data = cast(RecallContextDict, collect_context(trw_dir, config.context_dir, reader))
+            context_data = cast("RecallContextDict", collect_context(trw_dir, config.context_dir, reader))
 
         logger.info(
             "trw_recall_searched",
@@ -522,9 +563,12 @@ def register_learning_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
             ctx = NudgeContext(tool_name=ToolName.RECALL)
-            append_ceremony_nudge(cast(dict[str, object], recall_result), trw_dir, available_learnings=total_available, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block recall
+            append_ceremony_nudge(
+                cast("dict[str, object]", recall_result), trw_dir, available_learnings=total_available, context=ctx
+            )
+        except Exception:  # justified: fail-open, nudge injection must not block recall  # noqa: S110
             pass
 
         return recall_result
@@ -558,4 +602,6 @@ def register_learning_tools(server: FastMCP) -> None:
         reader = FileStateReader()
         writer = FileStateWriter()
         llm = _create_llm_client()
-        return cast(ClaudeMdSyncResultDict, execute_claude_md_sync(scope, target_dir, config, reader, writer, llm, client))
+        return cast(
+            "ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, writer, llm, client)
+        )

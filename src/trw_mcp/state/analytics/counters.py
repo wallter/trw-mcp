@@ -35,11 +35,7 @@ def find_repeated_operations(
     Returns:
         List of (operation_name, count) tuples, sorted by count descending.
     """
-    counts = Counter(
-        et
-        for event in events
-        if (et := _ac._get_event_type(event))
-    )
+    counts = Counter(et for event in events if (et := _ac._get_event_type(event)))
     cfg: TRWConfig = get_config()
     threshold = cfg.learning_repeated_op_threshold
     return sorted(
@@ -79,17 +75,21 @@ def find_success_patterns(
 
     patterns: list[dict[str, str]] = []
     for event_type, count in sorted(
-        success_counts.items(), key=lambda x: x[1], reverse=True,
+        success_counts.items(),
+        key=lambda x: x[1],
+        reverse=True,
     ):
-        patterns.append({
-            "event_type": event_type,
-            "summary": f"Success: {event_type} ({count}x)",
-            "detail": success_details.get(event_type, ""),
-            "count": str(count),
-        })
+        patterns.append(
+            {
+                "event_type": event_type,
+                "summary": f"Success: {event_type} ({count}x)",
+                "detail": success_details.get(event_type, ""),
+                "count": str(count),
+            }
+        )
 
     cfg_sp: TRWConfig = get_config()
-    return patterns[:cfg_sp.reflect_max_success_patterns]
+    return patterns[: cfg_sp.reflect_max_success_patterns]
 
 
 def detect_tool_sequences(
@@ -123,26 +123,27 @@ def detect_tool_sequences(
             continue
         total_anchors += 1
         start = max(0, i - lookback)
-        preceding = [
-            _ac._get_event_type(events[j]) or "unknown"
-            for j in range(start, i)
-        ]
+        preceding = [_ac._get_event_type(events[j]) or "unknown" for j in range(start, i)]
         current_type = _ac._get_event_type(event) or "unknown"
-        seq = tuple([*preceding, current_type])
+        seq = (*preceding, current_type)
         if len(seq) >= 2:
             sequence_counts[seq] = sequence_counts.get(seq, 0) + 1
 
     results: list[dict[str, object]] = []
     for seq, count in sorted(
-        sequence_counts.items(), key=lambda x: x[1], reverse=True,
+        sequence_counts.items(),
+        key=lambda x: x[1],
+        reverse=True,
     ):
         if count >= min_occurrences:
             rate = f"{count}/{total_anchors}" if total_anchors else "0/0"
-            results.append({
-                "sequence": list(seq),
-                "count": count,
-                "success_rate": rate,
-            })
+            results.append(
+                {
+                    "sequence": list(seq),
+                    "count": count,
+                    "success_rate": rate,
+                }
+            )
 
     return results
 
@@ -286,6 +287,7 @@ def update_analytics_extended(
     high_impact = 0
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
+
         all_active = list_active_learnings(trw_dir)
         for entry_data in all_active:
             if int(str(entry_data.get("q_observations", 0))) > 0:

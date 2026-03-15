@@ -19,9 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.conftest import get_tools_sync
-
 import trw_mcp.state.analytics.report as analytics_mod
+from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics.report import (
     _get_last_activity_timestamp,
@@ -58,12 +57,15 @@ def _create_run(
     run_dir = runs_root / task_name / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
-    _writer.write_yaml(meta / "run.yaml", {
-        "run_id": run_id,
-        "task": task_name,
-        "status": status,
-        "phase": phase,
-    })
+    _writer.write_yaml(
+        meta / "run.yaml",
+        {
+            "run_id": run_id,
+            "task": task_name,
+            "status": status,
+            "phase": phase,
+        },
+    )
     # Create empty events.jsonl
     (meta / "events.jsonl").write_text("", encoding="utf-8")
     return run_dir
@@ -275,7 +277,9 @@ class TestStaleRunNonActiveSkipped:
 
     @pytest.mark.parametrize("status", ["completed", "abandoned", "failed"])
     def test_stale_run_non_active_skipped(
-        self, tmp_path: Path, status: str,
+        self,
+        tmp_path: Path,
+        status: str,
     ) -> None:
         """A run with non-active status is never touched, even if very old."""
         runs_root = tmp_path / ".trw" / "runs"
@@ -312,7 +316,9 @@ class TestCountStaleRuns:
         _create_run(runs_root, "task-c", _make_run_id_hours_ago(12))
         # 1 completed run (old, should be skipped)
         _create_run(
-            runs_root, "task-d", _make_run_id_hours_ago(200),
+            runs_root,
+            "task-d",
+            _make_run_id_hours_ago(200),
             status="completed",
         )
 
@@ -369,7 +375,9 @@ class TestStaleCountInStatus:
     """trw_status includes stale_count in its response."""
 
     def test_stale_count_in_status(
-        self, tmp_path: Path, sample_run_dir: Path,
+        self,
+        tmp_path: Path,
+        sample_run_dir: Path,
     ) -> None:
         """trw_status response includes stale_count field."""
         from fastmcp import FastMCP
@@ -402,7 +410,9 @@ class TestStaleCountInStatus:
         assert "3 stale run(s)" in str(result["stale_runs_advisory"])
 
     def test_stale_count_zero_no_advisory(
-        self, tmp_path: Path, sample_run_dir: Path,
+        self,
+        tmp_path: Path,
+        sample_run_dir: Path,
     ) -> None:
         """When stale count is 0, no advisory is shown."""
         from fastmcp import FastMCP
@@ -431,7 +441,9 @@ class TestStaleCountInStatus:
         assert "stale_runs_advisory" not in result
 
     def test_stale_count_error_failopen(
-        self, tmp_path: Path, sample_run_dir: Path,
+        self,
+        tmp_path: Path,
+        sample_run_dir: Path,
     ) -> None:
         """When count_stale_runs raises, trw_status still returns normally."""
         from fastmcp import FastMCP

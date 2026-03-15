@@ -120,11 +120,7 @@ def register_aaref_prompts(server: FastMCP) -> None:
             Conflict resolution prompt with embedded requirements.
         """
         template = _load_prompt_template("conflict_resolution.md")
-        return (
-            f"{template}\n\n"
-            f"## Conflict Description\n\n{conflict_description}\n\n"
-            f"## Requirements\n\n{requirements}"
-        )
+        return f"{template}\n\n## Conflict Description\n\n{conflict_description}\n\n## Requirements\n\n{requirements}"
 
     @server.prompt()
     def check_traceability(
@@ -145,7 +141,5 @@ def register_aaref_prompts(server: FastMCP) -> None:
         """
         template = _load_prompt_template("traceability.md")
         return (
-            f"{template}\n\n"
-            f"## Requirements\n\n{requirements}\n\n"
-            f"## Implementation References\n\n{implementation_refs}"
+            f"{template}\n\n## Requirements\n\n{requirements}\n\n## Implementation References\n\n{implementation_refs}"
         )

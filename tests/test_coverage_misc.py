@@ -43,11 +43,7 @@ _HAS_SKILLS_DIR = _SKILLS_DIR.is_dir()
 _SKILL_DIRS = [d for d in _SKILLS_DIR.iterdir() if d.is_dir()] if _HAS_SKILLS_DIR else []
 _HAS_SKILL_DIRS = len(_SKILL_DIRS) > 0
 _FIRST_SKILL_DIR = _SKILL_DIRS[0] if _HAS_SKILL_DIRS else None
-_SKILL_DIR_FILES = (
-    [f for f in _FIRST_SKILL_DIR.iterdir() if f.is_file()]
-    if _FIRST_SKILL_DIR is not None
-    else []
-)
+_SKILL_DIR_FILES = [f for f in _FIRST_SKILL_DIR.iterdir() if f.is_file()] if _FIRST_SKILL_DIR is not None else []
 _HAS_SKILL_FILES = len(_SKILL_DIR_FILES) > 0
 
 _HAS_AGENTS_DIR = _AGENTS_DIR.is_dir()
@@ -98,10 +94,7 @@ class TestBootstrapDryRunBranches:
 
         result = bs.update_project(target, dry_run=True)
         # Identical file: should NOT appear in 'would update' for this specific hook
-        would_update_names = [
-            s for s in result.get("updated", [])
-            if hook_src.name in s and "would update" in s
-        ]
+        would_update_names = [s for s in result.get("updated", []) if hook_src.name in s and "would update" in s]
         assert len(would_update_names) == 0, (
             f"Identical file should not appear in dry_run updated list: {would_update_names}"
         )
@@ -147,9 +140,9 @@ class TestBootstrapDryRunBranches:
         result = bs.update_project(target, dry_run=True)
         # No 'would update' for this specific file since it's identical
         would_update = [s for s in result.get("updated", []) if "would update" in s]
-        assert not any(
-            skill_file.name in s for s in would_update
-        ), f"Identical skill file should not be flagged: {would_update}"
+        assert not any(skill_file.name in s for s in would_update), (
+            f"Identical skill file should not be flagged: {would_update}"
+        )
 
     @pytest.mark.skipif(not _HAS_SKILLS_DIR, reason="No skills in bundled data")
     @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
@@ -324,9 +317,7 @@ class TestLLMClientAskSync:
         # Force _available=True regardless of SDK
         object.__setattr__(client, "_available", True)
 
-        async def mock_ask(
-            prompt: str, *, system: Any = None, model: Any = None, max_turns: Any = None
-        ) -> str:
+        async def mock_ask(prompt: str, *, system: Any = None, model: Any = None, max_turns: Any = None) -> str:
             return "thread pool result"
 
         with patch.object(client, "ask", mock_ask):
@@ -678,7 +669,8 @@ class TestAutoUpgradeCoverage:
     """Lines 29-30: get_installed_version ImportError/AttributeError."""
 
     def test_get_installed_version_missing_attr_returns_fallback(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Lines 29-30: When __version__ is missing, returns '0.0.0'.
 
@@ -702,10 +694,7 @@ class TestAutoUpgradeCoverage:
         version = get_installed_version()
         assert isinstance(version, str)
         assert len(version) > 0
-        assert re.match(r"\d+\.\d+\.\d+", version), (
-            f"Expected semver pattern, got: {version!r}"
-        )
-
+        assert re.match(r"\d+\.\d+\.\d+", version), f"Expected semver pattern, got: {version!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -752,9 +741,7 @@ class TestMessagingCoverage:
         messages = _load_messages()
         # Find a key that has a format placeholder, or mock one
         with patch("trw_mcp.prompts.messaging._load_messages") as mock_load:
-            mock_load.return_value = {
-                "test_key": "Hello {name}, you have {count} items"
-            }
+            mock_load.return_value = {"test_key": "Hello {name}, you have {count} items"}
             result = get_message("test_key", name="Alice", count=5)
 
         assert result == "Hello Alice, you have 5 items"
@@ -785,9 +772,7 @@ class TestMessagingCoverage:
         from trw_mcp.prompts import messaging
 
         with patch.object(messaging, "_load_messages") as mock_load:
-            mock_load.return_value = {
-                "list_key": ["item one", "item two", "item three"]
-            }
+            mock_load.return_value = {"list_key": ["item one", "item two", "item three"]}
             result = messaging.get_message_lines("list_key")
 
         assert result == ["item one", "item two", "item three"]
@@ -844,7 +829,9 @@ class TestPathsCoverage:
         assert result.name == "20260206T120000Z-abc1"
 
     def test_detect_current_phase_skips_non_dir_runs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """detect_current_phase skips task_dirs without valid run subdirectories."""
         from trw_mcp.state import _paths
@@ -877,7 +864,9 @@ class TestPathsCoverage:
         assert result is None
 
     def test_detect_current_phase_inactive_run_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """detect_current_phase returns None when status != active."""
         from trw_mcp.state import _paths
@@ -887,9 +876,7 @@ class TestPathsCoverage:
         run_dir = task_dir / "20260206T120000Z-xyz1"
         (run_dir / "meta").mkdir(parents=True)
         run_yaml = run_dir / "meta" / "run.yaml"
-        run_yaml.write_text(
-            "run_id: xyz1\nphase: deliver\nstatus: complete\n", encoding="utf-8"
-        )
+        run_yaml.write_text("run_id: xyz1\nphase: deliver\nstatus: complete\n", encoding="utf-8")
 
         from trw_mcp.models.config import TRWConfig
 
@@ -903,7 +890,9 @@ class TestPathsCoverage:
         assert result is None
 
     def test_detect_current_phase_active_run_returns_phase(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Positive: detect_current_phase returns phase when status == active."""
         from trw_mcp.state import _paths
@@ -913,9 +902,7 @@ class TestPathsCoverage:
         run_dir = task_dir / "20260206T120000Z-xyz2"
         (run_dir / "meta").mkdir(parents=True)
         run_yaml = run_dir / "meta" / "run.yaml"
-        run_yaml.write_text(
-            "run_id: xyz2\nphase: implement\nstatus: active\n", encoding="utf-8"
-        )
+        run_yaml.write_text("run_id: xyz2\nphase: implement\nstatus: active\n", encoding="utf-8")
 
         from trw_mcp.models.config import TRWConfig
 

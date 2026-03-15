@@ -80,7 +80,7 @@ def sanitize_ceremony_feedback(trw_dir: Path) -> dict[str, object]:
 
     task_classes = data.get("task_classes", {})
     if isinstance(task_classes, dict):
-        for class_key, class_data in task_classes.items():
+        for class_data in task_classes.values():
             if not isinstance(class_data, dict):
                 continue
             sessions = class_data.get("sessions", [])
@@ -93,7 +93,7 @@ def sanitize_ceremony_feedback(trw_dir: Path) -> dict[str, object]:
                     continue
                 run_path = str(entry.get("run_path", ""))
                 session_id = str(entry.get("session_id", ""))
-                if "/tmp/" in run_path or "pytest" in run_path or session_id in _TEST_SESSION_IDS:
+                if "/tmp/" in run_path or "pytest" in run_path or session_id in _TEST_SESSION_IDS:  # noqa: S108 — string comparison to detect test-generated entries, not a file system path
                     removed_count += 1
                 else:
                     cleaned.append(entry)
@@ -139,7 +139,9 @@ def _float_field(entry: dict[str, object], key: str, default: float = 0.0) -> fl
     val = entry.get(key, default)
     return float(str(val)) if val is not None else default
 
+
 # --- FR01: Task Class Classifier ---
+
 
 class TaskClass(str, Enum):
     DOCUMENTATION = "documentation"
@@ -152,8 +154,17 @@ class TaskClass(str, Enum):
 # Keywords must be checked in priority order: SECURITY > INFRASTRUCTURE > REFACTOR > FEATURE > DOCUMENTATION
 _DEFAULT_KEYWORDS: dict[str, list[str]] = {
     "security": [
-        "security", "vulnerability", "cve", "xss", "csrf", "injection",
-        "bypass", "patch auth", "fix auth", "secret", "encrypt",
+        "security",
+        "vulnerability",
+        "cve",
+        "xss",
+        "csrf",
+        "injection",
+        "bypass",
+        "patch auth",
+        "fix auth",
+        "secret",
+        "encrypt",
     ],
     "infrastructure": ["deploy", "migration", "infra", "docker", "ci", "pipeline"],
     "refactor": ["refactor", "cleanup", "simplify", "rename", "extract"],
@@ -186,6 +197,7 @@ def classify_task_class(task_name: str, task_description: str | None = None) -> 
 
 
 # --- FR02: Quality Outcome Tracker ---
+
 
 def _feedback_path(trw_dir: Path) -> Path:
     return trw_dir / "context" / "ceremony-feedback.yaml"
@@ -283,6 +295,7 @@ def record_session_outcome(
 
 # --- FR03: Statistical Significance ---
 
+
 def has_sufficient_samples(
     task_class: str,
     feedback_data: dict[str, object],
@@ -362,6 +375,7 @@ def generate_reduction_proposal(
 
 
 # --- FR05: Auto-Escalation on Quality Regression ---
+
 
 def check_auto_escalation(
     task_class: str,
@@ -550,6 +564,7 @@ def read_overrides(trw_dir: Path) -> dict[str, object]:
 
 # --- FR08: Status tool helper ---
 
+
 def get_ceremony_status(
     trw_dir: Path,
     task_class: str | None = None,
@@ -558,14 +573,10 @@ def get_ceremony_status(
     config = get_config()
     feedback_data = read_feedback_data(trw_dir)
 
-    classes_to_check: list[str | None] = (
-        [task_class] if task_class else [tc.value for tc in TaskClass]
-    )
+    classes_to_check: list[str | None] = [task_class] if task_class else [tc.value for tc in TaskClass]
 
     if task_class and task_class not in [tc.value for tc in TaskClass]:
-        raise ValueError(
-            f"Invalid task_class '{task_class}'. Valid: {[tc.value for tc in TaskClass]}"
-        )
+        raise ValueError(f"Invalid task_class '{task_class}'. Valid: {[tc.value for tc in TaskClass]}")
 
     results: list[dict[str, object]] = []
     for tc in classes_to_check:
@@ -586,16 +597,8 @@ def _get_class_status(
     """Get status for a single task class."""
     sessions = _get_class_sessions(task_class, feedback_data)
 
-    avg_score = (
-        sum(_float_field(s, "ceremony_score") for s in sessions) / len(sessions)
-        if sessions
-        else None
-    )
-    avg_quality = (
-        sum(_float_field(s, "outcome_quality") for s in sessions) / len(sessions)
-        if sessions
-        else None
-    )
+    avg_score = sum(_float_field(s, "ceremony_score") for s in sessions) / len(sessions) if sessions else None
+    avg_quality = sum(_float_field(s, "outcome_quality") for s in sessions) / len(sessions) if sessions else None
 
     current_tier = str(sessions[-1].get("current_tier", "STANDARD")) if sessions else "STANDARD"
 
@@ -643,6 +646,7 @@ def _get_class_status(
 
 
 # --- FR09: Ceremony Change History ---
+
 
 def _log_ceremony_change(
     trw_dir: Path,

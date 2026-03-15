@@ -11,6 +11,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     AggregateMetrics,
@@ -21,7 +22,6 @@ from trw_mcp.models.typed_dicts import (
     TierMetrics,
 )
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
-from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -46,7 +46,7 @@ _CEREMONY_WEIGHTS: dict[str, int] = {
 }
 
 
-def compute_ceremony_score(
+def compute_ceremony_score(  # noqa: C901
     events: list[dict[str, object]],
     trw_dir: Path | None = None,
 ) -> CeremonyScoreResult:
@@ -75,6 +75,7 @@ def compute_ceremony_score(
     # Extracted to shared helper _merge_session_events in _deferred_delivery.py
     if trw_dir is not None:
         from trw_mcp.tools._deferred_delivery import _merge_session_events
+
         events = _merge_session_events(list(events), trw_dir)
     else:
         events = list(events)
@@ -91,25 +92,17 @@ def compute_ceremony_score(
         tool_name = str(evt.get("tool_name", ""))
         is_tool_invocation = event_type == "tool_invocation"
 
-        if event_type == "session_start" or (
-            is_tool_invocation and tool_name == "trw_session_start"
-        ):
+        if event_type == "session_start" or (is_tool_invocation and tool_name == "trw_session_start"):
             has_session_start = True
         elif event_type in ("reflection_complete", "claude_md_synced", "trw_deliver_complete") or (
             is_tool_invocation and tool_name in ("trw_deliver", "trw_reflect")
         ):
             has_deliver = True
-        elif event_type == "checkpoint" or (
-            is_tool_invocation and tool_name == "trw_checkpoint"
-        ):
+        elif event_type == "checkpoint" or (is_tool_invocation and tool_name == "trw_checkpoint"):
             checkpoint_count += 1
-        elif "learn" in event_type or (
-            is_tool_invocation and tool_name == "trw_learn"
-        ):
+        elif "learn" in event_type or (is_tool_invocation and tool_name == "trw_learn"):
             learn_count += 1
-        elif event_type == "build_check_complete" or (
-            is_tool_invocation and tool_name == "trw_build_check"
-        ):
+        elif event_type == "build_check_complete" or (is_tool_invocation and tool_name == "trw_build_check"):
             has_build_check = True
             if "tests_passed" in evt:
                 build_passed = str(evt["tests_passed"]).lower() == "true"
@@ -181,7 +174,7 @@ def scan_all_runs(
                 run_data = _analyze_single_run(run_dir, trw_dir=resolve_trw_dir())
                 if run_data is not None:
                     runs.append(run_data)
-            except Exception as exc:  # justified: scan-resilience, skip bad run dirs without aborting report
+            except Exception as exc:  # per-item error handling: skip bad run dirs without aborting report  # noqa: PERF203
                 parse_errors.append(f"{run_dir.name}: {exc}")
 
     # Apply since filter (validate ISO date format)
@@ -305,8 +298,8 @@ def _parse_run_id_timestamp(run_id: str) -> str:
     try:
         ts_part = run_id.split("-")[0]
         if len(ts_part) >= 16 and "T" in ts_part:
-            dt = datetime.strptime(ts_part, "%Y%m%dT%H%M%SZ")
-            return dt.replace(tzinfo=timezone.utc).isoformat()
+            dt = datetime.strptime(ts_part, "%Y%m%dT%H%M%S%z").replace(tzinfo=timezone.utc)
+            return dt.isoformat()
     except (ValueError, IndexError):
         logger.debug("run_id_timestamp_parse_failed", run_id=run_id, exc_info=True)
     return run_id
@@ -336,11 +329,13 @@ def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
         score = run.get("score")
         if isinstance(score, int):
             scores.append(score)
-            ceremony_trend.append(CeremonyTrendItem(
-                run_id=str(run.get("run_id", "")),
-                score=score,
-                started_at=str(run.get("started_at", "")),
-            ))
+            ceremony_trend.append(
+                CeremonyTrendItem(
+                    run_id=str(run.get("run_id", "")),
+                    score=score,
+                    started_at=str(run.get("started_at", "")),
+                )
+            )
 
             # FR07: Group by complexity_class
             tier = str(run.get("complexity_class") or "unclassified")
@@ -355,10 +350,7 @@ def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
             total_learnings += learn_count
 
     avg_score = sum(scores) / len(scores) if scores else 0.0
-    build_pass_rate = (
-        sum(1 for b in build_results if b) / len(build_results)
-        if build_results else 0.0
-    )
+    build_pass_rate = sum(1 for b in build_results if b) / len(build_results) if build_results else 0.0
     avg_learnings = total_learnings / len(runs) if runs else 0.0
 
     # FR07: Build ceremony_by_tier breakdown
@@ -366,9 +358,14 @@ def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
     for tier_name, tier_score_list in tier_scores.items():
         count = len(tier_score_list)
         avg = round(sum(tier_score_list) / count, 1) if count else 0.0
-        pass_rate = round(
-            sum(1 for s in tier_score_list if s >= 70) / count, 2,
-        ) if count else 0.0
+        pass_rate = (
+            round(
+                sum(1 for s in tier_score_list if s >= 70) / count,
+                2,
+            )
+            if count
+            else 0.0
+        )
         ceremony_by_tier[tier_name] = TierMetrics(
             count=count,
             avg_score=avg,
@@ -560,9 +557,7 @@ def auto_close_stale_runs(
                 data["status"] = "abandoned"
                 data["abandoned_at"] = now.isoformat()
                 data["original_phase"] = original_phase
-                data["abandoned_reason"] = (
-                    f"Stale timeout — exceeded threshold: {threshold_hours}h"
-                )
+                data["abandoned_reason"] = f"Stale timeout — exceeded threshold: {threshold_hours}h"
                 writer.write_yaml(run_yaml, data)
                 closed.append(run_id)
 

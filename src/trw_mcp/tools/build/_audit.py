@@ -19,19 +19,19 @@ from trw_mcp.models.typed_dicts import (
     PipAuditResult,
 )
 from trw_mcp.tools.build._subprocess import (
+    _MAX_FAILURES,
     _extract_failures,
     _find_executable,
     _run_audit_tool,
     _run_subprocess,
     _strip_ansi,
-    _MAX_FAILURES,
 )
 
 _DEP_AUDIT_FILE = "dep-audit.yaml"
 _API_FUZZ_FILE = "api-fuzz-status.yaml"
 
 
-def _run_pip_audit(
+def _run_pip_audit(  # noqa: C901
     project_root: Path,
     config: TRWConfig,
 ) -> PipAuditResult:
@@ -157,9 +157,7 @@ def _run_npm_audit(
         when skipping (no platform changes, npm not found, etc.).
     """
     # Only run when platform/package.json is changed
-    has_platform_changes = any(
-        "platform/package.json" in f for f in changed_files
-    )
+    has_platform_changes = any("platform/package.json" in f for f in changed_files)
     if not has_platform_changes:
         return NpmAuditResult(
             npm_audit_skipped=True,
@@ -206,11 +204,13 @@ def _run_npm_audit(
             severity = str(info.get("severity", "")).lower()
             if severity in ("high", "critical"):
                 high_plus += 1
-                vuln_details.append({
-                    "package": pkg_name,
-                    "severity": severity,
-                    "via": str(info.get("via", ""))[:200],
-                })
+                vuln_details.append(
+                    {
+                        "package": pkg_name,
+                        "severity": severity,
+                        "via": str(info.get("via", ""))[:200],
+                    }
+                )
 
     return NpmAuditResult(
         npm_audit_passed=high_plus == 0,
@@ -219,7 +219,7 @@ def _run_npm_audit(
     )
 
 
-def _detect_unlisted_imports(
+def _detect_unlisted_imports(  # noqa: C901
     project_root: Path,
     changed_files: list[str],
 ) -> list[str]:
@@ -272,16 +272,60 @@ def _detect_unlisted_imports(
 
     # Standard library modules to exclude from detection
     stdlib_prefixes = {
-        "os", "sys", "re", "json", "time", "datetime", "pathlib",
-        "subprocess", "shutil", "typing", "collections", "functools",
-        "itertools", "contextlib", "abc", "io", "math", "hashlib",
-        "logging", "unittest", "tempfile", "copy", "enum", "dataclasses",
-        "importlib", "inspect", "textwrap", "string", "operator",
-        "warnings", "traceback", "threading", "multiprocessing",
-        "socket", "http", "urllib", "email", "html", "xml",
-        "csv", "configparser", "argparse", "getpass", "uuid",
-        "secrets", "hmac", "base64", "binascii", "struct",
-        "asyncio", "concurrent", "signal", "fcntl", "stat",
+        "os",
+        "sys",
+        "re",
+        "json",
+        "time",
+        "datetime",
+        "pathlib",
+        "subprocess",
+        "shutil",
+        "typing",
+        "collections",
+        "functools",
+        "itertools",
+        "contextlib",
+        "abc",
+        "io",
+        "math",
+        "hashlib",
+        "logging",
+        "unittest",
+        "tempfile",
+        "copy",
+        "enum",
+        "dataclasses",
+        "importlib",
+        "inspect",
+        "textwrap",
+        "string",
+        "operator",
+        "warnings",
+        "traceback",
+        "threading",
+        "multiprocessing",
+        "socket",
+        "http",
+        "urllib",
+        "email",
+        "html",
+        "xml",
+        "csv",
+        "configparser",
+        "argparse",
+        "getpass",
+        "uuid",
+        "secrets",
+        "hmac",
+        "base64",
+        "binascii",
+        "struct",
+        "asyncio",
+        "concurrent",
+        "signal",
+        "fcntl",
+        "stat",
         "__future__",
     }
 
@@ -313,10 +357,9 @@ def _detect_unlisted_imports(
 
     # Filter out stdlib and already-listed deps
     unlisted = sorted(
-        pkg for pkg in imported_packages
-        if pkg not in stdlib_prefixes
-        and pkg not in listed_deps
-        and not pkg.startswith("_")
+        pkg
+        for pkg in imported_packages
+        if pkg not in stdlib_prefixes and pkg not in listed_deps and not pkg.startswith("_")
     )
     return unlisted
 
@@ -340,16 +383,17 @@ def _run_dep_audit(
     # Get changed files for npm audit and unlisted import detection
     try:
         git_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
             capture_output=True,
             text=True,
             timeout=30,
             cwd=str(project_root),
         )
-        changed_files = [
-            line.strip() for line in git_result.stdout.strip().splitlines()
-            if line.strip()
-        ] if git_result.returncode == 0 else []
+        changed_files = (
+            [line.strip() for line in git_result.stdout.strip().splitlines() if line.strip()]
+            if git_result.returncode == 0
+            else []
+        )
     except (subprocess.TimeoutExpired, OSError):
         changed_files = []
 
@@ -435,11 +479,11 @@ def _run_api_fuzz(
     try:
         import urllib.request
 
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310 — URL from config.api_fuzz_base_url (operator-configured dev/test backend, not user input)
             f"{base_url}/",
             method="HEAD",
         )
-        urllib.request.urlopen(req, timeout=5)
+        urllib.request.urlopen(req, timeout=5)  # noqa: S310 — see Request comment above
     except Exception:  # justified: boundary, backend reachability check may fail for many reasons
         return ApiFuzzResult(
             api_fuzz_skipped=True,
@@ -447,8 +491,7 @@ def _run_api_fuzz(
         )
 
     result = _run_subprocess(
-        [schemathesis_path, "run", "--checks", "all",
-         f"--base-url={base_url}", openapi_url],
+        [schemathesis_path, "run", "--checks", "all", f"--base-url={base_url}", openapi_url],
         project_root,
         config.api_fuzz_timeout_secs,
     )

@@ -61,12 +61,8 @@ class TestEmitToolSpan:
 
         mock_span = MagicMock()
         mock_tracer = MagicMock()
-        mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
-            return_value=mock_span
-        )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
 
         mock_trace = MagicMock()
         mock_trace.get_tracer.return_value = mock_tracer
@@ -76,10 +72,13 @@ class TestEmitToolSpan:
 
         with (
             patch("trw_mcp.models.config.get_config") as mock_cfg,
-            patch.dict(sys.modules, {
-                "opentelemetry": mock_otel,
-                "opentelemetry.trace": mock_trace,
-            }),
+            patch.dict(
+                sys.modules,
+                {
+                    "opentelemetry": mock_otel,
+                    "opentelemetry.trace": mock_trace,
+                },
+            ),
         ):
             mock_cfg.return_value = MagicMock(otel_enabled=True)
 

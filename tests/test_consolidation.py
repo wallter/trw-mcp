@@ -43,6 +43,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 def make_vec(x: float, y: float = 0.0, z: float = 0.0) -> list[float]:
     """Return a unit vector in 3D (normalized)."""
     import math
+
     mag = math.sqrt(x * x + y * y + z * z)
     if mag == 0.0:
         return [0.0, 0.0, 0.0]
@@ -124,17 +125,13 @@ class TestFindClusters:
                 result = find_clusters(entries_dir, reader)
         assert result == []
 
-    def test_nonexistent_dir_returns_empty(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_nonexistent_dir_returns_empty(self, tmp_path: Path, reader: FileStateReader) -> None:
         """When entries_dir does not exist, returns []."""
         with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
             result = find_clusters(tmp_path / "nonexistent", reader)
         assert result == []
 
-    def test_skips_index_yaml(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_skips_index_yaml(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """index.yaml is skipped during loading."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -149,9 +146,7 @@ class TestFindClusters:
                 result = find_clusters(entries_dir, reader, min_cluster_size=3)
         assert result == []
 
-    def test_skips_inactive_entries(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_skips_inactive_entries(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Entries with status != 'active' are excluded from clustering."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -260,7 +255,8 @@ class TestFindClusters:
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=all_vecs):
                     result = find_clusters(
-                        entries_dir, reader,
+                        entries_dir,
+                        reader,
                         similarity_threshold=0.9,
                         min_cluster_size=3,
                     )
@@ -292,22 +288,22 @@ class TestFindClusters:
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
                     result_low = find_clusters(
-                        entries_dir, reader,
+                        entries_dir,
+                        reader,
                         similarity_threshold=0.5,
                         min_cluster_size=3,
                     )
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
                     result_high = find_clusters(
-                        entries_dir, reader,
+                        entries_dir,
+                        reader,
                         similarity_threshold=0.99,
                         min_cluster_size=3,
                     )
 
         assert len(result_low) >= len(result_high)
 
-    def test_max_entries_cap(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_max_entries_cap(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """max_entries caps the number of entries loaded for clustering."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -339,9 +335,7 @@ class TestFindClusters:
                     result = find_clusters(entries_dir, reader, min_cluster_size=3)
         assert result == []
 
-    def test_unreadable_yaml_skipped(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_unreadable_yaml_skipped(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Entries that cannot be read are skipped without raising."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -378,7 +372,8 @@ class TestFindClusters:
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
                     result = find_clusters(
-                        entries_dir, reader,
+                        entries_dir,
+                        reader,
                         similarity_threshold=0.9,
                         min_cluster_size=3,
                     )
@@ -407,15 +402,14 @@ class TestFindClusters:
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
                     result = find_clusters(
-                        entries_dir, reader,
+                        entries_dir,
+                        reader,
                         similarity_threshold=0.9,
                         min_cluster_size=4,
                     )
         assert result == []
 
-    def test_entries_dir_nonexistent_with_embedding_available(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_entries_dir_nonexistent_with_embedding_available(self, tmp_path: Path, reader: FileStateReader) -> None:
         """When embedding is available but entries_dir doesn't exist, returns []."""
         nonexistent = tmp_path / "no_such_dir"
 
@@ -453,11 +447,7 @@ class TestParseConsolidationResponse:
 
     def test_non_json_lines_skipped(self) -> None:
         """Non-JSON lines are skipped without error."""
-        response = (
-            "Thinking about this...\n"
-            "Let me consolidate:\n"
-            '{"summary": "the summary", "detail": "the detail"}'
-        )
+        response = 'Thinking about this...\nLet me consolidate:\n{"summary": "the summary", "detail": "the detail"}'
         result = _parse_consolidation_response(response)
         assert result is not None
         assert result["summary"] == "the summary"
@@ -603,9 +593,7 @@ class TestSummarizeClusterLlm:
 class TestCreateConsolidatedEntry:
     """FR03: _create_consolidated_entry aggregates fields and writes atomically."""
 
-    def test_entry_id_has_L_prefix(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_entry_id_has_L_prefix(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Generated entry ID starts with 'L-'."""
         cluster = make_cluster(3)
         entries_dir = tmp_path / "entries"
@@ -614,9 +602,7 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "summary", "detail", entries_dir, writer)
         assert str(entry["id"]).startswith("L-")
 
-    def test_impact_is_max_of_cluster(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_impact_is_max_of_cluster(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """impact = max(cluster impacts)."""
         cluster = [
             {"id": "e1", "impact": 0.3},
@@ -629,9 +615,7 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["impact"] == pytest.approx(0.7)
 
-    def test_tags_sorted_union(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_tags_sorted_union(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """tags = sorted union of all cluster tags (deduplicated)."""
         cluster = [
             {"id": "e1", "tags": ["beta", "alpha"]},
@@ -644,9 +628,7 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["tags"] == ["alpha", "beta", "delta", "gamma"]
 
-    def test_evidence_deduplicated_union(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_evidence_deduplicated_union(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """evidence = union of all cluster evidence (deduplicated)."""
         cluster = [
             {"id": "e1", "evidence": ["ev1", "ev2"]},
@@ -660,9 +642,7 @@ class TestCreateConsolidatedEntry:
         evidence = list(entry["evidence"])  # type: ignore[arg-type]
         assert sorted(evidence) == ["ev1", "ev2", "ev3", "ev4"]
 
-    def test_recurrence_is_sum(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_recurrence_is_sum(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """recurrence = sum of cluster recurrences."""
         cluster = [
             {"id": "e1", "recurrence": 2},
@@ -675,9 +655,7 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["recurrence"] == 6
 
-    def test_q_value_is_max(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_q_value_is_max(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """q_value = max of cluster q_values."""
         cluster = [
             {"id": "e1", "q_value": 0.2},
@@ -690,9 +668,7 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["q_value"] == pytest.approx(0.8)
 
-    def test_source_type_is_consolidated(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_source_type_is_consolidated(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """source_type = 'consolidated'."""
         cluster = make_cluster(3)
         entries_dir = tmp_path / "entries"
@@ -701,9 +677,7 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["source_type"] == "consolidated"
 
-    def test_consolidated_from_contains_cluster_ids(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_consolidated_from_contains_cluster_ids(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """consolidated_from contains IDs of all cluster entries."""
         cluster = make_cluster(3)
         entries_dir = tmp_path / "entries"
@@ -715,9 +689,7 @@ class TestCreateConsolidatedEntry:
         assert "L-entry001" in consolidated_from
         assert "L-entry002" in consolidated_from
 
-    def test_entry_written_to_disk(
-        self, tmp_path: Path, writer: FileStateWriter, reader: FileStateReader
-    ) -> None:
+    def test_entry_written_to_disk(self, tmp_path: Path, writer: FileStateWriter, reader: FileStateReader) -> None:
         """Entry is written atomically to entries_dir as a YAML file."""
         cluster = make_cluster(3)
         entries_dir = tmp_path / "entries"
@@ -732,9 +704,7 @@ class TestCreateConsolidatedEntry:
         data = reader.read_yaml(written_path)
         assert data["id"] == entry_id
 
-    def test_missing_fields_use_defaults(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_missing_fields_use_defaults(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Cluster entries missing fields fall back to defaults."""
         cluster = [
             {"id": "e1"},  # no impact, tags, evidence, recurrence, q_value
@@ -750,9 +720,7 @@ class TestCreateConsolidatedEntry:
         assert entry["tags"] == []
         assert entry["recurrence"] == 3
 
-    def test_status_is_active(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_status_is_active(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """New consolidated entry has status='active'."""
         cluster = make_cluster(3)
         entries_dir = tmp_path / "entries"
@@ -836,9 +804,7 @@ class TestArchiveOriginals:
         data = reader.read_yaml(entries_dir / "e001.yaml")
         assert data["status"] == "archived"
 
-    def test_missing_entry_file_skipped(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_missing_entry_file_skipped(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Entries with no matching file are skipped without raising."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -847,9 +813,7 @@ class TestArchiveOriginals:
         # Should not raise
         _archive_originals(cluster, "L-cons001", entries_dir, reader, writer)
 
-    def test_entry_without_id_skipped(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_entry_without_id_skipped(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Entries without 'id' field are skipped."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -868,11 +832,14 @@ class TestArchiveOriginals:
         entry_id = "e:001"  # colon gets replaced to dash
         slug = entry_id.replace("/", "-").replace(":", "-")
         path = entries_dir / f"{slug}.yaml"
-        writer.write_yaml(path, {
-            "id": entry_id,
-            "summary": "test",
-            "status": "active",
-        })
+        writer.write_yaml(
+            path,
+            {
+                "id": entry_id,
+                "summary": "test",
+                "status": "active",
+            },
+        )
         cluster = [{"id": entry_id, "summary": "test"}]
 
         # Should find the file via exact slug derivation (line 384 path)
@@ -881,9 +848,7 @@ class TestArchiveOriginals:
         data = reader.read_yaml(path)
         assert data["consolidated_into"] == "L-cons001"
 
-    def test_rollback_on_write_failure(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_rollback_on_write_failure(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """On write failure, previously written entries are rolled back."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -942,9 +907,7 @@ class TestRollbackArchive:
         restored = reader.read_yaml(path)
         assert "consolidated_into" not in restored
 
-    def test_deletes_consolidated_entry_file(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_deletes_consolidated_entry_file(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Consolidated entry file is deleted during rollback."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -955,18 +918,14 @@ class TestRollbackArchive:
 
         assert not cons_path.exists()
 
-    def test_rollback_with_no_processed_entries(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_rollback_with_no_processed_entries(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Rollback with empty processed list only deletes consolidated file."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         # Should not raise even if file doesn't exist
         _rollback_archive([], "L-nonexistent", entries_dir, writer)
 
-    def test_rollback_write_failure_logged_not_raised(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_rollback_write_failure_logged_not_raised(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Write failure during rollback is caught and logged, not re-raised."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -978,9 +937,7 @@ class TestRollbackArchive:
         # Should not raise
         _rollback_archive([(bad_path, original_data)], "L-cons001", entries_dir, writer)
 
-    def test_rollback_unlink_failure_logged_not_raised(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_rollback_unlink_failure_logged_not_raised(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """unlink failure during rollback is caught and logged, not re-raised."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -1107,9 +1064,7 @@ class TestConsolidateCycle:
         yaml_files = list(entries_dir.glob("*.yaml"))
         assert all(f.stem in ids for f in yaml_files)
 
-    def test_dry_run_cluster_preview_structure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_dry_run_cluster_preview_structure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Dry-run cluster previews contain entry_ids, count, mean_similarity."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1131,9 +1086,7 @@ class TestConsolidateCycle:
             assert "count" in preview
             assert "mean_similarity" in preview
 
-    def test_no_clusters_returns_no_clusters_status(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_no_clusters_returns_no_clusters_status(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When no clusters found, returns status='no_clusters'."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1182,9 +1135,7 @@ class TestConsolidateCycle:
         }
         assert len(all_ids_with_consolidated) >= len(ids)
 
-    def test_llm_unavailable_uses_fallback(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_llm_unavailable_uses_fallback(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When LLM unavailable, falls back to longest-entry summarization."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1206,9 +1157,7 @@ class TestConsolidateCycle:
 
         assert result["status"] == "completed"
 
-    def test_tier_manager_unavailable_graceful(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_tier_manager_unavailable_graceful(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """TierManager unavailability is handled gracefully (falls back to archived status)."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1226,6 +1175,7 @@ class TestConsolidateCycle:
         # `from trw_mcp.state.tiers import TierManager as _TierManager` internally.
         # We patch the module so the import raises, triggering graceful degradation.
         import trw_mcp.state.tiers as tiers_mod
+
         original_tm = tiers_mod.TierManager
         try:
             tiers_mod.TierManager = MagicMock(side_effect=Exception("tiers unavailable"))  # type: ignore[misc]
@@ -1240,9 +1190,7 @@ class TestConsolidateCycle:
         assert "status" in result
         assert result["status"] == "completed"
 
-    def test_llm_client_init_exception_graceful(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_llm_client_init_exception_graceful(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When LLMClient() raises on init, consolidation proceeds with fallback."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1263,9 +1211,7 @@ class TestConsolidateCycle:
         assert "status" in result
         assert result["status"] == "completed"
 
-    def test_cluster_error_added_to_errors_list(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_cluster_error_added_to_errors_list(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Per-cluster errors are collected and returned, not re-raised."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1289,9 +1235,7 @@ class TestConsolidateCycle:
         # consolidate_cycle should not raise — errors collected or fallback used
         assert "status" in result
 
-    def test_completed_result_structure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_completed_result_structure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Full cycle result has expected keys."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1398,17 +1342,34 @@ def _patch_trw_deliver_deps(trw_dir: Path) -> Any:
     import trw_mcp.tools.ceremony as ceremony_mod
 
     stack = ExitStack()
-    stack.enter_context(patch.object(ceremony_mod, "_do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}))
+    stack.enter_context(
+        patch.object(
+            ceremony_mod,
+            "_do_reflect",
+            return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0},
+        )
+    )
     stack.enter_context(patch.object(ceremony_mod, "find_active_run", return_value=None))
     stack.enter_context(patch.object(ceremony_mod, "resolve_trw_dir", return_value=trw_dir))
-    stack.enter_context(patch.object(ceremony_mod, "_do_instruction_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0, "path": ""}))
+    stack.enter_context(
+        patch.object(
+            ceremony_mod,
+            "_do_instruction_sync",
+            return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0, "path": ""},
+        )
+    )
     stack.enter_context(patch.object(ceremony_mod, "_do_index_sync", return_value={"status": "success"}))
     stack.enter_context(patch.object(ceremony_mod, "_do_auto_progress", return_value={"status": "skipped"}))
     stack.enter_context(patch("trw_mcp.telemetry.publisher.publish_learnings", return_value={"status": "skipped"}))
     stack.enter_context(patch("trw_mcp.scoring.process_outcome_for_event", return_value=[]))
     stack.enter_context(patch("trw_mcp.state.recall_tracking.get_recall_stats", return_value={}))
     stack.enter_context(patch("trw_mcp.telemetry.client.TelemetryClient.from_config", return_value=MagicMock()))
-    stack.enter_context(patch("trw_mcp.telemetry.sender.BatchSender.from_config", return_value=MagicMock(send=MagicMock(return_value={"status": "skipped"}))))
+    stack.enter_context(
+        patch(
+            "trw_mcp.telemetry.sender.BatchSender.from_config",
+            return_value=MagicMock(send=MagicMock(return_value={"status": "skipped"})),
+        )
+    )
     return stack
 
 
@@ -1436,9 +1397,11 @@ def _call_trw_deliver(trw_dir: Path, cfg: TRWConfig) -> dict[str, Any]:
 
         def capture_tool(fn: Any = None) -> Any:
             if fn is None:
+
                 def decorator(f: Any) -> Any:
                     captured_fn.append(f)
                     return f
+
                 return decorator
             captured_fn.append(fn)
             return fn
@@ -1446,9 +1409,7 @@ def _call_trw_deliver(trw_dir: Path, cfg: TRWConfig) -> dict[str, Any]:
         mock_server.tool = capture_tool
         ceremony_mod.register_ceremony_tools(mock_server)
         # trw_deliver is the second registered tool (index 1)
-        deliver_fn = next(
-            f for f in captured_fn if getattr(f, "__name__", "") == "trw_deliver"
-        )
+        deliver_fn = next(f for f in captured_fn if getattr(f, "__name__", "") == "trw_deliver")
         with _patch_trw_deliver_deps(trw_dir):
             return deliver_fn()  # type: ignore[no-any-return]
     finally:
@@ -1458,9 +1419,7 @@ def _call_trw_deliver(trw_dir: Path, cfg: TRWConfig) -> dict[str, Any]:
 class TestCeremonyWiring:
     """FR07: trw_deliver includes memory consolidation at step 2.6."""
 
-    def test_consolidation_disabled_result_has_skipped_status(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_consolidation_disabled_result_has_skipped_status(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When memory_consolidation_enabled=False, trw_deliver result has consolidation.status=skipped."""
         import trw_mcp.tools.ceremony as ceremony_mod
 
@@ -1485,6 +1444,7 @@ class TestCeremonyWiring:
                     try:
                         if cfg.memory_consolidation_enabled:
                             from trw_mcp.state.consolidation import consolidate_cycle as _cc
+
                             results["consolidation"] = _cc(trw_dir, max_entries=cfg.memory_consolidation_max_per_cycle)
                         else:
                             results["consolidation"] = {"status": "skipped", "reason": "disabled"}
@@ -1499,9 +1459,7 @@ class TestCeremonyWiring:
         finally:
             ceremony_mod._config = old_config  # type: ignore[attr-defined]
 
-    def test_consolidation_exception_is_fail_open(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_consolidation_exception_is_fail_open(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When consolidate_cycle raises, error is collected and result has status=failed."""
         import trw_mcp.tools.ceremony as ceremony_mod
 
@@ -1525,6 +1483,7 @@ class TestCeremonyWiring:
                     try:
                         if cfg.memory_consolidation_enabled:
                             from trw_mcp.state.consolidation import consolidate_cycle as _cc
+
                             results["consolidation"] = _cc(trw_dir, max_entries=cfg.memory_consolidation_max_per_cycle)
                         else:
                             results["consolidation"] = {"status": "skipped", "reason": "disabled"}
@@ -1541,9 +1500,7 @@ class TestCeremonyWiring:
         finally:
             ceremony_mod._config = old_config  # type: ignore[attr-defined]
 
-    def test_consolidation_result_key_present_when_enabled(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_consolidation_result_key_present_when_enabled(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When enabled, trw_deliver result dict contains 'consolidation' key."""
         import trw_mcp.tools.ceremony as ceremony_mod
 
@@ -1567,6 +1524,7 @@ class TestCeremonyWiring:
                     try:
                         if cfg.memory_consolidation_enabled:
                             from trw_mcp.state.consolidation import consolidate_cycle as _cc
+
                             results["consolidation"] = _cc(trw_dir, max_entries=cfg.memory_consolidation_max_per_cycle)
                         else:
                             results["consolidation"] = {"status": "skipped", "reason": "disabled"}
@@ -1616,6 +1574,7 @@ class TestConsolidationConfig:
     def test_min_cluster_below_2_raises_validation_error(self) -> None:
         """min_cluster < 2 raises a ValidationError."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             TRWConfig(memory_consolidation_min_cluster=1)
 
@@ -1627,12 +1586,14 @@ class TestConsolidationConfig:
     def test_similarity_threshold_above_1_raises_validation_error(self) -> None:
         """similarity_threshold > 1.0 raises a ValidationError."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             TRWConfig(memory_consolidation_similarity_threshold=1.1)
 
     def test_similarity_threshold_below_0_raises_validation_error(self) -> None:
         """similarity_threshold < 0.0 raises a ValidationError."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             TRWConfig(memory_consolidation_similarity_threshold=-0.1)
 
@@ -1646,6 +1607,7 @@ class TestConsolidationConfig:
     def test_max_per_cycle_below_1_raises_validation_error(self) -> None:
         """max_per_cycle < 1 raises a ValidationError."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             TRWConfig(memory_consolidation_max_per_cycle=0)
 
@@ -1687,7 +1649,9 @@ class TestConsolidationIntegration:
         entry_ids = [f"entry{i:03d}" for i in range(3)]
         for i in range(3):
             write_entry(
-                entries_dir, writer, entry_ids[i],
+                entries_dir,
+                writer,
+                entry_ids[i],
                 summary=f"test pattern {i}",
                 detail=f"detail about pattern {i}",
                 impact=0.6 + i * 0.1,
@@ -1720,20 +1684,21 @@ class TestConsolidationIntegration:
         # Check all yaml files recursively in the trw tree for consolidated_into.
         all_yaml: list[Path] = list(trw_dir.rglob("*.yaml"))
         archived_ids = set()
-        for f in all_yaml:
+
+        def _safe_check_yaml(path: Path) -> None:
             try:
-                data = reader.read_yaml(f)
+                data = reader.read_yaml(path)
                 if "consolidated_into" in data and str(data.get("id", "")) in entry_ids:
                     archived_ids.add(str(data["id"]))
             except Exception:
-                continue
+                pass
+
+        for f in all_yaml:
+            _safe_check_yaml(f)
         assert len(archived_ids) == 3
 
         # Verify consolidated entry exists and has correct structure (always stays in entries_dir)
-        consolidated_files = [
-            f for f in entries_dir.glob("*.yaml")
-            if f.stem.startswith("L-")
-        ]
+        consolidated_files = [f for f in entries_dir.glob("*.yaml") if f.stem.startswith("L-")]
         assert len(consolidated_files) >= 1
         cons_data = reader.read_yaml(consolidated_files[0])
         assert cons_data["source_type"] == "consolidated"
@@ -1770,8 +1735,7 @@ class TestConsolidationIntegration:
 
         # Find consolidated entry
         consolidated_files = [
-            f for f in entries_dir.glob("*.yaml")
-            if f.stem not in [f"entry{i:03d}" for i in range(3)]
+            f for f in entries_dir.glob("*.yaml") if f.stem not in [f"entry{i:03d}" for i in range(3)]
         ]
         if consolidated_files:
             cons_data = reader.read_yaml(consolidated_files[0])
@@ -1997,9 +1961,7 @@ class TestPathRedaction:
 class TestFindClustersSQLite:
     """PRD-FIX-033-FR04: find_clusters loads entries from SQLite when available."""
 
-    def test_find_clusters_uses_sqlite(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_find_clusters_uses_sqlite(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """find_clusters calls list_active_learnings instead of glob when available."""
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
@@ -2018,18 +1980,23 @@ class TestFindClustersSQLite:
             for i in range(5)
         ]
 
-        with patch(
-            "trw_mcp.state.memory_adapter.list_active_learnings",
-            return_value=fake_entries,
-        ) as mock_sqlite, patch(
-            "trw_mcp.state.memory_adapter.embedding_available",
-            return_value=True,
-        ), patch(
-            "trw_mcp.state.memory_adapter.embed_text_batch",
-            return_value=[make_vec(1.0, 0.0)] * 5,
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.list_active_learnings",
+                return_value=fake_entries,
+            ) as mock_sqlite,
+            patch(
+                "trw_mcp.state.memory_adapter.embedding_available",
+                return_value=True,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.embed_text_batch",
+                return_value=[make_vec(1.0, 0.0)] * 5,
+            ),
         ):
             result = find_clusters(
-                entries_dir, reader,
+                entries_dir,
+                reader,
                 similarity_threshold=0.9,
                 min_cluster_size=3,
             )
@@ -2048,22 +2015,29 @@ class TestFindClustersSQLite:
         # Write YAML entries for fallback
         for i in range(4):
             write_entry(
-                entries_dir, writer, f"L-fb{i:02d}",
+                entries_dir,
+                writer,
+                f"L-fb{i:02d}",
                 summary=f"yaml fallback testing {i}",
             )
 
-        with patch(
-            "trw_mcp.state.memory_adapter.list_active_learnings",
-            side_effect=RuntimeError("SQLite unavailable"),
-        ), patch(
-            "trw_mcp.state.memory_adapter.embedding_available",
-            return_value=True,
-        ), patch(
-            "trw_mcp.state.memory_adapter.embed_text_batch",
-            return_value=[make_vec(1.0, 0.0)] * 4,
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.list_active_learnings",
+                side_effect=RuntimeError("SQLite unavailable"),
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.embedding_available",
+                return_value=True,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.embed_text_batch",
+                return_value=[make_vec(1.0, 0.0)] * 4,
+            ),
         ):
             result = find_clusters(
-                entries_dir, reader,
+                entries_dir,
+                reader,
                 similarity_threshold=0.9,
                 min_cluster_size=3,
             )
@@ -2079,26 +2053,53 @@ class TestFindClustersSQLite:
         entries_dir.mkdir(parents=True)
 
         fake_entries: list[dict[str, object]] = [
-            {"id": "L-active1", "summary": "test", "detail": "d", "status": "active",
-             "impact": 0.5, "tags": [], "source_type": "agent"},
-            {"id": "L-consolidated", "summary": "test", "detail": "d", "status": "active",
-             "impact": 0.5, "tags": [], "source_type": "consolidated"},
-            {"id": "L-archived", "summary": "test", "detail": "d", "status": "active",
-             "impact": 0.5, "tags": [], "source_type": "agent", "consolidated_into": "L-xyz"},
+            {
+                "id": "L-active1",
+                "summary": "test",
+                "detail": "d",
+                "status": "active",
+                "impact": 0.5,
+                "tags": [],
+                "source_type": "agent",
+            },
+            {
+                "id": "L-consolidated",
+                "summary": "test",
+                "detail": "d",
+                "status": "active",
+                "impact": 0.5,
+                "tags": [],
+                "source_type": "consolidated",
+            },
+            {
+                "id": "L-archived",
+                "summary": "test",
+                "detail": "d",
+                "status": "active",
+                "impact": 0.5,
+                "tags": [],
+                "source_type": "agent",
+                "consolidated_into": "L-xyz",
+            },
         ]
 
-        with patch(
-            "trw_mcp.state.memory_adapter.list_active_learnings",
-            return_value=fake_entries,
-        ), patch(
-            "trw_mcp.state.memory_adapter.embedding_available",
-            return_value=True,
-        ), patch(
-            "trw_mcp.state.memory_adapter.embed_text_batch",
-            return_value=[make_vec(1.0, 0.0)],  # Only 1 entry passes filters
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.list_active_learnings",
+                return_value=fake_entries,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.embedding_available",
+                return_value=True,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.embed_text_batch",
+                return_value=[make_vec(1.0, 0.0)],  # Only 1 entry passes filters
+            ),
         ):
             result = find_clusters(
-                entries_dir, reader,
+                entries_dir,
+                reader,
                 similarity_threshold=0.5,
                 min_cluster_size=2,
             )
@@ -2177,16 +2178,13 @@ class TestIsClusterable:
 class TestLoadActiveEntries:
     """Direct unit tests for _load_active_entries."""
 
-    def test_sqlite_path_returns_entries(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_sqlite_path_returns_entries(self, tmp_path: Path, reader: FileStateReader) -> None:
         """When SQLite succeeds, returns entries from list_active_learnings."""
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
 
         fake_entries: list[dict[str, object]] = [
-            {"id": f"e{i}", "summary": f"s{i}", "status": "active"}
-            for i in range(4)
+            {"id": f"e{i}", "summary": f"s{i}", "status": "active"} for i in range(4)
         ]
         with patch(
             "trw_mcp.state.memory_adapter.list_active_learnings",
@@ -2196,16 +2194,13 @@ class TestLoadActiveEntries:
 
         assert len(result) == 4
 
-    def test_sqlite_path_respects_max_entries(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_sqlite_path_respects_max_entries(self, tmp_path: Path, reader: FileStateReader) -> None:
         """SQLite path caps entries at max_entries."""
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
 
         fake_entries: list[dict[str, object]] = [
-            {"id": f"e{i}", "summary": f"s{i}", "status": "active"}
-            for i in range(10)
+            {"id": f"e{i}", "summary": f"s{i}", "status": "active"} for i in range(10)
         ]
         with patch(
             "trw_mcp.state.memory_adapter.list_active_learnings",
@@ -2215,9 +2210,7 @@ class TestLoadActiveEntries:
 
         assert len(result) == 3
 
-    def test_sqlite_path_filters_consolidated(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_sqlite_path_filters_consolidated(self, tmp_path: Path, reader: FileStateReader) -> None:
         """SQLite path filters out consolidated entries via _is_clusterable."""
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
@@ -2324,9 +2317,7 @@ class TestLoadActiveEntries:
         assert len(result) == 1
         assert result[0]["id"] == "e002"
 
-    def test_sqlite_returns_empty_for_all_consolidated(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_sqlite_returns_empty_for_all_consolidated(self, tmp_path: Path, reader: FileStateReader) -> None:
         """When all SQLite entries are consolidated, returns empty list."""
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
@@ -2352,9 +2343,7 @@ class TestLoadActiveEntries:
 class TestCreateConsolidatedEntryEdgeCases:
     """Edge cases for _create_consolidated_entry field aggregation."""
 
-    def test_entries_without_id_excluded_from_consolidated_from(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_entries_without_id_excluded_from_consolidated_from(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Entries missing 'id' field are excluded from consolidated_from list."""
         cluster = [
             {"id": "e1", "summary": "s1"},
@@ -2370,9 +2359,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         assert "e3" in consolidated_from
         assert len(consolidated_from) == 2
 
-    def test_evidence_preserves_insertion_order(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_evidence_preserves_insertion_order(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Deduplicated evidence preserves original insertion order."""
         cluster = [
             {"id": "e1", "evidence": ["third", "first"]},
@@ -2386,9 +2373,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         # dict.fromkeys preserves insertion order: third, first, second
         assert evidence == ["third", "first", "second"]
 
-    def test_tags_none_treated_as_empty(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_tags_none_treated_as_empty(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Entries with tags=None produce empty tag union."""
         cluster = [
             {"id": "e1", "tags": None},
@@ -2401,9 +2386,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["tags"] == []
 
-    def test_evidence_none_treated_as_empty(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_evidence_none_treated_as_empty(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Entries with evidence=None produce empty evidence list."""
         cluster = [
             {"id": "e1", "evidence": None},
@@ -2415,9 +2398,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert list(entry["evidence"]) == []  # type: ignore[arg-type]
 
-    def test_single_entry_cluster_aggregation(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_single_entry_cluster_aggregation(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Single-entry cluster uses that entry's values directly."""
         cluster = [
             {
@@ -2439,25 +2420,21 @@ class TestCreateConsolidatedEntryEdgeCases:
         assert entry["recurrence"] == 5
         assert entry["q_value"] == pytest.approx(0.7)
 
-    def test_date_fields_set_to_today(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_date_fields_set_to_today(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """created, updated, last_accessed_at are set to today's date."""
-        from datetime import date
+        from datetime import datetime, timezone
 
         cluster = make_cluster(2)
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        today = date.today().isoformat()
+        today = datetime.now(tz=timezone.utc).date().isoformat()
         assert entry["created"] == today
         assert entry["updated"] == today
         assert entry["last_accessed_at"] == today
 
-    def test_string_impact_values_parsed_correctly(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_string_impact_values_parsed_correctly(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Impact values stored as strings are parsed to floats for max()."""
         cluster = [
             {"id": "e1", "impact": "0.3"},
@@ -2617,9 +2594,7 @@ class TestArchiveOriginalsEdgeCases:
 class TestRollbackArchiveEdgeCases:
     """Edge cases for _rollback_archive slug derivation and error handling."""
 
-    def test_consolidated_id_with_slash_slugified_for_deletion(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_consolidated_id_with_slash_slugified_for_deletion(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """consolidated_id with '/' chars is slugified when deriving file path."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -2674,7 +2649,7 @@ class TestSummarizeClusterFallbackEdgeCases:
     def test_detail_contributes_to_length_selection(self) -> None:
         """Entry with shorter summary but longer detail wins by total length."""
         cluster = [
-            {"id": "e1", "summary": "short", "detail": "x"},              # len = 6
+            {"id": "e1", "summary": "short", "detail": "x"},  # len = 6
             {"id": "e2", "summary": "s", "detail": "very long detail here"},  # len = 22
         ]
         result = _summarize_cluster_fallback(cluster)
@@ -2809,9 +2784,7 @@ class TestConsolidateCycleEdgeCases:
         assert result["clusters_found"] == 2
         assert result["consolidated_count"] == 2
 
-    def test_errors_list_populated_on_cluster_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_errors_list_populated_on_cluster_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When a cluster fails to process, its error is appended to errors list."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -2880,15 +2853,18 @@ class TestTagOverlapClusters:
     ) -> Path:
         """Write a minimal entry YAML with specific tags."""
         path = entries_dir / f"{entry_id}.yaml"
-        writer.write_yaml(path, {
-            "id": entry_id,
-            "summary": f"summary for {entry_id}",
-            "detail": f"detail for {entry_id}",
-            "tags": tags,
-            "impact": 0.5,
-            "status": status,
-            "source_type": "agent",
-        })
+        writer.write_yaml(
+            path,
+            {
+                "id": entry_id,
+                "summary": f"summary for {entry_id}",
+                "detail": f"detail for {entry_id}",
+                "tags": tags,
+                "impact": 0.5,
+                "status": status,
+                "source_type": "agent",
+            },
+        )
         return path
 
     def test_tag_overlap_clusters_basic_5_entries(
@@ -2898,8 +2874,7 @@ class TestTagOverlapClusters:
         from trw_mcp.state.consolidation import _tag_overlap_clusters
 
         entries = [
-            {"id": f"e{i}", "tags": ["gotcha", "pydantic-v2"], "summary": f"s{i}", "status": "active"}
-            for i in range(5)
+            {"id": f"e{i}", "tags": ["gotcha", "pydantic-v2"], "summary": f"s{i}", "status": "active"} for i in range(5)
         ]
         clusters = _tag_overlap_clusters(entries, min_cluster_size=3, min_shared_tags=2)
         assert len(clusters) == 1
@@ -2938,10 +2913,7 @@ class TestTagOverlapClusters:
         """Entries sharing only 1 tag do not cluster when min_shared_tags=2."""
         from trw_mcp.state.consolidation import _tag_overlap_clusters
 
-        entries = [
-            {"id": f"e{i}", "tags": ["gotcha"], "summary": f"s{i}", "status": "active"}
-            for i in range(5)
-        ]
+        entries = [{"id": f"e{i}", "tags": ["gotcha"], "summary": f"s{i}", "status": "active"} for i in range(5)]
         clusters = _tag_overlap_clusters(entries, min_cluster_size=3, min_shared_tags=2)
         assert clusters == []
 
@@ -2955,20 +2927,24 @@ class TestTagOverlapClusters:
         fake_entries = []
         for i in range(5):
             self._write_entry_with_tags(entries_dir, writer, f"e{i:03d}", ["gotcha", "pydantic-v2"])
-            fake_entries.append({
-                "id": f"e{i:03d}",
-                "tags": ["gotcha", "pydantic-v2"],
-                "summary": f"s{i}",
-                "status": "active",
-                "source_type": "agent",
-            })
+            fake_entries.append(
+                {
+                    "id": f"e{i:03d}",
+                    "tags": ["gotcha", "pydantic-v2"],
+                    "summary": f"s{i}",
+                    "status": "active",
+                    "source_type": "agent",
+                }
+            )
 
-        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False), \
-             patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries), \
-             patch(
+        with (
+            patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False),
+            patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries),
+            patch(
                 "trw_mcp.state.consolidation._tag_overlap_clusters",
                 wraps=lambda entries, **kw: [],
-            ) as mock_tag:
+            ) as mock_tag,
+        ):
             find_clusters(entries_dir, reader, min_cluster_size=3)
 
         mock_tag.assert_called_once()
@@ -2983,18 +2959,22 @@ class TestTagOverlapClusters:
         fake_entries = []
         for i in range(5):
             self._write_entry_with_tags(entries_dir, writer, f"e{i:03d}", ["gotcha", "pydantic-v2"])
-            fake_entries.append({
-                "id": f"e{i:03d}",
-                "summary": f"summary for e{i:03d}",
-                "detail": f"detail for e{i:03d}",
-                "tags": ["gotcha", "pydantic-v2"],
-                "impact": 0.5,
-                "status": "active",
-                "source_type": "agent",
-            })
+            fake_entries.append(
+                {
+                    "id": f"e{i:03d}",
+                    "summary": f"summary for e{i:03d}",
+                    "detail": f"detail for e{i:03d}",
+                    "tags": ["gotcha", "pydantic-v2"],
+                    "impact": 0.5,
+                    "status": "active",
+                    "source_type": "agent",
+                }
+            )
 
-        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False), \
-             patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries):
+        with (
+            patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False),
+            patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries),
+        ):
             clusters = find_clusters(entries_dir, reader, min_cluster_size=3)
 
         assert len(clusters) == 1
@@ -3011,9 +2991,11 @@ class TestTagOverlapClusters:
         for i in range(3):
             self._write_entry_with_tags(entries_dir, writer, f"e{i}", ["gotcha"])
 
-        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True), \
-             patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs), \
-             patch("trw_mcp.state.consolidation._tag_overlap_clusters") as mock_tag_fn:
+        with (
+            patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True),
+            patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs),
+            patch("trw_mcp.state.consolidation._tag_overlap_clusters") as mock_tag_fn,
+        ):
             find_clusters(entries_dir, reader, min_cluster_size=3, similarity_threshold=0.5)
 
         mock_tag_fn.assert_not_called()

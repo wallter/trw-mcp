@@ -294,7 +294,10 @@ class TestModeDetection:
     """trw_review mode detection logic."""
 
     def test_explicit_findings_uses_manual_mode(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """findings=[...] explicitly passed → manual mode (backward compat)."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -311,7 +314,10 @@ class TestModeDetection:
         assert result["verdict"] == "pass"
 
     def test_explicit_mode_cross_model_uses_cross_model(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """mode='cross_model' explicitly set → cross_model mode."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -326,7 +332,10 @@ class TestModeDetection:
         assert result.get("mode") == "cross_model"
 
     def test_explicit_mode_auto_uses_auto(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """mode='auto' explicitly set → auto mode."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -341,7 +350,10 @@ class TestModeDetection:
         assert result.get("mode") == "auto"
 
     def test_reviewer_findings_without_mode_uses_auto(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """reviewer_findings provided (no mode) → auto mode (inferred)."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -366,7 +378,10 @@ class TestModeDetection:
         assert result.get("mode") == "auto"
 
     def test_no_args_uses_manual_mode(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """No args provided → manual mode (backward compat)."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -389,7 +404,10 @@ class TestCrossModelMode:
     """trw_review cross_model mode behavior."""
 
     def test_cross_model_disabled_sets_skipped_true(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model mode with config.cross_model_review_enabled=False → skipped."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -404,7 +422,10 @@ class TestCrossModelMode:
         assert result["cross_model_skipped"] is True
 
     def test_cross_model_no_diff_sets_skipped_true(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model mode with no diff → skipped."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -419,7 +440,10 @@ class TestCrossModelMode:
         assert result["cross_model_skipped"] is True
 
     def test_cross_model_writes_review_yaml_with_mode_field(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model mode writes review.yaml with mode='cross_model'."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -438,14 +462,19 @@ class TestCrossModelMode:
         assert result["review_yaml"] == str(review_path)
 
     def test_cross_model_returns_provider_in_result(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model mode returns cross_model_provider in result."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
-        _reset_config(TRWConfig(
-            cross_model_review_enabled=False,
-            cross_model_provider="gemini-2.5-pro",
-        ))
+        _reset_config(
+            TRWConfig(
+                cross_model_review_enabled=False,
+                cross_model_provider="gemini-2.5-pro",
+            )
+        )
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
@@ -456,7 +485,10 @@ class TestCrossModelMode:
         assert result["cross_model_provider"] == "gemini-2.5-pro"
 
     def test_cross_model_mode_field_in_result(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model result always has mode='cross_model'."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -471,7 +503,10 @@ class TestCrossModelMode:
         assert result["mode"] == "cross_model"
 
     def test_cross_model_skipped_yields_pass_verdict(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When skipped, no findings → verdict is pass."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -486,7 +521,10 @@ class TestCrossModelMode:
         assert result["verdict"] == "pass"
 
     def test_cross_model_logs_review_complete_event(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model mode logs review_complete event."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -499,15 +537,10 @@ class TestCrossModelMode:
             result = tools["trw_review"].fn(mode="cross_model")
 
         events_path = run_dir / "meta" / "events.jsonl"
-        lines = [
-            line for line in events_path.read_text(encoding="utf-8").strip().split("\n")
-            if line
-        ]
+        lines = [line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line]
         assert len(lines) >= 1
         # Find review_complete event (may not be last due to tool_invocation decorator)
-        review_events = [
-            json.loads(l) for l in lines if "review_complete" in l
-        ]
+        review_events = [json.loads(l) for l in lines if "review_complete" in l]
         assert len(review_events) >= 1
         event = review_events[-1]
         assert event["event"] == "review_complete"
@@ -515,7 +548,9 @@ class TestCrossModelMode:
         assert event["review_id"] == result["review_id"]
 
     def test_cross_model_no_run_returns_empty_review_yaml(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model mode with no run → review_yaml=''."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -540,17 +575,30 @@ class TestAutoMode:
     """trw_review auto mode behavior with confidence-filtered findings."""
 
     def test_auto_mode_filters_findings_below_threshold(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode with reviewer_findings filters by confidence_threshold."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=80))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "warning", "description": "High confidence finding"},
-            {"reviewer_role": "style", "confidence": 50, "category": "style",
-             "severity": "info", "description": "Low confidence finding"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "warning",
+                "description": "High confidence finding",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 50,
+                "category": "style",
+                "severity": "info",
+                "description": "Low confidence finding",
+            },
         ]
 
         with (
@@ -563,17 +611,30 @@ class TestAutoMode:
         assert result["total_findings_count"] == 2
 
     def test_auto_mode_surfaces_findings_at_or_above_threshold(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Findings at or above threshold are surfaced; below are hidden."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=75))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "security", "confidence": 75, "category": "security",
-             "severity": "critical", "description": "At-threshold finding"},
-            {"reviewer_role": "performance", "confidence": 74, "category": "perf",
-             "severity": "warning", "description": "Below-threshold finding"},
+            {
+                "reviewer_role": "security",
+                "confidence": 75,
+                "category": "security",
+                "severity": "critical",
+                "description": "At-threshold finding",
+            },
+            {
+                "reviewer_role": "performance",
+                "confidence": 74,
+                "category": "perf",
+                "severity": "warning",
+                "description": "Below-threshold finding",
+            },
         ]
 
         with (
@@ -586,7 +647,10 @@ class TestAutoMode:
         assert result["total_findings_count"] == 2
 
     def test_auto_mode_verdict_from_surfaced_findings_only(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Verdict is computed from surfaced (above-threshold) findings only."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -594,10 +658,20 @@ class TestAutoMode:
 
         # critical finding is below threshold, warning is above
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "confidence": 50, "category": "logic",
-             "severity": "critical", "description": "Low confidence critical — should not block"},
-            {"reviewer_role": "style", "confidence": 90, "category": "style",
-             "severity": "warning", "description": "High confidence warning — should warn"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 50,
+                "category": "logic",
+                "severity": "critical",
+                "description": "Low confidence critical — should not block",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 90,
+                "category": "style",
+                "severity": "warning",
+                "description": "High confidence warning — should warn",
+            },
         ]
 
         with (
@@ -610,17 +684,30 @@ class TestAutoMode:
         assert result["verdict"] == "warn"
 
     def test_auto_mode_writes_review_yaml_with_surfaced_findings(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode writes review.yaml containing only surfaced findings."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=80))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "confidence": 95, "category": "logic",
-             "severity": "warning", "description": "Surfaced finding"},
-            {"reviewer_role": "style", "confidence": 30, "category": "style",
-             "severity": "info", "description": "Filtered finding"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 95,
+                "category": "logic",
+                "severity": "warning",
+                "description": "Surfaced finding",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 30,
+                "category": "style",
+                "severity": "info",
+                "description": "Filtered finding",
+            },
         ]
 
         with (
@@ -637,17 +724,30 @@ class TestAutoMode:
         assert len(data["findings"]) == 1
 
     def test_auto_mode_writes_review_all_yaml_with_all_findings(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode writes review-all.yaml containing ALL findings unfiltered."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=80))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "confidence": 95, "category": "logic",
-             "severity": "warning", "description": "High confidence"},
-            {"reviewer_role": "style", "confidence": 30, "category": "style",
-             "severity": "info", "description": "Low confidence"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 95,
+                "category": "logic",
+                "severity": "warning",
+                "description": "High confidence",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 30,
+                "category": "style",
+                "severity": "info",
+                "description": "Low confidence",
+            },
         ]
 
         with (
@@ -663,17 +763,30 @@ class TestAutoMode:
         assert len(data["findings"]) == 2
 
     def test_auto_mode_writes_integration_review_yaml_when_present(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode writes integration-review.yaml when integration findings exist."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=0))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "integration", "confidence": 90, "category": "wiring",
-             "severity": "warning", "description": "Integration finding"},
-            {"reviewer_role": "correctness", "confidence": 85, "category": "logic",
-             "severity": "info", "description": "Normal finding"},
+            {
+                "reviewer_role": "integration",
+                "confidence": 90,
+                "category": "wiring",
+                "severity": "warning",
+                "description": "Integration finding",
+            },
+            {
+                "reviewer_role": "correctness",
+                "confidence": 85,
+                "category": "logic",
+                "severity": "info",
+                "description": "Normal finding",
+            },
         ]
 
         with (
@@ -689,15 +802,23 @@ class TestAutoMode:
         assert data["findings"][0]["reviewer_role"] == "integration"
 
     def test_auto_mode_no_integration_review_yaml_when_none_present(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """integration-review.yaml is NOT written when no integration findings exist."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=0))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "No integration findings here"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "No integration findings here",
+            },
         ]
 
         with (
@@ -710,7 +831,10 @@ class TestAutoMode:
         assert not integration_path.exists()
 
     def test_auto_mode_without_reviewer_findings_runs_basic_analysis(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode without reviewer_findings runs _run_multi_reviewer_analysis."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -727,7 +851,10 @@ class TestAutoMode:
         assert isinstance(result["reviewer_roles_run"], list)
 
     def test_auto_mode_logs_review_complete_event(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode logs review_complete event with mode='auto'."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -740,15 +867,10 @@ class TestAutoMode:
             result = tools["trw_review"].fn(mode="auto")
 
         events_path = run_dir / "meta" / "events.jsonl"
-        lines = [
-            line for line in events_path.read_text(encoding="utf-8").strip().split("\n")
-            if line
-        ]
+        lines = [line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line]
         assert len(lines) >= 1
         # Find review_complete event (may not be last due to tool_invocation decorator)
-        review_events = [
-            json.loads(l) for l in lines if "review_complete" in l
-        ]
+        review_events = [json.loads(l) for l in lines if "review_complete" in l]
         assert len(review_events) >= 1
         event = review_events[-1]
         assert event["event"] == "review_complete"
@@ -756,7 +878,10 @@ class TestAutoMode:
         assert event["review_id"] == result["review_id"]
 
     def test_auto_mode_returns_confidence_threshold_in_result(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode result includes the configured confidence_threshold."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -771,19 +896,37 @@ class TestAutoMode:
         assert result["confidence_threshold"] == 75
 
     def test_auto_mode_all_findings_above_threshold_all_surfaced(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When all findings exceed threshold, all are surfaced."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=50))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "First"},
-            {"reviewer_role": "security", "confidence": 85, "category": "sec",
-             "severity": "warning", "description": "Second"},
-            {"reviewer_role": "style", "confidence": 60, "category": "style",
-             "severity": "info", "description": "Third"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "First",
+            },
+            {
+                "reviewer_role": "security",
+                "confidence": 85,
+                "category": "sec",
+                "severity": "warning",
+                "description": "Second",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 60,
+                "category": "style",
+                "severity": "info",
+                "description": "Third",
+            },
         ]
 
         with (
@@ -796,15 +939,23 @@ class TestAutoMode:
         assert result["total_findings_count"] == 3
 
     def test_auto_mode_all_findings_below_threshold_none_surfaced(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When all findings are below threshold, none are surfaced."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=80))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "confidence": 30, "category": "logic",
-             "severity": "critical", "description": "Below threshold critical"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 30,
+                "category": "logic",
+                "severity": "critical",
+                "description": "Below threshold critical",
+            },
         ]
 
         with (
@@ -818,7 +969,9 @@ class TestAutoMode:
         assert result["verdict"] == "pass"
 
     def test_auto_mode_no_run_returns_empty_review_yaml(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto mode with no run → review_yaml=''."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -862,7 +1015,9 @@ class TestIntegration:
     """Integration scenarios spanning multiple mode paths."""
 
     def test_no_run_available_manual_mode_returns_result(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """No run available → review still returns result but review_yaml=''."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -878,7 +1033,10 @@ class TestIntegration:
         assert result["review_yaml"] == ""
 
     def test_explicit_run_path_manual_mode(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Explicit run_path works for manual mode."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -894,7 +1052,10 @@ class TestIntegration:
         assert review_path.exists()
 
     def test_explicit_run_path_cross_model_mode(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Explicit run_path works for cross_model mode."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -911,7 +1072,10 @@ class TestIntegration:
         assert review_path.exists()
 
     def test_explicit_run_path_auto_mode(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Explicit run_path works for auto mode."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -928,7 +1092,10 @@ class TestIntegration:
         assert review_path.exists()
 
     def test_review_id_is_unique_across_calls(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Each trw_review call produces a unique review_id."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -941,7 +1108,10 @@ class TestIntegration:
         assert result1["review_id"] != result2["review_id"]
 
     def test_auto_mode_findings_none_filtered_correctly(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Non-dict items in reviewer_findings are gracefully skipped."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -950,8 +1120,13 @@ class TestIntegration:
         reviewer_findings: list[Any] = [
             None,
             "not-a-dict",
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "Valid finding"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "Valid finding",
+            },
         ]
 
         with (
@@ -964,15 +1139,22 @@ class TestIntegration:
         assert result["surfaced_findings_count"] == 1
 
     def test_auto_mode_finding_missing_confidence_defaults_to_zero(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Findings without confidence key default to 0 and are filtered at threshold > 0."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=80))
 
         reviewer_findings: list[dict[str, Any]] = [
-            {"reviewer_role": "correctness", "category": "logic",
-             "severity": "critical", "description": "No confidence field"},
+            {
+                "reviewer_role": "correctness",
+                "category": "logic",
+                "severity": "critical",
+                "description": "No confidence field",
+            },
         ]
 
         with (
@@ -985,14 +1167,19 @@ class TestIntegration:
         assert result["surfaced_findings_count"] == 0
 
     def test_cross_model_with_findings_from_stub(
-        self, tmp_path: Path, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cross_model mode when stub returns findings normalizes severity."""
         tools = make_ceremony_server(monkeypatch, tmp_path)
-        _reset_config(TRWConfig(
-            cross_model_review_enabled=True,
-            cross_model_provider="test-provider",
-        ))
+        _reset_config(
+            TRWConfig(
+                cross_model_review_enabled=True,
+                cross_model_provider="test-provider",
+            )
+        )
 
         stub_findings = [
             {"category": "security", "severity": "high", "description": "High severity finding"},
@@ -1032,7 +1219,9 @@ class TestGetGitDiff:
     def test_returns_stdout_on_success(self, mock_run: Any) -> None:
         """Returns subprocess stdout when git diff succeeds."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff --git a/foo.py b/foo.py\n+new line\n",
+            args=[],
+            returncode=0,
+            stdout="diff --git a/foo.py b/foo.py\n+new line\n",
             stderr="",
         )
         result = _get_git_diff()
@@ -1069,9 +1258,7 @@ class TestGetGitDiff:
     @patch("trw_mcp.tools.review.subprocess.run")
     def test_returns_empty_string_on_empty_diff(self, mock_run: Any) -> None:
         """Empty stdout (no changes staged) → empty string."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         result = _get_git_diff()
         assert result == ""
 
@@ -1134,6 +1321,7 @@ class TestTrwReviewEdgeCases:
     ) -> None:
         """findings=[] (explicit empty list) → manual mode, verdict=pass."""
         from tests._ceremony_helpers import make_ceremony_server
+
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config()
 
@@ -1152,6 +1340,7 @@ class TestTrwReviewEdgeCases:
     ) -> None:
         """Findings dict without 'severity' key → no critical/warning counted → pass."""
         from tests._ceremony_helpers import make_ceremony_server
+
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config()
 
@@ -1175,13 +1364,12 @@ class TestTrwReviewEdgeCases:
     ) -> None:
         """Findings without 'description' → no crash, verdict computed from severity."""
         from tests._ceremony_helpers import make_ceremony_server
+
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config()
 
         with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
-            result = tools["trw_review"].fn(
-                findings=[{"category": "security", "severity": "critical"}]
-            )
+            result = tools["trw_review"].fn(findings=[{"category": "security", "severity": "critical"}])
 
         assert result["verdict"] == "block"
         assert result["critical_count"] == 1
@@ -1194,6 +1382,7 @@ class TestTrwReviewEdgeCases:
     ) -> None:
         """Multiple warning-severity findings → verdict=warn."""
         from tests._ceremony_helpers import make_ceremony_server
+
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config()
 
@@ -1222,6 +1411,7 @@ class TestTrwReviewEdgeCases:
         critical_count, warning_count, info_count, and findings.
         """
         from tests._ceremony_helpers import make_ceremony_server
+
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config()
 

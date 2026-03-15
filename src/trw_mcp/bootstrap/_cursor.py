@@ -4,6 +4,7 @@ FR05: Cursor Hook Adapter (PRD-CORE-074)
 FR06: Cursor Rules Generation (PRD-CORE-074)
 FR07: Cursor MCP Configuration (PRD-CORE-074)
 """
+
 from __future__ import annotations
 
 import json
@@ -130,29 +131,18 @@ def generate_cursor_hooks(
     if hooks_file.exists() and not force:
         # Smart merge: preserve user hooks, add/replace TRW hooks
         try:
-            existing: CursorHooksConfig = json.loads(
-                hooks_file.read_text(encoding="utf-8")
-            )
+            existing: CursorHooksConfig = json.loads(hooks_file.read_text(encoding="utf-8"))
             existing_hooks: list[CursorHookEntry] = existing.get("hooks", [])
             # Remove existing TRW hooks (identified by description prefix)
-            non_trw = [
-                h for h in existing_hooks
-                if not h.get("description", "").startswith("TRW")
-            ]
+            non_trw = [h for h in existing_hooks if not h.get("description", "").startswith("TRW")]
             existing["hooks"] = non_trw + trw_hooks
-            hooks_file.write_text(
-                json.dumps(existing, indent=2) + "\n", encoding="utf-8"
-            )
+            hooks_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
         except (json.JSONDecodeError, KeyError):
             # Malformed JSON — overwrite with fresh config
-            hooks_file.write_text(
-                json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8"
-            )
+            hooks_file.write_text(json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8")
         result["updated"].append(".cursor/hooks.json")
     else:
-        hooks_file.write_text(
-            json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8"
-        )
+        hooks_file.write_text(json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8")
         result["created"].append(".cursor/hooks.json")
 
     logger.debug(
@@ -256,15 +246,11 @@ def generate_cursor_mcp_config(
     if mcp_file.exists() and not force:
         # Smart merge: update only the trw key, preserve everything else
         try:
-            existing: CursorMcpConfig = json.loads(
-                mcp_file.read_text(encoding="utf-8")
-            )
+            existing: CursorMcpConfig = json.loads(mcp_file.read_text(encoding="utf-8"))
             servers: dict[str, CursorServerEntry] = existing.get("mcpServers", {})
             servers["trw"] = trw_entry
             existing["mcpServers"] = servers
-            mcp_file.write_text(
-                json.dumps(existing, indent=2) + "\n", encoding="utf-8"
-            )
+            mcp_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
         except (json.JSONDecodeError, KeyError):
             # Malformed JSON — write fresh config
             _write_fresh_mcp(mcp_file, trw_entry)

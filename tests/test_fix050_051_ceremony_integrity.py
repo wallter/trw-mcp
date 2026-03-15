@@ -7,12 +7,10 @@ Covers:
 - FIX-051-FR01/FR05: compute_ceremony_score reads session-events.jsonl
 - FIX-050-FR06: sessions_count -> sessions_tracked migration + increment on session_start
 """
+
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
-import pytest
 
 from trw_mcp.state.analytics.counters import (
     _read_analytics,
@@ -26,11 +24,11 @@ from trw_mcp.state.ceremony_feedback import (
 )
 from trw_mcp.state.persistence import FileStateWriter
 
-
 # ---------------------------------------------------------------------------
 # FIX-050-FR01/FR02: Test isolation — autouse fixture in conftest redirects
 # resolve_trw_dir() to tmp_path, so the real .trw/ is never touched.
 # ---------------------------------------------------------------------------
+
 
 class TestIsolation:
     """FIX-050-FR01/FR02: Verify _isolate_trw_dir autouse fixture works."""
@@ -42,6 +40,7 @@ class TestIsolation:
         tmp_path/.trw — verify that it does NOT return the real project .trw/.
         """
         from trw_mcp.state._paths import resolve_trw_dir
+
         result = resolve_trw_dir()
         # Verify isolation: result must not be the real project .trw/
         real_project_trw = (Path(__file__).parent.parent / ".trw").resolve()
@@ -57,26 +56,34 @@ class TestIsolation:
     def test_ceremony_feedback_writes_to_tmp_not_real_project(self, tmp_path: Path) -> None:
         """Ceremony feedback must not write to the real project .trw/."""
         from trw_mcp.state._paths import resolve_trw_dir
+
         trw_dir = resolve_trw_dir()
         writer = FileStateWriter()
         writer.ensure_dir(trw_dir / "context")
         # Write ceremony data to wherever resolve_trw_dir points
         record_session_outcome(
-            trw_dir, "test-task", 80.0, True, 0.0, 0, True,
-            "STANDARD", "/runs/test", "test-session",
+            trw_dir,
+            "test-task",
+            80.0,
+            True,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/runs/test",
+            "test-session",
         )
         # The real project .trw/ must NOT have been modified
         real_feedback = Path(__file__).parent.parent / ".trw" / "context" / "ceremony-feedback.yaml"
         if real_feedback.exists():
             content = real_feedback.read_text()
-            assert "test-session" not in content, (
-                "Test wrote to real project .trw/ — isolation fixture failed"
-            )
+            assert "test-session" not in content, "Test wrote to real project .trw/ — isolation fixture failed"
 
 
 # ---------------------------------------------------------------------------
 # FIX-051-FR04: Zero-score escalation guard
 # ---------------------------------------------------------------------------
+
 
 class TestZeroScoreEscalationGuard:
     """FIX-051-FR04: check_auto_escalation must skip escalation when all scores are 0.0."""
@@ -84,6 +91,7 @@ class TestZeroScoreEscalationGuard:
     def test_all_zero_scores_returns_none(self, tmp_path: Path) -> None:
         """When all window scores are exactly 0.0, escalation must be skipped."""
         from trw_mcp.models.config import TRWConfig
+
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "context").mkdir()
@@ -91,22 +99,30 @@ class TestZeroScoreEscalationGuard:
         # Record enough sessions with score=0.0 to meet the escalation window
         for i in range(6):
             record_session_outcome(
-                trw_dir, "test-task", 0.0, False, 0.0, 0, True,
-                "STANDARD", f"/runs/{i}", f"s-{i}",
+                trw_dir,
+                "test-task",
+                0.0,
+                False,
+                0.0,
+                0,
+                True,
+                "STANDARD",
+                f"/runs/{i}",
+                f"s-{i}",
             )
 
         from trw_mcp.state.ceremony_feedback import read_feedback_data
+
         data = read_feedback_data(trw_dir)
         config = TRWConfig(ceremony_feedback_escalation_window=5)
 
         result = check_auto_escalation("documentation", data, config)
-        assert result is None, (
-            f"Expected None (no escalation) when all scores are 0.0, got: {result}"
-        )
+        assert result is None, f"Expected None (no escalation) when all scores are 0.0, got: {result}"
 
     def test_genuine_low_scores_still_escalate(self, tmp_path: Path) -> None:
         """Non-zero but below-threshold scores must still trigger escalation (guard not over-blocking)."""
         from trw_mcp.models.config import TRWConfig
+
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "context").mkdir()
@@ -114,11 +130,20 @@ class TestZeroScoreEscalationGuard:
         # Score 15.0 — below default threshold (60.0) but non-zero
         for i in range(6):
             record_session_outcome(
-                trw_dir, "test-task", 15.0, False, 0.0, 0, True,
-                "STANDARD", f"/runs/{i}", f"s-{i}",
+                trw_dir,
+                "test-task",
+                15.0,
+                False,
+                0.0,
+                0,
+                True,
+                "STANDARD",
+                f"/runs/{i}",
+                f"s-{i}",
             )
 
         from trw_mcp.state.ceremony_feedback import read_feedback_data
+
         data = read_feedback_data(trw_dir)
         config = TRWConfig(ceremony_feedback_escalation_window=5)
 
@@ -129,6 +154,7 @@ class TestZeroScoreEscalationGuard:
     def test_mixed_scores_with_nonzero_triggers_normally(self, tmp_path: Path) -> None:
         """If even one score is non-zero but below threshold, normal escalation applies."""
         from trw_mcp.models.config import TRWConfig
+
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "context").mkdir()
@@ -137,11 +163,20 @@ class TestZeroScoreEscalationGuard:
         scores = [0.0, 0.0, 0.0, 0.0, 30.0]  # all < 60 threshold
         for i, score in enumerate(scores):
             record_session_outcome(
-                trw_dir, "test-task", score, False, 0.0, 0, True,
-                "STANDARD", f"/runs/{i}", f"s-{i}",
+                trw_dir,
+                "test-task",
+                score,
+                False,
+                0.0,
+                0,
+                True,
+                "STANDARD",
+                f"/runs/{i}",
+                f"s-{i}",
             )
 
         from trw_mcp.state.ceremony_feedback import read_feedback_data
+
         data = read_feedback_data(trw_dir)
         config = TRWConfig(ceremony_feedback_escalation_window=5)
 
@@ -152,6 +187,7 @@ class TestZeroScoreEscalationGuard:
 # ---------------------------------------------------------------------------
 # FIX-050-FR03 / FIX-051-FR02: task_name -> task field fix
 # ---------------------------------------------------------------------------
+
 
 class TestTaskFieldFix:
     """FIX-050-FR03 / FIX-051-FR02: Verify _step_ceremony_feedback reads 'task' not 'task_name'."""
@@ -170,17 +206,23 @@ class TestTaskFieldFix:
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
 
-        W().write_yaml(meta / "run.yaml", {
-            "run_id": "20260313T120000Z-test",
-            "task": "feat-add-auth",   # correct field name (not task_name)
-            "status": "active",
-            "phase": "implement",
-        })
-        W().append_jsonl(meta / "events.jsonl", {
-            "ts": "2026-03-13T12:00:00Z",
-            "event": "run_init",
-            "task": "feat-add-auth",
-        })
+        W().write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "20260313T120000Z-test",
+                "task": "feat-add-auth",  # correct field name (not task_name)
+                "status": "active",
+                "phase": "implement",
+            },
+        )
+        W().append_jsonl(
+            meta / "events.jsonl",
+            {
+                "ts": "2026-03-13T12:00:00Z",
+                "event": "run_init",
+                "task": "feat-add-auth",
+            },
+        )
 
         deliver_results: dict[str, object] = {
             "telemetry": {"ceremony_score": 80, "build_passed": True},
@@ -193,6 +235,7 @@ class TestTaskFieldFix:
         # Verify the task_class in the written ceremony-feedback.yaml
         from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.ceremony_feedback import read_feedback_data
+
         trw_dir = resolve_trw_dir()
         feedback_path = trw_dir / "context" / "ceremony-feedback.yaml"
         assert feedback_path.exists(), (
@@ -214,12 +257,14 @@ class TestTaskFieldFix:
     def test_task_name_field_never_returns_task_class_documentation_for_feat(self) -> None:
         """classify_task_class with 'feat-add-auth' must return FEATURE, not DOCUMENTATION."""
         from trw_mcp.state.ceremony_feedback import TaskClass
+
         result = classify_task_class("feat-add-auth")
         assert result == TaskClass.FEATURE, f"Expected FEATURE, got {result}"
 
     def test_task_name_field_security_audit_classifies_correctly(self) -> None:
         """classify_task_class('security-audit') must return SECURITY."""
         from trw_mcp.state.ceremony_feedback import TaskClass
+
         result = classify_task_class("security-audit")
         assert result == TaskClass.SECURITY, f"Expected SECURITY, got {result}"
 
@@ -227,6 +272,7 @@ class TestTaskFieldFix:
 # ---------------------------------------------------------------------------
 # FIX-051-FR01/FR05: compute_ceremony_score reads session-events.jsonl
 # ---------------------------------------------------------------------------
+
 
 class TestCeremonyScoreSessionEvents:
     """FIX-051-FR01/FR05: compute_ceremony_score must read session-events.jsonl."""
@@ -239,11 +285,14 @@ class TestCeremonyScoreSessionEvents:
 
         # Write session_start event to session-events.jsonl (the fallback path)
         session_events_path = trw_dir / "context" / "session-events.jsonl"
-        writer.append_jsonl(session_events_path, {
-            "ts": "2026-03-13T12:00:00Z",
-            "event": "tool_invocation",
-            "tool_name": "trw_session_start",
-        })
+        writer.append_jsonl(
+            session_events_path,
+            {
+                "ts": "2026-03-13T12:00:00Z",
+                "event": "tool_invocation",
+                "tool_name": "trw_session_start",
+            },
+        )
 
         # events.jsonl (run-level) has NO session_start — just a checkpoint
         run_events: list[dict[str, object]] = [
@@ -314,26 +363,32 @@ class TestCeremonyScoreSessionEvents:
 # FIX-050-FR06: sessions_count -> sessions_tracked migration + increment
 # ---------------------------------------------------------------------------
 
+
 class TestSessionsCountMigration:
     """FIX-050-FR06: sessions_count field migration and session_start counter increment."""
 
     def test_sessions_count_migrated_to_sessions_tracked(self, tmp_path: Path) -> None:
         """Legacy sessions_count must be migrated to sessions_tracked on read."""
         from trw_mcp.models.config import TRWConfig
+
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
         writer = FileStateWriter()
 
         # Write analytics.yaml with legacy sessions_count field
         analytics_path = trw_dir / "context" / "analytics.yaml"
-        writer.write_yaml(analytics_path, {
-            "sessions_count": 42,
-            "sessions_tracked": 0,
-            "total_learnings": 100,
-        })
+        writer.write_yaml(
+            analytics_path,
+            {
+                "sessions_count": 42,
+                "sessions_tracked": 0,
+                "total_learnings": 100,
+            },
+        )
 
         _reset_config_for_test = TRWConfig()
         from trw_mcp.models.config import _reset_config
+
         _reset_config(_reset_config_for_test)
 
         _, data = _read_analytics(trw_dir)
@@ -346,15 +401,19 @@ class TestSessionsCountMigration:
     def test_sessions_migration_uses_max_value(self, tmp_path: Path) -> None:
         """Migration must use max(sessions_count, sessions_tracked) to avoid data loss."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
         writer = FileStateWriter()
 
         analytics_path = trw_dir / "context" / "analytics.yaml"
-        writer.write_yaml(analytics_path, {
-            "sessions_count": 10,   # legacy (lower value)
-            "sessions_tracked": 25, # current (higher value — must be preserved)
-        })
+        writer.write_yaml(
+            analytics_path,
+            {
+                "sessions_count": 10,  # legacy (lower value)
+                "sessions_tracked": 25,  # current (higher value — must be preserved)
+            },
+        )
 
         _reset_config(TRWConfig())
         _, data = _read_analytics(trw_dir)
@@ -367,6 +426,7 @@ class TestSessionsCountMigration:
     def test_increment_session_start_counter_increments_by_one(self, tmp_path: Path) -> None:
         """increment_session_start_counter must increment sessions_tracked by 1."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
         writer = FileStateWriter()
@@ -385,6 +445,7 @@ class TestSessionsCountMigration:
     def test_increment_session_start_counter_starts_from_zero(self, tmp_path: Path) -> None:
         """increment_session_start_counter must work on empty analytics.yaml."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
 
@@ -399,6 +460,7 @@ class TestSessionsCountMigration:
     def test_no_sessions_count_in_clean_analytics(self, tmp_path: Path) -> None:
         """A fresh analytics.yaml without sessions_count must be unaffected by migration."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
         writer = FileStateWriter()
@@ -421,11 +483,10 @@ class TestSessionsCountMigration:
 class TestSessionsTrackedEndToEnd:
     """P2-005: sessions_tracked increments end-to-end via session_start → analytics.yaml."""
 
-    def test_sessions_tracked_increments_on_each_session_start(
-        self, tmp_path: Path
-    ) -> None:
+    def test_sessions_tracked_increments_on_each_session_start(self, tmp_path: Path) -> None:
         """Multiple increment_session_start_counter calls accumulate correctly in analytics.yaml."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
         _reset_config(TRWConfig())
@@ -444,8 +505,9 @@ class TestSessionsTrackedEndToEnd:
         analytics_path = trw_dir / "context" / "analytics.yaml"
         assert analytics_path.exists(), "analytics.yaml must be written to disk"
         raw = FileStateWriter._instance if False else None  # just check file exists
-        reader = FileStateWriter()  # noqa: F841 — use standard reader
+        reader = FileStateWriter()
         from trw_mcp.state.persistence import FileStateReader as FSR
+
         disk_data: dict[str, object] = FSR().read_yaml(analytics_path)
         assert disk_data.get("sessions_tracked") == 3, (
             f"Disk analytics.yaml must show sessions_tracked=3, got {disk_data.get('sessions_tracked')}"
@@ -454,6 +516,7 @@ class TestSessionsTrackedEndToEnd:
     def test_sessions_tracked_persists_after_config_reset(self, tmp_path: Path) -> None:
         """sessions_tracked value survives a config singleton reset between reads."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
         _reset_config(TRWConfig())

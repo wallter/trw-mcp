@@ -24,15 +24,6 @@ from trw_mcp.models.run import (
     RunState,
     RunStatus,
 )
-from trw_mcp.scoring import classify_complexity, get_phase_requirements
-from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
-from trw_mcp.state.analytics.report import count_stale_runs
-from trw_mcp.state.persistence import (
-    FileEventLogger,
-    FileStateReader,
-    FileStateWriter,
-    model_to_dict,
-)
 from trw_mcp.models.typed_dicts import (
     CheckpointEventDataDict,
     CheckpointRecordDict,
@@ -43,6 +34,15 @@ from trw_mcp.models.typed_dicts import (
     WaveDetailDict,
     WaveProgressDict,
     WaveShardCountsDict,
+)
+from trw_mcp.scoring import classify_complexity, get_phase_requirements
+from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
+from trw_mcp.state.analytics.report import count_stale_runs
+from trw_mcp.state.persistence import (
+    FileEventLogger,
+    FileStateReader,
+    FileStateWriter,
+    model_to_dict,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -58,7 +58,7 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
-def register_orchestration_tools(server: FastMCP) -> None:
+def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
     """Register orchestration tools on the MCP server.
 
     Args:
@@ -222,8 +222,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # Reset ceremony state for new run (PRD-CORE-074 FR04, P0-3)
         try:
             from trw_mcp.state.ceremony_nudge import reset_ceremony_state
+
             reset_ceremony_state(trw_dir)
-        except Exception:  # justified: fail-open, ceremony state reset must not block run init
+        except Exception:  # justified: fail-open, ceremony state reset must not block run init  # noqa: S110
             pass
 
         logger.info(
@@ -248,16 +249,17 @@ def register_orchestration_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
             ctx = NudgeContext(tool_name=ToolName.INIT)
-            append_ceremony_nudge(cast(dict[str, object], result), trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block init
+            append_ceremony_nudge(cast("dict[str, object]", result), trw_dir, context=ctx)
+        except Exception:  # justified: fail-open, nudge injection must not block init  # noqa: S110
             pass
 
         return result
 
     @server.tool()
     @log_tool_call
-    def trw_status(run_path: str | None = None) -> TrwStatusDict:
+    def trw_status(run_path: str | None = None) -> TrwStatusDict:  # noqa: C901
         """See your current phase, completed work, and what to do next — so you pick up where you left off instead of redoing work.
 
         Returns run state including phase, wave progress, shard status, confidence,
@@ -267,7 +269,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Args:
             run_path: Path to the run directory. Auto-detects if not provided.
         """
-        config = get_config()
         reader = FileStateReader()
         resolved_path = resolve_run_path(run_path)
         meta_path = resolved_path / "meta"
@@ -285,12 +286,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         events = reader.read_jsonl(events_path)
 
         # Reflection metrics (count only, no need to collect full lists)
-        reflection_count = sum(
-            1 for e in events if e.get("event") == "reflection_complete"
-        )
-        has_synced = any(
-            e.get("event") == "claude_md_synced" for e in events
-        )
+        reflection_count = sum(1 for e in events if e.get("event") == "reflection_complete")
+        has_synced = any(e.get("event") == "claude_md_synced" for e in events)
 
         result: TrwStatusDict = {
             "run_id": str(state_data.get("run_id", "unknown")),
@@ -311,7 +308,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
             result["waves"] = raw_waves if isinstance(raw_waves, list) else []
 
             wave_progress = _compute_wave_progress(
-                wave_data, resolved_path,
+                wave_data,
+                resolved_path,
             )
             if wave_progress:
                 result["wave_progress"] = wave_progress
@@ -343,9 +341,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                         logger.debug("checkpoint_timestamp_parse_failed", exc_info=True)
         if "last_activity_ts" not in result:
             # Fall back to run.yaml creation (run_init event)
-            run_init_events = [
-                e for e in events if str(e.get("event", "")) == "run_init"
-            ]
+            run_init_events = [e for e in events if str(e.get("event", "")) == "run_init"]
             if run_init_events:
                 init_ts = str(run_init_events[0].get("ts", ""))
                 if init_ts:
@@ -371,8 +367,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             result["stale_count"] = stale
             if stale > 0:
                 result["stale_runs_advisory"] = (
-                    f"{stale} stale run(s) detected. "
-                    f"Use trw_session_start to auto-close them."
+                    f"{stale} stale run(s) detected. Use trw_session_start to auto-close them."
                 )
         except Exception:  # justified: fail-open, stale run count is advisory only
             result["stale_count_error"] = True
@@ -385,17 +380,20 @@ def register_orchestration_tools(server: FastMCP) -> None:
             from trw_mcp.state._paths import resolve_trw_dir
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
             _trw_dir = resolve_trw_dir()
             ctx = NudgeContext(tool_name=ToolName.STATUS)
-            result = cast(TrwStatusDict, append_ceremony_nudge(cast(dict[str, object], result), _trw_dir, context=ctx))
-        except Exception:  # justified: fail-open, nudge injection must not block status
+            result = cast(
+                "TrwStatusDict", append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
+            )
+        except Exception:  # justified: fail-open, nudge injection must not block status  # noqa: S110
             pass
 
         return result
 
     @server.tool()
     @log_tool_call
-    def trw_checkpoint(
+    def trw_checkpoint(  # noqa: C901
         run_path: str | None = None,
         message: str = "",
         shard_id: str | None = None,
@@ -433,7 +431,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             checkpoint["wave_id"] = wave_id
 
         checkpoints_path = meta_path / "checkpoints.jsonl"
-        writer.append_jsonl(checkpoints_path, cast(dict[str, object], checkpoint))
+        writer.append_jsonl(checkpoints_path, cast("dict[str, object]", checkpoint))
 
         event_data: CheckpointEventDataDict = {"message": message}
         if shard_id:
@@ -443,7 +441,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         _events.log_event(
             meta_path / "events.jsonl",
             "checkpoint",
-            cast(dict[str, object], event_data),
+            cast("dict[str, object]", event_data),
         )
 
         # Update wave status in run.yaml if wave_id provided (PRD-INFRA-036-FR02)
@@ -477,6 +475,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # Resolve trw_dir once for ceremony state + nudge injection
         try:
             from trw_mcp.state._paths import resolve_trw_dir
+
             _trw_dir = resolve_trw_dir()
         except Exception:  # justified: fail-open, ceremony features must not block checkpoint
             _trw_dir = None
@@ -485,8 +484,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if _trw_dir is not None:
             try:
                 from trw_mcp.state.ceremony_nudge import mark_checkpoint as _mark_cp
+
                 _mark_cp(_trw_dir)
-            except Exception:  # justified: fail-open, ceremony state update must not block checkpoint
+            except Exception:  # justified: fail-open, ceremony state update must not block checkpoint  # noqa: S110
                 pass
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
@@ -494,9 +494,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             try:
                 from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
                 from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
                 ctx = NudgeContext(tool_name=ToolName.CHECKPOINT)
-                append_ceremony_nudge(cast(dict[str, object], result), _trw_dir, context=ctx)
-            except Exception:  # justified: fail-open, nudge injection must not block checkpoint
+                append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
+            except Exception:  # justified: fail-open, nudge injection must not block checkpoint  # noqa: S110
                 pass
 
         return result
@@ -551,8 +552,11 @@ def _compute_wave_progress(
             wave_shard_ids = []
 
         counts: dict[str, int] = {
-            "complete": 0, "active": 0, "pending": 0,
-            "failed": 0, "partial": 0,
+            "complete": 0,
+            "active": 0,
+            "pending": 0,
+            "failed": 0,
+            "partial": 0,
         }
         for sid in wave_shard_ids:
             st = shard_statuses.get(str(sid), "pending")
@@ -564,18 +568,20 @@ def _compute_wave_progress(
         elif wave_status == "active" or counts["active"] > 0:
             active_wave = wave_num
 
-        wave_details.append(WaveDetailDict(
-            wave=wave_num,
-            status=wave_status,
-            shards=WaveShardCountsDict(
-                total=len(wave_shard_ids),
-                complete=counts["complete"],
-                active=counts["active"],
-                pending=counts["pending"],
-                failed=counts["failed"],
-                partial=counts["partial"],
-            ),
-        ))
+        wave_details.append(
+            WaveDetailDict(
+                wave=wave_num,
+                status=wave_status,
+                shards=WaveShardCountsDict(
+                    total=len(wave_shard_ids),
+                    complete=counts["complete"],
+                    active=counts["active"],
+                    pending=counts["pending"],
+                    failed=counts["failed"],
+                    partial=counts["partial"],
+                ),
+            )
+        )
 
     return {
         "total_waves": len(waves_raw),
@@ -596,12 +602,8 @@ def _compute_reversion_metrics(
     Returns:
         Reversion metrics dict with count, rate, by_trigger, classification, latest.
     """
-    revert_events = [
-        e for e in events if e.get("event") == "phase_revert"
-    ]
-    phase_enter_events = [
-        e for e in events if e.get("event") == "phase_enter"
-    ]
+    revert_events = [e for e in events if e.get("event") == "phase_revert"]
+    phase_enter_events = [e for e in events if e.get("event") == "phase_enter"]
 
     revert_count = len(revert_events)
     total_transitions = revert_count + len(phase_enter_events)
@@ -675,6 +677,7 @@ def _get_package_version() -> str:
     """
     try:
         from importlib.metadata import version as pkg_version
+
         return pkg_version("trw-mcp")
     except Exception:  # justified: import-guard, package may not be installed in editable mode
         return "unknown"
@@ -715,14 +718,18 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
             return {"status": "up_to_date", "framework_version": current_fw_version}
 
         # Version mismatch — log upgrade event
-        _events.log_event(trw_dir / "upgrade_events.jsonl", "framework_upgrade", {
-            "old_framework": existing_versions[0],
-            "new_framework": current_fw_version,
-            "old_aaref": existing_versions[1],
-            "new_aaref": current_aaref_version,
-            "old_pkg": existing_versions[2],
-            "new_pkg": current_pkg_version,
-        })
+        _events.log_event(
+            trw_dir / "upgrade_events.jsonl",
+            "framework_upgrade",
+            {
+                "old_framework": existing_versions[0],
+                "new_framework": current_fw_version,
+                "old_aaref": existing_versions[1],
+                "new_aaref": current_aaref_version,
+                "old_pkg": existing_versions[2],
+                "new_pkg": current_pkg_version,
+            },
+        )
 
     framework_files = [
         ("framework.md", "FRAMEWORK.md"),
@@ -739,7 +746,7 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         "trw_mcp_version": current_pkg_version,
         "deployed_at": datetime.now(timezone.utc).isoformat(),
     }
-    writer.write_yaml(version_path, cast(dict[str, object], version_data))
+    writer.write_yaml(version_path, cast("dict[str, object]", version_data))
 
     logger.info(
         "frameworks_deployed",

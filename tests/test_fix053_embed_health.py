@@ -15,9 +15,7 @@ import pytest
 class TestEmbedHealthAdvisory:
     """FR01: check_embeddings_status returns advisory when embeddings unavailable."""
 
-    def test_advisory_when_enabled_but_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_advisory_when_enabled_but_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """embeddings_enabled=True but embedder=None → advisory with install hint."""
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.state import memory_adapter
@@ -37,9 +35,7 @@ class TestEmbedHealthAdvisory:
             f"Advisory must include install instructions, got: {advisory!r}"
         )
 
-    def test_no_advisory_when_available(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_advisory_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """embeddings working normally → available=True, empty advisory."""
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.state import memory_adapter
@@ -57,9 +53,7 @@ class TestEmbedHealthAdvisory:
         assert result["available"] is True
         assert result.get("advisory", "") == ""
 
-    def test_disabled_embeddings_no_advisory(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_disabled_embeddings_no_advisory(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """embeddings_enabled=False → enabled=False, no advisory."""
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.state import memory_adapter
@@ -74,9 +68,7 @@ class TestEmbedHealthAdvisory:
         assert result["enabled"] is False
         assert result.get("advisory", "") == ""
 
-    def test_check_embeddings_status_has_required_keys(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_check_embeddings_status_has_required_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """check_embeddings_status always returns enabled, available, advisory keys."""
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.state import memory_adapter
@@ -115,7 +107,10 @@ class TestEmbedFailureCounter:
         # Store 5 learnings — each should increment the failure counter
         for i in range(5):
             memory_adapter.store_learning(
-                trw_dir, f"L-fail{i:03d}", f"Summary {i}", f"Detail {i}",
+                trw_dir,
+                f"L-fail{i:03d}",
+                f"Summary {i}",
+                f"Detail {i}",
             )
 
         count = memory_adapter.get_embed_failure_count()
@@ -140,7 +135,10 @@ class TestEmbedFailureCounter:
         monkeypatch.setattr(memory_adapter, "get_embedder", lambda: mock_embedder)
 
         memory_adapter.store_learning(
-            trw_dir, "L-ok001", "Working embedding", "Detail",
+            trw_dir,
+            "L-ok001",
+            "Working embedding",
+            "Detail",
         )
 
         count = memory_adapter.get_embed_failure_count()
@@ -154,9 +152,7 @@ class TestEmbedFailureCounter:
         assert isinstance(result, int)
         assert result >= 0
 
-    def test_reset_embed_failure_count_resets_to_zero(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_reset_embed_failure_count_resets_to_zero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """reset_embed_failure_count() sets the counter back to 0."""
         from trw_mcp.state import memory_adapter
 
@@ -175,9 +171,7 @@ class TestEmbedFailureCounter:
         memory_adapter.reset_embed_failure_count()
         assert memory_adapter.get_embed_failure_count() == 0
 
-    def test_check_embeddings_status_includes_recent_failures(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_check_embeddings_status_includes_recent_failures(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """check_embeddings_status response includes recent_failures count (FR07)."""
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.state import memory_adapter
@@ -196,9 +190,7 @@ class TestEmbedFailureCounter:
 
         result = memory_adapter.check_embeddings_status()
 
-        assert "recent_failures" in result, (
-            "check_embeddings_status must include recent_failures field (FR07)"
-        )
+        assert "recent_failures" in result, "check_embeddings_status must include recent_failures field (FR07)"
         assert result["recent_failures"] == 7
 
     def test_recent_failures_reflects_actual_failure_count(
@@ -220,7 +212,10 @@ class TestEmbedFailureCounter:
         # Cause 3 real failures via store_learning
         for i in range(3):
             memory_adapter.store_learning(
-                trw_dir, f"L-rf{i:03d}", f"Summary {i}", f"Detail {i}",
+                trw_dir,
+                f"L-rf{i:03d}",
+                f"Summary {i}",
+                f"Detail {i}",
             )
 
         actual_count = memory_adapter.get_embed_failure_count()
@@ -229,12 +224,12 @@ class TestEmbedFailureCounter:
         # check_embeddings_status must report the same count
         # Use a properly constructed config that has all required fields
         from trw_mcp.models.config import TRWConfig
+
         mock_config = TRWConfig.__new__(TRWConfig)
         object.__setattr__(mock_config, "embeddings_enabled", True)
         monkeypatch.setattr(memory_adapter, "get_config", lambda: mock_config)
 
         result = memory_adapter.check_embeddings_status()
         assert result["recent_failures"] == actual_count, (
-            f"recent_failures ({result['recent_failures']}) must equal "
-            f"get_embed_failure_count() ({actual_count})"
+            f"recent_failures ({result['recent_failures']}) must equal get_embed_failure_count() ({actual_count})"
         )

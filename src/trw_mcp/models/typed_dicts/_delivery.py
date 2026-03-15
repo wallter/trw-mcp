@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from typing import TypedDict
+
 from typing_extensions import NotRequired
 
 from trw_mcp.models.typed_dicts._analytics import TierDistribution
+
 # LearnResult was merged into LearnResultDict in _tools.py (PRD-CORE-080).
 # Re-exported here so existing ``from ... _delivery import LearnResult`` call-sites work.
-from trw_mcp.models.typed_dicts._tools import LearnResultDict as LearnResult  # noqa: F401
+from trw_mcp.models.typed_dicts._tools import LearnResultDict as LearnResult
+
+__all__ = ["LearnResult"]
 
 
 class StepResultBase(TypedDict):
@@ -185,4 +189,3 @@ class IndexSyncResult(TypedDict):
     status: str
     index: dict[str, object]
     roadmap: dict[str, object]
-

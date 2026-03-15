@@ -69,9 +69,7 @@ class TestValidateQualityPrompt:
 
     def test_returns_validation_prompt(self) -> None:
         prompts = _get_prompts()
-        result = prompts["validate_quality"].fn(
-            prd_content="# PRD-CORE-001: Test\n## 1. Problem Statement\n"
-        )
+        result = prompts["validate_quality"].fn(prd_content="# PRD-CORE-001: Test\n## 1. Problem Statement\n")
         assert "PRD-CORE-001" in result
 
 

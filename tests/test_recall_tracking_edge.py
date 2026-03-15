@@ -98,9 +98,7 @@ class TestGetRecallStatsLearningIdEdgeCases:
 class TestGetRecallStatsOutcomeEdgeCases:
     """Outcomes not in {positive, negative, neutral} do not increment counters."""
 
-    def test_unknown_outcome_counted_in_total_not_buckets(
-        self, trw_dir: Path
-    ) -> None:
+    def test_unknown_outcome_counted_in_total_not_buckets(self, trw_dir: Path) -> None:
         """An outcome value like 'unknown' increments total but no bucket."""
         tracking_path = trw_dir / _TRACKING_FILE
         tracking_path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,9 +165,7 @@ class TestGetRecallStatsOutcomeEdgeCases:
 class TestGetRecallStatsUniqueLearnings:
     """Verify unique_learnings counts distinct IDs across both record types."""
 
-    def test_same_id_in_recall_and_outcome_counted_once(
-        self, trw_dir: Path
-    ) -> None:
+    def test_same_id_in_recall_and_outcome_counted_once(self, trw_dir: Path) -> None:
         """A learning_id appearing in both recall and outcome entries is one unique."""
         record_recall("L-001", "query")
         record_outcome("L-001", "positive")
@@ -217,9 +213,7 @@ class TestGetRecallStatsEntriesDirParam:
 class TestRecordRecallStateError:
     """record_recall catches (OSError, StateError) — verify StateError path."""
 
-    def test_state_error_returns_false(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_state_error_returns_false(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """StateError during write returns False, not raised."""
         mock_writer = MagicMock()
         mock_writer.append_jsonl.side_effect = StateError("write failed")
@@ -260,9 +254,7 @@ class TestRecordOutcomeTimestamp:
 class TestRecordOutcomeFailOpen:
     """record_outcome uses broad ``except Exception`` — verify coverage."""
 
-    def test_type_error_during_write_returns_false(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_type_error_during_write_returns_false(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A TypeError during append_jsonl returns False, not raised."""
         # First create the file so the existence check passes
         tracking_path = trw_dir / _TRACKING_FILE
@@ -288,9 +280,7 @@ class TestRecordOutcomeFailOpen:
 class TestGetRecallStatsReaderFailure:
     """get_recall_stats returns zeroed defaults when reader raises."""
 
-    def test_corrupted_jsonl_returns_zeroed_stats(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_corrupted_jsonl_returns_zeroed_stats(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """If FileStateReader.read_jsonl raises, stats are zeroed defaults."""
         # Create the tracking file so existence check passes
         tracking_path = trw_dir / _TRACKING_FILE

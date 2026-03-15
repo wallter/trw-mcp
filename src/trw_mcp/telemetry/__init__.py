@@ -14,19 +14,19 @@ from trw_mcp.telemetry.models import (
     TelemetryEvent,
     ToolInvocationEvent,
 )
+from trw_mcp.telemetry.pipeline import TelemetryPipeline
 from trw_mcp.telemetry.publisher import publish_learnings
 from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
-from trw_mcp.telemetry.pipeline import TelemetryPipeline
 from trw_mcp.telemetry.sender import BatchSender
 
 __all__ = [
     "BatchSender",
     "CeremonyComplianceEvent",
-    "TelemetryPipeline",
     "SessionEndEvent",
     "SessionStartEvent",
     "TelemetryClient",
     "TelemetryEvent",
+    "TelemetryPipeline",
     "ToolInvocationEvent",
     "anonymize_installation_id",
     "fetch_shared_learnings",

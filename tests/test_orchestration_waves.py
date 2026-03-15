@@ -14,9 +14,8 @@ from unittest.mock import patch
 import pytest
 from fastmcp import FastMCP
 
-from tests.conftest import get_tools_sync
-
 import trw_mcp.tools.orchestration as orch_mod
+from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools.orchestration import (
@@ -52,11 +51,14 @@ def orch_tools() -> dict[str, Any]:
 # Line 103: config_overrides applied to config.yaml
 # ────────────────────────────────────────────────
 
+
 class TestTrwInitConfigOverrides:
     """Tests for trw_init config_overrides parameter (line 103)."""
 
     def test_config_overrides_written_to_config_yaml(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """config_overrides values are merged into .trw/config.yaml."""
         orch_tools["trw_init"].fn(
@@ -70,7 +72,8 @@ class TestTrwInitConfigOverrides:
         assert data.get("custom_key") == "custom_value"
 
     def test_config_overrides_none_no_error(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """config_overrides=None runs without error (default path)."""
         result = orch_tools["trw_init"].fn(
@@ -80,7 +83,9 @@ class TestTrwInitConfigOverrides:
         assert result["status"] == "initialized"
 
     def test_config_overrides_not_applied_on_second_init(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """config.yaml already exists on second init — overrides skipped."""
         orch_tools["trw_init"].fn(task_name="first-task")
@@ -101,6 +106,7 @@ class TestTrwInitConfigOverrides:
 # ────────────────────────────────────────────────
 # Lines 295, 302: checkpoint with shard_id
 # ────────────────────────────────────────────────
+
 
 class TestTrwCheckpointShardId:
     """Tests for trw_checkpoint shard_id parameter (lines 295, 302)."""
@@ -148,6 +154,7 @@ class TestTrwCheckpointShardId:
 # Lines 214, 242-248: trw_status with wave_manifest
 # ────────────────────────────────────────────────
 
+
 class TestTrwStatusWaveManifest:
     """Tests for trw_status when wave_manifest exists (lines 214, 242-248)."""
 
@@ -178,11 +185,14 @@ class TestTrwStatusWaveManifest:
         return init_result["run_path"], run_path
 
     def test_status_includes_waves_when_manifest_in_shards(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """trw_status returns 'waves' key when wave_manifest.yaml in shards/."""
         run_path_str, _ = self._create_run_with_wave_manifest(
-            orch_tools, "wave-shards-task", manifest_location="shards",
+            orch_tools,
+            "wave-shards-task",
+            manifest_location="shards",
         )
         status = orch_tools["trw_status"].fn(run_path=run_path_str)
 
@@ -191,11 +201,13 @@ class TestTrwStatusWaveManifest:
         assert len(status["waves"]) == 2
 
     def test_status_includes_wave_progress_when_manifest_exists(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """trw_status includes 'wave_progress' dict when wave data present."""
         run_path_str, _ = self._create_run_with_wave_manifest(
-            orch_tools, "wave-progress-task",
+            orch_tools,
+            "wave-progress-task",
         )
         status = orch_tools["trw_status"].fn(run_path=run_path_str)
 
@@ -204,11 +216,14 @@ class TestTrwStatusWaveManifest:
         assert progress["total_waves"] == 2
 
     def test_status_wave_manifest_in_meta_fallback(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """trw_status falls back to meta/wave_manifest.yaml when shards/ not present."""
         run_path_str, _ = self._create_run_with_wave_manifest(
-            orch_tools, "wave-meta-task", manifest_location="meta",
+            orch_tools,
+            "wave-meta-task",
+            manifest_location="meta",
         )
         status = orch_tools["trw_status"].fn(run_path=run_path_str)
 
@@ -218,6 +233,7 @@ class TestTrwStatusWaveManifest:
 # ────────────────────────────────────────────────
 # Line 259: version_warning in trw_status
 # ────────────────────────────────────────────────
+
 
 class TestTrwStatusVersionWarning:
     """Tests for trw_status version staleness warning (line 259)."""
@@ -236,11 +252,14 @@ class TestTrwStatusVersionWarning:
         # Write a different version to VERSION.yaml
         version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
         writer = FileStateWriter()
-        writer.write_yaml(version_path, {
-            "framework_version": "v99.0_TRW",
-            "aaref_version": "v9.0.0",
-            "trw_mcp_version": "9.9.9",
-        })
+        writer.write_yaml(
+            version_path,
+            {
+                "framework_version": "v99.0_TRW",
+                "aaref_version": "v9.0.0",
+                "trw_mcp_version": "9.9.9",
+            },
+        )
 
         # Patch the _reader on the module so version_path.exists() check goes via the module
         status = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
@@ -249,7 +268,8 @@ class TestTrwStatusVersionWarning:
         assert "v99.0_TRW" in str(status["version_warning"])
 
     def test_status_no_version_warning_when_current(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """No version_warning when run framework matches deployed version."""
         init_result = orch_tools["trw_init"].fn(task_name="current-version-task")
@@ -263,6 +283,7 @@ class TestTrwStatusVersionWarning:
 # ────────────────────────────────────────────────
 # Lines 329-383: _compute_wave_progress directly
 # ────────────────────────────────────────────────
+
 
 class TestComputeWaveProgress:
     """Direct tests for _compute_wave_progress (lines 329-383)."""
@@ -328,13 +349,16 @@ class TestComputeWaveProgress:
         shards_dir.mkdir(parents=True)
 
         writer = FileStateWriter()
-        writer.write_yaml(shards_dir / "manifest.yaml", {
-            "shards": [
-                {"id": "s1", "status": "complete"},
-                {"id": "s2", "status": "active"},
-                {"id": "s3", "status": "pending"},
-            ]
-        })
+        writer.write_yaml(
+            shards_dir / "manifest.yaml",
+            {
+                "shards": [
+                    {"id": "s1", "status": "complete"},
+                    {"id": "s2", "status": "active"},
+                    {"id": "s3", "status": "pending"},
+                ]
+            },
+        )
 
         wave_data = {
             "waves": [
@@ -355,11 +379,14 @@ class TestComputeWaveProgress:
         shards_dir.mkdir(parents=True)
 
         writer = FileStateWriter()
-        writer.write_yaml(shards_dir / "manifest.yaml", {
-            "shards": [
-                {"id": "s1", "status": "active"},
-            ]
-        })
+        writer.write_yaml(
+            shards_dir / "manifest.yaml",
+            {
+                "shards": [
+                    {"id": "s1", "status": "active"},
+                ]
+            },
+        )
 
         wave_data = {
             "waves": [
@@ -438,6 +465,7 @@ class TestComputeWaveProgress:
 # ────────────────────────────────────────────────
 # Lines 415-430: _compute_reversion_metrics
 # ────────────────────────────────────────────────
+
 
 class TestComputeReversionMetrics:
     """Direct tests for _compute_reversion_metrics (lines 415-430)."""
@@ -573,6 +601,7 @@ class TestComputeReversionMetrics:
 # Line 463: _get_bundled_file returns None for missing file
 # ────────────────────────────────────────────────
 
+
 class TestGetBundledFile:
     """Tests for _get_bundled_file helper (line 463)."""
 
@@ -597,6 +626,7 @@ class TestGetBundledFile:
 # ────────────────────────────────────────────────
 # Lines 475-476: _get_package_version exception path
 # ────────────────────────────────────────────────
+
 
 class TestGetPackageVersion:
     """Tests for _get_package_version helper (lines 475-476)."""
@@ -633,6 +663,7 @@ class TestGetPackageVersion:
 # Lines 580, 586, 593-599: _check_framework_version_staleness
 # ────────────────────────────────────────────────
 
+
 class TestCheckFrameworkVersionStaleness:
     """Direct tests for _check_framework_version_staleness (lines 580-599)."""
 
@@ -642,7 +673,9 @@ class TestCheckFrameworkVersionStaleness:
         assert result is None
 
     def test_no_version_yaml_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Returns None when VERSION.yaml does not exist (line 586)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -651,7 +684,9 @@ class TestCheckFrameworkVersionStaleness:
         assert result is None
 
     def test_matching_versions_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Returns None when run framework matches deployed version (line 590-591)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -662,15 +697,20 @@ class TestCheckFrameworkVersionStaleness:
         frameworks_dir.mkdir(parents=True)
 
         writer = FileStateWriter()
-        writer.write_yaml(frameworks_dir / "VERSION.yaml", {
-            "framework_version": cfg.framework_version,
-        })
+        writer.write_yaml(
+            frameworks_dir / "VERSION.yaml",
+            {
+                "framework_version": cfg.framework_version,
+            },
+        )
 
         result = _check_framework_version_staleness(cfg.framework_version)
         assert result is None
 
     def test_mismatched_versions_returns_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Returns warning string when versions differ (lines 593-597)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -680,9 +720,12 @@ class TestCheckFrameworkVersionStaleness:
         frameworks_dir.mkdir(parents=True)
 
         writer = FileStateWriter()
-        writer.write_yaml(frameworks_dir / "VERSION.yaml", {
-            "framework_version": "v99.0_TRW",
-        })
+        writer.write_yaml(
+            frameworks_dir / "VERSION.yaml",
+            {
+                "framework_version": "v99.0_TRW",
+            },
+        )
 
         result = _check_framework_version_staleness("v1.0_TRW")
 
@@ -692,7 +735,9 @@ class TestCheckFrameworkVersionStaleness:
         assert "re-bootstrapping" in result
 
     def test_empty_current_version_in_yaml_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Returns None when VERSION.yaml has empty framework_version (line 590)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -702,35 +747,39 @@ class TestCheckFrameworkVersionStaleness:
         frameworks_dir.mkdir(parents=True)
 
         writer = FileStateWriter()
-        writer.write_yaml(frameworks_dir / "VERSION.yaml", {
-            "framework_version": "",
-        })
+        writer.write_yaml(
+            frameworks_dir / "VERSION.yaml",
+            {
+                "framework_version": "",
+            },
+        )
 
         result = _check_framework_version_staleness("v1.0_TRW")
         assert result is None
 
     def test_state_error_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Returns None when StateError raised during read (line 598-599)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
 
-        import trw_mcp.tools.orchestration as _orch_mod
         from trw_mcp.exceptions import StateError as TRWStateError
 
         cfg = TRWConfig()
         frameworks_dir = tmp_path / cfg.trw_dir / cfg.frameworks_dir
         frameworks_dir.mkdir(parents=True)
         # Create the file so exists() check passes
-        (frameworks_dir / "VERSION.yaml").write_text(
-            "framework_version: v1.0_TRW\n", encoding="utf-8"
-        )
+        (frameworks_dir / "VERSION.yaml").write_text("framework_version: v1.0_TRW\n", encoding="utf-8")
 
         def _raise_state_error(path: Path) -> dict[str, object]:
             raise TRWStateError("simulated error")
 
         from unittest.mock import patch as _patch
+
         from trw_mcp.state.persistence import FileStateReader as _FSR
+
         with _patch.object(_FSR, "read_yaml", side_effect=_raise_state_error):
             result = _check_framework_version_staleness("v2.0_TRW")
         assert result is None
@@ -739,6 +788,7 @@ class TestCheckFrameworkVersionStaleness:
 # ────────────────────────────────────────────────
 # Integration: trw_status reversion metrics visible
 # ────────────────────────────────────────────────
+
 
 class TestTrwStatusReversionMetrics:
     """Integration tests for reversion metrics in trw_status."""
@@ -755,7 +805,8 @@ class TestTrwStatusReversionMetrics:
         assert "classification" in rev
 
     def test_status_reversions_reflect_logged_events(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """Phase revert events logged by other means appear in reversion metrics."""
         init_result = orch_tools["trw_init"].fn(task_name="rev-events-task")
@@ -764,13 +815,18 @@ class TestTrwStatusReversionMetrics:
         # Manually append a phase_revert event to events.jsonl
         events_path = run_path / "meta" / "events.jsonl"
         with open(events_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "ts": "2026-01-01T00:00:00Z",
-                "event": "phase_revert",
-                "from_phase": "implement",
-                "to_phase": "plan",
-                "trigger": "scope_creep",
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "ts": "2026-01-01T00:00:00Z",
+                        "event": "phase_revert",
+                        "from_phase": "implement",
+                        "to_phase": "plan",
+                        "trigger": "scope_creep",
+                    }
+                )
+                + "\n"
+            )
 
         status = orch_tools["trw_status"].fn(run_path=str(run_path))
 

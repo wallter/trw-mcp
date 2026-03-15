@@ -10,7 +10,7 @@ This package decomposes the monolithic claude_md module into focused submodules:
 All public symbols are re-exported here for backward compatibility.
 """
 
-from pathlib import Path  # noqa: F401 — re-exported for test backward compat
+from pathlib import Path
 
 from trw_mcp.state._paths import (
     resolve_project_root,
@@ -30,7 +30,6 @@ from trw_mcp.state.claude_md._promotion import (
     collect_patterns,
     collect_promotable_learnings,
 )
-from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 from trw_mcp.state.claude_md._static_sections import (
     render_agent_teams_protocol,
     render_behavioral_protocol,
@@ -43,15 +42,16 @@ from trw_mcp.state.claude_md._static_sections import (
     render_phase_descriptions,
     render_rationalization_watchlist,
 )
+from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 from trw_mcp.state.claude_md._templates import (
+    _ADHERENCE_MAX_ENTRIES,
+    _ADHERENCE_TAGS,
     BEHAVIORAL_PROTOCOL_CAP,
     CEREMONY_TOOLS,
     CLAUDEMD_LEARNING_CAP,
     CLAUDEMD_PATTERN_CAP,
     PHASE_DESCRIPTIONS,
     CeremonyTool,
-    _ADHERENCE_MAX_ENTRIES,
-    _ADHERENCE_TAGS,
     _render_context_section,
     render_adherence,
     render_architecture,
@@ -61,22 +61,25 @@ from trw_mcp.state.claude_md._templates import (
 )
 
 __all__ = [
-    # Constants
     "BEHAVIORAL_PROTOCOL_CAP",
     "CEREMONY_TOOLS",
     "CLAUDEMD_LEARNING_CAP",
     "CLAUDEMD_PATTERN_CAP",
-    "CeremonyTool",
     "PHASE_DESCRIPTIONS",
     "TRW_AUTO_COMMENT",
     "TRW_MARKER_END",
     "TRW_MARKER_START",
-    # Private but imported by tests
     "_ADHERENCE_MAX_ENTRIES",
     "_ADHERENCE_TAGS",
+    "CeremonyTool",
     "_render_context_section",
     "_truncate_with_markers",
-    # Template rendering
+    "collect_context_data",
+    "collect_patterns",
+    "collect_promotable_learnings",
+    "execute_claude_md_sync",
+    "load_claude_md_template",
+    "merge_trw_section",
     "render_adherence",
     "render_agent_teams_protocol",
     "render_architecture",
@@ -93,16 +96,6 @@ __all__ = [
     "render_phase_descriptions",
     "render_rationalization_watchlist",
     "render_template",
-    # Template loading / parsing / merge
-    "load_claude_md_template",
-    "merge_trw_section",
-    # Promotion / data collection
-    "collect_context_data",
-    "collect_patterns",
-    "collect_promotable_learnings",
-    # Sync orchestration
-    "execute_claude_md_sync",
-    # Path resolvers (re-exported for backward-compat patching in tests)
     "resolve_project_root",
     "resolve_trw_dir",
 ]

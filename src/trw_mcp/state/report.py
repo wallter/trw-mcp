@@ -89,12 +89,14 @@ def _build_phase_timeline(
             exited_at = str(phase_enters[i + 1].get("ts", ""))
             duration_seconds = _ts_diff_seconds(entered_at, exited_at)
 
-        timeline.append(PhaseEntry(
-            phase=phase,
-            entered_at=entered_at,
-            exited_at=exited_at,
-            duration_seconds=duration_seconds,
-        ))
+        timeline.append(
+            PhaseEntry(
+                phase=phase,
+                entered_at=entered_at,
+                exited_at=exited_at,
+                duration_seconds=duration_seconds,
+            )
+        )
 
     return timeline
 
@@ -264,7 +266,8 @@ def assemble_report(
 
     # Optional: learning yield
     learning_summary = compute_learning_yield(
-        trw_dir, reader,
+        trw_dir,
+        reader,
         run_start=duration.start_ts,
         run_end=duration.end_ts,
     )

@@ -33,6 +33,4 @@ def register_run_state_resources(server: FastMCP) -> None:
         if not candidates:
             return "No active run found"
 
-        return max(candidates, key=lambda p: p.stat().st_mtime).read_text(
-            encoding="utf-8"
-        )
+        return max(candidates, key=lambda p: p.stat().st_mtime).read_text(encoding="utf-8")

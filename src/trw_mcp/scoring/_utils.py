@@ -8,14 +8,25 @@ from __future__ import annotations
 import math
 
 import structlog
-
 from trw_memory.lifecycle.scoring import (
     _clamp01 as _clamp01,
+)
+from trw_memory.lifecycle.scoring import (
     _ensure_utc as _ensure_utc,
+)
+from trw_memory.lifecycle.scoring import (
     apply_time_decay as apply_time_decay,
+)
+from trw_memory.lifecycle.scoring import (
     bayesian_calibrate as bayesian_calibrate,
+)
+from trw_memory.lifecycle.scoring import (
     compute_calibration_accuracy as compute_calibration_accuracy,
+)
+from trw_memory.lifecycle.scoring import (
     compute_utility_score as compute_utility_score,
+)
+from trw_memory.lifecycle.scoring import (
     update_q_value as update_q_value,
 )
 
@@ -37,26 +48,22 @@ _TIER_HIGH_CEILING: float = 0.89  # Top of high tier (demotion target)
 _TIER_MEDIUM_CEILING: float = 0.69  # Top of medium tier (demotion target)
 
 __all__ = [
-    # Re-exports from trw_memory
+    "_IMPACT_DECAY_FLOOR",
+    "_LN2",
+    "_TIER_HIGH_CEILING",
+    "_TIER_MEDIUM_CEILING",
+    "FileStateReader",
+    "FileStateWriter",
+    "TRWConfig",
     "_clamp01",
     "_ensure_utc",
     "apply_time_decay",
     "bayesian_calibrate",
     "compute_calibration_accuracy",
     "compute_utility_score",
-    "update_q_value",
-    # Shared state
+    "get_config",
     "logger",
-    # Constants
-    "_LN2",
-    "_IMPACT_DECAY_FLOOR",
-    "_TIER_HIGH_CEILING",
-    "_TIER_MEDIUM_CEILING",
-    # Re-exported helpers
     "safe_float",
     "safe_int",
-    "get_config",
-    "TRWConfig",
-    "FileStateReader",
-    "FileStateWriter",
+    "update_q_value",
 ]

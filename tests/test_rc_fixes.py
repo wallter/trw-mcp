@@ -13,12 +13,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.state.persistence import FileStateWriter
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_run_with_events(
     base: Path,
@@ -31,13 +31,16 @@ def _make_run_with_events(
     run_dir = base / task / "runs" / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
-    writer.write_yaml(meta / "run.yaml", {
-        "run_id": run_id,
-        "task": task,
-        "status": "active",
-        "phase": "implement",
-        "framework": "v24.0_TRW",
-    })
+    writer.write_yaml(
+        meta / "run.yaml",
+        {
+            "run_id": run_id,
+            "task": task,
+            "status": "active",
+            "phase": "implement",
+            "framework": "v24.0_TRW",
+        },
+    )
     events_path = meta / "events.jsonl"
     for ev in events:
         with events_path.open("a", encoding="utf-8") as f:
@@ -49,20 +52,29 @@ def _make_run_with_events(
 # RC-003 + RC-006: trw_deliver warns when no build_check_complete event
 # ---------------------------------------------------------------------------
 
+
 class TestDeliverBuildGate:
     """trw_deliver should warn when build_check_complete is missing or failed."""
 
     def test_deliver_warns_no_build_check(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Delivery without a build_check_complete event produces a warning."""
         project = tmp_path / "project"
         task_root = project / "docs"
-        run_dir = _make_run_with_events(task_root, "my-task", "20260227T100000Z-aaaa", [
-            {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
-            {"event": "checkpoint", "ts": "2026-02-27T11:00:00Z"},
-            {"event": "tool_invocation", "ts": "2026-02-27T11:30:00Z"},
-        ], writer)
+        run_dir = _make_run_with_events(
+            task_root,
+            "my-task",
+            "20260227T100000Z-aaaa",
+            [
+                {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
+                {"event": "checkpoint", "ts": "2026-02-27T11:00:00Z"},
+                {"event": "tool_invocation", "ts": "2026-02-27T11:30:00Z"},
+            ],
+            writer,
+        )
 
         from fastmcp import FastMCP
 
@@ -85,16 +97,27 @@ class TestDeliverBuildGate:
         assert "no successful build check" in str(result["build_gate_warning"]).lower()
 
     def test_deliver_no_warning_when_build_passed(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Delivery WITH a passing build_check_complete event has no warning."""
         project = tmp_path / "project"
         task_root = project / "docs"
-        run_dir = _make_run_with_events(task_root, "my-task", "20260227T100000Z-aaaa", [
-            {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
-            {"event": "build_check_complete", "ts": "2026-02-27T11:00:00Z",
-             "data": {"tests_passed": True, "mypy_clean": True}},
-        ], writer)
+        run_dir = _make_run_with_events(
+            task_root,
+            "my-task",
+            "20260227T100000Z-aaaa",
+            [
+                {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
+                {
+                    "event": "build_check_complete",
+                    "ts": "2026-02-27T11:00:00Z",
+                    "data": {"tests_passed": True, "mypy_clean": True},
+                },
+            ],
+            writer,
+        )
 
         from fastmcp import FastMCP
 
@@ -119,6 +142,7 @@ class TestDeliverBuildGate:
 # ---------------------------------------------------------------------------
 # RC-004: Parse exit criteria checkboxes from sprint markdown
 # ---------------------------------------------------------------------------
+
 
 class TestParseExitCriteria:
     """Sprint doc exit criteria parser extracts checkbox state."""
@@ -155,28 +179,41 @@ Some other content here.
 # RC-002: trw_status reports last activity timestamp
 # ---------------------------------------------------------------------------
 
+
 class TestStatusLastActivity:
     """trw_status should report last activity and hours since."""
 
     def test_status_reports_last_activity(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """trw_status includes last_activity_ts and hours_since_activity."""
         project = tmp_path / "project"
         task_root = project / "docs"
-        run_dir = _make_run_with_events(task_root, "my-task", "20260227T100000Z-aaaa", [
-            {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
-            {"event": "checkpoint", "ts": "2026-02-27T12:00:00Z",
-             "data": {"message": "milestone 1"}},
-        ], writer)
+        run_dir = _make_run_with_events(
+            task_root,
+            "my-task",
+            "20260227T100000Z-aaaa",
+            [
+                {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
+                {"event": "checkpoint", "ts": "2026-02-27T12:00:00Z", "data": {"message": "milestone 1"}},
+            ],
+            writer,
+        )
 
         # Also write checkpoints.jsonl (what trw_status reads for activity)
         checkpoints_path = run_dir / "meta" / "checkpoints.jsonl"
         with checkpoints_path.open("w", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "ts": "2026-02-27T12:00:00Z",
-                "message": "milestone 1",
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "ts": "2026-02-27T12:00:00Z",
+                        "message": "milestone 1",
+                    }
+                )
+                + "\n"
+            )
 
         from fastmcp import FastMCP
 

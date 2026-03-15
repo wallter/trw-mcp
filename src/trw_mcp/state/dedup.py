@@ -8,25 +8,25 @@ Gracefully degrades to no-op when embeddings are unavailable.
 from __future__ import annotations
 
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, cast
 
 import structlog
-
 from trw_memory.retrieval.dense import cosine_similarity
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import BatchDedupResult
-from trw_mcp.exceptions import StateError
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.state.memory_adapter import embed_text as embed, embedding_available
 from trw_mcp.state._helpers import iter_yaml_entry_files
+from trw_mcp.state.memory_adapter import embed_text as embed
+from trw_mcp.state.memory_adapter import embedding_available
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
 
 # Re-export so existing importers (tiers.py, consolidation.py) keep working.
-__all__ = ["cosine_similarity", "DedupResult", "check_duplicate", "merge_entries", "batch_dedup", "is_migration_needed"]
+__all__ = ["DedupResult", "batch_dedup", "check_duplicate", "cosine_similarity", "is_migration_needed", "merge_entries"]
 
 
 class DedupResult(NamedTuple):
@@ -205,7 +205,7 @@ def merge_entries(
     existing_detail = str(existing.get("detail", ""))
     new_detail = str(new_entry_data.get("detail", ""))
     new_id = str(new_entry_data.get("id", "unknown"))
-    today = date.today().isoformat()
+    today = datetime.now(tz=timezone.utc).date().isoformat()
     if len(new_detail) > len(existing_detail):
         audit_marker = f"\n---\nMerged from {new_id} on {today}:\n"
         if existing_detail:
@@ -233,13 +233,15 @@ def merge_entries(
 
     # FR03: Re-compute embedding for merged entry and update sqlite-vec if available
     try:
-        from trw_mcp.state.memory_store import MemoryStore
         from trw_mcp.state.memory_adapter import embed_text as _embed
+        from trw_mcp.state.memory_store import MemoryStore
+
         if MemoryStore.available():
             merged_text = str(existing.get("summary", "")) + " " + str(existing.get("detail", ""))
             new_embedding = _embed(merged_text)
             if new_embedding is not None:
                 from trw_mcp.state._paths import resolve_memory_store_path
+
                 store_path = resolve_memory_store_path()
                 store = MemoryStore(store_path)
                 try:
@@ -336,8 +338,7 @@ def batch_dedup(
                 # Exact duplicate — mark newer as obsolete
                 data_j["status"] = "obsolete"
                 data_j["detail"] = (
-                    str(data_j.get("detail", ""))
-                    + f"\n[Auto-obsoleted: duplicate of {id_i}, similarity={sim:.3f}]"
+                    str(data_j.get("detail", "")) + f"\n[Auto-obsoleted: duplicate of {id_i}, similarity={sim:.3f}]"
                 )
                 writer.write_yaml(path_j, data_j)
                 skipped_ids.add(id_j)
@@ -346,10 +347,7 @@ def batch_dedup(
                 # Near-duplicate — merge j into i
                 merge_entries(path_i, data_j, reader, writer)
                 data_j["status"] = "obsolete"
-                data_j["detail"] = (
-                    str(data_j.get("detail", ""))
-                    + f"\n[Auto-merged into {id_i}, similarity={sim:.3f}]"
-                )
+                data_j["detail"] = str(data_j.get("detail", "")) + f"\n[Auto-merged into {id_i}, similarity={sim:.3f}]"
                 writer.write_yaml(path_j, data_j)
                 skipped_ids.add(id_j)
                 # Re-read merged data for subsequent comparisons

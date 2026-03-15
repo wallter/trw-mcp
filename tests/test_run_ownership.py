@@ -116,7 +116,10 @@ class TestPerSessionPinning:
         assert get_pinned_run(session_id="session-2") == run_b.resolve()
 
     def test_find_active_run_uses_session_pin(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
@@ -140,17 +143,26 @@ class TestStatusAwareDiscovery:
     """FR02: find_active_run only returns active runs."""
 
     def test_completed_run_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
         active_run = _make_run(
-            runs_root, "task1", "20260219T100000Z-active",
-            status="active", writer=writer,
+            runs_root,
+            "task1",
+            "20260219T100000Z-active",
+            status="active",
+            writer=writer,
         )
         _make_run(
-            runs_root, "task1", "20260220T100000Z-done",
-            status="complete", writer=writer,
+            runs_root,
+            "task1",
+            "20260220T100000Z-done",
+            status="complete",
+            writer=writer,
         )
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
@@ -158,17 +170,26 @@ class TestStatusAwareDiscovery:
         assert result == active_run
 
     def test_failed_run_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
         active_run = _make_run(
-            runs_root, "task1", "20260219T100000Z-active",
-            status="active", writer=writer,
+            runs_root,
+            "task1",
+            "20260219T100000Z-active",
+            status="active",
+            writer=writer,
         )
         _make_run(
-            runs_root, "task1", "20260220T100000Z-fail",
-            status="failed", writer=writer,
+            runs_root,
+            "task1",
+            "20260220T100000Z-fail",
+            status="failed",
+            writer=writer,
         )
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
@@ -176,17 +197,26 @@ class TestStatusAwareDiscovery:
         assert result == active_run
 
     def test_all_completed_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        writer: FileStateWriter,
     ) -> None:
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
         _make_run(
-            runs_root, "task1", "20260219T100000Z-done1",
-            status="complete", writer=writer,
+            runs_root,
+            "task1",
+            "20260219T100000Z-done1",
+            status="complete",
+            writer=writer,
         )
         _make_run(
-            runs_root, "task1", "20260220T100000Z-done2",
-            status="complete", writer=writer,
+            runs_root,
+            "task1",
+            "20260220T100000Z-done2",
+            status="complete",
+            writer=writer,
         )
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
@@ -194,7 +224,9 @@ class TestStatusAwareDiscovery:
         assert result is None
 
     def test_legacy_run_without_status_treated_as_active(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Backward compat: runs without status field are active."""
         project = tmp_path / "project"
@@ -214,19 +246,23 @@ class TestRunOwnership:
 
     def test_run_state_has_owner_field(self) -> None:
         from trw_mcp.models.run import RunState
+
         state = RunState(run_id="test", task="test")
         assert state.owner_session_id is None
 
     def test_run_state_with_owner(self) -> None:
         from trw_mcp.models.run import RunState
+
         state = RunState(run_id="test", task="test", owner_session_id="abc123")
         assert state.owner_session_id == "abc123"
 
     def test_owner_roundtrips_through_yaml(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
-        from trw_mcp.state.persistence import FileStateReader, model_to_dict
         from trw_mcp.models.run import RunState
+        from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
         state = RunState(run_id="test", task="test", owner_session_id="abc123")
         yaml_path = tmp_path / "run.yaml"
@@ -241,10 +277,12 @@ class TestMarkRunComplete:
     """FR01: trw_deliver marks run as complete."""
 
     def test_mark_run_complete(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
-        from trw_mcp.tools.ceremony import _mark_run_complete
         from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools.ceremony import _mark_run_complete
 
         run_dir = tmp_path / "run1"
         (run_dir / "meta").mkdir(parents=True)
@@ -268,7 +306,10 @@ class TestMarkRunComplete:
         _mark_run_complete(run_dir)
 
     def test_delivered_run_not_recovered(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        writer: FileStateWriter,
     ) -> None:
         """After marking complete, find_active_run skips the run."""
         from trw_mcp.tools.ceremony import _mark_run_complete
@@ -288,7 +329,9 @@ class TestOwnershipWarning:
     """FR05: Ownership-aware recovery warnings."""
 
     def test_get_run_status_includes_owner(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         from trw_mcp.tools.ceremony import _get_run_status
 
@@ -303,7 +346,9 @@ class TestOwnershipWarning:
         assert status["owner_session_id"] == "other-session"
 
     def test_get_run_status_no_owner(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         from trw_mcp.tools.ceremony import _get_run_status
 

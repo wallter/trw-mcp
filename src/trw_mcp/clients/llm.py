@@ -11,6 +11,7 @@ override per-request.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,18 +25,16 @@ logger = structlog.get_logger()
 
 _ASK_TIMEOUT_SECS = 120
 
-# FIX-046-FR05: Shared executor for sync-to-async bridge (avoids per-call creation)
-import concurrent.futures
-
 _SHARED_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
 
 
 def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Lazily create and cache a shared ThreadPoolExecutor."""
-    global _SHARED_EXECUTOR  # noqa: PLW0603
+    global _SHARED_EXECUTOR
     if _SHARED_EXECUTOR is None:
         _SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     return _SHARED_EXECUTOR
+
 
 _MODEL_MAP: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",

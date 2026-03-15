@@ -79,7 +79,9 @@ class TestReadVersion:
         assert result  # non-empty
 
     def test_reads_version_from_synthetic_pyproject_double_quotes(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Parses version with double-quoted value."""
         fake = _fake_file(tmp_path)
@@ -92,7 +94,9 @@ class TestReadVersion:
         assert result == "5.6.7"
 
     def test_reads_version_from_synthetic_pyproject_single_quotes(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Parses version with single-quoted value."""
         fake = _fake_file(tmp_path)
@@ -105,7 +109,9 @@ class TestReadVersion:
         assert result == "1.2.3"
 
     def test_falls_back_to_dunder_version(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When pyproject.toml is missing, falls back to trw_mcp.__version__."""
         fake = _fake_file(tmp_path)
@@ -119,7 +125,9 @@ class TestReadVersion:
         assert result == "9.8.7"
 
     def test_returns_000_when_both_fail(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Returns '0.0.0' when pyproject.toml missing AND __version__ unavailable."""
         fake = _fake_file(tmp_path)
@@ -200,9 +208,7 @@ class TestBuildReleaseBundle:
         bundle_path = Path(str(result["path"]))
         with tarfile.open(bundle_path, "r:gz") as tar:
             for member in tar.getmembers():
-                assert not member.name.startswith("/"), (
-                    f"Absolute path in archive: {member.name}"
-                )
+                assert not member.name.startswith("/"), f"Absolute path in archive: {member.name}"
 
     def test_creates_output_dir_if_missing(self, tmp_path: Path) -> None:
         """output_dir is created (with parents) when it doesn't exist."""
@@ -215,7 +221,9 @@ class TestBuildReleaseBundle:
         assert Path(str(result["path"])).exists()
 
     def test_uses_read_version_when_version_is_none(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When version=None, delegates to _read_version()."""
         monkeypatch.setattr(rb_mod, "_read_version", lambda: "42.0.0")
@@ -226,7 +234,9 @@ class TestBuildReleaseBundle:
         assert "42.0.0" in Path(str(result["path"])).name
 
     def test_explicit_version_skips_read_version(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When version is provided, _read_version is not called."""
         called = False
@@ -244,7 +254,9 @@ class TestBuildReleaseBundle:
         assert result["version"] == "3.0.0"
 
     def test_defaults_to_cwd_when_output_dir_is_none(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When output_dir=None, bundle lands in the current working directory."""
         monkeypatch.chdir(tmp_path)
@@ -264,7 +276,8 @@ class TestBuildReleaseBundle:
             assert len(members) > 0
 
     def test_different_versions_produce_different_filenames(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Two builds with different versions produce distinct bundle files."""
         r1 = build_release_bundle(version="1.0.0", output_dir=tmp_path)

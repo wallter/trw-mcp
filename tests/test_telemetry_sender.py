@@ -117,9 +117,7 @@ class TestSendSuccess:
         remaining = _read_events(input_path)
         assert remaining == []
 
-    def test_send_result_contains_no_skipped_reason_on_success(
-        self, tmp_path: Path
-    ) -> None:
+    def test_send_result_contains_no_skipped_reason_on_success(self, tmp_path: Path) -> None:
         sender, input_path = _make_sender(tmp_path)
         _write_events(input_path, [{"k": "v"}])
 
@@ -182,9 +180,7 @@ class TestBatchSplitting:
 class TestRetryLogic:
     def test_send_retry_on_failure(self, tmp_path: Path) -> None:
         """First attempt fails (False), second attempt succeeds."""
-        sender, input_path = _make_sender(
-            tmp_path, max_retries=3, backoff_base=0.0
-        )
+        sender, input_path = _make_sender(tmp_path, max_retries=3, backoff_base=0.0)
         _write_events(input_path, [{"event_type": "test"}])
 
         attempt_results = [False, True]
@@ -205,9 +201,7 @@ class TestRetryLogic:
 
     def test_send_fail_open(self, tmp_path: Path) -> None:
         """All retries fail — events remain in queue (fail-open)."""
-        sender, input_path = _make_sender(
-            tmp_path, max_retries=2, backoff_base=0.0
-        )
+        sender, input_path = _make_sender(tmp_path, max_retries=2, backoff_base=0.0)
         events = [{"idx": i} for i in range(3)]
         _write_events(input_path, events)
 
@@ -223,15 +217,11 @@ class TestRetryLogic:
 
     def test_send_exception_is_caught(self, tmp_path: Path) -> None:
         """_http_post raising an exception is treated as a failure."""
-        sender, input_path = _make_sender(
-            tmp_path, max_retries=2, backoff_base=0.0
-        )
+        sender, input_path = _make_sender(tmp_path, max_retries=2, backoff_base=0.0)
         _write_events(input_path, [{"k": "v"}])
 
         with patch("time.sleep"):
-            with patch.object(
-                sender, "_http_post", side_effect=RuntimeError("boom")
-            ):
+            with patch.object(sender, "_http_post", side_effect=RuntimeError("boom")):
                 result = sender.send()
 
         assert result["sent"] == 0
@@ -244,13 +234,9 @@ class TestRetryLogic:
 
 
 class TestPartialSuccess:
-    def test_send_partial_success_remaining_events_stay(
-        self, tmp_path: Path
-    ) -> None:
+    def test_send_partial_success_remaining_events_stay(self, tmp_path: Path) -> None:
         """First batch succeeds, second fails — only sent events are removed."""
-        sender, input_path = _make_sender(
-            tmp_path, batch_size=2, max_retries=1, backoff_base=0.0
-        )
+        sender, input_path = _make_sender(tmp_path, batch_size=2, max_retries=1, backoff_base=0.0)
         events = [{"idx": i} for i in range(4)]
         _write_events(input_path, events)
 
@@ -273,13 +259,9 @@ class TestPartialSuccess:
         assert remaining[0]["idx"] == 2
         assert remaining[1]["idx"] == 3
 
-    def test_send_interleaved_success_failure_preserves_failed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_send_interleaved_success_failure_preserves_failed(self, tmp_path: Path) -> None:
         """FR04: batch1 OK, batch2 FAIL, batch3 OK — failed batch preserved."""
-        sender, input_path = _make_sender(
-            tmp_path, batch_size=2, max_retries=1, backoff_base=0.0
-        )
+        sender, input_path = _make_sender(tmp_path, batch_size=2, max_retries=1, backoff_base=0.0)
         events = [{"idx": i} for i in range(6)]
         _write_events(input_path, events)
 
@@ -313,9 +295,7 @@ class TestPartialSuccess:
 class TestBackoffTiming:
     def test_backoff_timing(self, tmp_path: Path) -> None:
         """Exponential backoff delays: backoff_base * 2^attempt."""
-        sender, input_path = _make_sender(
-            tmp_path, max_retries=3, backoff_base=1.0
-        )
+        sender, input_path = _make_sender(tmp_path, max_retries=3, backoff_base=1.0)
         _write_events(input_path, [{"k": "v"}])
 
         sleep_calls: list[float] = []
@@ -331,9 +311,7 @@ class TestBackoffTiming:
         assert sleep_calls == [1.0, 2.0]
 
     def test_no_sleep_on_first_attempt_success(self, tmp_path: Path) -> None:
-        sender, input_path = _make_sender(
-            tmp_path, max_retries=3, backoff_base=1.0
-        )
+        sender, input_path = _make_sender(tmp_path, max_retries=3, backoff_base=1.0)
         _write_events(input_path, [{"k": "v"}])
 
         sleep_calls: list[float] = []
@@ -346,9 +324,7 @@ class TestBackoffTiming:
 
     def test_zero_backoff_base_no_sleep(self, tmp_path: Path) -> None:
         """backoff_base=0 means no sleep time (0 * 2^n = 0)."""
-        sender, input_path = _make_sender(
-            tmp_path, max_retries=3, backoff_base=0.0
-        )
+        sender, input_path = _make_sender(tmp_path, max_retries=3, backoff_base=0.0)
         _write_events(input_path, [{"k": "v"}])
 
         sleep_calls: list[float] = []
@@ -391,9 +367,7 @@ class TestFromConfig:
         assert sender._platform_urls == ["https://api.trwframework.com"]
         assert sender._input_path == trw_dir / "logs" / "tool-telemetry.jsonl"
 
-    def test_from_config_offline_when_no_platform_url(
-        self, tmp_path: Path
-    ) -> None:
+    def test_from_config_offline_when_no_platform_url(self, tmp_path: Path) -> None:
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -423,9 +397,7 @@ class TestFromConfig:
 
 
 class TestParallelFanout:
-    def test_fanout_both_urls_attempted_when_first_fails(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fanout_both_urls_attempted_when_first_fails(self, tmp_path: Path) -> None:
         """Both URLs are attempted even when the first one fails."""
         input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
         sender = BatchSender(
@@ -453,9 +425,7 @@ class TestParallelFanout:
         assert "https://url-a.example.com/v1/telemetry" in attempted_urls
         assert "https://url-b.example.com/v1/telemetry" in attempted_urls
 
-    def test_fanout_both_urls_attempted_when_second_fails(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fanout_both_urls_attempted_when_second_fails(self, tmp_path: Path) -> None:
         """Both URLs are attempted even when the second one fails."""
         input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
         sender = BatchSender(
@@ -515,9 +485,7 @@ class TestParallelFanout:
 
 class TestUrlConstruction:
     def test_url_has_v1_telemetry_suffix(self, tmp_path: Path) -> None:
-        sender, input_path = _make_sender(
-            tmp_path, platform_url="https://api.example.com"
-        )
+        sender, input_path = _make_sender(tmp_path, platform_url="https://api.example.com")
         _write_events(input_path, [{"k": "v"}])
 
         captured_url: list[str] = []
@@ -532,9 +500,7 @@ class TestUrlConstruction:
         assert captured_url[0] == "https://api.example.com/v1/telemetry"
 
     def test_trailing_slash_stripped_from_url(self, tmp_path: Path) -> None:
-        sender, input_path = _make_sender(
-            tmp_path, platform_url="https://api.example.com/"
-        )
+        sender, input_path = _make_sender(tmp_path, platform_url="https://api.example.com/")
         _write_events(input_path, [{"k": "v"}])
 
         captured_url: list[str] = []

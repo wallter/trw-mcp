@@ -146,10 +146,12 @@ def _assign_entries_to_clusters(
             clusters[best_idx]["entry_list"].append(entry)
             clusters[best_idx]["tag_set"] |= entry_tags
         else:
-            clusters.append({
-                "tag_set": set(entry_tags),
-                "entry_list": [entry],
-            })
+            clusters.append(
+                {
+                    "tag_set": set(entry_tags),
+                    "entry_list": [entry],
+                }
+            )
 
     return clusters
 
@@ -223,19 +225,17 @@ def form_jaccard_clusters(
         most_common_tag = tag_counter.most_common(1)[0][0] if tag_counter else "cluster"
         slug = sanitize_slug(most_common_tag)
 
-        avg_importance = (
-            sum(e.importance for e in entry_list) / len(entry_list)
-            if entry_list
-            else 0.0
-        )
+        avg_importance = sum(e.importance for e in entry_list) / len(entry_list) if entry_list else 0.0
 
-        result.append({
-            "slug": slug,
-            "tags": sorted(all_tags),
-            "entry_ids": [e.id for e in entry_list],
-            "entries": entry_list,
-            "avg_importance": round(avg_importance, 4),
-        })
+        result.append(
+            {
+                "slug": slug,
+                "tags": sorted(all_tags),
+                "entry_ids": [e.id for e in entry_list],
+                "entries": entry_list,
+                "avg_importance": round(avg_importance, 4),
+            }
+        )
 
     return result
 
@@ -441,12 +441,20 @@ def execute_knowledge_sync(
             threshold=config.knowledge_sync_threshold,
         )
         return _base_result(
-            total_count, config, trw_dir, threshold_met=False, dry_run=dry_run,
+            total_count,
+            config,
+            trw_dir,
+            threshold_met=False,
+            dry_run=dry_run,
         )
 
     if dry_run:
         return _base_result(
-            total_count, config, trw_dir, threshold_met=True, dry_run=True,
+            total_count,
+            config,
+            trw_dir,
+            threshold_met=True,
+            dry_run=True,
         )
 
     # Step 2: list active entries
@@ -469,14 +477,10 @@ def execute_knowledge_sync(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Build entry-id lookup before rendering (passed to renderer for future use)
-    entries_map: dict[str, object] = {
-        str(c.get("slug", "")): c.get("entry_ids", []) for c in clusters
-    }
+    entries_map: dict[str, object] = {str(c.get("slug", "")): c.get("entry_ids", []) for c in clusters}
 
     documents, render_errors = _render_cluster_documents(clusters, entries_map)
-    slugs_written, topics_generated, _, write_errors = _write_knowledge_files(
-        documents, output_dir, writer
-    )
+    slugs_written, topics_generated, _, write_errors = _write_knowledge_files(documents, output_dir, writer)
 
     # Tally entries clustered and build cluster_map from original cluster list
     entries_clustered = 0

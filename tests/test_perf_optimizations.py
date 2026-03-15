@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from trw_memory.models.memory import MemoryEntry
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
@@ -30,7 +31,6 @@ from trw_mcp.state.memory_adapter import (
     store_learning,
     update_access_tracking,
 )
-
 
 
 @pytest.fixture
@@ -156,15 +156,9 @@ class TestSingleQueryKeywordSearch:
     def test_multi_token_and_semantics(self, trw_dir: Path) -> None:
         """Multi-token query returns only entries matching ALL tokens."""
         backend = get_backend(trw_dir)
-        backend.store(
-            MemoryEntry(id="L-mt1", content="python testing gotcha", detail="d1")
-        )
-        backend.store(
-            MemoryEntry(id="L-mt2", content="python memory leak", detail="d2")
-        )
-        backend.store(
-            MemoryEntry(id="L-mt3", content="rust testing safety", detail="d3")
-        )
+        backend.store(MemoryEntry(id="L-mt1", content="python testing gotcha", detail="d1"))
+        backend.store(MemoryEntry(id="L-mt2", content="python memory leak", detail="d2"))
+        backend.store(MemoryEntry(id="L-mt3", content="rust testing safety", detail="d3"))
 
         results = _keyword_search(backend, "python testing")
         ids = [e.id for e in results]
@@ -207,9 +201,7 @@ class TestSingleQueryKeywordSearch:
     def test_multi_token_no_match_returns_empty(self, trw_dir: Path) -> None:
         """Multi-token query with no common entries returns empty."""
         backend = get_backend(trw_dir)
-        backend.store(
-            MemoryEntry(id="L-nm1", content="alpha only", detail="nothing else")
-        )
+        backend.store(MemoryEntry(id="L-nm1", content="alpha only", detail="nothing else"))
 
         results = _keyword_search(backend, "alpha zebra")
         assert len(results) == 0
@@ -217,9 +209,7 @@ class TestSingleQueryKeywordSearch:
     def test_single_db_call_for_multi_token(self, trw_dir: Path) -> None:
         """Multi-token search makes only 1 backend.search() call."""
         backend = get_backend(trw_dir)
-        backend.store(
-            MemoryEntry(id="L-db1", content="python testing gotcha", detail="d")
-        )
+        backend.store(MemoryEntry(id="L-db1", content="python testing gotcha", detail="d"))
 
         original_search = backend.search
         call_count = 0

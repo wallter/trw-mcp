@@ -11,7 +11,6 @@ import pytest
 from fastmcp import FastMCP
 
 from tests.conftest import get_tools_sync, make_test_server
-
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -33,14 +32,17 @@ def rich_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
 
-    writer.write_yaml(meta / "run.yaml", {
-        "run_id": "20260219T100000Z-test1234",
-        "task": "test-task",
-        "framework": "v24.0_TRW",
-        "status": "complete",
-        "phase": "deliver",
-        "confidence": "high",
-    })
+    writer.write_yaml(
+        meta / "run.yaml",
+        {
+            "run_id": "20260219T100000Z-test1234",
+            "task": "test-task",
+            "framework": "v24.0_TRW",
+            "status": "complete",
+            "phase": "deliver",
+            "confidence": "high",
+        },
+    )
 
     events = [
         {"ts": "2026-02-19T10:00:00Z", "event": "run_init", "task": "test-task"},
@@ -50,19 +52,25 @@ def rich_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     for evt in events:
         writer.append_jsonl(meta / "events.jsonl", evt)
 
-    writer.append_jsonl(meta / "checkpoints.jsonl", {
-        "ts": "2026-02-19T11:00:00Z",
-        "message": "mid-impl",
-    })
+    writer.append_jsonl(
+        meta / "checkpoints.jsonl",
+        {
+            "ts": "2026-02-19T11:00:00Z",
+            "message": "mid-impl",
+        },
+    )
 
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
-    writer.write_yaml(trw_dir / "context" / "build-status.yaml", {
-        "tests_passed": True,
-        "mypy_clean": True,
-        "coverage_pct": 88.0,
-        "test_count": 100,
-    })
+    writer.write_yaml(
+        trw_dir / "context" / "build-status.yaml",
+        {
+            "tests_passed": True,
+            "mypy_clean": True,
+            "coverage_pct": 88.0,
+            "test_count": 100,
+        },
+    )
 
     return run_dir
 
@@ -76,7 +84,10 @@ class TestRunReportTool:
     """Tests for trw_run_report tool."""
 
     def test_explicit_run_path_returns_report(
-        self, report_server: FastMCP, rich_run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        report_server: FastMCP,
+        rich_run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Providing explicit run_path returns a valid report dict."""
         tool = get_tools_sync(report_server)["trw_run_report"]
@@ -184,7 +195,10 @@ class TestRunReportTool:
         assert isinstance(result, dict)
 
     def test_result_is_serializable_dict(
-        self, report_server: FastMCP, rich_run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        report_server: FastMCP,
+        rich_run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Report result contains expected keys from model_dump."""
         tool = get_tools_sync(report_server)["trw_run_report"]
@@ -238,13 +252,12 @@ class TestAnalyticsReportTool:
         result = tool.fn(since="2026-01-01")
         assert isinstance(result, dict)
 
-    def test_exception_returns_error_dict(
-        self, report_server: FastMCP, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_returns_error_dict(self, report_server: FastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
         """Unexpected exception is caught and returned as error dict."""
         tool = get_tools_sync(report_server)["trw_analytics_report"]
 
         import trw_mcp.state.analytics.report as analytics_mod
+
         monkeypatch.setattr(
             analytics_mod,
             "scan_all_runs",
@@ -269,12 +282,15 @@ class TestAnalyticsReportTool:
         run_dir = tmp_path / ".trw" / "runs" / "task1" / "20260219T100000Z-abcd1234"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "20260219T100000Z-abcd1234",
-            "task": "task1",
-            "status": "complete",
-            "phase": "deliver",
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "20260219T100000Z-abcd1234",
+                "task": "task1",
+                "status": "complete",
+                "phase": "deliver",
+            },
+        )
 
         monkeypatch.setattr(
             "trw_mcp.state.analytics.report.resolve_project_root",

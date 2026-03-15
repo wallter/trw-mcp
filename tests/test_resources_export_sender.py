@@ -61,9 +61,7 @@ def _get_learnings_resource() -> Any:
 class TestLearningsSummaryErrorHandling:
     """Lines 99-100 — bad YAML in entries directory is silently skipped."""
 
-    def test_skips_unreadable_entry(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_skips_unreadable_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -86,9 +84,7 @@ class TestLearningsSummaryErrorHandling:
         # Good entry must still appear; bad entry is silently skipped
         assert "Good one" in result
 
-    def test_entry_below_impact_threshold_excluded(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_entry_below_impact_threshold_excluded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -108,9 +104,7 @@ class TestLearningsSummaryErrorHandling:
 class TestLearningsSummaryPatternsSection:
     """Lines 112-122 — patterns_dir exists branch."""
 
-    def test_patterns_included_in_summary(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_patterns_included_in_summary(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -129,9 +123,7 @@ class TestLearningsSummaryPatternsSection:
         assert "Wave Audit Pattern" in result
         assert "Run 3-wave audit" in result
 
-    def test_patterns_index_yaml_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_patterns_index_yaml_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -154,9 +146,7 @@ class TestLearningsSummaryPatternsSection:
         # index.yaml content must not appear as a pattern entry
         assert "should not appear" not in result
 
-    def test_bad_pattern_file_silently_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_bad_pattern_file_silently_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -179,9 +169,7 @@ class TestLearningsSummaryPatternsSection:
 class TestLearningsSummaryAnalyticsSection:
     """Lines 127-131 — analytics.yaml exists branch."""
 
-    def test_analytics_section_included(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_analytics_section_included(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -282,6 +270,7 @@ class TestCollectLearningsEdgeCases:
         # Remove the entries directory and replace with a file
         entries_path = project / ".trw" / "learnings" / "entries"
         import shutil
+
         shutil.rmtree(entries_path)
         entries_path.write_text("not a directory", encoding="utf-8")
 
@@ -348,9 +337,7 @@ class TestCollectLearningsEdgeCases:
 
         project = _setup_project(tmp_path)
         entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(
-            entries_dir, summary="Boundary entry", created="2026-02-01T00:00:00Z"
-        )
+        _make_entry(entries_dir, summary="Boundary entry", created="2026-02-01T00:00:00Z")
 
         result = export_data(project, "learnings", since="2026-02-01")
         learnings = result.get("learnings")
@@ -361,9 +348,7 @@ class TestCollectLearningsEdgeCases:
 class TestCollectRunsEnvRestore:
     """Line 111 — TRW_PROJECT_ROOT env var restored when it was previously set."""
 
-    def test_existing_env_var_restored_after_collect_runs(
-        self, tmp_path: Path
-    ) -> None:
+    def test_existing_env_var_restored_after_collect_runs(self, tmp_path: Path) -> None:
         import os
 
         from trw_mcp.export import export_data
@@ -407,9 +392,7 @@ class TestCollectAnalyticsEdgeCases:
         assert isinstance(session_analytics, dict)
         assert session_analytics.get("sessions_tracked") == 7
 
-    def test_analytics_yaml_read_error_silently_ignored(
-        self, tmp_path: Path
-    ) -> None:
+    def test_analytics_yaml_read_error_silently_ignored(self, tmp_path: Path) -> None:
         """Lines 128-131 exception branch — read error does not raise."""
         from trw_mcp.export import export_data
 
@@ -417,9 +400,7 @@ class TestCollectAnalyticsEdgeCases:
         trw_dir = project / ".trw"
         context_dir = trw_dir / "context"
         analytics_file = context_dir / "analytics.yaml"
-        analytics_file.write_text(
-            "!!python/object:os.system [rm -rf /]", encoding="utf-8"
-        )
+        analytics_file.write_text("!!python/object:os.system [rm -rf /]", encoding="utf-8")
 
         with patch("trw_mcp.export.compute_reflection_quality", return_value=0.5):
             result = export_data(project, "analytics")
@@ -427,9 +408,7 @@ class TestCollectAnalyticsEdgeCases:
         # Should succeed even if analytics.yaml is unreadable
         assert result["status"] == "ok"
 
-    def test_reflection_quality_exception_silently_ignored(
-        self, tmp_path: Path
-    ) -> None:
+    def test_reflection_quality_exception_silently_ignored(self, tmp_path: Path) -> None:
         """Lines 139-140 — compute_reflection_quality exception is caught."""
         from trw_mcp.export import export_data
 
@@ -448,9 +427,7 @@ class TestCollectAnalyticsEdgeCases:
         # No reflection_quality if exception occurred
         assert "reflection_quality" not in analytics
 
-    def test_analytics_env_restored_when_previously_set(
-        self, tmp_path: Path
-    ) -> None:
+    def test_analytics_env_restored_when_previously_set(self, tmp_path: Path) -> None:
         """Line 143 — TRW_PROJECT_ROOT restored in analytics env block."""
         import os
 
@@ -461,9 +438,7 @@ class TestCollectAnalyticsEdgeCases:
         original_val = "pre_analytics_root"
         os.environ["TRW_PROJECT_ROOT"] = original_val
         try:
-            with patch(
-                "trw_mcp.export.compute_reflection_quality", return_value=0.5
-            ):
+            with patch("trw_mcp.export.compute_reflection_quality", return_value=0.5):
                 result = export_data(project, "analytics")
             assert result["status"] == "ok"
             assert os.environ.get("TRW_PROJECT_ROOT") == original_val
@@ -471,9 +446,7 @@ class TestCollectAnalyticsEdgeCases:
             if os.environ.get("TRW_PROJECT_ROOT") == original_val:
                 del os.environ["TRW_PROJECT_ROOT"]
 
-    def test_cached_report_ceremony_aggregates_included(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cached_report_ceremony_aggregates_included(self, tmp_path: Path) -> None:
         """Lines 151-155 — analytics-report.yaml loaded for ceremony_aggregates."""
         from trw_mcp.export import export_data
 
@@ -493,9 +466,7 @@ class TestCollectAnalyticsEdgeCases:
         assert isinstance(ceremony, dict)
         assert ceremony.get("avg_ceremony_score") == 72.5
 
-    def test_cached_report_read_error_silently_ignored(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cached_report_read_error_silently_ignored(self, tmp_path: Path) -> None:
         """Lines 151-155 exception branch — bad analytics-report.yaml is skipped."""
         from trw_mcp.export import export_data
 
@@ -516,9 +487,7 @@ class TestCollectAnalyticsEdgeCases:
 class TestImportSourceValidation:
     """Lines 258, 261 — invalid source file shape."""
 
-    def test_source_is_invalid_dict_no_learnings_key(
-        self, tmp_path: Path
-    ) -> None:
+    def test_source_is_invalid_dict_no_learnings_key(self, tmp_path: Path) -> None:
         """Line 258 — dict without 'learnings' key returns error."""
         from trw_mcp.export import import_learnings
 
@@ -536,9 +505,7 @@ class TestImportSourceValidation:
 
         target = _setup_project(tmp_path / "target")
         source_file = tmp_path / "export.json"
-        source_file.write_text(
-            json.dumps({"learnings": "should be a list"}), encoding="utf-8"
-        )
+        source_file.write_text(json.dumps({"learnings": "should be a list"}), encoding="utf-8")
 
         result = import_learnings(source_file, target)
         assert result["status"] == "failed"
@@ -574,9 +541,7 @@ class TestImportDeduplicationEdgeCases:
         assert result["status"] == "ok"
         assert result["imported"] == 1
 
-    def test_unreadable_existing_entry_skipped_during_dedup(
-        self, tmp_path: Path
-    ) -> None:
+    def test_unreadable_existing_entry_skipped_during_dedup(self, tmp_path: Path) -> None:
         """Lines 273-274 — bad existing entry during dedup load is skipped."""
         from trw_mcp.export import import_learnings
 
@@ -604,9 +569,7 @@ class TestImportDeduplicationEdgeCases:
 class TestImportTagFilterNonList:
     """Lines 283, 295 — tag filter when entry_tags is not a list."""
 
-    def test_non_list_tags_in_source_entry_treated_as_no_tags(
-        self, tmp_path: Path
-    ) -> None:
+    def test_non_list_tags_in_source_entry_treated_as_no_tags(self, tmp_path: Path) -> None:
         """Line 283 / 295 — when entry's tags is not a list, treated as empty."""
         from trw_mcp.export import import_learnings
 
@@ -636,9 +599,7 @@ class TestImportTagFilterNonList:
         assert result["skipped_filter"] == 1
         assert result["imported"] == 1
 
-    def test_none_tags_in_source_entry_treated_as_no_tags(
-        self, tmp_path: Path
-    ) -> None:
+    def test_none_tags_in_source_entry_treated_as_no_tags(self, tmp_path: Path) -> None:
         """None tags value is treated as empty list — gets filtered out."""
         from trw_mcp.export import import_learnings
 
@@ -663,9 +624,7 @@ class TestImportTagFilterNonList:
 class TestImportResyncEnvRestore:
     """Line 347 — TRW_PROJECT_ROOT restored after resync when previously set."""
 
-    def test_env_restored_after_resync_when_previously_set(
-        self, tmp_path: Path
-    ) -> None:
+    def test_env_restored_after_resync_when_previously_set(self, tmp_path: Path) -> None:
         import os
 
         from trw_mcp.export import import_learnings
@@ -744,9 +703,7 @@ class TestExportAllScope:
         assert "runs" in result
         assert "analytics" in result
 
-    def test_export_csv_for_all_scope_gives_json_not_csv(
-        self, tmp_path: Path
-    ) -> None:
+    def test_export_csv_for_all_scope_gives_json_not_csv(self, tmp_path: Path) -> None:
         """CSV format only applies when scope='learnings'. scope='all' uses JSON."""
         from trw_mcp.export import export_data
 

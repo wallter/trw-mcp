@@ -156,10 +156,20 @@ class TestComputeUtilityScore:
     def test_custom_half_life(self) -> None:
         """Shorter half-life causes faster decay."""
         score_short = compute_utility_score(
-            0.5, 7, 1, 0.5, 5, half_life_days=7.0,
+            0.5,
+            7,
+            1,
+            0.5,
+            5,
+            half_life_days=7.0,
         )
         score_long = compute_utility_score(
-            0.5, 7, 1, 0.5, 5, half_life_days=28.0,
+            0.5,
+            7,
+            1,
+            0.5,
+            5,
+            half_life_days=28.0,
         )
         assert score_short < score_long
 
@@ -171,19 +181,26 @@ class TestComputeUtilityScore:
     def test_custom_use_exponent(self) -> None:
         """Higher use_exponent amplifies recurrence benefit."""
         score_low = compute_utility_score(
-            0.5, 14, 5, 0.5, 5, use_exponent=0.3,
+            0.5,
+            14,
+            5,
+            0.5,
+            5,
+            use_exponent=0.3,
         )
         score_high = compute_utility_score(
-            0.5, 14, 5, 0.5, 5, use_exponent=0.9,
+            0.5,
+            14,
+            5,
+            0.5,
+            5,
+            use_exponent=0.9,
         )
         assert score_high > score_low
 
     def test_monotonic_decay(self) -> None:
         """Utility is monotonically decreasing with days (all else equal)."""
-        scores = [
-            compute_utility_score(0.5, d, 1, 0.5, 5)
-            for d in range(0, 60, 5)
-        ]
+        scores = [compute_utility_score(0.5, d, 1, 0.5, 5) for d in range(0, 60, 5)]
         for i in range(1, len(scores)):
             assert scores[i] <= scores[i - 1]
 
@@ -193,9 +210,7 @@ class TestComputeImpactDistribution:
 
     def _write_entry(self, entries_dir: Path, fname: str, impact: float, status: str = "active") -> None:
         entries_dir.mkdir(parents=True, exist_ok=True)
-        (entries_dir / fname).write_text(
-            f"id: {fname}\nimpact: {impact}\nstatus: {status}\n"
-        )
+        (entries_dir / fname).write_text(f"id: {fname}\nimpact: {impact}\nstatus: {status}\n")
 
     def test_empty_dir_returns_zeros(self, tmp_path: Path) -> None:
         entries_dir = tmp_path / "entries"
@@ -310,7 +325,8 @@ class TestRunStateComplexityFields:
             task="test",
             complexity_class=ComplexityClass.COMPREHENSIVE,
             complexity_signals=ComplexitySignals(
-                files_affected=5, architecture_change=True,
+                files_affected=5,
+                architecture_change=True,
             ),
         )
         assert rs.complexity_class == "COMPREHENSIVE"  # use_enum_values=True
@@ -362,7 +378,9 @@ class TestClassifyComplexity:
     def test_comprehensive_high_score(self) -> None:
         """FR01: high signals -> COMPREHENSIVE."""
         signals = ComplexitySignals(
-            files_affected=5, novel_patterns=True, cross_cutting=True,
+            files_affected=5,
+            novel_patterns=True,
+            cross_cutting=True,
         )
         tier, raw_score, override = classify_complexity(signals)
         # 5 + 3 + 2 = 10
@@ -373,7 +391,8 @@ class TestClassifyComplexity:
     def test_standard_mid_score(self) -> None:
         """FR01: mid-range score -> STANDARD."""
         signals = ComplexitySignals(
-            files_affected=2, novel_patterns=True,
+            files_affected=2,
+            novel_patterns=True,
         )
         tier, raw_score, override = classify_complexity(signals)
         # 2 + 3 = 5
@@ -398,7 +417,8 @@ class TestClassifyComplexity:
     def test_boundary_comprehensive_lower(self) -> None:
         """FR01: raw_score=7 (comprehensive_tier=6, need >=7) -> COMPREHENSIVE."""
         signals = ComplexitySignals(
-            files_affected=5, cross_cutting=True,
+            files_affected=5,
+            cross_cutting=True,
         )
         tier, raw_score, _ = classify_complexity(signals)
         # 5 + 2 = 7
@@ -408,7 +428,8 @@ class TestClassifyComplexity:
     def test_boundary_standard_upper(self) -> None:
         """FR01: raw_score=6 -> STANDARD (not yet COMPREHENSIVE, need >=7)."""
         signals = ComplexitySignals(
-            files_affected=4, cross_cutting=True,
+            files_affected=4,
+            cross_cutting=True,
         )
         tier, raw_score, _ = classify_complexity(signals)
         # 4 + 2 = 6
@@ -550,40 +571,61 @@ class TestTierCeremonyScore:
 
     def test_comprehensive_missing_review_penalized(self) -> None:
         """FR03: COMPREHENSIVE missing trw_review -> score <= 60."""
-        events = self._make_events([
-            "trw_session_start", "trw_init", "trw_checkpoint",
-            "trw_build_check", "trw_deliver",
-        ])
+        events = self._make_events(
+            [
+                "trw_session_start",
+                "trw_init",
+                "trw_checkpoint",
+                "trw_build_check",
+                "trw_deliver",
+            ]
+        )
         result = compute_tier_ceremony_score(events, ComplexityClass.COMPREHENSIVE)
         # 5/7 matched = ~71, minus 25 penalty = ~46
         assert result["score"] <= 60
 
     def test_standard_with_review_bonus(self) -> None:
         """FR03: STANDARD with all events including review -> 100."""
-        events = self._make_events([
-            "trw_session_start", "trw_init", "trw_checkpoint",
-            "trw_build_check", "trw_deliver", "trw_review",
-        ])
+        events = self._make_events(
+            [
+                "trw_session_start",
+                "trw_init",
+                "trw_checkpoint",
+                "trw_build_check",
+                "trw_deliver",
+                "trw_review",
+            ]
+        )
         result = compute_tier_ceremony_score(events, ComplexityClass.STANDARD)
         # 6/6 expected = 100, review_mandatory=True satisfied, no penalty
         assert result["score"] == 100
 
     def test_standard_without_review_penalized(self) -> None:
         """FR03: STANDARD without review incurs 15-point penalty (review is mandatory)."""
-        events = self._make_events([
-            "trw_session_start", "trw_init", "trw_checkpoint",
-            "trw_build_check", "trw_deliver",
-        ])
+        events = self._make_events(
+            [
+                "trw_session_start",
+                "trw_init",
+                "trw_checkpoint",
+                "trw_build_check",
+                "trw_deliver",
+            ]
+        )
         result = compute_tier_ceremony_score(events, ComplexityClass.STANDARD)
         # 5/6 expected = round(83.33) = 83, minus 15 penalty = 68
         assert result["score"] == 68
 
     def test_none_defaults_to_standard(self) -> None:
         """FR03: None complexity_class defaults to STANDARD."""
-        events = self._make_events([
-            "trw_session_start", "trw_init", "trw_checkpoint",
-            "trw_build_check", "trw_deliver",
-        ])
+        events = self._make_events(
+            [
+                "trw_session_start",
+                "trw_init",
+                "trw_checkpoint",
+                "trw_build_check",
+                "trw_deliver",
+            ]
+        )
         result = compute_tier_ceremony_score(events, None)
         assert result["tier"] == "STANDARD"
         # 5/6 expected = 83, minus 15 missing_review_penalty = 68
@@ -602,9 +644,16 @@ class TestTierCeremonyScore:
 
     def test_comprehensive_all_events_perfect(self) -> None:
         """FR03: COMPREHENSIVE with all events -> 100."""
-        events = self._make_events([
-            "trw_session_start", "trw_init", "trw_checkpoint",
-            "trw_learn", "trw_build_check", "trw_deliver", "trw_review",
-        ])
+        events = self._make_events(
+            [
+                "trw_session_start",
+                "trw_init",
+                "trw_checkpoint",
+                "trw_learn",
+                "trw_build_check",
+                "trw_deliver",
+                "trw_review",
+            ]
+        )
         result = compute_tier_ceremony_score(events, ComplexityClass.COMPREHENSIVE)
         assert result["score"] == 100

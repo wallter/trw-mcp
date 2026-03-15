@@ -12,7 +12,6 @@ from trw_mcp.models.run import (
     ComplexityClass,
     ComplexityOverride,
     ComplexitySignals,
-    EventType,
     PhaseRequirements,
 )
 from trw_mcp.models.typed_dicts import TierCeremonyScoreResult
@@ -66,10 +65,7 @@ def classify_complexity(
         tier = ComplexityClass.STANDARD
 
     # FR05: Hard override for high-risk signals
-    active_risk_signals = [
-        name for name in _HIGH_RISK_SIGNALS
-        if getattr(signals, name, False)
-    ]
+    active_risk_signals = [name for name in _HIGH_RISK_SIGNALS if getattr(signals, name, False)]
     override: ComplexityOverride | None = None
 
     if len(active_risk_signals) >= cfg.complexity_hard_override_threshold:
@@ -134,8 +130,11 @@ class _TierExpectation:
     """Expected ceremony events and scoring rules for a complexity tier."""
 
     __slots__ = (
-        "checkpoint_min", "events", "missing_review_penalty",
-        "review_bonus", "review_mandatory",
+        "checkpoint_min",
+        "events",
+        "missing_review_penalty",
+        "review_bonus",
+        "review_mandatory",
     )
 
     def __init__(
@@ -164,10 +163,16 @@ _TIER_EXPECTATIONS: dict[str, _TierExpectation] = {
     ),
     "STANDARD": _TierExpectation(
         # Most tasks. Review is mandatory — skipping it is a 15-point penalty.
-        events=frozenset({
-            "trw_recall", "trw_init", "trw_checkpoint",
-            "trw_build_check", "trw_deliver", "trw_review",
-        }),
+        events=frozenset(
+            {
+                "trw_recall",
+                "trw_init",
+                "trw_checkpoint",
+                "trw_build_check",
+                "trw_deliver",
+                "trw_review",
+            }
+        ),
         checkpoint_min=1,
         review_mandatory=True,
         review_bonus=0,
@@ -175,10 +180,16 @@ _TIER_EXPECTATIONS: dict[str, _TierExpectation] = {
     ),
     "COMPREHENSIVE": _TierExpectation(
         # Complex multi-file work. All phases mandatory, heavy review penalty.
-        events=frozenset({
-            "trw_recall", "trw_init", "trw_checkpoint",
-            "trw_build_check", "trw_deliver", "trw_review",
-        }),
+        events=frozenset(
+            {
+                "trw_recall",
+                "trw_init",
+                "trw_checkpoint",
+                "trw_build_check",
+                "trw_deliver",
+                "trw_review",
+            }
+        ),
         checkpoint_min=1,
         review_mandatory=True,
         review_bonus=0,
@@ -187,7 +198,7 @@ _TIER_EXPECTATIONS: dict[str, _TierExpectation] = {
 }
 
 
-def compute_tier_ceremony_score(
+def compute_tier_ceremony_score(  # noqa: C901
     events: list[dict[str, object]],
     complexity_class: ComplexityClass | str | None = None,
 ) -> TierCeremonyScoreResult:
@@ -296,8 +307,8 @@ def compute_tier_ceremony_score(
 
 __all__ = [
     "_HIGH_RISK_SIGNALS",
-    "_TierExpectation",
     "_TIER_EXPECTATIONS",
+    "_TierExpectation",
     "classify_complexity",
     "compute_tier_ceremony_score",
     "get_phase_requirements",

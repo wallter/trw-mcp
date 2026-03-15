@@ -7,11 +7,11 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._helpers import iter_yaml_entry_files
+from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
-from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.persistence import FileStateReader
 
 
 def collect_promotable_learnings(
@@ -37,6 +37,7 @@ def collect_promotable_learnings(
 
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
+
         all_active = list_active_learnings(trw_dir)
     except (ImportError, OSError, ValueError):
         return high_impact
@@ -59,6 +60,7 @@ def collect_promotable_learnings(
                     from datetime import datetime as _dt
 
                     from trw_mcp.scoring import apply_time_decay
+
                     created_dt = _dt.fromisoformat(created_at_raw)
                     score = apply_time_decay(score, created_dt)
                 except (ValueError, ImportError):
@@ -66,7 +68,7 @@ def collect_promotable_learnings(
 
             if score >= config.learning_promotion_impact:
                 high_impact.append(data)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # per-item error handling: skip entries with malformed fields  # noqa: PERF203
             continue
 
     return high_impact
@@ -95,7 +97,7 @@ def collect_patterns(
     for pattern_file in iter_yaml_entry_files(patterns_dir):
         try:
             patterns.append(reader.read_yaml(pattern_file))
-        except (StateError, ValueError, TypeError):
+        except (StateError, ValueError, TypeError):  # per-item error handling: skip corrupt pattern files  # noqa: PERF203
             continue
 
     return patterns

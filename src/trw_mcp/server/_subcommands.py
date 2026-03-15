@@ -202,15 +202,17 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
     import urllib.request
 
     url = f"{backend_url.rstrip('/')}/v1/releases"
-    payload = _json.dumps({
-        "version": str(result["version"]),
-        "artifact_url": str(result["path"]),
-        "artifact_checksum": str(result["checksum"]),
-        "artifact_size_bytes": int(str(result["size_bytes"])),
-        "framework_version": _get_framework_version(),
-    }).encode("utf-8")
+    payload = _json.dumps(
+        {
+            "version": str(result["version"]),
+            "artifact_url": str(result["path"]),
+            "artifact_checksum": str(result["checksum"]),
+            "artifact_size_bytes": int(str(result["size_bytes"])),
+            "framework_version": _get_framework_version(),
+        }
+    ).encode("utf-8")
 
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310 — URL comes from CLI --backend-url arg (operator-supplied, not end-user input); HTTPS enforced by deployment
         url,
         data=payload,
         method="POST",
@@ -220,7 +222,7 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — see Request comment above
             data = _json.loads(resp.read().decode("utf-8"))
             print(f"  Published: v{data.get('version', '?')} to {backend_url}")
     except Exception as exc:  # justified: boundary, backend publish API call may fail
@@ -231,6 +233,7 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
 def _get_framework_version() -> str:
     """Extract framework version from bundled FRAMEWORK.md."""
     from trw_mcp.state._helpers import read_framework_version
+
     return read_framework_version()
 
 

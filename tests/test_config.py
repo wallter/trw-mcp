@@ -39,37 +39,27 @@ class TestPlatformConfigDefaults:
 class TestPlatformConfigEnvOverrides:
     """T-CFG-02: Verify env var overrides for new platform/telemetry fields."""
 
-    def test_telemetry_enabled_env_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_telemetry_enabled_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PLATFORM_TELEMETRY_ENABLED", "true")
         config = TRWConfig()
         assert config.platform_telemetry_enabled is True
 
-    def test_update_channel_env_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_update_channel_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_UPDATE_CHANNEL", "lts")
         config = TRWConfig()
         assert config.update_channel == "lts"
 
-    def test_platform_url_env_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_platform_url_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PLATFORM_URL", "https://api.trwframework.com")
         config = TRWConfig()
         assert config.platform_url == "https://api.trwframework.com"
 
-    def test_installation_id_env_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_installation_id_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_INSTALLATION_ID", "anon-abc123")
         config = TRWConfig()
         assert config.installation_id == "anon-abc123"
 
-    def test_telemetry_enabled_false_env_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_telemetry_enabled_false_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PLATFORM_TELEMETRY_ENABLED", "false")
         config = TRWConfig()
         assert config.platform_telemetry_enabled is False
@@ -136,9 +126,7 @@ def config_project(tmp_path: Path) -> Path:
 class TestConfigYamlLoading:
     """T-CFG-04: get_config() loads .trw/config.yaml overrides."""
 
-    def test_config_yaml_values_loaded(
-        self, config_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_config_yaml_values_loaded(self, config_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Config.yaml values are loaded into singleton."""
         config_yaml = config_project / ".trw" / "config.yaml"
         config_yaml.write_text(
@@ -158,9 +146,7 @@ class TestConfigYamlLoading:
         finally:
             _reset_config()
 
-    def test_env_vars_override_config_yaml(
-        self, config_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_vars_override_config_yaml(self, config_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Env vars take priority over config.yaml values."""
         config_yaml = config_project / ".trw" / "config.yaml"
         config_yaml.write_text("task_root: from-yaml\n", encoding="utf-8")
@@ -176,9 +162,7 @@ class TestConfigYamlLoading:
         finally:
             _reset_config()
 
-    def test_missing_config_yaml_falls_back(
-        self, config_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_config_yaml_falls_back(self, config_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing config.yaml gracefully falls back to defaults."""
         # No config.yaml written
         monkeypatch.setattr(
@@ -193,9 +177,7 @@ class TestConfigYamlLoading:
         finally:
             _reset_config()
 
-    def test_corrupt_config_yaml_falls_back(
-        self, config_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_corrupt_config_yaml_falls_back(self, config_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Corrupt config.yaml gracefully falls back to defaults."""
         config_yaml = config_project / ".trw" / "config.yaml"
         config_yaml.write_text("{{{{invalid yaml!!!!", encoding="utf-8")
@@ -210,10 +192,9 @@ class TestConfigYamlLoading:
         finally:
             _reset_config()
 
-    def test_no_project_root_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_project_root_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When resolve_project_root fails, falls back to defaults."""
+
         def _raise() -> Path:
             msg = "Not in a git repo"
             raise FileNotFoundError(msg)
@@ -229,9 +210,7 @@ class TestConfigYamlLoading:
         finally:
             _reset_config()
 
-    def test_unknown_keys_ignored(
-        self, config_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unknown_keys_ignored(self, config_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Unknown config.yaml keys are silently ignored (extra='ignore')."""
         config_yaml = config_project / ".trw" / "config.yaml"
         config_yaml.write_text(
@@ -249,9 +228,7 @@ class TestConfigYamlLoading:
         finally:
             _reset_config()
 
-    def test_none_values_filtered(
-        self, config_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_none_values_filtered(self, config_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Config.yaml entries with null values don't override defaults."""
         config_yaml = config_project / ".trw" / "config.yaml"
         config_yaml.write_text("task_root: null\ndebug: true\n", encoding="utf-8")

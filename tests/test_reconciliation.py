@@ -30,7 +30,6 @@ from trw_mcp.tools._review_helpers import (
     handle_reconcile_mode,
 )
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures and constants
 # ---------------------------------------------------------------------------
@@ -305,7 +304,9 @@ class TestExtractFrMismatches:
         Regression test for P1-1: deleted code should not mask spec drift.
         """
         mismatches = _extract_fr_mismatches(
-            SAMPLE_PRD, "PRD-TEST-001", SAMPLE_DIFF_REMOVED_ONLY,
+            SAMPLE_PRD,
+            "PRD-TEST-001",
+            SAMPLE_DIFF_REMOVED_ONLY,
         )
         # UserValidator and ValidationResult appear only in removed lines,
         # so they should be reported as mismatches
@@ -403,7 +404,11 @@ class TestHandleReconcileMode:
             ),
         ):
             result = handle_reconcile_mode(
-                config, run_dir, "review-2", "2026-03-04T00:00:00Z", ["PRD-TEST-001"],
+                config,
+                run_dir,
+                "review-2",
+                "2026-03-04T00:00:00Z",
+                ["PRD-TEST-001"],
             )
         assert result["verdict"] == "drift_detected"
         mismatches = result["mismatches"]
@@ -427,7 +432,11 @@ class TestHandleReconcileMode:
             ),
         ):
             result = handle_reconcile_mode(
-                config, run_dir, "review-3", "2026-03-04T00:00:00Z", ["PRD-TEST-001"],
+                config,
+                run_dir,
+                "review-3",
+                "2026-03-04T00:00:00Z",
+                ["PRD-TEST-001"],
             )
         assert result["verdict"] == "clean"
         assert result["mismatches"] == []
@@ -449,7 +458,11 @@ class TestHandleReconcileMode:
             ),
         ):
             result = handle_reconcile_mode(
-                config, run_dir, "review-persist", "2026-03-04T00:00:00Z", ["PRD-TEST-001"],
+                config,
+                run_dir,
+                "review-persist",
+                "2026-03-04T00:00:00Z",
+                ["PRD-TEST-001"],
             )
 
         recon_path = run_dir / "meta" / "reconciliation.yaml"
@@ -477,7 +490,11 @@ class TestHandleReconcileMode:
             ),
         ):
             handle_reconcile_mode(
-                config, run_dir, "review-event", "2026-03-04T00:00:00Z", ["PRD-TEST-001"],
+                config,
+                run_dir,
+                "review-event",
+                "2026-03-04T00:00:00Z",
+                ["PRD-TEST-001"],
             )
 
         events_path = run_dir / "meta" / "events.jsonl"
@@ -493,7 +510,11 @@ class TestHandleReconcileMode:
         config = _make_config()
         with patch("trw_mcp.tools.review._get_git_diff", return_value="diff"):
             result = handle_reconcile_mode(
-                config, None, "review-norun", "2026-03-04T00:00:00Z", [],
+                config,
+                None,
+                "review-norun",
+                "2026-03-04T00:00:00Z",
+                [],
             )
         assert result["verdict"] == "clean"
         assert "reconciliation_yaml" not in result
@@ -515,7 +536,11 @@ class TestHandleReconcileMode:
             ),
         ):
             result = handle_reconcile_mode(
-                config, run_dir, "review-miss", "2026-03-04T00:00:00Z", ["PRD-TEST-001"],
+                config,
+                run_dir,
+                "review-miss",
+                "2026-03-04T00:00:00Z",
+                ["PRD-TEST-001"],
             )
         # Should not raise, verdict is clean (no mismatches from missing PRD)
         assert result["verdict"] == "clean"
@@ -538,7 +563,11 @@ class TestHandleReconcileMode:
             ),
         ):
             result = handle_reconcile_mode(
-                config, run_dir, "review-fields", "2026-03-04T00:00:00Z", ["PRD-TEST-001"],
+                config,
+                run_dir,
+                "review-fields",
+                "2026-03-04T00:00:00Z",
+                ["PRD-TEST-001"],
             )
         assert "review_id" in result
         assert "verdict" in result
@@ -559,7 +588,9 @@ class TestTrwReviewReconcileDispatch:
 
     @pytest.mark.unit
     def test_reconcile_mode_dispatches_to_handler(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """mode='reconcile' dispatches to handle_reconcile_mode."""
         from tests._ceremony_helpers import make_ceremony_server
@@ -609,8 +640,7 @@ class TestPhaseGateReconciliation:
         meta = run_d / "meta"
         meta.mkdir(parents=True)
         (meta / "run.yaml").write_text(
-            "run_id: gate-test\nstatus: active\nphase: review\n"
-            "task_name: gate-task\nprd_scope:\n  - PRD-TEST-001\n",
+            "run_id: gate-test\nstatus: active\nphase: review\ntask_name: gate-task\nprd_scope:\n  - PRD-TEST-001\n",
             encoding="utf-8",
         )
         (meta / "events.jsonl").write_text("", encoding="utf-8")
@@ -625,9 +655,7 @@ class TestPhaseGateReconciliation:
             result = check_phase_exit(Phase.REVIEW, run_d, config)
 
         # Should have an info advisory about reconciliation not run
-        recon_failures = [
-            f for f in result.failures if f.field == "spec_reconciliation"
-        ]
+        recon_failures = [f for f in result.failures if f.field == "spec_reconciliation"]
         assert len(recon_failures) >= 1
         info_advisory = [f for f in recon_failures if f.rule == "reconciliation_not_run"]
         assert len(info_advisory) == 1
@@ -667,9 +695,7 @@ class TestPhaseGateReconciliation:
         config = TRWConfig()
         result = check_phase_exit(Phase.REVIEW, run_d, config)
 
-        recon_failures = [
-            f for f in result.failures if f.field == "spec_reconciliation"
-        ]
+        recon_failures = [f for f in result.failures if f.field == "spec_reconciliation"]
         assert len(recon_failures) >= 1
         drift_warning = [f for f in recon_failures if f.rule == "spec_drift_detected"]
         assert len(drift_warning) == 1
@@ -705,9 +731,7 @@ class TestPhaseGateReconciliation:
         config = TRWConfig()
         result = check_phase_exit(Phase.REVIEW, run_d, config)
 
-        recon_failures = [
-            f for f in result.failures if f.field == "spec_reconciliation"
-        ]
+        recon_failures = [f for f in result.failures if f.field == "spec_reconciliation"]
         assert len(recon_failures) == 0
 
     @pytest.mark.unit
@@ -734,7 +758,5 @@ class TestPhaseGateReconciliation:
         ):
             result = check_phase_exit(Phase.REVIEW, run_d, config)
 
-        recon_failures = [
-            f for f in result.failures if f.field == "spec_reconciliation"
-        ]
+        recon_failures = [f for f in result.failures if f.field == "spec_reconciliation"]
         assert len(recon_failures) == 0

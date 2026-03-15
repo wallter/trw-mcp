@@ -12,8 +12,8 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.models.run import PHASE_ORDER, Phase
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.run import PHASE_ORDER, Phase
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()
@@ -62,12 +62,14 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     try:
         from trw_mcp.telemetry.pipeline import TelemetryPipeline
 
-        TelemetryPipeline.get_instance().enqueue({
-            "event_type": "phase_transition",
-            "phase": new_phase.value,
-            "previous_phase": current,
-        })
-    except Exception:  # justified: fail-open, pipeline may not be initialized
+        TelemetryPipeline.get_instance().enqueue(
+            {
+                "event_type": "phase_transition",
+                "phase": new_phase.value,
+                "previous_phase": current,
+            }
+        )
+    except Exception:  # justified: fail-open, pipeline may not be initialized  # noqa: S110
         pass
 
     return True

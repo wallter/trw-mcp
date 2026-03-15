@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import get_tools_sync, make_test_server
-
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.scoring import correlate_recalls, process_outcome, process_outcome_for_event
 from trw_mcp.state.analytics import (
@@ -96,9 +95,7 @@ class TestTrwLearn:
             detail="Detail 2",
         )
 
-        index = reader.read_yaml(
-            tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml"
-        )
+        index = reader.read_yaml(tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml")
         assert index["total_count"] == 2
 
 
@@ -257,9 +254,7 @@ class TestTrwLearnUpdate:
         )
 
         # Index should reflect the updated status
-        index = reader.read_yaml(
-            tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml"
-        )
+        index = reader.read_yaml(tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml")
         # Entry should still be in the index
         assert index["total_count"] >= 1
 
@@ -307,7 +302,8 @@ class TestTrwRecall:
         result = tools["trw_recall"].fn(query="tagged", tags=["python"])
         # Should only find the python-tagged one
         python_results = [
-            entry for entry in result["learnings"]
+            entry
+            for entry in result["learnings"]
             if "python" in (entry.get("tags", []) if isinstance(entry.get("tags"), list) else [])
         ]
         assert len(python_results) >= 1
@@ -327,10 +323,7 @@ class TestTrwRecall:
         )
 
         result = tools["trw_recall"].fn(query="impact learning filter", min_impact=0.5)
-        assert all(
-            float(entry.get("impact", 0)) >= 0.5
-            for entry in result["learnings"]
-        )
+        assert all(float(entry.get("impact", 0)) >= 0.5 for entry in result["learnings"])
 
     def test_multi_word_query_matches_tokens(self, tmp_path: Path) -> None:
         tools = _get_tools()
@@ -404,9 +397,7 @@ class TestTrwClaudeMdSync:
     def test_replaces_existing_trw_section(self, tmp_path: Path) -> None:
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text(
-            "# Project\n\n"
-            "<!-- trw:start -->\nOld content\n<!-- trw:end -->\n\n"
-            "# Other section\n",
+            "# Project\n\n<!-- trw:start -->\nOld content\n<!-- trw:end -->\n\n# Other section\n",
             encoding="utf-8",
         )
 
@@ -450,7 +441,6 @@ class TestTrwClaudeMdSync:
 
     def test_enforces_line_limit(self, tmp_path: Path) -> None:
         """CLAUDE.md content is truncated when exceeding line limit."""
-        import trw_mcp.tools.learning as learn_mod
 
         tools = _get_tools()
 
@@ -470,7 +460,6 @@ class TestTrwClaudeMdSync:
         line_count = len(content.split("\n"))
         # Should be at or below the configured max (200) + 1 for truncation comment
         assert line_count <= get_config().claude_md_max_lines + 1
-
 
     def test_wildcard_returns_all_learnings(self, tmp_path: Path) -> None:
         """Query '*' or empty returns all learnings (filtered by other params)."""
@@ -515,12 +504,7 @@ class TestClaudeMdTemplate:
         trw_dir = tmp_path / _CFG.trw_dir
         templates_dir = trw_dir / _CFG.templates_dir
         templates_dir.mkdir(parents=True)
-        custom = (
-            "<!-- trw:start -->\n"
-            "## Custom Section\n"
-            "{{categorized_learnings}}"
-            "<!-- trw:end -->\n"
-        )
+        custom = "<!-- trw:start -->\n## Custom Section\n{{categorized_learnings}}<!-- trw:end -->\n"
         (templates_dir / "claude_md.md").write_text(custom, encoding="utf-8")
 
         template = load_claude_md_template(trw_dir)
@@ -736,7 +720,9 @@ class TestProgressiveDisclosure:
         """PRD-CORE-061-FR02: rendered auto-gen block <=80 lines."""
         tools = _get_tools()
         tools["trw_learn"].fn(
-            summary="Line count test", detail="Testing line count", impact=0.9,
+            summary="Line count test",
+            detail="Testing line count",
+            impact=0.9,
         )
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
@@ -767,7 +753,9 @@ class TestProgressiveDisclosure:
         """PRD-CORE-061-FR02: rendered output contains /trw-ceremony-guide."""
         tools = _get_tools()
         tools["trw_learn"].fn(
-            summary="Skill ref test", detail="Testing", impact=0.9,
+            summary="Skill ref test",
+            detail="Testing",
+            impact=0.9,
         )
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
@@ -778,7 +766,9 @@ class TestProgressiveDisclosure:
         """PRD-CORE-061-FR02: rendered output does NOT contain tool table."""
         tools = _get_tools()
         tools["trw_learn"].fn(
-            summary="Table test", detail="Testing", impact=0.9,
+            summary="Table test",
+            detail="Testing",
+            impact=0.9,
         )
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
@@ -789,7 +779,9 @@ class TestProgressiveDisclosure:
         """PRD-CORE-061-FR02: rendered output does NOT contain rationalization."""
         tools = _get_tools()
         tools["trw_learn"].fn(
-            summary="Watchlist test", detail="Testing", impact=0.9,
+            summary="Watchlist test",
+            detail="Testing",
+            impact=0.9,
         )
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
@@ -800,9 +792,12 @@ class TestProgressiveDisclosure:
     def test_auto_gen_no_orphan_headers(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR01: no orphan ## TRW ... (Auto-Generated) headers."""
         import re
+
         tools = _get_tools()
         tools["trw_learn"].fn(
-            summary="Header test", detail="Testing", impact=0.9,
+            summary="Header test",
+            detail="Testing",
+            impact=0.9,
         )
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
@@ -815,7 +810,9 @@ class TestProgressiveDisclosure:
         matches = re.findall(orphan_pattern, auto_gen)
         assert len(matches) == 0, f"Found orphan headers: {matches}"
 
-    def test_max_auto_lines_gate_raises_error(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_max_auto_lines_gate_raises_error(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """PRD-CORE-061-FR04: StateError raised when auto-gen exceeds limit."""
         from trw_mcp.clients.llm import LLMClient
         from trw_mcp.exceptions import StateError
@@ -830,7 +827,9 @@ class TestProgressiveDisclosure:
         """PRD-CORE-061-FR04: exactly max_auto_lines succeeds."""
         tools = _get_tools()
         tools["trw_learn"].fn(
-            summary="Gate pass test", detail="Testing", impact=0.9,
+            summary="Gate pass test",
+            detail="Testing",
+            impact=0.9,
         )
         # Default max_auto_lines=80, our output should be well under
         result = tools["trw_claude_md_sync"].fn(scope="root")
@@ -864,19 +863,13 @@ class TestProgressiveDisclosure:
 
     def test_session_start_hook_contains_behavioral_protocol_header(self) -> None:
         """PRD-CORE-061-FR03: session-start.sh has formal protocol header."""
-        hook_path = (
-            Path(__file__).parent.parent
-            / "src" / "trw_mcp" / "data" / "hooks" / "session-start.sh"
-        )
+        hook_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "session-start.sh"
         content = hook_path.read_text(encoding="utf-8")
         assert "## TRW Behavioral Protocol" in content
 
     def test_session_start_rigid_line_count(self) -> None:
         """PRD-CORE-062-FR04: session-start.sh RIGID line count is 1."""
-        hook_path = (
-            Path(__file__).parent.parent
-            / "src" / "trw_mcp" / "data" / "hooks" / "session-start.sh"
-        )
+        hook_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "session-start.sh"
         content = hook_path.read_text(encoding="utf-8")
         rigid_count = content.count("RIGID")
         assert rigid_count == 1, f"RIGID appears {rigid_count} times, expected 1"
@@ -884,34 +877,28 @@ class TestProgressiveDisclosure:
     def test_skill_exists_in_data_directory(self) -> None:
         """PRD-CORE-061-FR01: trw-ceremony-guide skill exists."""
         skill_path = (
-            Path(__file__).parent.parent
-            / "src" / "trw_mcp" / "data" / "skills"
-            / "trw-ceremony-guide" / "SKILL.md"
+            Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "skills" / "trw-ceremony-guide" / "SKILL.md"
         )
         assert skill_path.exists()
 
     def test_skill_has_minimum_table_rows(self) -> None:
         """PRD-CORE-061-FR01: skill contains >= 12 table rows."""
         skill_path = (
-            Path(__file__).parent.parent
-            / "src" / "trw_mcp" / "data" / "skills"
-            / "trw-ceremony-guide" / "SKILL.md"
+            Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "skills" / "trw-ceremony-guide" / "SKILL.md"
         )
         content = skill_path.read_text(encoding="utf-8")
         # Count table rows (lines starting with | that aren't headers/separators)
         table_rows = [
-            line for line in content.split("\n")
-            if line.startswith("| ") and "---" not in line
-            and "Phase | Tool" not in line
+            line
+            for line in content.split("\n")
+            if line.startswith("| ") and "---" not in line and "Phase | Tool" not in line
         ]
         assert len(table_rows) >= 12, f"Only {len(table_rows)} table rows, expected >= 12"
 
     def test_skill_frontmatter_user_invocable(self) -> None:
         """PRD-CORE-061-FR01: skill has user-invocable: true frontmatter."""
         skill_path = (
-            Path(__file__).parent.parent
-            / "src" / "trw_mcp" / "data" / "skills"
-            / "trw-ceremony-guide" / "SKILL.md"
+            Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "skills" / "trw-ceremony-guide" / "SKILL.md"
         )
         content = skill_path.read_text(encoding="utf-8")
         assert "user-invocable: true" in content
@@ -996,9 +983,7 @@ class TestTrwLearnAnalytics:
             impact=0.5,
         )
 
-        analytics_path = (
-            tmp_path / _CFG.trw_dir / _CFG.context_dir / "analytics.yaml"
-        )
+        analytics_path = tmp_path / _CFG.trw_dir / _CFG.context_dir / "analytics.yaml"
         if analytics_path.exists():
             data = reader.read_yaml(analytics_path)
             assert int(str(data.get("total_learnings", 0))) >= 2
@@ -1098,10 +1083,7 @@ class TestTrwRecallAccessTracking:
 
         tools["trw_recall"].fn(query="zzz_nonexistent_xyz")
 
-        receipt_path = (
-            tmp_path / _CFG.trw_dir / _CFG.learnings_dir
-            / _CFG.receipts_dir / "recall_log.jsonl"
-        )
+        receipt_path = tmp_path / _CFG.trw_dir / _CFG.learnings_dir / _CFG.receipts_dir / "recall_log.jsonl"
         # Receipt should still be logged (with empty matched_ids)
         if receipt_path.exists():
             lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
@@ -1135,16 +1117,21 @@ class TestTrwRecallAccessTracking:
 
         # Update the index
         index_path = tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml"
-        writer.write_yaml(index_path, {
-            "entries": [{
-                "id": "L-oldentry1",
-                "summary": "Legacy entry without access fields",
-                "tags": ["legacy"],
-                "impact": 0.7,
-                "created": "2026-01-01",
-            }],
-            "total_count": 1,
-        })
+        writer.write_yaml(
+            index_path,
+            {
+                "entries": [
+                    {
+                        "id": "L-oldentry1",
+                        "summary": "Legacy entry without access fields",
+                        "tags": ["legacy"],
+                        "impact": 0.7,
+                        "created": "2026-01-01",
+                    }
+                ],
+                "total_count": 1,
+            },
+        )
 
         # Also store the legacy entry in SQLite so the adapter can find and track it
         trw_dir = tmp_path / _CFG.trw_dir
@@ -1173,10 +1160,14 @@ class TestTrwRecallAccessTracking:
 
         tools = _get_tools()
         r1 = tools["trw_learn"].fn(
-            summary="Wildcard access test one", detail="First", impact=0.8,
+            summary="Wildcard access test one",
+            detail="First",
+            impact=0.8,
         )
         r2 = tools["trw_learn"].fn(
-            summary="Wildcard access test two", detail="Second", impact=0.8,
+            summary="Wildcard access test two",
+            detail="Second",
+            impact=0.8,
         )
 
         tools["trw_recall"].fn(query="*")
@@ -1263,7 +1254,8 @@ class TestRecallCompactMode:
         )
 
         result = tools["trw_recall"].fn(
-            query="compact strip test", compact=True,
+            query="compact strip test",
+            compact=True,
         )
         assert len(result["learnings"]) >= 1
         entry = result["learnings"][0]
@@ -1349,7 +1341,8 @@ class TestRecallCompactMode:
             )
 
         result = tools["trw_recall"].fn(
-            query="unlimited test entry", max_results=0,
+            query="unlimited test entry",
+            max_results=0,
         )
         assert len(result["learnings"]) == 10
 
@@ -1364,7 +1357,8 @@ class TestRecallCompactMode:
             )
 
         result = tools["trw_recall"].fn(
-            query="total avail test entry", max_results=3,
+            query="total avail test entry",
+            max_results=3,
         )
         assert len(result["learnings"]) == 3
         assert result["total_available"] == 10
@@ -1451,7 +1445,10 @@ class TestOutcomeCorrelation:
                 break
 
     def test_process_outcome_caps_history(
-        self, tmp_path: Path, reader: FileStateReader, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """outcome_history is capped to learning_outcome_history_cap."""
         # Set cap to 3 for testing — process_outcome reads get_config() in _correlation
@@ -1490,7 +1487,9 @@ class TestOutcomeCorrelation:
         assert updated == []
 
     def test_correlate_recalls_time_window(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Only receipts within the correlation window are included."""
         trw_dir = tmp_path / _CFG.trw_dir
@@ -1549,7 +1548,7 @@ class TestOutcomeCorrelation:
         )
 
         results = correlate_recalls(trw_dir, window_minutes=30)
-        discount_map = {lid: d for lid, d in results}
+        discount_map = dict(results)
         assert discount_map["L-new"] > discount_map["L-older"]
         assert discount_map["L-new"] > 0.9  # nearly full credit
         assert discount_map["L-older"] >= 0.5  # at least minimum
@@ -1756,12 +1755,15 @@ class TestBehavioralProtocol:
         # Create protocol file
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
-        writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
-            "directives": [
-                "Execute trw_recall at session start",
-                "Read FRAMEWORK.md after compaction",
-            ],
-        })
+        writer.write_yaml(
+            context_dir / "behavioral_protocol.yaml",
+            {
+                "directives": [
+                    "Execute trw_recall at session start",
+                    "Read FRAMEWORK.md after compaction",
+                ],
+            },
+        )
 
         result = render_behavioral_protocol()
         assert "- Execute trw_recall at session start" in result
@@ -1776,9 +1778,12 @@ class TestBehavioralProtocol:
         """Respects _BEHAVIORAL_PROTOCOL_CAP of 12 directives."""
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
-        writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
-            "directives": [f"Directive {i}" for i in range(20)],
-        })
+        writer.write_yaml(
+            context_dir / "behavioral_protocol.yaml",
+            {
+                "directives": [f"Directive {i}" for i in range(20)],
+            },
+        )
 
         result = render_behavioral_protocol()
         # Should have exactly 12 directive lines
@@ -1786,7 +1791,8 @@ class TestBehavioralProtocol:
         assert len(directive_lines) == 12
 
     def test_render_adherence_includes_behavioral_mandate_tag(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """behavioral-mandate tag is recognized by _render_adherence."""
         entries = [
@@ -1802,7 +1808,8 @@ class TestBehavioralProtocol:
         assert "Execute trw_recall at every session start" in result
 
     def test_render_adherence_behavioral_mandate_uses_summary(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """behavioral-mandate entries promote summary, not detail sentences."""
         entries = [
@@ -1823,12 +1830,15 @@ class TestBehavioralProtocol:
         """Full trw_claude_md_sync includes quick ref header but not full directives."""
         context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
         writer.ensure_dir(context_dir)
-        writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
-            "directives": [
-                "Execute trw_recall at session start",
-                "Execute trw_reflect after tasks",
-            ],
-        })
+        writer.write_yaml(
+            context_dir / "behavioral_protocol.yaml",
+            {
+                "directives": [
+                    "Execute trw_recall at session start",
+                    "Execute trw_reflect after tasks",
+                ],
+            },
+        )
 
         tools = _get_tools()
         tools["trw_learn"].fn(
@@ -1856,13 +1866,18 @@ class TestBehavioralProtocol:
 class TestRecallSearch:
     """Unit tests for state.recall_search functions."""
 
-    def test_search_patterns_finds_matching(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_search_patterns_finds_matching(
+        self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """search_patterns returns patterns matching query."""
         patterns_dir = tmp_project / ".trw" / "patterns"
-        writer.write_yaml(patterns_dir / "p1.yaml", {
-            "name": "research-map-reduce",
-            "description": "3-wave research pattern",
-        })
+        writer.write_yaml(
+            patterns_dir / "p1.yaml",
+            {
+                "name": "research-map-reduce",
+                "description": "3-wave research pattern",
+            },
+        )
         matches = search_patterns(patterns_dir, ["research"], reader)
         assert len(matches) == 1
 
@@ -1919,7 +1934,8 @@ class TestAnalyticsExtraction:
         assert len(list(entries_dir.glob("*.yaml"))) >= 1
 
     def test_extract_learnings_from_llm_filters_telemetry_noise(
-        self, tmp_project: Path,
+        self,
+        tmp_project: Path,
     ) -> None:
         """PRD-FIX-021: LLM-generated telemetry noise must be suppressed."""
         trw_dir = tmp_project / ".trw"
@@ -1937,20 +1953,34 @@ class TestAnalyticsExtraction:
 class TestClaudeMdCollection:
     """Unit tests for claude_md collection helpers."""
 
-    def test_collect_promotable_learnings(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_collect_promotable_learnings(
+        self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """collect_promotable_learnings returns high-impact active entries."""
         config = TRWConfig()
         entries_dir = tmp_project / ".trw" / "learnings" / "entries"
-        writer.write_yaml(entries_dir / "high.yaml", {
-            "id": "L-high", "summary": "important",
-            "status": "active", "impact": 0.9,
-            "q_observations": 0, "q_value": 0.5,
-        })
-        writer.write_yaml(entries_dir / "low.yaml", {
-            "id": "L-low", "summary": "trivial",
-            "status": "active", "impact": 0.2,
-            "q_observations": 0, "q_value": 0.1,
-        })
+        writer.write_yaml(
+            entries_dir / "high.yaml",
+            {
+                "id": "L-high",
+                "summary": "important",
+                "status": "active",
+                "impact": 0.9,
+                "q_observations": 0,
+                "q_value": 0.5,
+            },
+        )
+        writer.write_yaml(
+            entries_dir / "low.yaml",
+            {
+                "id": "L-low",
+                "summary": "trivial",
+                "status": "active",
+                "impact": 0.2,
+                "q_observations": 0,
+                "q_value": 0.1,
+            },
+        )
         result = collect_promotable_learnings(tmp_project / ".trw", config, reader)
         assert any(d["id"] == "L-high" for d in result)
         assert not any(d["id"] == "L-low" for d in result)
@@ -1984,7 +2014,10 @@ class TestToolDelegationIntact:
         srv = make_test_server("learning")
         tool_names = set(get_tools_sync(srv).keys())
         expected = {
-            "trw_learn", "trw_learn_update", "trw_recall", "trw_claude_md_sync",
+            "trw_learn",
+            "trw_learn_update",
+            "trw_recall",
+            "trw_claude_md_sync",
         }
         assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
         assert len(tool_names) == 4, f"Expected 4 tools, got {len(tool_names)}: {tool_names}"
@@ -2056,7 +2089,8 @@ class TestSuccessPatternDetection:
         assert len(patterns) >= 1
 
         shard_pattern = next(
-            (p for p in patterns if p["event_type"] == "shard_complete"), None,
+            (p for p in patterns if p["event_type"] == "shard_complete"),
+            None,
         )
         assert shard_pattern is not None
         assert shard_pattern["count"] == "3"
@@ -2091,9 +2125,7 @@ class TestSuccessPatternDetection:
         from trw_mcp.models.config import TRWConfig
 
         config = TRWConfig()
-        events: list[dict[str, Any]] = []
-        for i in range(10):
-            events.append({"event": f"success_type_{i}_complete"})
+        events: list[dict[str, Any]] = [{"event": f"success_type_{i}_complete"} for i in range(10)]
 
         patterns = find_success_patterns(events)
         assert len(patterns) <= config.reflect_max_success_patterns
@@ -2104,9 +2136,7 @@ class TestTrwLearnDistributionWarning:
 
     def _write_entry(self, entries_dir: Path, fname: str, impact: float, status: str = "active") -> None:
         entries_dir.mkdir(parents=True, exist_ok=True)
-        (entries_dir / fname).write_text(
-            f"id: {fname}\nimpact: {impact}\nstatus: {status}\n"
-        )
+        (entries_dir / fname).write_text(f"id: {fname}\nimpact: {impact}\nstatus: {status}\n")
 
     def test_learn_distribution_warning_critical_tier(self, tmp_path: Path) -> None:
         """Warning fires when critical tier exceeds 5% cap."""
@@ -2224,7 +2254,9 @@ class TestBayesianCalibrationWiring:
                 break
 
     def test_calibration_failure_falls_back_to_raw_impact(
-        self, tmp_path: Path, reader: FileStateReader,
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
     ) -> None:
         """If Bayesian calibration raises, raw impact is used (fail-open)."""
         tools = _get_tools()
@@ -2276,9 +2308,7 @@ class TestRemoteRecallWiring:
             result = tools["trw_recall"].fn(query="testing")
 
         # Remote learnings should be included
-        all_summaries = [
-            str(e.get("summary", "")) for e in result.get("learnings", [])
-        ]
+        all_summaries = [str(e.get("summary", "")) for e in result.get("learnings", [])]
         assert any("[shared]" in s for s in all_summaries)
 
     def test_remote_recall_failure_is_fail_open(self, tmp_path: Path) -> None:
@@ -2305,7 +2335,8 @@ class TestRecallTrackingWiring:
     """Verify record_recall() is called in trw_recall for matched learnings."""
 
     def test_record_recall_called_for_each_matched_learning(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """record_recall is called once per matched learning ID."""
         tools = _get_tools()
@@ -2348,18 +2379,21 @@ class TestRecallTrackingWiring:
 # QUAL-018 FR03: Tag inference tests
 # ---------------------------------------------------------------------------
 
+
 class TestInferTopicTags:
     """QUAL-018 FR03: Tag inference from summary keywords."""
 
     def test_infers_testing_tag(self) -> None:
         """Keywords like 'pytest' and 'fixture' map to 'testing'."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("pytest fixture fails on Windows", [])
         assert "testing" in tags
 
     def test_infers_multiple_tags(self) -> None:
         """Multiple distinct topic keywords produce multiple tags (up to 3)."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("API endpoint security auth token", [])
         assert len(tags) <= 3
         assert "api" in tags
@@ -2368,12 +2402,14 @@ class TestInferTopicTags:
     def test_no_duplicates_with_existing(self) -> None:
         """Tags already present in existing_tags are not re-inferred."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("pytest coverage report", ["testing"])
         assert "testing" not in tags
 
     def test_case_insensitive_dedup(self) -> None:
         """Dedup is case-insensitive: existing 'Testing' suppresses 'testing'."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("Test coverage", ["Testing"])
         # 'test' maps to 'testing', which matches existing 'Testing' (case-insensitive)
         assert "testing" not in tags
@@ -2381,24 +2417,28 @@ class TestInferTopicTags:
     def test_max_three_tags(self) -> None:
         """At most 3 tags are inferred regardless of how many keywords match."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("test api security deploy config debug database", [])
         assert len(tags) <= 3
 
     def test_empty_summary(self) -> None:
         """Empty summary produces no tags."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("", [])
         assert tags == []
 
     def test_no_matching_keywords(self) -> None:
         """Summary with no recognized keywords produces no tags."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("xyzzy foobar quux", [])
         assert tags == []
 
     def test_graceful_on_none_existing(self) -> None:
         """None for existing_tags is handled gracefully."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("test something", None)
         assert isinstance(tags, list)
         assert "testing" in tags
@@ -2406,6 +2446,7 @@ class TestInferTopicTags:
     def test_database_keywords(self) -> None:
         """Database-related keywords map to 'database' tag."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("sqlite migration query performance", [])
         assert "database" in tags
         assert "performance" in tags
@@ -2413,6 +2454,7 @@ class TestInferTopicTags:
     def test_hyphenated_and_slashed_tokens(self) -> None:
         """Tokens separated by hyphens, underscores, and slashes are split."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("api-endpoint/security_auth", [])
         assert "api" in tags
         assert "security" in tags
@@ -2420,24 +2462,28 @@ class TestInferTopicTags:
     def test_no_duplicate_same_tag_from_multiple_keywords(self) -> None:
         """Multiple keywords mapping to same tag produce only one instance (FR05)."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("test tests pytest coverage", [])
         assert tags.count("testing") == 1
 
     def test_documentation_keywords(self) -> None:
         """Documentation keywords are inferred correctly."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("update prd readme docs", [])
         assert "documentation" in tags
 
     def test_pricing_keywords(self) -> None:
         """Cost/pricing keywords map to 'pricing' tag (PRD acceptance example)."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("cost_tracker renamed", ["gotcha"])
         assert "pricing" in tags
 
     def test_rate_limiting_keywords(self) -> None:
         """Rate/limit keywords map to 'rate-limiting' tag (PRD acceptance example)."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         tags = infer_topic_tags("api rate_limit exceeded", [])
         assert "api" in tags
         assert "rate-limiting" in tags
@@ -2445,6 +2491,7 @@ class TestInferTopicTags:
     def test_exception_safety(self) -> None:
         """Non-string or pathological input returns empty list, never raises."""
         from trw_mcp.state.analytics import infer_topic_tags
+
         # type: ignore intentional — testing exception safety
         assert infer_topic_tags(None, []) == []  # type: ignore[arg-type]
         assert infer_topic_tags(123, []) == []  # type: ignore[arg-type]
@@ -2499,6 +2546,7 @@ class TestTagInferenceIntegration:
 # QUAL-018 FR02: Marker-aware truncation tests
 # ---------------------------------------------------------------------------
 
+
 class TestMarkerAwareTruncation:
     """QUAL-018 FR02: Marker-aware truncation preserves TRW section."""
 
@@ -2509,18 +2557,13 @@ class TestMarkerAwareTruncation:
             TRW_MARKER_START,
             merge_trw_section,
         )
+
         target = tmp_path / "CLAUDE.md"
         # 200 lines of user content
         user_content = "\n".join(f"# User line {i}" for i in range(200)) + "\n"
         target.write_text(user_content, encoding="utf-8")
 
-        trw_section = (
-            f"\n{TRW_MARKER_START}\n"
-            "## TRW Auto\n"
-            "- learning alpha\n"
-            "- learning beta\n"
-            f"{TRW_MARKER_END}\n"
-        )
+        trw_section = f"\n{TRW_MARKER_START}\n## TRW Auto\n- learning alpha\n- learning beta\n{TRW_MARKER_END}\n"
         merge_trw_section(target, trw_section, max_lines=50)
 
         content = target.read_text(encoding="utf-8")
@@ -2537,6 +2580,7 @@ class TestMarkerAwareTruncation:
     def test_simple_truncation_fallback(self, tmp_path: Path) -> None:
         """Without TRW markers, truncation falls back to simple line slice."""
         from trw_mcp.state.claude_md import merge_trw_section
+
         target = tmp_path / "CLAUDE.md"
         content = "\n".join(f"# Line {i}" for i in range(200)) + "\n"
         target.write_text(content, encoding="utf-8")
@@ -2556,16 +2600,12 @@ class TestMarkerAwareTruncation:
             TRW_MARKER_START,
             merge_trw_section,
         )
+
         target = tmp_path / "CLAUDE.md"
         user_content = "# Short file\n\nSome content.\n"
         target.write_text(user_content, encoding="utf-8")
 
-        trw_section = (
-            f"\n{TRW_MARKER_START}\n"
-            "## TRW\n"
-            "- item\n"
-            f"{TRW_MARKER_END}\n"
-        )
+        trw_section = f"\n{TRW_MARKER_START}\n## TRW\n- item\n{TRW_MARKER_END}\n"
         merge_trw_section(target, trw_section, max_lines=500)
 
         content = target.read_text(encoding="utf-8")
@@ -2613,6 +2653,7 @@ class TestAutoObsoleteOnCompendium:
 
         # Verify both source entries are now obsolete
         from trw_mcp.state.memory_adapter import recall_learnings
+
         all_entries = recall_learnings(
             tmp_path / _CFG.trw_dir,
             query="*",
@@ -2646,6 +2687,7 @@ class TestAutoObsoleteOnCompendium:
 
         # First learning should still be active
         from trw_mcp.state.memory_adapter import recall_learnings
+
         active_entries = recall_learnings(
             tmp_path / _CFG.trw_dir,
             query="regular",
@@ -2687,6 +2729,7 @@ class TestPatternTagAutoSuggestion:
         """
         from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.memory_adapter import recall_learnings
+
         trw_dir = resolve_trw_dir()
         results = recall_learnings(trw_dir, query="*", max_results=0, compact=False)
         for entry in results:

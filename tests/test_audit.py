@@ -25,6 +25,7 @@ _reader = FileStateReader()
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_entry(
     entries_dir: Path,
     *,
@@ -40,16 +41,19 @@ def _make_entry(
     entry_id = f"L-{uuid.uuid4().hex[:8]}"
     slug = summary.lower().replace(" ", "-")[:40]
     filename = f"2026-02-21-{slug}-{uuid.uuid4().hex[:6]}.yaml"
-    _writer.write_yaml(entries_dir / filename, {
-        "id": entry_id,
-        "summary": summary,
-        "detail": f"Detail for: {summary}",
-        "impact": impact,
-        "status": status,
-        "tags": tags or ["test"],
-        "source_type": source_type,
-        "created": "2026-02-21T00:00:00Z",
-    })
+    _writer.write_yaml(
+        entries_dir / filename,
+        {
+            "id": entry_id,
+            "summary": summary,
+            "detail": f"Detail for: {summary}",
+            "impact": impact,
+            "status": status,
+            "tags": tags or ["test"],
+            "source_type": source_type,
+            "created": "2026-02-21T00:00:00Z",
+        },
+    )
 
 
 def _setup_project(tmp_path: Path) -> Path:

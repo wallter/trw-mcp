@@ -6,7 +6,7 @@ reflection pipeline from tool registration.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
@@ -225,9 +225,7 @@ def _build_what_worked(
     success_patterns: list[dict[str, str]],
 ) -> list[str]:
     """Build what_worked list from phase transitions and success patterns."""
-    return [str(e.get("event")) for e in phase_transitions] + [
-        p["summary"] for p in success_patterns
-    ]
+    return [str(e.get("event")) for e in phase_transitions] + [p["summary"] for p in success_patterns]
 
 
 def _build_what_failed(error_events: list[dict[str, object]]) -> list[str]:
@@ -261,16 +259,19 @@ def persist_reflection(
     events = FileEventLogger(writer)
 
     reflection_path = (
-        trw_dir / config.reflections_dir
-        / f"{date.today().isoformat()}-{reflection.id}.yaml"
+        trw_dir / config.reflections_dir / f"{datetime.now(tz=timezone.utc).date().isoformat()}-{reflection.id}.yaml"
     )
     writer.write_yaml(reflection_path, model_to_dict(reflection))
 
     if run_path:
         run_events_path = Path(run_path).resolve() / "meta" / "events.jsonl"
         if run_events_path.parent.exists():
-            events.log_event(run_events_path, "reflection_complete", {
-                "reflection_id": reflection.id,
-                "scope": scope,
-                "learnings_produced": learnings_count,
-            })
+            events.log_event(
+                run_events_path,
+                "reflection_complete",
+                {
+                    "reflection_id": reflection.id,
+                    "scope": scope,
+                    "learnings_produced": learnings_count,
+                },
+            )

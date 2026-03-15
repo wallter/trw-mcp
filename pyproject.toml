@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.19.0"
+version = "0.19.2"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "CC-BY-NC-SA-4.0"
@@ -50,6 +50,10 @@ dev = [
     "hypothesis>=6.0.0",
     "sqlite-vec>=0.1.0",
     "rank-bm25>=0.2.0",
+    "ruff>=0.15.0",
+    "pip-audit>=2.7.0",
+    "vulture>=2.11",
+    "deptry>=0.21.0",
 ]
 ai = [
     "anthropic>=0.40.0",
@@ -76,6 +80,7 @@ typeCheckingMode = "standard"
 [tool.ruff]
 target-version = "py310"
 line-length = 120
+exclude = ["scripts/install-trw.template.py", "scripts/build_installer.py"]
 
 [tool.ruff.lint]
 select = [
@@ -93,6 +98,14 @@ select = [
     "PT",       # flake8-pytest-style: fixture/assert/exception style
     "TC",       # flake8-type-checking: move type-only imports to TYPE_CHECKING
     "RUF",      # Ruff-native: mutable ClassVar, unused noqa
+    "C4",       # flake8-comprehensions: unnecessary list/dict comprehension
+    "PERF",     # performance anti-patterns
+    "G",        # flake8-logging-format: logging format strings
+    "S",        # bandit: security checks
+    "DTZ",      # flake8-datetimez: timezone-aware datetime
+    "FURB",     # refurb: modern Python idioms
+    "C901",     # McCabe complexity
+    "ANN",      # flake8-annotations: type annotations
 ]
 ignore = [
     "E501",     # line too long — handled by line-length setting
@@ -105,18 +118,29 @@ ignore = [
     "TC002",    # third-party imports used at runtime — not type-checking-only
     "TC003",    # stdlib imports used at runtime — not type-checking-only
     "B008",     # function calls in defaults — FastMCP/Pydantic patterns use this idiomatically
+    "ISC001",   # conflicts with formatter
+    "ANN101",   # deprecated: self type annotation
+    "ANN102",   # deprecated: cls type annotation
 ]
 fixable = ["F401", "B007", "B013", "B014", "UP", "I", "PIE790", "TC", "RUF100"]
 unfixable = ["F841"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["PT", "TRY", "SIM", "B018", "RUF012", "F841", "E741", "B017", "RUF059", "B905", "UP031", "RUF009", "RUF015", "B009", "E402", "ASYNC240", "RET501"]
+"tests/**/*.py" = ["PT", "TRY", "SIM", "B018", "RUF012", "F841", "E741", "B017", "RUF059", "B905", "UP031", "RUF009", "RUF015", "B009", "E402", "ASYNC240", "RET501", "ANN", "S101", "S", "G"]
+"tests/test_scoring_properties.py" = ["DTZ001"]  # hypothesis st.datetimes() requires naive bounds when timezones= is provided
 "**/__init__.py" = ["F401"]
 "**/conftest.py" = ["PT"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["trw_mcp"]
 split-on-trailing-comma = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.mypy]
 strict = true

@@ -32,27 +32,101 @@ PHASE_DESCRIPTIONS: list[tuple[str, str]] = [
 
 # 11 lifecycle-critical tools in execution order
 CEREMONY_TOOLS: list[CeremonyTool] = [
-    CeremonyTool("Start", "trw_session_start", "At session start \u2014 loads learnings + run state (pass query for focused recall)", "Recall learnings + check run status", "trw_session_start(query='task domain')"),
-    CeremonyTool("Start", "trw_recall", "Quick tasks \u2014 retrieves relevant prior learnings", "Search learnings by query", "trw_recall('*', min_impact=0.7)"),
-    CeremonyTool("Start", "trw_status", "When resuming \u2014 shows phase, progress, next steps", "Show run state and phase", "trw_status()"),
-    CeremonyTool("RESEARCH", "trw_init", "New tasks \u2014 creates run directory for tracking", "Bootstrap run directory + events", "trw_init(task_name='...')"),
-    CeremonyTool("Any", "trw_learn", "On errors/discoveries \u2014 saves for future sessions", "Record learning entry", "trw_learn(summary='...', impact=0.8)"),
-    CeremonyTool("Any", "trw_checkpoint", "After milestones \u2014 preserves progress across compactions", "Atomic state snapshot", "trw_checkpoint(message='...')"),
-    CeremonyTool("PLAN", "trw_prd_create", "When defining requirements", "Generate AARE-F PRD", "trw_prd_create(input_text='...')"),
-    CeremonyTool("PLAN", "trw_prd_validate", "Before implementation", "PRD quality gate", "trw_prd_validate(prd_path='...')"),
-    CeremonyTool("VALIDATE", "trw_build_check", "After implementation \u2014 runs tests and type-check, verifies integration", "Run tests + type-check", "trw_build_check(scope='full')"),
-    CeremonyTool("REVIEW", "review diff", "After VALIDATE \u2014 check quality (DRY/KISS/SOLID), fix gaps, record learnings", "Review diff, fix incomplete integrations", "Read diff, fix gaps, trw_learn(summary='...')"),
-    CeremonyTool("DELIVER", "trw_claude_md_sync", "At delivery \u2014 promotes learnings to CLAUDE.md", "Promote learnings to CLAUDE.md", "trw_claude_md_sync()"),
-    CeremonyTool("DELIVER", "trw_deliver", "At task completion \u2014 persists everything in one call", "reflect+sync+checkpoint+index", "trw_deliver()"),
+    CeremonyTool(
+        "Start",
+        "trw_session_start",
+        "At session start \u2014 loads learnings + run state (pass query for focused recall)",
+        "Recall learnings + check run status",
+        "trw_session_start(query='task domain')",
+    ),
+    CeremonyTool(
+        "Start",
+        "trw_recall",
+        "Quick tasks \u2014 retrieves relevant prior learnings",
+        "Search learnings by query",
+        "trw_recall('*', min_impact=0.7)",
+    ),
+    CeremonyTool(
+        "Start",
+        "trw_status",
+        "When resuming \u2014 shows phase, progress, next steps",
+        "Show run state and phase",
+        "trw_status()",
+    ),
+    CeremonyTool(
+        "RESEARCH",
+        "trw_init",
+        "New tasks \u2014 creates run directory for tracking",
+        "Bootstrap run directory + events",
+        "trw_init(task_name='...')",
+    ),
+    CeremonyTool(
+        "Any",
+        "trw_learn",
+        "On errors/discoveries \u2014 saves for future sessions",
+        "Record learning entry",
+        "trw_learn(summary='...', impact=0.8)",
+    ),
+    CeremonyTool(
+        "Any",
+        "trw_checkpoint",
+        "After milestones \u2014 preserves progress across compactions",
+        "Atomic state snapshot",
+        "trw_checkpoint(message='...')",
+    ),
+    CeremonyTool(
+        "PLAN",
+        "trw_prd_create",
+        "When defining requirements",
+        "Generate AARE-F PRD",
+        "trw_prd_create(input_text='...')",
+    ),
+    CeremonyTool(
+        "PLAN", "trw_prd_validate", "Before implementation", "PRD quality gate", "trw_prd_validate(prd_path='...')"
+    ),
+    CeremonyTool(
+        "VALIDATE",
+        "trw_build_check",
+        "After implementation \u2014 runs tests and type-check, verifies integration",
+        "Run tests + type-check",
+        "trw_build_check(scope='full')",
+    ),
+    CeremonyTool(
+        "REVIEW",
+        "review diff",
+        "After VALIDATE \u2014 check quality (DRY/KISS/SOLID), fix gaps, record learnings",
+        "Review diff, fix incomplete integrations",
+        "Read diff, fix gaps, trw_learn(summary='...')",
+    ),
+    CeremonyTool(
+        "DELIVER",
+        "trw_claude_md_sync",
+        "At delivery \u2014 promotes learnings to CLAUDE.md",
+        "Promote learnings to CLAUDE.md",
+        "trw_claude_md_sync()",
+    ),
+    CeremonyTool(
+        "DELIVER",
+        "trw_deliver",
+        "At task completion \u2014 persists everything in one call",
+        "reflect+sync+checkpoint+index",
+        "trw_deliver()",
+    ),
 ]
 
 
 _ARCH_SKIP_KEYS = frozenset({"notes"})
 _CONV_SKIP_KEYS = frozenset({"notes", "test_patterns"})
 
-_ADHERENCE_TAGS = frozenset({
-    "compliance", "process", "framework", "self-audit", "behavioral-mandate",
-})
+_ADHERENCE_TAGS = frozenset(
+    {
+        "compliance",
+        "process",
+        "framework",
+        "self-audit",
+        "behavioral-mandate",
+    }
+)
 _ADHERENCE_KEYWORDS = ("must", "should", "call ", "never", "always")
 _ADHERENCE_MAX_ENTRIES = 8
 _ADHERENCE_MIN_LENGTH = 20
@@ -155,8 +229,7 @@ def render_categorized_learnings(
     for cat_name, entries in categories.items():
         if entries:
             lines.append(f"### {cat_name}")
-            for entry in entries:
-                lines.append(f"- {entry}")
+            lines.extend(f"- {entry}" for entry in entries)
             lines.append("")
     if lines:
         return "\n".join(lines) + "\n"

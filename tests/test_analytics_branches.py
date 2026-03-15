@@ -15,8 +15,6 @@ import pytest
 
 import trw_mcp.state.analytics.report as analytics_mod
 from trw_mcp.models.learning import LearningEntry, LearningStatus
-from trw_mcp.state import analytics as analytics_state
-from trw_mcp.state.analytics import core as analytics_core_mod
 from trw_mcp.state.analytics import (
     _iter_entry_files,
     apply_status_update,
@@ -133,9 +131,7 @@ class TestIterEntryFilesIndexYamlSkipped:
         entries_dir = trw_dir / "learnings" / "entries"
         # Write a valid entry and an index.yaml
         _write_entry(entries_dir, "valid_entry", summary="real learning")
-        (entries_dir / "index.yaml").write_text(
-            "entries: []\ntotal_count: 0\n", encoding="utf-8"
-        )
+        (entries_dir / "index.yaml").write_text("entries: []\ntotal_count: 0\n", encoding="utf-8")
 
         results = list(_iter_entry_files(entries_dir))
         # Only the valid entry, not index.yaml
@@ -147,9 +143,7 @@ class TestIterEntryFilesIndexYamlSkipped:
         """index.yaml skipped even in sorted_order=True mode — line 66."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(entries_dir, "aaa_entry", summary="first learning")
-        (entries_dir / "index.yaml").write_text(
-            "entries: []\ntotal_count: 0\n", encoding="utf-8"
-        )
+        (entries_dir / "index.yaml").write_text("entries: []\ntotal_count: 0\n", encoding="utf-8")
 
         results = list(_iter_entry_files(entries_dir, sorted_order=True))
         filenames = [p.name for p, _ in results]
@@ -309,8 +303,11 @@ class TestSurfaceValidatedLearnings:
         """Non-active entries are skipped — line 312-313."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "resolved_entry",
-            status="resolved", q_value=0.9, q_observations=5,
+            entries_dir,
+            "resolved_entry",
+            status="resolved",
+            q_value=0.9,
+            q_observations=5,
         )
         result = surface_validated_learnings(trw_dir)
         assert result == []
@@ -319,8 +316,11 @@ class TestSurfaceValidatedLearnings:
         """Entries below q_threshold are excluded — line 318."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "low_q",
-            status="active", q_value=0.3, q_observations=5,
+            entries_dir,
+            "low_q",
+            status="active",
+            q_value=0.3,
+            q_observations=5,
         )
         result = surface_validated_learnings(trw_dir, q_threshold=0.6)
         assert result == []
@@ -329,8 +329,11 @@ class TestSurfaceValidatedLearnings:
         """Entries below cold_start_threshold are excluded — line 318."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "few_obs",
-            status="active", q_value=0.9, q_observations=1,
+            entries_dir,
+            "few_obs",
+            status="active",
+            q_value=0.9,
+            q_observations=1,
         )
         result = surface_validated_learnings(trw_dir, cold_start_threshold=3)
         assert result == []
@@ -339,19 +342,28 @@ class TestSurfaceValidatedLearnings:
         """Qualified entries returned sorted by q_value descending — lines 312-319."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "high_q",
-            summary="high q learning", status="active",
-            q_value=0.95, q_observations=5,
+            entries_dir,
+            "high_q",
+            summary="high q learning",
+            status="active",
+            q_value=0.95,
+            q_observations=5,
         )
         _write_entry(
-            entries_dir, "mid_q",
-            summary="mid q learning", status="active",
-            q_value=0.75, q_observations=4,
+            entries_dir,
+            "mid_q",
+            summary="mid q learning",
+            status="active",
+            q_value=0.75,
+            q_observations=4,
         )
         _write_entry(
-            entries_dir, "too_low",
-            summary="too low", status="active",
-            q_value=0.4, q_observations=4,
+            entries_dir,
+            "too_low",
+            summary="too low",
+            status="active",
+            q_value=0.4,
+            q_observations=4,
         )
         result = surface_validated_learnings(trw_dir, q_threshold=0.6, cold_start_threshold=3)
         assert len(result) == 2
@@ -363,9 +375,13 @@ class TestSurfaceValidatedLearnings:
         """Result dicts have required keys — lines 319-325."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "qualified",
-            summary="important learning", status="active",
-            q_value=0.8, q_observations=3, tags=["testing"],
+            entries_dir,
+            "qualified",
+            summary="important learning",
+            status="active",
+            q_value=0.8,
+            q_observations=3,
+            tags=["testing"],
         )
         result = surface_validated_learnings(trw_dir)
         assert len(result) == 1
@@ -390,12 +406,11 @@ class TestHasExistingSuccessLearning:
         """Returns True when a matching summary prefix exists — lines 352-354."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "success_entry",
+            entries_dir,
+            "success_entry",
             summary="Success: task_complete pattern discovered",
         )
-        result = has_existing_success_learning(
-            trw_dir, "Success: task_complete pattern discovered"
-        )
+        result = has_existing_success_learning(trw_dir, "Success: task_complete pattern discovered")
         assert result is True
 
     def test_no_match_returns_false(self, trw_dir: Path) -> None:
@@ -442,20 +457,20 @@ class TestHasExistingMechanicalLearning:
         """Returns True when active entry with matching prefix found — line 381."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "repeated_op",
+            entries_dir,
+            "repeated_op",
             summary="repeated operation: file_modified (12x)",
             status="active",
         )
-        result = has_existing_mechanical_learning(
-            trw_dir, "Repeated operation: file_modified"
-        )
+        result = has_existing_mechanical_learning(trw_dir, "Repeated operation: file_modified")
         assert result is True
 
     def test_non_active_entry_ignored(self, trw_dir: Path) -> None:
         """Non-active entries are ignored even if prefix matches — lines 379-380."""
         entries_dir = trw_dir / "learnings" / "entries"
         _write_entry(
-            entries_dir, "resolved_op",
+            entries_dir,
+            "resolved_op",
             summary="repeated operation: build_step (8x)",
             status="resolved",
         )
@@ -469,6 +484,7 @@ class TestUpdateLearningIndexOverflow:
     def test_overflow_prunes_lowest_impact(self, trw_dir: Path) -> None:
         """When entries exceed learning_max_entries, lowest impact entries are pruned — lines 444-445."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         _reset_config()
 
         # Use a low max_entries to trigger the pruning branch
@@ -481,6 +497,7 @@ class TestUpdateLearningIndexOverflow:
         with patch("trw_mcp.state.analytics.entries.get_config", return_value=config_with_low_max):
             # Create entries via LearningEntry objects
             from datetime import date
+
             entries = [
                 LearningEntry(
                     id=f"L-{i:04d}",
@@ -614,9 +631,7 @@ class TestAutoPruneUtilityCandidates:
             "trw_mcp.scoring.utility_based_prune_candidates",
             return_value=fake_candidates,
         ):
-            result = auto_prune_excess_entries(
-                trw_dir, max_entries=3, dry_run=False
-            )
+            result = auto_prune_excess_entries(trw_dir, max_entries=3, dry_run=False)
 
         # Actions taken includes utility pruning
         assert result["actions_taken"] > 0
@@ -642,9 +657,7 @@ class TestAutoPruneUtilityCandidates:
             "trw_mcp.scoring.utility_based_prune_candidates",
             return_value=fake_candidates,
         ):
-            result = auto_prune_excess_entries(
-                trw_dir, max_entries=3, dry_run=False
-            )
+            result = auto_prune_excess_entries(trw_dir, max_entries=3, dry_run=False)
 
         # No utility actions from these invalid-status candidates
         assert result is not None
@@ -667,9 +680,7 @@ class TestComputeReflectionQualityExceptionHandling:
             encoding="utf-8",
         )
         # Write a corrupt reflection file
-        (reflections_dir / "corrupt_reflection.yaml").write_bytes(
-            b"\xff\xfe INVALID YAML \x00"
-        )
+        (reflections_dir / "corrupt_reflection.yaml").write_bytes(b"\xff\xfe INVALID YAML \x00")
 
         result = compute_reflection_quality(trw_dir)
         # Should not raise; valid reflection counted
@@ -809,12 +820,15 @@ class TestAnalyzeRunExceptionHandling:
         run_dir = tmp_path / "corrupt_events_run"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
-        _writer.write_yaml(meta / "run.yaml", {
-            "run_id": "20260101T000000Z-corrpt00",
-            "task": "test",
-            "status": "active",
-            "phase": "implement",
-        })
+        _writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-corrpt00",
+                "task": "test",
+                "status": "active",
+                "phase": "implement",
+            },
+        )
         # Write corrupt (non-JSON) events.jsonl
         (meta / "events.jsonl").write_bytes(b"\xff\xfe INVALID JSON CONTENT \x00")
 
@@ -826,9 +840,7 @@ class TestAnalyzeRunExceptionHandling:
                 raise ValueError("simulated parse error")
             return original_read_jsonl(path)
 
-        with patch.object(
-            analytics_mod._reader, "read_jsonl", side_effect=raise_on_read
-        ):
+        with patch.object(analytics_mod._reader, "read_jsonl", side_effect=raise_on_read):
             result = _analyze_single_run(run_dir)
 
         # Run should still be analyzed with score 0
@@ -842,12 +854,15 @@ class TestAnalyzeRunExceptionHandling:
         run_dir = tmp_path / "bad_ceremony_run"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
-        _writer.write_yaml(meta / "run.yaml", {
-            "run_id": "20260101T000000Z-ceremon0",
-            "task": "test",
-            "status": "active",
-            "phase": "implement",
-        })
+        _writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-ceremon0",
+                "task": "test",
+                "status": "active",
+                "phase": "implement",
+            },
+        )
 
         with patch(
             "trw_mcp.state.analytics.report.compute_ceremony_score",
@@ -874,22 +889,24 @@ class TestScanAllRunsExceptionPaths:
     ) -> None:
         """Exception in _analyze_single_run is caught and added to parse_errors — lines 146-147."""
         from trw_mcp.models.config import TRWConfig
+
         mock_cfg = TRWConfig(task_root="docs")
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(analytics_mod, "get_config", lambda: mock_cfg)
-        monkeypatch.setattr(
-            analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw"
-        )
+        monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
 
         # Create a run directory with a valid run.yaml structure
         run_dir = tmp_path / ".trw" / "runs" / "task-exc" / "20260101T000000Z-exc00000"
         (run_dir / "meta").mkdir(parents=True)
-        _writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-exc00000",
-            "task": "task-exc",
-            "status": "active",
-            "phase": "implement",
-        })
+        _writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-exc00000",
+                "task": "task-exc",
+                "status": "active",
+                "phase": "implement",
+            },
+        )
 
         # Make _analyze_single_run raise for this specific run
         original_analyze = analytics_mod._analyze_single_run
@@ -916,6 +933,7 @@ class TestScanAllRunsExceptionPaths:
         section rather than returning early via _empty_report.
         """
         from trw_mcp.models.config import TRWConfig
+
         mock_cfg = TRWConfig(task_root="docs")
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(analytics_mod, "get_config", lambda: mock_cfg)
@@ -1028,9 +1046,11 @@ class TestAutoPruneUsesSQLite:
         # Create YAML entries so entries_dir.is_dir() passes
         for i in range(5):
             _write_entry(
-                entries_dir, f"sq_{i:02d}",
+                entries_dir,
+                f"sq_{i:02d}",
                 summary=f"Unique topic {i} about subject {i * 10}",
-                status="active", impact=0.5,
+                status="active",
+                impact=0.5,
                 learning_id=f"L-sq_{i:02d}",
             )
 
@@ -1055,12 +1075,15 @@ class TestAutoPruneUsesSQLite:
         ]
 
         # Patch at the source module since it's imported locally
-        with patch(
-            "trw_mcp.state.memory_adapter.list_entries_by_status",
-            return_value=fake_entries,
-        ) as mock_sqlite, patch(
-            "trw_mcp.scoring.utility_based_prune_candidates",
-            return_value=[],
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.list_entries_by_status",
+                return_value=fake_entries,
+            ) as mock_sqlite,
+            patch(
+                "trw_mcp.scoring.utility_based_prune_candidates",
+                return_value=[],
+            ),
         ):
             result = auto_prune_excess_entries(trw_dir, max_entries=3, dry_run=True)
 
@@ -1072,9 +1095,11 @@ class TestAutoPruneUsesSQLite:
         entries_dir = trw_dir / "learnings" / "entries"
         for i in range(5):
             _write_entry(
-                entries_dir, f"fb_{i:02d}",
+                entries_dir,
+                f"fb_{i:02d}",
                 summary=f"Fallback topic {i} about thing {i * 100}",
-                status="active", impact=0.5,
+                status="active",
+                impact=0.5,
                 learning_id=f"L-fb_{i:02d}",
             )
 

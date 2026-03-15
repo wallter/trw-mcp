@@ -101,7 +101,7 @@ def check_integration(source_dir: Path) -> dict[str, object]:
     }
 
 
-def check_orphan_modules(source_dir: Path) -> dict[str, object]:
+def check_orphan_modules(source_dir: Path) -> dict[str, object]:  # noqa: C901
     """Detect source modules not imported by any other production module.
 
     Scans all ``.py`` files under *source_dir* (excluding ``__init__.py``
@@ -217,7 +217,7 @@ def parse_exit_criteria(sprint_md: str) -> list[dict[str, object]]:
     # Extract section content until next ## heading or EOF
     start = match.end()
     next_heading = re.search(r"^##\s", sprint_md[start:], re.MULTILINE)
-    section = sprint_md[start:start + next_heading.start()] if next_heading else sprint_md[start:]
+    section = sprint_md[start : start + next_heading.start()] if next_heading else sprint_md[start:]
 
     criteria: list[dict[str, object]] = []
     for cb_match in _CHECKBOX_RE.finditer(section):

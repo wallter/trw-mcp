@@ -13,14 +13,13 @@ from pathlib import Path
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.models.typed_dicts import ImpactDistributionResult, ImpactTierInfo, LearningEntryDict
-from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.scoring._utils import (
-    FileStateReader,
-    TRWConfig,
     _IMPACT_DECAY_FLOOR,
     _LN2,
     _TIER_HIGH_CEILING,
     _TIER_MEDIUM_CEILING,
+    FileStateReader,
+    TRWConfig,
     _ensure_utc,
     apply_time_decay,
     compute_utility_score,
@@ -28,7 +27,7 @@ from trw_mcp.scoring._utils import (
     safe_float,
     safe_int,
 )
-
+from trw_mcp.state._helpers import iter_yaml_entry_files
 
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
 
@@ -135,7 +134,7 @@ def compute_impact_distribution(
     for yaml_file in iter_yaml_entry_files(entries_dir):
         try:
             data = reader.read_yaml(yaml_file)
-        except Exception:  # justified: fail-open, skip unreadable YAML entries
+        except Exception:  # justified: fail-open, skip unreadable YAML entries  # noqa: S112
             continue
         if str(data.get("status", "active")) != "active":
             continue

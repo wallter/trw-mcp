@@ -53,12 +53,12 @@ def truncate_description(description: str | None, max_len: int = 80) -> str:
         sentence = match.group(1)
         if len(sentence) <= max_len:
             return sentence
-        return sentence[:max_len - 3] + "..."
+        return sentence[: max_len - 3] + "..."
 
     # No sentence-ending period found — truncate raw
     if len(description) <= max_len:
         return description
-    return description[:max_len - 3] + "..."
+    return description[: max_len - 3] + "..."
 
 
 class ProgressiveDisclosureMiddleware(Middleware):

@@ -13,12 +13,10 @@ import inspect
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import structlog
 from structlog.testing import capture_logs
 
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.models import TelemetryEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,7 +51,9 @@ class TestFlushFailurePreservesQueue:
         mock_writer.append_jsonl.side_effect = OSError("disk full")
 
         client = TelemetryClient(
-            enabled=True, output_path=output, writer=mock_writer,
+            enabled=True,
+            output_path=output,
+            writer=mock_writer,
         )
         # Enqueue 3 events
         for _ in range(3):
@@ -89,7 +89,9 @@ class TestFlushFailurePreservesQueue:
         mock_writer.append_jsonl.side_effect = _side_effect
 
         client = TelemetryClient(
-            enabled=True, output_path=output, writer=mock_writer,
+            enabled=True,
+            output_path=output,
+            writer=mock_writer,
         )
         for _ in range(3):
             client.record_event(_base_event())
@@ -132,14 +134,11 @@ class TestMarkRunCompleteFailureLogsWarning:
 
         # Verify warning was logged with the correct event name
         warning_events = [
-            log for log in cap_logs
-            if log.get("log_level") == "warning"
-            and "mark_run_complete_failed" in str(log.get("event", ""))
+            log
+            for log in cap_logs
+            if log.get("log_level") == "warning" and "mark_run_complete_failed" in str(log.get("event", ""))
         ]
-        assert len(warning_events) >= 1, (
-            f"Expected a warning log with 'mark_run_complete_failed', "
-            f"got: {cap_logs}"
-        )
+        assert len(warning_events) >= 1, f"Expected a warning log with 'mark_run_complete_failed', got: {cap_logs}"
 
 
 # ===========================================================================
@@ -184,10 +183,7 @@ class TestMaintenanceStepsHaveUniqueEventNames:
                     event_names.append(child.args[0].value)
 
         # Must have found some event names (sanity check)
-        assert len(event_names) >= 3, (
-            f"Expected at least 3 unique event names in except blocks, "
-            f"found: {event_names}"
-        )
+        assert len(event_names) >= 3, f"Expected at least 3 unique event names in except blocks, found: {event_names}"
 
         # All must be unique
         seen: set[str] = set()
@@ -197,7 +193,4 @@ class TestMaintenanceStepsHaveUniqueEventNames:
                 duplicates.append(name)
             seen.add(name)
 
-        assert not duplicates, (
-            f"Duplicate event names in except blocks: {duplicates}. "
-            f"All event names: {event_names}"
-        )
+        assert not duplicates, f"Duplicate event names in except blocks: {duplicates}. All event names: {event_names}"

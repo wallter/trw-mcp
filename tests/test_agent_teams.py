@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
     render_agent_teams_protocol,
@@ -42,7 +41,9 @@ class TestRenderAgentTeamsProtocol:
 
     def test_renders_when_enabled(self) -> None:
         """Agent Teams section renders when agent_teams_enabled=True."""
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
+        ):
             result = render_agent_teams_protocol()
 
         assert "## TRW Agent Teams Protocol" in result
@@ -54,14 +55,18 @@ class TestRenderAgentTeamsProtocol:
 
     def test_empty_when_disabled(self) -> None:
         """Agent Teams section is empty when agent_teams_enabled=False."""
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)
+        ):
             result = render_agent_teams_protocol()
 
         assert result == ""
 
     def test_contains_all_five_roles(self) -> None:
         """All five teammate roles appear in the rendered table."""
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
+        ):
             result = render_agent_teams_protocol()
 
         assert "trw-lead" in result
@@ -72,7 +77,9 @@ class TestRenderAgentTeamsProtocol:
 
     def test_contains_hook_names(self) -> None:
         """TeammateIdle and TaskCompleted hooks are documented."""
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
+        ):
             result = render_agent_teams_protocol()
 
         assert "TeammateIdle" in result
@@ -80,7 +87,9 @@ class TestRenderAgentTeamsProtocol:
 
     def test_contains_dual_mode_table(self) -> None:
         """Dual-mode table lists both Subagents and Agent Teams."""
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
+        ):
             result = render_agent_teams_protocol()
 
         assert "Subagents" in result
@@ -89,7 +98,9 @@ class TestRenderAgentTeamsProtocol:
 
     def test_lifecycle_steps_ordered(self) -> None:
         """Lifecycle steps appear in correct order (1-6)."""
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
+        ):
             result = render_agent_teams_protocol()
 
         positions = []
@@ -142,7 +153,9 @@ class TestAgentTeamsTemplateIntegration:
         (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
 
         tools = _get_tools()
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
+        ):
             result = tools["trw_claude_md_sync"].fn(scope="root")
 
         assert result["status"] == "synced"
@@ -159,7 +172,9 @@ class TestAgentTeamsTemplateIntegration:
         (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
 
         tools = _get_tools()
-        with patch("trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)):
+        with patch(
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)
+        ):
             result = tools["trw_claude_md_sync"].fn(scope="root")
 
         assert result["status"] == "synced"
@@ -218,7 +233,7 @@ class TestHookScripts:
         content = (hooks_dir / script_name).read_text(encoding="utf-8")
         # Hooks use conditional fail-open: intentional exits (exit 2 for blocking)
         # are allowed, but unexpected errors silently exit 0.
-        assert 'exit 0' in content and 'trap' in content
+        assert "exit 0" in content and "trap" in content
 
     @pytest.mark.parametrize(
         "script_name",
@@ -265,6 +280,7 @@ class TestSettingsJson:
     def test_settings_valid_json(self, settings_path: Path) -> None:
         """settings.json is valid JSON."""
         import json
+
         content = settings_path.read_text(encoding="utf-8")
         data = json.loads(content)
         assert isinstance(data, dict)
@@ -272,6 +288,7 @@ class TestSettingsJson:
     def test_teammate_idle_hook_registered(self, settings_path: Path) -> None:
         """TeammateIdle hook is registered in settings.json."""
         import json
+
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         hooks = data.get("hooks", {})
         assert "TeammateIdle" in hooks
@@ -282,6 +299,7 @@ class TestSettingsJson:
     def test_task_completed_hook_registered(self, settings_path: Path) -> None:
         """TaskCompleted hook is registered in settings.json."""
         import json
+
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         hooks = data.get("hooks", {})
         assert "TaskCompleted" in hooks
@@ -292,6 +310,7 @@ class TestSettingsJson:
     def test_agent_teams_env_var(self, settings_path: Path) -> None:
         """CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 is set in env."""
         import json
+
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         env = data.get("env", {})
         assert env.get("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS") == "1"
@@ -341,11 +360,10 @@ class TestAgentDefinitions:
             ("trw-researcher.md", "claude-sonnet-4-6"),
         ],
     )
-    def test_agent_model_assignment(
-        self, agents_dir: Path, agent_name: str, expected_model: str
-    ) -> None:
+    def test_agent_model_assignment(self, agents_dir: Path, agent_name: str, expected_model: str) -> None:
         """Agent definition specifies correct model."""
         import yaml
+
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
@@ -360,6 +378,7 @@ class TestAgentDefinitions:
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
         # Parse YAML frontmatter to check disallowedTools
         import yaml
+
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         disallowed = meta.get("disallowedTools", [])
@@ -377,6 +396,7 @@ class TestAgentDefinitions:
         """Lead, implementer, and tester agents have Edit and Write in allowedTools."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
         import yaml
+
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         allowed = meta.get("allowedTools", [])
@@ -387,17 +407,18 @@ class TestAgentDefinitions:
         """trw-lead has TaskCreate, TaskUpdate, TeamCreate, SendMessage tools."""
         content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
         import yaml
+
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         allowed = meta.get("allowedTools", [])
-        for tool in ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-                      "TeamCreate", "TeamDelete", "SendMessage"]:
+        for tool in ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]:
             assert tool in allowed, f"trw-lead: {tool} must be in allowedTools"
 
     def test_lead_has_all_trw_mcp_tools(self, agents_dir: Path) -> None:
         """trw-lead has access to all TRW MCP orchestration tools."""
         content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
         import yaml
+
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         allowed = meta.get("allowedTools", [])
@@ -419,6 +440,7 @@ class TestAgentDefinitions:
         """trw-lead has Skill tool for invoking skills at phase boundaries."""
         content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
         import yaml
+
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         allowed = meta.get("allowedTools", [])
@@ -458,15 +480,18 @@ class TestAgentDefinitions:
         """Agent definitions must have name, description, model in frontmatter."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
         import yaml
+
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         assert "name" in meta, f"{agent_name}: missing 'name'"
         assert "description" in meta, f"{agent_name}: missing 'description'"
         assert "model" in meta, f"{agent_name}: missing 'model'"
         valid_models = (
-            "opus", "sonnet", "haiku",
-            "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
+            "opus",
+            "sonnet",
+            "haiku",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
         )
-        assert meta["model"] in valid_models, (
-            f"{agent_name}: model must be one of {valid_models}, got {meta['model']}"
-        )
+        assert meta["model"] in valid_models, f"{agent_name}: model must be one of {valid_models}, got {meta['model']}"

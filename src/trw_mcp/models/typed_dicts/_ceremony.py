@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict, Optional
+from typing import TypedDict
 
 
 class AutoMaintenanceDict(TypedDict, total=False):
@@ -150,10 +150,10 @@ class CeremonyClassStatusDict(TypedDict):
     task_class: str
     current_tier: str
     session_count: int
-    avg_ceremony_score: Optional[float]
-    avg_outcome_quality: Optional[float]
+    avg_ceremony_score: float | None
+    avg_outcome_quality: float | None
     proposals: list[ReductionProposalDict]
-    auto_escalation: Optional[EscalationResult]
+    auto_escalation: EscalationResult | None
     warnings: list[str]
 
 

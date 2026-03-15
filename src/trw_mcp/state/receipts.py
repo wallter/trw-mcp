@@ -89,10 +89,7 @@ def prune_recall_receipts(trw_dir: Path) -> int:
     removed = len(records) - limit
 
     # Rewrite the file atomically (DEBT-028)
-    content = "".join(
-        json.dumps(record, default=json_serializer) + "\n"
-        for record in records[-limit:]
-    )
+    content = "".join(json.dumps(record, default=json_serializer) + "\n" for record in records[-limit:])
     writer.write_text(path, content)
 
     return removed

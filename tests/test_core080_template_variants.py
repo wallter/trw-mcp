@@ -7,6 +7,7 @@ Covers:
 - FR04: Configurable per-section content density weights via TRWConfig
 - Backward compatibility: CORE/QUAL PRDs still score against 12 sections
 """
+
 from __future__ import annotations
 
 import pytest
@@ -22,7 +23,6 @@ from trw_mcp.state.validation.template_variants import (
     get_required_sections,
     get_variant_for_category,
 )
-
 
 # ---------------------------------------------------------------------------
 # FR01 / FR02 / FR03 / FR04: Variant mapping
@@ -190,8 +190,7 @@ def test_fix_prd_with_8_sections_not_penalized_vs_12() -> None:
     # With full section coverage (8/8), frontmatter (5/5), confidence (3/3):
     # composite = 0.5*1.0 + 0.3*1.0 + 0.2*1.0 = 1.0 -> max_score
     assert result.score >= result.max_score * 0.9, (
-        f"FIX PRD with 8/8 sections scored {result.score:.2f} / {result.max_score}, "
-        "expected >= 90% of max"
+        f"FIX PRD with 8/8 sections scored {result.score:.2f} / {result.max_score}, expected >= 90% of max"
     )
 
 

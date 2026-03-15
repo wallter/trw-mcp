@@ -11,25 +11,25 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Sequence
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import structlog
-
-from trw_mcp.clients.llm import LLMClient
-from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.models.typed_dicts import LearningEntryDict
-from trw_mcp.state.dedup import cosine_similarity
-from trw_mcp.exceptions import StateError
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_memory.lifecycle.consolidation import (
     _parse_consolidation_response,
     _redact_paths,
     complete_linkage_cluster,
 )
+
+from trw_mcp.clients.llm import LLMClient
+from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.models.typed_dicts import LearningEntryDict
+from trw_mcp.state._helpers import iter_yaml_entry_files
+from trw_mcp.state.dedup import cosine_similarity
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 if TYPE_CHECKING:
     from trw_mcp.state.tiers import TierManager
@@ -46,9 +46,7 @@ def _is_clusterable(data: LearningEntryDict) -> bool:
     """Check if an entry is eligible for clustering (not consolidated/archived)."""
     if str(data.get("source_type", "")) == "consolidated":
         return False
-    if data.get("consolidated_into") is not None:
-        return False
-    return True
+    return data.get("consolidated_into") is None
 
 
 def _load_active_entries(
@@ -80,8 +78,8 @@ def _load_active_entries(
         for data in all_active:
             if len(entries) >= max_entries:
                 break
-            if _is_clusterable(cast(LearningEntryDict, data)):
-                entries.append(cast(LearningEntryDict, data))
+            if _is_clusterable(cast("LearningEntryDict", data)):
+                entries.append(cast("LearningEntryDict", data))
         return entries
     except Exception as exc:  # justified: fail-open, consolidation errors must not block
         logger.warning(
@@ -135,8 +133,7 @@ def _tag_overlap_clusters(
 
     # Pre-compute tag sets for each entry
     tag_sets: list[set[str]] = [
-        {str(t) for t in (e.get("tags") or [] if isinstance(e.get("tags"), list) else [])}
-        for e in entries
+        {str(t) for t in (e.get("tags") or [] if isinstance(e.get("tags"), list) else [])} for e in entries
     ]
 
     # Union-Find parent array with path compression
@@ -195,7 +192,8 @@ def find_clusters(
     Returns:
         List of clusters; each cluster is a list of entry dicts.
     """
-    from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch, embedding_available
+    from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch
+    from trw_mcp.state.memory_adapter import embedding_available
 
     _t0 = time.monotonic()
 
@@ -211,7 +209,7 @@ def find_clusters(
                 min_cluster_size=min_cluster_size,
                 min_shared_tags=2,
             )
-        except Exception:  # noqa: BLE001 — justified: fail-open, consolidation errors must not block
+        except Exception:
             logger.warning("tag_overlap_clustering_failed", exc_info=True)
             return []
         logger.debug(
@@ -230,10 +228,7 @@ def find_clusters(
         return []
 
     # Batch embed all entries in one call (FR01 requirement)
-    texts = [
-        str(e.get("summary", "")) + " " + str(e.get("detail", ""))
-        for e in entries
-    ]
+    texts = [str(e.get("summary", "")) + " " + str(e.get("detail", "")) for e in entries]
     vectors = embed_batch(texts)
 
     # Build (entry, vector) pairs, dropping entries with no embedding
@@ -295,14 +290,11 @@ def _summarize_cluster_llm(
     prompt = (
         "Consolidate the following related learning entries into a single entry.\n"
         "Respond with exactly one JSON object on a single line:\n"
-        '{"summary": "concise one-liner", "detail": "merged explanation"}\n\n'
-        + entries_text
+        '{"summary": "concise one-liner", "detail": "merged explanation"}\n\n' + entries_text
     )
     system = "You are a knowledge consolidation assistant. Be concise and precise."
 
-    total_input_len = sum(
-        len(str(e.get("summary", ""))) for e in cluster
-    )
+    total_input_len = sum(len(str(e.get("summary", ""))) for e in cluster)
 
     response: str | None = client.ask_sync(prompt, system=system)
     if response is None:
@@ -318,9 +310,7 @@ def _summarize_cluster_llm(
 
     # Retry once with explicit length constraint
     max_chars = max(50, total_input_len // 2)
-    retry_prompt = (
-        f"{prompt}\n\nIMPORTANT: The summary must be under {max_chars} characters."
-    )
+    retry_prompt = f"{prompt}\n\nIMPORTANT: The summary must be under {max_chars} characters."
     retry_response: str | None = client.ask_sync(retry_prompt, system=system)
     if retry_response is None:
         return None
@@ -365,17 +355,11 @@ def _create_consolidated_entry(
 
     impact = max(float(str(e.get("impact", 0.5))) for e in cluster)
 
-    tags = sorted({
-        str(t)
-        for e in cluster
-        for t in cast("list[object]", e.get("tags") or [])
-    })
+    tags = sorted({str(t) for e in cluster for t in cast("list[object]", e.get("tags") or [])})
 
-    all_evidence: list[str] = list(dict.fromkeys(
-        str(ev)
-        for e in cluster
-        for ev in cast("list[object]", e.get("evidence") or [])
-    ))
+    all_evidence: list[str] = list(
+        dict.fromkeys(str(ev) for e in cluster for ev in cast("list[object]", e.get("evidence") or []))
+    )
 
     recurrence = sum(int(str(e.get("recurrence", 1))) for e in cluster)
     q_value = max(float(str(e.get("q_value", 0.0))) for e in cluster)
@@ -394,9 +378,9 @@ def _create_consolidated_entry(
         "recurrence": recurrence,
         "q_value": q_value,
         "status": "active",
-        "created": date.today().isoformat(),
-        "updated": date.today().isoformat(),
-        "last_accessed_at": date.today().isoformat(),
+        "created": datetime.now(tz=timezone.utc).date().isoformat(),
+        "updated": datetime.now(tz=timezone.utc).date().isoformat(),
+        "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
     }
 
     slug = entry_id.replace("/", "-")
@@ -510,7 +494,7 @@ def _rollback_archive(
     for entry_path, original_data in processed:
         try:
             writer.write_yaml(entry_path, original_data)
-        except (OSError, StateError):
+        except (OSError, StateError):  # per-item error handling: log rollback failure per entry, continue rollback  # noqa: PERF203
             logger.exception(
                 "consolidation_rollback_failed",
                 path=str(entry_path),
@@ -616,11 +600,13 @@ def consolidate_cycle(
             entry_ids = [str(e.get("id", "")) for e in cluster]
             # Compute mean similarity for preview
             mean_sim = _mean_pairwise_similarity(cluster)
-            cluster_previews.append({
-                "entry_ids": entry_ids,
-                "count": len(cluster),
-                "mean_similarity": round(mean_sim, 3),
-            })
+            cluster_previews.append(
+                {
+                    "entry_ids": entry_ids,
+                    "count": len(cluster),
+                    "mean_similarity": round(mean_sim, 3),
+                }
+            )
         return {
             "dry_run": True,
             "clusters": cluster_previews,
@@ -638,6 +624,7 @@ def consolidate_cycle(
     tier_manager: TierManager | None = None
     try:
         from trw_mcp.state.tiers import TierManager as _TierManager
+
         tier_manager = _TierManager(trw_dir, reader=reader, writer=writer, config=cfg)
     except Exception:  # justified: fail-open, consolidation errors must not block
         # justified: TierManager is optional — consolidation works without cold
@@ -672,9 +659,7 @@ def consolidate_cycle(
                 detail = fallback["detail"]
 
             # FR03: Create consolidated entry
-            new_entry = _create_consolidated_entry(
-                cluster, summary, detail, entries_dir, writer
-            )
+            new_entry = _create_consolidated_entry(cluster, summary, detail, entries_dir, writer)
             consolidated_id = str(new_entry["id"])
 
             # FR04: Archive originals
@@ -723,18 +708,11 @@ def _mean_pairwise_similarity(cluster: Sequence[LearningEntryDict]) -> float:
     if len(cluster) < 2:
         return 0.0
 
-    texts = [
-        str(e.get("summary", "")) + " " + str(e.get("detail", ""))
-        for e in cluster
-    ]
+    texts = [str(e.get("summary", "")) + " " + str(e.get("detail", "")) for e in cluster]
     vectors = embed_batch(texts)
     valid: list[list[float]] = [v for v in vectors if v is not None]
     if len(valid) < 2:
         return 0.0
 
-    pairs = [
-        cosine_similarity(valid[i], valid[j])
-        for i in range(len(valid))
-        for j in range(i + 1, len(valid))
-    ]
+    pairs = [cosine_similarity(valid[i], valid[j]) for i in range(len(valid)) for j in range(i + 1, len(valid))]
     return sum(pairs) / len(pairs) if pairs else 0.0

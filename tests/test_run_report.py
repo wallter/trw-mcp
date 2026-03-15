@@ -13,7 +13,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.report import (
     BuildSummary,
     DurationInfo,
@@ -42,16 +41,19 @@ def report_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     meta.mkdir(parents=True)
 
     # run.yaml
-    writer.write_yaml(meta / "run.yaml", {
-        "run_id": "20260219T100000Z-aaaa1111",
-        "task": "analytics-task",
-        "framework": "v24.0_TRW",
-        "status": "complete",
-        "phase": "deliver",
-        "confidence": "high",
-        "run_type": "implementation",
-        "prd_scope": ["PRD-CORE-030"],
-    })
+    writer.write_yaml(
+        meta / "run.yaml",
+        {
+            "run_id": "20260219T100000Z-aaaa1111",
+            "task": "analytics-task",
+            "framework": "v24.0_TRW",
+            "status": "complete",
+            "phase": "deliver",
+            "confidence": "high",
+            "run_type": "implementation",
+            "prd_scope": ["PRD-CORE-030"],
+        },
+    )
 
     # events.jsonl — 3 phase transitions + other events
     events = [
@@ -76,13 +78,16 @@ def report_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     # build-status.yaml in .trw/context/
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
-    writer.write_yaml(trw_dir / "context" / "build-status.yaml", {
-        "tests_passed": True,
-        "mypy_clean": True,
-        "coverage_pct": 92.5,
-        "test_count": 45,
-        "duration_secs": 12.3,
-    })
+    writer.write_yaml(
+        trw_dir / "context" / "build-status.yaml",
+        {
+            "tests_passed": True,
+            "mypy_clean": True,
+            "coverage_pct": 92.5,
+            "test_count": 45,
+            "duration_secs": 12.3,
+        },
+    )
 
     return run_dir
 
@@ -94,14 +99,17 @@ def minimal_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
 
-    writer.write_yaml(meta / "run.yaml", {
-        "run_id": "20260219T080000Z-bbbb2222",
-        "task": "minimal",
-        "framework": "v24.0_TRW",
-        "status": "active",
-        "phase": "research",
-        "confidence": "medium",
-    })
+    writer.write_yaml(
+        meta / "run.yaml",
+        {
+            "run_id": "20260219T080000Z-bbbb2222",
+            "task": "minimal",
+            "framework": "v24.0_TRW",
+            "status": "active",
+            "phase": "research",
+            "confidence": "medium",
+        },
+    )
 
     return run_dir
 
@@ -131,17 +139,27 @@ class TestRunReportModel:
                 elapsed_seconds=10800.0,
             ),
             phase_timeline=[
-                PhaseEntry(phase="research", entered_at="2026-02-19T10:00:00Z",
-                           exited_at="2026-02-19T10:15:00Z", duration_seconds=900.0),
+                PhaseEntry(
+                    phase="research",
+                    entered_at="2026-02-19T10:00:00Z",
+                    exited_at="2026-02-19T10:15:00Z",
+                    duration_seconds=900.0,
+                ),
             ],
             event_summary=EventSummary(total_count=5, by_type={"run_init": 1, "phase_enter": 4}),
             checkpoint_count=2,
             learning_summary=LearningSummary(
-                total_produced=3, avg_impact=0.7, high_impact_count=1, tags_used=["test"],
+                total_produced=3,
+                avg_impact=0.7,
+                high_impact_count=1,
+                tags_used=["test"],
             ),
             build=BuildSummary(
-                tests_passed=True, mypy_clean=True, coverage_pct=90.0,
-                test_count=40, duration_secs=10.0,
+                tests_passed=True,
+                mypy_clean=True,
+                coverage_pct=90.0,
+                test_count=40,
+                duration_secs=10.0,
             ),
             reversion_rate=0.1,
         )
@@ -328,15 +346,33 @@ class TestLearningYield:
     def test_mixed_impact_learnings(self, tmp_path: Path) -> None:
         """Learning yield computes correct averages with mixed impacts."""
         mock_entries: list[dict[str, object]] = [
-            {"id": "L-1", "summary": "High", "detail": "d",
-             "impact": 0.9, "tags": ["arch"], "created": "2026-02-19",
-             "status": "active"},
-            {"id": "L-2", "summary": "Med", "detail": "d",
-             "impact": 0.5, "tags": ["testing"], "created": "2026-02-19",
-             "status": "active"},
-            {"id": "L-3", "summary": "Low", "detail": "d",
-             "impact": 0.2, "tags": ["arch", "testing"], "created": "2026-02-19",
-             "status": "active"},
+            {
+                "id": "L-1",
+                "summary": "High",
+                "detail": "d",
+                "impact": 0.9,
+                "tags": ["arch"],
+                "created": "2026-02-19",
+                "status": "active",
+            },
+            {
+                "id": "L-2",
+                "summary": "Med",
+                "detail": "d",
+                "impact": 0.5,
+                "tags": ["testing"],
+                "created": "2026-02-19",
+                "status": "active",
+            },
+            {
+                "id": "L-3",
+                "summary": "Low",
+                "detail": "d",
+                "impact": 0.2,
+                "tags": ["arch", "testing"],
+                "created": "2026-02-19",
+                "status": "active",
+            },
         ]
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -382,12 +418,24 @@ class TestLearningYield:
     def test_date_range_filter(self, tmp_path: Path) -> None:
         """Learning yield filters by date range when provided."""
         mock_entries: list[dict[str, object]] = [
-            {"id": "L-in", "summary": "In range", "detail": "d",
-             "impact": 0.8, "tags": [], "created": "2026-02-19",
-             "status": "active"},
-            {"id": "L-out", "summary": "Out range", "detail": "d",
-             "impact": 0.8, "tags": [], "created": "2026-02-10",
-             "status": "active"},
+            {
+                "id": "L-in",
+                "summary": "In range",
+                "detail": "d",
+                "impact": 0.8,
+                "tags": [],
+                "created": "2026-02-19",
+                "status": "active",
+            },
+            {
+                "id": "L-out",
+                "summary": "Out range",
+                "detail": "d",
+                "impact": 0.8,
+                "tags": [],
+                "created": "2026-02-10",
+                "status": "active",
+            },
         ]
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -395,7 +443,8 @@ class TestLearningYield:
         reader = FileStateReader()
         with patch("trw_mcp.state.report.list_active_learnings", return_value=mock_entries):
             result = compute_learning_yield(
-                trw_dir, reader,
+                trw_dir,
+                reader,
                 run_start="2026-02-19T10:00:00Z",
                 run_end="2026-02-19T13:00:00Z",
             )
@@ -418,12 +467,24 @@ class TestToolIntegration:
     ) -> None:
         """Full report with all data sources populated."""
         mock_learnings: list[dict[str, object]] = [
-            {"id": "L-aaa", "summary": "Test learning A", "detail": "Detail A",
-             "impact": 0.9, "tags": ["testing", "report"], "created": "2026-02-19",
-             "status": "active"},
-            {"id": "L-bbb", "summary": "Test learning B", "detail": "Detail B",
-             "impact": 0.4, "tags": ["report"], "created": "2026-02-19",
-             "status": "active"},
+            {
+                "id": "L-aaa",
+                "summary": "Test learning A",
+                "detail": "Detail A",
+                "impact": 0.9,
+                "tags": ["testing", "report"],
+                "created": "2026-02-19",
+                "status": "active",
+            },
+            {
+                "id": "L-bbb",
+                "summary": "Test learning B",
+                "detail": "Detail B",
+                "impact": 0.4,
+                "tags": ["report"],
+                "created": "2026-02-19",
+                "status": "active",
+            },
         ]
         reader = FileStateReader()
         trw_dir = tmp_path / ".trw"
@@ -634,19 +695,26 @@ class TestReportToolLayer:
         run_dir = tmp_path / "docs" / "t" / "runs" / "20260101T000000Z-aaaa1111"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "20260101T000000Z-aaaa1111",
-            "task": "t",
-            "framework": "v24.0_TRW",
-            "status": "active",
-            "phase": "implement",
-            "confidence": "medium",
-            "run_type": "implementation",
-            "prd_scope": [],
-        })
-        writer.append_jsonl(meta / "events.jsonl", {
-            "ts": "2026-01-01T00:00:00Z", "event": "run_init",
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-aaaa1111",
+                "task": "t",
+                "framework": "v24.0_TRW",
+                "status": "active",
+                "phase": "implement",
+                "confidence": "medium",
+                "run_type": "implementation",
+                "prd_scope": [],
+            },
+        )
+        writer.append_jsonl(
+            meta / "events.jsonl",
+            {
+                "ts": "2026-01-01T00:00:00Z",
+                "event": "run_init",
+            },
+        )
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True)

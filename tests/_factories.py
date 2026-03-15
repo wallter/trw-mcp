@@ -98,8 +98,11 @@ def make_merge_scenario(
     writer = FileStateWriter()
 
     existing_path = write_entry(
-        entries_dir, writer, existing_id,
-        summary="summary", detail=existing_detail,
+        entries_dir,
+        writer,
+        existing_id,
+        summary="summary",
+        detail=existing_detail,
         tags=existing_tags or [],
         evidence=existing_evidence or [],
         impact=existing_impact,
@@ -108,7 +111,9 @@ def make_merge_scenario(
     )
 
     new_data = make_entry_data(
-        new_id, "summary", new_detail,
+        new_id,
+        "summary",
+        new_detail,
         tags=new_tags or [],
         evidence=new_evidence or [],
         impact=new_impact,
@@ -136,13 +141,16 @@ def make_run_dir(
     meta.mkdir(parents=True, exist_ok=True)
 
     writer = FileStateWriter()
-    writer.write_yaml(meta / "run.yaml", {
-        "task_name": task_name,
-        "phase": phase,
-        "status": status,
-        "run_id": "test-run-001",
-        "created": "2026-01-01T00:00:00Z",
-    })
+    writer.write_yaml(
+        meta / "run.yaml",
+        {
+            "task_name": task_name,
+            "phase": phase,
+            "status": status,
+            "run_id": "test-run-001",
+            "created": "2026-01-01T00:00:00Z",
+        },
+    )
 
     events_path = meta / "events.jsonl"
     events_path.write_text(
@@ -193,20 +201,26 @@ def make_run_dir_with_structure(
     else:
         (run_dir / "scratch").mkdir(exist_ok=True)
 
-    w.write_yaml(meta / "run.yaml", {
-        "run_id": run_id,
-        "task": task,
-        "framework": framework,
-        "status": "active",
-        "phase": "research",
-        "confidence": "medium",
-    })
+    w.write_yaml(
+        meta / "run.yaml",
+        {
+            "run_id": run_id,
+            "task": task,
+            "framework": framework,
+            "status": "active",
+            "phase": "research",
+            "confidence": "medium",
+        },
+    )
 
     if with_events:
-        w.append_jsonl(meta / "events.jsonl", {
-            "ts": "2026-02-06T12:00:00Z",
-            "event": "run_init",
-            "task": task,
-        })
+        w.append_jsonl(
+            meta / "events.jsonl",
+            {
+                "ts": "2026-02-06T12:00:00Z",
+                "event": "run_init",
+                "task": task,
+            },
+        )
 
     return run_dir

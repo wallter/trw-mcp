@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.build import (
     _collect_failures,
@@ -88,7 +87,9 @@ class TestFindExecutable:
         assert result == str(tmp_path / ".venv" / "bin" / "pytest")
 
     def test_falls_back_to_legacy_venv(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Legacy: source_package_path parent's .venv
         monkeypatch.setattr("trw_mcp.tools.build._subprocess.get_config", lambda: TRWConfig())
@@ -218,9 +219,7 @@ class TestRunSubprocess:
 class TestCustomCmdErrorPath:
     """Tests for _run_pytest when build_check_pytest_cmd is set."""
 
-    def test_custom_cmd_subprocess_error_string(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_cmd_subprocess_error_string(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 209: custom_cmd path returns error string (OSError/timeout)."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --suite all")
         monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
@@ -237,9 +236,7 @@ class TestCustomCmdErrorPath:
         assert isinstance(failures, list)
         assert any("not found" in str(f) for f in failures)
 
-    def test_custom_cmd_success(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_cmd_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """custom_cmd happy path -- returncode 0."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --fast")
         monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
@@ -255,9 +252,7 @@ class TestCustomCmdErrorPath:
         assert result["tests_passed"] is True
         assert result["failure_count"] == 0
 
-    def test_custom_cmd_failure(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_custom_cmd_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """custom_cmd failure -- returncode != 0 extracts FAILED lines."""
         config = TRWConfig(build_check_pytest_cmd="mypytest --suite all")
         monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: config)
@@ -303,9 +298,7 @@ class TestRunMypyErrorPath:
     """Tests for _run_mypy OSError/timeout path (line 282)."""
 
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
-    def test_mypy_subprocess_error_string(
-        self, mock_which: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_mypy_subprocess_error_string(self, mock_which: MagicMock, tmp_path: Path) -> None:
         """Line 282: _run_subprocess returns a string -> mypy_clean=False."""
         with patch(
             "trw_mcp.tools.build._runners._run_subprocess",
@@ -317,9 +310,7 @@ class TestRunMypyErrorPath:
         assert any("timed out" in f for f in status.failures)
 
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
-    def test_mypy_oserror_returns_error_string(
-        self, mock_which: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_mypy_oserror_returns_error_string(self, mock_which: MagicMock, tmp_path: Path) -> None:
         """mypy OSError: subprocess returns error string."""
         with patch(
             "trw_mcp.tools.build._runners._run_subprocess",
@@ -384,9 +375,7 @@ class TestTrwBuildCheckTool:
         # Access registered tool by looking at server tools
         return server
 
-    def test_build_check_disabled_returns_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_disabled_returns_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 396-400: build_check_enabled=False returns skipped status."""
         config = TRWConfig(build_check_enabled=False)
         monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
@@ -412,9 +401,7 @@ class TestTrwBuildCheckTool:
         assert result["status"] == "skipped"
         assert "build_check_enabled" in result["reason"]
 
-    def test_build_check_runs_and_caches(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_runs_and_caches(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lines 402-440: build check runs, caches result, returns dict."""
         (tmp_path / ".trw").mkdir()
 
@@ -458,9 +445,7 @@ class TestTrwBuildCheckTool:
         assert result["test_count"] == 50
         assert "cache_path" in result
 
-    def test_build_check_with_run_path_and_events(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_with_run_path_and_events(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lines 419-431: run_path provided -> logs build_check_complete event."""
         (tmp_path / ".trw").mkdir()
 
@@ -518,9 +503,7 @@ class TestTrwBuildCheckTool:
             events = [json.loads(line) for line in fh if line.strip()]
         assert any(e.get("event") == "build_check_complete" for e in events)
 
-    def test_build_check_run_path_no_meta_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_run_path_no_meta_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lines 422-423: run_path given but meta dir missing -> no event logged."""
         (tmp_path / ".trw").mkdir()
         run_dir = tmp_path / "runs" / "nonexistent-run"
@@ -568,9 +551,7 @@ class TestTrwBuildCheckTool:
         assert result["tests_passed"] is False
         assert result["failure_count"] == 2
 
-    def test_build_check_timeout_capped_at_600(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_timeout_capped_at_600(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 404-407: timeout_secs capped at 600."""
         (tmp_path / ".trw").mkdir()
         config = TRWConfig(build_check_enabled=True)
@@ -613,9 +594,7 @@ class TestTrwBuildCheckTool:
 
         assert captured_timeout[0] == 600
 
-    def test_build_check_uses_config_default_timeout(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_uses_config_default_timeout(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 405: timeout_secs=None uses config default."""
         (tmp_path / ".trw").mkdir()
         config = TRWConfig(build_check_enabled=True, build_check_timeout_secs=120)

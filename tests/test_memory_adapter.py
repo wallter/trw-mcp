@@ -38,63 +38,73 @@ def trw_dir_with_entries(trw_dir: Path) -> Path:
     """Create a .trw structure with sample YAML learning entries."""
     entries_dir = trw_dir / "learnings" / "entries"
     writer = FileStateWriter()
-    writer.write_yaml(entries_dir / "2026-01-01-test-learning.yaml", {
-        "id": "L-test0001",
-        "summary": "Test learning about Python",
-        "detail": "Python is a great language",
-        "tags": ["python", "testing"],
-        "evidence": [],
-        "impact": 0.8,
-        "status": "active",
-        "source_type": "agent",
-        "source_identity": "test",
-        "created": "2026-01-01",
-        "updated": "2026-01-01",
-        "access_count": 0,
-        "q_value": 0.5,
-        "q_observations": 0,
-        "recurrence": 1,
-    })
-    writer.write_yaml(entries_dir / "2026-01-02-second-learning.yaml", {
-        "id": "L-test0002",
-        "summary": "Testing gotcha with mocking",
-        "detail": "Always patch at the import site",
-        "tags": ["testing", "gotcha"],
-        "evidence": ["test_foo.py"],
-        "impact": 0.6,
-        "status": "active",
-        "source_type": "human",
-        "source_identity": "Tyler",
-        "created": "2026-01-02",
-        "updated": "2026-01-02",
-        "access_count": 3,
-        "q_value": 0.7,
-        "q_observations": 2,
-        "recurrence": 2,
-    })
-    writer.write_yaml(entries_dir / "2026-01-03-obsolete-entry.yaml", {
-        "id": "L-test0003",
-        "summary": "Obsolete learning",
-        "detail": "No longer relevant",
-        "tags": ["old"],
-        "evidence": [],
-        "impact": 0.4,
-        "status": "obsolete",
-        "source_type": "agent",
-        "source_identity": "",
-        "created": "2026-01-03",
-        "updated": "2026-01-03",
-        "access_count": 0,
-        "q_value": 0.3,
-        "q_observations": 0,
-        "recurrence": 1,
-    })
+    writer.write_yaml(
+        entries_dir / "2026-01-01-test-learning.yaml",
+        {
+            "id": "L-test0001",
+            "summary": "Test learning about Python",
+            "detail": "Python is a great language",
+            "tags": ["python", "testing"],
+            "evidence": [],
+            "impact": 0.8,
+            "status": "active",
+            "source_type": "agent",
+            "source_identity": "test",
+            "created": "2026-01-01",
+            "updated": "2026-01-01",
+            "access_count": 0,
+            "q_value": 0.5,
+            "q_observations": 0,
+            "recurrence": 1,
+        },
+    )
+    writer.write_yaml(
+        entries_dir / "2026-01-02-second-learning.yaml",
+        {
+            "id": "L-test0002",
+            "summary": "Testing gotcha with mocking",
+            "detail": "Always patch at the import site",
+            "tags": ["testing", "gotcha"],
+            "evidence": ["test_foo.py"],
+            "impact": 0.6,
+            "status": "active",
+            "source_type": "human",
+            "source_identity": "Tyler",
+            "created": "2026-01-02",
+            "updated": "2026-01-02",
+            "access_count": 3,
+            "q_value": 0.7,
+            "q_observations": 2,
+            "recurrence": 2,
+        },
+    )
+    writer.write_yaml(
+        entries_dir / "2026-01-03-obsolete-entry.yaml",
+        {
+            "id": "L-test0003",
+            "summary": "Obsolete learning",
+            "detail": "No longer relevant",
+            "tags": ["old"],
+            "evidence": [],
+            "impact": 0.4,
+            "status": "obsolete",
+            "source_type": "agent",
+            "source_identity": "",
+            "created": "2026-01-03",
+            "updated": "2026-01-03",
+            "access_count": 0,
+            "q_value": 0.3,
+            "q_observations": 0,
+            "recurrence": 1,
+        },
+    )
     return trw_dir
 
 
 # ---------------------------------------------------------------------------
 # Migration tests
 # ---------------------------------------------------------------------------
+
 
 class TestEnsureMigrated:
     def test_migrates_yaml_entries(self, trw_dir_with_entries: Path) -> None:
@@ -164,6 +174,7 @@ class TestEnsureMigrated:
 # get_backend tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetBackend:
     def test_singleton_returns_same_instance(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(trw_dir.parent))
@@ -180,11 +191,16 @@ class TestGetBackend:
 # store_learning tests
 # ---------------------------------------------------------------------------
 
+
 class TestStoreLearning:
     def test_basic_store(self, trw_dir: Path) -> None:
         result = store_learning(
-            trw_dir, "L-new001", "Test summary", "Test detail",
-            tags=["test"], impact=0.7,
+            trw_dir,
+            "L-new001",
+            "Test summary",
+            "Test detail",
+            tags=["test"],
+            impact=0.7,
         )
         assert result["learning_id"] == "L-new001"
         assert result["status"] == "recorded"
@@ -194,14 +210,21 @@ class TestStoreLearning:
     def test_return_shape_keys(self, trw_dir: Path) -> None:
         """Return dict must have exact key set for API compatibility."""
         result = store_learning(
-            trw_dir, "L-shape01", "s", "d",
+            trw_dir,
+            "L-shape01",
+            "s",
+            "d",
         )
         expected_keys = {"learning_id", "path", "status", "distribution_warning"}
         assert set(result.keys()) == expected_keys
 
     def test_shard_id_stored_in_metadata(self, trw_dir: Path) -> None:
         store_learning(
-            trw_dir, "L-shard01", "s", "d", shard_id="shard-A",
+            trw_dir,
+            "L-shard01",
+            "s",
+            "d",
+            shard_id="shard-A",
         )
         entry = find_entry_by_id(trw_dir, "L-shard01")
         assert entry is not None
@@ -211,6 +234,7 @@ class TestStoreLearning:
 # ---------------------------------------------------------------------------
 # recall_learnings tests
 # ---------------------------------------------------------------------------
+
 
 class TestRecallLearnings:
     def test_wildcard_returns_all(self, trw_dir: Path) -> None:
@@ -258,10 +282,23 @@ class TestRecallLearnings:
         assert len(results) == 1
         entry = results[0]
         expected_keys = {
-            "id", "summary", "tags", "impact", "status",
-            "detail", "evidence", "source_type", "source_identity",
-            "created", "updated", "access_count", "last_accessed_at",
-            "q_value", "q_observations", "recurrence", "shard_id",
+            "id",
+            "summary",
+            "tags",
+            "impact",
+            "status",
+            "detail",
+            "evidence",
+            "source_type",
+            "source_identity",
+            "created",
+            "updated",
+            "access_count",
+            "last_accessed_at",
+            "q_value",
+            "q_observations",
+            "recurrence",
+            "shard_id",
         }
         assert expected_keys <= set(entry.keys())
 
@@ -269,6 +306,7 @@ class TestRecallLearnings:
 # ---------------------------------------------------------------------------
 # update_learning tests
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateLearning:
     def test_status_change(self, trw_dir: Path) -> None:
@@ -310,6 +348,7 @@ class TestUpdateLearning:
 # Access tracking tests
 # ---------------------------------------------------------------------------
 
+
 class TestAccessTracking:
     def test_increments_count(self, trw_dir: Path) -> None:
         store_learning(trw_dir, "L-at1", "s", "d")
@@ -326,6 +365,7 @@ class TestAccessTracking:
 # ---------------------------------------------------------------------------
 # Utility tests
 # ---------------------------------------------------------------------------
+
 
 class TestUtilities:
     def test_count_entries(self, trw_dir: Path) -> None:
@@ -474,7 +514,8 @@ class TestRecallByLearningId:
     def test_two_ids_returns_both(self, trw_dir_with_entries: Path) -> None:
         """Querying two learning IDs returns both entries (OR, not AND)."""
         results = recall_learnings(
-            trw_dir_with_entries, query="L-test0001 L-test0002",
+            trw_dir_with_entries,
+            query="L-test0001 L-test0002",
         )
         ids = {str(r["id"]) for r in results}
         assert "L-test0001" in ids
@@ -483,7 +524,8 @@ class TestRecallByLearningId:
     def test_id_plus_keywords_returns_union(self, trw_dir_with_entries: Path) -> None:
         """Mixed query with IDs and keywords returns union of both result sets."""
         results = recall_learnings(
-            trw_dir_with_entries, query="L-test0001 mocking",
+            trw_dir_with_entries,
+            query="L-test0001 mocking",
         )
         ids = {str(r["id"]) for r in results}
         # ID lookup finds L-test0001, keyword "mocking" finds L-test0002
@@ -499,7 +541,9 @@ class TestRecallByLearningId:
         """Direct ID lookup still applies status filter."""
         # L-test0003 is obsolete in the fixture data
         results = recall_learnings(
-            trw_dir_with_entries, query="L-test0003", status="active",
+            trw_dir_with_entries,
+            query="L-test0003",
+            status="active",
         )
         ids = [str(r["id"]) for r in results]
         assert "L-test0003" not in ids

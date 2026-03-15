@@ -4,6 +4,30 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.19.2] — 2026-03-15
+
+### Changed
+
+- **Ruff lint enforcement** — expanded from 14 to 26 rule sets (added C4, PERF, G, S, DTZ, FURB, C901, ANN). 244 violations fixed, 0 remaining. All test noqa comments eliminated.
+- **noqa reduction** — source noqa reduced from 292 to 130 (all justified security/complexity suppressions). Test noqa reduced from 117 to 0.
+- **Code simplification** — consolidated duplicate imports in `learning.py`, extracted `_parse_version()` in `auto_upgrade.py`, simplified `ceremony_nudge.py` variable naming.
+- **C901 complexity** — decomposed 9 of 29 complex functions. Remaining 25 are core ceremony/registration functions with justified suppressions.
+- **Ruff format** — `make format-python` target added for consistent formatting.
+- **Pre-commit hooks** — 11 hooks including ruff, ruff-format, detect-secrets, check-ast, check-yaml, check-toml.
+- **Quality baselines** — vulture dead code, deptry dependency hygiene, pyright type checking baselines documented.
+- **Custom semgrep rules** — 4 rules: no-datetime-now-without-tz, no-bare-except, no-print-statements, mcp-tools-must-have-docstrings.
+- **pip-audit CVE scanning** — `make vuln-scan` target with severity filtering.
+- **CI hardening** — ruff check + ruff format --check added to mcp-ci.yml.
+
+## [0.19.1] — 2026-03-15
+
+### Fixed
+
+- **Installer hang on extras detection** — `_detect_installed_extras()` now uses a 10-second timeout (was 120s). Import checks for `anthropic` and `sqlite_vec` that hang on system Python without a venv no longer block the installer for 2+ minutes.
+- **Installer hang on project setup** — `run_with_progress()` now has a 180-second watchdog timer (`threading.Timer`) that kills stalled subprocesses. Previously, a hanging `trw-mcp update-project` would block the installer indefinitely.
+- **CLAUDE.md sync blocking on ThreadPoolExecutor shutdown** — `_run_claude_md_sync()` now calls `pool.shutdown(wait=False, cancel_futures=True)` instead of relying on the `with` context manager's `__exit__`. The old code blocked indefinitely in `shutdown(wait=True)` when `LLMClient()` initialization hung in the worker thread.
+- **Timeout observability** — `run_with_progress()` now warns users when a subprocess is killed by the watchdog timeout. `_run_claude_md_sync()` emits structured log events (`claude_md_sync_completed`, `claude_md_sync_timeout`, `claude_md_sync_failed`) for all sync outcomes.
+
 ## [0.19.0] — 2026-03-15
 
 ### Added

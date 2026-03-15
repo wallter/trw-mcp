@@ -13,9 +13,9 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import os
-import sys
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -66,6 +66,7 @@ def initialized_repo(fake_git_repo: Path) -> Path:
 # dry_run "would create" path (line 245) — framework files that don't exist
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestDryRunWouldCreate:
     """Cover the 'would create' branches in dry-run mode."""
@@ -102,6 +103,7 @@ class TestDryRunWouldCreate:
         hook_creates = [x for x in all_output if "would create" in x and "hook" in x.lower()]
         # If hooks exist in data dir, we should see would-create entries
         from trw_mcp.bootstrap import _DATA_DIR
+
         if (_DATA_DIR / "hooks").is_dir():
             assert len(hook_creates) > 0
 
@@ -112,6 +114,7 @@ class TestDryRunWouldCreate:
         all_output = result["created"] + result["updated"]
         skill_creates = [x for x in all_output if "would create" in x and "skill" in x.lower()]
         from trw_mcp.bootstrap import _DATA_DIR
+
         if (_DATA_DIR / "skills").is_dir():
             assert len(skill_creates) > 0
 
@@ -122,6 +125,7 @@ class TestDryRunWouldCreate:
         all_output = result["created"] + result["updated"]
         agent_creates = [x for x in all_output if "would create" in x and ".md" in x]
         from trw_mcp.bootstrap import _DATA_DIR
+
         if (_DATA_DIR / "agents").is_dir():
             assert len(agent_creates) > 0
 
@@ -171,6 +175,7 @@ class TestDryRunWouldCreate:
 # update_project — OSError paths in framework/hook/skill/agent copy (lines 253-255, 285-287, etc.)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestUpdateOSErrorPaths:
     """Cover OSError branches in update_project copy loops."""
@@ -184,6 +189,7 @@ class TestUpdateOSErrorPaths:
     def test_hook_copy_oserror(self, initialized_repo: Path) -> None:
         """OSError during hook copy adds to errors."""
         from trw_mcp.bootstrap import _DATA_DIR
+
         if not (_DATA_DIR / "hooks").is_dir():
             pytest.skip("no bundled hooks")
 
@@ -202,6 +208,7 @@ class TestUpdateOSErrorPaths:
     def test_skill_copy_oserror(self, initialized_repo: Path) -> None:
         """OSError during skill file copy adds to errors."""
         from trw_mcp.bootstrap import _DATA_DIR
+
         if not (_DATA_DIR / "skills").is_dir():
             pytest.skip("no bundled skills")
 
@@ -222,6 +229,7 @@ class TestUpdateOSErrorPaths:
     def test_agent_copy_oserror(self, initialized_repo: Path) -> None:
         """OSError during agent file copy adds to errors."""
         from trw_mcp.bootstrap import _DATA_DIR
+
         if not (_DATA_DIR / "agents").is_dir():
             pytest.skip("no bundled agents")
 
@@ -240,6 +248,7 @@ class TestUpdateOSErrorPaths:
 # ---------------------------------------------------------------------------
 # _update_claude_md_trw_section — error paths (lines 442-443, 452-455)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestUpdateClaudeMdTrwSection:
@@ -266,9 +275,7 @@ class TestUpdateClaudeMdTrwSection:
     def test_malformed_markers_start_without_end(self, tmp_path: Path) -> None:
         """CLAUDE.md with trw:start but no trw:end → error about malformed markers."""
         claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text(
-            "<!-- trw:start -->\nno end marker here\n", encoding="utf-8"
-        )
+        claude_md.write_text("<!-- trw:start -->\nno end marker here\n", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
         _update_claude_md_trw_section(claude_md, result)
@@ -317,6 +324,7 @@ class TestUpdateClaudeMdTrwSection:
 # _minimal_claude_md_trw_block — fallback path (lines 469-472)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestMinimalClaudeMdTrwBlock:
     """Cover _minimal_claude_md_trw_block including fallback."""
@@ -345,6 +353,7 @@ class TestMinimalClaudeMdTrwBlock:
 # ---------------------------------------------------------------------------
 # _read_manifest — OSError path (lines 520-521)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestReadManifest:
@@ -382,12 +391,16 @@ class TestReadManifest:
         manifest_path = tmp_path / ".trw" / "managed-artifacts.yaml"
         manifest_path.parent.mkdir(parents=True)
         from trw_mcp.state.persistence import FileStateWriter
-        FileStateWriter().write_yaml(manifest_path, {
-            "version": 1,
-            "skills": ["deliver", "learn"],
-            "agents": ["trw-tester.md"],
-            "hooks": ["session-start.sh"],
-        })
+
+        FileStateWriter().write_yaml(
+            manifest_path,
+            {
+                "version": 1,
+                "skills": ["deliver", "learn"],
+                "agents": ["trw-tester.md"],
+                "hooks": ["session-start.sh"],
+            },
+        )
 
         result = _read_manifest(tmp_path)
         assert result is not None
@@ -398,6 +411,7 @@ class TestReadManifest:
 # ---------------------------------------------------------------------------
 # _write_manifest — OSError path (lines 549-550)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestWriteManifest:
@@ -427,13 +441,18 @@ class TestWriteManifest:
 # _remove_stale_artifacts — OSError during rmtree/unlink (lines 592-593, 605-606, 618-619)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestRemoveStaleArtifacts:
     """Cover OSError branches in _remove_stale_artifacts."""
 
-    def _setup_manifest(self, target_dir: Path, extra_skills: list[str] | None = None,
-                        extra_agents: list[str] | None = None,
-                        extra_hooks: list[str] | None = None) -> None:
+    def _setup_manifest(
+        self,
+        target_dir: Path,
+        extra_skills: list[str] | None = None,
+        extra_agents: list[str] | None = None,
+        extra_hooks: list[str] | None = None,
+    ) -> None:
         """Write manifest with extra stale entries."""
         from trw_mcp.bootstrap import _get_bundled_names
         from trw_mcp.state.persistence import FileStateWriter
@@ -492,6 +511,7 @@ class TestRemoveStaleArtifacts:
 # _check_package_version — PackageNotFoundError path (lines 635-640) and mismatch (643)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestCheckPackageVersion:
     """Cover _check_package_version branches."""
@@ -500,8 +520,7 @@ class TestCheckPackageVersion:
         """PackageNotFoundError → warning about missing package."""
         result: dict[str, list[str]] = {"warnings": [], "preserved": []}
 
-        with patch("importlib.metadata.version",
-                   side_effect=importlib.metadata.PackageNotFoundError("trw-mcp")):
+        with patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError("trw-mcp")):
             _check_package_version(result)
 
         assert any("not found" in w for w in result["warnings"])
@@ -516,6 +535,7 @@ class TestCheckPackageVersion:
 
         # Patch the installed version to something clearly different from source
         import trw_mcp
+
         real_version = trw_mcp.__version__
         fake_installed = "0.0.0-old"
 
@@ -532,6 +552,7 @@ class TestCheckPackageVersion:
     def test_version_match_adds_preserved(self) -> None:
         """Matching versions → preserved entry."""
         import trw_mcp
+
         real_version = trw_mcp.__version__
 
         result: dict[str, list[str]] = {"warnings": [], "preserved": []}
@@ -547,6 +568,7 @@ class TestCheckPackageVersion:
 
         # Patch installed version to something different from source
         import trw_mcp as _trw
+
         real_version = _trw.__version__
         fake_installed = "0.0.0-stale"
 
@@ -561,6 +583,7 @@ class TestCheckPackageVersion:
 # ---------------------------------------------------------------------------
 # _pip_install_package — success/failure paths (lines 664-690)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestPipInstallPackage:
@@ -596,8 +619,7 @@ class TestPipInstallPackage:
         """subprocess.TimeoutExpired → error entry."""
         result: dict[str, list[str]] = {"updated": [], "errors": []}
 
-        with patch("subprocess.run",
-                   side_effect=subprocess.TimeoutExpired(cmd="pip", timeout=120)):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="pip", timeout=120)):
             _pip_install_package(tmp_path, result)
 
         assert any("pip install failed" in e for e in result["errors"])
@@ -639,6 +661,7 @@ class TestPipInstallPackage:
 # ---------------------------------------------------------------------------
 # _copy_file — OSError path (lines 723-724)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestCopyFile:
@@ -687,6 +710,7 @@ class TestCopyFile:
 # _write_if_missing — OSError path (lines 740-741)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestWriteIfMissing:
     """Cover _write_if_missing error path."""
@@ -705,6 +729,7 @@ class TestWriteIfMissing:
 # ---------------------------------------------------------------------------
 # _files_identical — OSError path (lines 780-781)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFilesIdentical:
@@ -738,6 +763,7 @@ class TestFilesIdentical:
 # _merge_mcp_json — error paths (lines 806-807, 810, 823-824, 832-833)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestMergeMcpJson:
     """Cover _merge_mcp_json edge cases."""
@@ -767,9 +793,7 @@ class TestMergeMcpJson:
     def test_existing_trw_key_reported_as_key(self, tmp_path: Path) -> None:
         """Existing 'trw' key is updated — result key matches result dict."""
         mcp_path = tmp_path / ".mcp.json"
-        mcp_path.write_text(json.dumps(
-            {"mcpServers": {"trw": {"command": "old", "args": []}}}
-        ), encoding="utf-8")
+        mcp_path.write_text(json.dumps({"mcpServers": {"trw": {"command": "old", "args": []}}}), encoding="utf-8")
 
         # When "updated" key exists
         result: dict[str, list[str]] = {"updated": [], "errors": []}
@@ -808,6 +832,7 @@ class TestMergeMcpJson:
 # _write_installer_metadata — OSError path (lines 877-878)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestWriteInstallerMetadata:
     """Cover _write_installer_metadata error path."""
@@ -816,8 +841,7 @@ class TestWriteInstallerMetadata:
         """OSError writing metadata adds to errors."""
         result: dict[str, list[str]] = {"created": [], "errors": []}
 
-        with patch("trw_mcp.state.persistence.FileStateWriter.write_yaml",
-                   side_effect=OSError("disk full")):
+        with patch("trw_mcp.state.persistence.FileStateWriter.write_yaml", side_effect=OSError("disk full")):
             _write_installer_metadata(tmp_path, "init-project", result)
 
         assert any("Failed to write" in e for e in result["errors"])
@@ -835,6 +859,7 @@ class TestWriteInstallerMetadata:
 # ---------------------------------------------------------------------------
 # _verify_installation — all branches (lines 895, 903-909, 916)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestVerifyInstallation:
@@ -899,8 +924,7 @@ class TestVerifyInstallation:
         _verify_installation(initialized_repo, result)
 
         health_warnings = [
-            w for w in result["warnings"]
-            if "not executable" in w or "missing" in w.lower() or "not valid" in w
+            w for w in result["warnings"] if "not executable" in w or "missing" in w.lower() or "not valid" in w
         ]
         assert len(health_warnings) == 0
 
@@ -908,6 +932,7 @@ class TestVerifyInstallation:
 # ---------------------------------------------------------------------------
 # _generate_mcp_json — legacy helper (lines 927-928)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestGenerateMcpJson:
@@ -930,6 +955,7 @@ class TestGenerateMcpJson:
 # ---------------------------------------------------------------------------
 # _trw_mcp_server_entry — fallback path
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestTrwMcpServerEntry:
@@ -954,6 +980,7 @@ class TestTrwMcpServerEntry:
 # _get_bundled_names — covers all branches
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestGetBundledNames:
     """Cover _get_bundled_names."""
@@ -977,6 +1004,7 @@ class TestGetBundledNames:
 # update_project with pip_install and dry_run interaction
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestUpdateProjectPipInstall:
     """Cover pip_install + dry_run interaction."""
@@ -993,6 +1021,7 @@ class TestUpdateProjectPipInstall:
 # ---------------------------------------------------------------------------
 # update_project — framework file that doesn't exist yet (line 253 'created' path)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestUpdateCreatesMissingFrameworkFiles:
@@ -1160,9 +1189,7 @@ class TestContextCleanupEdgeCases:
         assert not stale.exists()
         assert len(result["cleaned"]) == 1
 
-    def test_update_project_cleans_context_end_to_end(
-        self, initialized_repo: Path
-    ) -> None:
+    def test_update_project_cleans_context_end_to_end(self, initialized_repo: Path) -> None:
         """Full update_project() call removes stale context files end-to-end."""
         context = initialized_repo / ".trw" / "context"
         # Create a mix of allowlisted and transient files
@@ -1230,9 +1257,7 @@ class TestPrefixMigrationExtra:
         # (the first one failed, the second should succeed)
         assert not result.get("errors")
 
-    def test_dry_run_migration_reports_would_migrate(
-        self, initialized_repo: Path
-    ) -> None:
+    def test_dry_run_migration_reports_would_migrate(self, initialized_repo: Path) -> None:
         """dry_run=True appends 'would migrate:' without deleting."""
         skills_dir = initialized_repo / ".claude" / "skills"
         (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
@@ -1245,14 +1270,10 @@ class TestPrefixMigrationExtra:
         # Old dir still present
         assert (skills_dir / "commit").exists()
         # "would migrate:" entry in result
-        would_migrate = [
-            e for e in result["updated"] if "would migrate:" in e and "commit" in e
-        ]
+        would_migrate = [e for e in result["updated"] if "would migrate:" in e and "commit" in e]
         assert len(would_migrate) >= 1
 
-    def test_manifest_excludes_predecessor_names_from_custom(
-        self, initialized_repo: Path
-    ) -> None:
+    def test_manifest_excludes_predecessor_names_from_custom(self, initialized_repo: Path) -> None:
         """Predecessor names are excluded from custom_skills in manifest."""
         skills_dir = initialized_repo / ".claude" / "skills"
         # Create predecessor dir so _get_custom_names would classify it as custom
@@ -1268,9 +1289,7 @@ class TestPrefixMigrationExtra:
         # "commit" should NOT appear in custom_skills
         assert "commit" not in manifest.get("custom_skills", [])
 
-    def test_migrate_prefix_predecessors_direct_call(
-        self, tmp_path: Path
-    ) -> None:
+    def test_migrate_prefix_predecessors_direct_call(self, tmp_path: Path) -> None:
         """Direct call removes both skill dirs and agent files."""
         target = tmp_path
         skills_dir = target / ".claude" / "skills"
@@ -1329,13 +1348,9 @@ class TestPrefixMigrationExtra:
         bundled_agents = set(bundled["agents"])
 
         for old_skill in PREDECESSOR_MAP["skills"]:
-            assert old_skill not in bundled_skills, (
-                f"Predecessor skill '{old_skill}' found in bundled names"
-            )
+            assert old_skill not in bundled_skills, f"Predecessor skill '{old_skill}' found in bundled names"
         for old_agent in PREDECESSOR_MAP["agents"]:
-            assert old_agent not in bundled_agents, (
-                f"Predecessor agent '{old_agent}' found in bundled names"
-            )
+            assert old_agent not in bundled_agents, f"Predecessor agent '{old_agent}' found in bundled names"
 
 
 # ---------------------------------------------------------------------------
@@ -1382,9 +1397,7 @@ class TestMigratePredecessorSuccessorAbsent:
         assert predecessor.exists()
         assert result["updated"] == []
 
-    def test_both_skill_and_agent_predecessors_kept_when_successors_missing(
-        self, tmp_path: Path
-    ) -> None:
+    def test_both_skill_and_agent_predecessors_kept_when_successors_missing(self, tmp_path: Path) -> None:
         """Both skill and agent predecessors are preserved when successors are absent."""
         skills_dir = tmp_path / ".claude" / "skills"
         agents_dir = tmp_path / ".claude" / "agents"

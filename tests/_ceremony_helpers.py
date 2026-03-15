@@ -11,7 +11,8 @@ from tests.conftest import get_tools_sync, make_test_server
 
 
 def make_ceremony_server(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> dict[str, Any]:
     """Create a FastMCP server with all ceremony-related tools and patched project root.
 

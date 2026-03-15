@@ -32,15 +32,19 @@ class BuildStatus(BaseModel):
         description="True if the build check timed out before completing.",
     )
     coverage_pct: float = Field(
-        ge=0.0, le=100.0, default=0.0,
+        ge=0.0,
+        le=100.0,
+        default=0.0,
         description="Coverage percentage from pytest --cov output.",
     )
     test_count: int = Field(
-        ge=0, default=0,
+        ge=0,
+        default=0,
         description="Total number of tests collected by pytest.",
     )
     failure_count: int = Field(
-        ge=0, default=0,
+        ge=0,
+        default=0,
         description="Number of failed tests.",
     )
     failures: list[str] = Field(
@@ -56,6 +60,7 @@ class BuildStatus(BaseModel):
         description="Build check scope: 'full', 'quick', 'pytest', 'mypy'.",
     )
     duration_secs: float = Field(
-        ge=0.0, default=0.0,
+        ge=0.0,
+        default=0.0,
         description="Total wall-clock duration of the build check.",
     )

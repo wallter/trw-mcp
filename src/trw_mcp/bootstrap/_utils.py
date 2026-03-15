@@ -169,17 +169,18 @@ def _default_config(
     lines.append("")
     lines.append("# Target platforms for instruction file sync")
     lines.append("target_platforms:")
-    for p in platforms:
-        lines.append(f'  - "{p}"')
+    lines.extend(f'  - "{p}"' for p in platforms)
 
-    lines.extend([
-        "",
-        "# Platform telemetry — set platform_api_key to enable",
-        "# platform_urls:",
-        '#   - "https://api.trwframework.com"',
-        "# platform_api_key: ''",
-        "# platform_telemetry_enabled: true",
-    ])
+    lines.extend(
+        [
+            "",
+            "# Platform telemetry — set platform_api_key to enable",
+            "# platform_urls:",
+            '#   - "https://api.trwframework.com"',
+            "# platform_api_key: ''",
+            "# platform_telemetry_enabled: true",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -232,7 +233,8 @@ def _merge_mcp_json(
         data["mcpServers"] = servers
         try:
             mcp_path.write_text(
-                json.dumps(data, indent=2) + "\n", encoding="utf-8",
+                json.dumps(data, indent=2) + "\n",
+                encoding="utf-8",
             )
             key = _result_action_key(result)
             if existed:
@@ -248,9 +250,13 @@ def _merge_mcp_json(
             if on_progress:
                 on_progress("Error", str(mcp_path))
     else:
-        content = json.dumps(
-            {"mcpServers": {"trw": trw_entry}}, indent=2,
-        ) + "\n"
+        content = (
+            json.dumps(
+                {"mcpServers": {"trw": trw_entry}},
+                indent=2,
+            )
+            + "\n"
+        )
         try:
             mcp_path.write_text(content, encoding="utf-8")
             result["created"].append(str(mcp_path))
@@ -400,9 +406,7 @@ def _verify_installation(
         try:
             data = json.loads(mcp_path.read_text(encoding="utf-8"))
             if "trw" not in data.get("mcpServers", {}):
-                result["warnings"].append(
-                    ".mcp.json missing 'trw' server entry"
-                )
+                result["warnings"].append(".mcp.json missing 'trw' server entry")
         except (json.JSONDecodeError, OSError):
             result["warnings"].append(".mcp.json is not valid JSON")
     else:
@@ -415,9 +419,7 @@ def _verify_installation(
     if claude_md.exists():
         content = claude_md.read_text(encoding="utf-8")
         if _TRW_START_MARKER not in content or _TRW_END_MARKER not in content:
-            result["warnings"].append(
-                "CLAUDE.md missing TRW auto-generated markers"
-            )
+            result["warnings"].append("CLAUDE.md missing TRW auto-generated markers")
 
 
 def _check_package_version(result: dict[str, list[str]]) -> None:
@@ -432,8 +434,7 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
         installed_version = importlib.metadata.version("trw-mcp")
     except importlib.metadata.PackageNotFoundError:
         result["warnings"].append(
-            "trw-mcp package not found in Python environment. "
-            "Install with: pip install -e trw-mcp[dev]"
+            "trw-mcp package not found in Python environment. Install with: pip install -e trw-mcp[dev]"
         )
         return
 
@@ -444,9 +445,7 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
             f"pip install -e trw-mcp[dev]"
         )
     else:
-        result["preserved"].append(
-            f"trw-mcp package v{installed_version} (up to date)"
-        )
+        result["preserved"].append(f"trw-mcp package v{installed_version} (up to date)")
 
 
 def _pip_install_package(
@@ -467,13 +466,12 @@ def _pip_install_package(
     package_dir = _data_dir.parent.parent.parent
     if not (package_dir / "pyproject.toml").exists():
         result["errors"].append(
-            "Cannot find trw-mcp pyproject.toml for pip install. "
-            "Manually run: pip install -e /path/to/trw-mcp[dev]"
+            "Cannot find trw-mcp pyproject.toml for pip install. Manually run: pip install -e /path/to/trw-mcp[dev]"
         )
         return
 
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603 — shell=False (default); cmd uses sys.executable (fully-qualified) and a static package_dir path
             [sys.executable, "-m", "pip", "install", "-e", f"{package_dir}[dev]"],
             capture_output=True,
             text=True,
@@ -483,9 +481,7 @@ def _pip_install_package(
         if proc.returncode == 0:
             result["updated"].append("pip install trw-mcp (reinstalled)")
         else:
-            result["errors"].append(
-                f"pip install failed (exit {proc.returncode}): {proc.stderr[:200]}"
-            )
+            result["errors"].append(f"pip install failed (exit {proc.returncode}): {proc.stderr[:200]}")
     except (subprocess.TimeoutExpired, OSError) as exc:
         result["errors"].append(f"pip install failed: {exc}")
 
@@ -545,7 +541,7 @@ def resolve_ide_targets(
     if ide_override:
         return [ide_override]
     detected = detect_ide(target_dir)
-    return detected if detected else ["claude-code"]  # default to Claude Code
+    return detected or ["claude-code"]  # default to Claude Code
 
 
 # ---------------------------------------------------------------------------

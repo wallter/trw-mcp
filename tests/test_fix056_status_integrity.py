@@ -11,8 +11,7 @@ Covers:
 from __future__ import annotations
 
 import textwrap
-
-import pytest
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Minimal PRD fixtures
@@ -208,8 +207,8 @@ class TestStatusDriftDetection:
 
     def test_no_drift_matching_status(self) -> None:
         """When frontmatter and prose status agree (case-insensitive), no warnings."""
-        from trw_mcp.state.validation.prd_quality import _check_status_drift
         from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.state.validation.prd_quality import _check_status_drift
 
         content = _make_prd(fm_status="draft", prose_status="Draft")
         fm = parse_frontmatter(content)
@@ -218,8 +217,8 @@ class TestStatusDriftDetection:
 
     def test_no_drift_case_insensitive(self) -> None:
         """Case-insensitive comparison: 'done' matches 'Done'."""
-        from trw_mcp.state.validation.prd_quality import _check_status_drift
         from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.state.validation.prd_quality import _check_status_drift
 
         content = _make_prd(fm_status="done", prose_status="Done")
         fm = parse_frontmatter(content)
@@ -228,8 +227,8 @@ class TestStatusDriftDetection:
 
     def test_drift_detected_mismatch(self) -> None:
         """When frontmatter status differs from prose, a warning is returned."""
-        from trw_mcp.state.validation.prd_quality import _check_status_drift
         from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.state.validation.prd_quality import _check_status_drift
 
         content = _make_prd(fm_status="done", prose_status="Draft")
         fm = parse_frontmatter(content)
@@ -241,8 +240,8 @@ class TestStatusDriftDetection:
 
     def test_no_drift_no_quick_reference_block(self) -> None:
         """When no prose Quick Reference block exists, drift check skips gracefully."""
-        from trw_mcp.state.validation.prd_quality import _check_status_drift
         from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.state.validation.prd_quality import _check_status_drift
 
         # A PRD body without any **Status**: line in the prose
         content = textwrap.dedent("""\
@@ -307,9 +306,7 @@ class TestFRStatusAnnotation:
             confidence=0.7,
         )
         # The FR blocks should have **Status**: active injected after **Priority**:
-        assert "**Status**: active" in body, (
-            "Expected '**Status**: active' to appear in generated FR body"
-        )
+        assert "**Status**: active" in body, "Expected '**Status**: active' to appear in generated FR body"
 
     def test_status_annotation_follows_priority(self) -> None:
         """**Status**: active appears immediately after **Priority**: in FR blocks."""
@@ -327,11 +324,10 @@ class TestFRStatusAnnotation:
         for i, line in enumerate(lines):
             if "**Priority**: Must Have" in line or "**Priority**: Should Have" in line:
                 # Check the very next non-empty line has **Status**: active
-                next_lines = [l for l in lines[i + 1 :i + 3] if l.strip()]
+                next_lines = [l for l in lines[i + 1 : i + 3] if l.strip()]
                 if next_lines:
                     assert "**Status**: active" in next_lines[0], (
-                        f"Expected **Status**: active after priority line at line {i}, "
-                        f"got: {next_lines[0]!r}"
+                        f"Expected **Status**: active after priority line at line {i}, got: {next_lines[0]!r}"
                     )
                 break
 
@@ -391,9 +387,7 @@ class TestStatusStateMachine:
             ("implemented", "deprecated"),
         ]
         for current, target in valid_pairs:
-            assert validate_status_transition(current, target), (
-                f"Expected {current} -> {target} to be allowed"
-            )
+            assert validate_status_transition(current, target), f"Expected {current} -> {target} to be allowed"
 
     def test_invalid_transitions(self) -> None:
         """Invalid transitions return False — derived from canonical state machine."""
@@ -410,9 +404,7 @@ class TestStatusStateMachine:
             ("approved", "draft"),  # approved cannot go back to draft
         ]
         for current, target in invalid_pairs:
-            assert not validate_status_transition(current, target), (
-                f"Expected {current} -> {target} to be blocked"
-            )
+            assert not validate_status_transition(current, target), f"Expected {current} -> {target} to be blocked"
 
     def test_identity_transitions_always_valid(self) -> None:
         """Same-to-same transitions are always valid."""
@@ -513,7 +505,8 @@ class TestApprovalWarningGuard:
         from trw_mcp.state.prd_utils import check_transition_guards
 
         # DRAFT -> REVIEW has its own content density guard, not approval warning
-        minimal = textwrap.dedent("""\
+        minimal = textwrap.dedent(
+            """\
             ---
             prd:
               id: PRD-TEST-001
@@ -527,7 +520,9 @@ class TestApprovalWarningGuard:
 
             # Test
 
-            Long enough content to meet density threshold. """ + ("x " * 100) + """
+            Long enough content to meet density threshold. """
+            + ("x " * 100)
+            + """
 
             ## 1. Problem Statement
             Content here.
@@ -553,7 +548,8 @@ class TestApprovalWarningGuard:
             Content here.
             ## 12. Traceability Matrix
             Content here.
-        """)
+        """
+        )
         result = check_transition_guards(PRDStatus.DRAFT, PRDStatus.REVIEW, minimal)
         assert "approval_warning" not in result.guard_details
 
@@ -626,9 +622,7 @@ class TestPartiallyImplementedFRsWarning:
             partial_frs="[FR03]",
         )
         result = validate_prd_quality_v2(content)
-        partial_msgs = [
-            w for w in result.status_drift_warnings if "partially implemented" in w.lower()
-        ]
+        partial_msgs = [w for w in result.status_drift_warnings if "partially implemented" in w.lower()]
         assert len(partial_msgs) >= 1, (
             f"Expected partial FR warning in status_drift_warnings, got: {result.status_drift_warnings}"
         )
@@ -696,13 +690,13 @@ class TestModelFields:
 class TestUpdateFrontmatterProseSyncFR02:
     """Tests that update_frontmatter() syncs the prose Quick Reference status line."""
 
-    def test_update_frontmatter_syncs_prose(self, tmp_path: "Path") -> None:  # type: ignore[name-defined]
+    def test_update_frontmatter_syncs_prose(self, tmp_path: Path) -> None:  # type: ignore[name-defined]
         """update_frontmatter with status update must sync prose **Status** line."""
-        from pathlib import Path
         from trw_mcp.state.prd_utils import parse_frontmatter, update_frontmatter
 
         prd_file = tmp_path / "PRD-TEST-001.md"
-        prd_file.write_text(textwrap.dedent("""\
+        prd_file.write_text(
+            textwrap.dedent("""\
             ---
             prd:
               id: PRD-TEST-001
@@ -722,7 +716,9 @@ class TestUpdateFrontmatterProseSyncFR02:
             ## 1. Problem Statement
 
             Body here.
-        """), encoding="utf-8")
+        """),
+            encoding="utf-8",
+        )
 
         update_frontmatter(prd_file, {"status": "review"})
 
@@ -730,16 +726,13 @@ class TestUpdateFrontmatterProseSyncFR02:
 
         # Frontmatter must say "review"
         fm = parse_frontmatter(updated)
-        assert fm.get("status") == "review", (
-            f"Frontmatter status not updated: {fm.get('status')!r}"
-        )
+        assert fm.get("status") == "review", f"Frontmatter status not updated: {fm.get('status')!r}"
 
         # Prose Quick Reference must also say "Review"
-        assert "- **Status**: Review" in updated, (
-            f"Prose status not synced in body:\n{updated}"
-        )
+        assert "- **Status**: Review" in updated, f"Prose status not synced in body:\n{updated}"
         # The old value "Draft" must not remain on a **Status** prose line
         import re
+
         prose_status_lines = re.findall(r"- \*\*Status\*\*: (\w+)", updated)
         assert all(s.lower() == "review" for s in prose_status_lines), (
             f"Found prose status lines not updated: {prose_status_lines}"

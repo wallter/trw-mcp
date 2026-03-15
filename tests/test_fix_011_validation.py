@@ -17,7 +17,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.validation import validate_prd_quality_v2
 
@@ -145,6 +144,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     import trw_mcp.tools.requirements as req_mod
+
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
     (tmp_path / ".trw").mkdir()
@@ -175,6 +175,7 @@ def _run_validate(prd_text: str, tmp_path: Path) -> dict[str, Any]:
 # Test: single V2 execution path (no separate V1 call)
 # ---------------------------------------------------------------------------
 
+
 class TestSingleExecutionPath:
     """PRD-FIX-011-FR01: Only one validation call per invocation."""
 
@@ -198,6 +199,7 @@ class TestSingleExecutionPath:
         validate_prd_quality is not in the tool module's namespace.
         """
         import trw_mcp.tools.requirements as req_mod
+
         assert not hasattr(req_mod, "validate_prd_quality"), (
             "Tool module should not import validate_prd_quality directly"
         )
@@ -210,6 +212,7 @@ class TestSingleExecutionPath:
 # ---------------------------------------------------------------------------
 # Test: V2 includes V1-compatible checks
 # ---------------------------------------------------------------------------
+
 
 class TestV2IncludesV1Checks:
     """PRD-FIX-011-FR02: V2 produces V1-compatible output fields."""
@@ -256,6 +259,7 @@ class TestV2IncludesV1Checks:
 # Test: rich diagnostics exposed (PRD-FIX-011-FR03)
 # ---------------------------------------------------------------------------
 
+
 class TestRichDiagnosticsExposed:
     """PRD-FIX-011-FR03: Previously discarded diagnostics are now exposed."""
 
@@ -299,6 +303,7 @@ class TestRichDiagnosticsExposed:
 # Test: backward-compatible output
 # ---------------------------------------------------------------------------
 
+
 class TestBackwardCompatibleOutput:
     """PRD-FIX-011-FR04: All V1 output keys are preserved."""
 
@@ -308,13 +313,25 @@ class TestBackwardCompatibleOutput:
 
         expected_keys = [
             # V1 keys
-            "path", "valid", "completeness_score", "traceability_coverage",
-            "ambiguity_rate", "sections_found", "sections_expected", "failures",
+            "path",
+            "valid",
+            "completeness_score",
+            "traceability_coverage",
+            "ambiguity_rate",
+            "sections_found",
+            "sections_expected",
+            "failures",
             # V2 keys
-            "total_score", "quality_tier", "grade", "dimensions",
+            "total_score",
+            "quality_tier",
+            "grade",
+            "dimensions",
             "improvement_suggestions",
             # FIX-011 diagnostic keys
-            "smell_findings", "ears_classifications", "readability", "section_scores",
+            "smell_findings",
+            "ears_classifications",
+            "readability",
+            "section_scores",
         ]
         for key in expected_keys:
             assert key in result, f"Missing expected key: {key!r}"
@@ -337,6 +354,7 @@ class TestBackwardCompatibleOutput:
 # ---------------------------------------------------------------------------
 # Test: ambiguity detection single source
 # ---------------------------------------------------------------------------
+
 
 class TestAmbiguityDetection:
     """Ambiguity detection uses V2 smell detection as single source."""

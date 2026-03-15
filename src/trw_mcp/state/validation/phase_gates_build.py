@@ -43,7 +43,8 @@ def _best_effort_check(
     try:
         check_fn()
     except Exception:  # justified: boundary, best-effort build gate
-        logger.debug(f"{check_name}_failed", exc_info=True)
+        logger.debug("check_failed", check_name=check_name, exc_info=True)
+
 
 # Build status staleness threshold (PRD-CORE-023-FR10)
 _BUILD_STALENESS_SECS = 1800  # 30 minutes
@@ -81,17 +82,14 @@ def _check_build_status(
             ValidationFailure(
                 field="build_status",
                 rule="build_cache_exists",
-                message=(
-                    "No build status cached — run trw_build_check() "
-                    "before phase gate"
-                ),
+                message=("No build status cached — run trw_build_check() before phase gate"),
                 severity="info",
             )
         ]
 
+    from trw_mcp.exceptions import StateError
     from trw_mcp.state.persistence import FileStateReader
 
-    from trw_mcp.exceptions import StateError
     try:
         data = FileStateReader().read_yaml(cache_path)
     except (OSError, StateError):
@@ -112,9 +110,12 @@ def _check_build_status(
     if ts_str:
         try:
             cached_dt = datetime.fromisoformat(str(ts_str))
-            age_secs = time.time() - cached_dt.replace(
-                tzinfo=timezone.utc,
-            ).timestamp()
+            age_secs = (
+                time.time()
+                - cached_dt.replace(
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            )
             if age_secs > _BUILD_STALENESS_SECS:
                 is_stale = True
                 failures.append(
@@ -133,11 +134,7 @@ def _check_build_status(
             pass  # Can't parse timestamp — treat as fresh
 
     # Determine severity: IMPLEMENT always warning; VALIDATE/DELIVER per config
-    is_strict_gate = (
-        phase_name != "implement"
-        and not is_stale
-        and config.build_gate_enforcement == "strict"
-    )
+    is_strict_gate = phase_name != "implement" and not is_stale and config.build_gate_enforcement == "strict"
     severity = "error" if is_strict_gate else "warning"
 
     # Check test results
@@ -177,10 +174,7 @@ def _check_build_status(
                 ValidationFailure(
                     field="build_coverage",
                     rule="coverage_min",
-                    message=(
-                        f"Coverage {coverage:.1f}% is below minimum "
-                        f"{config.build_check_coverage_min:.1f}%"
-                    ),
+                    message=(f"Coverage {coverage:.1f}% is below minimum {config.build_check_coverage_min:.1f}%"),
                     severity=severity,
                 )
             )
@@ -200,8 +194,10 @@ def _best_effort_build_check(
         phase_name: Current phase name.
         failures: Mutable list to append failures into.
     """
+
     def _check() -> None:
         from trw_mcp.state._paths import resolve_trw_dir
+
         failures.extend(_check_build_status(resolve_trw_dir(), config, phase_name))
 
     _best_effort_check(_check, "build_check")
@@ -218,6 +214,7 @@ def _best_effort_integration_check(
         failures: Mutable list to append failures into.
         severity: Severity for unregistered-tool findings.
     """
+
     def _check() -> None:
         from trw_mcp.state._paths import resolve_project_root
         from trw_mcp.state.validation.integration_check import check_integration
@@ -228,22 +225,26 @@ def _best_effort_integration_check(
         integ = check_integration(src_dir)
         unreg = integ.get("unregistered", [])
         if isinstance(unreg, list):
-            for mod in unreg:
-                failures.append(ValidationFailure(
+            failures.extend(
+                ValidationFailure(
                     field=f"integration:tools/{mod}.py",
                     rule="tool_registration",
                     message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
                     severity=severity,
-                ))
+                )
+                for mod in unreg
+            )
         missing = integ.get("missing_tests", [])
         if isinstance(missing, list):
-            for test_name in missing:
-                failures.append(ValidationFailure(
+            failures.extend(
+                ValidationFailure(
                     field=f"integration:{test_name}",
                     rule="test_coverage",
                     message=f"Missing test file: {test_name}",
                     severity="warning",
-                ))
+                )
+                for test_name in missing
+            )
 
     _best_effort_check(_check, "integration_check")
 
@@ -263,6 +264,7 @@ def _best_effort_orphan_check(
         failures: Mutable list to append failures into.
         severity: Severity for orphan findings.
     """
+
     def _check() -> None:
         from trw_mcp.state._paths import resolve_project_root
         from trw_mcp.state.validation.integration_check import check_orphan_modules
@@ -273,8 +275,8 @@ def _best_effort_orphan_check(
         result = check_orphan_modules(src_dir)
         orphans = result.get("orphans", [])
         if isinstance(orphans, list):
-            for mod in orphans:
-                failures.append(ValidationFailure(
+            failures.extend(
+                ValidationFailure(
                     field=f"orphan:{mod}",
                     rule="module_reachability",
                     message=(
@@ -283,7 +285,9 @@ def _best_effort_orphan_check(
                         f"without wiring"
                     ),
                     severity=severity,
-                ))
+                )
+                for mod in orphans
+            )
 
     _best_effort_check(_check, "orphan_check")
 
@@ -309,7 +313,7 @@ def _get_changed_files(project_root: Path) -> list[str]:
     try:
         # Staged + unstaged changes
         result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
             capture_output=True,
             text=True,
             timeout=10,
@@ -319,7 +323,7 @@ def _get_changed_files(project_root: Path) -> list[str]:
 
         # Also check staged files (for new files)
         result2 = subprocess.run(
-            ["git", "diff", "--name-only", "--cached"],
+            ["git", "diff", "--name-only", "--cached"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
             capture_output=True,
             text=True,
             timeout=10,
@@ -329,15 +333,13 @@ def _get_changed_files(project_root: Path) -> list[str]:
 
         # Also check untracked files
         result3 = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
+            ["git", "ls-files", "--others", "--exclude-standard"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
             capture_output=True,
             text=True,
             timeout=10,
             cwd=str(project_root),
         )
-        untracked = [
-            f.strip() for f in result3.stdout.strip().split("\n") if f.strip()
-        ]
+        untracked = [f.strip() for f in result3.stdout.strip().split("\n") if f.strip()]
 
         all_files = list(set(files + staged + untracked))
         return all_files
@@ -369,8 +371,8 @@ def _check_nullable_defaults(
     for model_file in model_files:
         try:
             # Get only added lines from the diff
-            result = subprocess.run(
-                ["git", "diff", "HEAD", "--", model_file],
+            result = subprocess.run(  # noqa: S603 — shell=False (default); cmd is a git read-only command with validated static args
+                ["git", "diff", "HEAD", "--", model_file],  # noqa: S607 — git is a well-known VCS tool; model_file is a project-relative path from git's own output
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -380,16 +382,9 @@ def _check_nullable_defaults(
                 if not line.startswith("+") or line.startswith("+++"):
                     continue
                 added_line = line[1:]  # Strip the leading +
-                if (
-                    "Column(" in added_line
-                    and "nullable=False" in added_line
-                    and "server_default" not in added_line
-                ):
+                if "Column(" in added_line and "nullable=False" in added_line and "server_default" not in added_line:
                     clean_line = added_line.strip()
-                    warnings.append(
-                        f"NOT NULL column without server_default in "
-                        f"{model_file}: {clean_line}"
-                    )
+                    warnings.append(f"NOT NULL column without server_default in {model_file}: {clean_line}")
         except (subprocess.SubprocessError, FileNotFoundError, OSError):
             continue
 
@@ -415,23 +410,14 @@ def check_migration_gate(project_root: Path) -> list[str]:
         return warnings
 
     # FR-1: Detect model file changes
-    model_files = [
-        f for f in changed if "models/database" in f and f.endswith(".py")
-    ]
+    model_files = [f for f in changed if "models/database" in f and f.endswith(".py")]
 
     # FR-2: Check for new migration files
-    migration_files = [
-        f
-        for f in changed
-        if "alembic/versions/" in f and f.endswith(".py")
-    ]
+    migration_files = [f for f in changed if "alembic/versions/" in f and f.endswith(".py")]
 
     if model_files and not migration_files:
         model_names = ", ".join(model_files)
-        warnings.append(
-            f"database.py modified ({model_names}) but no new Alembic "
-            f"migration detected"
-        )
+        warnings.append(f"database.py modified ({model_names}) but no new Alembic migration detected")
 
     # FR-3: Check NOT NULL without server_default
     if model_files:
@@ -461,15 +447,15 @@ def _best_effort_migration_check(
         project_root = resolve_project_root()
 
         warnings = check_migration_gate(project_root)
-        for warning_msg in warnings:
-            failures.append(
-                ValidationFailure(
-                    field="migration_gate",
-                    rule="migration_check",
-                    message=warning_msg,
-                    severity="warning",
-                )
+        failures.extend(
+            ValidationFailure(
+                field="migration_gate",
+                rule="migration_check",
+                message=warning_msg,
+                severity="warning",
             )
+            for warning_msg in warnings
+        )
 
     _best_effort_check(_check, "migration_check")
 
@@ -497,32 +483,28 @@ def _best_effort_dry_check(
 
         # Reuse shared helper instead of duplicating subprocess call
         changed = _get_changed_files(project_root)
-        py_files = [
-            str(project_root / f) for f in changed
-            if f.endswith(".py") and "/tests/" not in f
-        ]
+        py_files = [str(project_root / f) for f in changed if f.endswith(".py") and "/tests/" not in f]
 
         if not py_files:
             return
 
         blocks = find_duplicated_blocks(
-            py_files, min_block_size=config.dry_check_min_block_size,
+            py_files,
+            min_block_size=config.dry_check_min_block_size,
         )
 
         for block in blocks[:5]:  # Cap at 5 warnings
-            loc_summary = ", ".join(
-                f"{loc.file_path}:{loc.start_line}"
-                for loc in block.locations[:3]
+            loc_summary = ", ".join(f"{loc.file_path}:{loc.start_line}" for loc in block.locations[:3])
+            failures.append(
+                ValidationFailure(
+                    field="dry_check",
+                    rule="duplication_detected",
+                    message=(
+                        f"Duplicated block ({len(block.locations)} occurrences, {block.block_hash}): {loc_summary}"
+                    ),
+                    severity="warning",
+                )
             )
-            failures.append(ValidationFailure(
-                field="dry_check",
-                rule="duplication_detected",
-                message=(
-                    f"Duplicated block ({len(block.locations)} occurrences, "
-                    f"{block.block_hash}): {loc_summary}"
-                ),
-                severity="warning",
-            ))
 
     _best_effort_check(_check, "dry_check")
 
@@ -550,11 +532,7 @@ def _best_effort_semantic_check(
 
         # Reuse shared helper instead of duplicating subprocess call
         changed = _get_changed_files(project_root)
-        scannable = [
-            str(project_root / f)
-            for f in changed
-            if f.endswith((".py", ".ts", ".tsx", ".js"))
-        ]
+        scannable = [str(project_root / f) for f in changed if f.endswith((".py", ".ts", ".tsx", ".js"))]
 
         if not scannable:
             return
@@ -562,18 +540,17 @@ def _best_effort_semantic_check(
         check_result = run_semantic_checks(scannable)
 
         # Only report warnings and errors (skip info-level)
-        for finding in check_result.findings[:10]:
-            if finding.severity in ("warning", "error"):
-                failures.append(
-                    ValidationFailure(
-                        field="semantic_check",
-                        rule=finding.check_id,
-                        message=(
-                            f"[{finding.severity}] {finding.description} "
-                            f"at {finding.file_path}:{finding.line_number}"
-                        ),
-                        severity="warning",  # Always soft gate
-                    )
-                )
+        failures.extend(
+            ValidationFailure(
+                field="semantic_check",
+                rule=finding.check_id,
+                message=(
+                    f"[{finding.severity}] {finding.description} at {finding.file_path}:{finding.line_number}"
+                ),
+                severity="warning",  # Always soft gate
+            )
+            for finding in check_result.findings[:10]
+            if finding.severity in ("warning", "error")
+        )
 
     _best_effort_check(_check, "semantic_check")

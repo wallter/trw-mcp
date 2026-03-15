@@ -17,9 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.conftest import get_tools_sync
-
 import trw_mcp.state.analytics.report as analytics_mod
+from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.analytics.report import auto_close_stale_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -49,12 +48,15 @@ def _create_run(
     """Create a run directory with run.yaml at the expected path."""
     run_dir = runs_root / task_name / run_id / "meta"
     run_dir.mkdir(parents=True)
-    _writer.write_yaml(run_dir / "run.yaml", {
-        "run_id": run_id,
-        "task": task_name,
-        "status": status,
-        "phase": "implement",
-    })
+    _writer.write_yaml(
+        run_dir / "run.yaml",
+        {
+            "run_id": run_id,
+            "task": task_name,
+            "status": status,
+            "phase": "implement",
+        },
+    )
     return run_dir.parent
 
 
@@ -222,12 +224,15 @@ class TestAutoCloseStaleRuns:
         bad_run_id = "not-a-timestamp-abcd1234"
         run_dir = runs_root / "my-task" / bad_run_id / "meta"
         run_dir.mkdir(parents=True)
-        _writer.write_yaml(run_dir / "run.yaml", {
-            "run_id": bad_run_id,
-            "task": "my-task",
-            "status": "active",
-            "phase": "implement",
-        })
+        _writer.write_yaml(
+            run_dir / "run.yaml",
+            {
+                "run_id": bad_run_id,
+                "task": "my-task",
+                "status": "active",
+                "phase": "implement",
+            },
+        )
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -379,7 +384,8 @@ class TestTRWConfigMaintenanceFields:
         assert cfg.run_auto_close_age_days == 14
 
     def test_learning_auto_prune_on_deliver_env_override(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("TRW_LEARNING_AUTO_PRUNE_ON_DELIVER", "false")
         _reset_config()
@@ -387,7 +393,8 @@ class TestTRWConfigMaintenanceFields:
         assert cfg.learning_auto_prune_on_deliver is False
 
     def test_learning_auto_prune_cap_env_override(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("TRW_LEARNING_AUTO_PRUNE_CAP", "200")
         _reset_config()
@@ -416,7 +423,8 @@ class TestSessionStartAutoClose:
         return getattr(tool, "fn", tool)
 
     def test_session_start_calls_auto_close_when_enabled(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When run_auto_close_enabled=True, auto_close_stale_runs is called and
         the result is surfaced in the return value when count > 0."""
@@ -424,7 +432,6 @@ class TestSessionStartAutoClose:
         object.__setattr__(cfg, "run_auto_close_enabled", True)
 
         import trw_mcp.state.analytics.report as ar_mod
-        import trw_mcp.tools.ceremony as ceremony_mod
 
         close_result = {"runs_closed": ["run-001"], "count": 1, "errors": []}
         original_fn = ar_mod.auto_close_stale_runs
@@ -452,13 +459,12 @@ class TestSessionStartAutoClose:
         assert result.get("stale_runs_closed") == close_result
 
     def test_session_start_does_not_call_auto_close_when_disabled(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When run_auto_close_enabled=False, auto_close_stale_runs is never called."""
         cfg = TRWConfig()
         object.__setattr__(cfg, "run_auto_close_enabled", False)
-
-        import trw_mcp.tools.ceremony as ceremony_mod
 
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
@@ -478,13 +484,12 @@ class TestSessionStartAutoClose:
         assert "stale_runs_closed" not in result
 
     def test_session_start_auto_close_exception_is_fail_open(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """If auto_close_stale_runs raises, session_start still succeeds."""
         cfg = TRWConfig()
         object.__setattr__(cfg, "run_auto_close_enabled", True)
-
-        import trw_mcp.tools.ceremony as ceremony_mod
 
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
@@ -496,6 +501,7 @@ class TestSessionStartAutoClose:
         ):
             # Patch the function imported inside Step 5 body
             import trw_mcp.state.analytics.report as ar_mod
+
             original_fn = ar_mod.auto_close_stale_runs
             try:
                 ar_mod.auto_close_stale_runs = MagicMock(  # type: ignore[method-assign]
@@ -536,9 +542,18 @@ class TestDeliverAutoPrune:
             "trw_mcp.tools.ceremony.get_config": lambda: cfg,
             "trw_mcp.tools.ceremony.resolve_trw_dir": lambda: tmp_path / ".trw",
             "trw_mcp.tools.ceremony.find_active_run": lambda: None,
-            "trw_mcp.tools.ceremony._do_reflect": lambda *a, **kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0},
+            "trw_mcp.tools.ceremony._do_reflect": lambda *a, **kw: {
+                "status": "success",
+                "events_analyzed": 0,
+                "learnings_produced": 0,
+                "success_patterns": 0,
+            },
             "trw_mcp.tools.ceremony._do_checkpoint": lambda *a, **kw: None,
-            "trw_mcp.tools.ceremony._do_instruction_sync": lambda *a, **kw: {"status": "success", "learnings_promoted": 0, "total_lines": 0},
+            "trw_mcp.tools.ceremony._do_instruction_sync": lambda *a, **kw: {
+                "status": "success",
+                "learnings_promoted": 0,
+                "total_lines": 0,
+            },
             "trw_mcp.tools.ceremony._do_index_sync": lambda: {"status": "success"},
             "trw_mcp.tools.ceremony._do_auto_progress": lambda *a, **kw: {"status": "skipped"},
         }
@@ -554,7 +569,6 @@ class TestDeliverAutoPrune:
         object.__setattr__(cfg, "learning_auto_prune_on_deliver", True)
         object.__setattr__(cfg, "learning_auto_prune_cap", 150)
 
-        import trw_mcp.tools.ceremony as ceremony_mod
         prune_result = {"actions_taken": 5, "status": "pruned"}
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
@@ -578,6 +592,7 @@ class TestDeliverAutoPrune:
             patch("trw_mcp.tools.ceremony._step_ceremony_feedback", return_value=noop),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
+
             original = analytics_mod_state.auto_prune_excess_entries
             try:
                 analytics_mod_state.auto_prune_excess_entries = mock_prune  # type: ignore[method-assign]
@@ -588,18 +603,18 @@ class TestDeliverAutoPrune:
         mock_prune.assert_called_once()
         # Check log file for auto_prune result
         import json
+
         log_path = trw_dir / "logs" / "deferred-deliver.jsonl"
         entry = json.loads(log_path.read_text().strip())
         assert "auto_prune" in entry["results"]
 
     def test_deliver_does_not_call_auto_prune_when_disabled(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When learning_auto_prune_on_deliver=False, auto_prune_excess_entries is not called."""
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_auto_prune_on_deliver", False)
-
-        import trw_mcp.tools.ceremony as ceremony_mod
 
         fn = self._make_deliver_fn()
         mock_prune = MagicMock(return_value={"actions_taken": 0})
@@ -608,12 +623,24 @@ class TestDeliverAutoPrune:
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony._do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}),
-            patch("trw_mcp.tools.ceremony._do_instruction_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0}),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                return_value={
+                    "status": "success",
+                    "events_analyzed": 0,
+                    "learnings_produced": 0,
+                    "success_patterns": 0,
+                },
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_instruction_sync",
+                return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0},
+            ),
             patch("trw_mcp.tools.ceremony._do_index_sync", return_value={"status": "success"}),
             patch("trw_mcp.tools.ceremony._do_auto_progress", return_value={"status": "skipped"}),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
+
             original = analytics_mod_state.auto_prune_excess_entries
             try:
                 analytics_mod_state.auto_prune_excess_entries = mock_prune  # type: ignore[method-assign]
@@ -624,7 +651,8 @@ class TestDeliverAutoPrune:
         mock_prune.assert_not_called()
 
     def test_deliver_auto_prune_exception_is_fail_open(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """If auto_prune_excess_entries raises, deferred steps still continue.
 
@@ -636,7 +664,6 @@ class TestDeliverAutoPrune:
         object.__setattr__(cfg, "learning_auto_prune_on_deliver", True)
         object.__setattr__(cfg, "learning_auto_prune_cap", 150)
 
-        import trw_mcp.tools.ceremony as ceremony_mod
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
 
@@ -658,6 +685,7 @@ class TestDeliverAutoPrune:
             patch("trw_mcp.tools.ceremony._step_ceremony_feedback", return_value=noop),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
+
             original = analytics_mod_state.auto_prune_excess_entries
             try:
                 analytics_mod_state.auto_prune_excess_entries = MagicMock(  # type: ignore[method-assign]
@@ -669,20 +697,20 @@ class TestDeliverAutoPrune:
 
         # Check log: auto_prune should show failure, but deferred run completes
         import json
+
         log_path = trw_dir / "logs" / "deferred-deliver.jsonl"
         entry = json.loads(log_path.read_text().strip())
         assert entry["results"]["auto_prune"]["status"] == "failed"
         assert not entry["success"]  # errors list is non-empty
 
     def test_deliver_auto_prune_cap_passed_correctly(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """auto_prune_excess_entries is called with max_entries=config.learning_auto_prune_cap."""
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_auto_prune_on_deliver", True)
         object.__setattr__(cfg, "learning_auto_prune_cap", 200)
-
-        import trw_mcp.tools.ceremony as ceremony_mod
 
         fn = self._make_deliver_fn()
         mock_prune = MagicMock(return_value={"actions_taken": 0})
@@ -691,12 +719,24 @@ class TestDeliverAutoPrune:
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony._do_reflect", return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0, "success_patterns": 0}),
-            patch("trw_mcp.tools.ceremony._do_instruction_sync", return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0}),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                return_value={
+                    "status": "success",
+                    "events_analyzed": 0,
+                    "learnings_produced": 0,
+                    "success_patterns": 0,
+                },
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_instruction_sync",
+                return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0},
+            ),
             patch("trw_mcp.tools.ceremony._do_index_sync", return_value={"status": "success"}),
             patch("trw_mcp.tools.ceremony._do_auto_progress", return_value={"status": "skipped"}),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
+
             original = analytics_mod_state.auto_prune_excess_entries
             try:
                 analytics_mod_state.auto_prune_excess_entries = mock_prune  # type: ignore[method-assign]

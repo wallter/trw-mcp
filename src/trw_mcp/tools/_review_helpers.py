@@ -9,6 +9,7 @@ test patchability (patching review._get_git_diff must affect these helpers).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 from datetime import datetime, timedelta
@@ -24,7 +25,6 @@ from trw_mcp.models.typed_dicts import (
     MultiReviewerAnalysisResult,
     ReconcileReviewResult,
     ReviewFindingDict,
-    ReviewModeResult,
 )
 
 if TYPE_CHECKING:
@@ -47,11 +47,9 @@ def validate_manual_findings(
     validated: list[ReviewFindingDict] = []
     for f in raw_findings:
         normalized = {**f, "severity": _normalize_severity(f.get("severity", "info"))}
-        try:
+        with contextlib.suppress(Exception):
             ReviewFinding(**normalized)  # type: ignore[arg-type]  # dict[str,str] coerced by Pydantic
-        except Exception:  # justified: fail-open, include finding even if model validation fails
-            pass  # Still include even if other fields fail validation
-        validated.append(cast(ReviewFindingDict, normalized))
+        validated.append(cast("ReviewFindingDict", normalized))
     return validated
 
 
@@ -80,7 +78,7 @@ def handle_manual_mode(
 
     validated = validate_manual_findings(raw_findings)
     critical_count, warning_count, info_count = count_by_severity(validated)
-    verdict = _compute_verdict(cast(list[dict[str, str]], validated))
+    verdict = _compute_verdict(cast("list[dict[str, str]]", validated))
 
     result: ManualReviewResult = {
         "review_id": review_id,
@@ -143,14 +141,16 @@ def handle_cross_model_mode(
         if not raw_findings:
             cross_model_skipped = True
         else:
-            for rf in raw_findings:
-                cross_model_findings.append({
+            cross_model_findings.extend(
+                {
                     "category": rf.get("category", "general"),
                     "severity": _normalize_severity(rf.get("severity", "info")),
                     "description": rf.get("description", ""),
                     "source": "cross_model",
                     "provider": config.cross_model_provider,
-                })
+                }
+                for rf in raw_findings
+            )
 
     verdict = _compute_verdict(cross_model_findings)
 
@@ -216,14 +216,13 @@ def _added_lines_only(diff: str) -> str:
     Filters out removed (-) lines to prevent false negatives: an identifier
     that was *deleted* from code should not count as "present in diff".
     """
-    return "\n".join(
-        line for line in diff.splitlines()
-        if not line.startswith("-") or line.startswith("---")
-    )
+    return "\n".join(line for line in diff.splitlines() if not line.startswith("-") or line.startswith("---"))
 
 
 def _extract_fr_mismatches(
-    prd_content: str, prd_id: str, diff: str,
+    prd_content: str,
+    prd_id: str,
+    diff: str,
 ) -> list[dict[str, str]]:
     """Compare FR identifiers against diff, return mismatches."""
     mismatches: list[dict[str, str]] = []
@@ -243,14 +242,16 @@ def _extract_fr_mismatches(
         fr_num = m.group(1)
         fr_text = m.group(2).strip()
         identifiers = _extract_identifiers(fr_text)
-        for ident in identifiers:
-            if ident not in added_diff:
-                mismatches.append({
-                    "prd_id": prd_id,
-                    "fr": f"FR{fr_num}",
-                    "identifier": ident,
-                    "recommendation": "update_spec",
-                })
+        mismatches.extend(
+            {
+                "prd_id": prd_id,
+                "fr": f"FR{fr_num}",
+                "identifier": ident,
+                "recommendation": "update_spec",
+            }
+            for ident in identifiers
+            if ident not in added_diff
+        )
     return mismatches
 
 
@@ -343,12 +344,16 @@ def handle_reconcile_mode(
         events_path = resolved_run / "meta" / "events.jsonl"
         if events_path.parent.exists():
             event_logger = FileEventLogger(writer)
-            event_logger.log_event(events_path, "spec_reconciliation", {
-                "review_id": review_id,
-                "verdict": verdict,
-                "mismatch_count": len(all_mismatches),
-                "prd_count": len(effective_prd_ids),
-            })
+            event_logger.log_event(
+                events_path,
+                "spec_reconciliation",
+                {
+                    "review_id": review_id,
+                    "verdict": verdict,
+                    "mismatch_count": len(all_mismatches),
+                    "prd_count": len(effective_prd_ids),
+                },
+            )
 
         result["reconciliation_yaml"] = str(reconciliation_path)
 
@@ -405,15 +410,12 @@ def handle_auto_mode(
                 surfaced.append(f)
 
     # Compute verdict from surfaced findings only
-    surfaced_for_verdict: list[dict[str, str]] = [
-        {"severity": str(f.get("severity", "info"))} for f in surfaced
-    ]
+    surfaced_for_verdict: list[dict[str, str]] = [{"severity": str(f.get("severity", "info"))} for f in surfaced]
     verdict = _compute_verdict(surfaced_for_verdict)
 
     # Count critical findings among surfaced for downstream ceremony tracking
     critical_count = sum(
-        1 for f in surfaced
-        if isinstance(f, dict) and str(f.get("severity", "")).lower() == "critical"
+        1 for f in surfaced if isinstance(f, dict) and str(f.get("severity", "")).lower() == "critical"
     )
 
     result: AutoReviewResult = {
@@ -486,14 +488,12 @@ def handle_auto_mode(
 
         # integration-review.yaml — integration findings only (INFRA-027-FR03)
         integration_findings = [
-            f for f in all_auto_findings
-            if isinstance(f, dict) and f.get("reviewer_role") == "integration"
+            f for f in all_auto_findings if isinstance(f, dict) and f.get("reviewer_role") == "integration"
         ]
         if integration_findings:
             # Compute verdict from integration findings
             int_critical = sum(
-                1 for f in integration_findings
-                if isinstance(f, dict) and f.get("severity") == "critical"
+                1 for f in integration_findings if isinstance(f, dict) and f.get("severity") == "critical"
             )
             int_verdict = "block" if int_critical > 0 else ("warn" if integration_findings else "pass")
 

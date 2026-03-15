@@ -24,9 +24,8 @@ import pytest
 import structlog
 from fastmcp import FastMCP
 
-from tests.conftest import get_tools_sync, make_test_server
-
 import trw_mcp.tools.telemetry as telemetry
+from tests.conftest import get_tools_sync, make_test_server
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -89,7 +88,10 @@ class TestLogToolCallDecorator:
     """T-01 through T-04: Core decorator behavior."""
 
     def test_t01_writes_tool_invocation_event_with_correct_fields(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-01: Decorator writes tool_invocation event to run events.jsonl with required fields."""
         # Point the telemetry module at our tmp_path as project root so
@@ -97,7 +99,9 @@ class TestLogToolCallDecorator:
         # returns our prepared run_dir.
         monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
         monkeypatch.setattr(
-            telemetry, "_get_cached_run_dir", lambda: run_dir,
+            telemetry,
+            "_get_cached_run_dir",
+            lambda: run_dir,
         )
 
         @log_tool_call
@@ -120,7 +124,10 @@ class TestLogToolCallDecorator:
         assert "error" not in ev
 
     def test_t01_error_field_present_on_exception(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-01 variant: error field appears when tool raises."""
         monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
@@ -141,7 +148,8 @@ class TestLogToolCallDecorator:
         assert ev["error"] == "boom"
 
     def test_t02_fail_open_event_write_exception_does_not_affect_result(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-02: Exception during event write does not propagate; tool result is returned normally."""
         monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
@@ -162,11 +170,16 @@ class TestLogToolCallDecorator:
         assert result == "ok"
 
     def test_t03_telemetry_enabled_false_produces_no_events(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-03: When telemetry_enabled=False, decorator bypasses all event writing."""
         monkeypatch.setattr(
-            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry,
+            "get_config",
+            lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
         # Patch _write_tool_event to assert it is never called
         write_mock = MagicMock()
@@ -181,11 +194,16 @@ class TestLogToolCallDecorator:
         write_mock.assert_not_called()
 
     def test_t03_telemetry_disabled_no_events_in_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-03 file variant: events.jsonl remains empty when telemetry_enabled=False."""
         monkeypatch.setattr(
-            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry,
+            "get_config",
+            lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
 
@@ -230,6 +248,7 @@ class TestLogToolCallDecorator:
 def _config_with(**overrides: object) -> Any:
     """Return a copy of the live TRWConfig with attribute overrides applied."""
     from trw_mcp.models.config import TRWConfig
+
     cfg = TRWConfig()
     for attr, val in overrides.items():
         object.__setattr__(cfg, attr, val)
@@ -253,7 +272,10 @@ class TestSessionStartEvent:
         return trw_dir
 
     def test_t05_session_start_event_written_to_run_events_jsonl(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-05: session_start event is written to run's events.jsonl when a run exists."""
         trw_dir = self._setup_trw_project(tmp_path)
@@ -280,7 +302,9 @@ class TestSessionStartEvent:
         assert ev["run_detected"] is True
 
     def test_t06_session_start_fallback_to_session_events_jsonl(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-06: When no active run, session_start event falls back to session-events.jsonl."""
         trw_dir = self._setup_trw_project(tmp_path)
@@ -307,7 +331,9 @@ class TestSessionStartEvent:
         assert "learnings_recalled" in ev
 
     def test_t07_event_write_failure_does_not_cause_session_start_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-07: Event write failure in FR01 block does not affect trw_session_start result."""
         trw_dir = self._setup_trw_project(tmp_path)
@@ -331,7 +357,9 @@ class TestSessionStartEvent:
         assert all("session_start" not in e for e in result.get("errors", []))
 
     def test_t07_second_resolve_trw_dir_failure_is_silenced(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-07 variant: If resolve_trw_dir raises inside FR01 fallback block, no error surfaces."""
         trw_dir = self._setup_trw_project(tmp_path)
@@ -368,7 +396,10 @@ class TestDetailedTelemetry:
     """T-08, T-09: FR04 detailed telemetry and debug logging."""
 
     def test_t08_config_telemetry_true_writes_to_tool_telemetry_jsonl(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-08: config.telemetry=True writes a record to .trw/logs/tool-telemetry.jsonl."""
         trw_dir = tmp_path / ".trw"
@@ -385,7 +416,8 @@ class TestDetailedTelemetry:
         monkeypatch.setattr(telemetry, "get_config", lambda: cfg)
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
         monkeypatch.setattr(
-            "trw_mcp.tools.telemetry.resolve_trw_dir", lambda: trw_dir,
+            "trw_mcp.tools.telemetry.resolve_trw_dir",
+            lambda: trw_dir,
         )
 
         @log_tool_call
@@ -411,7 +443,10 @@ class TestDetailedTelemetry:
         assert "result_summary" in rec
 
     def test_t08_config_telemetry_false_no_telemetry_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-08 inverse: config.telemetry=False means tool-telemetry.jsonl is not written."""
         trw_dir = tmp_path / ".trw"
@@ -494,11 +529,14 @@ class TestToolDiscovery:
         assert "api_tool" in registered
 
     def test_t25_registered_tool_is_callable_via_fastmcp(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-25: A registered decorated tool can be invoked through FastMCP's tool manager."""
         monkeypatch.setattr(
-            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry,
+            "get_config",
+            lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
 
         srv = FastMCP("discovery-invoke-test")
@@ -514,7 +552,9 @@ class TestToolDiscovery:
         assert result == 15
 
     def test_t25_ceremony_tools_discoverable(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-25: trw_session_start and trw_deliver decorated with @log_tool_call are registered."""
         tools = _make_ceremony_tools(monkeypatch, tmp_path)
@@ -522,11 +562,14 @@ class TestToolDiscovery:
         assert "trw_deliver" in tools
 
     def test_t25_tool_call_with_kwargs_works_correctly(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-25: Decorated tool accepts keyword arguments and returns correct result."""
         monkeypatch.setattr(
-            telemetry, "get_config", lambda: _config_with(telemetry_enabled=False, telemetry=False),
+            telemetry,
+            "get_config",
+            lambda: _config_with(telemetry_enabled=False, telemetry=False),
         )
 
         @log_tool_call
@@ -599,17 +642,23 @@ class TestWriteToolEventFallback:
     """Verify _write_tool_event uses session-events.jsonl when no run is active."""
 
     def test_fallback_creates_session_events_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When run_dir is None, _write_tool_event writes to context/session-events.jsonl."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
 
-        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
-            telemetry_enabled=True,
-            telemetry=False,
-            context_dir="context",
-        ))
+        monkeypatch.setattr(
+            telemetry,
+            "get_config",
+            lambda: _config_with(
+                telemetry_enabled=True,
+                telemetry=False,
+                context_dir="context",
+            ),
+        )
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: None)
         monkeypatch.setattr("trw_mcp.tools.telemetry.resolve_trw_dir", lambda: trw_dir)
 
@@ -628,7 +677,10 @@ class TestWriteToolEventFallback:
         assert records[0]["success"] is True
 
     def test_fallback_skipped_if_run_dir_meta_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """When run_dir exists but meta/ does not, code falls through to session-events.jsonl."""
         trw_dir = tmp_path / ".trw"
@@ -636,13 +688,18 @@ class TestWriteToolEventFallback:
 
         # Remove meta directory to simulate a partially-created run
         import shutil
+
         shutil.rmtree(run_dir / "meta")
 
-        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
-            telemetry_enabled=True,
-            telemetry=False,
-            context_dir="context",
-        ))
+        monkeypatch.setattr(
+            telemetry,
+            "get_config",
+            lambda: _config_with(
+                telemetry_enabled=True,
+                telemetry=False,
+                context_dir="context",
+            ),
+        )
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
         monkeypatch.setattr("trw_mcp.tools.telemetry.resolve_trw_dir", lambda: trw_dir)
 
@@ -669,7 +726,9 @@ class TestTelemetryIntegration:
     """Integration tests for telemetry decorator and session_start event."""
 
     def test_t18_full_ceremony_flow_produces_events(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-18: session_start + checkpoint + deliver flow produces ceremony events."""
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260220T120000Z-integ001"
@@ -680,9 +739,14 @@ class TestTelemetryIntegration:
         )
         (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
 
-        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
-            telemetry_enabled=True, telemetry=False,
-        ))
+        monkeypatch.setattr(
+            telemetry,
+            "get_config",
+            lambda: _config_with(
+                telemetry_enabled=True,
+                telemetry=False,
+            ),
+        )
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
 
         @log_tool_call
@@ -710,12 +774,20 @@ class TestTelemetryIntegration:
         assert "trw_deliver" in tool_names
 
     def test_t21_telemetry_kill_switch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """T-21: telemetry_enabled=False prevents all tool_invocation events."""
-        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
-            telemetry_enabled=False, telemetry=False,
-        ))
+        monkeypatch.setattr(
+            telemetry,
+            "get_config",
+            lambda: _config_with(
+                telemetry_enabled=False,
+                telemetry=False,
+            ),
+        )
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
 
         @log_tool_call
@@ -731,7 +803,9 @@ class TestTelemetryIntegration:
         assert len(tool_events) == 0, "Kill switch should prevent all tool_invocation events"
 
     def test_t23_meta_dir_removed_during_session(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """T-23: meta/ removed during session — decorator fails silently, tool returns normally."""
         import shutil
@@ -739,16 +813,23 @@ class TestTelemetryIntegration:
         rd = tmp_path / "docs" / "task" / "runs" / "20260220T120000Z-vanish01"
         (rd / "meta").mkdir(parents=True)
         (rd / "meta" / "run.yaml").write_text(
-            "run_id: vanish\nstatus: active\n", encoding="utf-8",
+            "run_id: vanish\nstatus: active\n",
+            encoding="utf-8",
         )
         (rd / "meta" / "events.jsonl").write_text("", encoding="utf-8")
 
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
 
-        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(
-            telemetry_enabled=True, telemetry=False, context_dir="context",
-        ))
+        monkeypatch.setattr(
+            telemetry,
+            "get_config",
+            lambda: _config_with(
+                telemetry_enabled=True,
+                telemetry=False,
+                context_dir="context",
+            ),
+        )
         monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: rd)
         monkeypatch.setattr("trw_mcp.tools.telemetry.resolve_trw_dir", lambda: trw_dir)
 

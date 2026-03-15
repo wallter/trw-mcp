@@ -40,10 +40,8 @@ class TestTaskNameSanitization:
         # We import the module and call the registered tool function directly.
         # Since trw_init is a nested closure, we re-implement just the validation
         # that fires before any I/O to test it in isolation.
-        if not re.match(r'^[a-zA-Z0-9._-]+$', task_name):
-            raise ValueError(
-                f"Invalid task_name: must match [a-zA-Z0-9._-]+, got {task_name!r}"
-            )
+        if not re.match(r"^[a-zA-Z0-9._-]+$", task_name):
+            raise ValueError(f"Invalid task_name: must match [a-zA-Z0-9._-]+, got {task_name!r}")
         return {"task_name": task_name}
 
     def test_task_name_rejects_traversal(self) -> None:
@@ -153,13 +151,20 @@ class TestCategoryValidation:
         category = "EVIL"
         with pytest.raises(ValueError, match="Invalid category"):
             if category.upper() not in VALID_CATEGORIES:
-                raise ValueError(
-                    f"Invalid category: {category}. Must be one of {sorted(VALID_CATEGORIES)}"
-                )
+                raise ValueError(f"Invalid category: {category}. Must be one of {sorted(VALID_CATEGORIES)}")
 
-    @pytest.mark.parametrize("category", [
-        "CORE", "QUAL", "INFRA", "LOCAL", "EXPLR", "RESEARCH", "FIX",
-    ])
+    @pytest.mark.parametrize(
+        "category",
+        [
+            "CORE",
+            "QUAL",
+            "INFRA",
+            "LOCAL",
+            "EXPLR",
+            "RESEARCH",
+            "FIX",
+        ],
+    )
     def test_category_accepts_all_valid(self, category: str) -> None:
         """All 7 valid categories must pass validation."""
         VALID_CATEGORIES = self.VALID_CATEGORIES

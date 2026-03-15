@@ -34,48 +34,42 @@ _telemetry     — RemoteSharedLearningDict
 
 from __future__ import annotations
 
-# _learning
-from trw_mcp.models.typed_dicts._learning import (
-    LearningEntryCompactDict,
-    LearningEntryDict,
-    PruneCandidateDict,
+# _analytics
+from trw_mcp.models.typed_dicts._analytics import (
+    AggregateMetrics,
+    AnalyticsReport,
+    BatchDedupResult,
+    CeremonyTrendItem,
+    EmbedHealthStatus,
+    ImpactDistributionResult,
+    ImpactTierInfo,
+    RecallStats,
+    RunAnalysisResult,
+    TierDistribution,
+    TierMetrics,
 )
 
-# _validation
-from trw_mcp.models.typed_dicts._validation import (
-    DimensionScoreDict,
-    ImprovementSuggestionDict,
-    PrdCreateResultDict,
-    PrdFrontmatterDict,
-    SectionScoreDict,
-    ValidateResultDict,
-    ValidationFailureDict,
+# _audit
+from trw_mcp.models.typed_dicts._audit import (
+    AuditCeremonyComplianceResult,
+    AuditDuplicatePairDict,
+    AuditDuplicatesResult,
+    AuditFixActionsDict,
+    AuditHookVersionsResult,
+    AuditIndexConsistencyResult,
+    AuditLearningsResult,
+    AuditRecallEffectivenessResult,
+    AuditReflectionComponentsDict,
+    AuditReflectionDiagnosticsDict,
+    AuditReflectionQualityResult,
+    AuditReport,
+    AuditTelemetryBloatDict,
 )
 
-# _tools
-from trw_mcp.models.typed_dicts._tools import (
-    CheckpointResultDict,
-    DeliverResultDict,
-    KnowledgeSyncResultDict,
-    LearnResultDict,
-    PreCompactResultDict,
-    ProgressiveExpandResult,
-    RecallContextDict,
-    RecallResultDict,
-    RunReportResultDict,
-    RunStatusDict,
-    SessionStartResultDict,
-    TelemetryRecordDict,
-    ToolEventDataDict,
-    UsageCallerEntryDict,
-    UsageGroupEntryDict,
-    UsageModelEntryDict,
-    UsageReportResult,
+# _bootstrap
+from trw_mcp.models.typed_dicts._bootstrap import (
+    BootstrapFileResult,
 )
-
-# Backward-compat alias: LearnResult was merged into LearnResultDict (PRD-CORE-080).
-# Consumers that import `LearnResult` continue to work unchanged.
-LearnResult = LearnResultDict
 
 # _build
 from trw_mcp.models.typed_dicts._build import (
@@ -85,18 +79,6 @@ from trw_mcp.models.typed_dicts._build import (
     NpmAuditResult,
     PipAuditResult,
     PytestResultDict,
-)
-
-# _review
-from trw_mcp.models.typed_dicts._review import (
-    AutoReviewResult,
-    CrossModelReviewResult,
-    ManualReviewResult,
-    MultiReviewerAnalysisResult,
-    ReconcileReviewResult,
-    ReviewFindingDict,
-    ReviewModeResult,
-    ReviewResultBase,
 )
 
 # _ceremony
@@ -120,19 +102,17 @@ from trw_mcp.models.typed_dicts._ceremony import (
     TierCeremonyScoreResult,
 )
 
-# _analytics
-from trw_mcp.models.typed_dicts._analytics import (
-    AggregateMetrics,
-    AnalyticsReport,
-    BatchDedupResult,
-    CeremonyTrendItem,
-    EmbedHealthStatus,
-    ImpactDistributionResult,
-    ImpactTierInfo,
-    RecallStats,
-    RunAnalysisResult,
-    TierDistribution,
-    TierMetrics,
+# _dashboard
+from trw_mcp.models.typed_dicts._dashboard import (
+    CeremonyTrendResult,
+    CoverageTrendResult,
+    DegradationAlertResult,
+    ReviewTrendResult,
+)
+
+# _dedup
+from trw_mcp.models.typed_dicts._dedup import (
+    DedupHandleResult,
 )
 
 # _delivery
@@ -153,29 +133,38 @@ from trw_mcp.models.typed_dicts._delivery import (
     TrustIncrementResult,
 )
 
-# _audit
-from trw_mcp.models.typed_dicts._audit import (
-    AuditCeremonyComplianceResult,
-    AuditDuplicatePairDict,
-    AuditDuplicatesResult,
-    AuditFixActionsDict,
-    AuditHookVersionsResult,
-    AuditIndexConsistencyResult,
-    AuditLearningsResult,
-    AuditRecallEffectivenessResult,
-    AuditReflectionComponentsDict,
-    AuditReflectionDiagnosticsDict,
-    AuditReflectionQualityResult,
-    AuditReport,
-    AuditTelemetryBloatDict,
+# _export
+from trw_mcp.models.typed_dicts._export import (
+    ExportAnalyticsSection,
+    ExportMetadata,
+    ExportPatternsSection,
+    ExportRunsSection,
+    ExportSummary,
+    ImportLearningsResult,
+    RoadmapSyncResult,
+    SyncIndexMdResult,
 )
 
-# _dashboard
-from trw_mcp.models.typed_dicts._dashboard import (
-    CeremonyTrendResult,
-    CoverageTrendResult,
-    DegradationAlertResult,
-    ReviewTrendResult,
+# _learning
+from trw_mcp.models.typed_dicts._learning import (
+    LearningEntryCompactDict,
+    LearningEntryDict,
+    PruneCandidateDict,
+)
+
+# _mutations
+from trw_mcp.models.typed_dicts._mutations import (
+    MutationCheckResult,
+    MutationSkippedResult,
+    ParseMutmutResultDict,
+    SurvivingMutantDict,
+)
+
+# _opencode
+from trw_mcp.models.typed_dicts._opencode import (
+    OpencodeConfig,
+    OpencodeServerEntry,
+    OpencodeTemplateDict,
 )
 
 # _orchestration
@@ -193,6 +182,44 @@ from trw_mcp.models.typed_dicts._orchestration import (
     WaveShardCountsDict,
 )
 
+# _review
+from trw_mcp.models.typed_dicts._review import (
+    AutoReviewResult,
+    CrossModelReviewResult,
+    ManualReviewResult,
+    MultiReviewerAnalysisResult,
+    ReconcileReviewResult,
+    ReviewFindingDict,
+    ReviewModeResult,
+    ReviewResultBase,
+)
+
+# _telemetry
+from trw_mcp.models.typed_dicts._telemetry import (
+    RemoteSharedLearningDict,
+)
+
+# _tools
+from trw_mcp.models.typed_dicts._tools import (
+    CheckpointResultDict,
+    DeliverResultDict,
+    KnowledgeSyncResultDict,
+    LearnResultDict,
+    PreCompactResultDict,
+    ProgressiveExpandResult,
+    RecallContextDict,
+    RecallResultDict,
+    RunReportResultDict,
+    RunStatusDict,
+    SessionStartResultDict,
+    TelemetryRecordDict,
+    ToolEventDataDict,
+    UsageCallerEntryDict,
+    UsageGroupEntryDict,
+    UsageModelEntryDict,
+    UsageReportResult,
+)
+
 # _trust
 from trw_mcp.models.typed_dicts._trust import (
     HumanReviewResult,
@@ -201,142 +228,25 @@ from trw_mcp.models.typed_dicts._trust import (
     TrustSessionIncrementResult,
 )
 
-# _export
-from trw_mcp.models.typed_dicts._export import (
-    ExportAnalyticsSection,
-    ExportMetadata,
-    ExportPatternsSection,
-    ExportRunsSection,
-    ExportSummary,
-    ImportLearningsResult,
-    RoadmapSyncResult,
-    SyncIndexMdResult,
+# _validation
+from trw_mcp.models.typed_dicts._validation import (
+    DimensionScoreDict,
+    ImprovementSuggestionDict,
+    PrdCreateResultDict,
+    PrdFrontmatterDict,
+    SectionScoreDict,
+    ValidateResultDict,
+    ValidationFailureDict,
 )
 
-# _dedup
-from trw_mcp.models.typed_dicts._dedup import (
-    DedupHandleResult,
-)
-
-# _mutations
-from trw_mcp.models.typed_dicts._mutations import (
-    MutationCheckResult,
-    MutationSkippedResult,
-    ParseMutmutResultDict,
-    SurvivingMutantDict,
-)
-
-# _bootstrap
-from trw_mcp.models.typed_dicts._bootstrap import (
-    BootstrapFileResult,
-)
-
-# _opencode
-from trw_mcp.models.typed_dicts._opencode import (
-    OpencodeConfig,
-    OpencodeServerEntry,
-    OpencodeTemplateDict,
-)
-
-# _telemetry
-from trw_mcp.models.typed_dicts._telemetry import (
-    RemoteSharedLearningDict,
-)
+# Backward-compat alias: LearnResult was merged into LearnResultDict (PRD-CORE-080).
+# Consumers that import `LearnResult` continue to work unchanged.
+LearnResult = LearnResultDict
 
 __all__ = [
-    # _learning
-    "LearningEntryCompactDict",
-    "LearningEntryDict",
-    "PruneCandidateDict",
-    # _validation
-    "DimensionScoreDict",
-    "ImprovementSuggestionDict",
-    "PrdCreateResultDict",
-    "PrdFrontmatterDict",
-    "SectionScoreDict",
-    "ValidateResultDict",
-    "ValidationFailureDict",
-    # _tools
-    "CheckpointResultDict",
-    "DeliverResultDict",
-    "KnowledgeSyncResultDict",
-    "LearnResult",  # backward-compat alias for LearnResultDict
-    "LearnResultDict",
-    "PreCompactResultDict",
-    "ProgressiveExpandResult",
-    "RecallContextDict",
-    "RecallResultDict",
-    "RunReportResultDict",
-    "RunStatusDict",
-    "SessionStartResultDict",
-    "TelemetryRecordDict",
-    "ToolEventDataDict",
-    "UsageCallerEntryDict",
-    "UsageGroupEntryDict",
-    "UsageModelEntryDict",
-    "UsageReportResult",
-    # _build
-    "ApiFuzzResult",
-    "DepAuditResult",
-    "MypyResultDict",
-    "NpmAuditResult",
-    "PipAuditResult",
-    "PytestResultDict",
-    # _review
-    "AutoReviewResult",
-    "CrossModelReviewResult",
-    "ManualReviewResult",
-    "MultiReviewerAnalysisResult",
-    "ReconcileReviewResult",
-    "ReviewFindingDict",
-    "ReviewModeResult",
-    "ReviewResultBase",
-    # _ceremony
-    "AutoMaintenanceDict",
-    "AutoRecalledItemDict",
-    "CeremonyApproveResult",
-    "CeremonyClassStatusDict",
-    "CeremonyFeedbackEntry",
-    "CeremonyRevertResult",
-    "CeremonyScoreResult",
-    "CeremonyStatusResult",
-    "ClaudeMdSyncResultDict",
-    "ComplianceArtifactsDict",
-    "DeliveryGatesDict",
-    "EscalationResult",
-    "FinalizeRunResult",
-    "ReductionProposalDict",
-    "ReflectResultDict",
-    "SessionRecallExtrasDict",
-    "TierCeremonyScoreResult",
-    # _analytics
     "AggregateMetrics",
     "AnalyticsReport",
-    "BatchDedupResult",
-    "CeremonyTrendItem",
-    "EmbedHealthStatus",
-    "ImpactDistributionResult",
-    "ImpactTierInfo",
-    "RecallStats",
-    "RunAnalysisResult",
-    "TierDistribution",
-    "TierMetrics",
-    # _delivery
-    "AutoProgressStepResult",
-    "BatchSendResult",
-    "CeremonyFeedbackStepResult",
-    "ConsolidationStepResult",
-    "IndexSyncResult",
-    "OutcomeCorrelationStepResult",
-    "ProgressionItem",
-    "PublishLearningsResult",
-    "PublishResult",
-    "RecallOutcomeStepResult",
-    "StepResultBase",
-    "TelemetryStepResult",
-    "TierSweepStepResult",
-    "TrustIncrementResult",
-    # _audit
+    "ApiFuzzResult",
     "AuditCeremonyComplianceResult",
     "AuditDuplicatePairDict",
     "AuditDuplicatesResult",
@@ -350,50 +260,122 @@ __all__ = [
     "AuditReflectionQualityResult",
     "AuditReport",
     "AuditTelemetryBloatDict",
-    # _dashboard
+    "AutoMaintenanceDict",
+    "AutoProgressStepResult",
+    "AutoRecalledItemDict",
+    "AutoReviewResult",
+    "BatchDedupResult",
+    "BatchSendResult",
+    "BootstrapFileResult",
+    "CeremonyApproveResult",
+    "CeremonyClassStatusDict",
+    "CeremonyFeedbackEntry",
+    "CeremonyFeedbackStepResult",
+    "CeremonyRevertResult",
+    "CeremonyScoreResult",
+    "CeremonyStatusResult",
+    "CeremonyTrendItem",
     "CeremonyTrendResult",
-    "CoverageTrendResult",
-    "DegradationAlertResult",
-    "ReviewTrendResult",
-    # _orchestration
     "CheckpointEventDataDict",
     "CheckpointRecordDict",
+    "CheckpointResultDict",
+    "ClaudeMdSyncResultDict",
+    "ComplianceArtifactsDict",
+    "ConsolidationStepResult",
+    "CoverageTrendResult",
+    "CrossModelReviewResult",
+    "DedupHandleResult",
+    "DegradationAlertResult",
+    "DeliverResultDict",
+    "DeliveryGatesDict",
+    "DepAuditResult",
     "DeployFrameworksVersionDataDict",
-    "StatusReflectionDict",
-    "StatusReversionLatestDict",
-    "StatusReversionMetricsDict",
-    "TrwInitConfigDataDict",
-    "TrwStatusDict",
-    "WaveDetailDict",
-    "WaveProgressDict",
-    "WaveShardCountsDict",
-    # _trust
-    "HumanReviewResult",
-    "TrustLevelQueryResult",
-    "TrustLevelResult",
-    "TrustSessionIncrementResult",
-    # _export
+    "DimensionScoreDict",
+    "EmbedHealthStatus",
+    "EscalationResult",
     "ExportAnalyticsSection",
     "ExportMetadata",
     "ExportPatternsSection",
     "ExportRunsSection",
     "ExportSummary",
+    "FinalizeRunResult",
+    "HumanReviewResult",
+    "ImpactDistributionResult",
+    "ImpactTierInfo",
     "ImportLearningsResult",
-    "RoadmapSyncResult",
-    "SyncIndexMdResult",
-    # _dedup
-    "DedupHandleResult",
-    # _mutations
+    "ImprovementSuggestionDict",
+    "IndexSyncResult",
+    "KnowledgeSyncResultDict",
+    "LearnResult",  # backward-compat alias for LearnResultDict
+    "LearnResultDict",
+    "LearningEntryCompactDict",
+    "LearningEntryDict",
+    "ManualReviewResult",
+    "MultiReviewerAnalysisResult",
     "MutationCheckResult",
     "MutationSkippedResult",
-    "ParseMutmutResultDict",
-    "SurvivingMutantDict",
-    # _bootstrap
-    "BootstrapFileResult",
-    # _opencode
+    "MypyResultDict",
+    "NpmAuditResult",
     "OpencodeConfig",
     "OpencodeServerEntry",
     "OpencodeTemplateDict",
-    # _telemetry
+    "OutcomeCorrelationStepResult",
+    "ParseMutmutResultDict",
+    "PipAuditResult",
+    "PrdCreateResultDict",
+    "PrdFrontmatterDict",
+    "PreCompactResultDict",
+    "ProgressionItem",
+    "ProgressiveExpandResult",
+    "PruneCandidateDict",
+    "PublishLearningsResult",
+    "PublishResult",
+    "PytestResultDict",
+    "RecallContextDict",
+    "RecallOutcomeStepResult",
+    "RecallResultDict",
+    "RecallStats",
+    "ReconcileReviewResult",
+    "ReductionProposalDict",
+    "ReflectResultDict",
     "RemoteSharedLearningDict",
+    "ReviewFindingDict",
+    "ReviewModeResult",
+    "ReviewResultBase",
+    "ReviewTrendResult",
+    "RoadmapSyncResult",
+    "RunAnalysisResult",
+    "RunReportResultDict",
+    "RunStatusDict",
+    "SectionScoreDict",
+    "SessionRecallExtrasDict",
+    "SessionStartResultDict",
+    "StatusReflectionDict",
+    "StatusReversionLatestDict",
+    "StatusReversionMetricsDict",
+    "StepResultBase",
+    "SurvivingMutantDict",
+    "SyncIndexMdResult",
+    "TelemetryRecordDict",
+    "TelemetryStepResult",
+    "TierCeremonyScoreResult",
+    "TierDistribution",
+    "TierMetrics",
+    "TierSweepStepResult",
+    "ToolEventDataDict",
+    "TrustIncrementResult",
+    "TrustLevelQueryResult",
+    "TrustLevelResult",
+    "TrustSessionIncrementResult",
+    "TrwInitConfigDataDict",
+    "TrwStatusDict",
+    "UsageCallerEntryDict",
+    "UsageGroupEntryDict",
+    "UsageModelEntryDict",
+    "UsageReportResult",
+    "ValidateResultDict",
+    "ValidationFailureDict",
+    "WaveDetailDict",
+    "WaveProgressDict",
+    "WaveShardCountsDict",
 ]

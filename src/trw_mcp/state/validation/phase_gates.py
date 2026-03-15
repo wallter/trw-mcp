@@ -35,22 +35,22 @@ from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_build_check as _best_effort_build_check,
 )
 from trw_mcp.state.validation.phase_gates_build import (
-    _best_effort_integration_check as _best_effort_integration_check,
-)
-from trw_mcp.state.validation.phase_gates_build import (
-    _best_effort_orphan_check as _best_effort_orphan_check,
-)
-from trw_mcp.state.validation.phase_gates_build import (
-    _check_build_status as _check_build_status,
-)
-from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_dry_check as _best_effort_dry_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
+    _best_effort_integration_check as _best_effort_integration_check,
 )
 from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_migration_check as _best_effort_migration_check,
 )
 from trw_mcp.state.validation.phase_gates_build import (
+    _best_effort_orphan_check as _best_effort_orphan_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_semantic_check as _best_effort_semantic_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
+    _check_build_status as _check_build_status,
 )
 
 # Re-export from sub-modules for backward compatibility
@@ -196,7 +196,10 @@ def _check_plan_exit(
             )
         )
     prd_failures = _check_prd_enforcement(
-        run_path, config, PRDStatus.DRAFT, "plan",
+        run_path,
+        config,
+        PRDStatus.DRAFT,
+        "plan",
     )
     failures.extend(prd_failures)
 
@@ -225,7 +228,10 @@ def _check_implement_exit(
     except ValueError:
         required_status = PRDStatus.APPROVED
     prd_failures = _check_prd_enforcement(
-        run_path, config, required_status, "implement",
+        run_path,
+        config,
+        required_status,
+        "implement",
     )
     failures.extend(prd_failures)
     _best_effort_build_check(config, "implement", failures)
@@ -395,8 +401,7 @@ def _check_deliver_exit(
             field="test_strategy",
             rule="phase_test_advisory",
             message=(
-                "DELIVER phase: run full test suite with coverage "
-                "(use trw_build_check for automated verification)"
+                "DELIVER phase: run full test suite with coverage (use trw_build_check for automated verification)"
             ),
             severity="info",
         )
@@ -510,7 +515,10 @@ def _check_implement_input(
             )
         )
     prd_failures = _check_prd_enforcement(
-        run_path, config, PRDStatus.APPROVED, "implement",
+        run_path,
+        config,
+        PRDStatus.APPROVED,
+        "implement",
     )
     failures.extend(prd_failures)
 

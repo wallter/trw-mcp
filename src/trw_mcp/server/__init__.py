@@ -8,12 +8,15 @@ PRD-CORE-001: Base MCP tool suite.
 
 from __future__ import annotations
 
-# Import _tools first to trigger eager tool registration (side effect).
-from trw_mcp.server._tools import _register_tools as _register_tools  # noqa: F401
 from trw_mcp.server._app import mcp as mcp
 from trw_mcp.server._cli import (
     _check_mcp_json_portability as _check_mcp_json_portability,
+)
+from trw_mcp.server._cli import (
     main as main,
 )
 
-__all__ = ["mcp", "main", "_check_mcp_json_portability"]
+# Import _tools first to trigger eager tool registration (side effect).
+from trw_mcp.server._tools import _register_tools as _register_tools
+
+__all__ = ["_check_mcp_json_portability", "main", "mcp"]

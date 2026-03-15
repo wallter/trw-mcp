@@ -122,10 +122,14 @@ class TestPrdCreateEdgeCases:
         """Different categories produce different PRD IDs."""
         tools = _get_tools()
         r1 = tools["trw_prd_create"].fn(
-            input_text="Core feature", category="CORE", title="Core",
+            input_text="Core feature",
+            category="CORE",
+            title="Core",
         )
         r2 = tools["trw_prd_create"].fn(
-            input_text="Fix bug", category="FIX", title="Fix",
+            input_text="Fix bug",
+            category="FIX",
+            title="Fix",
         )
         assert r1["prd_id"].startswith("PRD-CORE-")
         assert r2["prd_id"].startswith("PRD-FIX-")

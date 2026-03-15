@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -23,8 +24,8 @@ from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools.ceremony import (
     _do_auto_progress,
     _do_checkpoint,
-    _do_instruction_sync,
     _do_index_sync,
+    _do_instruction_sync,
     _do_reflect,
     _get_run_status,
     _launch_deferred,
@@ -57,7 +58,8 @@ def trw_project(tmp_path: Path) -> Path:
 
     # Create index.yaml
     (trw_dir / "learnings" / "index.yaml").write_text(
-        "total_entries: 1\n", encoding="utf-8",
+        "total_entries: 1\n",
+        encoding="utf-8",
     )
 
     return tmp_path
@@ -175,15 +177,14 @@ class TestDoReflect:
         assert result["events_analyzed"] == 2
 
     def test_no_telemetry_noise_learnings_from_success_patterns(
-        self, trw_project: Path, run_dir: Path,
+        self,
+        trw_project: Path,
+        run_dir: Path,
     ) -> None:
         """PRD-FIX-021: _do_reflect must not create 'Success: X (Nx)' learnings."""
         events_path = run_dir / "meta" / "events.jsonl"
         # Many success events of the same type -> triggers success_patterns
-        success_events = [
-            {"ts": f"2026-02-11T12:0{i}:00Z", "event": "shard_complete", "data": {}}
-            for i in range(8)
-        ]
+        success_events = [{"ts": f"2026-02-11T12:0{i}:00Z", "event": "shard_complete", "data": {}} for i in range(8)]
         events_path.write_text(
             "\n".join(json.dumps(e) for e in success_events) + "\n",
             encoding="utf-8",
@@ -198,22 +199,20 @@ class TestDoReflect:
         new_entries = after_entries[before_count:]
         for f in new_entries:
             from trw_mcp.state.persistence import FileStateReader
+
             data = FileStateReader().read_yaml(f)
             summary = str(data.get("summary", ""))
-            assert not summary.startswith("Success:"), (
-                f"Telemetry noise learning created: {summary}"
-            )
+            assert not summary.startswith("Success:"), f"Telemetry noise learning created: {summary}"
 
     def test_no_telemetry_noise_learnings_from_repeated_ops(
-        self, trw_project: Path, run_dir: Path,
+        self,
+        trw_project: Path,
+        run_dir: Path,
     ) -> None:
         """PRD-FIX-021: _do_reflect must not create 'Repeated operation: X' learnings."""
         events_path = run_dir / "meta" / "events.jsonl"
         # Repeated same op -> triggers repeated_ops detection
-        repeated_events = [
-            {"ts": f"2026-02-11T12:0{i}:00Z", "event": "checkpoint", "data": {}}
-            for i in range(6)
-        ]
+        repeated_events = [{"ts": f"2026-02-11T12:0{i}:00Z", "event": "checkpoint", "data": {}} for i in range(6)]
         events_path.write_text(
             "\n".join(json.dumps(e) for e in repeated_events) + "\n",
             encoding="utf-8",
@@ -228,11 +227,10 @@ class TestDoReflect:
         new_entries = after_entries[before_count:]
         for f in new_entries:
             from trw_mcp.state.persistence import FileStateReader
+
             data = FileStateReader().read_yaml(f)
             summary = str(data.get("summary", ""))
-            assert not summary.startswith("Repeated operation:"), (
-                f"Telemetry noise learning created: {summary}"
-            )
+            assert not summary.startswith("Repeated operation:"), f"Telemetry noise learning created: {summary}"
 
 
 # --- _do_instruction_sync ---
@@ -299,8 +297,7 @@ class TestDoIndexSync:
         prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
         prds_dir.mkdir(parents=True)
         (prds_dir / "PRD-CORE-001.md").write_text(
-            "---\nprd:\n  id: PRD-CORE-001\n  title: Test\n"
-            "  status: done\n  priority: P0\n  category: CORE\n---\n",
+            "---\nprd:\n  id: PRD-CORE-001\n  title: Test\n  status: done\n  priority: P0\n  category: CORE\n---\n",
             encoding="utf-8",
         )
         with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
@@ -347,8 +344,7 @@ class TestDoAutoProgress:
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
         (run_dir / "meta").mkdir(parents=True)
         (run_dir / "meta" / "run.yaml").write_text(
-            "run_id: test\nstatus: active\nphase: deliver\n"
-            "prd_scope:\n  - PRD-CORE-099\n",
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope:\n  - PRD-CORE-099\n",
             encoding="utf-8",
         )
         (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
@@ -364,15 +360,13 @@ class TestDoAutoProgress:
         prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
         prds_dir.mkdir(parents=True)
         (prds_dir / "PRD-CORE-099.md").write_text(
-            "---\nprd:\n  id: PRD-CORE-099\n  title: Test\n"
-            "  status: done\n  priority: P1\n  category: CORE\n---\n",
+            "---\nprd:\n  id: PRD-CORE-099\n  title: Test\n  status: done\n  priority: P1\n  category: CORE\n---\n",
             encoding="utf-8",
         )
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
         (run_dir / "meta").mkdir(parents=True)
         (run_dir / "meta" / "run.yaml").write_text(
-            "run_id: test\nstatus: active\nphase: deliver\n"
-            "prd_scope:\n  - PRD-CORE-099\n",
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope:\n  - PRD-CORE-099\n",
             encoding="utf-8",
         )
         (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
@@ -393,7 +387,9 @@ class TestSessionStartPartialFailure:
     """trw_session_start resilience when sub-operations fail."""
 
     def test_returns_result_when_recall_fails(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If recall raises, status step still runs and result is returned."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -420,7 +416,9 @@ class TestSessionStartPartialFailure:
         assert "run" in result
 
     def test_returns_result_when_status_fails(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If status check raises, recall still runs and result is returned."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -443,7 +441,9 @@ class TestSessionStartPartialFailure:
         assert "learnings" in result
 
     def test_success_when_all_steps_work(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Both recall and status succeed."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -467,7 +467,9 @@ class TestDeliverPartialFailure:
     """trw_deliver resilience when sub-operations fail."""
 
     def test_reflect_failure_does_not_block_checkpoint(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If reflect raises, checkpoint still runs."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -493,8 +495,7 @@ class TestDeliverPartialFailure:
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch(
                 "trw_mcp.tools.ceremony._do_instruction_sync",
-                return_value={"status": "success", "learnings_promoted": 0,
-                              "path": "", "total_lines": 0},
+                return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
             ),
             patch(
                 "trw_mcp.tools.ceremony._do_index_sync",
@@ -510,7 +511,9 @@ class TestDeliverPartialFailure:
         assert result["checkpoint"]["status"] == "success"
 
     def test_checkpoint_failure_does_not_block_sync(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If checkpoint raises, claude_md_sync still runs."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -531,8 +534,7 @@ class TestDeliverPartialFailure:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch(
                 "trw_mcp.tools.ceremony._do_reflect",
-                return_value={"status": "success", "events_analyzed": 0,
-                              "learnings_produced": 0},
+                return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0},
             ),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch(
@@ -541,8 +543,7 @@ class TestDeliverPartialFailure:
             ),
             patch(
                 "trw_mcp.tools.ceremony._do_instruction_sync",
-                return_value={"status": "success", "learnings_promoted": 0,
-                              "path": "", "total_lines": 0},
+                return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
             ),
             patch(
                 "trw_mcp.tools.ceremony._do_index_sync",
@@ -557,7 +558,9 @@ class TestDeliverPartialFailure:
         assert result["claude_md_sync"]["status"] == "success"
 
     def test_index_sync_failure_does_not_block_auto_progress(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If index_sync raises in deferred path, auto_progress still runs.
 
@@ -629,7 +632,9 @@ class TestDeliverPartialFailure:
         assert log_entry["results"]["auto_progress"]["status"] == "skipped"
 
     def test_skip_reflect_flag(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """skip_reflect=True skips the reflect step entirely."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -642,8 +647,7 @@ class TestDeliverPartialFailure:
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
                 "trw_mcp.tools.ceremony._do_instruction_sync",
-                return_value={"status": "success", "learnings_promoted": 0,
-                              "path": "", "total_lines": 0},
+                return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
             ),
             patch(
                 "trw_mcp.tools.ceremony._do_index_sync",
@@ -656,7 +660,9 @@ class TestDeliverPartialFailure:
         assert result["success"] is True
 
     def test_skip_index_sync_flag(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """skip_index_sync=True skips index sync in deferred path.
 
@@ -690,7 +696,8 @@ class TestDeliverPartialFailure:
         assert log_entry["success"] is True
 
     def test_event_logging_during_delivery(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Verify events are logged to events.jsonl during delivery sub-steps."""
         trw_dir = tmp_path / ".trw"
@@ -711,9 +718,7 @@ class TestDeliverPartialFailure:
         _do_checkpoint(run_dir, "test-delivery")
 
         events_path = run_dir / "meta" / "events.jsonl"
-        lines = [
-            line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line
-        ]
+        lines = [line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line]
         assert len(lines) >= 2
         event_types = [json.loads(line)["event"] for line in lines]
         assert "reflection_complete" in event_types
@@ -728,7 +733,9 @@ class TestSessionStartUpdateAdvisory:
     """Verify check_for_update() wiring in trw_session_start."""
 
     def test_update_advisory_included_when_update_available(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When check_for_update returns available=True, advisory is in results."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -756,7 +763,9 @@ class TestSessionStartUpdateAdvisory:
         assert "0.5.0" in str(result["update_advisory"])
 
     def test_no_update_advisory_when_up_to_date(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When check_for_update returns available=False, advisory key is absent."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -783,7 +792,9 @@ class TestSessionStartUpdateAdvisory:
         assert result.get("update_advisory") is None
 
     def test_update_check_failure_is_fail_open(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If check_for_update raises, session start still succeeds."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -870,7 +881,8 @@ class TestDeliverTelemetryIntegration:
     """
 
     def test_deliver_calls_process_outcome_for_event(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 6.5: process_outcome_for_event is called via deferred path."""
         trw_dir = _make_deferred_trw_dir(tmp_path)
@@ -894,10 +906,12 @@ class TestDeliverTelemetryIntegration:
         assert "trw_deliver_complete" in called_with
 
     def test_deliver_emits_session_end_event(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 7: TelemetryClient.record_event called with SessionEndEvent."""
         from unittest.mock import MagicMock
+
         trw_dir = _make_deferred_trw_dir(tmp_path)
 
         mock_client = MagicMock()
@@ -919,10 +933,12 @@ class TestDeliverTelemetryIntegration:
         assert "SessionEndEvent" in event_types
 
     def test_deliver_emits_ceremony_compliance_event(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 7: TelemetryClient.record_event called with CeremonyComplianceEvent."""
         from unittest.mock import MagicMock
+
         trw_dir = _make_deferred_trw_dir(tmp_path)
 
         mock_client = MagicMock()
@@ -943,16 +959,23 @@ class TestDeliverTelemetryIntegration:
         assert "CeremonyComplianceEvent" in event_types
 
     def test_deliver_calls_batch_sender(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 8: BatchSender.from_config().send() is called."""
         from unittest.mock import MagicMock
+
         trw_dir = _make_deferred_trw_dir(tmp_path)
 
         mock_sender = MagicMock()
-        mock_sender.send = MagicMock(return_value={
-            "sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "offline_mode",
-        })
+        mock_sender.send = MagicMock(
+            return_value={
+                "sent": 0,
+                "failed": 0,
+                "remaining": 0,
+                "skipped_reason": "offline_mode",
+            }
+        )
 
         stubs = _stub_all_deferred_steps()
         del stubs["_step_batch_send"]
@@ -966,7 +989,8 @@ class TestDeliverTelemetryIntegration:
         mock_sender.send.assert_called_once()
 
     def test_deliver_calls_record_outcome(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 6.6: record_outcome is called for tracked recalls with positive outcome."""
         trw_dir = _make_deferred_trw_dir(tmp_path)
@@ -1009,7 +1033,8 @@ class TestDeliverTelemetryIntegration:
         assert ("L-test001", "positive") in recorded
 
     def test_deliver_outcome_correlation_failopen(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 6.5: process_outcome_for_event raising does not block other deferred steps."""
         trw_dir = _make_deferred_trw_dir(tmp_path)
@@ -1031,7 +1056,8 @@ class TestDeliverTelemetryIntegration:
         assert "batch_send" in log_entry["results"]
 
     def test_deliver_telemetry_failopen(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 7: TelemetryClient.from_config raising does not block other deferred steps."""
         trw_dir = _make_deferred_trw_dir(tmp_path)
@@ -1053,7 +1079,8 @@ class TestDeliverTelemetryIntegration:
         assert "batch_send" in log_entry["results"]
 
     def test_deliver_batch_send_failopen(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Step 8: BatchSender.from_config raising does not block other deferred steps."""
         trw_dir = _make_deferred_trw_dir(tmp_path)
@@ -1075,10 +1102,12 @@ class TestDeliverTelemetryIntegration:
         assert log_entry["results"]["telemetry"]["status"] == "skipped"
 
     def test_step_tier_sweep_includes_impact_tier_distribution(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """PRD-FIX-052-FR07: _step_tier_sweep result includes impact_tier_distribution dict."""
         from unittest.mock import MagicMock
+
         from trw_mcp.tools._deferred_delivery import _step_tier_sweep
 
         trw_dir = _make_deferred_trw_dir(tmp_path)
@@ -1118,7 +1147,9 @@ class TestDeliverTelemetryIntegration:
         assert dist["low"] == 3
 
     def test_deliver_critical_steps_completed_count(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Critical path reports 3 steps; deferred_steps reports 11."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -1155,7 +1186,9 @@ class TestSessionStartWithQuery:
     """trw_session_start(query=...) focused hybrid recall tests."""
 
     def test_query_empty_is_default_behavior(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Empty string query uses default wildcard — no 'query' key in result."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -1173,7 +1206,9 @@ class TestSessionStartWithQuery:
         assert "query" not in result
 
     def test_query_triggers_focused_recall(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Non-empty query makes 2 adapter_recall calls, returns 'query' key."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -1184,9 +1219,14 @@ class TestSessionStartWithQuery:
         call_log: list[dict[str, Any]] = []
 
         def _fake_recall(
-            _trw_d: Any, *, query: str = "*", min_impact: float = 0.0,
-            max_results: int = 25, compact: bool = False,
-            tags: Any = None, status: Any = None,
+            _trw_d: Any,
+            *,
+            query: str = "*",
+            min_impact: float = 0.0,
+            max_results: int = 25,
+            compact: bool = False,
+            tags: Any = None,
+            status: Any = None,
         ) -> list[dict[str, object]]:
             call_log.append({"query": query, "min_impact": min_impact})
             if query == "*":
@@ -1208,7 +1248,9 @@ class TestSessionStartWithQuery:
         assert any(c["query"] == "*" for c in call_log)
 
     def test_query_deduplicates_across_recalls(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Same ID from both recalls appears only once in merged results."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -1221,9 +1263,14 @@ class TestSessionStartWithQuery:
         baseline_only: dict[str, object] = {"id": "L-base", "summary": "Baseline", "impact": 0.9}
 
         def _fake_recall(
-            _trw_d: Any, *, query: str = "*", min_impact: float = 0.0,
-            max_results: int = 25, compact: bool = False,
-            tags: Any = None, status: Any = None,
+            _trw_d: Any,
+            *,
+            query: str = "*",
+            min_impact: float = 0.0,
+            max_results: int = 25,
+            compact: bool = False,
+            tags: Any = None,
+            status: Any = None,
         ) -> list[dict[str, object]]:
             if query == "*":
                 return [shared_entry, baseline_only]
@@ -1245,7 +1292,9 @@ class TestSessionStartWithQuery:
         assert ids.index("L-focus") < ids.index("L-base")
 
     def test_query_recall_failure_falls_back(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Exception in recall is handled gracefully — result still returned."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -1269,7 +1318,9 @@ class TestSessionStartWithQuery:
         assert "run" in result
 
     def test_query_merged_into_auto_recall(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Step 6 ar_query includes user query tokens + phase context."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -1281,9 +1332,14 @@ class TestSessionStartWithQuery:
         step6_queries: list[str] = []
 
         def _fake_recall(
-            _trw_d: Any, *, query: str = "*", min_impact: float = 0.0,
-            max_results: int = 25, compact: bool = False,
-            tags: Any = None, status: Any = None,
+            _trw_d: Any,
+            *,
+            query: str = "*",
+            min_impact: float = 0.0,
+            max_results: int = 25,
+            compact: bool = False,
+            tags: Any = None,
+            status: Any = None,
         ) -> list[dict[str, object]]:
             # Step 1 calls use compact=True, Step 6 uses compact=False
             if not compact:
@@ -1400,7 +1456,9 @@ class TestRunDeferredSteps:
             _release_deferred_lock(fd)
 
     def test_all_steps_fail_open(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Each deferred step can fail without blocking others."""
         trw_dir = tmp_path / ".trw"
@@ -1408,16 +1466,23 @@ class TestRunDeferredSteps:
 
         # Patch all step functions to raise
         step_names = [
-            "_step_auto_prune", "_step_consolidation", "_step_tier_sweep",
-            "_do_index_sync", "_step_auto_progress", "_step_publish_learnings",
-            "_step_outcome_correlation", "_step_recall_outcome",
-            "_step_telemetry", "_step_batch_send", "_step_trust_increment",
+            "_step_auto_prune",
+            "_step_consolidation",
+            "_step_tier_sweep",
+            "_do_index_sync",
+            "_step_auto_progress",
+            "_step_publish_learnings",
+            "_step_outcome_correlation",
+            "_step_recall_outcome",
+            "_step_telemetry",
+            "_step_batch_send",
+            "_step_trust_increment",
             "_step_ceremony_feedback",
         ]
         for name in step_names:
             monkeypatch.setattr(
                 f"trw_mcp.tools.ceremony.{name}",
-                lambda *a, **kw: (_ for _ in ()).throw(Exception(f"{name} boom")),
+                lambda *a, name=name, **kw: (_ for _ in ()).throw(Exception(f"{name} boom")),
             )
 
         _run_deferred_steps(trw_dir, None, {})
@@ -1433,7 +1498,9 @@ class TestLaunchDeferred:
     """Background thread launcher with deduplication."""
 
     def test_returns_launched(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Launching deferred steps returns 'launched'."""
         trw_dir = tmp_path / ".trw"
@@ -1441,10 +1508,17 @@ class TestLaunchDeferred:
 
         # Patch all deferred steps to no-ops
         step_names = [
-            "_step_auto_prune", "_step_consolidation", "_step_tier_sweep",
-            "_do_index_sync", "_step_auto_progress", "_step_publish_learnings",
-            "_step_outcome_correlation", "_step_recall_outcome",
-            "_step_telemetry", "_step_batch_send", "_step_trust_increment",
+            "_step_auto_prune",
+            "_step_consolidation",
+            "_step_tier_sweep",
+            "_do_index_sync",
+            "_step_auto_progress",
+            "_step_publish_learnings",
+            "_step_outcome_correlation",
+            "_step_recall_outcome",
+            "_step_telemetry",
+            "_step_batch_send",
+            "_step_trust_increment",
             "_step_ceremony_feedback",
         ]
         for name in step_names:
@@ -1454,6 +1528,7 @@ class TestLaunchDeferred:
             )
 
         import trw_mcp.tools.ceremony as cer
+
         # Reset global thread state
         monkeypatch.setattr(cer, "_deferred_thread", None)
 
@@ -1466,10 +1541,13 @@ class TestLaunchDeferred:
                 cer._deferred_thread.join(timeout=10)
 
     def test_skips_when_thread_alive(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Second launch returns 'skipped_already_running' while first is active."""
         import threading
+
         import trw_mcp.tools.ceremony as cer
 
         trw_dir = tmp_path / ".trw"
@@ -1477,6 +1555,7 @@ class TestLaunchDeferred:
 
         # Create a fake long-running thread
         barrier = threading.Event()
+
         def slow_worker() -> None:
             barrier.wait(timeout=10)
 

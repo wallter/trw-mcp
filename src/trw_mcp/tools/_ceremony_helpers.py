@@ -9,23 +9,22 @@ Modularizes the two longest tool functions into focused, testable helpers:
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
-from typing import cast
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config._defaults import LIGHT_MODE_RECALL_CAP
 from trw_mcp.models.typed_dicts import (
     AutoMaintenanceDict,
     AutoRecalledItemDict,
     ComplianceArtifactsDict,
     DeliveryGatesDict,
     FinalizeRunResult,
-    LearningEntryDict,
     RunStatusDict,
     SessionRecallExtrasDict,
 )
-from trw_mcp.models.config._defaults import LIGHT_MODE_RECALL_CAP
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_nudge import NudgeContext, compute_nudge, read_ceremony_state
@@ -67,6 +66,7 @@ def append_ceremony_nudge(
             _highest_priority_pending_step,
             increment_nudge_count,
         )
+
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
         state = read_ceremony_state(effective_dir)
         nudge = compute_nudge(state, available_learnings=available_learnings, context=context)
@@ -74,10 +74,8 @@ def append_ceremony_nudge(
         # Increment nudge count for the pending step (tracks progressive urgency)
         pending = _highest_priority_pending_step(state)
         if pending:
-            try:
+            with contextlib.suppress(Exception):
                 increment_nudge_count(effective_dir, pending)
-            except Exception:  # justified: fail-open, nudge count increment is best-effort
-                pass
         logger.debug(
             "append_ceremony_nudge",
             phase=state.phase,
@@ -141,12 +139,18 @@ def perform_session_recalls(
     # Step 1: Core recall
     if is_focused:
         focused = adapter_recall(
-            trw_dir, query=query, min_impact=0.3,
-            max_results=effective_max, compact=True,
+            trw_dir,
+            query=query,
+            min_impact=0.3,
+            max_results=effective_max,
+            compact=True,
         )
         baseline = adapter_recall(
-            trw_dir, query="*", min_impact=0.7,
-            max_results=effective_max, compact=True,
+            trw_dir,
+            query="*",
+            min_impact=0.7,
+            max_results=effective_max,
+            compact=True,
         )
         extra["query"] = query
         extra["query_matched"] = len(focused)
@@ -159,8 +163,11 @@ def perform_session_recalls(
         learnings = learnings[:effective_max]
     else:
         learnings = adapter_recall(
-            trw_dir, query="*", min_impact=0.7,
-            max_results=effective_max, compact=True,
+            trw_dir,
+            query="*",
+            min_impact=0.7,
+            max_results=effective_max,
+            compact=True,
         )
 
     # Update access tracking
@@ -208,18 +215,22 @@ def _phase_contextual_recall(
 
     ar_query = " ".join(query_tokens) if query_tokens else "*"
     ar_entries = adapter_recall_ar(
-        trw_dir, query=ar_query,
-        tags=phase_tags, min_impact=0.5,
-        max_results=0, compact=False,
+        trw_dir,
+        query=ar_query,
+        tags=phase_tags,
+        min_impact=0.5,
+        max_results=0,
+        compact=False,
     )
     if not ar_entries:
         return []
 
     ranked = rank_by_utility(
-        ar_entries, query_tokens,
+        ar_entries,
+        query_tokens,
         lambda_weight=config.recall_utility_lambda,
     )
-    capped = ranked[:config.auto_recall_max_results]
+    capped = ranked[: config.auto_recall_max_results]
     return [
         {
             "id": str(e.get("id", "")),
@@ -258,6 +269,7 @@ def _check_version_sentinel(
     # Compare with running version
     try:
         from importlib.metadata import version as pkg_version
+
         running_version = pkg_version("trw-mcp")
     except Exception:  # justified: importlib.metadata may fail in edge cases
         return
@@ -290,17 +302,18 @@ def run_auto_maintenance(
     # Auto-upgrade check (PRD-INFRA-014)
     try:
         from trw_mcp.state.auto_upgrade import check_for_update
+
         update_info = check_for_update()
         if update_info.get("available"):
             maintenance["update_advisory"] = str(update_info.get("advisory", ""))
             if config.auto_upgrade:
                 from trw_mcp.state.auto_upgrade import perform_upgrade
+
                 upgrade_result = perform_upgrade(update_info)
                 if upgrade_result.get("applied"):
                     parts: list[str] = []
                     parts.append(
-                        f"Auto-upgraded to v{upgrade_result.get('version', '?')}: "
-                        f"{upgrade_result.get('details', '')}"
+                        f"Auto-upgraded to v{upgrade_result.get('version', '?')}: {upgrade_result.get('details', '')}"
                     )
                     maintenance["auto_upgrade"] = upgrade_result
     except Exception:  # justified: fail-open, auto-upgrade must not block session start
@@ -310,6 +323,7 @@ def run_auto_maintenance(
     try:
         if config.run_auto_close_enabled:
             from trw_mcp.state.analytics.report import auto_close_stale_runs
+
             close_result = auto_close_stale_runs()
             closed_count = int(str(close_result.get("count", 0)))
             if closed_count > 0:
@@ -320,11 +334,13 @@ def run_auto_maintenance(
     # Embeddings status check + backfill
     try:
         from trw_mcp.state.memory_adapter import check_embeddings_status
+
         emb_status = check_embeddings_status()
         if emb_status.get("advisory"):
             maintenance["embeddings_advisory"] = str(emb_status["advisory"])
         elif emb_status.get("enabled") and emb_status.get("available"):
             from trw_mcp.state.memory_adapter import backfill_embeddings
+
             backfill = backfill_embeddings(resolve_trw_dir())
             if backfill.get("embedded", 0) > 0:
                 maintenance["embeddings_backfill"] = backfill
@@ -350,6 +366,164 @@ def _read_complexity_class(run_path: Path, reader: FileStateReader) -> str:
         return ""
 
 
+def _check_review_gate(
+    run_path: Path,
+    reader: FileStateReader,
+) -> tuple[str | None, str | None]:
+    """Check review gate and return (warning, advisory) if found."""
+    warning: str | None = None
+    advisory: str | None = None
+
+    review_path = run_path / "meta" / "review.yaml"
+    if review_path.exists():
+        try:
+            review_data = reader.read_yaml(review_path)
+            rv_verdict = str(review_data.get("verdict", ""))
+            rv_critical = int(str(review_data.get("critical_count", 0)))
+            if rv_verdict == "block" and rv_critical > 0:
+                warning = (
+                    f"Review has {rv_critical} critical findings. "
+                    f"Delivery proceeding but review issues should be addressed."
+                )
+        except Exception:  # justified: fail-open, review gate check must not block delivery
+            logger.warning("maintenance_review_gate_failed", exc_info=True)
+    else:
+        # Check complexity — STANDARD+ tasks MUST have review (Sprint 68 enforcement)
+        complexity_class = _read_complexity_class(run_path, reader)
+        if complexity_class in ("STANDARD", "COMPREHENSIVE"):
+            warning = (
+                f"No trw_review was run before delivery (complexity: {complexity_class}). "
+                "Review is MANDATORY for STANDARD+ tasks — adversarial audit catches "
+                "false completions that self-review misses. "
+                "Run trw_review() or /trw-audit before delivering."
+            )
+        else:
+            advisory = (
+                "No trw_review was run before delivery. Consider running trw_review for quality assurance."
+            )
+
+    return warning, advisory
+
+
+def _check_integration_review_gate(
+    run_path: Path,
+    reader: FileStateReader,
+) -> tuple[str | None, str | None]:
+    """Check integration review gate and return (block, warning) if found."""
+    block: str | None = None
+    warning: str | None = None
+
+    integration_path = run_path / "meta" / "integration-review.yaml"
+    if integration_path.exists():
+        try:
+            int_data = reader.read_yaml(integration_path)
+            int_verdict = str(int_data.get("verdict", ""))
+            if int_verdict == "block":
+                raw_findings = int_data.get("findings", [])
+                int_findings = raw_findings if isinstance(raw_findings, list) else []
+                critical_list = [f for f in int_findings if isinstance(f, dict) and f.get("severity") == "critical"]
+                block = (
+                    f"Integration review verdict is 'block' with {len(critical_list)} critical finding(s). "
+                    f"Delivery blocked. Fix critical integration issues before delivering."
+                )
+            elif int_verdict == "warn":
+                warning = (
+                    "Integration review has warnings. Review findings before merging."
+                )
+        except Exception:  # justified: fail-open, integration review check must not block delivery
+            logger.warning("maintenance_integration_review_failed", exc_info=True)
+
+    return block, warning
+
+
+def _check_untracked_files(run_path: Path) -> str | None:
+    """Check for untracked source/test files and return warning if found."""
+    try:
+        import subprocess
+
+        git_result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(run_path.parent.parent.parent),  # project root
+        )
+        if git_result.returncode == 0:
+            untracked = [
+                f
+                for f in git_result.stdout.strip().splitlines()
+                if f
+                and (f.endswith((".py", ".ts", ".tsx")))
+                and ("/src/" in f or "/tests/" in f or f.startswith(("src/", "tests/")))
+            ]
+            if untracked:
+                return (
+                    f"{len(untracked)} untracked source/test file(s) detected. "
+                    f"These won't be included in commits: {', '.join(untracked[:5])}"
+                    + (f" (+{len(untracked) - 5} more)" if len(untracked) > 5 else "")
+                )
+    except Exception:  # justified: fail-open, untracked file detection is advisory only
+        logger.debug("untracked_file_check_failed", exc_info=True)
+
+    return None
+
+
+def _check_build_and_work_events(
+    run_path: Path,
+    reader: FileStateReader,
+) -> tuple[str | None, str | None]:
+    """Check build gate and work events, return (build_warning, premature_warning) if found."""
+    build_warning: str | None = None
+    premature_warning: str | None = None
+
+    try:
+        events_path = run_path / "meta" / "events.jsonl"
+        if reader.exists(events_path):
+            all_events = reader.read_jsonl(events_path)
+
+            # Build gate (RC-003 + RC-006)
+            def _build_passed(ev: dict[str, object]) -> bool:
+                if str(ev.get("event", "")) != "build_check_complete":
+                    return False
+                data = ev.get("data")
+                if isinstance(data, dict):
+                    val = data.get("tests_passed")
+                    return val is True or (isinstance(val, str) and val.lower() == "true")
+                return False
+
+            if not any(_build_passed(e) for e in all_events):
+                build_warning = (
+                    "No successful build check found before delivery. "
+                    "Run trw_build_check() to verify tests pass and type-check is clean."
+                )
+
+            # Premature delivery guard
+            ceremony_only = {
+                "run_init",
+                "checkpoint",
+                "reflection_complete",
+                "trw_reflect_complete",
+                "trw_deliver_complete",
+                "trw_session_start_complete",
+            }
+            work_events = [e for e in all_events if str(e.get("event", "")) not in ceremony_only]
+            if len(work_events) == 0 and len(all_events) > 0:
+                premature_warning = (
+                    "Premature delivery — no work events found beyond ceremony. "
+                    "This run has only init/checkpoint events. Proceeding anyway, "
+                    "but consider whether work was actually completed."
+                )
+                logger.warning(
+                    "premature_delivery",
+                    total_events=len(all_events),
+                    work_events=0,
+                )
+    except Exception:  # justified: fail-open, build gate check must not block delivery
+        logger.warning("maintenance_build_gate_failed", exc_info=True)
+
+    return build_warning, premature_warning
+
+
 def check_delivery_gates(
     run_path: Path | None,
     reader: FileStateReader,
@@ -367,135 +541,31 @@ def check_delivery_gates(
     if run_path is None:
         return result
 
-    # Step 0: Review soft gate (PRD-QUAL-022)
-    review_path = run_path / "meta" / "review.yaml"
-    if review_path.exists():
-        try:
-            review_data = reader.read_yaml(review_path)
-            rv_verdict = str(review_data.get("verdict", ""))
-            rv_critical = int(str(review_data.get("critical_count", 0)))
-            if rv_verdict == "block" and rv_critical > 0:
-                result["review_warning"] = (
-                    f"Review has {rv_critical} critical findings. "
-                    f"Delivery proceeding but review issues should be addressed."
-                )
-        except Exception:  # justified: fail-open, review gate check must not block delivery
-            logger.warning("maintenance_review_gate_failed", exc_info=True)
-    else:
-        # Check complexity — STANDARD+ tasks MUST have review (Sprint 68 enforcement)
-        complexity_class = _read_complexity_class(run_path, reader)
-
-        if complexity_class in ("STANDARD", "COMPREHENSIVE"):
-            result["review_warning"] = (
-                f"No trw_review was run before delivery (complexity: {complexity_class}). "
-                "Review is MANDATORY for STANDARD+ tasks — adversarial audit catches "
-                "false completions that self-review misses. "
-                "Run trw_review() or /trw-audit before delivering."
-            )
-        else:
-            result["review_advisory"] = (
-                "No trw_review was run before delivery. "
-                "Consider running trw_review for quality assurance."
-            )
+    # Review gate (PRD-QUAL-022)
+    review_warning, review_advisory = _check_review_gate(run_path, reader)
+    if review_warning:
+        result["review_warning"] = review_warning
+    elif review_advisory:
+        result["review_advisory"] = review_advisory
 
     # Integration review gate (PRD-INFRA-027-FR06)
-    integration_path = run_path / "meta" / "integration-review.yaml"
-    if integration_path.exists():
-        try:
-            int_data = reader.read_yaml(integration_path)
-            int_verdict = str(int_data.get("verdict", ""))
-            if int_verdict == "block":
-                raw_findings = int_data.get("findings", [])
-                int_findings = raw_findings if isinstance(raw_findings, list) else []
-                critical_list = [
-                    f for f in int_findings
-                    if isinstance(f, dict) and f.get("severity") == "critical"
-                ]
-                result["integration_review_block"] = (
-                    f"Integration review verdict is 'block' with {len(critical_list)} critical finding(s). "
-                    f"Delivery blocked. Fix critical integration issues before delivering."
-                )
-            elif int_verdict == "warn":
-                result["integration_review_warning"] = (
-                    "Integration review has warnings. Review findings before merging."
-                )
-        except Exception:  # justified: fail-open, integration review check must not block delivery
-            logger.warning("maintenance_integration_review_failed", exc_info=True)
-    # No integration-review.yaml is fine for single-shard sprints
+    int_block, int_warning = _check_integration_review_gate(run_path, reader)
+    if int_block:
+        result["integration_review_block"] = int_block
+    elif int_warning:
+        result["integration_review_warning"] = int_warning
 
-    # Step 0a: Untracked source/test file detection
-    try:
-        import subprocess
+    # Untracked files
+    untracked_warning = _check_untracked_files(run_path)
+    if untracked_warning:
+        result["untracked_warning"] = untracked_warning
 
-        git_result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True, text=True, timeout=10,
-            cwd=str(run_path.parent.parent.parent),  # project root
-        )
-        if git_result.returncode == 0:
-            untracked = [
-                f for f in git_result.stdout.strip().splitlines()
-                if f and (
-                    f.endswith(".py") or f.endswith(".ts") or f.endswith(".tsx")
-                ) and (
-                    "/src/" in f or "/tests/" in f or f.startswith("src/")
-                    or f.startswith("tests/")
-                )
-            ]
-            if untracked:
-                result["untracked_warning"] = (
-                    f"{len(untracked)} untracked source/test file(s) detected. "
-                    f"These won't be included in commits: {', '.join(untracked[:5])}"
-                    + (f" (+{len(untracked) - 5} more)" if len(untracked) > 5 else "")
-                )
-    except Exception:  # justified: fail-open, untracked file detection is advisory only
-        logger.debug("untracked_file_check_failed", exc_info=True)
-
-    # Step 0b: Build gate + premature delivery guard (single events.jsonl read)
-    try:
-        events_path = run_path / "meta" / "events.jsonl"
-        if reader.exists(events_path):
-            all_events = reader.read_jsonl(events_path)
-
-            # Build gate (RC-003 + RC-006)
-            def _build_passed(ev: dict[str, object]) -> bool:
-                if str(ev.get("event", "")) != "build_check_complete":
-                    return False
-                data = ev.get("data")
-                if isinstance(data, dict):
-                    val = data.get("tests_passed")
-                    return val is True or (isinstance(val, str) and val.lower() == "true")
-                return False
-
-            if not any(_build_passed(e) for e in all_events):
-                result["build_gate_warning"] = (
-                    "No successful build check found before delivery. "
-                    "Run trw_build_check() to verify tests pass and type-check is clean."
-                )
-
-            # Premature delivery guard
-            ceremony_only = {
-                "run_init", "checkpoint", "reflection_complete",
-                "trw_reflect_complete", "trw_deliver_complete",
-                "trw_session_start_complete",
-            }
-            work_events = [
-                e for e in all_events
-                if str(e.get("event", "")) not in ceremony_only
-            ]
-            if len(work_events) == 0 and len(all_events) > 0:
-                result["warning"] = (
-                    "Premature delivery — no work events found beyond ceremony. "
-                    "This run has only init/checkpoint events. Proceeding anyway, "
-                    "but consider whether work was actually completed."
-                )
-                logger.warning(
-                    "premature_delivery",
-                    total_events=len(all_events),
-                    work_events=0,
-                )
-    except Exception:  # justified: fail-open, build gate check must not block delivery
-        logger.warning("maintenance_build_gate_failed", exc_info=True)
+    # Build gate and work events
+    build_warning, premature_warning = _check_build_and_work_events(run_path, reader)
+    if build_warning:
+        result["build_gate_warning"] = build_warning
+    if premature_warning:
+        result["warning"] = premature_warning
 
     return result
 
@@ -534,10 +604,7 @@ def copy_compliance_artifacts(
     now = datetime.now(timezone.utc)
     run_id = run_path.name
 
-    compliance_dir = (
-        trw_dir / config.compliance_dir / "reviews"
-        / str(now.year) / f"{now.month:02d}" / run_id
-    )
+    compliance_dir = trw_dir / config.compliance_dir / "reviews" / str(now.year) / f"{now.month:02d}" / run_id
 
     artifacts = ["review.yaml", "review-all.yaml", "integration-review.yaml"]
     copied = []

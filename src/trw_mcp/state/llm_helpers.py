@@ -68,8 +68,7 @@ def llm_assess_learnings(
         "Review these learning entries and assess whether each is still relevant.\n"
         "For each, respond with a JSON line: "
         '{"id": "...", "status": "ACTIVE|RESOLVED|OBSOLETE", "reason": "..."}\n'
-        "Only include entries you recommend changing (not ACTIVE ones).\n\n"
-        + "\n".join(summaries)
+        "Only include entries you recommend changing (not ACTIVE ones).\n\n" + "\n".join(summaries)
     )
 
     response = llm.ask_sync(
@@ -81,10 +80,7 @@ def llm_assess_learnings(
         return []
 
     # Build id->summary lookup for matching parsed results to entries
-    summary_by_id: dict[object, str] = {
-        d.get("id"): str(d.get("summary", ""))
-        for _, d in entries
-    }
+    summary_by_id: dict[object, str] = {d.get("id"): str(d.get("summary", "")) for _, d in entries}
 
     candidates: list[dict[str, object]] = []
     for parsed in _parse_json_lines(response):
@@ -92,12 +88,14 @@ def llm_assess_learnings(
         if status_raw not in ("RESOLVED", "OBSOLETE"):
             continue
         entry_id = parsed.get("id", "")
-        candidates.append({
-            "id": entry_id,
-            "summary": summary_by_id.get(entry_id, ""),
-            "suggested_status": status_raw.lower(),
-            "reason": parsed.get("reason", "LLM assessment"),
-        })
+        candidates.append(
+            {
+                "id": entry_id,
+                "summary": summary_by_id.get(entry_id, ""),
+                "suggested_status": status_raw.lower(),
+                "reason": parsed.get("reason", "LLM assessment"),
+            }
+        )
 
     return candidates
 
@@ -121,8 +119,7 @@ def llm_extract_learnings(
         List of learning dicts with summary, detail, tags, impact, or None.
     """
     event_summaries: list[str] = [
-        f"- {evt.get('event', 'unknown')}: {str(evt.get('data', ''))[:100]}"
-        for evt in events[:event_cap]
+        f"- {evt.get('event', 'unknown')}: {str(evt.get('data', ''))[:100]}" for evt in events[:event_cap]
     ]
 
     if not event_summaries:
@@ -134,8 +131,7 @@ def llm_extract_learnings(
         '{"summary": "one-line", "detail": "explanation", "tags": ["tag1"], "impact": 0.5}\n'
         "Extract 1-5 learnings. Focus on actionable insights.\n"
         "Do NOT extract learnings about event frequencies, repeated operations, or success counts"
-        " — these are tracked separately as analytics data.\n\n"
-        + "\n".join(event_summaries)
+        " — these are tracked separately as analytics data.\n\n" + "\n".join(event_summaries)
     )
 
     response = llm.ask_sync(
@@ -150,15 +146,17 @@ def llm_extract_learnings(
     for parsed in _parse_json_lines(response):
         if "summary" not in parsed:
             continue
-        learnings.append({
-            "summary": str(parsed["summary"]),
-            "detail": str(parsed.get("detail", "")),
-            "tags": parsed.get("tags", ["auto-discovered", "llm"]),
-            # Stored as str for YAML serialization consistency
-            "impact": str(parsed.get("impact", "0.6")),
-        })
+        learnings.append(
+            {
+                "summary": str(parsed["summary"]),
+                "detail": str(parsed.get("detail", "")),
+                "tags": parsed.get("tags", ["auto-discovered", "llm"]),
+                # Stored as str for YAML serialization consistency
+                "impact": str(parsed.get("impact", "0.6")),
+            }
+        )
 
-    return learnings if learnings else None
+    return learnings or None
 
 
 def llm_summarize_learnings(
@@ -188,10 +186,7 @@ def llm_summarize_learnings(
     items: list[str] = [
         f"- Learning: {entry.get('summary', '')} | Detail: {entry.get('detail', '')}"
         for entry in learnings[:learning_cap]
-    ] + [
-        f"- Pattern: {pat.get('name', '')} | {pat.get('description', '')}"
-        for pat in patterns[:pattern_cap]
-    ]
+    ] + [f"- Pattern: {pat.get('name', '')} | {pat.get('description', '')}" for pat in patterns[:pattern_cap]]
 
     prompt = (
         "Summarize these learnings and patterns into a concise CLAUDE.md section.\n"

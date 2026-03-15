@@ -98,6 +98,7 @@ def _release_deferred_lock(fd: object) -> None:
     """Release the deferred-deliver file lock."""
     try:
         import io as _io
+
         if isinstance(fd, _io.TextIOWrapper):
             fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
             fd.close()
@@ -148,7 +149,7 @@ def _run_deferred_steps(
     """
     # Late import — tests patch step functions on the ceremony module, so we
     # must resolve them from there rather than from our own module scope.
-    import trw_mcp.tools.ceremony as _cer  # noqa: F811
+    import trw_mcp.tools.ceremony as _cer
 
     lock_fd = _try_acquire_deferred_lock(trw_dir)
     if lock_fd is None:
@@ -284,6 +285,7 @@ def _step_checkpoint(resolved_run: Path) -> dict[str, object]:
     so that test patches on ``trw_mcp.tools.ceremony._do_checkpoint`` work.
     """
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
+
     _cer._do_checkpoint(resolved_run, "delivery")
     return {"status": "success"}
 
@@ -291,10 +293,12 @@ def _step_checkpoint(resolved_run: Path) -> dict[str, object]:
 def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
     """Step 2.5: Auto-prune excess learnings."""
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
+
     config = _cer.get_config()
     if not config.learning_auto_prune_on_deliver:
         return None
     from trw_mcp.state.analytics import auto_prune_excess_entries
+
     prune_result = auto_prune_excess_entries(
         trw_dir,
         max_entries=config.learning_auto_prune_cap,
@@ -306,20 +310,28 @@ def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
 def _step_consolidation(trw_dir: Path) -> ConsolidationStepResult:
     """Step 2.6: Memory consolidation (PRD-CORE-044)."""
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
+
     config = _cer.get_config()
     if not config.memory_consolidation_enabled:
-        return cast(ConsolidationStepResult, {"status": "skipped", "reason": "disabled"})
+        return cast("ConsolidationStepResult", {"status": "skipped", "reason": "disabled"})
     from trw_mcp.state.consolidation import consolidate_cycle
-    return cast(ConsolidationStepResult, dict(consolidate_cycle(
-        trw_dir,
-        max_entries=config.memory_consolidation_max_per_cycle,
-    )))
+
+    return cast(
+        "ConsolidationStepResult",
+        dict(
+            consolidate_cycle(
+                trw_dir,
+                max_entries=config.memory_consolidation_max_per_cycle,
+            )
+        ),
+    )
 
 
 def _step_tier_sweep(trw_dir: Path) -> TierSweepStepResult:
     """Step 2.7: Tier lifecycle sweep (PRD-CORE-043) + impact tier assignment (PRD-FIX-052-FR07)."""
-    from trw_mcp.state.tiers import TierManager
     from trw_mcp.state.persistence import FileStateWriter
+    from trw_mcp.state.tiers import TierManager
+
     reader = FileStateReader()
     writer = FileStateWriter()
     tier_mgr = TierManager(trw_dir, reader, writer)
@@ -346,12 +358,14 @@ def _step_auto_progress(resolved_run: Path | None) -> AutoProgressStepResult:
 def _step_publish_learnings() -> PublishLearningsResult:
     """Step 6: Publish high-impact learnings to platform backend."""
     from trw_mcp.telemetry.publisher import publish_learnings
-    return cast(PublishLearningsResult, dict(publish_learnings()))
+
+    return cast("PublishLearningsResult", dict(publish_learnings()))
 
 
 def _step_outcome_correlation() -> OutcomeCorrelationStepResult:
     """Step 6.5: Outcome correlation (G1)."""
     from trw_mcp.scoring import process_outcome_for_event
+
     outcome_ids = process_outcome_for_event("trw_deliver_complete")
     return {"status": "success", "updated": len(outcome_ids)}
 
@@ -359,15 +373,18 @@ def _step_outcome_correlation() -> OutcomeCorrelationStepResult:
 def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
     """Step 6.6: Recall outcome tracking (G6)."""
     from trw_mcp.state.recall_tracking import get_recall_stats, record_outcome
+
     recall_stats = get_recall_stats()
     unique_ids = recall_stats.get("unique_learnings", 0)
     recalled_count = 0
     if unique_ids and resolved_run is not None:
         import trw_mcp.tools.ceremony as _cer  # late import for test compat
+
         trw_dir_rt = _cer.resolve_trw_dir()
         tracking_path = trw_dir_rt / "logs" / "recall_tracking.jsonl"
         if tracking_path.exists():
             from trw_mcp.state.persistence import FileStateReader as _FSR
+
             rt_reader = _FSR()
             records_rt = rt_reader.read_jsonl(tracking_path)
             seen: set[str] = set()
@@ -383,12 +400,14 @@ def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
 def _resolve_installation_id() -> str:
     """Resolve installation ID from config, never falling back to 'local'."""
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
+
     cfg = _cer.get_config()
     iid = cfg.installation_id.strip() if cfg.installation_id else ""
     if iid:
         return iid
     # Generate a stable ID from the project root path
     import hashlib
+
     project_root = str(_cer.resolve_project_root())
     return "inst-" + hashlib.sha256(project_root.encode()).hexdigest()[:12]
 
@@ -403,6 +422,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     # Drain the telemetry pipeline (flushes remaining tool events to backend).
     try:
         from trw_mcp.telemetry.pipeline import TelemetryPipeline
+
         TelemetryPipeline.get_instance().stop(drain=True, timeout=10.0)
     except Exception:  # justified: fail-open — pipeline drain must not block delivery
         logger.debug("pipeline_drain_failed", exc_info=True)
@@ -417,6 +437,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
         ev_path = resolved_run / "meta" / "events.jsonl"
         if ev_path.exists():
             from trw_mcp.state.persistence import FileStateReader as _FSR2
+
             ev_reader = _FSR2()
             events = ev_reader.read_jsonl(ev_path)
 
@@ -426,25 +447,33 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     ceremony = compute_ceremony_score(events, trw_dir=trw_dir_for_score)
     ceremony_score = int(str(ceremony.get("score", 0)))
 
-    tel_client.record_event(SessionEndEvent(
-        installation_id=inst_id,
-        framework_version=cfg.framework_version,
-        tools_invoked=len(events),
-        ceremony_score=ceremony_score,
-    ))
+    tel_client.record_event(
+        SessionEndEvent(
+            installation_id=inst_id,
+            framework_version=cfg.framework_version,
+            tools_invoked=len(events),
+            ceremony_score=ceremony_score,
+        )
+    )
     run_id_str = str(resolved_run.name) if resolved_run else "unknown"
-    tel_client.record_event(CeremonyComplianceEvent(
-        installation_id=inst_id,
-        framework_version=cfg.framework_version,
-        run_id=run_id_str,
-        score=ceremony_score,
-    ))
+    tel_client.record_event(
+        CeremonyComplianceEvent(
+            installation_id=inst_id,
+            framework_version=cfg.framework_version,
+            run_id=run_id_str,
+            score=ceremony_score,
+        )
+    )
     tel_client.flush()
 
     # Write session summary to session-events.jsonl for trw_quality_dashboard
     from trw_mcp.state.persistence import (
         FileEventLogger,
+    )
+    from trw_mcp.state.persistence import (
         FileStateReader as _BSR,
+    )
+    from trw_mcp.state.persistence import (
         FileStateWriter as _FSW,
     )
 
@@ -493,7 +522,8 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
 def _step_batch_send() -> BatchSendResult:
     """Step 8: Batch send (G2)."""
     from trw_mcp.telemetry.sender import BatchSender
-    return cast(BatchSendResult, dict(BatchSender.from_config().send()))
+
+    return cast("BatchSendResult", dict(BatchSender.from_config().send()))
 
 
 def _merge_session_events(
@@ -561,10 +591,11 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
             if not isinstance(ev_data, dict):
                 ev_data = {}
             tool_name = str(ev_data.get("tool_name", ""))
-            if ev_type == "build_check_complete" or tool_name == "trw_build_check":
-                if ev_data.get("result") == "pass" or ev_data.get("build_passed") is True:
-                    build_passed = True
-                    break
+            if (ev_type == "build_check_complete" or tool_name == "trw_build_check") and (
+                ev_data.get("result") == "pass" or ev_data.get("build_passed") is True
+            ):
+                build_passed = True
+                break
 
         if build_passed:
             agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
@@ -572,7 +603,7 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
             # Preserve existing return shape; add reason for observability
             if isinstance(result, dict) and "reason" not in result:
                 result["reason"] = "build_check_passed"
-            return cast(TrustIncrementResult, result)
+            return cast("TrustIncrementResult", result)
 
         # Check path (b): productive session (>= 3 learnings AND >= 1 checkpoint)
         learn_count = 0
@@ -586,15 +617,11 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
             is_tool_invocation = ev_type == "tool_invocation"
 
             # Count learn events
-            if ev_type in ("learn", "trw_learn") or (
-                is_tool_invocation and "trw_learn" in tool_name
-            ):
+            if ev_type in ("learn", "trw_learn") or (is_tool_invocation and "trw_learn" in tool_name):
                 learn_count += 1
 
             # Count checkpoint events
-            if ev_type in ("checkpoint", "trw_checkpoint") or (
-                is_tool_invocation and "trw_checkpoint" in tool_name
-            ):
+            if ev_type in ("checkpoint", "trw_checkpoint") or (is_tool_invocation and "trw_checkpoint" in tool_name):
                 checkpoint_count += 1
 
         # Thresholds: >= 3 learnings AND >= 1 checkpoint
@@ -603,7 +630,7 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
             result = increment_session_count(trw_dir, agent_id)
             if isinstance(result, dict):
                 result["reason"] = "productive_session"
-            return cast(TrustIncrementResult, result)
+            return cast("TrustIncrementResult", result)
 
         return {"skipped": True, "reason": "insufficient_session_activity"}
 
@@ -611,23 +638,22 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
         return {"skipped": True, "reason": str(exc)}
 
 
-def _step_ceremony_feedback(
+def _step_ceremony_feedback(  # noqa: C901
     resolved_run: Path | None,
     deliver_results: dict[str, object],
 ) -> CeremonyFeedbackStepResult | None:
     """Step 10: Ceremony feedback recording (CORE-069-FR02)."""
     try:
+        import trw_mcp.tools.ceremony as _cer  # late import for test compat
         from trw_mcp.state.ceremony_feedback import (
             _derive_agent_id,
             apply_auto_escalation,
             check_auto_escalation,
-            classify_task_class,
             generate_reduction_proposal,
             read_feedback_data,
             record_session_outcome,
         )
 
-        import trw_mcp.tools.ceremony as _cer  # late import for test compat
         trw_dir = _cer.resolve_trw_dir()
         run_state: dict[str, object] = {}
         if resolved_run is not None:
@@ -720,6 +746,7 @@ def _step_ceremony_feedback(
                 register_proposal,
             )
             from trw_mcp.state.persistence import FileStateWriter as _FSW
+
             register_proposal(proposal)
             # Persist pending proposals to ceremony-overrides.yaml so
             # trw_ceremony_status (on main thread) can read them on restart.
@@ -734,14 +761,14 @@ def _step_ceremony_feedback(
 
         escalation = check_auto_escalation(task_class_str, data)
         if escalation:
-            apply_auto_escalation(trw_dir, task_class_str, cast(dict[str, object], escalation))
+            apply_auto_escalation(trw_dir, task_class_str, cast("dict[str, object]", escalation))
             return cast(
-                CeremonyFeedbackStepResult,
+                "CeremonyFeedbackStepResult",
                 {"recorded": True, "auto_escalation": escalation, "proposal": proposal},
             )
-        return cast(CeremonyFeedbackStepResult, {"recorded": True, "proposal": proposal})
+        return cast("CeremonyFeedbackStepResult", {"recorded": True, "proposal": proposal})
     except Exception as exc:  # justified: fail-open, ceremony feedback is best-effort enrichment
-        return cast(CeremonyFeedbackStepResult, {"skipped": True, "reason": str(exc)})
+        return cast("CeremonyFeedbackStepResult", {"skipped": True, "reason": str(exc)})
 
 
 def _do_index_sync() -> IndexSyncResult:
@@ -752,7 +779,6 @@ def _do_index_sync() -> IndexSyncResult:
     ``trw_mcp.tools.ceremony.resolve_project_root`` propagate correctly.
     """
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
-
     from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
     from trw_mcp.state.persistence import FileStateWriter
 
@@ -767,8 +793,8 @@ def _do_index_sync() -> IndexSyncResult:
 
     return IndexSyncResult(
         status="success",
-        index=cast(dict[str, object], index_result),
-        roadmap=cast(dict[str, object], roadmap_result),
+        index=cast("dict[str, object]", index_result),
+        roadmap=cast("dict[str, object]", roadmap_result),
     )
 
 
@@ -786,7 +812,6 @@ def _do_auto_progress(run_dir: Path | None) -> AutoProgressStepResult:
         return {"status": "skipped", "reason": "no_active_run"}
 
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
-
     from trw_mcp.state.validation import auto_progress_prds
 
     config = _cer.get_config()

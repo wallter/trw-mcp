@@ -45,6 +45,7 @@ from trw_mcp.state.validation import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     """Create a minimal run directory with run.yaml present."""
     return make_run_dir_with_structure(
@@ -83,6 +84,7 @@ prd:
 # _is_validate_pass (lines 206-211)
 # ---------------------------------------------------------------------------
 
+
 class TestIsValidatePass:
     """Unit tests for _is_validate_pass predicate."""
 
@@ -118,6 +120,7 @@ class TestIsValidatePass:
 # ---------------------------------------------------------------------------
 # FileContractValidator (lines 312-359)
 # ---------------------------------------------------------------------------
+
 
 class TestFileContractValidator:
     """Tests for FileContractValidator.validate_contract."""
@@ -156,7 +159,9 @@ class TestFileContractValidator:
         output_file = tmp_path / "output.yaml"
         output_file.write_text("status: done\nresult: ok\n", encoding="utf-8")
         contract = OutputContract(
-            file="output.yaml", required=True, schema_keys=["status", "result"],
+            file="output.yaml",
+            required=True,
+            schema_keys=["status", "result"],
         )
         validator = FileContractValidator()
         failures = validator.validate_contract(contract, tmp_path)
@@ -166,7 +171,9 @@ class TestFileContractValidator:
         output_file = tmp_path / "output.yaml"
         output_file.write_text("status: done\n", encoding="utf-8")
         contract = OutputContract(
-            file="output.yaml", required=True, schema_keys=["status", "missing_key"],
+            file="output.yaml",
+            required=True,
+            schema_keys=["status", "missing_key"],
         )
         validator = FileContractValidator()
         failures = validator.validate_contract(contract, tmp_path)
@@ -176,7 +183,9 @@ class TestFileContractValidator:
         output_file = tmp_path / "broken.yaml"
         output_file.write_text("{ invalid yaml: [unclosed", encoding="utf-8")
         contract = OutputContract(
-            file="broken.yaml", required=True, schema_keys=["key"],
+            file="broken.yaml",
+            required=True,
+            schema_keys=["key"],
         )
         validator = FileContractValidator()
         failures = validator.validate_contract(contract, tmp_path)
@@ -186,6 +195,7 @@ class TestFileContractValidator:
 # ---------------------------------------------------------------------------
 # validate_wave_contracts (lines 382-428)
 # ---------------------------------------------------------------------------
+
 
 class TestValidateWaveContracts:
     """Tests for validate_wave_contracts function."""
@@ -283,6 +293,7 @@ class TestValidateWaveContracts:
 # _check_build_status (lines 566-678)
 # ---------------------------------------------------------------------------
 
+
 class TestCheckBuildStatus:
     """Tests for the _check_build_status function."""
 
@@ -327,13 +338,16 @@ class TestCheckBuildStatus:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": False,
-            "mypy_clean": True,
-            "coverage_pct": 90.0,
-            "scope": "full",
-            "timestamp": "2026-01-01T00:00:00",
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": False,
+                "mypy_clean": True,
+                "coverage_pct": 90.0,
+                "scope": "full",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+        )
         result = _check_build_status(trw_dir, config, "validate")
         assert any(f.rule == "tests_passed" for f in result)
 
@@ -343,14 +357,17 @@ class TestCheckBuildStatus:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": False,
-            "mypy_clean": True,
-            "coverage_pct": 90.0,
-            "scope": "full",
-            "timestamp": "2026-01-01T00:00:00",
-            "failures": ["test_foo failed", "test_bar failed"],
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": False,
+                "mypy_clean": True,
+                "coverage_pct": 90.0,
+                "scope": "full",
+                "timestamp": "2026-01-01T00:00:00",
+                "failures": ["test_foo failed", "test_bar failed"],
+            },
+        )
         result = _check_build_status(trw_dir, config, "validate")
         failed = [f for f in result if f.rule == "tests_passed"]
         assert len(failed) == 1
@@ -362,13 +379,16 @@ class TestCheckBuildStatus:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": True,
-            "mypy_clean": False,
-            "coverage_pct": 90.0,
-            "scope": "full",
-            "timestamp": "2026-01-01T00:00:00",
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": True,
+                "mypy_clean": False,
+                "coverage_pct": 90.0,
+                "scope": "full",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+        )
         result = _check_build_status(trw_dir, config, "validate")
         assert any(f.rule == "type_check_clean" for f in result)
 
@@ -382,13 +402,16 @@ class TestCheckBuildStatus:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": True,
-            "mypy_clean": True,
-            "coverage_pct": 70.0,
-            "scope": "full",
-            "timestamp": "2026-01-01T00:00:00",
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": True,
+                "mypy_clean": True,
+                "coverage_pct": 70.0,
+                "scope": "full",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+        )
         result = _check_build_status(trw_dir, config, "validate")
         assert any(f.rule == "coverage_min" for f in result)
 
@@ -402,13 +425,16 @@ class TestCheckBuildStatus:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": True,
-            "mypy_clean": True,
-            "coverage_pct": 50.0,  # below min
-            "scope": "full",
-            "timestamp": "2026-01-01T00:00:00",
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": True,
+                "mypy_clean": True,
+                "coverage_pct": 50.0,  # below min
+                "scope": "full",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+        )
         result = _check_build_status(trw_dir, config, "implement")
         assert not any(f.rule == "coverage_min" for f in result)
 
@@ -420,13 +446,16 @@ class TestCheckBuildStatus:
         writer = FileStateWriter()
         # Use a timestamp from 2 hours ago (stale beyond 30 min threshold)
         stale_ts = "2020-01-01T00:00:00"
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": True,
-            "mypy_clean": True,
-            "coverage_pct": 90.0,
-            "scope": "full",
-            "timestamp": stale_ts,
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": True,
+                "mypy_clean": True,
+                "coverage_pct": 90.0,
+                "scope": "full",
+                "timestamp": stale_ts,
+            },
+        )
         result = _check_build_status(trw_dir, config, "validate")
         assert any(f.rule == "build_staleness" for f in result)
 
@@ -441,13 +470,16 @@ class TestCheckBuildStatus:
         writer = FileStateWriter()
         # Use a fresh timestamp (not stale) so the is_stale guard doesn't kick in
         fresh_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": False,
-            "mypy_clean": True,
-            "coverage_pct": 90.0,
-            "scope": "full",
-            "timestamp": fresh_ts,
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": False,
+                "mypy_clean": True,
+                "coverage_pct": 90.0,
+                "scope": "full",
+                "timestamp": fresh_ts,
+            },
+        )
         result = _check_build_status(trw_dir, config, "validate")
         failed = [f for f in result if f.rule == "tests_passed"]
         assert len(failed) == 1
@@ -460,13 +492,16 @@ class TestCheckBuildStatus:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": False,
-            "mypy_clean": False,
-            "coverage_pct": 50.0,
-            "scope": "full",
-            "timestamp": "2026-01-01T00:00:00",
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": False,
+                "mypy_clean": False,
+                "coverage_pct": 50.0,
+                "scope": "full",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+        )
         result = _check_build_status(trw_dir, config, "implement")
         for failure in result:
             if failure.rule in ("tests_passed", "mypy_clean"):
@@ -481,13 +516,16 @@ class TestCheckBuildStatus:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": True,
-            "mypy_clean": False,  # mypy failed, but scope is pytest
-            "coverage_pct": 90.0,
-            "scope": "pytest",
-            "timestamp": "2026-01-01T00:00:00",
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": True,
+                "mypy_clean": False,  # mypy failed, but scope is pytest
+                "coverage_pct": 90.0,
+                "scope": "pytest",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+        )
         result = _check_build_status(trw_dir, config, "validate")
         assert not any(f.rule == "mypy_clean" for f in result)
 
@@ -495,6 +533,7 @@ class TestCheckBuildStatus:
 # ---------------------------------------------------------------------------
 # _best_effort_build_check + _best_effort_integration_check (lines 693-736)
 # ---------------------------------------------------------------------------
+
 
 class TestBestEffortChecks:
     """Tests for _best_effort_build_check and _best_effort_integration_check."""
@@ -557,11 +596,14 @@ class TestBestEffortChecks:
 # check_phase_exit (lines 754-955) — all phases
 # ---------------------------------------------------------------------------
 
+
 class TestCheckPhaseExitResearch:
     """check_phase_exit for RESEARCH phase."""
 
     def test_research_exit_warns_without_synthesis(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig()
@@ -570,7 +612,9 @@ class TestCheckPhaseExitResearch:
         assert "synthesis_exists" in rules
 
     def test_research_exit_passes_with_orchestrator_synthesis(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         synthesis = run_dir / "scratch" / "_orchestrator" / "research_synthesis.md"
@@ -580,7 +624,9 @@ class TestCheckPhaseExitResearch:
         assert not any(f.rule == "synthesis_exists" for f in result.failures)
 
     def test_research_exit_passes_with_reports_synthesis(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         alt_path = run_dir / "reports" / "research_synthesis.md"
@@ -594,7 +640,9 @@ class TestCheckPhaseExitPlan:
     """check_phase_exit for PLAN phase."""
 
     def test_plan_exit_fails_without_plan_md(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig(phase_gate_enforcement="off")
@@ -603,7 +651,9 @@ class TestCheckPhaseExitPlan:
         assert "plan_exists" in rules
 
     def test_plan_exit_passes_with_plan_md(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "plan.md").write_text("# Plan\n", encoding="utf-8")
@@ -616,7 +666,9 @@ class TestCheckPhaseExitImplement:
     """check_phase_exit for IMPLEMENT phase."""
 
     def test_implement_exit_warns_without_manifest(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # shards dir exists but no manifest
@@ -626,7 +678,9 @@ class TestCheckPhaseExitImplement:
         assert "manifest_exists" in rules
 
     def test_implement_exit_passes_with_manifest(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         manifest = run_dir / "shards" / "manifest.yaml"
@@ -640,7 +694,9 @@ class TestCheckPhaseExitValidate:
     """check_phase_exit for VALIDATE phase."""
 
     def test_validate_exit_includes_test_advisory(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig()
@@ -649,7 +705,9 @@ class TestCheckPhaseExitValidate:
         assert "phase_test_advisory" in rules
 
     def test_validate_exit_advisory_is_info(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig()
@@ -662,7 +720,9 @@ class TestCheckPhaseExitReview:
     """check_phase_exit for REVIEW phase."""
 
     def test_review_exit_warns_without_final_report(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig()
@@ -671,21 +731,28 @@ class TestCheckPhaseExitReview:
         assert "final_report_exists" in rules
 
     def test_review_exit_warns_without_reflection_event(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         meta = run_dir / "meta"
-        writer.append_jsonl(meta / "events.jsonl", {
-            "event": "run_init",
-            "ts": "2026-01-01T00:00:00Z",
-        })
+        writer.append_jsonl(
+            meta / "events.jsonl",
+            {
+                "event": "run_init",
+                "ts": "2026-01-01T00:00:00Z",
+            },
+        )
         config = TRWConfig()
         result = check_phase_exit(Phase.REVIEW, run_dir, config)
         rules = [f.rule for f in result.failures]
         assert "reflection_required" in rules
 
     def test_review_exit_warns_when_no_events_jsonl(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # No events.jsonl written
@@ -695,15 +762,20 @@ class TestCheckPhaseExitReview:
         assert "reflection_required" in rules
 
     def test_review_exit_passes_with_reflection_event(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         meta = run_dir / "meta"
         (run_dir / "reports" / "final.md").write_text("# Final\n", encoding="utf-8")
-        writer.append_jsonl(meta / "events.jsonl", {
-            "event": "reflection_complete",
-            "ts": "2026-01-01T12:00:00Z",
-        })
+        writer.append_jsonl(
+            meta / "events.jsonl",
+            {
+                "event": "reflection_complete",
+                "ts": "2026-01-01T12:00:00Z",
+            },
+        )
         config = TRWConfig()
         result = check_phase_exit(Phase.REVIEW, run_dir, config)
         assert not any(f.rule == "reflection_required" for f in result.failures)
@@ -713,7 +785,9 @@ class TestCheckPhaseExitDeliver:
     """check_phase_exit for DELIVER phase."""
 
     def test_deliver_exit_warns_incomplete_run_status(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # run.yaml status is "active", not "complete"
@@ -723,22 +797,29 @@ class TestCheckPhaseExitDeliver:
         assert "status_complete" in rules
 
     def test_deliver_exit_no_warning_when_run_complete(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # Update run.yaml status to complete
-        writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-extra1234",
-            "task": "extra-coverage-test",
-            "status": "complete",
-            "phase": "deliver",
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-extra1234",
+                "task": "extra-coverage-test",
+                "status": "complete",
+                "phase": "deliver",
+            },
+        )
         config = TRWConfig()
         result = check_phase_exit(Phase.DELIVER, run_dir, config)
         assert not any(f.rule == "status_complete" for f in result.failures)
 
     def test_deliver_exit_includes_test_advisory(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig()
@@ -747,29 +828,39 @@ class TestCheckPhaseExitDeliver:
         assert "phase_test_advisory" in rules
 
     def test_deliver_exit_warns_when_sync_missing(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         meta = run_dir / "meta"
         # Write events without sync event
-        writer.append_jsonl(meta / "events.jsonl", {
-            "event": "reflection_complete",
-            "ts": "2026-01-01T00:00:00Z",
-        })
+        writer.append_jsonl(
+            meta / "events.jsonl",
+            {
+                "event": "reflection_complete",
+                "ts": "2026-01-01T00:00:00Z",
+            },
+        )
         config = TRWConfig()
         result = check_phase_exit(Phase.DELIVER, run_dir, config)
         rules = [f.rule for f in result.failures]
         assert "sync_required" in rules
 
     def test_deliver_exit_no_sync_warning_when_synced(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         meta = run_dir / "meta"
-        writer.append_jsonl(meta / "events.jsonl", {
-            "event": "claude_md_sync",
-            "ts": "2026-01-01T00:00:00Z",
-        })
+        writer.append_jsonl(
+            meta / "events.jsonl",
+            {
+                "event": "claude_md_sync",
+                "ts": "2026-01-01T00:00:00Z",
+            },
+        )
         config = TRWConfig()
         result = check_phase_exit(Phase.DELIVER, run_dir, config)
         assert not any(f.rule == "sync_required" for f in result.failures)
@@ -778,6 +869,7 @@ class TestCheckPhaseExitDeliver:
 # ---------------------------------------------------------------------------
 # check_phase_input — uncovered branches (lines 1006-1121)
 # ---------------------------------------------------------------------------
+
 
 class TestCheckPhaseInputUncovered:
     """Cover additional branches in check_phase_input."""
@@ -793,7 +885,9 @@ class TestCheckPhaseInputUncovered:
         assert any(f.rule == "run_initialized" for f in result.failures)
 
     def test_plan_phase_warning_severity_in_lenient_mode(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """In lenient mode missing research synthesis is a warning, not error."""
         run_dir = _make_run_dir(tmp_path, writer)
@@ -805,7 +899,9 @@ class TestCheckPhaseInputUncovered:
         assert result.valid is True
 
     def test_implement_warning_severity_in_lenient_mode(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Missing plan.md in lenient mode is warning, not error."""
         run_dir = _make_run_dir(tmp_path, writer)
@@ -818,7 +914,9 @@ class TestCheckPhaseInputUncovered:
         assert all(f.severity == "warning" for f in plan_failures)
 
     def test_validate_phase_empty_shards_dir_in_strict_mode(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # shards dir exists but is empty
@@ -829,7 +927,9 @@ class TestCheckPhaseInputUncovered:
         assert failures[0].severity == "error"
 
     def test_review_phase_with_events_empty_file(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Empty events.jsonl (file exists but no entries) — no validate_passed failure."""
         run_dir = _make_run_dir(tmp_path, writer)
@@ -843,15 +943,20 @@ class TestCheckPhaseInputUncovered:
         assert "validate_passed" not in rules
 
     def test_deliver_phase_events_with_reflection_and_complete(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Deliver phase passes when events contain a reflection event."""
         run_dir = _make_run_dir(tmp_path, writer)
         meta = run_dir / "meta"
-        writer.append_jsonl(meta / "events.jsonl", {
-            "event": "trw_reflect_complete",
-            "ts": "2026-01-01T00:00:00Z",
-        })
+        writer.append_jsonl(
+            meta / "events.jsonl",
+            {
+                "event": "trw_reflect_complete",
+                "ts": "2026-01-01T00:00:00Z",
+            },
+        )
         config = TRWConfig()
         result = check_phase_input(Phase.DELIVER, run_dir, config)
         assert not any(f.rule in ("reflection_complete", "events_exist") for f in result.failures)
@@ -933,9 +1038,7 @@ class TestValidatePrdQualityV2ExceptionBranches:
         """v1_result failures as raw dicts get coerced."""
         v1_precomputed: dict[str, object] = {
             "valid": False,
-            "failures": [
-                {"field": "f1", "rule": "r1", "message": "m1", "severity": "error"}
-            ],
+            "failures": [{"field": "f1", "rule": "r1", "message": "m1", "severity": "error"}],
             "completeness_score": 0.5,
             "traceability_coverage": 0.0,
         }
@@ -1004,22 +1107,30 @@ class TestValidatePrdQualityV2ExceptionBranches:
 # auto_progress_prds (lines 1851-1966)
 # ---------------------------------------------------------------------------
 
+
 class TestAutoProgressPrds:
     """Tests for auto_progress_prds function."""
 
     def test_returns_empty_for_unknown_phase(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
         result = auto_progress_prds(
-            run_dir, "unknown_phase", prds_dir, TRWConfig(),
+            run_dir,
+            "unknown_phase",
+            prds_dir,
+            TRWConfig(),
         )
         assert result == []
 
     def test_returns_empty_when_no_prd_scope(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         prds_dir = tmp_path / "prds"
@@ -1028,16 +1139,22 @@ class TestAutoProgressPrds:
         assert result == []
 
     def test_skips_missing_prd_file(
-        self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
-        writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-extra1234",
-            "task": "test",
-            "status": "active",
-            "phase": "plan",
-            "prd_scope": ["PRD-MISSING-001"],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-extra1234",
+                "task": "test",
+                "status": "active",
+                "phase": "plan",
+                "prd_scope": ["PRD-MISSING-001"],
+            },
+        )
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
         # PRD file does not exist — should be skipped
@@ -1046,16 +1163,22 @@ class TestAutoProgressPrds:
         assert result == []
 
     def test_dry_run_does_not_write_file(
-        self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
-        writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-extra1234",
-            "task": "test",
-            "status": "active",
-            "phase": "plan",
-            "prd_scope": ["PRD-TEST-DRY"],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-extra1234",
+                "task": "test",
+                "status": "active",
+                "phase": "plan",
+                "prd_scope": ["PRD-TEST-DRY"],
+            },
+        )
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
         prd_file = _make_prd_file(prds_dir, "PRD-TEST-DRY", status="draft")
@@ -1069,17 +1192,23 @@ class TestAutoProgressPrds:
         assert len(would_apply_entries) >= 1
 
     def test_applies_transition_for_approved_prd(
-        self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Apply transition: implement phase should move an approved→implemented PRD."""
         run_dir = _make_run_dir(tmp_path, writer)
-        writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-extra1234",
-            "task": "test",
-            "status": "active",
-            "phase": "implement",
-            "prd_scope": ["PRD-TEST-IMPL"],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-extra1234",
+                "task": "test",
+                "status": "active",
+                "phase": "implement",
+                "prd_scope": ["PRD-TEST-IMPL"],
+            },
+        )
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
         _make_prd_file(prds_dir, "PRD-TEST-IMPL", status="approved")
@@ -1091,17 +1220,23 @@ class TestAutoProgressPrds:
         assert applied[0]["to_status"] == "implemented"
 
     def test_skips_terminal_status_prds(
-        self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """PRDs already at done/merged/deprecated are skipped."""
         run_dir = _make_run_dir(tmp_path, writer)
-        writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-extra1234",
-            "task": "test",
-            "status": "active",
-            "phase": "plan",
-            "prd_scope": ["PRD-TEST-DONE"],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-extra1234",
+                "task": "test",
+                "status": "active",
+                "phase": "plan",
+                "prd_scope": ["PRD-TEST-DONE"],
+            },
+        )
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
         _make_prd_file(prds_dir, "PRD-TEST-DONE", status="done")
@@ -1110,17 +1245,22 @@ class TestAutoProgressPrds:
         assert result == []
 
     def test_skips_identity_transition(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """PRD already at target status is skipped (identity transition)."""
         run_dir = _make_run_dir(tmp_path, writer)
-        writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-extra1234",
-            "task": "test",
-            "status": "active",
-            "phase": "plan",
-            "prd_scope": ["PRD-TEST-ALREADY"],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-extra1234",
+                "task": "test",
+                "status": "active",
+                "phase": "plan",
+                "prd_scope": ["PRD-TEST-ALREADY"],
+            },
+        )
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
         # "plan" phase targets PRDStatus.REVIEW
@@ -1131,17 +1271,22 @@ class TestAutoProgressPrds:
         assert result == []
 
     def test_invalid_prd_status_in_file_is_skipped(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """PRD file with unrecognized status is skipped gracefully."""
         run_dir = _make_run_dir(tmp_path, writer)
-        writer.write_yaml(run_dir / "meta" / "run.yaml", {
-            "run_id": "20260101T000000Z-extra1234",
-            "task": "test",
-            "status": "active",
-            "phase": "plan",
-            "prd_scope": ["PRD-TEST-BAD"],
-        })
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-extra1234",
+                "task": "test",
+                "status": "active",
+                "phase": "plan",
+                "prd_scope": ["PRD-TEST-BAD"],
+            },
+        )
         prds_dir = tmp_path / "prds"
         prds_dir.mkdir()
         _make_prd_file(prds_dir, "PRD-TEST-BAD", status="totally_invalid_status")
@@ -1154,6 +1299,7 @@ class TestAutoProgressPrds:
 # ---------------------------------------------------------------------------
 # check_integration — edge cases (lines 1987-2043)
 # ---------------------------------------------------------------------------
+
 
 class TestCheckIntegrationEdgeCases:
     """Additional edge cases for check_integration."""
@@ -1240,14 +1386,17 @@ class TestCheckIntegrationEdgeCases:
 
         # 2 modules with register functions
         (tools_dir / "tool_a.py").write_text(
-            "def register_tool_a_tools(server):\n    pass\n", encoding="utf-8",
+            "def register_tool_a_tools(server):\n    pass\n",
+            encoding="utf-8",
         )
         (tools_dir / "tool_b.py").write_text(
-            "def register_tool_b_tools(server):\n    pass\n", encoding="utf-8",
+            "def register_tool_b_tools(server):\n    pass\n",
+            encoding="utf-8",
         )
         # 1 module without register function
         (tools_dir / "helper.py").write_text(
-            "def some_helper():\n    pass\n", encoding="utf-8",
+            "def some_helper():\n    pass\n",
+            encoding="utf-8",
         )
         result = check_integration(src_dir)
         assert result["tool_modules_scanned"] == 2
@@ -1259,7 +1408,8 @@ class TestCheckIntegrationEdgeCases:
         tools_dir.mkdir(parents=True)
         (src_dir / "server.py").write_text("", encoding="utf-8")
         (tools_dir / "__init__.py").write_text(
-            "def register_init_tools(server):\n    pass\n", encoding="utf-8",
+            "def register_init_tools(server):\n    pass\n",
+            encoding="utf-8",
         )
         result = check_integration(src_dir)
         assert "__init__" not in result["unregistered"]
@@ -1275,7 +1425,8 @@ class TestCheckIntegrationEdgeCases:
         tests_dir.mkdir(parents=True)
 
         (tools_dir / "widget.py").write_text(
-            "def register_widget_tools(server):\n    pass\n", encoding="utf-8",
+            "def register_widget_tools(server):\n    pass\n",
+            encoding="utf-8",
         )
         # Alternate pattern: test_widget.py (not test_tools_widget.py)
         (tests_dir / "test_widget.py").write_text("# tests\n", encoding="utf-8")

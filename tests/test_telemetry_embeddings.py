@@ -115,9 +115,7 @@ class TestLoadModel:
 
         assert result is mock_model
 
-    def test_pre_cached_model_returned_without_import(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_pre_cached_model_returned_without_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
         existing_model = _make_model()
         monkeypatch.setattr(emb_module, "_model", existing_model)
 
@@ -193,15 +191,11 @@ class TestEmbedNone:
         monkeypatch.setattr(emb_module, "_load_model", lambda: _make_model())
         assert embed("\t\n") is None
 
-    def test_returns_none_when_model_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_none_when_model_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(emb_module, "_load_model", lambda: None)
         assert embed("valid text") is None
 
-    def test_returns_none_on_encode_exception(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_none_on_encode_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_model = MagicMock()
         mock_model.encode.side_effect = RuntimeError("encode exploded")
         monkeypatch.setattr(emb_module, "_load_model", lambda: mock_model)
@@ -220,9 +214,7 @@ class TestEmbedNone:
 
 
 class TestEmbedBatchSuccess:
-    def test_returns_list_same_length_as_input(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_list_same_length_as_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
         vectors = [_single_vector() for _ in range(3)]
         mock_model = _make_model(vectors)
         monkeypatch.setattr(emb_module, "_load_model", lambda: mock_model)
@@ -242,9 +234,7 @@ class TestEmbedBatchSuccess:
         assert isinstance(result[0], list)
         assert all(isinstance(v, float) for v in result[0])
 
-    def test_encode_called_with_batch_size_32(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_encode_called_with_batch_size_32(self, monkeypatch: pytest.MonkeyPatch) -> None:
         vectors = [_single_vector(), _single_vector()]
         mock_model = _make_model(vectors)
         monkeypatch.setattr(emb_module, "_load_model", lambda: mock_model)
@@ -257,9 +247,7 @@ class TestEmbedBatchSuccess:
             batch_size=32,
         )
 
-    def test_empty_strings_skipped_in_encode_call(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_strings_skipped_in_encode_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # "b" is the only non-empty text; only one vector returned
         vector = _single_vector()
         mock_model = _make_model([vector])
@@ -273,13 +261,11 @@ class TestEmbedBatchSuccess:
             normalize_embeddings=True,
             batch_size=32,
         )
-        assert result[0] is None      # "" → None
+        assert result[0] is None  # "" → None
         assert result[1] is not None  # "b" → vector
-        assert result[2] is None      # "  " → None
+        assert result[2] is None  # "  " → None
 
-    def test_mixed_empty_non_empty_correct_length(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_mixed_empty_non_empty_correct_length(self, monkeypatch: pytest.MonkeyPatch) -> None:
         vectors = [_single_vector(), _single_vector()]
         mock_model = _make_model(vectors)
         monkeypatch.setattr(emb_module, "_load_model", lambda: mock_model)
@@ -309,31 +295,23 @@ class TestEmbedBatchSuccess:
 
 
 class TestEmbedBatchNone:
-    def test_empty_input_returns_empty_list(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_input_returns_empty_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(emb_module, "_load_model", lambda: _make_model())
         assert embed_batch([]) == []
 
-    def test_returns_all_none_when_model_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_all_none_when_model_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(emb_module, "_load_model", lambda: None)
         result = embed_batch(["a", "b", "c"])
         assert result == [None, None, None]
 
-    def test_none_list_length_matches_input(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_none_list_length_matches_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(emb_module, "_load_model", lambda: None)
         texts = ["x"] * 7
         result = embed_batch(texts)
         assert len(result) == 7
         assert all(v is None for v in result)
 
-    def test_returns_all_none_on_encode_exception(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_all_none_on_encode_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_model = MagicMock()
         mock_model.encode.side_effect = RuntimeError("CUDA OOM")
         monkeypatch.setattr(emb_module, "_load_model", lambda: mock_model)
@@ -342,9 +320,7 @@ class TestEmbedBatchNone:
 
         assert result == [None, None]
 
-    def test_exception_result_length_matches_input(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_result_length_matches_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_model = MagicMock()
         mock_model.encode.side_effect = ValueError("bad input")
         monkeypatch.setattr(emb_module, "_load_model", lambda: mock_model)
@@ -354,9 +330,7 @@ class TestEmbedBatchNone:
         assert len(result) == 3
         assert all(v is None for v in result)
 
-    def test_all_empty_strings_skips_encode(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_all_empty_strings_skips_encode(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_model = MagicMock()
         mock_model.encode.return_value = []
         monkeypatch.setattr(emb_module, "_load_model", lambda: mock_model)
@@ -364,9 +338,7 @@ class TestEmbedBatchNone:
         result = embed_batch(["", "  ", "\t"])
 
         # encode is called with an empty list (no non-empty texts)
-        mock_model.encode.assert_called_once_with(
-            [], normalize_embeddings=True, batch_size=32
-        )
+        mock_model.encode.assert_called_once_with([], normalize_embeddings=True, batch_size=32)
         assert result == [None, None, None]
 
 
@@ -376,15 +348,11 @@ class TestEmbedBatchNone:
 
 
 class TestEmbeddingAvailable:
-    def test_returns_true_when_model_loads(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_true_when_model_loads(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(emb_module, "_load_model", lambda: _make_model())
         assert embedding_available() is True
 
-    def test_returns_false_when_model_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_false_when_model_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(emb_module, "_load_model", lambda: None)
         assert embedding_available() is False
 
@@ -393,9 +361,7 @@ class TestEmbeddingAvailable:
             result = embedding_available()
         assert result is False
 
-    def test_returns_true_with_mocked_import(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_true_with_mocked_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_model = _make_model()
         mock_st = MagicMock()
         mock_st.SentenceTransformer.return_value = mock_model

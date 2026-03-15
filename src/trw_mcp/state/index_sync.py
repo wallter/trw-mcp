@@ -74,13 +74,15 @@ def _scan_prd_dir(directory: Path) -> list[PRDEntry]:
             status = str(fm.get("status", "draft")).lower()
             category = str(fm.get("category", "")).upper()
 
-            entries.append(PRDEntry(
-                id=prd_id,
-                title=title,
-                priority=priority,
-                status=status,
-                category=category,
-            ))
+            entries.append(
+                PRDEntry(
+                    id=prd_id,
+                    title=title,
+                    priority=priority,
+                    status=status,
+                    category=category,
+                )
+            )
         except (ValueError, TypeError, OSError) as exc:
             logger.debug("prd_scan_skip", file=str(prd_file), error=str(exc))
 
@@ -154,8 +156,7 @@ def _render_4col_table(heading: str, group: list[PRDEntry]) -> list[str]:
         "| PRD | Title | Priority | Category |",
         "|-----|-------|----------|----------|",
     ]
-    for e in group:
-        lines.append(f"| {e.id} | {e.title} | {e.priority} | {e.category} |")
+    lines.extend(f"| {e.id} | {e.title} | {e.priority} | {e.category} |" for e in group)
     lines.append("")
     return lines
 
@@ -173,11 +174,7 @@ def _render_5col_table(heading: str, group: list[PRDEntry]) -> list[str]:
         "| PRD | Title | Priority | Status | Category |",
         "|-----|-------|----------|--------|----------|",
     ]
-    for e in group:
-        lines.append(
-            f"| {e.id} | {e.title} | {e.priority} "
-            f"| {e.status.title()} | {e.category} |",
-        )
+    lines.extend(f"| {e.id} | {e.title} | {e.priority} | {e.status.title()} | {e.category} |" for e in group)
     lines.append("")
     return lines
 
@@ -206,8 +203,7 @@ def render_index_catalogue(entries: list[PRDEntry]) -> str:
     lines: list[str] = [
         INDEX_CATALOGUE_START,
         "",
-        f"## PRD Catalogue ({len(entries)} total: "
-        f"{', '.join(summary_parts)})",
+        f"## PRD Catalogue ({len(entries)} total: {', '.join(summary_parts)})",
         "",
     ]
 
@@ -247,8 +243,7 @@ def render_roadmap_catalogue(entries: list[PRDEntry]) -> str:
     for e in sorted_entries:
         status_display = "**Done**" if e.status in _DONE_STATUSES else e.status.title()
         lines.append(
-            f"| {e.id} | {e.title} | {e.priority} "
-            f"| {status_display} | {e.category} |",
+            f"| {e.id} | {e.title} | {e.priority} | {status_display} | {e.category} |",
         )
 
     lines.extend(["", ROADMAP_CATALOGUE_END])
@@ -341,17 +336,12 @@ def _update_header_stats(
         index_format: Use INDEX.md ``(N total: ...)`` format when True,
             ROADMAP.md ``N (...)`` format when False.
     """
-    summary = (
-        _build_index_stats(groups, total)
-        if index_format
-        else _build_roadmap_stats(groups, total)
-    )
+    summary = _build_index_stats(groups, total) if index_format else _build_roadmap_stats(groups, total)
     match = pattern.search(content)
     if not match:
         return content
     prefix = match.group(1)
-    return content[:match.start()] + prefix + summary + content[match.end():]
-
+    return content[: match.start()] + prefix + summary + content[match.end() :]
 
 
 def sync_index_md(
@@ -383,12 +373,19 @@ def sync_index_md(
     if index_path.exists():
         content = index_path.read_text(encoding="utf-8")
         content = _merge_section(
-            content, catalogue, INDEX_CATALOGUE_START, INDEX_CATALOGUE_END,
+            content,
+            catalogue,
+            INDEX_CATALOGUE_START,
+            INDEX_CATALOGUE_END,
         )
     else:
         content = catalogue + "\n"
     content = _update_header_stats(
-        content, groups, len(entries), _INDEX_SUMMARY_RE, index_format=True,
+        content,
+        groups,
+        len(entries),
+        _INDEX_SUMMARY_RE,
+        index_format=True,
     )
     writer.write_text(index_path, content)
 
@@ -432,12 +429,18 @@ def sync_roadmap_md(
     if roadmap_path.exists():
         content = roadmap_path.read_text(encoding="utf-8")
         content = _merge_section(
-            content, catalogue, ROADMAP_CATALOGUE_START, ROADMAP_CATALOGUE_END,
+            content,
+            catalogue,
+            ROADMAP_CATALOGUE_START,
+            ROADMAP_CATALOGUE_END,
         )
     else:
         content = catalogue + "\n"
     content = _update_header_stats(
-        content, groups, len(entries), _ROADMAP_TOTAL_RE,
+        content,
+        groups,
+        len(entries),
+        _ROADMAP_TOTAL_RE,
     )
     writer.write_text(roadmap_path, content)
 

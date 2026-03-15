@@ -112,7 +112,12 @@ class TrustConfig(BaseModel):
     trust_walk_boundary: int = 200
     trust_walk_sample_rate: float = 0.3
     trust_security_tags: tuple[str, ...] = (
-        "auth", "secrets", "permissions", "encryption", "oauth", "jwt",
+        "auth",
+        "secrets",
+        "permissions",
+        "encryption",
+        "oauth",
+        "jwt",
     )
     trust_locked: bool = False
 

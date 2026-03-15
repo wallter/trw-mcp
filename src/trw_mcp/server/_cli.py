@@ -101,9 +101,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("serve", help="Run MCP server (default)")
 
     # init-project
-    init_parser = subparsers.add_parser(
-        "init-project", help="Bootstrap TRW in a project directory"
-    )
+    init_parser = subparsers.add_parser("init-project", help="Bootstrap TRW in a project directory")
     init_parser.add_argument(
         "target_dir",
         nargs="?",

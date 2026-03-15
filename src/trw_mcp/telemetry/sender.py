@@ -115,21 +115,16 @@ class BatchSender:
 
         if len(self._platform_urls) <= 1:
             # Fast path: no parallelism overhead for single URL
-            return any(
-                self._send_batch_to(url, batch) for url in self._platform_urls
-            )
+            return any(self._send_batch_to(url, batch) for url in self._platform_urls)
 
         with ThreadPoolExecutor(max_workers=len(self._platform_urls)) as pool:
-            futures = {
-                pool.submit(self._send_batch_to, url, batch): url
-                for url in self._platform_urls
-            }
+            futures = {pool.submit(self._send_batch_to, url, batch): url for url in self._platform_urls}
             any_success = False
             for fut in as_completed(futures):
                 try:
                     if fut.result():
                         any_success = True
-                except Exception as exc:  # justified: boundary, backend URL can fail arbitrarily
+                except Exception as exc:  # per-item error handling: one future failure must not stop other URLs from being checked  # noqa: PERF203
                     logger.debug("batch_future_failed", exc_type=type(exc).__name__)
             return any_success
 
@@ -170,7 +165,7 @@ class BatchSender:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._platform_api_key:
             headers["Authorization"] = f"Bearer {self._platform_api_key}"
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310 — URL is the platform_url from TRW config (operator-configured, not user input)
             url,
             data=data,
             headers=headers,
@@ -178,7 +173,7 @@ class BatchSender:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 — see Request comment above
                 return bool(200 <= response.status < 300)
         except (urllib.error.URLError, urllib.error.HTTPError, OSError):
             return False

@@ -76,9 +76,7 @@ def register_usage_tools(server: FastMCP) -> None:
         """
         _VALID_GROUP_BY = {"agent", "phase", "model", "task", "none"}
         if group_by not in _VALID_GROUP_BY:
-            raise ValueError(
-                f"group_by must be one of: {', '.join(sorted(_VALID_GROUP_BY))}"
-            )
+            raise ValueError(f"group_by must be one of: {', '.join(sorted(_VALID_GROUP_BY))}")
 
         config = get_config()
         reader = FileStateReader()
@@ -137,9 +135,7 @@ def register_usage_tools(server: FastMCP) -> None:
             model_entry["calls"] = model_entry["calls"] + 1
             model_entry["input_tokens"] = model_entry["input_tokens"] + input_tokens
             model_entry["output_tokens"] = model_entry["output_tokens"] + output_tokens
-            model_entry["cost_estimate_usd"] = round(
-                model_entry["cost_estimate_usd"] + cost, 6
-            )
+            model_entry["cost_estimate_usd"] = round(model_entry["cost_estimate_usd"] + cost, 6)
 
             # Aggregate by caller
             if caller not in by_caller:
@@ -202,8 +198,7 @@ def register_usage_tools(server: FastMCP) -> None:
                 entry["input_tokens"] = entry["input_tokens"] + rec_input
                 entry["output_tokens"] = entry["output_tokens"] + rec_output
                 entry["cost_estimate_usd"] = round(
-                    entry["cost_estimate_usd"]
-                    + _compute_cost(rec_model, rec_input, rec_output),
+                    entry["cost_estimate_usd"] + _compute_cost(rec_model, rec_input, rec_output),
                     6,
                 )
             result["group_by"] = group_by
@@ -269,7 +264,7 @@ def register_usage_tools(server: FastMCP) -> None:
         }
 
         if security_tags:
-            review = requires_human_review(security_tags, [], cast(dict[str, object], trust))
+            review = requires_human_review(security_tags, [], cast("dict[str, object]", trust))
             result["review_required"] = review["required"]
             result["review_reason"] = review["reason"]
 

@@ -6,12 +6,10 @@ Covers:
   FR-4: infer_domain_tags — domain tag extraction from file paths
   FR-5: Configuration integration via TRWConfig
 """
+
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -48,10 +46,12 @@ class TestInferDomainTags:
     def test_multiple_paths_merge_tags(self) -> None:
         from trw_mcp.state.learning_injection import infer_domain_tags
 
-        tags = infer_domain_tags([
-            "backend/routers/admin.py",
-            "platform/src/components/dashboard/",
-        ])
+        tags = infer_domain_tags(
+            [
+                "backend/routers/admin.py",
+                "platform/src/components/dashboard/",
+            ]
+        )
         assert "backend" in tags
         assert "frontend" in tags
         assert "dashboard" in tags
@@ -137,9 +137,7 @@ class TestSelectLearningsForTask:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="implement admin endpoint",
@@ -165,9 +163,7 @@ class TestSelectLearningsForTask:
             for i in range(10)
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="test task",
@@ -179,9 +175,7 @@ class TestSelectLearningsForTask:
     def test_returns_empty_on_recall_failure(self) -> None:
         from trw_mcp.state.learning_injection import select_learnings_for_task
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.side_effect = RuntimeError("recall failed")
             results = select_learnings_for_task(
                 task_description="test task",
@@ -202,9 +196,7 @@ class TestSelectLearningsForTask:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="test task",
@@ -239,9 +231,7 @@ class TestSelectLearningsForTask:
                 },
             ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.side_effect = side_effect
             results = select_learnings_for_task(
                 task_description="test task",
@@ -264,9 +254,7 @@ class TestSelectLearningsForTask:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="test task",
@@ -279,9 +267,7 @@ class TestSelectLearningsForTask:
         """When max_results/min_impact not passed, uses sentinel -> config defaults."""
         from trw_mcp.state.learning_injection import select_learnings_for_task
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = []
             select_learnings_for_task(
                 task_description="test task",
@@ -428,9 +414,7 @@ class TestConfigIntegration:
             for i in range(20)
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="test task",

@@ -9,8 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
 from trw_mcp.state.prd_utils import TransitionResult
@@ -46,15 +44,12 @@ def _write_run(run_dir: Path, prd_ids: list[str]) -> None:
     meta_dir.mkdir(exist_ok=True)
     run_yaml = meta_dir / "run.yaml"
     run_yaml.write_text(
-        "run_id: test-run\ntask: test\nprd_scope:\n"
-        + "".join(f"  - {pid}\n" for pid in prd_ids),
+        "run_id: test-run\ntask: test\nprd_scope:\n" + "".join(f"  - {pid}\n" for pid in prd_ids),
         encoding="utf-8",
     )
 
 
-def _guard_always_allowed(
-    current: PRDStatus, target: PRDStatus, content: str, config: object
-) -> TransitionResult:
+def _guard_always_allowed(current: PRDStatus, target: PRDStatus, content: str, config: object) -> TransitionResult:
     """Mock guard that always allows transitions (for testing BFS logic)."""
     return TransitionResult(allowed=True, reason="test_mock_allow")
 
@@ -62,9 +57,7 @@ def _guard_always_allowed(
 class TestMultiStepProgression:
     """FR05: BFS traversal through intermediate states."""
 
-    def test_draft_to_done_via_intermediate_steps(
-        self, tmp_path: Path
-    ) -> None:
+    def test_draft_to_done_via_intermediate_steps(self, tmp_path: Path) -> None:
         """PRD in draft + phase=deliver → steps through review→approved→implemented→done."""
         from trw_mcp.state.validation.prd_progression import auto_progress_prds
 
@@ -85,16 +78,12 @@ class TestMultiStepProgression:
         assert len(results) >= 1
         prd_result = next((r for r in results if r["prd_id"] == "PRD-TEST-001"), None)
         assert prd_result is not None, "PRD-TEST-001 must appear in results"
-        assert prd_result.get("applied") is True, (
-            f"Expected applied=True but got: {prd_result}"
-        )
+        assert prd_result.get("applied") is True, f"Expected applied=True but got: {prd_result}"
         assert prd_result.get("to_status") == "done"
         # Must NOT show invalid_transition
         assert prd_result.get("reason") != "invalid_transition"
 
-    def test_implemented_to_done_single_step(
-        self, tmp_path: Path
-    ) -> None:
+    def test_implemented_to_done_single_step(self, tmp_path: Path) -> None:
         """PRD in implemented + phase=deliver → single step to done."""
         from trw_mcp.state.validation.prd_progression import auto_progress_prds
 
@@ -117,9 +106,7 @@ class TestMultiStepProgression:
         assert prd_result.get("applied") is True
         assert prd_result.get("to_status") == "done"
 
-    def test_done_status_no_transition_attempted(
-        self, tmp_path: Path
-    ) -> None:
+    def test_done_status_no_transition_attempted(self, tmp_path: Path) -> None:
         """PRD already in done → terminal state, no transition."""
         from trw_mcp.state.validation.prd_progression import auto_progress_prds
 
@@ -137,9 +124,7 @@ class TestMultiStepProgression:
         prd_result = next((r for r in results if r.get("prd_id") == "PRD-TEST-003"), None)
         assert prd_result is None, "Terminal status 'done' must not produce a result entry"
 
-    def test_no_invalid_transition_errors(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_invalid_transition_errors(self, tmp_path: Path) -> None:
         """No result should have reason='invalid_transition' after BFS fix."""
         from trw_mcp.state.validation.prd_progression import auto_progress_prds
 
@@ -160,16 +145,12 @@ class TestMultiStepProgression:
             results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
 
         invalid = [r for r in results if r.get("reason") == "invalid_transition"]
-        assert len(invalid) == 0, (
-            f"Expected no invalid_transition errors, got: {invalid}"
-        )
+        assert len(invalid) == 0, f"Expected no invalid_transition errors, got: {invalid}"
 
-    def test_draft_file_updated_to_done(
-        self, tmp_path: Path
-    ) -> None:
+    def test_draft_file_updated_to_done(self, tmp_path: Path) -> None:
         """PRD file on disk must reflect final 'done' status after multi-step progression."""
-        from trw_mcp.state.validation.prd_progression import auto_progress_prds
         from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.state.validation.prd_progression import auto_progress_prds
 
         prds_dir = tmp_path / "prds"
         prd_file = _write_prd(prds_dir, "PRD-TEST-007", "draft")
@@ -192,9 +173,7 @@ class TestMultiStepProgression:
             f"PRD file must have status=done after multi-step progression, got: {final_status!r}"
         )
 
-    def test_review_to_done_skips_two_steps(
-        self, tmp_path: Path
-    ) -> None:
+    def test_review_to_done_skips_two_steps(self, tmp_path: Path) -> None:
         """PRD in review + phase=deliver → approved→implemented→done via BFS."""
         from trw_mcp.state.validation.prd_progression import auto_progress_prds
 
@@ -218,9 +197,7 @@ class TestMultiStepProgression:
         assert prd_result.get("to_status") == "done"
         assert prd_result.get("reason") != "invalid_transition"
 
-    def test_guard_failure_stops_progression_at_first_failure(
-        self, tmp_path: Path
-    ) -> None:
+    def test_guard_failure_stops_progression_at_first_failure(self, tmp_path: Path) -> None:
         """Guard failure at first step stops progression — PRD stays at original status."""
         from trw_mcp.state.validation.prd_progression import auto_progress_prds
 
@@ -232,9 +209,7 @@ class TestMultiStepProgression:
 
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
-        def guard_always_denied(
-            current: PRDStatus, target: PRDStatus, content: str, cfg: object
-        ) -> TransitionResult:
+        def guard_always_denied(current: PRDStatus, target: PRDStatus, content: str, cfg: object) -> TransitionResult:
             return TransitionResult(allowed=False, reason="test_mock_deny")
 
         with patch(

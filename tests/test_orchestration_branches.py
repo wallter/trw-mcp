@@ -23,9 +23,8 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
-from tests.conftest import get_tools_sync
-
 import trw_mcp.tools.orchestration as orch_mod
+from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools.orchestration import (
@@ -70,7 +69,9 @@ class TestTrwInitConfigOverrides:
     """Line 103: config_overrides dict merged into config.yaml."""
 
     def test_config_overrides_written_to_config_yaml(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """When config_overrides is provided, values appear in .trw/config.yaml."""
         result = orch_tools["trw_init"].fn(
@@ -87,7 +88,9 @@ class TestTrwInitConfigOverrides:
         assert str(data.get("parallelism_max")) == "8"
 
     def test_config_overrides_none_still_writes_defaults(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """config_overrides=None (default) still writes the default config keys."""
         orch_tools["trw_init"].fn(task_name="no-override-task")
@@ -97,7 +100,9 @@ class TestTrwInitConfigOverrides:
         assert "framework_version" in data
 
     def test_second_init_does_not_overwrite_config(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """Second trw_init call does NOT overwrite existing config.yaml (idempotent)."""
         orch_tools["trw_init"].fn(
@@ -125,7 +130,9 @@ class TestTrwStatusWaveData:
     """Lines 214, 242-248: wave_manifest.yaml reading in trw_status."""
 
     def test_wave_manifest_in_meta_dir_fallback(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """wave_manifest.yaml under meta/ is used when shards/ location is absent (line 214)."""
         # Create run via trw_init so auto-detection works
@@ -149,7 +156,9 @@ class TestTrwStatusWaveData:
         assert len(waves) == 1
 
     def test_wave_manifest_in_shards_dir_primary(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """wave_manifest.yaml under shards/ is preferred over meta/ (primary path)."""
         init_result = orch_tools["trw_init"].fn(task_name="wave-shards-task")
@@ -172,7 +181,9 @@ class TestTrwStatusWaveData:
         assert len(waves) == 2
 
     def test_wave_progress_computed_when_waves_present(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """wave_progress key appears in status when wave data is present (lines 244-248)."""
         init_result = orch_tools["trw_init"].fn(task_name="wave-progress-task")
@@ -196,7 +207,9 @@ class TestTrwStatusWaveData:
         assert wp["completed_waves"] == 1
 
     def test_no_wave_manifest_means_no_wave_keys(
-        self, tmp_path: Path, orch_tools: dict[str, Any],
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
     ) -> None:
         """When no wave_manifest.yaml exists, status has no 'waves' or 'wave_progress' keys."""
         init_result = orch_tools["trw_init"].fn(task_name="no-wave-status-task")
@@ -217,7 +230,10 @@ class TestTrwStatusVersionWarning:
     """Line 259: version_warning in status result when framework is stale."""
 
     def test_version_warning_when_run_uses_older_framework(
-        self, tmp_path: Path, orch_tools: dict[str, Any], monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When run framework differs from deployed version, version_warning appears."""
         # Run trw_init to deploy the framework at current version
@@ -248,7 +264,8 @@ class TestTrwCheckpointShardId:
     """Lines 295, 302: shard_id included in checkpoint and event records."""
 
     def test_shard_id_in_checkpoint_record(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """shard_id appears in checkpoint JSONL record when provided."""
         init_result = orch_tools["trw_init"].fn(task_name="shard-cp-task")
@@ -269,7 +286,8 @@ class TestTrwCheckpointShardId:
         assert last.get("shard_id") == "shard-1"
 
     def test_shard_id_in_event_record(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """shard_id appears in events.jsonl checkpoint event when provided (line 302)."""
         init_result = orch_tools["trw_init"].fn(task_name="shard-event-task")
@@ -289,7 +307,8 @@ class TestTrwCheckpointShardId:
         assert last_cp.get("shard_id") == "shard-2"
 
     def test_no_shard_id_omits_key(
-        self, orch_tools: dict[str, Any],
+        self,
+        orch_tools: dict[str, Any],
     ) -> None:
         """When shard_id is not given, key is absent from both checkpoint and event."""
         init_result = orch_tools["trw_init"].fn(task_name="no-shard-task")
@@ -375,7 +394,9 @@ class TestComputeWaveProgress:
         assert result["active_wave"] == 2
 
     def test_active_wave_by_shard_active_count(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Wave with pending status but active shards also sets active_wave."""
         run_path = tmp_path / "run"
@@ -383,11 +404,14 @@ class TestComputeWaveProgress:
         shards_dir.mkdir(parents=True)
 
         # Write shard manifest with an active shard
-        writer.write_yaml(shards_dir / "manifest.yaml", {
-            "shards": [
-                {"id": "s1", "status": "active"},
-            ]
-        })
+        writer.write_yaml(
+            shards_dir / "manifest.yaml",
+            {
+                "shards": [
+                    {"id": "s1", "status": "active"},
+                ]
+            },
+        )
 
         wave_data: dict[str, object] = {
             "waves": [
@@ -402,20 +426,25 @@ class TestComputeWaveProgress:
     # --- Shard manifest reading ---
 
     def test_shard_statuses_read_from_manifest(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Shard statuses from manifest.yaml are counted in wave details."""
         run_path = tmp_path / "run"
         shards_dir = run_path / "shards"
         shards_dir.mkdir(parents=True)
 
-        writer.write_yaml(shards_dir / "manifest.yaml", {
-            "shards": [
-                {"id": "s1", "status": "complete"},
-                {"id": "s2", "status": "complete"},
-                {"id": "s3", "status": "failed"},
-            ]
-        })
+        writer.write_yaml(
+            shards_dir / "manifest.yaml",
+            {
+                "shards": [
+                    {"id": "s1", "status": "complete"},
+                    {"id": "s2", "status": "complete"},
+                    {"id": "s3", "status": "failed"},
+                ]
+            },
+        )
 
         wave_data: dict[str, object] = {
             "waves": [
@@ -434,7 +463,8 @@ class TestComputeWaveProgress:
         assert shard_counts["failed"] == 1
 
     def test_shard_manifest_missing_is_handled_gracefully(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When shards/manifest.yaml does not exist, shard_statuses is empty (no error)."""
         run_path = tmp_path / "run"
@@ -458,19 +488,24 @@ class TestComputeWaveProgress:
     # --- Multi-wave mixed states ---
 
     def test_multiple_waves_mixed_states(
-        self, tmp_path: Path, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
     ) -> None:
         """Multiple waves: complete + active + pending all counted correctly."""
         run_path = tmp_path / "run"
         (run_path / "shards").mkdir(parents=True)
 
-        writer.write_yaml(run_path / "shards" / "manifest.yaml", {
-            "shards": [
-                {"id": "s1", "status": "complete"},
-                {"id": "s2", "status": "complete"},
-                {"id": "s3", "status": "active"},
-            ]
-        })
+        writer.write_yaml(
+            run_path / "shards" / "manifest.yaml",
+            {
+                "shards": [
+                    {"id": "s1", "status": "complete"},
+                    {"id": "s2", "status": "complete"},
+                    {"id": "s3", "status": "active"},
+                ]
+            },
+        )
 
         wave_data: dict[str, object] = {
             "waves": [
@@ -543,7 +578,8 @@ class TestComputeWaveProgress:
         assert shard_counts["total"] == 0
 
     def test_shard_manifest_with_corrupt_data_handled_gracefully(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Corrupt shards manifest (non-list shards key) is handled without error."""
         run_path = tmp_path / "run"
@@ -551,7 +587,8 @@ class TestComputeWaveProgress:
 
         # Write malformed manifest where shards is not a list
         run_path.joinpath("shards", "manifest.yaml").write_text(
-            "shards: not-a-list\n", encoding="utf-8",
+            "shards: not-a-list\n",
+            encoding="utf-8",
         )
 
         wave_data: dict[str, object] = {
@@ -571,7 +608,9 @@ class TestComputeWaveProgress:
         assert details[0]["shards"]["pending"] == 1
 
     def test_shard_manifest_read_error_is_caught(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """StateError from read_yaml for shard manifest is caught (lines 344-345)."""
         from trw_mcp.exceptions import StateError as TRWStateError
@@ -581,7 +620,8 @@ class TestComputeWaveProgress:
 
         # Create the manifest file so .exists() returns True
         (run_path / "shards" / "manifest.yaml").write_text(
-            "shards: []\n", encoding="utf-8",
+            "shards: []\n",
+            encoding="utf-8",
         )
 
         # Patch _reader.read_yaml to raise StateError when reading the manifest
@@ -631,9 +671,12 @@ class TestComputeReversionMetrics:
         """Rate below elevated threshold gives classification=healthy."""
         # 1 revert, 9 phase_enter → rate=0.1 → below elevated (0.15)
         revert_event: dict[str, object] = {
-            "event": "phase_revert", "trigger_classified": "blocker",
-            "from_phase": "implement", "to_phase": "plan",
-            "reason": "found bug", "ts": "2026-01-01T00:00:00Z",
+            "event": "phase_revert",
+            "trigger_classified": "blocker",
+            "from_phase": "implement",
+            "to_phase": "plan",
+            "reason": "found bug",
+            "ts": "2026-01-01T00:00:00Z",
         }
         enter_event: dict[str, object] = {"event": "phase_enter"}
         events: list[dict[str, object]] = [revert_event] + [enter_event for _ in range(9)]
@@ -646,19 +689,23 @@ class TestComputeReversionMetrics:
         """Rate between elevated (0.15) and concerning (0.30) → classification=elevated."""
         # 2 reverts, 10 phase_enter → rate = 2/12 ≈ 0.1667 → elevated
         revert1: dict[str, object] = {
-            "event": "phase_revert", "trigger_classified": "scope_change",
-            "from_phase": "implement", "to_phase": "plan",
-            "reason": "r1", "ts": "2026-01-01T00:00:00Z",
+            "event": "phase_revert",
+            "trigger_classified": "scope_change",
+            "from_phase": "implement",
+            "to_phase": "plan",
+            "reason": "r1",
+            "ts": "2026-01-01T00:00:00Z",
         }
         revert2: dict[str, object] = {
-            "event": "phase_revert", "trigger_classified": "blocker",
-            "from_phase": "validate", "to_phase": "implement",
-            "reason": "r2", "ts": "2026-01-02T00:00:00Z",
+            "event": "phase_revert",
+            "trigger_classified": "blocker",
+            "from_phase": "validate",
+            "to_phase": "implement",
+            "reason": "r2",
+            "ts": "2026-01-02T00:00:00Z",
         }
         enter_event: dict[str, object] = {"event": "phase_enter"}
-        events: list[dict[str, object]] = [revert1, revert2] + [
-            enter_event for _ in range(10)
-        ]
+        events: list[dict[str, object]] = [revert1, revert2] + [enter_event for _ in range(10)]
         result = _compute_reversion_metrics(events)
 
         assert result["classification"] == "elevated"
@@ -668,9 +715,12 @@ class TestComputeReversionMetrics:
         """Rate >= concerning threshold (0.30) → classification=concerning (line 420)."""
         # 4 reverts, 8 phase_enter → rate = 4/12 ≈ 0.333 → concerning
         revert: dict[str, object] = {
-            "event": "phase_revert", "trigger_classified": "scope_change",
-            "from_phase": "implement", "to_phase": "plan",
-            "reason": "oops", "ts": "2026-01-01T00:00:00Z",
+            "event": "phase_revert",
+            "trigger_classified": "scope_change",
+            "from_phase": "implement",
+            "to_phase": "plan",
+            "reason": "oops",
+            "ts": "2026-01-01T00:00:00Z",
         }
         enter: dict[str, object] = {"event": "phase_enter"}
         events: list[dict[str, object]] = [dict(revert)] * 4 + [dict(enter)] * 8
@@ -681,15 +731,30 @@ class TestComputeReversionMetrics:
     def test_by_trigger_grouping(self) -> None:
         """trigger_classified values are counted per-trigger (lines 415-416)."""
         events: list[dict[str, object]] = [
-            {"event": "phase_revert", "trigger_classified": "scope_change",
-             "from_phase": "implement", "to_phase": "plan",
-             "reason": "r", "ts": "2026-01-01T00:00:00Z"},
-            {"event": "phase_revert", "trigger_classified": "scope_change",
-             "from_phase": "validate", "to_phase": "implement",
-             "reason": "r", "ts": "2026-01-02T00:00:00Z"},
-            {"event": "phase_revert", "trigger_classified": "blocker",
-             "from_phase": "plan", "to_phase": "research",
-             "reason": "r", "ts": "2026-01-03T00:00:00Z"},
+            {
+                "event": "phase_revert",
+                "trigger_classified": "scope_change",
+                "from_phase": "implement",
+                "to_phase": "plan",
+                "reason": "r",
+                "ts": "2026-01-01T00:00:00Z",
+            },
+            {
+                "event": "phase_revert",
+                "trigger_classified": "scope_change",
+                "from_phase": "validate",
+                "to_phase": "implement",
+                "reason": "r",
+                "ts": "2026-01-02T00:00:00Z",
+            },
+            {
+                "event": "phase_revert",
+                "trigger_classified": "blocker",
+                "from_phase": "plan",
+                "to_phase": "research",
+                "reason": "r",
+                "ts": "2026-01-03T00:00:00Z",
+            },
         ]
         result = _compute_reversion_metrics(events)
 
@@ -701,9 +766,14 @@ class TestComputeReversionMetrics:
     def test_by_trigger_falls_back_to_trigger_key(self) -> None:
         """When trigger_classified is absent, 'trigger' key is used (line 415)."""
         events: list[dict[str, object]] = [
-            {"event": "phase_revert", "trigger": "manual",
-             "from_phase": "implement", "to_phase": "plan",
-             "reason": "r", "ts": "2026-01-01T00:00:00Z"},
+            {
+                "event": "phase_revert",
+                "trigger": "manual",
+                "from_phase": "implement",
+                "to_phase": "plan",
+                "reason": "r",
+                "ts": "2026-01-01T00:00:00Z",
+            },
         ]
         result = _compute_reversion_metrics(events)
 
@@ -714,9 +784,13 @@ class TestComputeReversionMetrics:
     def test_by_trigger_defaults_to_other(self) -> None:
         """When neither trigger_classified nor trigger exists, key is 'other'."""
         events: list[dict[str, object]] = [
-            {"event": "phase_revert",
-             "from_phase": "implement", "to_phase": "plan",
-             "reason": "r", "ts": "2026-01-01T00:00:00Z"},
+            {
+                "event": "phase_revert",
+                "from_phase": "implement",
+                "to_phase": "plan",
+                "reason": "r",
+                "ts": "2026-01-01T00:00:00Z",
+            },
         ]
         result = _compute_reversion_metrics(events)
 
@@ -727,12 +801,22 @@ class TestComputeReversionMetrics:
     def test_latest_populated_from_last_revert_event(self) -> None:
         """latest dict is populated from the last phase_revert event (lines 429-430)."""
         events: list[dict[str, object]] = [
-            {"event": "phase_revert", "trigger_classified": "first_trigger",
-             "from_phase": "implement", "to_phase": "plan",
-             "reason": "reason-A", "ts": "2026-01-01T00:00:00Z"},
-            {"event": "phase_revert", "trigger_classified": "second_trigger",
-             "from_phase": "validate", "to_phase": "implement",
-             "reason": "reason-B", "ts": "2026-01-02T00:00:00Z"},
+            {
+                "event": "phase_revert",
+                "trigger_classified": "first_trigger",
+                "from_phase": "implement",
+                "to_phase": "plan",
+                "reason": "reason-A",
+                "ts": "2026-01-01T00:00:00Z",
+            },
+            {
+                "event": "phase_revert",
+                "trigger_classified": "second_trigger",
+                "from_phase": "validate",
+                "to_phase": "implement",
+                "reason": "reason-B",
+                "ts": "2026-01-02T00:00:00Z",
+            },
         ]
         result = _compute_reversion_metrics(events)
 
@@ -747,9 +831,14 @@ class TestComputeReversionMetrics:
     def test_latest_trigger_falls_back_to_trigger_key(self) -> None:
         """latest['trigger'] uses 'trigger' key when trigger_classified absent (line 433)."""
         events: list[dict[str, object]] = [
-            {"event": "phase_revert", "trigger": "manual_fallback",
-             "from_phase": "plan", "to_phase": "research",
-             "reason": "changed mind", "ts": "2026-01-01T00:00:00Z"},
+            {
+                "event": "phase_revert",
+                "trigger": "manual_fallback",
+                "from_phase": "plan",
+                "to_phase": "research",
+                "reason": "changed mind",
+                "ts": "2026-01-01T00:00:00Z",
+            },
         ]
         result = _compute_reversion_metrics(events)
 
@@ -761,9 +850,14 @@ class TestComputeReversionMetrics:
     def test_rate_computed_correctly(self) -> None:
         """Rate is revert_count / (revert_count + phase_enter_count)."""
         events: list[dict[str, object]] = [
-            {"event": "phase_revert", "trigger_classified": "x",
-             "from_phase": "a", "to_phase": "b",
-             "reason": "r", "ts": "2026-01-01T00:00:00Z"},
+            {
+                "event": "phase_revert",
+                "trigger_classified": "x",
+                "from_phase": "a",
+                "to_phase": "b",
+                "reason": "r",
+                "ts": "2026-01-01T00:00:00Z",
+            },
             {"event": "phase_enter"},
             {"event": "phase_enter"},
             {"event": "phase_enter"},
@@ -819,12 +913,14 @@ class TestGetPackageVersion:
     def test_returns_string(self) -> None:
         """_get_package_version always returns a string."""
         from trw_mcp.tools.orchestration import _get_package_version
+
         result = _get_package_version()
         assert isinstance(result, str)
         assert len(result) > 0
 
     def test_returns_unknown_when_package_not_installed(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When importlib.metadata raises an exception, returns 'unknown' (lines 475-476)."""
         import importlib.metadata as im
@@ -853,7 +949,9 @@ class TestCheckFrameworkVersionStaleness:
         assert result is None
 
     def test_version_file_does_not_exist_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When VERSION.yaml does not exist, returns None (line 586)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -862,7 +960,9 @@ class TestCheckFrameworkVersionStaleness:
         assert result is None
 
     def test_matching_versions_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When run version matches deployed version, returns None (line 591)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -871,15 +971,20 @@ class TestCheckFrameworkVersionStaleness:
         frameworks_dir = tmp_path / ".trw" / "frameworks"
         frameworks_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(frameworks_dir / "VERSION.yaml", {
-            "framework_version": "v24.0_TRW",
-        })
+        writer.write_yaml(
+            frameworks_dir / "VERSION.yaml",
+            {
+                "framework_version": "v24.0_TRW",
+            },
+        )
 
         result = _check_framework_version_staleness("v24.0_TRW")
         assert result is None
 
     def test_stale_version_returns_warning_string(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When versions differ, returns a warning message string (lines 593-599)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -887,9 +992,12 @@ class TestCheckFrameworkVersionStaleness:
         frameworks_dir = tmp_path / ".trw" / "frameworks"
         frameworks_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(frameworks_dir / "VERSION.yaml", {
-            "framework_version": "v24.0_TRW",
-        })
+        writer.write_yaml(
+            frameworks_dir / "VERSION.yaml",
+            {
+                "framework_version": "v24.0_TRW",
+            },
+        )
 
         result = _check_framework_version_staleness("v18.0_TRW")
 
@@ -899,7 +1007,9 @@ class TestCheckFrameworkVersionStaleness:
         assert "v24.0_TRW" in result
 
     def test_empty_current_version_in_file_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When VERSION.yaml has empty framework_version, returns None (line 590)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -907,15 +1017,20 @@ class TestCheckFrameworkVersionStaleness:
         frameworks_dir = tmp_path / ".trw" / "frameworks"
         frameworks_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(frameworks_dir / "VERSION.yaml", {
-            "framework_version": "",
-        })
+        writer.write_yaml(
+            frameworks_dir / "VERSION.yaml",
+            {
+                "framework_version": "",
+            },
+        )
 
         result = _check_framework_version_staleness("v18.0_TRW")
         assert result is None
 
     def test_exception_during_read_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """StateError during version file read is caught and returns None (line 598)."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -925,7 +1040,8 @@ class TestCheckFrameworkVersionStaleness:
         frameworks_dir.mkdir(parents=True)
         # Write a file that exists but causes a read error via patching reader
         (frameworks_dir / "VERSION.yaml").write_text(
-            "framework_version: v99.0_TRW\n", encoding="utf-8",
+            "framework_version: v99.0_TRW\n",
+            encoding="utf-8",
         )
 
         from unittest.mock import patch

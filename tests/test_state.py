@@ -133,6 +133,7 @@ class TestModelToDict:
 
     def test_run_state(self) -> None:
         from trw_mcp.models.run import RunState
+
         state = RunState(run_id="test", task="test-task")
         d = model_to_dict(state)
         assert d["run_id"] == "test"

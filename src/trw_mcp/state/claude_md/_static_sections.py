@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root
-from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.claude_md._templates import (
     BEHAVIORAL_PROTOCOL_CAP,
     CEREMONY_TOOLS,
     PHASE_DESCRIPTIONS,
 )
-
+from trw_mcp.state.persistence import FileStateReader
 
 _SESSION_BOUNDARY_TEXT = (
     "Every session that loads learnings via `trw_session_start()` should persist "
@@ -87,9 +86,7 @@ def render_behavioral_protocol() -> str:
     config = get_config()
     reader = FileStateReader()
 
-    proto_path = (
-        resolve_project_root() / config.trw_dir / config.context_dir / "behavioral_protocol.yaml"
-    )
+    proto_path = resolve_project_root() / config.trw_dir / config.context_dir / "behavioral_protocol.yaml"
     if not proto_path.exists():
         return ""
     try:
@@ -136,10 +133,7 @@ def render_ceremony_table() -> str:
         "| Phase | Tool | When to Use | What It Does | Example |",
         "|-------|------|-------------|--------------|---------|",
     ]
-    lines.extend(
-        f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |"
-        for ct in CEREMONY_TOOLS
-    )
+    lines.extend(f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |" for ct in CEREMONY_TOOLS)
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -301,12 +295,7 @@ def render_closing_reminder() -> str:
     Returns:
         Markdown string with closing reminder.
     """
-    return (
-        "### Session Boundaries\n"
-        "\n"
-        + _SESSION_BOUNDARY_TEXT
-        + "\n"
-    )
+    return "### Session Boundaries\n\n" + _SESSION_BOUNDARY_TEXT + "\n"
 
 
 def render_minimal_protocol() -> str:
@@ -320,8 +309,7 @@ def render_minimal_protocol() -> str:
         "TRW tools persist your work across sessions:\n"
         "- **Start**: call `trw_session_start()` to load prior learnings\n"
         "- **Finish**: call `trw_deliver()` to persist discoveries\n"
-        "\n"
-        + _SESSION_BOUNDARY_TEXT
+        "\n" + _SESSION_BOUNDARY_TEXT
     )
 
 
@@ -363,8 +351,7 @@ def render_agents_trw_section() -> str:
         "4. **Finish**: call `trw_deliver()` to persist your work for future sessions\n"
         "\n"
         "## Session Boundaries\n"
-        "\n"
-        + _SESSION_BOUNDARY_TEXT
+        "\n" + _SESSION_BOUNDARY_TEXT
     )
 
 

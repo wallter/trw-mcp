@@ -35,11 +35,11 @@ _PRD_REF_RE = re.compile(r"PRD-[A-Z]+-\d{3}")
 
 # Patterns for non-substantive lines in content density calculation
 _NON_SUBSTANTIVE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^\s*$"),                          # blank lines
-    re.compile(r"^\s*---\s*$"),                    # horizontal rules
-    re.compile(r"^\s*<!--.*?-->\s*$"),             # HTML comments (single-line)
-    re.compile(r"^\s*\|[\s\-:|]+\|\s*$"),          # table separator rows
-    re.compile(r"^\s*#"),                           # heading lines
+    re.compile(r"^\s*$"),  # blank lines
+    re.compile(r"^\s*---\s*$"),  # horizontal rules
+    re.compile(r"^\s*<!--.*?-->\s*$"),  # HTML comments (single-line)
+    re.compile(r"^\s*\|[\s\-:|]+\|\s*$"),  # table separator rows
+    re.compile(r"^\s*#"),  # heading lines
 ]
 
 
@@ -66,10 +66,10 @@ def parse_frontmatter(content: str) -> dict[str, object]:
         if isinstance(data, dict):
             # Flatten nested 'prd' key if present (AARE-F template nests under 'prd')
             if "prd" in data and isinstance(data["prd"], dict):
-                prd_data: dict[str, object] = dict(data["prd"])
-                for key, val in data.items():
-                    if key != "prd":
-                        prd_data[key] = val
+                prd_data: dict[str, object] = {
+                    **data["prd"],
+                    **{k: v for k, v in data.items() if k != "prd"},
+                }
                 return prd_data
             return dict(data)
     except (YAMLError, ValueError, TypeError, AttributeError) as exc:
@@ -110,10 +110,7 @@ def compute_content_density(content: str) -> float:
     if total == 0:
         return 0.0
 
-    substantive = sum(
-        1 for line in lines
-        if not any(p.match(line) for p in _NON_SUBSTANTIVE_PATTERNS)
-    )
+    substantive = sum(1 for line in lines if not any(p.match(line) for p in _NON_SUBSTANTIVE_PATTERNS))
     return substantive / total
 
 
@@ -158,14 +155,18 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
     yaml = YAML()
     yaml.preserve_quotes = True
 
+    fm_text = match.group(1)
     try:
-        fm_text = match.group(1)
         data = yaml.load(fm_text)
-        if not isinstance(data, dict):
-            raise StateError(  # noqa: TRY301
-                f"Frontmatter is not a mapping in: {path}", path=str(path)
-            )
+    except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
+        raise StateError(f"Failed to update frontmatter: {exc}", path=str(path)) from exc
 
+    if not isinstance(data, dict):
+        raise StateError(
+            f"Frontmatter is not a mapping in: {path}", path=str(path)
+        )
+
+    try:
         # Determine target dict: nested 'prd' key or top-level
         prd_val = data.get("prd")
         target = prd_val if isinstance(prd_val, dict) else data
@@ -179,7 +180,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         new_fm = stream.getvalue()
 
         # Reconstruct file: new frontmatter + original body
-        body = content[match.end():]
+        body = content[match.end() :]
 
         # FR02 (PRD-FIX-056): Sync prose Quick Reference status line when status changes
         if "status" in updates:
@@ -194,9 +195,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         new_content = f"---\n{new_fm}---{body}"
 
         # Atomic write: write to temp, then rename
-        tmp_fd, tmp_path_str = tempfile.mkstemp(
-            dir=str(path.parent), suffix=".md.tmp"
-        )
+        tmp_fd, tmp_path_str = tempfile.mkstemp(dir=str(path.parent), suffix=".md.tmp")
         tmp_path = Path(tmp_path_str)
         try:
             os.close(tmp_fd)
@@ -208,12 +207,8 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
 
         logger.info("frontmatter_updated", path=str(path), fields=list(updates.keys()))
 
-    except StateError:
-        raise
     except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
-        raise StateError(
-            f"Failed to update frontmatter: {exc}", path=str(path)
-        ) from exc
+        raise StateError(f"Failed to update frontmatter: {exc}", path=str(path)) from exc
 
 
 # PRD status state machine (PRD-CORE-009-FR01, PRD-FIX-008)
@@ -421,11 +416,7 @@ def _deep_merge(target: object, source: dict[str, object]) -> None:
     if not isinstance(target, dict):
         return
     for key, value in source.items():
-        if (
-            key in target
-            and isinstance(target[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
             _deep_merge(target[key], value)
         else:
             target[key] = value
@@ -456,7 +447,7 @@ def next_prd_sequence(prds_dir: Path, category: str) -> int:
             name = prd_file.stem
             if name.startswith(prefix):
                 try:
-                    sequences.append(int(name[len(prefix):]))
+                    sequences.append(int(name[len(prefix) :]))
                 except ValueError:
                     continue
 

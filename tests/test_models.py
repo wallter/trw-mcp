@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -79,8 +79,12 @@ class TestTRWConfig:
     def test_removed_fields_not_in_config(self) -> None:
         """PRD-FIX-016-FR02: Verify dead fields are removed."""
         config = TRWConfig()
-        for removed in ("correlation_min", "learning_prune_threshold",
-                        "validation_smell_false_positive_max", "llm_max_tokens"):
+        for removed in (
+            "correlation_min",
+            "learning_prune_threshold",
+            "validation_smell_false_positive_max",
+            "llm_max_tokens",
+        ):
             assert not hasattr(config, removed), f"{removed} should be removed"
 
     def test_orc_defaults_still_exist(self) -> None:
@@ -105,10 +109,7 @@ class TestTRWConfig:
         # TRWConfig loads from env vars, not directly from YAML — extra="ignore"
         # ensures unknown keys don't break loading.
         (tmp_path / "config.yaml").write_text(
-            "correlation_min: 0.99\n"
-            "learning_prune_threshold: 0.5\n"
-            "llm_max_tokens: 1000\n"
-            "parallelism_max: 15\n"
+            "correlation_min: 0.99\nlearning_prune_threshold: 0.5\nllm_max_tokens: 1000\nparallelism_max: 15\n"
         )
         config = TRWConfig()
         assert not hasattr(config, "correlation_min")
@@ -248,10 +249,12 @@ class TestWaveManifest:
         assert manifest.waves == []
 
     def test_with_waves(self) -> None:
-        manifest = WaveManifest(waves=[
-            WaveEntry(wave=1, shards=["shard-001", "shard-002"], status=WaveStatus.COMPLETE),
-            WaveEntry(wave=2, shards=["shard-003"], status=WaveStatus.PENDING, depends_on=[1]),
-        ])
+        manifest = WaveManifest(
+            waves=[
+                WaveEntry(wave=1, shards=["shard-001", "shard-002"], status=WaveStatus.COMPLETE),
+                WaveEntry(wave=2, shards=["shard-003"], status=WaveStatus.PENDING, depends_on=[1]),
+            ]
+        )
         assert len(manifest.waves) == 2
         assert manifest.waves[1].depends_on == [1]
 
@@ -261,7 +264,7 @@ class TestEvent:
 
     def test_create(self) -> None:
         event = Event(
-            ts=datetime(2026, 2, 6, 12, 0, 0),
+            ts=datetime(2026, 2, 6, 12, 0, 0, tzinfo=timezone.utc),
             event="run_init",
             data={"task": "test"},
         )
@@ -300,7 +303,7 @@ class TestReflection:
             id="R-001",
             run_id="run-001",
             scope="session",
-            timestamp=datetime(2026, 2, 6, 12, 0, 0),
+            timestamp=datetime(2026, 2, 6, 12, 0, 0, tzinfo=timezone.utc),
             events_analyzed=42,
             what_worked=["phase transitions"],
             what_failed=["shard timeout"],

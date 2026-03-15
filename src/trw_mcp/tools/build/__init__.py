@@ -19,6 +19,8 @@ Internal modules:
 
 from __future__ import annotations
 
+from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+
 # Re-export public API for backward compatibility
 from trw_mcp.tools.build._audit import (
     _API_FUZZ_FILE,
@@ -35,7 +37,6 @@ from trw_mcp.tools.build._core import (
     run_build_check,
 )
 from trw_mcp.tools.build._registration import register_build_tools
-from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.tools.build._runners import (
     _COVERAGE_RE,
     _PYTEST_SUMMARY_RE,
@@ -55,36 +56,30 @@ from trw_mcp.tools.build._subprocess import (
 )
 
 __all__ = [
-    # _subprocess
     "_ANSI_RE",
-    "_MAX_FAILURES",
-    "_strip_ansi",
-    "_find_executable",
-    "_run_subprocess",
-    "_extract_failures",
-    "_collect_failures",
-    "_run_audit_tool",
-    # _runners
-    "_PYTEST_SUMMARY_RE",
-    "_COVERAGE_RE",
-    "_pytest_error",
-    "_run_pytest",
-    "_run_mypy",
-    # _audit
-    "_DEP_AUDIT_FILE",
     "_API_FUZZ_FILE",
-    "_run_pip_audit",
-    "_run_npm_audit",
-    "_detect_unlisted_imports",
-    "_run_dep_audit",
-    "_run_api_fuzz",
-    # _core
+    "_COVERAGE_RE",
+    "_DEP_AUDIT_FILE",
+    "_MAX_FAILURES",
+    "_PYTEST_SUMMARY_RE",
     "_cache_to_context",
-    "run_build_check",
+    "_collect_failures",
+    "_detect_unlisted_imports",
+    "_extract_failures",
+    "_find_executable",
+    "_pytest_error",
+    "_run_api_fuzz",
+    "_run_audit_tool",
+    "_run_dep_audit",
+    "_run_mypy",
+    "_run_npm_audit",
+    "_run_pip_audit",
+    "_run_pytest",
+    "_run_subprocess",
+    "_strip_ansi",
     "cache_build_status",
-    # _registration
     "register_build_tools",
-    # _paths (re-exported for test monkeypatching)
-    "resolve_trw_dir",
     "resolve_project_root",
+    "resolve_trw_dir",
+    "run_build_check",
 ]

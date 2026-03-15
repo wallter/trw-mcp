@@ -39,7 +39,7 @@ def _get_git_diff() -> str:
     """Get git diff of HEAD, returning empty string on any error."""
     try:
         result = subprocess.run(
-            ["git", "diff", "HEAD"],
+            ["git", "diff", "HEAD"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
             capture_output=True,
             text=True,
             timeout=30,
@@ -126,17 +126,19 @@ def _run_multi_reviewer_analysis(
             stripped = line[1:].strip()
             for marker in ("TODO", "FIXME", "HACK", "XXX"):
                 if marker in stripped.upper():
-                    findings.append({
-                        "reviewer_role": "style",
-                        "confidence": 60,
-                        "category": "placeholder",
-                        "severity": "info",
-                        "description": f"Placeholder comment detected: {stripped[:80]}",
-                        "line": i + 1,
-                    })
+                    findings.append(
+                        {
+                            "reviewer_role": "style",
+                            "confidence": 60,
+                            "category": "placeholder",
+                            "severity": "info",
+                            "description": f"Placeholder comment detected: {stripped[:80]}",
+                            "line": i + 1,
+                        }
+                    )
                     break
 
-    result["findings"] = cast(list[dict[str, object]], findings)
+    result["findings"] = cast("list[dict[str, object]]", findings)
     return result
 
 
@@ -269,28 +271,55 @@ def register_review_tools(server: FastMCP) -> None:
 
         response: dict[str, object]
         if effective_mode == "manual":
-            response = cast(dict[str, object], handle_manual_mode(
-                findings or [], resolved_run, review_id, ts,
-            ))
+            response = cast(
+                "dict[str, object]",
+                handle_manual_mode(
+                    findings or [],
+                    resolved_run,
+                    review_id,
+                    ts,
+                ),
+            )
         elif effective_mode == "reconcile":
-            response = cast(dict[str, object], handle_reconcile_mode(
-                config, resolved_run, review_id, ts, prd_ids,
-            ))
+            response = cast(
+                "dict[str, object]",
+                handle_reconcile_mode(
+                    config,
+                    resolved_run,
+                    review_id,
+                    ts,
+                    prd_ids,
+                ),
+            )
         elif effective_mode == "cross_model":
-            response = cast(dict[str, object], handle_cross_model_mode(
-                config, resolved_run, review_id, ts,
-            ))
+            response = cast(
+                "dict[str, object]",
+                handle_cross_model_mode(
+                    config,
+                    resolved_run,
+                    review_id,
+                    ts,
+                ),
+            )
         else:
             # Auto mode (QUAL-027)
-            response = cast(dict[str, object], handle_auto_mode(
-                config, resolved_run, review_id, ts, reviewer_findings,
-            ))
+            response = cast(
+                "dict[str, object]",
+                handle_auto_mode(
+                    config,
+                    resolved_run,
+                    review_id,
+                    ts,
+                    reviewer_findings,
+                ),
+            )
 
         # Mark review in ceremony state and inject nudge (PRD-CORE-084 FR02)
         try:
             from trw_mcp.state._paths import resolve_trw_dir
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName, mark_review
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
             trw_dir = resolve_trw_dir()
             verdict = str(response.get("verdict", ""))
             p0_count = int(str(response.get("critical_count", 0)))
@@ -307,7 +336,7 @@ def register_review_tools(server: FastMCP) -> None:
             mark_review(trw_dir, verdict=verdict, p0_count=p0_count)
             ctx = NudgeContext(tool_name=ToolName.REVIEW, review_verdict=verdict, review_p0_count=p0_count)
             append_ceremony_nudge(response, trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block review
+        except Exception:  # justified: fail-open, nudge injection must not block review  # noqa: S110
             pass
 
         return response

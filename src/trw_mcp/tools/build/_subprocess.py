@@ -98,7 +98,7 @@ def _run_subprocess(
         CompletedProcess on success, or an error message string on failure.
     """
     try:
-        return subprocess.run(
+        return subprocess.run(  # noqa: S603 — shell=False (default); cmd is a fully-resolved build tool path from _find_executable() with validated args
             cmd,
             capture_output=True,
             text=True,

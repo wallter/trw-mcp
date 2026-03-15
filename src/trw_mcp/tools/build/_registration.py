@@ -16,8 +16,8 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import ApiFuzzResult, DepAuditResult
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.tools.build._audit import (
-    _DEP_AUDIT_FILE,
     _API_FUZZ_FILE,
+    _DEP_AUDIT_FILE,
     _run_api_fuzz,
     _run_dep_audit,
 )
@@ -31,12 +31,12 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger()
 
 
-def register_build_tools(server: FastMCP) -> None:
+def register_build_tools(server: FastMCP) -> None:  # noqa: C901
     """Register build verification tools on the MCP server."""
 
     @server.tool()
     @log_tool_call
-    def trw_build_check(
+    def trw_build_check(  # noqa: C901
         scope: str = "full",
         run_path: str | None = None,
         timeout_secs: int | None = None,
@@ -93,21 +93,21 @@ def register_build_tools(server: FastMCP) -> None:
 
             mut_result = run_mutation_check(project_root, config)
             cache_mutation_status(trw_dir, mut_result)
-            return cast(dict[str, object], mut_result)
+            return cast("dict[str, object]", mut_result)
 
         if scope == "deps":
             if not config.dep_audit_enabled:
                 return {"status": "skipped", "reason": "dep_audit_enabled is False"}
             dep_result: DepAuditResult = _run_dep_audit(project_root, config)
-            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast(dict[str, object], dep_result))
-            return cast(dict[str, object], dep_result)
+            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast("dict[str, object]", dep_result))
+            return cast("dict[str, object]", dep_result)
 
         if scope == "api":
             if not config.api_fuzz_enabled:
                 return {"status": "skipped", "reason": "api_fuzz_enabled is False"}
             fuzz_result: ApiFuzzResult = _run_api_fuzz(project_root, config)
-            _cache_to_context(trw_dir, _API_FUZZ_FILE, cast(dict[str, object], fuzz_result))
-            return cast(dict[str, object], fuzz_result)
+            _cache_to_context(trw_dir, _API_FUZZ_FILE, cast("dict[str, object]", fuzz_result))
+            return cast("dict[str, object]", fuzz_result)
 
         # --- Standard scopes (pytest/mypy) ---
 
@@ -143,17 +143,22 @@ def register_build_tools(server: FastMCP) -> None:
             events_path = resolved_run / "meta" / "events.jsonl"
             if events_path.parent.exists():
                 event_logger = FileEventLogger(FileStateWriter())
-                event_logger.log_event(events_path, "build_check_complete", {
-                    "scope": scope,
-                    "tests_passed": status.tests_passed,
-                    "mypy_clean": status.mypy_clean,
-                    "coverage_pct": str(status.coverage_pct),
-                    "duration_secs": str(status.duration_secs),
-                })
+                event_logger.log_event(
+                    events_path,
+                    "build_check_complete",
+                    {
+                        "scope": scope,
+                        "tests_passed": status.tests_passed,
+                        "mypy_clean": status.mypy_clean,
+                        "coverage_pct": str(status.coverage_pct),
+                        "duration_secs": str(status.duration_secs),
+                    },
+                )
 
         # Q-learning: reward recalled learnings based on build outcome
         try:
             from trw_mcp.scoring import process_outcome_for_event
+
             event_type = "build_passed" if status.tests_passed and status.mypy_clean else "build_failed"
             process_outcome_for_event(event_type)
         except Exception:  # justified: fail-open, Q-learning is best-effort, never blocks build check
@@ -187,32 +192,33 @@ def register_build_tools(server: FastMCP) -> None:
             result["coverage_threshold_failed"] = True
             result["coverage_threshold"] = min_coverage
             result["coverage_threshold_message"] = (
-                f"Coverage {status.coverage_pct:.1f}% is below "
-                f"required threshold {min_coverage:.1f}%"
+                f"Coverage {status.coverage_pct:.1f}% is below required threshold {min_coverage:.1f}%"
             )
 
         # Mark build check result in ceremony state tracker (PRD-CORE-074 FR04)
         try:
             from trw_mcp.state.ceremony_nudge import mark_build_check
+
             _build_passed = bool(result.get("tests_passed", False))
             mark_build_check(trw_dir, passed=_build_passed)
-        except Exception:  # justified: fail-open, ceremony state update must not block build check
+        except Exception:  # justified: fail-open, ceremony state update must not block build check  # noqa: S110
             pass
 
         # Inject ceremony nudge into response (PRD-CORE-084 FR02)
         try:
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
             build_passed = bool(result.get("tests_passed", False))
             ctx = NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=build_passed)
             append_ceremony_nudge(result, trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block build check
+        except Exception:  # justified: fail-open, nudge injection must not block build check  # noqa: S110
             pass
 
         # Dep audit on full scope (if enabled)
         if scope == "full" and config.dep_audit_enabled:
             dep_result = _run_dep_audit(project_root, config)
-            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast(dict[str, object], dep_result))
+            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast("dict[str, object]", dep_result))
             result["dep_audit"] = dep_result
             if not bool(dep_result.get("dep_audit_passed", True)):
                 result["dep_audit_blocking"] = True

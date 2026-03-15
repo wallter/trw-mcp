@@ -14,8 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trw_mcp.scoring._correlation import process_outcome
 
 
@@ -24,9 +22,7 @@ def _write_receipt(trw_dir: Path, learning_id: str) -> None:
     receipt_file = trw_dir / "logs" / "recall_tracking.jsonl"
     receipt_file.parent.mkdir(parents=True, exist_ok=True)
     now_ts = datetime.now(timezone.utc).timestamp()
-    receipt_file.write_text(
-        json.dumps({"timestamp": now_ts, "learning_id": learning_id}) + "\n"
-    )
+    receipt_file.write_text(json.dumps({"timestamp": now_ts, "learning_id": learning_id}) + "\n")
 
 
 def _make_sqlite_data(learning_id: str) -> dict[str, object]:
@@ -65,9 +61,7 @@ class TestProcessOutcomeSQLitePath:
 
         assert "test-lr-001" in updated
         # SQLite must be called exactly once per unique learning ID
-        assert mock_sqlite.call_count == 1, (
-            f"SQLite lookup must be called exactly once, got {mock_sqlite.call_count}"
-        )
+        assert mock_sqlite.call_count == 1, f"SQLite lookup must be called exactly once, got {mock_sqlite.call_count}"
         mock_sqlite.assert_called_once_with(trw_dir, "test-lr-001")
         # YAML fallback must NOT be called when SQLite succeeds
         mock_yaml.assert_not_called()
@@ -108,8 +102,7 @@ class TestProcessOutcomeSQLitePath:
         mock_sqlite.assert_called_once_with(trw_dir, "old-lr-002")
         # YAML fallback must be called exactly once for the entry
         assert mock_yaml.call_count == 1, (
-            f"YAML fallback must be called exactly once (not {mock_yaml.call_count}x) "
-            "when SQLite returns None"
+            f"YAML fallback must be called exactly once (not {mock_yaml.call_count}x) when SQLite returns None"
         )
 
     def test_entry_skipped_when_both_sources_return_none(self, tmp_path: Path) -> None:
@@ -199,9 +192,5 @@ class TestProcessOutcomeSQLitePath:
         assert "q-update-005" in updated
         # Q-value must have been updated (positive reward → higher q_value)
         new_q = float(str(sqlite_data.get("q_value", original_q)))
-        assert new_q != original_q, (
-            f"Q-value must change after positive reward; still {new_q}"
-        )
-        assert new_q > original_q, (
-            f"Positive reward must increase Q-value; {new_q} <= {original_q}"
-        )
+        assert new_q != original_q, f"Q-value must change after positive reward; still {new_q}"
+        assert new_q > original_q, f"Positive reward must increase Q-value; {new_q} <= {original_q}"

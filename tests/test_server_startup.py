@@ -29,19 +29,29 @@ class TestModuleImports:
     """Verify the full import chain succeeds without exception."""
 
     def test_import_server_package(self) -> None:
-        import trw_mcp.server  # noqa: F401
+        import trw_mcp.server
+
+        assert trw_mcp.server is not None
 
     def test_import_app(self) -> None:
-        from trw_mcp.server._app import configure_logging, mcp  # noqa: F401
+        from trw_mcp.server._app import configure_logging, mcp
+
+        assert configure_logging is not None
+        assert mcp is not None
 
     def test_import_cli(self) -> None:
-        from trw_mcp.server._cli import _build_arg_parser, main  # noqa: F401
+        from trw_mcp.server._cli import _build_arg_parser, main
+
+        assert _build_arg_parser is not None
+        assert main is not None
 
     def test_import_tools(self) -> None:
-        from trw_mcp.server._tools import _register_tools  # noqa: F401
+        from trw_mcp.server._tools import _register_tools
+
+        assert _register_tools is not None
 
     def test_import_all_tool_modules(self) -> None:
-        from trw_mcp.tools import (  # noqa: F401
+        from trw_mcp.tools import (
             build,
             ceremony,
             checkpoint,
@@ -54,11 +64,20 @@ class TestModuleImports:
             usage,
         )
 
+        assert all(
+            m is not None
+            for m in (build, ceremony, checkpoint, knowledge, learning, orchestration, report, requirements, review, usage)
+        )
+
     def test_import_middleware(self) -> None:
-        from trw_mcp.middleware.ceremony import CeremonyMiddleware  # noqa: F401
+        from trw_mcp.middleware.ceremony import CeremonyMiddleware
+
+        assert CeremonyMiddleware is not None
 
     def test_import_messaging(self) -> None:
-        from trw_mcp.prompts.messaging import get_message_or_default  # noqa: F401
+        from trw_mcp.prompts.messaging import get_message_or_default
+
+        assert get_message_or_default is not None
 
 
 # ── FastMCP instance ─────────────────────────────────────────────────
@@ -123,9 +142,7 @@ class TestMcpJsonCommand:
         with patch("shutil.which", return_value=None):
             entry = _trw_mcp_server_entry()
         cmd = str(entry["command"])
-        assert cmd == sys.executable, (
-            f"Fallback should use sys.executable ({sys.executable}), got {cmd}"
-        )
+        assert cmd == sys.executable, f"Fallback should use sys.executable ({sys.executable}), got {cmd}"
 
     def test_fallback_uses_module_invocation(self) -> None:
         from trw_mcp.bootstrap._utils import _trw_mcp_server_entry

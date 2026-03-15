@@ -11,9 +11,9 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.typed_dicts import RecallStats
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger()

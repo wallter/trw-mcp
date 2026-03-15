@@ -130,8 +130,13 @@ class TestLLMUsageRecord:
         )
         d = record.model_dump()
         assert set(d.keys()) == {
-            "ts", "model", "input_tokens", "output_tokens",
-            "latency_ms", "caller", "success",
+            "ts",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "latency_ms",
+            "caller",
+            "success",
         }
 
 
@@ -283,9 +288,7 @@ class TestLLMClientLogsFailure:
         log_path = tmp_path / "usage.jsonl"
 
         mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(
-            side_effect=RuntimeError("API error")
-        )
+        mock_async_client.messages.create = AsyncMock(side_effect=RuntimeError("API error"))
 
         client = LLMClient(usage_log_path=log_path)
         client._available = True
@@ -308,9 +311,7 @@ class TestLLMClientLogsFailure:
 
         log_path = tmp_path / "usage.jsonl"
         mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(
-            side_effect=ValueError("bad request")
-        )
+        mock_async_client.messages.create = AsyncMock(side_effect=ValueError("bad request"))
 
         client = LLMClient(usage_log_path=log_path)
         client._available = True
@@ -325,9 +326,7 @@ class TestLLMClientLogsFailure:
 class TestLLMClientLoggingNonFatal:
     """Test that logging failures do not propagate to ask() callers."""
 
-    async def test_llm_client_usage_logging_failure_non_fatal(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_llm_client_usage_logging_failure_non_fatal(self, tmp_path: Path) -> None:
         """If JSONL write raises, ask() still returns the response text."""
         from trw_mcp.clients.llm import LLMClient
         from trw_mcp.state import persistence as persistence_module
@@ -372,6 +371,7 @@ class TestLLMClientUnavailable:
         saved = sys.modules.pop("anthropic", None)
         try:
             from trw_mcp.clients.llm import LLMClient
+
             client = LLMClient()
             # Can't reliably test this without actually missing the package,
             # but we can verify the property exists and returns a bool
@@ -433,9 +433,7 @@ class TestLLMClientEdgeCases:
         result = await client.ask("test")
         assert result is None
 
-    async def test_ask_returns_none_when_content_item_has_no_text(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_ask_returns_none_when_content_item_has_no_text(self, tmp_path: Path) -> None:
         """ask() returns None when content[0] has no .text attribute."""
         from trw_mcp.clients.llm import LLMClient
 
@@ -462,8 +460,8 @@ class TestLLMClientEdgeCases:
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text="response")]
         usage_mock = MagicMock()
-        usage_mock.input_tokens = "not-a-number"   # will raise ValueError
-        usage_mock.output_tokens = None             # will raise TypeError
+        usage_mock.input_tokens = "not-a-number"  # will raise ValueError
+        usage_mock.output_tokens = None  # will raise TypeError
         mock_response.usage = usage_mock
 
         mock_async_client = MagicMock()
@@ -478,6 +476,7 @@ class TestLLMClientEdgeCases:
         assert result == "response"
         # Record is still written with 0 tokens (fallback)
         import json
+
         record = json.loads(log_path.read_text().strip())
         assert record["input_tokens"] == 0
         assert record["output_tokens"] == 0
@@ -501,6 +500,7 @@ class TestLLMClientEdgeCases:
         assert result == "no-usage-response"
         # Record written with 0 tokens
         import json
+
         record = json.loads(log_path.read_text().strip())
         assert record["input_tokens"] == 0
         assert record["output_tokens"] == 0

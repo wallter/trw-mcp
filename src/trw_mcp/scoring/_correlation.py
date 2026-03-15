@@ -8,12 +8,10 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
-
-logger = structlog.get_logger()
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
@@ -28,6 +26,8 @@ from trw_mcp.scoring._utils import (
     safe_int,
     update_q_value,
 )
+
+logger = structlog.get_logger()
 
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
 
@@ -188,7 +188,8 @@ def correlate_recalls(
             if ts_raw is not None:
                 try:
                     receipt_ts = datetime.fromtimestamp(
-                        float(str(ts_raw)), tz=timezone.utc,
+                        float(str(ts_raw)),
+                        tz=timezone.utc,
                     )
                 except (ValueError, OSError):
                     continue
@@ -216,9 +217,7 @@ def correlate_recalls(
         # Support both formats for learning IDs
         matched_ids = record.get("matched_ids")
         if isinstance(matched_ids, list) and matched_ids:
-            for lid in matched_ids:
-                if isinstance(lid, str) and lid:
-                    results.append((lid, discount))
+            results.extend((lid, discount) for lid in matched_ids if isinstance(lid, str) and lid)
         else:
             # recall_tracking format: single learning_id
             lid_single = record.get("learning_id")
@@ -228,7 +227,7 @@ def correlate_recalls(
     return results
 
 
-def process_outcome(
+def process_outcome(  # noqa: C901
     trw_dir: Path,
     reward: float,
     event_label: str,
@@ -272,7 +271,7 @@ def process_outcome(
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
 
     updated_ids: list[str] = []
-    today_iso = date.today().isoformat()
+    today_iso = datetime.now(tz=timezone.utc).date().isoformat()
     history_cap = cfg.learning_outcome_history_cap
     writer = FileStateWriter()
 
@@ -307,7 +306,8 @@ def process_outcome(
         effective_reward = reward * discount
         recurrence_bonus = cfg.q_recurrence_bonus if recurrence > 1 else 0.0
         q_new = update_q_value(
-            q_old, effective_reward,
+            q_old,
+            effective_reward,
             alpha=cfg.q_learning_rate,
             recurrence_bonus=recurrence_bonus,
         )
@@ -334,6 +334,7 @@ def process_outcome(
         # read updated values (best-effort — YAML is the authoritative write)
         try:
             from trw_mcp.state.memory_adapter import get_backend
+
             backend = get_backend(trw_dir)
             backend.update(
                 lid,
@@ -341,7 +342,7 @@ def process_outcome(
                 q_observations=q_obs + 1,
                 outcome_history=history,
             )
-        except Exception:  # noqa: BLE001 — justified: fail-open, correlation scoring is best-effort
+        except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)  # noqa: S110
             pass
 
         updated_ids.append(lid)
@@ -357,7 +358,7 @@ def process_outcome(
     return updated_ids
 
 
-def _resolve_event_reward(
+def _resolve_event_reward(  # noqa: C901
     event_type: str,
     event_data: dict[str, object] | None = None,
 ) -> tuple[float | None, str]:

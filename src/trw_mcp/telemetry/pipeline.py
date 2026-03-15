@@ -16,16 +16,13 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, TypedDict
+from typing import ClassVar, TypedDict
 
 import structlog
 
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.telemetry.anonymizer import redact_paths, strip_pii
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger()
 
@@ -128,7 +125,7 @@ class TelemetryPipeline:
     # Enqueue
     # ------------------------------------------------------------------
 
-    def enqueue(self, event: dict[str, object]) -> None:
+    def enqueue(self, event: dict[str, object]) -> None:  # noqa: C901
         """Sanitize and enqueue a telemetry event.
 
         Fail-open: exceptions are caught and silently swallowed so that
@@ -170,7 +167,7 @@ class TelemetryPipeline:
                     from trw_mcp.models.config import get_config
 
                     event["framework_version"] = get_config().framework_version
-                except Exception:  # justified: fail-open, config resolution non-fatal
+                except Exception:  # justified: fail-open, config resolution non-fatal  # noqa: S110
                     pass
 
             if "event_type" not in event:
@@ -191,7 +188,7 @@ class TelemetryPipeline:
 
                             data = FileStateReader().read_yaml(run_yaml)
                             event["phase"] = str(data.get("phase", "unknown"))
-                except Exception:  # justified: fail-open, phase enrichment non-critical
+                except Exception:  # justified: fail-open, phase enrichment non-critical  # noqa: S110
                     pass
 
             if "ts" not in event:
@@ -204,7 +201,7 @@ class TelemetryPipeline:
                 if was_full:
                     self._overflow_count += 1
 
-        except Exception:  # justified: fail-open, telemetry must never block
+        except Exception:  # justified: fail-open, telemetry must never block  # noqa: S110
             pass
 
     # ------------------------------------------------------------------
@@ -278,7 +275,7 @@ class TelemetryPipeline:
         for event in events:
             try:
                 self._writer.append_jsonl(jsonl_path, event)
-            except Exception:  # justified: fail-open, individual write errors non-fatal
+            except Exception:  # per-item error handling: one write failure must not block the rest of the batch  # noqa: PERF203
                 logger.debug("pipeline_jsonl_write_error", exc_info=True)
 
         # Resolve config for remote send
@@ -365,13 +362,13 @@ class TelemetryPipeline:
                     headers: dict[str, str] = {"Content-Type": "application/json"}
                     if api_key:
                         headers["Authorization"] = f"Bearer {api_key}"
-                    req = urllib.request.Request(
+                    req = urllib.request.Request(  # noqa: S310 — endpoint is built from cfg.effective_platform_urls (operator config, not user input)
                         endpoint,
                         data=data,
                         headers=headers,
                         method="POST",
                     )
-                    with urllib.request.urlopen(req, timeout=30) as response:
+                    with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 — see Request comment above
                         if 200 <= response.status < 300:
                             return True
                 except (urllib.error.URLError, urllib.error.HTTPError, OSError):

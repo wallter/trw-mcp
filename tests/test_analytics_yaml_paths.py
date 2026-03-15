@@ -16,7 +16,7 @@ Covers previously uncovered lines:
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -64,7 +64,7 @@ def _write_entry(
     last_accessed_at: str | None = None,
 ) -> Path:
     """Write a YAML entry to disk."""
-    today = date.today().isoformat()
+    today = datetime.now(tz=timezone.utc).date().isoformat()
     data: dict[str, object] = {
         "id": entry_id,
         "summary": summary,
@@ -103,7 +103,9 @@ class TestSurfaceValidatedLearningsYamlFallback:
             side_effect=RuntimeError("sqlite broken"),
         ):
             result = surface_validated_learnings(
-                trw_dir, q_threshold=0.5, cold_start_threshold=3,
+                trw_dir,
+                q_threshold=0.5,
+                cold_start_threshold=3,
             )
         assert result == []
 
@@ -114,25 +116,34 @@ class TestSurfaceValidatedLearningsYamlFallback:
 
         # Write entries with high q_value and q_observations
         _write_entry(
-            entries_dir, "validated-1",
+            entries_dir,
+            "validated-1",
             summary="validated learning",
-            q_value=0.8, q_observations=5,
+            q_value=0.8,
+            q_observations=5,
         )
         _write_entry(
-            entries_dir, "not-validated",
+            entries_dir,
+            "not-validated",
             summary="low q learning",
-            q_value=0.1, q_observations=1,
+            q_value=0.1,
+            q_observations=1,
         )
         _write_entry(
-            entries_dir, "cold-start",
+            entries_dir,
+            "cold-start",
             summary="cold start learning",
-            q_value=0.9, q_observations=0,
+            q_value=0.9,
+            q_observations=0,
         )
         # Non-active should be skipped
         _write_entry(
-            entries_dir, "resolved-entry",
+            entries_dir,
+            "resolved-entry",
             summary="resolved",
-            status="resolved", q_value=0.9, q_observations=5,
+            status="resolved",
+            q_value=0.9,
+            q_observations=5,
         )
 
         # Force SQLite to fail
@@ -141,7 +152,9 @@ class TestSurfaceValidatedLearningsYamlFallback:
             side_effect=ImportError("no sqlite"),
         ):
             result = surface_validated_learnings(
-                trw_dir, q_threshold=0.5, cold_start_threshold=3,
+                trw_dir,
+                q_threshold=0.5,
+                cold_start_threshold=3,
             )
 
         assert len(result) == 1
@@ -163,7 +176,9 @@ class TestSurfaceValidatedLearningsYamlFallback:
             side_effect=ImportError("no sqlite"),
         ):
             result = surface_validated_learnings(
-                trw_dir, q_threshold=0.5, cold_start_threshold=3,
+                trw_dir,
+                q_threshold=0.5,
+                cold_start_threshold=3,
             )
 
         assert len(result) == 3
@@ -186,7 +201,8 @@ class TestHasExistingSuccessLearning:
         entries_dir = trw_dir / "learnings" / "entries"
 
         _write_entry(
-            entries_dir, "success-1",
+            entries_dir,
+            "success-1",
             summary="Success: reflection complete 3x in session",
         )
 
@@ -195,7 +211,8 @@ class TestHasExistingSuccessLearning:
             side_effect=RuntimeError("sqlite broken"),
         ):
             result = has_existing_success_learning(
-                trw_dir, "Success: reflection complete 3x in session",
+                trw_dir,
+                "Success: reflection complete 3x in session",
             )
         assert result is True
 
@@ -203,15 +220,18 @@ class TestHasExistingSuccessLearning:
         """Lines 459-460: SQLite path finds a matching summary prefix."""
         trw_dir = _setup_trw(tmp_path)
 
-        mock_list = MagicMock(return_value=[
-            {"summary": "Success: reflection complete 3x in session"},
-        ])
+        mock_list = MagicMock(
+            return_value=[
+                {"summary": "Success: reflection complete 3x in session"},
+            ]
+        )
         with patch(
             "trw_mcp.state.memory_adapter.list_active_learnings",
             mock_list,
         ):
             result = has_existing_success_learning(
-                trw_dir, "Success: reflection complete 3x in session",
+                trw_dir,
+                "Success: reflection complete 3x in session",
             )
         assert result is True
 
@@ -221,7 +241,8 @@ class TestHasExistingSuccessLearning:
         entries_dir = trw_dir / "learnings" / "entries"
 
         _write_entry(
-            entries_dir, "success-1",
+            entries_dir,
+            "success-1",
             summary="Success: reflection complete 3x in session",
         )
 
@@ -232,7 +253,8 @@ class TestHasExistingSuccessLearning:
             mock_list,
         ):
             result = has_existing_success_learning(
-                trw_dir, "Success: reflection complete 3x in session",
+                trw_dir,
+                "Success: reflection complete 3x in session",
             )
         assert result is True
 
@@ -251,7 +273,8 @@ class TestHasExistingMechanicalLearning:
         entries_dir = trw_dir / "learnings" / "entries"
 
         _write_entry(
-            entries_dir, "mech-1",
+            entries_dir,
+            "mech-1",
             summary="Repeated operation: file_modified 5x",
         )
 
@@ -260,7 +283,8 @@ class TestHasExistingMechanicalLearning:
             side_effect=RuntimeError("sqlite broken"),
         ):
             result = has_existing_mechanical_learning(
-                trw_dir, "Repeated operation: file_modified",
+                trw_dir,
+                "Repeated operation: file_modified",
             )
         assert result is True
 
@@ -268,15 +292,18 @@ class TestHasExistingMechanicalLearning:
         """Lines 498-499: SQLite path finds a matching prefix."""
         trw_dir = _setup_trw(tmp_path)
 
-        mock_list = MagicMock(return_value=[
-            {"summary": "Repeated operation: file_modified 5x"},
-        ])
+        mock_list = MagicMock(
+            return_value=[
+                {"summary": "Repeated operation: file_modified 5x"},
+            ]
+        )
         with patch(
             "trw_mcp.state.memory_adapter.list_active_learnings",
             mock_list,
         ):
             result = has_existing_mechanical_learning(
-                trw_dir, "Repeated operation: file_modified",
+                trw_dir,
+                "Repeated operation: file_modified",
             )
         assert result is True
 
@@ -286,20 +313,24 @@ class TestHasExistingMechanicalLearning:
         entries_dir = trw_dir / "learnings" / "entries"
 
         _write_entry(
-            entries_dir, "mech-1",
+            entries_dir,
+            "mech-1",
             summary="Repeated operation: checkpoint 3x",
         )
 
         # SQLite returns entries but none match the prefix
-        mock_list = MagicMock(return_value=[
-            {"summary": "unrelated learning"},
-        ])
+        mock_list = MagicMock(
+            return_value=[
+                {"summary": "unrelated learning"},
+            ]
+        )
         with patch(
             "trw_mcp.state.memory_adapter.list_active_learnings",
             mock_list,
         ):
             result = has_existing_mechanical_learning(
-                trw_dir, "Repeated operation: checkpoint",
+                trw_dir,
+                "Repeated operation: checkpoint",
             )
         assert result is True
 
@@ -312,9 +343,7 @@ class TestHasExistingMechanicalLearning:
 class TestUpdateAnalyticsExtendedYamlFallback:
     """Test YAML fallback in update_analytics_extended for q-learning scan."""
 
-    def test_yaml_fallback_counts_q_activations_and_high_impact(
-        self, tmp_path: Path
-    ) -> None:
+    def test_yaml_fallback_counts_q_activations_and_high_impact(self, tmp_path: Path) -> None:
         """Lines 727-735: YAML fallback scans entries for q_observations and impact."""
         trw_dir = _setup_trw(tmp_path)
         entries_dir = trw_dir / "learnings" / "entries"
@@ -397,7 +426,8 @@ class TestAutoPruneYamlPath:
             side_effect=ImportError("no sqlite"),
         ):
             result = auto_prune_excess_entries(
-                trw_dir, max_entries=10,
+                trw_dir,
+                max_entries=10,
             )
 
         assert result["actions_taken"] == 0
@@ -410,10 +440,11 @@ class TestAutoPruneYamlPath:
 
         # Create enough entries to exceed max_entries threshold
         # Make duplicates (similar summaries for Jaccard match)
-        old_date = (date.today() - timedelta(days=60)).isoformat()
+        old_date = (datetime.now(tz=timezone.utc).date() - timedelta(days=60)).isoformat()
         for i in range(5):
             _write_entry(
-                entries_dir, f"entry-{i}",
+                entries_dir,
+                f"entry-{i}",
                 summary=f"testing coverage gap in module {i % 2}",
                 impact=0.1,
                 last_accessed_at=old_date,
@@ -441,14 +472,12 @@ class TestAutoPruneYamlPath:
                         {"id": "entry-4", "suggested_status": "active"},
                     ],
                 ):
-                    with patch(
-                        "trw_mcp.state.analytics.dedup.apply_status_update"
-                    ) as mock_apply:
-                        with patch(
-                            "trw_mcp.state.analytics.dedup.resync_learning_index"
-                        ) as mock_resync:
+                    with patch("trw_mcp.state.analytics.dedup.apply_status_update") as mock_apply:
+                        with patch("trw_mcp.state.analytics.dedup.resync_learning_index") as mock_resync:
                             result = auto_prune_excess_entries(
-                                trw_dir, max_entries=2, dry_run=False,
+                                trw_dir,
+                                max_entries=2,
+                                dry_run=False,
                             )
 
         # 1 dedup action + 2 utility actions (entry-2 obsolete, entry-3 resolved)
@@ -461,10 +490,11 @@ class TestAutoPruneYamlPath:
         trw_dir = _setup_trw(tmp_path)
         entries_dir = trw_dir / "learnings" / "entries"
 
-        old_date = (date.today() - timedelta(days=60)).isoformat()
+        old_date = (datetime.now(tz=timezone.utc).date() - timedelta(days=60)).isoformat()
         for i in range(5):
             _write_entry(
-                entries_dir, f"entry-{i}",
+                entries_dir,
+                f"entry-{i}",
                 summary=f"testing coverage gap {i}",
                 impact=0.1,
                 last_accessed_at=old_date,
@@ -483,7 +513,9 @@ class TestAutoPruneYamlPath:
                     return_value=[],
                 ):
                     result = auto_prune_excess_entries(
-                        trw_dir, max_entries=2, dry_run=True,
+                        trw_dir,
+                        max_entries=2,
+                        dry_run=True,
                     )
 
         assert result["actions_taken"] == 0
@@ -515,21 +547,27 @@ class TestComputeReflectionQualityYamlFallback:
 
         # Create entries with various attributes
         _write_entry(
-            entries_dir, "entry-1",
-            access_count=3, q_observations=2,
+            entries_dir,
+            "entry-1",
+            access_count=3,
+            q_observations=2,
             tags=["testing", "coverage"],
             source_type="agent",
         )
         _write_entry(
-            entries_dir, "entry-2",
-            access_count=0, q_observations=0,
+            entries_dir,
+            "entry-2",
+            access_count=0,
+            q_observations=0,
             tags=["architecture"],
             source_type="human",
         )
         _write_entry(
-            entries_dir, "entry-3",
+            entries_dir,
+            "entry-3",
             status="resolved",
-            access_count=1, q_observations=1,
+            access_count=1,
+            q_observations=1,
             tags=["gotcha"],
             source_type="agent",
         )
@@ -557,27 +595,35 @@ class TestComputeReflectionQualityYamlFallback:
 
         # Multiple entries with diverse attributes to cover all branches
         _write_entry(
-            entries_dir, "e1",
-            access_count=5, q_observations=3,
+            entries_dir,
+            "e1",
+            access_count=5,
+            q_observations=3,
             tags=["testing", "fixtures", "mocking"],
             source_type="agent",
         )
         _write_entry(
-            entries_dir, "e2",
-            access_count=1, q_observations=0,
+            entries_dir,
+            "e2",
+            access_count=1,
+            q_observations=0,
             tags=["architecture", "design"],
             source_type="human",
         )
         _write_entry(
-            entries_dir, "e3",
-            access_count=0, q_observations=1,
+            entries_dir,
+            "e3",
+            access_count=0,
+            q_observations=1,
             tags=["gotcha", "pydantic", "config"],
             source_type="agent",
         )
         # Entry with no tags (just empty list — default)
         _write_entry(
-            entries_dir, "e4",
-            access_count=0, q_observations=0,
+            entries_dir,
+            "e4",
+            access_count=0,
+            q_observations=0,
             tags=[],
             source_type="",
         )

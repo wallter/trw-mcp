@@ -64,8 +64,7 @@ def _build_config() -> TRWConfig:
                 filtered = {
                     str(k): v
                     for k, v in overrides.items()
-                    if v is not None
-                    and f"TRW_{str(k).upper()}" not in os.environ
+                    if v is not None and f"TRW_{str(k).upper()}" not in os.environ
                 }
                 if filtered:
                     return TRWConfig(**filtered)  # type: ignore[arg-type]

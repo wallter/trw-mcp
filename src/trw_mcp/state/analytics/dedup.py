@@ -75,10 +75,7 @@ def find_duplicate_learnings(
     """
     if entries is not None:
         # PRD-FIX-033-FR03: Use pre-loaded entries (from SQLite)
-        active_entries: list[LearningEntryDict] = [
-            e for e in entries
-            if str(e.get("status", "active")) == "active"
-        ]
+        active_entries: list[LearningEntryDict] = [e for e in entries if str(e.get("status", "active")) == "active"]
     else:
         # Backward-compatible YAML scan path
         if not entries_dir.is_dir():
@@ -91,7 +88,7 @@ def find_duplicate_learnings(
     duplicates: list[tuple[str, str, float]] = []
     for i, entry_a in enumerate(active_entries):
         summary_a = str(entry_a.get("summary", ""))
-        for entry_b in active_entries[i + 1:]:
+        for entry_b in active_entries[i + 1 :]:
             summary_b = str(entry_b.get("summary", ""))
             sim = compute_jaccard_similarity(summary_a, summary_b)
             if sim >= threshold:
@@ -124,7 +121,7 @@ def _compute_removal_scores(
     from trw_mcp.scoring import utility_based_prune_candidates
 
     duplicates = find_duplicate_learnings(entries_dir, jaccard_threshold)
-    typed_tuples = cast(list[tuple[Path, LearningEntryDict]], entries_tuples)
+    typed_tuples = cast("list[tuple[Path, LearningEntryDict]]", entries_tuples)
     utility_candidates = utility_based_prune_candidates(typed_tuples)
     return duplicates, utility_candidates
 
@@ -150,12 +147,12 @@ def _compute_removal_scores_from_sqlite(
     from trw_mcp.scoring import utility_based_prune_candidates
 
     duplicates = find_duplicate_learnings(
-        entries_dir, jaccard_threshold, entries=sqlite_entries,
+        entries_dir,
+        jaccard_threshold,
+        entries=sqlite_entries,
     )
     dummy_path = entries_dir / "_dummy.yaml"
-    all_entries_tuples: list[tuple[Path, LearningEntryDict]] = [
-        (dummy_path, e) for e in sqlite_entries
-    ]
+    all_entries_tuples: list[tuple[Path, LearningEntryDict]] = [(dummy_path, e) for e in sqlite_entries]
     utility_candidates = utility_based_prune_candidates(all_entries_tuples)
     return duplicates, utility_candidates
 
@@ -223,6 +220,7 @@ def auto_prune_excess_entries(
     sqlite_entries: list[dict[str, object]] | None = None
     try:
         from trw_mcp.state.memory_adapter import list_entries_by_status
+
         sqlite_entries = list_entries_by_status(trw_dir, status="active")
     except Exception:  # justified: boundary, ImportError + SQLite/adapter failures
         logger.warning("sqlite_read_fallback", step="auto_prune", reason="get_backend failed")
@@ -241,7 +239,9 @@ def auto_prune_excess_entries(
             }
 
         duplicates, utility_candidates = _compute_removal_scores_from_sqlite(
-            cast(list[LearningEntryDict], sqlite_entries), entries_dir, jaccard_threshold,
+            cast("list[LearningEntryDict]", sqlite_entries),
+            entries_dir,
+            jaccard_threshold,
         )
         removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
 
@@ -255,10 +255,7 @@ def auto_prune_excess_entries(
                 resync_learning_index(trw_dir)
 
         return {
-            "dedup_candidates": [
-                {"older_id": o, "newer_id": n, "similarity": s}
-                for o, n, s in duplicates
-            ],
+            "dedup_candidates": [{"older_id": o, "newer_id": n, "similarity": s} for o, n, s in duplicates],
             "utility_candidates": utility_candidates,
             "actions_taken": actions,
             "active_count": active_count,
@@ -283,7 +280,9 @@ def auto_prune_excess_entries(
         }
 
     duplicates, utility_candidates = _compute_removal_scores(
-        all_entries, entries_dir, jaccard_threshold,
+        all_entries,
+        entries_dir,
+        jaccard_threshold,
     )
     removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
 
@@ -297,10 +296,7 @@ def auto_prune_excess_entries(
             resync_learning_index(trw_dir)
 
     return {
-        "dedup_candidates": [
-            {"older_id": o, "newer_id": n, "similarity": s}
-            for o, n, s in duplicates
-        ],
+        "dedup_candidates": [{"older_id": o, "newer_id": n, "similarity": s} for o, n, s in duplicates],
         "utility_candidates": utility_candidates,
         "actions_taken": actions,
         "active_count": active_count,
@@ -351,10 +347,7 @@ def _score_learning_depth(
     """
     if total_entries == 0:
         return 0.0
-    accessed = sum(
-        1 for data in entries
-        if int(str(data.get("access_count", 0))) > 0
-    )
+    accessed = sum(1 for data in entries if int(str(data.get("access_count", 0))) > 0)
     return accessed / total_entries
 
 
@@ -376,10 +369,7 @@ def _score_impact_distribution(
     """
     if total_entries == 0:
         return 0.0
-    q_activated = sum(
-        1 for data in entries
-        if int(str(data.get("q_observations", 0))) > 0
-    )
+    q_activated = sum(1 for data in entries if int(str(data.get("q_observations", 0))) > 0)
     return q_activated / total_entries
 
 
@@ -415,7 +405,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
                 new_learnings = data.get("new_learnings", [])
                 if isinstance(new_learnings, list):
                     total_learnings_from_reflections += len(new_learnings)
-            except (StateError, ValueError, TypeError):
+            except (StateError, ValueError, TypeError):  # per-item error handling: skip corrupt reflection files  # noqa: PERF203
                 continue
 
     # Scan entries for diversity + access + Q-learning metrics
@@ -430,6 +420,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     _used_sqlite = False
     try:
         from trw_mcp.state.memory_adapter import count_entries, list_active_learnings
+
         total_entries = count_entries(trw_dir)
         entries_for_metrics = list_active_learnings(trw_dir)
         active_entries = len(entries_for_metrics)
@@ -457,36 +448,27 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     reflection_freq = min(1.0, reflection_count / 3.0) if reflection_count > 0 else 0.0
 
     # 2. Productivity: avg learnings per reflection (0 = 0.0, 2+ = 1.0)
-    avg_learnings = (total_learnings_from_reflections / max(reflection_count, 1)
-                     if reflection_count > 0 else 0.0)
+    avg_learnings = total_learnings_from_reflections / max(reflection_count, 1) if reflection_count > 0 else 0.0
     productivity = min(1.0, avg_learnings / 2.0)
 
     # 3. Diversity: tag variety (0 tags = 0.0, 10+ = 1.0)
-    diversity = _score_learning_diversity(cast(list[LearningEntryDict], entries_for_metrics))
+    diversity = _score_learning_diversity(cast("list[LearningEntryDict]", entries_for_metrics))
 
     # 4. Access ratio: proportion of entries that have been accessed
-    access_ratio = _score_learning_depth(cast(list[LearningEntryDict], entries_for_metrics), total_entries)
+    access_ratio = _score_learning_depth(cast("list[LearningEntryDict]", entries_for_metrics), total_entries)
 
     # 5. Q-learning activation: proportion of entries with Q observations
-    q_activation_rate = _score_impact_distribution(cast(list[LearningEntryDict], entries_for_metrics), total_entries)
+    q_activation_rate = _score_impact_distribution(cast("list[LearningEntryDict]", entries_for_metrics), total_entries)
 
     # Weighted composite (reflection_freq 25%, productivity 25%,
     # diversity 15%, access 20%, Q-activation 15%)
     composite = (
-        0.25 * reflection_freq
-        + 0.25 * productivity
-        + 0.15 * diversity
-        + 0.20 * access_ratio
-        + 0.15 * q_activation_rate
+        0.25 * reflection_freq + 0.25 * productivity + 0.15 * diversity + 0.20 * access_ratio + 0.15 * q_activation_rate
     )
 
     # Recompute raw counts for diagnostics
-    accessed_entries = sum(
-        1 for data in entries_for_metrics if int(str(data.get("access_count", 0))) > 0
-    )
-    q_activated = sum(
-        1 for data in entries_for_metrics if int(str(data.get("q_observations", 0))) > 0
-    )
+    accessed_entries = sum(1 for data in entries_for_metrics if int(str(data.get("access_count", 0))) > 0)
+    q_activated = sum(1 for data in entries_for_metrics if int(str(data.get("q_observations", 0))) > 0)
     unique_tags: set[str] = set()
     for entry_data in entries_for_metrics:
         tags = entry_data.get("tags", [])

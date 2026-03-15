@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.run import ComplexityClass, EventType
+from trw_mcp.models.run import EventType
 from trw_mcp.scoring import (
     _IMPACT_DECAY_FLOOR,
     _LN2,
@@ -36,7 +36,6 @@ from trw_mcp.scoring import (
     update_q_value,
     utility_based_prune_candidates,
 )
-
 
 # ============================================================================
 # Constants verification
@@ -213,22 +212,30 @@ class TestEntryUtilityEdgeCases:
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         entry: dict[str, object] = {}
-        result = _entry_utility(entry, date.today())
+        result = _entry_utility(entry, datetime.now(tz=timezone.utc).date())
         assert 0.0 <= result <= 1.0
 
     def test_high_access_count_boosts_utility(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """High access_count should boost utility score."""
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         entry_low: dict[str, object] = {
-            "impact": 0.5, "q_value": 0.5, "q_observations": 5,
-            "recurrence": 1, "access_count": 0, "source_type": "agent",
+            "impact": 0.5,
+            "q_value": 0.5,
+            "q_observations": 5,
+            "recurrence": 1,
+            "access_count": 0,
+            "source_type": "agent",
             "created": today.isoformat(),
         }
         entry_high: dict[str, object] = {
-            "impact": 0.5, "q_value": 0.5, "q_observations": 5,
-            "recurrence": 1, "access_count": 50, "source_type": "agent",
+            "impact": 0.5,
+            "q_value": 0.5,
+            "q_observations": 5,
+            "recurrence": 1,
+            "access_count": 50,
+            "source_type": "agent",
             "created": today.isoformat(),
         }
         score_low = _entry_utility(entry_low, today)
@@ -239,10 +246,14 @@ class TestEntryUtilityEdgeCases:
         """source_type='human' should produce higher utility than 'agent'."""
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         base: dict[str, object] = {
-            "impact": 0.5, "q_value": 0.5, "q_observations": 5,
-            "recurrence": 1, "access_count": 0, "created": today.isoformat(),
+            "impact": 0.5,
+            "q_value": 0.5,
+            "q_observations": 5,
+            "recurrence": 1,
+            "access_count": 0,
+            "created": today.isoformat(),
         }
         entry_agent = {**base, "source_type": "agent"}
         entry_human = {**base, "source_type": "human"}
@@ -255,12 +266,16 @@ class TestEntryUtilityEdgeCases:
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         entry: dict[str, object] = {
-            "impact": 0.5, "q_value": 0.5, "q_observations": 5,
-            "recurrence": 1, "access_count": 0, "source_type": "agent",
+            "impact": 0.5,
+            "q_value": 0.5,
+            "q_observations": 5,
+            "recurrence": 1,
+            "access_count": 0,
+            "source_type": "agent",
         }
         # With large fallback_days, utility should be very low
-        score_fresh = _entry_utility(entry, date.today(), fallback_days=0)
-        score_stale = _entry_utility(entry, date.today(), fallback_days=365)
+        score_fresh = _entry_utility(entry, datetime.now(tz=timezone.utc).date(), fallback_days=0)
+        score_stale = _entry_utility(entry, datetime.now(tz=timezone.utc).date(), fallback_days=365)
         assert score_fresh > score_stale
 
 
@@ -442,7 +457,7 @@ class TestEnforceTierDistributionEdgeCases:
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         # 10 entries: 6 critical, 4 medium
         entries = [
-            ("L-crit-low", 0.91),   # Lowest critical -- should be demoted
+            ("L-crit-low", 0.91),  # Lowest critical -- should be demoted
             ("L-crit-2", 0.95),
             ("L-crit-3", 0.95),
             ("L-crit-4", 0.95),
@@ -464,7 +479,8 @@ class TestEnforceTierDistributionEdgeCases:
                 assert new_score <= _TIER_HIGH_CEILING
 
     def test_high_tier_demotion_new_score_in_medium_range(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Demoted high entry gets a score in [0.4, 0.69]."""
         cfg = TRWConfig()
@@ -472,7 +488,7 @@ class TestEnforceTierDistributionEdgeCases:
         # 10 entries: all in high tier (0.7-0.89)
         entries = [(f"L-{i}", 0.75) for i in range(10)]
         result = enforce_tier_distribution(entries)
-        for lid, new_score in result:
+        for _lid, new_score in result:
             if new_score < 0.7:
                 assert new_score <= _TIER_MEDIUM_CEILING
                 assert new_score >= 0.4
@@ -637,7 +653,7 @@ class TestRankByUtilityEdgeCases:
             "recurrence": 1,
             "access_count": 0,
             "source_type": "agent",
-            "created": date.today().isoformat(),
+            "created": datetime.now(tz=timezone.utc).date().isoformat(),
         }
 
     def test_non_list_tags_handled(self) -> None:
@@ -735,7 +751,7 @@ class TestUtilityBasedPruneCandidatesEdgeCases:
 
     def test_active_young_high_utility_not_candidate(self) -> None:
         """Recent high-impact active entry is never a candidate."""
-        entries = [self._make_entry("L-fresh", date.today().isoformat(), impact=0.9)]
+        entries = [self._make_entry("L-fresh", datetime.now(tz=timezone.utc).date().isoformat(), impact=0.9)]
         result = utility_based_prune_candidates(entries)
         assert result == []
 
@@ -749,7 +765,7 @@ class TestUtilityBasedPruneCandidatesEdgeCases:
     def test_tier3_requires_age_over_14_days(self) -> None:
         """Tier-3 prune candidates must be older than 14 days."""
         # 10 days old, low utility but below age threshold
-        recent = (date.today() - timedelta(days=10)).isoformat()
+        recent = (datetime.now(tz=timezone.utc).date() - timedelta(days=10)).isoformat()
         entries = [self._make_entry("L-young-low", recent, impact=0.05)]
         result = utility_based_prune_candidates(entries)
         # Should be tier 2 (delete) if utility < delete_threshold, or not a candidate
@@ -757,12 +773,14 @@ class TestUtilityBasedPruneCandidatesEdgeCases:
         for candidate in result:
             if candidate["id"] == "L-young-low":
                 # If captured, it should be tier 2 (not tier 3 because age <= 14)
-                assert "delete threshold" in str(candidate.get("reason", "")).lower() or \
-                       "utility" in str(candidate.get("reason", "")).lower()
+                assert (
+                    "delete threshold" in str(candidate.get("reason", "")).lower()
+                    or "utility" in str(candidate.get("reason", "")).lower()
+                )
 
     def test_high_recurrence_improves_utility(self) -> None:
         """Higher recurrence count produces higher utility (harder to prune)."""
-        old_date = (date.today() - timedelta(days=60)).isoformat()
+        old_date = (datetime.now(tz=timezone.utc).date() - timedelta(days=60)).isoformat()
         low_rec = self._make_entry("L-low-rec", old_date, impact=0.3, recurrence=1)
         high_rec = self._make_entry("L-high-rec", old_date, impact=0.3, recurrence=20)
         result_low = utility_based_prune_candidates([low_rec])
@@ -782,20 +800,40 @@ class TestComputeUtilityScoreMath:
     def test_access_count_boost(self) -> None:
         """access_count parameter provides a boost."""
         score_no_access = compute_utility_score(
-            0.5, 7, 1, 0.5, 5, access_count=0,
+            0.5,
+            7,
+            1,
+            0.5,
+            5,
+            access_count=0,
         )
         score_with_access = compute_utility_score(
-            0.5, 7, 1, 0.5, 5, access_count=10,
+            0.5,
+            7,
+            1,
+            0.5,
+            5,
+            access_count=10,
         )
         assert score_with_access >= score_no_access
 
     def test_source_human_boost(self) -> None:
         """source_type='human' provides a utility boost."""
         score_agent = compute_utility_score(
-            0.5, 7, 1, 0.5, 5, source_type="agent",
+            0.5,
+            7,
+            1,
+            0.5,
+            5,
+            source_type="agent",
         )
         score_human = compute_utility_score(
-            0.5, 7, 1, 0.5, 5, source_type="human",
+            0.5,
+            7,
+            1,
+            0.5,
+            5,
+            source_type="human",
         )
         assert score_human >= score_agent
 
@@ -926,7 +964,8 @@ class TestResolveEventRewardAdditional:
         from trw_mcp.scoring import _resolve_event_reward
 
         reward, label = _resolve_event_reward(
-            EventType.COMPLIANCE_CHECK, event_data={"other": "data"},
+            EventType.COMPLIANCE_CHECK,
+            event_data={"other": "data"},
         )
         assert reward is None
 
@@ -935,7 +974,8 @@ class TestResolveEventRewardAdditional:
         from trw_mcp.scoring import _resolve_event_reward
 
         reward, label = _resolve_event_reward(
-            EventType.TEST_RUN, event_data={},
+            EventType.TEST_RUN,
+            event_data={},
         )
         # {} is falsy in Python, so `if event_data:` is False
         # Falls through to EVENT_ALIASES where TEST_RUN has None alias
@@ -955,7 +995,8 @@ class TestResolveEventRewardAdditional:
         from trw_mcp.scoring import _resolve_event_reward
 
         reward, label = _resolve_event_reward(
-            EventType.PRD_STATUS_CHANGE, event_data={"new_status": "Approved"},
+            EventType.PRD_STATUS_CHANGE,
+            event_data={"new_status": "Approved"},
         )
         # The code does .lower(), so this should match
         assert reward is not None

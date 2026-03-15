@@ -16,7 +16,7 @@ from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.typed_dicts import MypyResultDict, PytestResultDict
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.tools.build._runners import _run_mypy, _run_pytest
-from trw_mcp.tools.build._subprocess import _collect_failures, _MAX_FAILURES
+from trw_mcp.tools.build._subprocess import _MAX_FAILURES, _collect_failures
 
 
 def _cache_to_context(

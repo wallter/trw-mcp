@@ -15,7 +15,6 @@ import pytest
 from pydantic import ValidationError
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import Phase
@@ -141,7 +140,9 @@ class TestRunBuildCheck:
 
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None)
     def test_pytest_not_found(
-        self, mock_which: MagicMock, tmp_path: Path,
+        self,
+        mock_which: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # No venv pytest either
         status = run_build_check(tmp_path, scope="pytest")
@@ -284,17 +285,20 @@ def _write_build_cache(
     cache_path = context_dir / "build-status.yaml"
     ts = timestamp or datetime.now(timezone.utc).isoformat()
     writer = FileStateWriter()
-    writer.write_yaml(cache_path, {
-        "tests_passed": tests_passed,
-        "mypy_clean": mypy_clean,
-        "coverage_pct": coverage_pct,
-        "test_count": 100,
-        "failure_count": 0 if tests_passed else 3,
-        "failures": [] if tests_passed else ["FAILED test_a", "FAILED test_b", "FAILED test_c"],
-        "timestamp": ts,
-        "scope": scope,
-        "duration_secs": 30.0,
-    })
+    writer.write_yaml(
+        cache_path,
+        {
+            "tests_passed": tests_passed,
+            "mypy_clean": mypy_clean,
+            "coverage_pct": coverage_pct,
+            "test_count": 100,
+            "failure_count": 0 if tests_passed else 3,
+            "failures": [] if tests_passed else ["FAILED test_a", "FAILED test_b", "FAILED test_c"],
+            "timestamp": ts,
+            "scope": scope,
+            "duration_secs": 30.0,
+        },
+    )
     return cache_path
 
 
@@ -452,14 +456,20 @@ class TestBuildPhaseGateIntegration:
         meta.mkdir(parents=True)
         (run_dir / "shards").mkdir()
         writer = FileStateWriter()
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "test", "task": "test", "status": "active",
-            "phase": "implement",
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "test",
+                "task": "test",
+                "status": "active",
+                "phase": "implement",
+            },
+        )
 
         config = TRWConfig()
         with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
             from trw_mcp.state.validation import check_phase_exit
+
             result = check_phase_exit(Phase.IMPLEMENT, run_dir, config)
 
         build_failures = [f for f in result.failures if f.field.startswith("build_")]
@@ -477,14 +487,20 @@ class TestBuildPhaseGateIntegration:
         meta.mkdir(parents=True)
         (run_dir / "validation").mkdir()
         writer = FileStateWriter()
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "test", "task": "test", "status": "active",
-            "phase": "validate",
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "test",
+                "task": "test",
+                "status": "active",
+                "phase": "validate",
+            },
+        )
 
         config = TRWConfig()
         with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
             from trw_mcp.state.validation import check_phase_exit
+
             result = check_phase_exit(Phase.VALIDATE, run_dir, config)
 
         build_failures = [f for f in result.failures if f.field.startswith("build_")]
@@ -502,14 +518,20 @@ class TestBuildPhaseGateIntegration:
         meta.mkdir(parents=True)
         (run_dir / "reports").mkdir()
         writer = FileStateWriter()
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "test", "task": "test", "status": "active",
-            "phase": "deliver",
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "test",
+                "task": "test",
+                "status": "active",
+                "phase": "deliver",
+            },
+        )
 
         config = TRWConfig()
         with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
             from trw_mcp.state.validation import check_phase_exit
+
             result = check_phase_exit(Phase.DELIVER, run_dir, config)
 
         build_failures = [f for f in result.failures if f.field.startswith("build_")]
@@ -781,8 +803,10 @@ class TestMinCoverageThreshold:
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
         mock_get_config.return_value = TRWConfig(
-            build_check_enabled=True, build_check_timeout_secs=300,
-            build_check_pytest_args="", build_check_mypy_args="--strict",
+            build_check_enabled=True,
+            build_check_timeout_secs=300,
+            build_check_pytest_args="",
+            build_check_mypy_args="--strict",
         )
 
         mock_run.return_value = BuildStatus(
@@ -829,8 +853,10 @@ class TestMinCoverageThreshold:
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
         mock_get_config.return_value = TRWConfig(
-            build_check_enabled=True, build_check_timeout_secs=300,
-            build_check_pytest_args="", build_check_mypy_args="--strict",
+            build_check_enabled=True,
+            build_check_timeout_secs=300,
+            build_check_pytest_args="",
+            build_check_mypy_args="--strict",
         )
 
         mock_run.return_value = BuildStatus(
@@ -874,8 +900,10 @@ class TestMinCoverageThreshold:
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
         mock_get_config.return_value = TRWConfig(
-            build_check_enabled=True, build_check_timeout_secs=300,
-            build_check_pytest_args="", build_check_mypy_args="--strict",
+            build_check_enabled=True,
+            build_check_timeout_secs=300,
+            build_check_pytest_args="",
+            build_check_mypy_args="--strict",
         )
 
         mock_run.return_value = BuildStatus(

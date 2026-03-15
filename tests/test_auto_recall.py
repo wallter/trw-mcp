@@ -72,7 +72,9 @@ class TestAutoRecallEnabled:
     """Auto-recall is active by default and surfaces entries."""
 
     def test_auto_recall_returns_entries(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When auto-recall is enabled, returned entries appear in result."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -98,7 +100,9 @@ class TestAutoRecallEnabled:
         assert result["auto_recall_count"] == 3
 
     def test_auto_recall_no_results_no_key(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When auto-recall returns empty list, auto_recalled key is absent."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -122,10 +126,13 @@ class TestAutoRecallDisabled:
     """Auto-recall disabled via config flag."""
 
     def test_no_auto_recall_when_disabled(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When auto_recall_enabled=False, no auto_recalled key in result."""
         from trw_mcp.models.config import TRWConfig, _reset_config
+
         disabled_config = TRWConfig(auto_recall_enabled=False)
         _reset_config(disabled_config)
 
@@ -145,7 +152,9 @@ class TestAutoRecallWithActiveRun:
     """Auto-recall uses task context from active run."""
 
     def test_uses_task_and_phase_as_query(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When active run has task+phase, those form the query tokens."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -163,9 +172,14 @@ class TestAutoRecallWithActiveRun:
         captured_calls: list[dict[str, Any]] = []
 
         def _fake_recall(
-            trw_dir_arg: Any, *, query: str = "*", tags: Any = None,
-            min_impact: float = 0.0, max_results: int = 25,
-            compact: bool = False, **kwargs: Any,
+            trw_dir_arg: Any,
+            *,
+            query: str = "*",
+            tags: Any = None,
+            min_impact: float = 0.0,
+            max_results: int = 25,
+            compact: bool = False,
+            **kwargs: Any,
         ) -> list[dict[str, object]]:
             captured_calls.append({"query": query, "tags": tags, "min_impact": min_impact})
             return [{"id": "L-x1", "summary": "Scoring fix tip", "impact": 0.9, "tags": ["gotcha"], "status": "active"}]
@@ -197,7 +211,9 @@ class TestAutoRecallWithActiveRun:
         assert auto_recall_call.get("tags") == ["gotcha", "testing", "pattern"]
 
     def test_uses_wildcard_when_no_task_context(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When no active run, query tokens default to empty (wildcard)."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -206,9 +222,14 @@ class TestAutoRecallWithActiveRun:
         captured_calls: list[dict[str, Any]] = []
 
         def _fake_recall(
-            trw_dir_arg: Any, *, query: str = "*", tags: Any = None,
-            min_impact: float = 0.0, max_results: int = 25,
-            compact: bool = False, **kwargs: Any,
+            trw_dir_arg: Any,
+            *,
+            query: str = "*",
+            tags: Any = None,
+            min_impact: float = 0.0,
+            max_results: int = 25,
+            compact: bool = False,
+            **kwargs: Any,
         ) -> list[dict[str, object]]:
             captured_calls.append({"query": query, "tags": tags, "min_impact": min_impact})
             return [{"id": "L-y1", "summary": "General tip", "impact": 0.8, "tags": ["pattern"], "status": "active"}]
@@ -241,7 +262,9 @@ class TestAutoRecallFailOpen:
     """Auto-recall errors must not crash trw_session_start."""
 
     def test_error_failopen(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When search_entries raises in auto-recall step, session_start still succeeds."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -250,7 +273,8 @@ class TestAutoRecallFailOpen:
         call_count = {"n": 0}
 
         def _failing_recall(
-            trw_dir_arg: Any, **kwargs: Any,
+            trw_dir_arg: Any,
+            **kwargs: Any,
         ) -> list[dict[str, object]]:
             call_count["n"] += 1
             if call_count["n"] > 1:
@@ -275,7 +299,9 @@ class TestAutoRecallFailOpen:
         assert "timestamp" in result
 
     def test_error_failopen_with_active_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto-recall error with active run does not affect run status."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -293,7 +319,8 @@ class TestAutoRecallFailOpen:
         call_count = {"n": 0}
 
         def _failing_recall(
-            trw_dir_arg: Any, **kwargs: Any,
+            trw_dir_arg: Any,
+            **kwargs: Any,
         ) -> list[dict[str, object]]:
             call_count["n"] += 1
             if call_count["n"] > 1:
@@ -322,10 +349,13 @@ class TestAutoRecallMaxResults:
     """Auto-recall respects max_results config."""
 
     def test_respects_max_results(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """auto_recall_max_results limits returned entries."""
         from trw_mcp.models.config import TRWConfig
+
         mock_cfg = TRWConfig(auto_recall_max_results=2)
         monkeypatch.setattr("trw_mcp.tools.ceremony.get_config", lambda: mock_cfg)
 
@@ -338,7 +368,8 @@ class TestAutoRecallMaxResults:
         ]
 
         def _fake_recall(
-            trw_dir_arg: Any, **kwargs: Any,
+            trw_dir_arg: Any,
+            **kwargs: Any,
         ) -> list[dict[str, object]]:
             return mock_entries
 
@@ -363,28 +394,34 @@ class TestAutoRecallConfigFields:
 
     def test_auto_recall_enabled_default(self) -> None:
         from trw_mcp.models.config import TRWConfig
+
         config = TRWConfig()
         assert config.auto_recall_enabled is True
 
     def test_auto_recall_max_results_default(self) -> None:
         from trw_mcp.models.config import TRWConfig
+
         config = TRWConfig()
         assert config.auto_recall_max_results == 5
 
     def test_auto_recall_enabled_env_override(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """TRW_AUTO_RECALL_ENABLED env var can disable auto-recall."""
         from trw_mcp.models.config import TRWConfig
+
         monkeypatch.setenv("TRW_AUTO_RECALL_ENABLED", "false")
         config = TRWConfig()
         assert config.auto_recall_enabled is False
 
     def test_auto_recall_max_results_env_override(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """TRW_AUTO_RECALL_MAX_RESULTS env var overrides default."""
         from trw_mcp.models.config import TRWConfig
+
         monkeypatch.setenv("TRW_AUTO_RECALL_MAX_RESULTS", "10")
         config = TRWConfig()
         assert config.auto_recall_max_results == 10

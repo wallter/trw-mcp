@@ -4,24 +4,32 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from trw_mcp.state.memory_store import MemoryStore
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_store(tmp_path: Path, dim: int = 4) -> MemoryStore:  # type: ignore[name-defined]  # noqa: F821
-    from trw_mcp.state.memory_store import MemoryStore
-    return MemoryStore(tmp_path / "vectors.db", dim=dim)
+
+def _make_store(tmp_path: Path, dim: int = 4) -> MemoryStore:
+    from trw_mcp.state.memory_store import MemoryStore as _MemoryStore
+
+    return _MemoryStore(tmp_path / "vectors.db", dim=dim)
 
 
 # ---------------------------------------------------------------------------
 # Availability
 # ---------------------------------------------------------------------------
 
+
 class TestAvailability:
     def test_available_when_sqlite_vec_installed(self) -> None:
         from trw_mcp.state.memory_store import MemoryStore
+
         # sqlite_vec was installed so this should be True
         assert MemoryStore.available() is True
 
@@ -29,12 +37,14 @@ class TestAvailability:
         with patch.dict(sys.modules, {"sqlite_vec": None}):
             # Re-import to trigger fresh availability check
             import trw_mcp.state.memory_store as ms_mod
+
             # Directly test the function that uses the module-level flag
             # We patch the module-level flag
             original = ms_mod._SQLITE_VEC_AVAILABLE
             try:
                 ms_mod._SQLITE_VEC_AVAILABLE = False
                 from trw_mcp.state.memory_store import MemoryStore
+
                 assert MemoryStore.available() is False
             finally:
                 ms_mod._SQLITE_VEC_AVAILABLE = original
@@ -43,6 +53,7 @@ class TestAvailability:
 # ---------------------------------------------------------------------------
 # Init
 # ---------------------------------------------------------------------------
+
 
 class TestInit:
     def test_creates_db_file(self, tmp_path: Path) -> None:
@@ -60,6 +71,7 @@ class TestInit:
 
     def test_init_with_default_dim(self, tmp_path: Path) -> None:
         from trw_mcp.state.memory_store import MemoryStore
+
         store = MemoryStore(tmp_path / "default.db")
         try:
             assert store.count() == 0
@@ -70,6 +82,7 @@ class TestInit:
 # ---------------------------------------------------------------------------
 # Upsert + Search
 # ---------------------------------------------------------------------------
+
 
 class TestUpsertSearch:
     def test_upsert_then_search_returns_entry(self, tmp_path: Path) -> None:
@@ -137,6 +150,7 @@ class TestUpsertSearch:
 # Delete
 # ---------------------------------------------------------------------------
 
+
 class TestDelete:
     def test_delete_removes_entry(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path, dim=4)
@@ -173,13 +187,16 @@ class TestDelete:
 # Graceful degradation when sqlite-vec unavailable
 # ---------------------------------------------------------------------------
 
+
 class TestDegradation:
     def test_all_ops_noop_when_unavailable(self, tmp_path: Path) -> None:
         import trw_mcp.state.memory_store as ms_mod
+
         original = ms_mod._SQLITE_VEC_AVAILABLE
         try:
             ms_mod._SQLITE_VEC_AVAILABLE = False
             from trw_mcp.state.memory_store import MemoryStore
+
             store = MemoryStore(tmp_path / "noop.db", dim=4)
             # All ops should be no-ops or return empty/zero
             store.upsert("x", [1.0, 0.0, 0.0, 0.0], {})
@@ -193,10 +210,12 @@ class TestDegradation:
 
     def test_available_returns_false_when_flag_false(self, tmp_path: Path) -> None:
         import trw_mcp.state.memory_store as ms_mod
+
         original = ms_mod._SQLITE_VEC_AVAILABLE
         try:
             ms_mod._SQLITE_VEC_AVAILABLE = False
             from trw_mcp.state.memory_store import MemoryStore
+
             assert MemoryStore.available() is False
         finally:
             ms_mod._SQLITE_VEC_AVAILABLE = original
@@ -205,6 +224,7 @@ class TestDegradation:
 # ---------------------------------------------------------------------------
 # Count
 # ---------------------------------------------------------------------------
+
 
 class TestCount:
     def test_count_increments_with_upsert(self, tmp_path: Path) -> None:
@@ -222,6 +242,7 @@ class TestCount:
 # ---------------------------------------------------------------------------
 # Search error path
 # ---------------------------------------------------------------------------
+
 
 class TestSearchErrorPath:
     def test_search_returns_empty_on_exception(self, tmp_path: Path) -> None:
@@ -261,6 +282,7 @@ class TestSearchErrorPath:
 # Close idempotency
 # ---------------------------------------------------------------------------
 
+
 class TestCloseIdempotency:
     def test_close_twice_is_noop(self, tmp_path: Path) -> None:
         """Calling close() twice should not raise."""
@@ -299,15 +321,18 @@ class TestCloseIdempotency:
 # Migrate
 # ---------------------------------------------------------------------------
 
+
 class TestMigrate:
     def test_migrate_returns_zero_when_conn_none(self, tmp_path: Path) -> None:
         """When conn is None (unavailable), migrate returns all zeros."""
         import trw_mcp.state.memory_store as ms_mod
+
         original = ms_mod._SQLITE_VEC_AVAILABLE
         try:
             ms_mod._SQLITE_VEC_AVAILABLE = False
             from trw_mcp.state.memory_store import MemoryStore
             from trw_mcp.state.persistence import FileStateReader
+
             store = MemoryStore(tmp_path / "noop.db", dim=4)
             entries_dir = tmp_path / "entries"
             entries_dir.mkdir()
@@ -324,16 +349,20 @@ class TestMigrate:
         """
         from trw_mcp.state.memory_store import MemoryStore
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         store = MemoryStore(tmp_path / "vectors.db", dim=4)
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         writer = FileStateWriter()
-        writer.write_yaml(entries_dir / "L-test.yaml", {
-            "id": "L-test",
-            "summary": "test summary",
-            "detail": "test detail",
-            "status": "active",
-        })
+        writer.write_yaml(
+            entries_dir / "L-test.yaml",
+            {
+                "id": "L-test",
+                "summary": "test summary",
+                "detail": "test detail",
+                "status": "active",
+            },
+        )
         try:
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
                 result = store.migrate(entries_dir, FileStateReader())
@@ -345,6 +374,7 @@ class TestMigrate:
         """When entries_dir is empty (no YAML files), migrate returns all zeros."""
         from trw_mcp.state.memory_store import MemoryStore
         from trw_mcp.state.persistence import FileStateReader
+
         store = MemoryStore(tmp_path / "vectors.db", dim=4)
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -360,22 +390,29 @@ class TestMigrate:
         """migrate() embeds active entries and upserts into the store."""
         from trw_mcp.state.memory_store import MemoryStore
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         store = MemoryStore(tmp_path / "vectors.db", dim=4)
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         writer = FileStateWriter()
-        writer.write_yaml(entries_dir / "L-a.yaml", {
-            "id": "L-a",
-            "summary": "alpha summary",
-            "detail": "alpha detail",
-            "status": "active",
-        })
-        writer.write_yaml(entries_dir / "L-b.yaml", {
-            "id": "L-b",
-            "summary": "beta summary",
-            "detail": "beta detail",
-            "status": "active",
-        })
+        writer.write_yaml(
+            entries_dir / "L-a.yaml",
+            {
+                "id": "L-a",
+                "summary": "alpha summary",
+                "detail": "alpha detail",
+                "status": "active",
+            },
+        )
+        writer.write_yaml(
+            entries_dir / "L-b.yaml",
+            {
+                "id": "L-b",
+                "summary": "beta summary",
+                "detail": "beta detail",
+                "status": "active",
+            },
+        )
         try:
             fake_embeds = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
@@ -392,16 +429,20 @@ class TestMigrate:
         """migrate() skips resolved/obsolete entries."""
         from trw_mcp.state.memory_store import MemoryStore
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         store = MemoryStore(tmp_path / "vectors.db", dim=4)
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         writer = FileStateWriter()
-        writer.write_yaml(entries_dir / "L-res.yaml", {
-            "id": "L-res",
-            "summary": "resolved entry",
-            "detail": "resolved detail",
-            "status": "resolved",
-        })
+        writer.write_yaml(
+            entries_dir / "L-res.yaml",
+            {
+                "id": "L-res",
+                "summary": "resolved entry",
+                "detail": "resolved detail",
+                "status": "resolved",
+            },
+        )
         try:
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[]) as mock_batch:
@@ -415,16 +456,20 @@ class TestMigrate:
         """migrate() counts skipped entries when embed_batch returns None for some."""
         from trw_mcp.state.memory_store import MemoryStore
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         store = MemoryStore(tmp_path / "vectors.db", dim=4)
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         writer = FileStateWriter()
-        writer.write_yaml(entries_dir / "L-x.yaml", {
-            "id": "L-x",
-            "summary": "some summary",
-            "detail": "some detail",
-            "status": "active",
-        })
+        writer.write_yaml(
+            entries_dir / "L-x.yaml",
+            {
+                "id": "L-x",
+                "summary": "some summary",
+                "detail": "some detail",
+                "status": "active",
+            },
+        )
         try:
             # embed_text_batch returns [None] → 1 skipped, 0 migrated
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):

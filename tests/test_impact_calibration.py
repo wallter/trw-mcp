@@ -20,7 +20,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.scoring import apply_impact_decay, apply_time_decay, enforce_tier_distribution
 
 # ---------------------------------------------------------------------------
@@ -287,13 +286,14 @@ class TestApplyTimeDecay:
 
     def test_naive_datetime_treated_as_utc(self) -> None:
         """Naive datetimes are treated as UTC (no error)."""
-        naive_dt = datetime(2025, 1, 1, 12, 0, 0)  # no tzinfo
+        naive_dt = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc).replace(tzinfo=None)  # intentionally naive for backward-compat test
         result = apply_time_decay(0.8, naive_dt)
         assert 0.0 <= result <= 1.0
 
     def test_aware_datetime_in_other_tz(self) -> None:
         """Timezone-aware datetimes in non-UTC zones are handled correctly."""
         from datetime import timezone as _tz
+
         est = _tz(timedelta(hours=-5))
         past = datetime(2025, 2, 22, 8, 0, 0, tzinfo=est)
         result = apply_time_decay(0.8, past)
@@ -314,20 +314,20 @@ class TestTrwLearnForcedDistributionWiring:
 
     def _write_entry(self, entries_dir: Path, fname: str, impact: float, status: str = "active") -> None:
         entries_dir.mkdir(parents=True, exist_ok=True)
-        (entries_dir / fname).write_text(
-            f"id: {fname}\nimpact: {impact}\nstatus: {status}\n"
-        )
+        (entries_dir / fname).write_text(f"id: {fname}\nimpact: {impact}\nstatus: {status}\n")
 
     def _get_tools(self) -> dict[str, Any]:
         from fastmcp import FastMCP
 
         from trw_mcp.tools.learning import register_learning_tools
+
         srv = FastMCP("test")
         register_learning_tools(srv)
         return get_tools_sync(srv)
 
     def _entries_dir(self, root: Path) -> Path:
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         return root / cfg.trw_dir / cfg.learnings_dir / cfg.entries_dir
 
@@ -347,6 +347,7 @@ class TestTrwLearnForcedDistributionWiring:
         assert result["status"] == "recorded"
         # At least one entry should have been demoted (impact != 0.95)
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         impacts = []
         for yaml_file in entries_dir.glob("*.yaml"):
@@ -358,6 +359,7 @@ class TestTrwLearnForcedDistributionWiring:
     def test_no_demotion_when_disabled(self, tmp_path: Path) -> None:
         """When impact_forced_distribution_enabled=False, no demotions occur."""
         from trw_mcp.models.config import TRWConfig
+
         disabled_cfg = TRWConfig().model_copy(update={"impact_forced_distribution_enabled": False})
         with patch("trw_mcp.tools.learning.get_config", return_value=disabled_cfg):
             tools = self._get_tools()
@@ -510,6 +512,7 @@ class TestOutcomeWindowDefault:
 
     def test_outcome_window_default_is_480(self) -> None:
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         assert cfg.learning_outcome_correlation_window_minutes == 480
 
@@ -524,21 +527,25 @@ class TestApplyImpactDecay:
 
     def test_impact_decay_fresh_entry_unchanged(self) -> None:
         """Entry accessed within half_life_days: impact unchanged."""
-        entries: list[dict[str, object]] = [{
-            "id": "L-fresh",
-            "impact": 0.8,
-            "last_accessed_at": _utc(30).isoformat(),  # 30 days ago
-        }]
+        entries: list[dict[str, object]] = [
+            {
+                "id": "L-fresh",
+                "impact": 0.8,
+                "last_accessed_at": _utc(30).isoformat(),  # 30 days ago
+            }
+        ]
         result = apply_impact_decay(entries, half_life_days=90)
         assert result[0]["impact"] == 0.8  # Within 90-day half life
 
     def test_impact_decay_stale_entry_decayed(self) -> None:
         """Entry not accessed for > half_life_days: impact decayed."""
-        entries: list[dict[str, object]] = [{
-            "id": "L-stale",
-            "impact": 0.8,
-            "last_accessed_at": _utc(180).isoformat(),  # 180 days ago, half_life=90
-        }]
+        entries: list[dict[str, object]] = [
+            {
+                "id": "L-stale",
+                "impact": 0.8,
+                "last_accessed_at": _utc(180).isoformat(),  # 180 days ago, half_life=90
+            }
+        ]
         result = apply_impact_decay(entries, half_life_days=90)
         decayed_impact = float(str(result[0]["impact"]))
         # Expected: 0.8 * exp(-0.693 * 90 / 90) = 0.8 * 0.5 = 0.4
@@ -548,56 +555,67 @@ class TestApplyImpactDecay:
 
     def test_impact_decay_clamp_floor(self) -> None:
         """Extremely stale entry: impact floored at 0.1."""
-        entries: list[dict[str, object]] = [{
-            "id": "L-ancient",
-            "impact": 0.3,
-            "created": _utc(3650).isoformat(),  # 10 years ago
-        }]
+        entries: list[dict[str, object]] = [
+            {
+                "id": "L-ancient",
+                "impact": 0.3,
+                "created": _utc(3650).isoformat(),  # 10 years ago
+            }
+        ]
         result = apply_impact_decay(entries, half_life_days=90)
         decayed_impact = float(str(result[0]["impact"]))
         assert decayed_impact >= 0.1  # Floor enforced
 
     def test_impact_decay_uses_created_fallback(self) -> None:
         """When last_accessed_at is absent, falls back to created date."""
-        entries: list[dict[str, object]] = [{
-            "id": "L-no-access",
-            "impact": 0.8,
-            "created": _utc(180).isoformat(),
-        }]
+        entries: list[dict[str, object]] = [
+            {
+                "id": "L-no-access",
+                "impact": 0.8,
+                "created": _utc(180).isoformat(),
+            }
+        ]
         result = apply_impact_decay(entries, half_life_days=90)
         decayed_impact = float(str(result[0]["impact"]))
         assert decayed_impact < 0.8
 
     def test_impact_decay_no_date_field_unchanged(self) -> None:
         """Entry with no date fields: impact unchanged."""
-        entries: list[dict[str, object]] = [{
-            "id": "L-nodate",
-            "impact": 0.8,
-        }]
+        entries: list[dict[str, object]] = [
+            {
+                "id": "L-nodate",
+                "impact": 0.8,
+            }
+        ]
         result = apply_impact_decay(entries, half_life_days=90)
         assert result[0]["impact"] == 0.8
 
     def test_impact_decay_returns_same_list(self) -> None:
         """Returns the same list object (in-place modification)."""
-        entries: list[dict[str, object]] = [{
-            "id": "L-x",
-            "impact": 0.8,
-            "created": _utc(200).isoformat(),
-        }]
+        entries: list[dict[str, object]] = [
+            {
+                "id": "L-x",
+                "impact": 0.8,
+                "created": _utc(200).isoformat(),
+            }
+        ]
         result = apply_impact_decay(entries, half_life_days=90)
         assert result is entries
 
     def test_impact_decay_config_default_half_life(self) -> None:
         """When half_life_days=None, uses config default (90)."""
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         assert cfg.impact_decay_half_life_days == 90
         # Entry exactly at boundary: no decay
-        entries: list[dict[str, object]] = [{
-            "id": "L-boundary",
-            "impact": 0.8,
-            "last_accessed_at": _utc(90).isoformat(),
-        }]
+        entries: list[dict[str, object]] = [
+            {
+                "id": "L-boundary",
+                "impact": 0.8,
+                "last_accessed_at": _utc(90).isoformat(),
+            }
+        ]
         result = apply_impact_decay(entries)  # uses default
         assert float(str(result[0]["impact"])) == 0.8
 
@@ -612,10 +630,12 @@ class TestConfigFields:
 
     def test_impact_high_threshold_pct_default(self) -> None:
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         assert cfg.impact_high_threshold_pct == 20.0
 
     def test_impact_decay_half_life_days_default(self) -> None:
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         assert cfg.impact_decay_half_life_days == 90

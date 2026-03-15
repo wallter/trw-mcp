@@ -40,6 +40,7 @@ def _run_async(coro: Any) -> Any:
 
     if loop is not None and loop.is_running():
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, coro).result()
     return asyncio.run(coro)
@@ -145,52 +146,51 @@ def extract_tool_fn(server: FastMCP, tool_name: str) -> Any:
     """
     tools = get_tools_sync(server)
     if tool_name not in tools:
-        raise KeyError(
-            f"Tool {tool_name!r} not found. "
-            f"Available: {sorted(tools.keys())}"
-        )
+        raise KeyError(f"Tool {tool_name!r} not found. Available: {sorted(tools.keys())}")
     return tools[tool_name].fn
 
 
 # --- Marker auto-assignment ---
 
-_UNIT_FILES: frozenset[str] = frozenset({
-    "test_models.py",
-    "test_scoring.py",
-    "test_scoring_branches.py",
-    "test_scoring_edge_cases.py",
-    "test_scoring_properties.py",
-    "test_bayesian_calibration.py",
-    "test_clients_llm.py",
-    "test_llm_helpers.py",
-    "test_middleware_ceremony.py",
-    "test_prompts_messaging.py",
-    "test_telemetry_embeddings.py",
-    "test_telemetry_remote_recall.py",
-    "test_validation_v2.py",
-    "test_prd_utils_edge.py",
-    "test_fix055_traceability_lang.py",
-    "test_core080_template_variants.py",
-})
+_UNIT_FILES: frozenset[str] = frozenset(
+    {
+        "test_models.py",
+        "test_scoring.py",
+        "test_scoring_branches.py",
+        "test_scoring_edge_cases.py",
+        "test_scoring_properties.py",
+        "test_bayesian_calibration.py",
+        "test_clients_llm.py",
+        "test_llm_helpers.py",
+        "test_middleware_ceremony.py",
+        "test_prompts_messaging.py",
+        "test_telemetry_embeddings.py",
+        "test_telemetry_remote_recall.py",
+        "test_validation_v2.py",
+        "test_prd_utils_edge.py",
+        "test_fix055_traceability_lang.py",
+        "test_core080_template_variants.py",
+    }
+)
 
-_SLOW_FILES: frozenset[str] = frozenset({
-    "test_consolidation.py",
-    "test_bootstrap.py",
-    "test_bootstrap_branches.py",
-})
+_SLOW_FILES: frozenset[str] = frozenset(
+    {
+        "test_consolidation.py",
+        "test_bootstrap.py",
+        "test_bootstrap_branches.py",
+    }
+)
 
 _E2E_FILES: frozenset[str] = frozenset()
 
 
 def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item],
+    config: pytest.Config,
+    items: list[pytest.Item],
 ) -> None:
     """Auto-assign unit/integration/e2e/slow markers to tests without explicit markers."""
     for item in items:
-        has_tier = any(
-            m.name in ("unit", "integration", "e2e")
-            for m in item.iter_markers()
-        )
+        has_tier = any(m.name in ("unit", "integration", "e2e") for m in item.iter_markers())
         if has_tier:
             continue
 
@@ -220,6 +220,7 @@ def _reset_config_singleton() -> Iterator[None]:
 def _reset_run_pin() -> Iterator[None]:
     """Reset active run pin for test isolation."""
     from trw_mcp.state._paths import _pinned_runs  # type: ignore[attr-defined]
+
     _pinned_runs.clear()
     yield
     _pinned_runs.clear()
@@ -233,6 +234,7 @@ def _join_and_reset_deferred() -> None:
     """
     try:
         import trw_mcp.tools.ceremony as cer
+
         with cer._deferred_lock:
             t = cer._deferred_thread
         if t is not None and t.is_alive():
@@ -266,6 +268,7 @@ def _reset_telemetry_pipeline() -> Iterator[None]:
     yield
     try:
         from trw_mcp.telemetry.pipeline import TelemetryPipeline
+
         TelemetryPipeline.reset()
     except Exception:  # justified: fail-open — pipeline may not be importable in all test configs
         pass
@@ -312,15 +315,11 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     # Patch resources/ modules — they import resolve_project_root at module level,
     # so the bound reference must be updated each test to point to the current tmp_path.
     try:
-        monkeypatch.setattr(
-            "trw_mcp.resources.config.resolve_project_root", _fake_project_root
-        )
+        monkeypatch.setattr("trw_mcp.resources.config.resolve_project_root", _fake_project_root)
     except AttributeError:
         pass  # Not yet imported
     try:
-        monkeypatch.setattr(
-            "trw_mcp.resources.run_state.resolve_project_root", _fake_project_root
-        )
+        monkeypatch.setattr("trw_mcp.resources.run_state.resolve_project_root", _fake_project_root)
     except AttributeError:
         pass  # Not yet imported
 
@@ -383,20 +382,26 @@ def sample_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     (run_dir / "shards").mkdir()
 
     # Write run.yaml
-    writer.write_yaml(meta / "run.yaml", {
-        "run_id": "20260206T120000Z-abcd1234",
-        "task": "test-task",
-        "framework": "v18.0_TRW",
-        "status": "active",
-        "phase": "research",
-        "confidence": "medium",
-    })
+    writer.write_yaml(
+        meta / "run.yaml",
+        {
+            "run_id": "20260206T120000Z-abcd1234",
+            "task": "test-task",
+            "framework": "v18.0_TRW",
+            "status": "active",
+            "phase": "research",
+            "confidence": "medium",
+        },
+    )
 
     # Write events.jsonl
-    writer.append_jsonl(meta / "events.jsonl", {
-        "ts": "2026-02-06T12:00:00Z",
-        "event": "run_init",
-        "task": "test-task",
-    })
+    writer.append_jsonl(
+        meta / "events.jsonl",
+        {
+            "ts": "2026-02-06T12:00:00Z",
+            "event": "run_init",
+            "task": "test-task",
+        },
+    )
 
     return run_dir

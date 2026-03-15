@@ -59,19 +59,17 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[RemoteShared
             _api_key = cfg.platform_api_key.get_secret_value()
             if _api_key:
                 headers["Authorization"] = f"Bearer {_api_key}"
-            req = urllib.request.Request(
+            req = urllib.request.Request(  # noqa: S310 — URL built from cfg.effective_platform_urls (operator-configured TRW platform endpoint, not user input)
                 url,
                 data=data,
                 headers=headers,
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=REMOTE_RECALL_TIMEOUT) as response:
+            with urllib.request.urlopen(req, timeout=REMOTE_RECALL_TIMEOUT) as response:  # noqa: S310 — see Request comment above
                 if 200 <= response.status < 300:
                     body = json.loads(response.read().decode("utf-8"))
                     # Backend may return a list directly or {"results": [...]}
-                    items: list[RemoteSharedLearningDict] = (
-                        body if isinstance(body, list) else body.get("results", [])
-                    )
+                    items: list[RemoteSharedLearningDict] = body if isinstance(body, list) else body.get("results", [])
                     for r in items:
                         r["summary"] = f"[shared] {r.get('summary', '')}"
                     return items

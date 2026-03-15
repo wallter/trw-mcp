@@ -33,17 +33,17 @@ class DuplicatedBlock:
 
 # Default patterns to ignore when normalizing lines
 _COMMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"^\s*#"),      # Python comments
-    re.compile(r"^\s*//"),     # JS/TS/Go comments
-    re.compile(r"^\s*\*"),     # Block comment continuations
-    re.compile(r"^\s*/\*"),    # Block comment starts
+    re.compile(r"^\s*#"),  # Python comments
+    re.compile(r"^\s*//"),  # JS/TS/Go comments
+    re.compile(r"^\s*\*"),  # Block comment continuations
+    re.compile(r"^\s*/\*"),  # Block comment starts
 )
 
 # Default ignore patterns for boilerplate
 _DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
-    r"^\s*(?:from|import)\s+",    # Import lines
+    r"^\s*(?:from|import)\s+",  # Import lines
     r"^\s*(?:except|finally)\s*:",  # Exception handlers
-    r"^\s*(?:pass|\.\.\.)\s*$",   # Pass/ellipsis statements
+    r"^\s*(?:pass|\.\.\.)\s*$",  # Pass/ellipsis statements
 )
 
 
@@ -91,7 +91,7 @@ def _deduplicate_locations(locations: list[BlockLocation]) -> list[BlockLocation
     for loc in locations:
         by_file.setdefault(loc.file_path, []).append(loc)
 
-    for _, file_locs in by_file.items():
+    for file_locs in by_file.values():
         file_locs.sort(key=lambda loc: loc.start_line)
         last_end = -1
         for loc in file_locs:
@@ -136,7 +136,8 @@ def find_duplicated_blocks(
             continue
         try:
             raw_lines = path.read_text(
-                encoding="utf-8", errors="replace",
+                encoding="utf-8",
+                errors="replace",
             ).splitlines()
         except OSError:
             continue
@@ -179,11 +180,13 @@ def find_duplicated_blocks(
             # Deduplicate overlapping locations in the same file
             deduped = _deduplicate_locations(locations)
             if len(deduped) >= min_occurrences:
-                results.append(DuplicatedBlock(
-                    content=content,
-                    block_hash=block_hash,
-                    locations=deduped,
-                ))
+                results.append(
+                    DuplicatedBlock(
+                        content=content,
+                        block_hash=block_hash,
+                        locations=deduped,
+                    )
+                )
                 seen_hashes.add(block_hash)
 
     # Sort by number of occurrences descending
@@ -216,10 +219,7 @@ def format_dry_report(
         lines.append(f"### Block {i + 1} ({len(block.locations)} occurrences)")
         lines.append(f"Hash: `{block.block_hash}`\n")
         lines.append("Locations:")
-        for loc in block.locations:
-            lines.append(
-                f"- `{loc.file_path}` lines {loc.start_line}-{loc.end_line}",
-            )
+        lines.extend(f"- `{loc.file_path}` lines {loc.start_line}-{loc.end_line}" for loc in block.locations)
         lines.append(f"\n```\n{block.content}\n```\n")
 
     if len(blocks) > max_blocks:

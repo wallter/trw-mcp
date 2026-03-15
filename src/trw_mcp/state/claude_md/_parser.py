@@ -8,7 +8,6 @@ from pathlib import Path
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateWriter
 
-
 # CLAUDE.md TRW section markers (must stay consistent — parsing depends on these)
 TRW_AUTO_COMMENT = "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->"
 TRW_MARKER_START = "<!-- trw:start -->"
@@ -121,8 +120,8 @@ def _truncate_with_markers(content_lines: list[str], max_lines: int) -> list[str
 
     if start_idx is not None and end_idx is not None and end_idx < len(content_lines):
         user_lines = content_lines[:start_idx]
-        trw_lines = content_lines[start_idx:end_idx + 1]
-        after_lines = content_lines[end_idx + 1:]
+        trw_lines = content_lines[start_idx : end_idx + 1]
+        after_lines = content_lines[end_idx + 1 :]
         trw_size = len(trw_lines) + len(after_lines)
         user_budget = max(0, max_lines - trw_size - 1)
         truncated_user = user_lines[:user_budget]

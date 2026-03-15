@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, patch
 from fastmcp import FastMCP
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.build import (
     _run_npm_audit,
@@ -82,9 +81,7 @@ class TestPipAuditTypeGuards:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
         # Only the valid dict dep should produce a vulnerability
@@ -126,9 +123,7 @@ class TestPipAuditTypeGuards:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
         # Only the dep with a proper list of vulns should produce results
@@ -162,9 +157,7 @@ class TestPipAuditTypeGuards:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
         # Only the valid dict vuln should be counted
@@ -206,9 +199,7 @@ class TestCvssSeverityFallback:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         # dep_audit_level="high" means min_rank=3; CVSS 7.5 -> rank 3 -> included
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
@@ -241,9 +232,7 @@ class TestCvssSeverityFallback:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         # dep_audit_level="medium" means min_rank=2; CVSS 5.5 -> rank 2 -> included
         config = TRWConfig(dep_audit_level="medium")
         result = _run_pip_audit(tmp_path, config)
@@ -277,9 +266,7 @@ class TestCvssSeverityFallback:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_vulnerability_count") == 0
@@ -307,9 +294,7 @@ class TestCvssSeverityFallback:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         # dep_audit_level="low" means min_rank=1; CVSS 2.0 -> rank 1 -> included
         config = TRWConfig(dep_audit_level="low")
         result = _run_pip_audit(tmp_path, config)
@@ -342,9 +327,7 @@ class TestCvssSeverityFallback:
                 ],
             },
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_vulnerability_count") == 0
@@ -434,7 +417,9 @@ class TestDisabledFeatureFlags:
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
         mock_get_config.return_value = TRWConfig(
-            build_check_enabled=True, build_check_timeout_secs=300, mutation_enabled=False,
+            build_check_enabled=True,
+            build_check_timeout_secs=300,
+            mutation_enabled=False,
         )
 
         server = FastMCP("test")
@@ -461,7 +446,9 @@ class TestDisabledFeatureFlags:
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
         mock_get_config.return_value = TRWConfig(
-            build_check_enabled=True, build_check_timeout_secs=300, dep_audit_enabled=False,
+            build_check_enabled=True,
+            build_check_timeout_secs=300,
+            dep_audit_enabled=False,
         )
 
         server = FastMCP("test")
@@ -488,7 +475,9 @@ class TestDisabledFeatureFlags:
         mock_trw_dir.return_value = trw_dir
         mock_proj_root.return_value = tmp_path
         mock_get_config.return_value = TRWConfig(
-            build_check_enabled=True, build_check_timeout_secs=300, api_fuzz_enabled=False,
+            build_check_enabled=True,
+            build_check_timeout_secs=300,
+            api_fuzz_enabled=False,
         )
 
         server = FastMCP("test")
@@ -522,9 +511,7 @@ class TestNpmAuditJsonParseFailures:
             returncode=1, stdout="npm ERR! audit not valid json {{{{"
         )
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_skipped") is True
         assert "invalid JSON" in str(result.get("npm_audit_skip_reason", ""))
 
@@ -544,9 +531,7 @@ class TestNpmAuditJsonParseFailures:
         mock_proc.stderr = ""
         mock_subprocess.return_value = mock_proc
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_skipped") is True
         assert "invalid JSON" in str(result.get("npm_audit_skip_reason", ""))
 
@@ -560,13 +545,9 @@ class TestNpmAuditJsonParseFailures:
     ) -> None:
         """Empty stdout is not valid JSON and should return skipped."""
         (tmp_path / "platform").mkdir()
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=""
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout="")
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_skipped") is True
         assert "invalid JSON" in str(result.get("npm_audit_skip_reason", ""))
 
@@ -584,8 +565,6 @@ class TestNpmAuditJsonParseFailures:
         """Line 465: _run_subprocess returns error string for npm audit."""
         (tmp_path / "platform").mkdir()
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_skipped") is True
         assert "timed out" in str(result.get("npm_audit_skip_reason", ""))

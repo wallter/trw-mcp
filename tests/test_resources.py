@@ -68,12 +68,15 @@ class TestFrameworkVersionsResource:
         fw_dir = tmp_path / ".trw" / "frameworks"
         fw_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(fw_dir / "VERSION.yaml", {
-            "framework_version": "v18.0_TRW",
-            "aaref_version": "v1.1.0",
-            "trw_mcp_version": "0.2.0",
-            "deployed_at": "2026-02-07T12:00:00+00:00",
-        })
+        writer.write_yaml(
+            fw_dir / "VERSION.yaml",
+            {
+                "framework_version": "v18.0_TRW",
+                "aaref_version": "v1.1.0",
+                "trw_mcp_version": "0.2.0",
+                "deployed_at": "2026-02-07T12:00:00+00:00",
+            },
+        )
 
         resources = _get_resources()
         result = resources["trw://framework/versions"].fn()
@@ -96,12 +99,15 @@ class TestLearningsSummaryResource:
         entries_dir.mkdir(parents=True)
 
         writer = FileStateWriter()
-        writer.write_yaml(entries_dir / "test-learning.yaml", {
-            "id": "L-001",
-            "summary": "Test learning summary",
-            "detail": "Test detail",
-            "impact": 0.9,
-        })
+        writer.write_yaml(
+            entries_dir / "test-learning.yaml",
+            {
+                "id": "L-001",
+                "summary": "Test learning summary",
+                "detail": "Test detail",
+                "impact": 0.9,
+            },
+        )
 
         resources = _get_resources()
         result = resources["trw://learnings/summary"].fn()
@@ -137,12 +143,15 @@ class TestRunStateResource:
         run_dir = tmp_path / "docs" / "test" / "runs" / "run-001" / "meta"
         run_dir.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(run_dir / "run.yaml", {
-            "run_id": "run-001",
-            "task": "test",
-            "status": "active",
-            "phase": "research",
-        })
+        writer.write_yaml(
+            run_dir / "run.yaml",
+            {
+                "run_id": "run-001",
+                "task": "test",
+                "status": "active",
+                "phase": "research",
+            },
+        )
 
         resources = _get_resources()
         result = resources["trw://run/state"].fn()

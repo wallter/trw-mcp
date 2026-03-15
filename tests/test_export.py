@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from trw_mcp.export import (
     _collect_analytics,
@@ -25,6 +24,7 @@ _writer = FileStateWriter()
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_entry(
     entries_dir: Path,
     *,
@@ -42,19 +42,22 @@ def _make_entry(
         entry_id = f"L-{uuid.uuid4().hex[:8]}"
     slug = summary.lower().replace(" ", "-")[:40]
     filename = f"2026-02-21-{slug}.yaml"
-    _writer.write_yaml(entries_dir / filename, {
-        "id": entry_id,
-        "summary": summary,
-        "detail": f"Detail for: {summary}",
-        "impact": impact,
-        "status": status,
-        "tags": tags or ["test"],
-        "source_type": source_type,
-        "created": "2026-02-21T00:00:00Z",
-        "updated": "2026-02-21T00:00:00Z",
-        "q_value": 0.5,
-        "access_count": 1,
-    })
+    _writer.write_yaml(
+        entries_dir / filename,
+        {
+            "id": entry_id,
+            "summary": summary,
+            "detail": f"Detail for: {summary}",
+            "impact": impact,
+            "status": status,
+            "tags": tags or ["test"],
+            "source_type": source_type,
+            "created": "2026-02-21T00:00:00Z",
+            "updated": "2026-02-21T00:00:00Z",
+            "q_value": 0.5,
+            "access_count": 1,
+        },
+    )
 
 
 def _setup_project(tmp_path: Path) -> Path:
@@ -333,6 +336,7 @@ class TestTempProjectRoot:
     def test_restores_previous_root(self, tmp_path: Path, monkeypatch: object) -> None:
         """When TRW_PROJECT_ROOT was set before, it is restored on exit."""
         import os as _os
+
         _os.environ["TRW_PROJECT_ROOT"] = "/original/path"
         try:
             with temp_project_root(tmp_path):
@@ -485,9 +489,12 @@ class TestCollectAnalytics:
         """analytics-report.yaml with aggregate key populates ceremony_aggregates."""
         project = _setup_project(tmp_path)
         context_dir = project / ".trw" / "context"
-        _writer.write_yaml(context_dir / "analytics-report.yaml", {
-            "aggregate": {"total_runs": 12, "avg_score": 75},
-        })
+        _writer.write_yaml(
+            context_dir / "analytics-report.yaml",
+            {
+                "aggregate": {"total_runs": 12, "avg_score": 75},
+            },
+        )
         config = TRWConfig()
         result = _collect_analytics(project, project / ".trw", config)
         assert "ceremony_aggregates" in result

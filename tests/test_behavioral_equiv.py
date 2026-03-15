@@ -13,7 +13,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 
 _CFG = TRWConfig()

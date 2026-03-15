@@ -7,14 +7,12 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-import trw_mcp.scoring._utils as _su
 from trw_mcp.models.typed_dicts import LearningEntryDict, PruneCandidateDict
 from trw_mcp.scoring._decay import _entry_utility
-from trw_mcp.scoring._utils import TRWConfig, get_config, safe_float, safe_int
-
+from trw_mcp.scoring._utils import TRWConfig, get_config, safe_int
 
 # --- Recall ranking (PRD-FIX-010: moved from tools/learning.py) ---
 
@@ -39,7 +37,7 @@ def rank_by_utility(
     if not matches:
         return matches
 
-    today = date.today()
+    today = datetime.now(tz=timezone.utc).date()
     scored: list[tuple[float, dict[str, object]]] = []
 
     for entry in matches:
@@ -92,7 +90,7 @@ def utility_based_prune_candidates(
     """
     candidates: list[PruneCandidateDict] = []
     seen_ids: set[str] = set()
-    today = date.today()
+    today = datetime.now(tz=timezone.utc).date()
     cfg: TRWConfig = get_config()
 
     for _, data in entries:
@@ -112,14 +110,16 @@ def utility_based_prune_candidates(
 
         # Tier 1: Status-based cleanup (resolved/obsolete stragglers)
         if entry_status in ("resolved", "obsolete"):
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "utility": 0.0,
-                "suggested_status": entry_status,
-                "reason": f"Already marked {entry_status} -- cleanup candidate",
-            })
+            candidates.append(
+                {
+                    "id": entry_id,
+                    "summary": data.get("summary", ""),
+                    "age_days": age_days,
+                    "utility": 0.0,
+                    "suggested_status": entry_status,
+                    "reason": f"Already marked {entry_status} -- cleanup candidate",
+                }
+            )
             seen_ids.add(entry_id)
             continue
 
@@ -127,35 +127,39 @@ def utility_based_prune_candidates(
 
         # Tier 2: Delete-level utility (effectively forgotten)
         if utility < cfg.learning_utility_delete_threshold:
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "utility": round(utility, 3),
-                "suggested_status": "obsolete",
-                "reason": (
-                    f"Utility {utility:.3f} below delete threshold "
-                    f"({cfg.learning_utility_delete_threshold}). "
-                    f"recurrence={recurrence}, age={age_days}d"
-                ),
-            })
+            candidates.append(
+                {
+                    "id": entry_id,
+                    "summary": data.get("summary", ""),
+                    "age_days": age_days,
+                    "utility": round(utility, 3),
+                    "suggested_status": "obsolete",
+                    "reason": (
+                        f"Utility {utility:.3f} below delete threshold "
+                        f"({cfg.learning_utility_delete_threshold}). "
+                        f"recurrence={recurrence}, age={age_days}d"
+                    ),
+                }
+            )
             seen_ids.add(entry_id)
             continue
 
         # Tier 3: Prune-level utility (fading, older than 14 days)
         if utility < cfg.learning_utility_prune_threshold and age_days > 14:
-            candidates.append({
-                "id": entry_id,
-                "summary": data.get("summary", ""),
-                "age_days": age_days,
-                "utility": round(utility, 3),
-                "suggested_status": "obsolete",
-                "reason": (
-                    f"Utility {utility:.3f} below prune threshold "
-                    f"({cfg.learning_utility_prune_threshold}) and "
-                    f"age {age_days}d > 14d"
-                ),
-            })
+            candidates.append(
+                {
+                    "id": entry_id,
+                    "summary": data.get("summary", ""),
+                    "age_days": age_days,
+                    "utility": round(utility, 3),
+                    "suggested_status": "obsolete",
+                    "reason": (
+                        f"Utility {utility:.3f} below prune threshold "
+                        f"({cfg.learning_utility_prune_threshold}) and "
+                        f"age {age_days}d > 14d"
+                    ),
+                }
+            )
             seen_ids.add(entry_id)
 
     return candidates

@@ -11,6 +11,7 @@ import structlog
 
 try:
     from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
+
     _BM25_AVAILABLE = True
 except ImportError:
     _BM25_AVAILABLE = False
@@ -118,5 +119,3 @@ def rrf_fuse(
     result = list(fused_scores.items())
     result.sort(key=lambda x: x[1], reverse=True)
     return result
-
-

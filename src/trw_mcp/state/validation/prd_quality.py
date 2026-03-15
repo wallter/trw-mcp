@@ -15,7 +15,6 @@ from collections.abc import Callable
 import structlog
 
 from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.state.validation.template_variants import get_required_sections
 from trw_mcp.models.requirements import (
     DimensionScore,
     ImprovementSuggestion,
@@ -28,6 +27,7 @@ from trw_mcp.models.requirements import (
     ValidationResultV2,
 )
 from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
+from trw_mcp.state.validation.template_variants import get_required_sections
 
 logger = structlog.get_logger()
 
@@ -100,6 +100,7 @@ def _get_section_weights(config: TRWConfig) -> dict[str, float]:
         "Traceability Matrix": config.density_weight_traceability_matrix,
     }
 
+
 # Known test file naming conventions supported by _TEST_REF_RE.
 # Used for documentation and external introspection.
 _KNOWN_TEST_PATTERNS: dict[str, str] = {
@@ -139,11 +140,11 @@ _REQUIREMENT_LINE_RE = re.compile(
 #   - tests/ dir:     `tests/integration.rs`
 _TEST_REF_RE = re.compile(
     r"`(?:"
-    r"test[\w_]*\.[\w.]+[:\w]*"                    # Python: test_foo.py, test_foo.py::bar
-    r"|[\w/]+\.(?:test|spec)\.[\w]+[:\w]*"          # TS/JS: foo.test.ts, foo.spec.tsx
-    r"|[\w/]+(?:_test|_spec)\.[\w]+[:\w]*"          # Go/Ruby: foo_test.go, user_spec.rb
-    r"|[\w/]+(?:Test|Tests|Spec)\.[\w]+[:\w]*"      # Java: FooTest.java, FooTests.java
-    r"|tests?/[\w/]+\.[\w]+[:\w]*"                  # tests/ dir: tests/integration.rs
+    r"test[\w_]*\.[\w.]+[:\w]*"  # Python: test_foo.py, test_foo.py::bar
+    r"|[\w/]+\.(?:test|spec)\.[\w]+[:\w]*"  # TS/JS: foo.test.ts, foo.spec.tsx
+    r"|[\w/]+(?:_test|_spec)\.[\w]+[:\w]*"  # Go/Ruby: foo_test.go, user_spec.rb
+    r"|[\w/]+(?:Test|Tests|Spec)\.[\w]+[:\w]*"  # Java: FooTest.java, FooTests.java
+    r"|tests?/[\w/]+\.[\w]+[:\w]*"  # tests/ dir: tests/integration.rs
     r")`",
 )
 
@@ -163,9 +164,9 @@ def validate_prd_quality(
     .. deprecated::
         Prefer ``validate_prd_quality_v2()`` which provides the full
         3-dimension semantic scorer (content density, structural completeness,
-        traceability) and a ``total_score`` on a 0–100 scale. This V1
+        traceability) and a ``total_score`` on a 0-100 scale. This V1
         function is retained for backward compatibility and returns a
-        ``completeness_score`` (0.0–1.0) based on frontmatter field presence
+        ``completeness_score`` (0.0-1.0) based on frontmatter field presence
         and section count only.
 
     Args:
@@ -181,16 +182,16 @@ def validate_prd_quality(
 
     # Check required frontmatter fields
     required_fields = ["id", "title", "version", "status", "priority"]
-    for field in required_fields:
-        if field not in frontmatter or not frontmatter[field]:
-            failures.append(
-                ValidationFailure(
-                    field=f"frontmatter:{field}",
-                    rule="required_field",
-                    message=f"Required frontmatter field missing: {field}",
-                    severity="error",
-                )
-            )
+    failures.extend(
+        ValidationFailure(
+            field=f"frontmatter:{field}",
+            rule="required_field",
+            message=f"Required frontmatter field missing: {field}",
+            severity="error",
+        )
+        for field in required_fields
+        if field not in frontmatter or not frontmatter[field]
+    )
 
     # Check for 12 required sections
     expected_section_count = 12
@@ -212,16 +213,16 @@ def validate_prd_quality(
             "requirement_clarity",
             "estimate_confidence",
         ]
-        for field in confidence_fields:
-            if field not in confidence:
-                failures.append(
-                    ValidationFailure(
-                        field=f"confidence:{field}",
-                        rule="confidence_present",
-                        message=f"Missing confidence score: {field}",
-                        severity="warning",
-                    )
-                )
+        failures.extend(
+            ValidationFailure(
+                field=f"confidence:{field}",
+                rule="confidence_present",
+                message=f"Missing confidence score: {field}",
+                severity="warning",
+            )
+            for field in confidence_fields
+            if field not in confidence
+        )
 
     # Check traceability
     traceability = frontmatter.get("traceability", {})
@@ -316,7 +317,7 @@ def _parse_section_content(content: str) -> list[tuple[str, str]]:
     from trw_mcp.state.prd_utils import _FRONTMATTER_RE
 
     fm_match = _FRONTMATTER_RE.match(content)
-    body = content[fm_match.end():] if fm_match else content
+    body = content[fm_match.end() :] if fm_match else content
 
     sections: list[tuple[str, str]] = []
     matches = list(_HEADING_RE.finditer(body))
@@ -377,9 +378,7 @@ def score_section_density(
     for line in lines:
         if _is_substantive_line(line):
             substantive += 1
-        elif _PLACEHOLDER_RE.match(line) or (
-            line.strip().startswith("<!--") and line.strip().endswith("-->")
-        ):
+        elif _PLACEHOLDER_RE.match(line) or (line.strip().startswith("<!--") and line.strip().endswith("-->")):
             placeholder += 1
 
     density = substantive / max(total, 1)
@@ -757,8 +756,7 @@ def _check_fr_annotations(content: str) -> list[str]:
         if not _FR_STATUS_RE.search(block_body):
             header_text = header_match.group(0).strip()
             warnings.append(
-                f"FR annotation missing: '{header_text}' has no "
-                "'**Status**: active|deferred|superseded|done' line."
+                f"FR annotation missing: '{header_text}' has no '**Status**: active|deferred|superseded|done' line."
             )
 
     return warnings
@@ -816,12 +814,14 @@ def _coerce_v1_failures(raw: object) -> list[ValidationFailure]:
         if isinstance(item, ValidationFailure):
             result.append(item)
         elif isinstance(item, dict):
-            result.append(ValidationFailure(
-                field=str(item.get("field", "")),
-                rule=str(item.get("rule", "")),
-                message=str(item.get("message", "")),
-                severity=str(item.get("severity", "warning")),
-            ))
+            result.append(
+                ValidationFailure(
+                    field=str(item.get("field", "")),
+                    rule=str(item.get("rule", "")),
+                    message=str(item.get("message", "")),
+                    severity=str(item.get("severity", "warning")),
+                )
+            )
     return result
 
 
@@ -877,14 +877,22 @@ def validate_prd_quality_v2(
     # implementation and are NOT appended here (FR01 — PRD-FIX-054).
     _active_dims: list[tuple[str, Callable[[], DimensionScore], float]] = [
         ("content_density", lambda: score_content_density(content, _config), _config.validation_density_weight),
-        ("structural_completeness", lambda: score_structural_completeness(frontmatter, sections, _config, str(frontmatter.get("category", ""))), _config.validation_structure_weight),
-        ("traceability", lambda: score_traceability_v2(frontmatter, content, _config), _config.validation_traceability_weight),
+        (
+            "structural_completeness",
+            lambda: score_structural_completeness(frontmatter, sections, _config, str(frontmatter.get("category", ""))),
+            _config.validation_structure_weight,
+        ),
+        (
+            "traceability",
+            lambda: score_traceability_v2(frontmatter, content, _config),
+            _config.validation_traceability_weight,
+        ),
     ]
     dimensions: list[DimensionScore] = []
     for dim_name, scorer, max_score in _active_dims:
         try:
             dimensions.append(scorer())
-        except Exception:  # justified: fail-open, one dimension failure must not block entire scoring
+        except Exception:  # per-item error handling: one dimension failure must not block entire scoring  # noqa: PERF203
             logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
             dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 
@@ -897,7 +905,8 @@ def validate_prd_quality_v2(
     max_possible = sum(d.max_score for d in dimensions)
     if max_possible > 0:
         total_score = round(
-            min(sum(d.score for d in dimensions) / max_possible * 100.0, 100.0), 2,
+            min(sum(d.score for d in dimensions) / max_possible * 100.0, 100.0),
+            2,
         )
     else:
         total_score = 0.0
@@ -907,10 +916,7 @@ def validate_prd_quality_v2(
     grade = map_grade(tier)
 
     # Section scores
-    section_scores = [
-        score_section_density(name, body)
-        for name, body in _parse_section_content(content)
-    ]
+    section_scores = [score_section_density(name, body) for name, body in _parse_section_content(content)]
 
     # Generate improvement suggestions
     suggestions = generate_improvement_suggestions(dimensions)

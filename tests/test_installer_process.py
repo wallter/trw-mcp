@@ -9,27 +9,98 @@ Covers:
   update_config, phase_prompt_features, show_success_banner, _TIPS
 - PRD-INFRA-041: _is_process_alive, _terminate_process, _restart_mcp_servers
 """
+
 from __future__ import annotations
 
-import io
+import inspect
 import json
 import os
-import re
 import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
 import pytest
 
-
 # ── Replicated functions from install-trw.template.py ────────────────
 # These are exact copies of the installer functions for testability.
 # If the installer template changes, these must be updated to match.
 
 TRW_VERSION = "0.15.1"  # test fixture version
+
+
+def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
+    """Run a command silently, return True if exit code == 0.
+
+    *timeout* (seconds, default 120) prevents hangs when pip stalls on
+    PEP 668 externally-managed system Pythons without a venv.
+
+    ``KeyboardInterrupt`` is intentionally not caught — it propagates to
+    the caller so the user can abort the entire installer with Ctrl-C.
+    """
+    try:
+        return subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        ).returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _detect_installed_extras(python: str, timeout: int = 10) -> dict[str, bool]:
+    """Detect which optional extras are already installed.
+
+    Uses a short timeout (10s) because import checks should resolve quickly.
+    """
+    extras: dict[str, bool] = {}
+    extras["ai"] = _run_quiet([python, "-c", "import anthropic"], timeout=timeout)
+    extras["sqlite_vec"] = _run_quiet([python, "-c", "import sqlite_vec"], timeout=timeout)
+    return extras
+
+
+def _run_with_progress_testable(
+    ui: MagicMock, fallback_msg: str, cmd: list[str], timeout: int = 180,
+) -> bool:
+    """Simplified run_with_progress for testing (no ANSI/spinner deps)."""
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+    except FileNotFoundError:
+        return False
+
+    assert proc.stdout is not None
+
+    killed_by_watchdog = False
+
+    def _watchdog_kill() -> None:
+        nonlocal killed_by_watchdog
+        killed_by_watchdog = True
+        proc.kill()
+
+    watchdog = threading.Timer(timeout, _watchdog_kill)
+    watchdog.daemon = True
+    watchdog.start()
+
+    try:
+        for _line in proc.stdout:
+            pass  # drain stdout
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    finally:
+        watchdog.cancel()
+
+    if killed_by_watchdog:
+        ui.step_warn(f"{fallback_msg} timed out after {timeout}s")
+
+    return proc.returncode == 0
+
 
 _TIPS = [
     "Use trw_recall('topic') to search prior session learnings",
@@ -78,6 +149,7 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
 def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
     import urllib.error
     import urllib.request
+
     health_url = f"{url.rstrip('/')}/v1/health"
     try:
         req = urllib.request.Request(health_url, method="GET")
@@ -111,20 +183,21 @@ def _check_all_backends(target_dir: Path, prior_config: dict[str, object]) -> li
                         in_urls = False
         except OSError:
             pass
-    if (target_dir / "docker-compose.yml").is_file() or (
-        target_dir / "docker-compose.yaml"
-    ).is_file():
+    if (target_dir / "docker-compose.yml").is_file() or (target_dir / "docker-compose.yaml").is_file():
         local_url = "http://localhost:8000"
         if local_url not in urls:
             urls.insert(0, local_url)
-    for url in urls:
-        results.append(_check_backend_health(url))
+    results.extend(_check_backend_health(url) for url in urls)
     return results
 
 
 def update_config(
-    config_path: Path, project_name: str, api_key: str,
-    telemetry_enabled: bool, *, embeddings_enabled: bool | None = None,
+    config_path: Path,
+    project_name: str,
+    api_key: str,
+    telemetry_enabled: bool,
+    *,
+    embeddings_enabled: bool | None = None,
     sqlite_vec_enabled: bool | None = None,
 ) -> bool:
     if not config_path.is_file():
@@ -156,7 +229,8 @@ def update_config(
 
 
 def phase_prompt_features(
-    install_ai: bool | None, install_sqlitevec: bool | None,
+    install_ai: bool | None,
+    install_sqlitevec: bool | None,
     prior_extras: dict[str, bool] | None = None,
 ) -> tuple[bool, bool]:
     if prior_extras is None:
@@ -178,6 +252,7 @@ def _is_process_alive(pid: int) -> bool:
     if sys.platform == "win32":
         try:
             import ctypes
+
             SYNCHRONIZE = 0x00100000
             handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, 0, pid)  # type: ignore[union-attr]
             if handle == 0:
@@ -201,10 +276,14 @@ def _terminate_process(pid: int) -> bool:
                 os.kill(pid, signal.SIGTERM)
                 return True
             except OSError:
-                return subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/F"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                ).returncode == 0
+                return (
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    ).returncode
+                    == 0
+                )
         else:
             os.kill(pid, signal.SIGTERM)
             return True
@@ -225,9 +304,7 @@ class TestLoadPriorConfig:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "config.yaml").write_text(
-            "installation_id: my-project\n"
-            "embeddings_enabled: true\n"
-            "sqlite_vec_enabled: false\n",
+            "installation_id: my-project\nembeddings_enabled: true\nsqlite_vec_enabled: false\n",
             encoding="utf-8",
         )
         result = _load_prior_config(tmp_path)
@@ -252,10 +329,7 @@ class TestLoadPriorConfig:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "config.yaml").write_text(
-            "# This is a comment\n"
-            "\n"
-            "installation_id: test\n"
-            "# another comment\n",
+            "# This is a comment\n\ninstallation_id: test\n# another comment\n",
             encoding="utf-8",
         )
         result = _load_prior_config(tmp_path)
@@ -280,9 +354,16 @@ class TestCheckBackendHealth:
 
     def test_http_error(self) -> None:
         """HTTP 500 still counts as reachable (server responded)."""
-        with patch("urllib.request.urlopen", side_effect=HTTPError(
-            "http://x/v1/health", 500, "ISE", {}, None  # type: ignore[arg-type]
-        )):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=HTTPError(
+                "http://x/v1/health",
+                500,
+                "ISE",
+                {},
+                None,  # type: ignore[arg-type]
+            ),
+        ):
             result = _check_backend_health("http://example.com")
 
         assert result["reachable"] is True
@@ -290,9 +371,7 @@ class TestCheckBackendHealth:
 
     def test_connection_refused(self) -> None:
         """Connection refused returns unreachable."""
-        with patch("urllib.request.urlopen", side_effect=URLError(
-            ConnectionRefusedError("refused")
-        )):
+        with patch("urllib.request.urlopen", side_effect=URLError(ConnectionRefusedError("refused"))):
             result = _check_backend_health("http://example.com")
 
         assert result["reachable"] is False
@@ -300,8 +379,7 @@ class TestCheckBackendHealth:
 
     def test_timeout(self) -> None:
         """Socket timeout returns unreachable."""
-        import socket
-        with patch("urllib.request.urlopen", side_effect=socket.timeout("timed out")):
+        with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             result = _check_backend_health("http://example.com")
 
         assert result["reachable"] is False
@@ -383,8 +461,7 @@ class TestUpdateConfig:
         """Existing flags are updated in-place, not duplicated."""
         config = tmp_path / "config.yaml"
         config.write_text(
-            "installation_id: test\n"
-            "embeddings_enabled: false\n",
+            "installation_id: test\nembeddings_enabled: false\n",
             encoding="utf-8",
         )
 
@@ -401,7 +478,9 @@ class TestPhasePromptFeatures:
     def test_both_configured_returns_true(self) -> None:
         """Both extras configured: returns (True, True) without prompting."""
         ai, vec = phase_prompt_features(
-            None, None, prior_extras={"ai": True, "sqlite_vec": True},
+            None,
+            None,
+            prior_extras={"ai": True, "sqlite_vec": True},
         )
         assert ai is True
         assert vec is True
@@ -409,7 +488,9 @@ class TestPhasePromptFeatures:
     def test_cli_override(self) -> None:
         """CLI flags override prior_extras."""
         ai, vec = phase_prompt_features(
-            False, False, prior_extras={"ai": True, "sqlite_vec": True},
+            False,
+            False,
+            prior_extras={"ai": True, "sqlite_vec": True},
         )
         assert ai is False
         assert vec is False
@@ -417,7 +498,9 @@ class TestPhasePromptFeatures:
     def test_partial_config(self) -> None:
         """Only AI configured: AI auto-accepted, sqlite_vec defaults to False."""
         ai, vec = phase_prompt_features(
-            None, None, prior_extras={"ai": True},
+            None,
+            None,
+            prior_extras={"ai": True},
         )
         assert ai is True
         assert vec is False
@@ -556,3 +639,95 @@ class TestPIDRestart:
             pid_path.unlink(missing_ok=True)
 
         assert not pid_path.exists()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Timeout Hardening Tests: _run_quiet, _detect_installed_extras,
+# run_with_progress watchdog
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestRunQuiet:
+    """Tests for _run_quiet subprocess wrapper."""
+
+    def test_successful_command_returns_true(self) -> None:
+        assert _run_quiet([sys.executable, "-c", "pass"]) is True
+
+    def test_failing_command_returns_false(self) -> None:
+        assert _run_quiet([sys.executable, "-c", "raise SystemExit(1)"]) is False
+
+    def test_missing_executable_returns_false(self) -> None:
+        assert _run_quiet(["/nonexistent/binary"]) is False
+
+    def test_timeout_returns_false(self) -> None:
+        """Command exceeding timeout returns False without hanging."""
+        result = _run_quiet(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            timeout=1,
+        )
+        assert result is False
+
+    def test_default_timeout_is_120(self) -> None:
+        """Verify the default timeout parameter value."""
+        sig = inspect.signature(_run_quiet)
+        assert sig.parameters["timeout"].default == 120
+
+
+class TestDetectInstalledExtras:
+    """Tests for _detect_installed_extras with short timeout."""
+
+    def test_returns_dict_with_ai_and_sqlite_vec_keys(self) -> None:
+        result = _detect_installed_extras(sys.executable)
+        assert "ai" in result
+        assert "sqlite_vec" in result
+        assert all(isinstance(v, bool) for v in result.values())
+
+    def test_uses_short_timeout(self) -> None:
+        """Import checks use 10s timeout, not the default 120s."""
+        start = time.monotonic()
+        # Use a nonexistent python to force FileNotFoundError (instant)
+        result = _detect_installed_extras("/nonexistent/python3", timeout=1)
+        elapsed = time.monotonic() - start
+        assert elapsed < 5  # Should fail fast, not wait 120s
+        assert result["ai"] is False
+        assert result["sqlite_vec"] is False
+
+
+class TestRunWithProgress:
+    """Tests for run_with_progress watchdog timeout."""
+
+    def test_successful_command(self) -> None:
+        """Normal command completes and returns True."""
+        ui = MagicMock()
+        ui.interactive = False
+        ui.quiet = True
+        result = _run_with_progress_testable(
+            ui, "Testing...", [sys.executable, "-c", "print('hello')"],
+        )
+        assert result is True
+
+    def test_watchdog_kills_hanging_process(self) -> None:
+        """Process exceeding timeout is killed by watchdog."""
+        ui = MagicMock()
+        ui.interactive = False
+        ui.quiet = True
+        result = _run_with_progress_testable(
+            ui, "Testing...",
+            [sys.executable, "-c", "import time; time.sleep(300)"],
+            timeout=2,
+        )
+        assert result is False
+        ui.step_warn.assert_called_once()
+        warn_msg = ui.step_warn.call_args[0][0]
+        assert "timed out" in warn_msg
+        assert "2s" in warn_msg
+
+    def test_missing_command_returns_false(self) -> None:
+        """FileNotFoundError returns False immediately."""
+        ui = MagicMock()
+        ui.interactive = False
+        ui.quiet = True
+        result = _run_with_progress_testable(
+            ui, "Testing...", ["/nonexistent/command"],
+        )
+        assert result is False

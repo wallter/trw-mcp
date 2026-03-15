@@ -13,8 +13,8 @@ from trw_mcp.state.ceremony_feedback import (
     _derive_agent_id,
     _pending_proposals,
     _sanitize_flag_path,
-    approve_proposal,
     apply_auto_escalation,
+    approve_proposal,
     check_auto_escalation,
     classify_task_class,
     generate_reduction_proposal,
@@ -78,8 +78,16 @@ class TestQualityOutcomeTracker:
     def test_record_outcome_full_quality(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         trw_dir, _ = feedback_env
         entry = record_session_outcome(
-            trw_dir, "feat: add login", 85.0, True, 2.0, 0, True,
-            "STANDARD", "/runs/test", "session-1",
+            trw_dir,
+            "feat: add login",
+            85.0,
+            True,
+            2.0,
+            0,
+            True,
+            "STANDARD",
+            "/runs/test",
+            "session-1",
         )
         assert entry["outcome_quality"] == 1.0
         assert entry["task_class"] == "feature"
@@ -87,8 +95,16 @@ class TestQualityOutcomeTracker:
     def test_record_outcome_low_quality(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         trw_dir, _ = feedback_env
         entry = record_session_outcome(
-            trw_dir, "feat: add login", 50.0, False, -1.0, 2, False,
-            "STANDARD", "/runs/test", "session-1",
+            trw_dir,
+            "feat: add login",
+            50.0,
+            False,
+            -1.0,
+            2,
+            False,
+            "STANDARD",
+            "/runs/test",
+            "session-1",
         )
         assert entry["outcome_quality"] == 0.0
 
@@ -96,8 +112,16 @@ class TestQualityOutcomeTracker:
         trw_dir, _ = feedback_env
         for i in range(55):
             record_session_outcome(
-                trw_dir, "feat: work", 80.0, True, 1.0, 0, True,
-                "STANDARD", f"/runs/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                80.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/runs/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         tc = data["task_classes"]
@@ -113,8 +137,16 @@ class TestStatisticalSignificance:
         trw_dir, config = feedback_env
         for i in range(10):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         assert has_sufficient_samples("feature", data, config) is True
@@ -123,8 +155,16 @@ class TestStatisticalSignificance:
         trw_dir, config = feedback_env
         for i in range(9):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         assert has_sufficient_samples("feature", data, config) is False
@@ -134,8 +174,16 @@ class TestStatisticalSignificance:
         custom = TRWConfig(ceremony_feedback_min_samples=5)
         for i in range(5):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         assert has_sufficient_samples("feature", data, custom) is True
@@ -148,8 +196,16 @@ class TestReductionProposal:
         trw_dir, config = feedback_env
         for i in range(15):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         proposal = generate_reduction_proposal("feature", data, config)
@@ -162,8 +218,16 @@ class TestReductionProposal:
         trw_dir, config = feedback_env
         for i in range(15):
             record_session_outcome(
-                trw_dir, "feat: work", 75.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                75.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         assert generate_reduction_proposal("feature", data, config) is None
@@ -172,8 +236,16 @@ class TestReductionProposal:
         trw_dir, config = feedback_env
         for i in range(15):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, False, -1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                False,
+                -1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         assert generate_reduction_proposal("feature", data, config) is None
@@ -182,8 +254,16 @@ class TestReductionProposal:
         trw_dir, config = feedback_env
         for i in range(15):
             record_session_outcome(
-                trw_dir, "feat: work", 95.0, True, 1.0, 0, True,
-                "MINIMAL", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                95.0,
+                True,
+                1.0,
+                0,
+                True,
+                "MINIMAL",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         assert generate_reduction_proposal("feature", data, config) is None
@@ -197,8 +277,16 @@ class TestAutoEscalation:
         scores = [55, 58, 52, 59, 48]
         for i, score in enumerate(scores):
             record_session_outcome(
-                trw_dir, "feat: work", float(score), True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                float(score),
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         result = check_auto_escalation("feature", data, config)
@@ -211,8 +299,16 @@ class TestAutoEscalation:
         scores = [55, 63, 52, 58, 48]
         for i, score in enumerate(scores):
             record_session_outcome(
-                trw_dir, "feat: work", float(score), True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                float(score),
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         assert check_auto_escalation("feature", data, config) is None
@@ -240,8 +336,16 @@ class TestHumanApproval:
         trw_dir, config = feedback_env
         for i in range(15):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         proposal = generate_reduction_proposal("feature", data, config)
@@ -261,8 +365,16 @@ class TestHumanApproval:
         trw_dir, config = feedback_env
         for i in range(15):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         proposal = generate_reduction_proposal("feature", data, config)
@@ -281,8 +393,16 @@ class TestCeremonyStatus:
         trw_dir, _ = feedback_env
         for i in range(5):
             record_session_outcome(
-                trw_dir, "feat: work", 80.0, True, 1.0, 0, True,
-                "STANDARD", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                80.0,
+                True,
+                1.0,
+                0,
+                True,
+                "STANDARD",
+                f"/r/{i}",
+                f"s-{i}",
             )
         result = get_ceremony_status(trw_dir, "feature")
         assert len(result["task_classes"]) == 1
@@ -305,17 +425,24 @@ class TestCeremonyStatus:
 # FIX-050-FR04: Real outcome quality extraction
 # ===========================================================================
 
+
 class TestOutcomeQualityExtraction:
     """FIX-050-FR04: outcome_quality reflects actual build results; no IEEE 754 artifacts."""
 
-    def test_outcome_quality_no_ieee754_artifacts(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_outcome_quality_no_ieee754_artifacts(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Default combination must not produce 0.6000000000000001."""
         trw_dir, _ = feedback_env
         entry = record_session_outcome(
-            trw_dir, "feat: test", 80.0, True, 0.0, 0, True,
-            "STANDARD", "/runs/test", "session-1",
+            trw_dir,
+            "feat: test",
+            80.0,
+            True,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/runs/test",
+            "session-1",
         )
         val = float(str(entry["outcome_quality"]))
         # Must have at most 4 decimal places — no IEEE 754 noise.
@@ -333,23 +460,45 @@ class TestOutcomeQualityExtraction:
         """
         trw_dir, _ = feedback_env
         entry = record_session_outcome(
-            trw_dir, "feat: test", 80.0, False, -1.0, 0, True,
-            "STANDARD", "/runs/test", "session-fail",
+            trw_dir,
+            "feat: test",
+            80.0,
+            False,
+            -1.0,
+            0,
+            True,
+            "STANDARD",
+            "/runs/test",
+            "session-fail",
         )
         assert float(str(entry["outcome_quality"])) < 0.6
 
-    def test_outcome_quality_varies_across_sessions(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_outcome_quality_varies_across_sessions(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Different build outcomes must produce distinct outcome_quality values."""
         trw_dir, _ = feedback_env
         e1 = record_session_outcome(
-            trw_dir, "feat: a", 80.0, True, 1.0, 0, True,
-            "STANDARD", "/r/1", "s1",
+            trw_dir,
+            "feat: a",
+            80.0,
+            True,
+            1.0,
+            0,
+            True,
+            "STANDARD",
+            "/r/1",
+            "s1",
         )
         e2 = record_session_outcome(
-            trw_dir, "feat: b", 80.0, False, -1.0, 2, False,
-            "STANDARD", "/r/2", "s2",
+            trw_dir,
+            "feat: b",
+            80.0,
+            False,
+            -1.0,
+            2,
+            False,
+            "STANDARD",
+            "/r/2",
+            "s2",
         )
         q1 = float(str(e1["outcome_quality"]))
         q2 = float(str(e2["outcome_quality"]))
@@ -360,6 +509,7 @@ class TestOutcomeQualityExtraction:
 # ===========================================================================
 # FIX-050-FR05: agent_id derivation
 # ===========================================================================
+
 
 class TestDeriveAgentId:
     """FIX-050-FR05: _derive_agent_id uses priority chain: env > run_id > pid."""
@@ -374,18 +524,14 @@ class TestDeriveAgentId:
         result = _derive_agent_id(run_id="20260313T120000Z-abc123")
         assert result == "20260313T120000Z-abc123"
 
-    def test_pid_fallback_when_no_env_or_run_id(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_pid_fallback_when_no_env_or_run_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TRW_AGENT_ID", raising=False)
         result = _derive_agent_id(run_id=None)
         assert result.startswith("pid-")
         assert result != "unknown"
         assert str(os.getpid()) in result
 
-    def test_agent_id_not_unknown_with_run_id(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_agent_id_not_unknown_with_run_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Core acceptance: agent_id must not be 'unknown' when run_id is available."""
         monkeypatch.delenv("TRW_AGENT_ID", raising=False)
         result = _derive_agent_id(run_id="session-xyz")
@@ -417,22 +563,37 @@ class TestDeriveAgentId:
 # FIX-050-FR07: Sanitize test-polluted ceremony feedback
 # ===========================================================================
 
+
 class TestSanitizeCeremonyFeedback:
     """FIX-050-FR07: Remove test-polluted entries from ceremony-feedback.yaml."""
 
-    def test_removes_tmp_pytest_entries(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_removes_tmp_pytest_entries(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Entries with /tmp/pytest paths must be removed."""
         trw_dir, _ = feedback_env
         # Write real + polluted entries
         record_session_outcome(
-            trw_dir, "feat: real", 80.0, True, 0.0, 0, True,
-            "STANDARD", "/home/user/project/.trw/runs/abc", "real-session",
+            trw_dir,
+            "feat: real",
+            80.0,
+            True,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/home/user/project/.trw/runs/abc",
+            "real-session",
         )
         record_session_outcome(
-            trw_dir, "feat: polluted", 0.0, False, 0.0, 0, True,
-            "STANDARD", "/tmp/pytest-of-root/test_0/.trw/runs/xyz", "test",
+            trw_dir,
+            "feat: polluted",
+            0.0,
+            False,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/tmp/pytest-of-root/test_0/.trw/runs/xyz",
+            "test",
         )
 
         result = sanitize_ceremony_feedback(trw_dir)
@@ -444,65 +605,105 @@ class TestSanitizeCeremonyFeedback:
         assert len(sessions) == 1
         assert "/tmp/" not in str(sessions[0].get("run_path", ""))
 
-    def test_removes_known_test_session_ids(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_removes_known_test_session_ids(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Entries with session_id in test sentinel set must be removed."""
         trw_dir, _ = feedback_env
         record_session_outcome(
-            trw_dir, "feat: real", 80.0, True, 0.0, 0, True,
-            "STANDARD", "/real/path", "real-session-001",
+            trw_dir,
+            "feat: real",
+            80.0,
+            True,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/real/path",
+            "real-session-001",
         )
         record_session_outcome(
-            trw_dir, "feat: gate", 0.0, False, 0.0, 0, True,
-            "STANDARD", "/real/path2", "gate-test",
+            trw_dir,
+            "feat: gate",
+            0.0,
+            False,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/real/path2",
+            "gate-test",
         )
         record_session_outcome(
-            trw_dir, "feat: advisory", 0.0, False, 0.0, 0, True,
-            "STANDARD", "/real/path3", "advisory-test",
+            trw_dir,
+            "feat: advisory",
+            0.0,
+            False,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/real/path3",
+            "advisory-test",
         )
 
         result = sanitize_ceremony_feedback(trw_dir)
         assert result.get("removed_count") == 2
 
-    def test_idempotent_via_flag_file(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_idempotent_via_flag_file(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Running sanitize twice should skip the second time."""
         trw_dir, _ = feedback_env
         record_session_outcome(
-            trw_dir, "feat: polluted", 0.0, False, 0.0, 0, True,
-            "STANDARD", "/tmp/pytest-of-root/test", "test",
+            trw_dir,
+            "feat: polluted",
+            0.0,
+            False,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/tmp/pytest-of-root/test",
+            "test",
         )
         result1 = sanitize_ceremony_feedback(trw_dir)
         assert result1.get("removed_count") == 1
 
         # Write another polluted entry after first run
         record_session_outcome(
-            trw_dir, "feat: more-polluted", 0.0, False, 0.0, 0, True,
-            "STANDARD", "/tmp/pytest-of-root/test2", "test",
+            trw_dir,
+            "feat: more-polluted",
+            0.0,
+            False,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "/tmp/pytest-of-root/test2",
+            "test",
         )
         result2 = sanitize_ceremony_feedback(trw_dir)
         assert result2.get("skipped") is True
         # Second polluted entry still present (sanitization was idempotent/skipped)
 
-    def test_flag_file_written_to_context_dir(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_flag_file_written_to_context_dir(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Flag must be written to .trw/context/.sanitized_ceremony_v1."""
         trw_dir, _ = feedback_env
         sanitize_ceremony_feedback(trw_dir)
         flag = _sanitize_flag_path(trw_dir)
         assert flag.exists()
 
-    def test_preserves_real_entries(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_preserves_real_entries(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Real session entries (no /tmp/ or pytest paths) must survive sanitization."""
         trw_dir, _ = feedback_env
         record_session_outcome(
-            trw_dir, "feat: real", 85.0, True, 1.0, 0, True,
-            "STANDARD", "/home/user/myproject/.trw/runs/run-abc", "session-20260313",
+            trw_dir,
+            "feat: real",
+            85.0,
+            True,
+            1.0,
+            0,
+            True,
+            "STANDARD",
+            "/home/user/myproject/.trw/runs/run-abc",
+            "session-20260313",
         )
         sanitize_ceremony_feedback(trw_dir)
         data = read_feedback_data(trw_dir)
@@ -515,12 +716,11 @@ class TestSanitizeCeremonyFeedback:
 # FIX-051-FR03: De-escalation wiring
 # ===========================================================================
 
+
 class TestDeEscalationWiring:
     """FIX-051-FR03: Proposals persisted to disk; trw_ceremony_status reads them."""
 
-    def test_ceremony_status_reads_disk_proposals(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_ceremony_status_reads_disk_proposals(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """Proposals written to ceremony-overrides.yaml should appear in get_ceremony_status."""
         trw_dir, _ = feedback_env
         from trw_mcp.state.ceremony_feedback import _overrides_path
@@ -538,9 +738,7 @@ class TestDeEscalationWiring:
             "generated_at": "2026-03-13T12:00:00Z",
             "status": "pending",
         }
-        overrides: dict[str, object] = {
-            "_pending_proposals": {"prop-disk001": fake_proposal}
-        }
+        overrides: dict[str, object] = {"_pending_proposals": {"prop-disk001": fake_proposal}}
         FileStateWriter().write_yaml(_overrides_path(trw_dir), overrides)
 
         _pending_proposals.clear()  # Ensure nothing in memory
@@ -554,15 +752,21 @@ class TestDeEscalationWiring:
         proposal_ids = [str(p.get("proposal_id")) for p in proposals]
         assert "prop-disk001" in proposal_ids
 
-    def test_generate_reduction_proposal_with_good_scores(
-        self, feedback_env: tuple[Path, TRWConfig]
-    ) -> None:
+    def test_generate_reduction_proposal_with_good_scores(self, feedback_env: tuple[Path, TRWConfig]) -> None:
         """5 sessions with score=85, quality=0.95 at COMPREHENSIVE should yield a proposal."""
         trw_dir, config = feedback_env
         for i in range(15):
             record_session_outcome(
-                trw_dir, "feat: work", 85.0, True, 1.0, 0, True,
-                "COMPREHENSIVE", f"/r/{i}", f"s-{i}",
+                trw_dir,
+                "feat: work",
+                85.0,
+                True,
+                1.0,
+                0,
+                True,
+                "COMPREHENSIVE",
+                f"/r/{i}",
+                f"s-{i}",
             )
         data = read_feedback_data(trw_dir)
         proposal = generate_reduction_proposal("feature", data, config)
@@ -574,6 +778,7 @@ class TestDeEscalationWiring:
 # ===========================================================================
 # FIX-051-FR06: Task description pass-through
 # ===========================================================================
+
 
 class TestTaskDescriptionPassThrough:
     """FIX-051-FR06: classify_task_class uses both task_name and task_description."""

@@ -16,8 +16,7 @@ from trw_mcp.state.prd_utils import VALID_TRANSITIONS
 # Derive ALLOWED_TRANSITIONS from the canonical prd_utils.py VALID_TRANSITIONS.
 # Converts enum keys/values to lowercase strings for caller convenience.
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    status.value: {t.value for t in targets}
-    for status, targets in VALID_TRANSITIONS.items()
+    status.value: {t.value for t in targets} for status, targets in VALID_TRANSITIONS.items()
 }
 
 # Terminal statuses — no outgoing transitions allowed (derived from VALID_TRANSITIONS)

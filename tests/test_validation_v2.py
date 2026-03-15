@@ -63,7 +63,9 @@ prd:
 ---
 """
 
-_SKELETON_PRD = _MINIMAL_FRONTMATTER + """\
+_SKELETON_PRD = (
+    _MINIMAL_FRONTMATTER
+    + """\
 # PRD-TEST-001: Test PRD
 
 ## 1. Problem Statement
@@ -102,8 +104,11 @@ _SKELETON_PRD = _MINIMAL_FRONTMATTER + """\
 ## 12. Traceability Matrix
 <!-- Matrix -->
 """
+)
 
-_FILLED_PRD = _MINIMAL_FRONTMATTER + """\
+_FILLED_PRD = (
+    _MINIMAL_FRONTMATTER
+    + """\
 # PRD-TEST-001: Test PRD
 
 ## 1. Problem Statement
@@ -235,8 +240,11 @@ a new error display component in src/components/ErrorDisplay.tsx.
 | FR01 (Input Validation) | US-001 | `src/validation.py:validate_form()` | `test_validate_required_field_missing` | Pending |
 | FR02 (Error Display) | US-001 | `src/components/ErrorDisplay.tsx` | `test_error_display_renders_message` | Pending |
 """
+)
 
-_PARTIAL_PRD = _MINIMAL_FRONTMATTER + """\
+_PARTIAL_PRD = (
+    _MINIMAL_FRONTMATTER
+    + """\
 # PRD-TEST-001: Test PRD
 
 ## 1. Problem Statement
@@ -285,6 +293,7 @@ Errors are not handled consistently across modules.
 ## 12. Traceability Matrix
 <!-- TODO: Fill in matrix -->
 """
+)
 
 
 # ---------------------------------------------------------------------------
@@ -508,9 +517,14 @@ class TestStructuralCompleteness:
         assert result.score > 20.0  # near max 25 (recalibrated — FR03 PRD-FIX-054)
 
     def test_6_sections_half_score(self) -> None:
-        sections = ["Problem Statement", "Goals & Non-Goals", "User Stories",
-                     "Functional Requirements", "Non-Functional Requirements",
-                     "Technical Approach"]
+        sections = [
+            "Problem Statement",
+            "Goals & Non-Goals",
+            "User Stories",
+            "Functional Requirements",
+            "Non-Functional Requirements",
+            "Technical Approach",
+        ]
         frontmatter = {"id": "X", "title": "Y", "version": "1.0", "status": "draft", "priority": "P1"}
         result = score_structural_completeness(frontmatter, sections)
         assert result.score < 20.0  # less than full
@@ -518,8 +532,18 @@ class TestStructuralCompleteness:
     def test_missing_confidence_reduces_score(self) -> None:
         sections = extract_all_12_section_names()
         with_conf = score_structural_completeness(
-            {"id": "X", "title": "Y", "version": "1.0", "status": "d", "priority": "P1",
-             "confidence": {"implementation_feasibility": 0.8, "requirement_clarity": 0.8, "estimate_confidence": 0.7}},
+            {
+                "id": "X",
+                "title": "Y",
+                "version": "1.0",
+                "status": "d",
+                "priority": "P1",
+                "confidence": {
+                    "implementation_feasibility": 0.8,
+                    "requirement_clarity": 0.8,
+                    "estimate_confidence": 0.7,
+                },
+            },
             sections,
         )
         without_conf = score_structural_completeness(
@@ -532,10 +556,17 @@ class TestStructuralCompleteness:
 def extract_all_12_section_names() -> list[str]:
     """Return list of 12 expected AARE-F section names."""
     return [
-        "Problem Statement", "Goals & Non-Goals", "User Stories",
-        "Functional Requirements", "Non-Functional Requirements",
-        "Technical Approach", "Test Strategy", "Rollout Plan",
-        "Success Metrics", "Dependencies & Risks", "Open Questions",
+        "Problem Statement",
+        "Goals & Non-Goals",
+        "User Stories",
+        "Functional Requirements",
+        "Non-Functional Requirements",
+        "Technical Approach",
+        "Test Strategy",
+        "Rollout Plan",
+        "Success Metrics",
+        "Dependencies & Risks",
+        "Open Questions",
         "Traceability Matrix",
     ]
 
@@ -622,17 +653,19 @@ class TestAmbiguityRate:
 
     def test_ambiguity_rate_with_vague_terms(self) -> None:
         """PRD with vague terms and FR statements must yield ambiguity_rate > 0."""
-        content = "\n".join([
-            f"### PRD-TEST-{i:03d}-FR01: Requirement {i}" for i in range(10)
-        ]) + "\nThe system might fail. We should consider alternatives. As needed."
+        content = (
+            "\n".join([f"### PRD-TEST-{i:03d}-FR01: Requirement {i}" for i in range(10)])
+            + "\nThe system might fail. We should consider alternatives. As needed."
+        )
         rate = _compute_ambiguity_rate(content)
         assert rate > 0.0
 
     def test_ambiguity_rate_zero_for_clean_prd(self) -> None:
         """PRD with no vague terms must return 0.0."""
-        content = "\n".join([
-            f"### PRD-TEST-{i:03d}-FR01: Requirement {i}" for i in range(10)
-        ]) + "\nThe system shall validate all inputs within 200ms."
+        content = (
+            "\n".join([f"### PRD-TEST-{i:03d}-FR01: Requirement {i}" for i in range(10)])
+            + "\nThe system shall validate all inputs within 200ms."
+        )
         rate = _compute_ambiguity_rate(content)
         assert rate == 0.0
 
@@ -652,7 +685,9 @@ class TestAmbiguityRate:
 
     def test_ambiguity_rate_nonzero_for_vague_prd(self) -> None:
         """PRD with vague terms in FR statements must yield ambiguity_rate > 0 from v2."""
-        vague_content = _MINIMAL_FRONTMATTER + """\
+        vague_content = (
+            _MINIMAL_FRONTMATTER
+            + """\
 ## 4. Functional Requirements
 
 ### FR01: Do Something
@@ -662,6 +697,7 @@ Also should consider alternatives.
 ### FR02: Other Thing
 This might work approximately right.
 """
+        )
         result = validate_prd_quality_v2(vague_content)
         assert result.ambiguity_rate > 0.0
 
@@ -677,25 +713,19 @@ class TestRiskProfileWeights:
     def test_all_profiles_have_3_weights(self) -> None:
         """Each risk profile must have exactly 3 weight entries (FR04 — PRD-FIX-054)."""
         for name, profile in RISK_PROFILES.items():
-            assert len(profile.weights) == 3, (
-                f"Profile '{name}' has {len(profile.weights)} weights, expected 3"
-            )
+            assert len(profile.weights) == 3, f"Profile '{name}' has {len(profile.weights)} weights, expected 3"
 
     def test_all_profiles_weights_sum_to_100(self) -> None:
         """Each risk profile's weights must sum to exactly 100 (FR04 — PRD-FIX-054)."""
         for name, profile in RISK_PROFILES.items():
             total = sum(profile.weights)
-            assert total == 100, (
-                f"Profile '{name}' weights sum to {total}, expected 100"
-            )
+            assert total == 100, f"Profile '{name}' weights sum to {total}, expected 100"
 
     def test_risk_scaled_validation_no_stubs(self) -> None:
         """Risk-scaled validation must produce no stub dimensions (FR04 — PRD-FIX-054)."""
         result = validate_prd_quality_v2(_FILLED_PRD, risk_level="critical")
         for dim in result.dimensions:
-            assert dim.max_score > 0.0, (
-                f"Dimension '{dim.name}' has max_score=0.0 after risk scaling"
-            )
+            assert dim.max_score > 0.0, f"Dimension '{dim.name}' has max_score=0.0 after risk scaling"
 
 
 # ---------------------------------------------------------------------------
@@ -737,10 +767,7 @@ class TestImprovementSuggestions:
         assert suggestions[0].potential_gain >= suggestions[1].potential_gain
 
     def test_max_5_suggestions(self) -> None:
-        dims = [
-            DimensionScore(name=f"dim_{i}", score=0.0, max_score=20.0)
-            for i in range(8)
-        ]
+        dims = [DimensionScore(name=f"dim_{i}", score=0.0, max_score=20.0) for i in range(8)]
         suggestions = generate_improvement_suggestions(dims, max_suggestions=5)
         assert len(suggestions) <= 5
 
@@ -863,15 +890,11 @@ class TestTestRefsRegex:
 
     def test_python_prefix_with_pytest_node_matches(self) -> None:
         """Python pytest node ID (module::function) must match."""
-        assert _TEST_REF_RE.findall("`test_api.py::test_create`") == [
-            "`test_api.py::test_create`"
-        ]
+        assert _TEST_REF_RE.findall("`test_api.py::test_create`") == ["`test_api.py::test_create`"]
 
     def test_python_prefix_underscore_matches(self) -> None:
         """Underscore-prefixed Python test file must match."""
-        assert _TEST_REF_RE.findall("`test_validation_v2.py`") == [
-            "`test_validation_v2.py`"
-        ]
+        assert _TEST_REF_RE.findall("`test_validation_v2.py`") == ["`test_validation_v2.py`"]
 
     # --- FR01: TypeScript/JavaScript conventions ---
 
@@ -893,21 +916,15 @@ class TestTestRefsRegex:
         assert _TEST_REF_RE.findall("`handler_test.go`") == ["`handler_test.go`"]
 
     def test_go_test_suffix_with_path_matches(self) -> None:
-        assert _TEST_REF_RE.findall("`internal/handler_test.go`") == [
-            "`internal/handler_test.go`"
-        ]
+        assert _TEST_REF_RE.findall("`internal/handler_test.go`") == ["`internal/handler_test.go`"]
 
     # --- FR01: Java conventions ---
 
     def test_java_test_suffix_matches(self) -> None:
-        assert _TEST_REF_RE.findall("`UserServiceTest.java`") == [
-            "`UserServiceTest.java`"
-        ]
+        assert _TEST_REF_RE.findall("`UserServiceTest.java`") == ["`UserServiceTest.java`"]
 
     def test_java_tests_suffix_matches(self) -> None:
-        assert _TEST_REF_RE.findall("`UserServiceTests.java`") == [
-            "`UserServiceTests.java`"
-        ]
+        assert _TEST_REF_RE.findall("`UserServiceTests.java`") == ["`UserServiceTests.java`"]
 
     # --- FR01: Ruby convention ---
 
@@ -917,9 +934,7 @@ class TestTestRefsRegex:
     # --- FR01: tests/ directory convention (Rust, etc.) ---
 
     def test_tests_dir_matches(self) -> None:
-        assert _TEST_REF_RE.findall("`tests/integration.rs`") == [
-            "`tests/integration.rs`"
-        ]
+        assert _TEST_REF_RE.findall("`tests/integration.rs`") == ["`tests/integration.rs`"]
 
     def test_test_dir_singular_matches(self) -> None:
         """test/ (singular) directory must also match."""
@@ -962,9 +977,7 @@ class TestTestRefsRegex:
 
     def test_non_test_files_not_counted_in_mixed_matrix(self) -> None:
         """impl_refs like `src/validation.py` must NOT appear in test_refs."""
-        matrix_section = (
-            "| FR01 | `src/validation.py` | `test_api.py` | Pending |\n"
-        )
+        matrix_section = "| FR01 | `src/validation.py` | `test_api.py` | Pending |\n"
         matches = _TEST_REF_RE.findall(matrix_section)
         assert "`src/validation.py`" not in matches
         assert "`test_api.py`" in matches
@@ -1053,9 +1066,7 @@ None.
             }
         }
         result = score_traceability_v2(frontmatter, self._TS_PRD)
-        assert result.details["matrix_score"] > 0.0, (
-            "TypeScript test refs not counted — matrix_score was 0"
-        )
+        assert result.details["matrix_score"] > 0.0, "TypeScript test refs not counted — matrix_score was 0"
 
     def test_python_prd_backward_compat_score_unchanged(self) -> None:
         """Existing Python PRD score must not change after regex update."""
@@ -1071,7 +1082,7 @@ None.
         # (uses bare function names), so matrix_score remains 0 as before.
         # The important check is that the function runs without error and
         # field_ratio scoring still works.
-        # field_ratio 1.0 × 0.4 × 33 = 13.2 (recalibrated max_score)
+        # field_ratio 1.0 x 0.4 x 33 = 13.2 (recalibrated max_score)
         assert result.score >= 13.0
         assert result.name == "traceability"
 

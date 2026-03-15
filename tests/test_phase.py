@@ -17,12 +17,15 @@ class TestUpdateRunPhase:
         meta = tmp_path / "meta"
         meta.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "test-run",
-            "task": "test-task",
-            "status": "active",
-            "phase": phase,
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "test-run",
+                "task": "test-task",
+                "status": "active",
+                "phase": phase,
+            },
+        )
         return tmp_path
 
     def test_advances_phase_forward(self, tmp_path: Path) -> None:
@@ -107,12 +110,15 @@ class TestPhaseEnterEvent:
         meta = tmp_path / "meta"
         meta.mkdir(parents=True)
         writer = FileStateWriter()
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "test-run",
-            "task": "test-task",
-            "status": "active",
-            "phase": phase,
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "test-run",
+                "task": "test-task",
+                "status": "active",
+                "phase": phase,
+            },
+        )
         return tmp_path
 
     def test_phase_enter_event_logged(self, tmp_path: Path) -> None:
@@ -218,8 +224,7 @@ class TestCeremonyHelpersBuildGateCompat:
         meta = tmp_path / "meta"
         meta.mkdir(parents=True)
         events_path = meta / "events.jsonl"
-        event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete",
-                 "data": {"tests_passed": True}}
+        event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete", "data": {"tests_passed": True}}
         events_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
         result = check_delivery_gates(tmp_path, FileStateReader())
@@ -234,8 +239,7 @@ class TestCeremonyHelpersBuildGateCompat:
         meta = tmp_path / "meta"
         meta.mkdir(parents=True)
         events_path = meta / "events.jsonl"
-        event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete",
-                 "data": {"tests_passed": "True"}}
+        event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete", "data": {"tests_passed": "True"}}
         events_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
         result = check_delivery_gates(tmp_path, FileStateReader())

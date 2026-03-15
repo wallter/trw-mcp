@@ -30,12 +30,10 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     ClaudeMdSyncResultDict,
     DeliverResultDict,
-    LearningEntryDict,
     ReflectResultDict,
     RunStatusDict,
     SessionStartResultDict,
 )
-from trw_mcp.models.typed_dicts import EmbedHealthStatus
 from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
@@ -103,9 +101,8 @@ from trw_mcp.tools.checkpoint import (  # noqa: E402
 )
 
 # Suppress unused import warnings — these are re-exports
-__all__ = [
+__all__ = [  # noqa: RUF022 — grouped by origin, not alphabetical
     "_do_checkpoint", "_maybe_auto_checkpoint", "_reset_tool_call_counter",
-    # Deferred delivery re-exports
     "_deferred_lock", "_deferred_thread",
     "_do_auto_progress", "_do_index_sync",
     "_launch_deferred", "_log_deferred_result",
@@ -117,7 +114,6 @@ __all__ = [
     "_step_publish_learnings", "_step_recall_outcome", "_step_telemetry",
     "_step_tier_sweep", "_step_trust_increment",
     "_try_acquire_deferred_lock",
-    # Module-level imports used by _deferred_delivery via late import
     "get_config", "resolve_project_root", "resolve_trw_dir",
 ]
 
@@ -284,18 +280,18 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     )
     # Normalise status for backward compatibility with deliver callers.
     raw["status"] = "success"
-    return cast(ClaudeMdSyncResultDict, raw)
+    return cast("ClaudeMdSyncResultDict", raw)
 
 
 # ── Tool registration ─────────────────────────────────────────────────
 
 
-def register_ceremony_tools(server: FastMCP) -> None:
+def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool registration with 6 nested tool defs
     """Register session ceremony composite tools on the MCP server."""
 
     @server.tool()
     @log_tool_call
-    def trw_session_start(query: str = "") -> SessionStartResultDict:
+    def trw_session_start(query: str = "") -> SessionStartResultDict:  # noqa: C901 — session lifecycle with error recovery
         """Load your prior learnings and any active run — gives you full context before writing code.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
@@ -411,29 +407,28 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, counter increment must not block session start
             logger.debug("session_counter_increment_failed", exc_info=True)
 
-        # Step 3d: One-time sanitization of test-polluted ceremony feedback (FIX-050-FR07)
+        # Steps 3d, 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings, sanitization)
         try:
-            from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
-            sanitize_ceremony_feedback(resolve_trw_dir())
-        except Exception:  # justified: fail-open, sanitization must not block session start
-            logger.debug("ceremony_feedback_sanitize_failed", exc_info=True)
+            # One-time sanitization of test-polluted ceremony feedback (FIX-050-FR07)
+            try:
+                from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
+                sanitize_ceremony_feedback(resolve_trw_dir())
+            except Exception:  # justified: fail-open, sanitization must not block session start
+                logger.debug("ceremony_feedback_sanitize_failed", exc_info=True)
 
-        # Steps 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings)
-        try:
             maintenance = run_auto_maintenance(
                 resolve_trw_dir(), config, run_dir,
             )
             # Unpack AutoMaintenanceDict keys explicitly (all declared in SessionStartResultDict)
-            if "update_advisory" in maintenance:
-                results["update_advisory"] = maintenance["update_advisory"]
-            if "auto_upgrade" in maintenance:
-                results["auto_upgrade"] = maintenance["auto_upgrade"]
-            if "stale_runs_closed" in maintenance:
-                results["stale_runs_closed"] = maintenance["stale_runs_closed"]
-            if "embeddings_advisory" in maintenance:
-                results["embeddings_advisory"] = maintenance["embeddings_advisory"]
-            if "embeddings_backfill" in maintenance:
-                results["embeddings_backfill"] = maintenance["embeddings_backfill"]
+            for key in (
+                "update_advisory",
+                "auto_upgrade",
+                "stale_runs_closed",
+                "embeddings_advisory",
+                "embeddings_backfill",
+            ):
+                if key in maintenance:
+                    results[key] = maintenance[key]
         except Exception:  # justified: fail-open, auto-maintenance must not block session start
             logger.debug("session_maintenance_failed", exc_info=True)
 
@@ -488,7 +483,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.state.ceremony_nudge import mark_session_started
             mark_session_started(resolve_trw_dir())
-        except Exception:  # justified: fail-open, ceremony state update must not block session start
+        except Exception:  # noqa: S110 — fail-open, ceremony state must not block session start
             pass
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
@@ -499,8 +494,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
                 available = int(str(results.get("learnings_count", 0)))
                 ctx = NudgeContext(tool_name=ToolName.SESSION_START)
-                append_ceremony_nudge(cast(dict[str, object], results), resolve_trw_dir(), available_learnings=available, context=ctx)
-            except Exception:  # justified: fail-open, nudge injection must not block session start
+                append_ceremony_nudge(cast("dict[str, object]", results), resolve_trw_dir(), available_learnings=available, context=ctx)
+            except Exception:  # noqa: S110 — fail-open, nudge must not block session start
                 pass
 
         logger.info(
@@ -512,7 +507,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
     @server.tool()
     @log_tool_call
-    def trw_deliver(
+    def trw_deliver(  # noqa: C901 — delivery lifecycle with deferred background steps
         run_path: str | None = None,
         skip_reflect: bool = False,
         skip_index_sync: bool = False,
@@ -593,11 +588,11 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # artifacts the next session depends on.
 
         # Use a typed accumulator view for _run_step (which operates on dict[str, object])
-        _results_view: dict[str, object] = cast(dict[str, object], results)
+        _results_view: dict[str, object] = cast("dict[str, object]", results)
 
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:
-            _run_step("reflect", lambda: cast(dict[str, object], _do_reflect(trw_dir, resolved_run)), _results_view, errors)
+            _run_step("reflect", lambda: cast("dict[str, object]", _do_reflect(trw_dir, resolved_run)), _results_view, errors)
         else:
             results["reflect"] = {"status": "skipped"}
 
@@ -608,7 +603,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
         # Step 3: Sync platform instruction files (CLAUDE.md, AGENTS.md, etc.)
-        _run_step("claude_md_sync", lambda: cast(dict[str, object], _do_instruction_sync(trw_dir)), _results_view, errors)
+        _run_step("claude_md_sync", lambda: cast("dict[str, object]", _do_instruction_sync(trw_dir)), _results_view, errors)
 
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
@@ -647,7 +642,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.state.ceremony_nudge import mark_deliver
             mark_deliver(trw_dir)
-        except Exception:  # justified: fail-open, ceremony state update must not block delivery
+        except Exception:  # noqa: S110 — fail-open, ceremony state must not block delivery
             pass
 
         # Inject ceremony nudge into response (PRD-CORE-084 FR02)
@@ -655,8 +650,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
             ctx = NudgeContext(tool_name=ToolName.DELIVER)
-            append_ceremony_nudge(cast(dict[str, object], results), trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block delivery
+            append_ceremony_nudge(cast("dict[str, object]", results), trw_dir, context=ctx)
+        except Exception:  # noqa: S110 — fail-open, nudge must not block delivery
             pass
 
         logger.info(

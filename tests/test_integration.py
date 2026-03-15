@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.state.persistence import FileStateReader
 
 
@@ -195,9 +194,7 @@ class TestSessionLifecycle:
         recall_result = tools["trw_recall"].fn(query="roundtrip")
         assert recall_result["total_matches"] >= 1
         summaries = [
-            entry["summary"]
-            for entry in recall_result["learnings"]
-            if "roundtrip" in entry["summary"].lower()
+            entry["summary"] for entry in recall_result["learnings"] if "roundtrip" in entry["summary"].lower()
         ]
         assert len(summaries) >= 1
 

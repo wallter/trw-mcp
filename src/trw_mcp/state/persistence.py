@@ -33,20 +33,23 @@ logger = structlog.get_logger()
 # session-events.jsonl. Implemented via contextvars so it is thread-safe and
 # call-stack scoped (resets automatically on context exit).
 _suppress_internal_events: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "_suppress_internal_events", default=False,
+    "_suppress_internal_events",
+    default=False,
 )
 
 # Internal event types that are suppressed when _suppress_internal_events is set.
 # User-facing tool events (tool_invocation, session_start, checkpoint, etc.) are
 # NOT in this list and will never be suppressed.
-INTERNAL_EVENT_TYPES: frozenset[str] = frozenset({
-    "jsonl_appended",
-    "yaml_written",
-    "vector_upserted",
-    "index_synced",
-    "dedup_run",
-    "tier_updated",
-})
+INTERNAL_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "jsonl_appended",
+        "yaml_written",
+        "vector_upserted",
+        "index_synced",
+        "dedup_run",
+        "tier_updated",
+    }
+)
 
 
 def _new_yaml() -> YAML:
@@ -148,22 +151,20 @@ class FileStateReader:
                     data = _new_yaml().load(fh)
                 finally:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            if data is None:
-                return {}
-            if not isinstance(data, dict):
-                raise StateError(  # noqa: TRY301
-                    f"YAML root must be a mapping, got {type(data).__name__}",
-                    path=str(path),
-                )
-            result: dict[str, object] = dict(data)
-            return result
-        except StateError:
-            raise
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
                 f"Failed to read YAML: {exc}",
                 path=str(path),
             ) from exc
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise StateError(
+                f"YAML root must be a mapping, got {type(data).__name__}",
+                path=str(path),
+            )
+        result: dict[str, object] = dict(data)
+        return result
 
     def read_jsonl(self, path: Path) -> list[dict[str, object]]:
         """Read and parse a JSONL file (one JSON object per line).

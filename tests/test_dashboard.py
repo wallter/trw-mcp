@@ -8,6 +8,7 @@ edge cases for _sprint_id, non-numeric values, streak breaks.
 from __future__ import annotations
 
 import json
+
 import pytest
 
 from trw_mcp.state.dashboard import (
@@ -21,7 +22,6 @@ from trw_mcp.state.dashboard import (
     detect_degradation,
 )
 from trw_mcp.state.persistence import FileStateWriter
-
 
 # ---------------------------------------------------------------------------
 # Ceremony trend
@@ -182,7 +182,9 @@ class TestDegradation:
     def test_consecutive_negative_disables_alerting(self) -> None:
         """Negative consecutive also returns empty."""
         alerts = detect_degradation(
-            [{"ceremony_score": 5}], threshold=40, consecutive=-1,
+            [{"ceremony_score": 5}],
+            threshold=40,
+            consecutive=-1,
         )
         assert alerts == []
 
@@ -286,8 +288,8 @@ class TestAggregateDashboard:
 
     def test_with_session_events(self, tmp_path: object) -> None:
         """Session events are parsed and fed into trend computations."""
-        from pathlib import Path
         from datetime import datetime, timezone
+        from pathlib import Path
 
         trw_dir = Path(str(tmp_path)) / ".trw"
         context_dir = trw_dir / "context"
@@ -334,8 +336,8 @@ class TestAggregateDashboard:
 
     def test_sprint_comparison_populated(self, tmp_path: object) -> None:
         """Sprint comparison is populated when compare_sprint matches."""
-        from pathlib import Path
         from datetime import datetime, timezone
+        from pathlib import Path
 
         trw_dir = Path(str(tmp_path)) / ".trw"
         context_dir = trw_dir / "context"
@@ -376,8 +378,8 @@ class TestAggregateDashboard:
 
     def test_events_with_top_level_fields(self, tmp_path: object) -> None:
         """Events where fields are at top level (not nested in 'data') are still extracted."""
-        from pathlib import Path
         from datetime import datetime, timezone
+        from pathlib import Path
 
         trw_dir = Path(str(tmp_path)) / ".trw"
         context_dir = trw_dir / "context"

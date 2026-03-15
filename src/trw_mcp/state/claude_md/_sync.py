@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
@@ -64,9 +65,7 @@ def _compute_sync_hash(
     h = hashlib.sha256()
 
     # Sorted learning summaries (deterministic order)
-    learning_summaries = sorted(
-        str(entry.get("summary", "")) for entry in high_impact
-    )
+    learning_summaries = sorted(str(entry.get("summary", "")) for entry in high_impact)
     for summary in learning_summaries:
         h.update(summary.encode("utf-8"))
         h.update(b"\x00")  # null separator
@@ -149,11 +148,11 @@ _REVIEW_TEMPLATE = """\
 def _sanitize_summary(summary: str) -> str:
     """Strip markdown links, HTML tags, and bare URLs from summary."""
     # [text](url) -> text
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', summary)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", summary)
     # <tag> -> ""
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<[^>]+>", "", text)
     # Bare URLs
-    text = re.sub(r'https?://\S+', '', text)
+    text = re.sub(r"https?://\S+", "", text)
     return text.strip()
 
 
@@ -161,12 +160,14 @@ def _get_repo_root() -> Path | None:
     """Detect git repository root via ``git rev-parse``."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5,
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             return Path(result.stdout.strip())
-    except Exception:
+    except Exception:  # justified: fail-open, git root detection failure is non-fatal  # noqa: S110
         pass
     return None
 
@@ -199,7 +200,8 @@ def recall_learnings(
 
 
 def generate_review_md(
-    trw_dir: Path, repo_root: Path | None = None,
+    trw_dir: Path,
+    repo_root: Path | None = None,
 ) -> dict[str, object]:
     """Generate REVIEW.md at repo root with auto-injected learning rules.
 
@@ -256,17 +258,17 @@ def generate_review_md(
     # Atomic write: temp file + os.rename
     try:
         fd, tmp_path = tempfile.mkstemp(
-            dir=str(target_path.parent), prefix=".review-md-", suffix=".tmp",
+            dir=str(target_path.parent),
+            prefix=".review-md-",
+            suffix=".tmp",
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(content)
             os.rename(tmp_path, str(target_path))
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
     except Exception:
         logger.warning("review_md_write_failed", exc_info=True)
@@ -290,7 +292,7 @@ def generate_review_md(
     }
 
 
-def execute_claude_md_sync(
+def execute_claude_md_sync(  # noqa: C901
     scope: str,
     target_dir: str | None,
     config: TRWConfig,
@@ -325,7 +327,6 @@ def execute_claude_md_sync(
         Result dictionary with sync metadata.
     """
     import trw_mcp.state.claude_md as _pkg
-
     from trw_mcp.state.analytics import mark_promoted, update_analytics_sync
     from trw_mcp.state.llm_helpers import llm_summarize_learnings
 
@@ -370,7 +371,11 @@ def execute_claude_md_sync(
     llm_summary: str | None = None
     if (high_impact or patterns) and config.llm_enabled and llm.available:  # pragma: no cover
         llm_summary = llm_summarize_learnings(
-            high_impact, patterns, llm, CLAUDEMD_LEARNING_CAP, CLAUDEMD_PATTERN_CAP,
+            high_impact,
+            patterns,
+            llm,
+            CLAUDEMD_LEARNING_CAP,
+            CLAUDEMD_PATTERN_CAP,
         )
 
     template = load_claude_md_template(trw_dir)
@@ -492,12 +497,7 @@ def execute_claude_md_sync(
                 logger.warning("agents_md_learning_injection_failed", exc_info=True)
 
         # Wrap with markers so merge_trw_section can find/replace on updates.
-        agents_section = (
-            f"{TRW_AUTO_COMMENT}\n"
-            f"{TRW_MARKER_START}\n\n"
-            f"{agents_body}\n"
-            f"{TRW_MARKER_END}\n"
-        )
+        agents_section = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{agents_body}\n{TRW_MARKER_END}\n"
         agents_lines = agents_section.count("\n")
         if agents_lines > config.max_auto_lines:
             logger.warning(

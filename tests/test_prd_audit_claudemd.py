@@ -130,15 +130,18 @@ class TestUpdateFrontmatterGenericExceptionWrapping:
 class TestIsValidTransitionIdentity:
     """Cover line 235: identity transition returns True."""
 
-    @pytest.mark.parametrize("status", [
-        PRDStatus.DRAFT,
-        PRDStatus.REVIEW,
-        PRDStatus.APPROVED,
-        PRDStatus.IMPLEMENTED,
-        PRDStatus.DONE,
-        PRDStatus.MERGED,
-        PRDStatus.DEPRECATED,
-    ])
+    @pytest.mark.parametrize(
+        "status",
+        [
+            PRDStatus.DRAFT,
+            PRDStatus.REVIEW,
+            PRDStatus.APPROVED,
+            PRDStatus.IMPLEMENTED,
+            PRDStatus.DONE,
+            PRDStatus.MERGED,
+            PRDStatus.DEPRECATED,
+        ],
+    )
     def test_identity_transition_always_valid(self, status: PRDStatus) -> None:
         assert is_valid_transition(status, status) is True
 
@@ -166,14 +169,10 @@ class TestCheckTransitionGuardsReviewToApproved:
     def _high_quality_prd(self) -> str:
         """Return a PRD with enough content to pass quality guard."""
         sections = "\n\n".join(
-            f"## {i}. Section {i}\n\n"
-            + ("This is substantive content for section requirements. " * 8)
+            f"## {i}. Section {i}\n\n" + ("This is substantive content for section requirements. " * 8)
             for i in range(1, 13)
         )
-        return (
-            "---\nid: PRD-CORE-001\nstatus: review\npriority: P1\n---\n\n"
-            + sections
-        )
+        return "---\nid: PRD-CORE-001\nstatus: review\npriority: P1\n---\n\n" + sections
 
     def _low_quality_prd(self) -> str:
         return (
@@ -184,9 +183,7 @@ class TestCheckTransitionGuardsReviewToApproved:
     def test_high_quality_prd_passes_guard(self) -> None:
         content = self._high_quality_prd()
         config = TRWConfig()
-        result = check_transition_guards(
-            PRDStatus.REVIEW, PRDStatus.APPROVED, content, config
-        )
+        result = check_transition_guards(PRDStatus.REVIEW, PRDStatus.APPROVED, content, config)
         # High-quality PRD should pass
         if result.allowed:
             assert "Quality validation passed" in result.reason
@@ -198,9 +195,7 @@ class TestCheckTransitionGuardsReviewToApproved:
     def test_low_quality_prd_fails_guard(self) -> None:
         content = self._low_quality_prd()
         config = TRWConfig()
-        result = check_transition_guards(
-            PRDStatus.REVIEW, PRDStatus.APPROVED, content, config
-        )
+        result = check_transition_guards(PRDStatus.REVIEW, PRDStatus.APPROVED, content, config)
         # Low quality PRD should fail (SKELETON or DRAFT tier)
         assert result.allowed is False
         assert "quality_tier" in result.guard_details
@@ -208,14 +203,9 @@ class TestCheckTransitionGuardsReviewToApproved:
 
     def test_guard_uses_risk_scaled_config(self) -> None:
         """Guard must read frontmatter risk_level for scaling."""
-        content = (
-            "---\nid: PRD-CORE-001\nstatus: review\n"
-            "priority: P0\nrisk_level: critical\n---\n\n# Body\n"
-        )
+        content = "---\nid: PRD-CORE-001\nstatus: review\npriority: P0\nrisk_level: critical\n---\n\n# Body\n"
         config = TRWConfig()
-        result = check_transition_guards(
-            PRDStatus.REVIEW, PRDStatus.APPROVED, content, config
-        )
+        result = check_transition_guards(PRDStatus.REVIEW, PRDStatus.APPROVED, content, config)
         # Guard ran — allowed/denied both valid; key is guard_details populated
         assert "quality_tier" in result.guard_details
 
@@ -224,15 +214,12 @@ class TestCheckTransitionGuardsDraftToReview:
     """Cover the DRAFT → REVIEW content density guard path."""
 
     def test_dense_content_passes_guard(self) -> None:
-        substantive_lines = "\n".join([
-            f"Substantive requirement line {i} with real content and details." * 2
-            for i in range(30)
-        ])
+        substantive_lines = "\n".join(
+            [f"Substantive requirement line {i} with real content and details." * 2 for i in range(30)]
+        )
         content = f"---\nid: PRD-CORE-001\nstatus: draft\npriority: P2\n---\n\n{substantive_lines}"
         config = TRWConfig()
-        result = check_transition_guards(
-            PRDStatus.DRAFT, PRDStatus.REVIEW, content, config
-        )
+        result = check_transition_guards(PRDStatus.DRAFT, PRDStatus.REVIEW, content, config)
         assert result.allowed is True
         assert "density" in result.guard_details
 
@@ -242,18 +229,14 @@ class TestCheckTransitionGuardsDraftToReview:
             "# Title\n\n<!-- placeholder -->\n\n---\n\n<!-- empty -->\n"
         )
         config = TRWConfig()
-        result = check_transition_guards(
-            PRDStatus.DRAFT, PRDStatus.REVIEW, content, config
-        )
+        result = check_transition_guards(PRDStatus.DRAFT, PRDStatus.REVIEW, content, config)
         assert result.allowed is False
         assert "density" in result.guard_details
 
     def test_no_guard_for_other_transitions(self) -> None:
         content = "---\nid: PRD-CORE-001\nstatus: approved\npriority: P2\n---\n\n# Body\n"
         config = TRWConfig()
-        result = check_transition_guards(
-            PRDStatus.APPROVED, PRDStatus.IMPLEMENTED, content, config
-        )
+        result = check_transition_guards(PRDStatus.APPROVED, PRDStatus.IMPLEMENTED, content, config)
         assert result.allowed is True
         assert result.reason == "No guard for this transition."
 
@@ -266,10 +249,13 @@ class TestDiscoverGoverningPrds:
         run_dir = tmp_path / "test-run"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
-        _writer.write_yaml(meta / "run.yaml", {
-            "run_id": "test-123",
-            "prd_scope": ["PRD-CORE-007", "PRD-FIX-006"],
-        })
+        _writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "test-123",
+                "prd_scope": ["PRD-CORE-007", "PRD-FIX-006"],
+            },
+        )
         result = discover_governing_prds(run_dir)
         assert result == ["PRD-CORE-007", "PRD-FIX-006"]
 
@@ -305,10 +291,13 @@ class TestDiscoverGoverningPrds:
         meta.mkdir(parents=True)
         reports = run_dir / "reports"
         reports.mkdir()
-        _writer.write_yaml(meta / "run.yaml", {
-            "run_id": "test-123",
-            "prd_scope": [],  # empty list — should fall through
-        })
+        _writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "test-123",
+                "prd_scope": [],  # empty list — should fall through
+            },
+        )
         (reports / "plan.md").write_text(
             "References PRD-QUAL-013.\n",
             encoding="utf-8",
@@ -410,9 +399,12 @@ class TestLoadProjectConfig:
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        _writer.write_yaml(trw_dir / "config.yaml", {
-            "learning_max_entries": 250,
-        })
+        _writer.write_yaml(
+            trw_dir / "config.yaml",
+            {
+                "learning_max_entries": 250,
+            },
+        )
         config = _load_project_config(trw_dir)
         assert config.learning_max_entries == 250
 
@@ -513,9 +505,11 @@ class TestAuditRecallEffectivenessEdgeCases:
         log_path = receipts_dir / "recall_log.jsonl"
 
         content = (
-            json.dumps({"query": "pydantic", "matched_ids": ["L-1"]}) + "\n"
+            json.dumps({"query": "pydantic", "matched_ids": ["L-1"]})
+            + "\n"
             + "not valid json\n"
-            + json.dumps({"query": "testing", "matched_ids": []}) + "\n"
+            + json.dumps({"query": "testing", "matched_ids": []})
+            + "\n"
         )
         log_path.write_text(content, encoding="utf-8")
 
@@ -671,16 +665,25 @@ class TestRunAuditFix:
         entries_dir = project / ".trw" / "learnings" / "entries"
 
         # Add a normal entry and a bloat entry
-        _writer.write_yaml(entries_dir / "good.yaml", {
-            "id": "L-good", "summary": "Real learning", "status": "active",
-            "impact": 0.8, "tags": ["testing"],
-        })
-        _writer.write_yaml(entries_dir / "bloat.yaml", {
-            "id": "L-bloat",
-            "summary": "Repeated operation: checkpoint (5x)",
-            "status": "active",
-            "impact": 0.2,
-        })
+        _writer.write_yaml(
+            entries_dir / "good.yaml",
+            {
+                "id": "L-good",
+                "summary": "Real learning",
+                "status": "active",
+                "impact": 0.8,
+                "tags": ["testing"],
+            },
+        )
+        _writer.write_yaml(
+            entries_dir / "bloat.yaml",
+            {
+                "id": "L-bloat",
+                "summary": "Repeated operation: checkpoint (5x)",
+                "status": "active",
+                "impact": 0.2,
+            },
+        )
 
         result = run_audit(project, fix=True)
         assert result["status"] == "ok"
@@ -700,9 +703,7 @@ class TestFormatMarkdownEdgeCases:
             "project": "test",
             "generated_at": "2026-02-22T00:00:00Z",
             "duplicates": {
-                "pairs": [
-                    {"older_id": "L-abc", "newer_id": "L-def", "similarity": 0.92}
-                ],
+                "pairs": [{"older_id": "L-abc", "newer_id": "L-def", "similarity": 0.92}],
                 "count": 1,
                 "verdict": "WARN",
             },
@@ -929,8 +930,7 @@ class TestRenderCategorizedLearnings:
         from trw_mcp.state.claude_md import CLAUDEMD_LEARNING_CAP, render_categorized_learnings
 
         high_impact: list[dict[str, object]] = [
-            {"summary": f"Learning {i}", "tags": ["architecture"]}
-            for i in range(CLAUDEMD_LEARNING_CAP + 5)
+            {"summary": f"Learning {i}", "tags": ["architecture"]} for i in range(CLAUDEMD_LEARNING_CAP + 5)
         ]
         result = render_categorized_learnings(high_impact)
         # Should not include learnings beyond cap
@@ -962,8 +962,7 @@ class TestRenderPatterns:
         from trw_mcp.state.claude_md import CLAUDEMD_PATTERN_CAP, render_patterns
 
         patterns: list[dict[str, object]] = [
-            {"name": f"Pattern {i}", "description": f"Desc {i}"}
-            for i in range(CLAUDEMD_PATTERN_CAP + 3)
+            {"name": f"Pattern {i}", "description": f"Desc {i}"} for i in range(CLAUDEMD_PATTERN_CAP + 3)
         ]
         result = render_patterns(patterns)
         assert f"Pattern {CLAUDEMD_PATTERN_CAP + 1}" not in result
@@ -1066,12 +1065,15 @@ class TestRenderBehavioralProtocol:
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
-        _writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
-            "directives": [
-                "Call trw_session_start at session start",
-                "Call trw_deliver at task completion",
-            ]
-        })
+        _writer.write_yaml(
+            context_dir / "behavioral_protocol.yaml",
+            {
+                "directives": [
+                    "Call trw_session_start at session start",
+                    "Call trw_deliver at task completion",
+                ]
+            },
+        )
 
         # Patch resolve_project_root in _static_sections to return tmp_path
         monkeypatch.setattr(
@@ -1093,9 +1095,7 @@ class TestRenderBehavioralProtocol:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
         # Write a corrupt YAML
-        (context_dir / "behavioral_protocol.yaml").write_text(
-            ": invalid: [yaml\n", encoding="utf-8"
-        )
+        (context_dir / "behavioral_protocol.yaml").write_text(": invalid: [yaml\n", encoding="utf-8")
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md._static_sections.resolve_project_root",
@@ -1118,11 +1118,7 @@ class TestMergeTrwSectionTruncationNoMarkers:
 
         target = tmp_path / "CLAUDE.md"
         # Existing file with auto comment before marker
-        existing = (
-            "# User content\n\n"
-            f"{TRW_AUTO_COMMENT}\n"
-            f"{TRW_MARKER_START}\nOld TRW content\n{TRW_MARKER_END}\n"
-        )
+        existing = f"# User content\n\n{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\nOld TRW content\n{TRW_MARKER_END}\n"
         target.write_text(existing, encoding="utf-8")
 
         new_section = f"\n{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\nNew content\n{TRW_MARKER_END}\n"
@@ -1189,14 +1185,17 @@ class TestCollectPromotableLearnings:
         entries_dir.mkdir(parents=True)
 
         # Entry with enough q_observations to use q_value
-        _writer.write_yaml(entries_dir / "mature.yaml", {
-            "id": "L-mature",
-            "summary": "Mature learning",
-            "status": "active",
-            "impact": 0.3,  # below threshold
-            "q_observations": config.q_cold_start_threshold,  # at threshold
-            "q_value": 0.9,  # above threshold via q_value
-        })
+        _writer.write_yaml(
+            entries_dir / "mature.yaml",
+            {
+                "id": "L-mature",
+                "summary": "Mature learning",
+                "status": "active",
+                "impact": 0.3,  # below threshold
+                "q_observations": config.q_cold_start_threshold,  # at threshold
+                "q_value": 0.9,  # above threshold via q_value
+            },
+        )
 
         result = collect_promotable_learnings(trw_dir, config, _reader)
         assert any(e.get("id") == "L-mature" for e in result)
@@ -1210,13 +1209,16 @@ class TestCollectPromotableLearnings:
         entries_dir.mkdir(parents=True)
 
         # Cold-start entry with low impact — should be excluded
-        _writer.write_yaml(entries_dir / "low.yaml", {
-            "id": "L-low",
-            "summary": "Low impact learning",
-            "status": "active",
-            "impact": 0.3,  # below config.learning_promotion_impact = 0.7
-            "q_observations": 0,
-        })
+        _writer.write_yaml(
+            entries_dir / "low.yaml",
+            {
+                "id": "L-low",
+                "summary": "Low impact learning",
+                "status": "active",
+                "impact": 0.3,  # below config.learning_promotion_impact = 0.7
+                "q_observations": 0,
+            },
+        )
 
         result = collect_promotable_learnings(trw_dir, config, _reader)
         assert all(e.get("id") != "L-low" for e in result)
@@ -1229,12 +1231,15 @@ class TestCollectPromotableLearnings:
         entries_dir = trw_dir / config.learnings_dir / config.entries_dir
         entries_dir.mkdir(parents=True)
 
-        _writer.write_yaml(entries_dir / "obsolete.yaml", {
-            "id": "L-obs",
-            "summary": "Obsolete learning",
-            "status": "obsolete",
-            "impact": 0.9,
-        })
+        _writer.write_yaml(
+            entries_dir / "obsolete.yaml",
+            {
+                "id": "L-obs",
+                "summary": "Obsolete learning",
+                "status": "obsolete",
+                "impact": 0.9,
+            },
+        )
 
         result = collect_promotable_learnings(trw_dir, config, _reader)
         assert all(e.get("id") != "L-obs" for e in result)
@@ -1262,14 +1267,20 @@ class TestCollectPatterns:
         patterns_dir = trw_dir / config.patterns_dir
         patterns_dir.mkdir(parents=True)
 
-        _writer.write_yaml(patterns_dir / "wave-pattern.yaml", {
-            "name": "Wave Pattern",
-            "description": "Use waves for parallel execution",
-        })
-        _writer.write_yaml(patterns_dir / "shard-pattern.yaml", {
-            "name": "Shard Pattern",
-            "description": "Decompose tasks by category",
-        })
+        _writer.write_yaml(
+            patterns_dir / "wave-pattern.yaml",
+            {
+                "name": "Wave Pattern",
+                "description": "Use waves for parallel execution",
+            },
+        )
+        _writer.write_yaml(
+            patterns_dir / "shard-pattern.yaml",
+            {
+                "name": "Shard Pattern",
+                "description": "Decompose tasks by category",
+            },
+        )
 
         result = collect_patterns(trw_dir, config, _reader)
         assert len(result) == 2
@@ -1285,10 +1296,13 @@ class TestCollectPatterns:
         patterns_dir.mkdir(parents=True)
 
         _writer.write_yaml(patterns_dir / "index.yaml", {"total": 1})
-        _writer.write_yaml(patterns_dir / "my-pattern.yaml", {
-            "name": "My Pattern",
-            "description": "Details",
-        })
+        _writer.write_yaml(
+            patterns_dir / "my-pattern.yaml",
+            {
+                "name": "My Pattern",
+                "description": "Details",
+            },
+        )
 
         result = collect_patterns(trw_dir, config, _reader)
         assert len(result) == 1
@@ -1311,12 +1325,8 @@ class TestCollectPatterns:
         patterns_dir = trw_dir / config.patterns_dir
         patterns_dir.mkdir(parents=True)
 
-        _writer.write_yaml(patterns_dir / "good.yaml", {
-            "name": "Good Pattern", "description": "Works"
-        })
-        _writer.write_yaml(patterns_dir / "also-good.yaml", {
-            "name": "Also Good", "description": "Also works"
-        })
+        _writer.write_yaml(patterns_dir / "good.yaml", {"name": "Good Pattern", "description": "Works"})
+        _writer.write_yaml(patterns_dir / "also-good.yaml", {"name": "Also Good", "description": "Also works"})
 
         # Simulate a read error by using a mock reader that raises for one file
         mock_reader = MagicMock(spec=FileStateReader)
@@ -1347,12 +1357,18 @@ class TestCollectContextData:
         context_dir = trw_dir / config.context_dir
         context_dir.mkdir(parents=True)
 
-        _writer.write_yaml(context_dir / "architecture.yaml", {
-            "source_layout": "src/trw_mcp/",
-        })
-        _writer.write_yaml(context_dir / "conventions.yaml", {
-            "git_format": "feat(scope): msg",
-        })
+        _writer.write_yaml(
+            context_dir / "architecture.yaml",
+            {
+                "source_layout": "src/trw_mcp/",
+            },
+        )
+        _writer.write_yaml(
+            context_dir / "conventions.yaml",
+            {
+                "git_format": "feat(scope): msg",
+            },
+        )
 
         arch_data, conv_data = collect_context_data(trw_dir, config, _reader)
         assert arch_data.get("source_layout") == "src/trw_mcp/"
@@ -1382,9 +1398,7 @@ class TestCollectContextData:
 class TestExecuteClaudeMdSyncAgentsMd:
     """Cover lines 733-734, 794: agents_md sync path."""
 
-    def test_agents_md_synced_when_enabled_root_scope(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_agents_md_synced_when_enabled_root_scope(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.claude_md import execute_claude_md_sync
 
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -1417,9 +1431,7 @@ class TestExecuteClaudeMdSyncAgentsMd:
         agents_md = tmp_path / "AGENTS.md"
         assert agents_md.exists()
 
-    def test_agents_md_not_synced_for_sub_scope(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_agents_md_not_synced_for_sub_scope(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.claude_md import execute_claude_md_sync
 
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -1451,9 +1463,7 @@ class TestExecuteClaudeMdSyncAgentsMd:
         assert result["agents_md_synced"] is False
         assert result["scope"] == "sub"
 
-    def test_agents_md_not_synced_when_disabled(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_agents_md_not_synced_when_disabled(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.claude_md import execute_claude_md_sync
 
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -1504,9 +1514,7 @@ class TestCheckTransitionGuardsReviewApprovedPass:
         mock_result.grade = "A"
 
         with patch("trw_mcp.state.validation.validate_prd_quality_v2", return_value=mock_result):
-            result = check_transition_guards(
-                PRDStatus.REVIEW, PRDStatus.APPROVED, content, config
-            )
+            result = check_transition_guards(PRDStatus.REVIEW, PRDStatus.APPROVED, content, config)
 
         assert result.allowed is True
         assert "Quality validation passed" in result.reason
@@ -1526,9 +1534,7 @@ class TestDiscoverGoverningPrdsExceptionHandlers:
 
         # Write corrupt run.yaml that triggers read error
         (meta / "run.yaml").write_text(": bad yaml: [broken\n", encoding="utf-8")
-        (reports / "plan.md").write_text(
-            "Implements PRD-CORE-011.\n", encoding="utf-8"
-        )
+        (reports / "plan.md").write_text("Implements PRD-CORE-011.\n", encoding="utf-8")
 
         result = discover_governing_prds(run_dir)
         # Should fall through to tier 2 plan.md scan
@@ -1568,10 +1574,12 @@ class TestAuditRecallEffectivenessBlankLines:
 
         # Include actual blank lines in the file
         content = (
-            json.dumps({"query": "pydantic", "matched_ids": ["L-1"]}) + "\n"
+            json.dumps({"query": "pydantic", "matched_ids": ["L-1"]})
+            + "\n"
             + "\n"  # blank line — triggers line 171 continue
             + "\n"  # another blank line
-            + json.dumps({"query": "testing", "matched_ids": []}) + "\n"
+            + json.dumps({"query": "testing", "matched_ids": []})
+            + "\n"
         )
         log_path.write_text(content, encoding="utf-8")
 
@@ -1626,13 +1634,14 @@ class TestRenderAdherenceMaxEntriesCap:
         from trw_mcp.state.claude_md import _ADHERENCE_MAX_ENTRIES, render_adherence
 
         # Create more than _ADHERENCE_MAX_ENTRIES unique adherence entries
-        high_impact: list[dict[str, object]] = []
-        for i in range(_ADHERENCE_MAX_ENTRIES + 5):
-            high_impact.append({
+        high_impact: list[dict[str, object]] = [
+            {
                 "summary": f"Unique adherence directive number {i:02d} long enough to qualify here",
                 "tags": ["behavioral-mandate"],
                 "detail": "",
-            })
+            }
+            for i in range(_ADHERENCE_MAX_ENTRIES + 5)
+        ]
 
         result = render_adherence(high_impact)
         assert "Framework Adherence" in result
@@ -1644,9 +1653,7 @@ class TestRenderAdherenceMaxEntriesCap:
 class TestRenderBehavioralProtocolEmptyDirectives:
     """Cover claude_md.py line 376: empty/non-list directives return empty string."""
 
-    def test_empty_directives_returns_empty_string(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_directives_returns_empty_string(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.claude_md import render_behavioral_protocol
 
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -1656,9 +1663,12 @@ class TestRenderBehavioralProtocolEmptyDirectives:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
 
-        _writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
-            "directives": []  # empty list → line 376: return ""
-        })
+        _writer.write_yaml(
+            context_dir / "behavioral_protocol.yaml",
+            {
+                "directives": []  # empty list → line 376: return ""
+            },
+        )
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md._static_sections.resolve_project_root",
@@ -1668,9 +1678,7 @@ class TestRenderBehavioralProtocolEmptyDirectives:
 
         assert result == ""
 
-    def test_non_list_directives_returns_empty_string(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_non_list_directives_returns_empty_string(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.claude_md import render_behavioral_protocol
 
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -1680,9 +1688,12 @@ class TestRenderBehavioralProtocolEmptyDirectives:
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
 
-        _writer.write_yaml(context_dir / "behavioral_protocol.yaml", {
-            "directives": "not a list"  # not isinstance list → line 376: return ""
-        })
+        _writer.write_yaml(
+            context_dir / "behavioral_protocol.yaml",
+            {
+                "directives": "not a list"  # not isinstance list → line 376: return ""
+            },
+        )
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md._static_sections.resolve_project_root",

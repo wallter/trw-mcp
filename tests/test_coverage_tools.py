@@ -20,13 +20,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import FastMCP
 
-from tests.conftest import extract_tool_fn, get_tools_sync, make_test_server
-
+from tests.conftest import extract_tool_fn, make_test_server
 from trw_mcp.exceptions import StateError, ValidationError
-from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus
 from trw_mcp.models.run import Phase
+from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.reflection import ReflectionInputs, create_reflection_record, persist_reflection
 from trw_mcp.state.validation import (
     _check_prd_enforcement,
@@ -44,6 +43,7 @@ from trw_mcp.tools.telemetry import _write_telemetry_record, _write_tool_event
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_server() -> FastMCP:
     return make_test_server()
 
@@ -57,6 +57,7 @@ def _extract_tool(server: FastMCP, name: str):
 # 1. tools/ceremony.py
 # ---------------------------------------------------------------------------
 
+
 class TestCeremonySessionStartFailurePaths:
     """Lines 74-75: session_start exception path when recall raises."""
 
@@ -68,15 +69,19 @@ class TestCeremonySessionStartFailurePaths:
 
         # Step 1 now uses adapter_recall (local import from memory_adapter).
         # Patch the source module so the local import picks up the mock.
-        with patch(
-            "trw_mcp.state.memory_adapter.recall_learnings",
-            side_effect=RuntimeError("disk failure"),
-        ), patch(
-            "trw_mcp.tools.ceremony.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.ceremony.find_active_run",
-            return_value=None,
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                side_effect=RuntimeError("disk failure"),
+            ),
+            patch(
+                "trw_mcp.tools.ceremony.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.ceremony.find_active_run",
+                return_value=None,
+            ),
         ):
             result = tool()
 
@@ -95,15 +100,19 @@ class TestCeremonySessionStartFailurePaths:
         register_ceremony_tools(server)
         tool = _extract_tool(server, "trw_session_start")
 
-        with patch(
-            "trw_mcp.tools.ceremony.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.state.memory_adapter.recall_learnings",
-            return_value=[],
-        ), patch(
-            "trw_mcp.tools.ceremony.find_active_run",
-            side_effect=OSError("permission denied"),
+        with (
+            patch(
+                "trw_mcp.tools.ceremony.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                return_value=[],
+            ),
+            patch(
+                "trw_mcp.tools.ceremony.find_active_run",
+                side_effect=OSError("permission denied"),
+            ),
         ):
             result = tool()
 
@@ -124,24 +133,31 @@ class TestCeremonyDeliverSubStepFailures:
         """Lines 256-258: claude_md_sync exception populates errors list."""
         tool = self._register_and_get_deliver()
 
-        with patch(
-            "trw_mcp.tools.ceremony.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.ceremony.find_active_run",
-            return_value=None,
-        ), patch(
-            "trw_mcp.tools.ceremony._do_reflect",
-            return_value={"status": "success", "learnings_produced": 0},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_instruction_sync",
-            side_effect=RuntimeError("sync failed"),
-        ), patch(
-            "trw_mcp.tools.ceremony._do_index_sync",
-            return_value={"status": "success"},
-        ), patch(
-            "trw_mcp.tools.ceremony._do_auto_progress",
-            return_value={"status": "skipped"},
+        with (
+            patch(
+                "trw_mcp.tools.ceremony.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.ceremony.find_active_run",
+                return_value=None,
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                return_value={"status": "success", "learnings_produced": 0},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_instruction_sync",
+                side_effect=RuntimeError("sync failed"),
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_index_sync",
+                return_value={"status": "success"},
+            ),
+            patch(
+                "trw_mcp.tools.ceremony._do_auto_progress",
+                return_value={"status": "skipped"},
+            ),
         ):
             result = tool(skip_reflect=False, skip_index_sync=False)
 
@@ -163,9 +179,9 @@ class TestCeremonyDeliverSubStepFailures:
         ):
             _run_step(
                 "auto_progress",
-                lambda: __import__(
-                    "trw_mcp.tools.ceremony", fromlist=["_step_auto_progress"]
-                )._step_auto_progress(None),
+                lambda: __import__("trw_mcp.tools.ceremony", fromlist=["_step_auto_progress"])._step_auto_progress(
+                    None
+                ),
                 results,
                 errors,
             )
@@ -204,10 +220,11 @@ class TestCeremonyDeliverSubStepFailures:
 # 2. tools/learning.py
 # ---------------------------------------------------------------------------
 
+
 class TestLearningExceptionPaths:
     """Lines 140-141, 143: YAML read exception inside distribution enforcement.
-       Lines 170-171: distribution enforcement exception.
-       Lines 301-302: claude_md_sync failure path."""
+    Lines 170-171: distribution enforcement exception.
+    Lines 301-302: claude_md_sync failure path."""
 
     def _register_and_get(self, name: str):
         server = _make_server()
@@ -222,23 +239,35 @@ class TestLearningExceptionPaths:
 
         tool = self._register_and_get("trw_learn")
 
-        with patch(
-            "trw_mcp.tools.learning.get_config",
-            return_value=cfg,
-        ), patch(
-            "trw_mcp.tools.learning.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.learning.generate_learning_id",
-            return_value="L-test0001",
-        ), patch(
-            "trw_mcp.tools.learning.adapter_store",
-            return_value={"learning_id": "L-test0001", "path": "sqlite://L-test0001", "status": "recorded", "distribution_warning": ""},
-        ), patch(
-            "trw_mcp.tools.learning.update_analytics",
-        ), patch(
-            "trw_mcp.tools.learning.list_active_learnings",
-            side_effect=StateError("adapter read failure"),
+        with (
+            patch(
+                "trw_mcp.tools.learning.get_config",
+                return_value=cfg,
+            ),
+            patch(
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.learning.generate_learning_id",
+                return_value="L-test0001",
+            ),
+            patch(
+                "trw_mcp.tools.learning.adapter_store",
+                return_value={
+                    "learning_id": "L-test0001",
+                    "path": "sqlite://L-test0001",
+                    "status": "recorded",
+                    "distribution_warning": "",
+                },
+            ),
+            patch(
+                "trw_mcp.tools.learning.update_analytics",
+            ),
+            patch(
+                "trw_mcp.tools.learning.list_active_learnings",
+                side_effect=StateError("adapter read failure"),
+            ),
         ):
             result = tool(
                 summary="test summary",
@@ -258,26 +287,39 @@ class TestLearningExceptionPaths:
 
         tool = self._register_and_get("trw_learn")
 
-        with patch(
-            "trw_mcp.tools.learning.get_config",
-            return_value=cfg,
-        ), patch(
-            "trw_mcp.tools.learning.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.learning.generate_learning_id",
-            return_value="L-test0002",
-        ), patch(
-            "trw_mcp.tools.learning.adapter_store",
-            return_value={"learning_id": "L-test0002", "path": "sqlite://L-test0002", "status": "recorded", "distribution_warning": ""},
-        ), patch(
-            "trw_mcp.tools.learning.update_analytics",
-        ), patch(
-            "trw_mcp.tools.learning.list_active_learnings",
-            return_value=[{"id": "L-abc", "impact": 0.8}],
-        ), patch(
-            "trw_mcp.scoring.enforce_tier_distribution",
-            side_effect=RuntimeError("distribution exploded"),
+        with (
+            patch(
+                "trw_mcp.tools.learning.get_config",
+                return_value=cfg,
+            ),
+            patch(
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.learning.generate_learning_id",
+                return_value="L-test0002",
+            ),
+            patch(
+                "trw_mcp.tools.learning.adapter_store",
+                return_value={
+                    "learning_id": "L-test0002",
+                    "path": "sqlite://L-test0002",
+                    "status": "recorded",
+                    "distribution_warning": "",
+                },
+            ),
+            patch(
+                "trw_mcp.tools.learning.update_analytics",
+            ),
+            patch(
+                "trw_mcp.tools.learning.list_active_learnings",
+                return_value=[{"id": "L-abc", "impact": 0.8}],
+            ),
+            patch(
+                "trw_mcp.scoring.enforce_tier_distribution",
+                side_effect=RuntimeError("distribution exploded"),
+            ),
         ):
             result = tool(
                 summary="test summary",
@@ -292,12 +334,15 @@ class TestLearningExceptionPaths:
         """learn_update delegates to adapter_update and returns 'updated' status."""
         tool = self._register_and_get("trw_learn_update")
 
-        with patch(
-            "trw_mcp.tools.learning.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.learning.adapter_update",
-            return_value={"learning_id": "L-testXX", "changes": "status→resolved", "status": "updated"},
+        with (
+            patch(
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.learning.adapter_update",
+                return_value={"learning_id": "L-testXX", "changes": "status→resolved", "status": "updated"},
+            ),
         ):
             result = tool(learning_id="L-testXX", status="resolved")
 
@@ -320,6 +365,7 @@ class TestLearningExceptionPaths:
 # 3. tools/requirements.py
 # ---------------------------------------------------------------------------
 
+
 class TestRequirementsFailurePaths:
     """Lines 122-126: invalid risk_level. Line 327: validate path. Lines 579-581: auto-sync failure."""
 
@@ -332,12 +378,15 @@ class TestRequirementsFailurePaths:
         """Lines 122-126: invalid risk_level raises ValidationError."""
         tool = self._register_and_get("trw_prd_create")
 
-        with patch(
-            "trw_mcp.tools.requirements.resolve_project_root",
-            return_value=tmp_path,
-        ), patch(
-            "trw_mcp.tools.requirements.next_prd_sequence",
-            return_value=42,
+        with (
+            patch(
+                "trw_mcp.tools.requirements.resolve_project_root",
+                return_value=tmp_path,
+            ),
+            patch(
+                "trw_mcp.tools.requirements.next_prd_sequence",
+                return_value=42,
+            ),
         ):
             with pytest.raises(ValidationError, match="Invalid risk_level"):
                 tool(
@@ -348,24 +397,26 @@ class TestRequirementsFailurePaths:
                 )
 
     @pytest.mark.parametrize("risk_level", ["critical", "high", "medium", "low"])
-    def test_prd_create_valid_risk_levels_accepted(
-        self, tmp_path: Path, risk_level: str
-    ) -> None:
+    def test_prd_create_valid_risk_levels_accepted(self, tmp_path: Path, risk_level: str) -> None:
         """Valid risk_level values do not raise."""
         tool = self._register_and_get("trw_prd_create")
 
         prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
         prds_dir.mkdir(parents=True)
 
-        with patch(
-            "trw_mcp.tools.requirements.resolve_project_root",
-            return_value=tmp_path,
-        ), patch(
-            "trw_mcp.tools.requirements.next_prd_sequence",
-            return_value=99,
-        ), patch(
-            "trw_mcp.tools.requirements.get_config",
-        ) as mock_get_cfg:
+        with (
+            patch(
+                "trw_mcp.tools.requirements.resolve_project_root",
+                return_value=tmp_path,
+            ),
+            patch(
+                "trw_mcp.tools.requirements.next_prd_sequence",
+                return_value=99,
+            ),
+            patch(
+                "trw_mcp.tools.requirements.get_config",
+            ) as mock_get_cfg,
+        ):
             mock_get_cfg.return_value.prds_relative_path = "docs/requirements-aare-f/prds"
             mock_get_cfg.return_value.trw_dir = ".trw"
             mock_get_cfg.return_value.index_auto_sync_on_status_change = False
@@ -383,7 +434,8 @@ class TestRequirementsFailurePaths:
     def test_prd_validate_path_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 327: trw_prd_validate reads and validates an existing file."""
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: tmp_path,
         )
         tool = self._register_and_get("trw_prd_validate")
 
@@ -475,9 +527,10 @@ None.
 # 4. tools/telemetry.py
 # ---------------------------------------------------------------------------
 
+
 class TestTelemetryExceptionPaths:
     """Lines 100-101: FR04 telemetry exception path.
-       Lines 135-136: fallback session-events write exception path."""
+    Lines 135-136: fallback session-events write exception path."""
 
     def test_fr04_telemetry_write_record_exception_suppressed(self, tmp_path: Path) -> None:
         """Lines 100-101: _write_telemetry_record raises but exception is swallowed."""
@@ -491,19 +544,25 @@ class TestTelemetryExceptionPaths:
             return {"ok": True}
 
         from trw_mcp.tools.telemetry import log_tool_call
+
         wrapped = log_tool_call(bomb_fn)
 
-        with patch(
-            "trw_mcp.tools.telemetry.get_config",
-            return_value=cfg,
-        ), patch(
-            "trw_mcp.tools.telemetry._get_cached_run_dir",
-            return_value=None,
-        ), patch(
-            "trw_mcp.tools.telemetry._write_tool_event",
-        ), patch(
-            "trw_mcp.tools.telemetry._write_telemetry_record",
-            side_effect=RuntimeError("telemetry write failed"),
+        with (
+            patch(
+                "trw_mcp.tools.telemetry.get_config",
+                return_value=cfg,
+            ),
+            patch(
+                "trw_mcp.tools.telemetry._get_cached_run_dir",
+                return_value=None,
+            ),
+            patch(
+                "trw_mcp.tools.telemetry._write_tool_event",
+            ),
+            patch(
+                "trw_mcp.tools.telemetry._write_telemetry_record",
+                side_effect=RuntimeError("telemetry write failed"),
+            ),
         ):
             # Should not raise — exception in FR04 path is swallowed
             result = wrapped()
@@ -513,19 +572,21 @@ class TestTelemetryExceptionPaths:
     def test_write_tool_event_fallback_exception_suppressed(self, tmp_path: Path) -> None:
         """Lines 135-136: fallback resolve_trw_dir raises, exception suppressed."""
 
-        with patch(
-            "trw_mcp.tools.telemetry._get_cached_run_dir",
-            return_value=None,  # No active run -> go to fallback
-        ), patch(
-            "trw_mcp.tools.telemetry.resolve_trw_dir",
-            side_effect=RuntimeError("no trw dir"),
+        with (
+            patch(
+                "trw_mcp.tools.telemetry._get_cached_run_dir",
+                return_value=None,  # No active run -> go to fallback
+            ),
+            patch(
+                "trw_mcp.tools.telemetry.resolve_trw_dir",
+                side_effect=RuntimeError("no trw dir"),
+            ),
         ):
             # Must not raise
             _write_tool_event("test_tool", 12.5, True, None)
 
     def test_write_telemetry_record_writes_to_logs(self, tmp_path: Path) -> None:
         """_write_telemetry_record creates tool-telemetry.jsonl."""
-        import trw_mcp.tools.telemetry as tel_mod
 
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
@@ -535,10 +596,16 @@ class TestTelemetryExceptionPaths:
             return_value=trw_dir,
         ):
             _write_telemetry_record(
-                "my_tool", (), {}, 42.0, {"result": "ok"}, True,
+                "my_tool",
+                (),
+                {},
+                42.0,
+                {"result": "ok"},
+                True,
             )
 
         from trw_mcp.models.config import get_config as _get_config
+
         telemetry_file = trw_dir / "logs" / _get_config().telemetry_file
         assert telemetry_file.exists()
 
@@ -547,12 +614,11 @@ class TestTelemetryExceptionPaths:
 # 5. state/validation.py
 # ---------------------------------------------------------------------------
 
+
 class TestValidationRunTypeReadFailure:
     """Lines 469-470: StateError reading run.yaml for run_type check."""
 
-    def test_check_prd_enforcement_run_yaml_read_error_continues(
-        self, tmp_path: Path
-    ) -> None:
+    def test_check_prd_enforcement_run_yaml_read_error_continues(self, tmp_path: Path) -> None:
         """When run.yaml raises StateError during run_type check, proceeds normally."""
         run_path = tmp_path / "run"
         meta = run_path / "meta"
@@ -564,18 +630,25 @@ class TestValidationRunTypeReadFailure:
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
         # Patch the function-local imports at their source modules
-        with patch(
-            "trw_mcp.state.prd_utils.discover_governing_prds",
-            return_value=[],
-        ), patch(
-            "trw_mcp.state._paths.resolve_project_root",
-            return_value=tmp_path,
-        ), patch(
-            "trw_mcp.state.persistence.FileStateReader.read_yaml",
-            side_effect=StateError("corrupt yaml"),
+        with (
+            patch(
+                "trw_mcp.state.prd_utils.discover_governing_prds",
+                return_value=[],
+            ),
+            patch(
+                "trw_mcp.state._paths.resolve_project_root",
+                return_value=tmp_path,
+            ),
+            patch(
+                "trw_mcp.state.persistence.FileStateReader.read_yaml",
+                side_effect=StateError("corrupt yaml"),
+            ),
         ):
             failures = _check_prd_enforcement(
-                run_path, config, PRDStatus.APPROVED, "implement",
+                run_path,
+                config,
+                PRDStatus.APPROVED,
+                "implement",
             )
 
         # Should return the "no governing PRDs" advisory (StateError was caught on lines 469-470)
@@ -604,18 +677,25 @@ class TestValidationPrdReadFailed:
 
         # All are function-local imports inside _check_prd_enforcement
         # resolve_project_root is imported from trw_mcp.state._paths inside the function
-        with patch(
-            "trw_mcp.state.prd_utils.discover_governing_prds",
-            return_value=["PRD-TEST-001"],
-        ), patch(
-            "trw_mcp.state._paths.resolve_project_root",
-            return_value=tmp_path,
-        ), patch(
-            "trw_mcp.state.prd_utils.parse_frontmatter",
-            side_effect=OSError("cannot read"),
+        with (
+            patch(
+                "trw_mcp.state.prd_utils.discover_governing_prds",
+                return_value=["PRD-TEST-001"],
+            ),
+            patch(
+                "trw_mcp.state._paths.resolve_project_root",
+                return_value=tmp_path,
+            ),
+            patch(
+                "trw_mcp.state.prd_utils.parse_frontmatter",
+                side_effect=OSError("cannot read"),
+            ),
         ):
             failures = _check_prd_enforcement(
-                run_path, config, PRDStatus.APPROVED, "implement",
+                run_path,
+                config,
+                PRDStatus.APPROVED,
+                "implement",
             )
 
         readable_failures = [f for f in failures if f.rule == "prd_readable"]
@@ -626,9 +706,7 @@ class TestValidationPrdReadFailed:
 class TestValidationBuildStatusStaleness:
     """Lines 622-623: ValueError/TypeError when parsing build timestamp."""
 
-    def test_build_status_unparseable_timestamp_continues(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_status_unparseable_timestamp_continues(self, tmp_path: Path) -> None:
         """When timestamp is unparseable, staleness is treated as fresh (pass)."""
         from trw_mcp.state.validation import _check_build_status
 
@@ -637,9 +715,7 @@ class TestValidationBuildStatusStaleness:
         context_dir.mkdir(parents=True)
 
         cache = context_dir / "build-status.yaml"
-        cache.write_text(
-            "tests_passed: true\nmypy_clean: true\ntimestamp: not-a-date\n"
-        )
+        cache.write_text("tests_passed: true\nmypy_clean: true\ntimestamp: not-a-date\n")
 
         config = TRWConfig(trw_dir=str(trw_dir))
         object.__setattr__(config, "build_check_enabled", True)
@@ -676,9 +752,7 @@ class TestValidationIntegrationScannerException:
 class TestValidationImplementPhaseInvalidStatus:
     """Lines 815-816: invalid prd_required_status_for_implement falls back to APPROVED."""
 
-    def test_implement_phase_invalid_required_status_fallback(
-        self, tmp_path: Path
-    ) -> None:
+    def test_implement_phase_invalid_required_status_fallback(self, tmp_path: Path) -> None:
         """Invalid prd_required_status_for_implement falls back to PRDStatus.APPROVED."""
         from trw_mcp.state.validation import check_phase_exit
 
@@ -689,19 +763,20 @@ class TestValidationImplementPhaseInvalidStatus:
         (run_path / "shards").mkdir()
 
         # Write minimal run.yaml
-        (run_path / "meta" / "run.yaml").write_text(
-            "run_id: test\ntask: test\nstatus: active\nphase: implement\n"
-        )
+        (run_path / "meta" / "run.yaml").write_text("run_id: test\ntask: test\nstatus: active\nphase: implement\n")
 
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
         # Set invalid status string to trigger ValueError fallback
         object.__setattr__(config, "prd_required_status_for_implement", "INVALID_STATUS")
 
-        with patch(
-            "trw_mcp.state.validation._check_prd_enforcement",
-            return_value=[],
-        ), patch(
-            "trw_mcp.state.validation._best_effort_build_check",
+        with (
+            patch(
+                "trw_mcp.state.validation._check_prd_enforcement",
+                return_value=[],
+            ),
+            patch(
+                "trw_mcp.state.validation._best_effort_build_check",
+            ),
         ):
             result = check_phase_exit(Phase.IMPLEMENT, run_path, config)
 
@@ -714,9 +789,7 @@ class TestValidationImplementPhaseInvalidStatus:
 class TestValidationReflectionQualityException:
     """Lines 900-901: reflection quality check exception is swallowed (best-effort)."""
 
-    def test_review_phase_reflection_quality_exception_swallowed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_review_phase_reflection_quality_exception_swallowed(self, tmp_path: Path) -> None:
         """When compute_reflection_quality raises, review phase continues."""
         from trw_mcp.state.validation import check_phase_exit
 
@@ -728,9 +801,8 @@ class TestValidationReflectionQualityException:
         # Write events.jsonl with a reflection event
         events_file = meta / "events.jsonl"
         import json
-        events_file.write_text(
-            json.dumps({"event": "reflection_complete", "ts": "2026-01-01T00:00:00Z"}) + "\n"
-        )
+
+        events_file.write_text(json.dumps({"event": "reflection_complete", "ts": "2026-01-01T00:00:00Z"}) + "\n")
         (meta / "run.yaml").write_text("status: active\n")
 
         # Final report required for review phase
@@ -738,11 +810,14 @@ class TestValidationReflectionQualityException:
 
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
-        with patch(
-            "trw_mcp.state.analytics.compute_reflection_quality",
-            side_effect=RuntimeError("quality check exploded"),
-        ), patch(
-            "trw_mcp.state.validation._best_effort_integration_check",
+        with (
+            patch(
+                "trw_mcp.state.analytics.compute_reflection_quality",
+                side_effect=RuntimeError("quality check exploded"),
+            ),
+            patch(
+                "trw_mcp.state.validation._best_effort_integration_check",
+            ),
         ):
             result = check_phase_exit(Phase.REVIEW, run_path, config)
 
@@ -755,9 +830,7 @@ class TestValidationReflectionQualityException:
 class TestValidationDeliverRunYamlReadException:
     """Lines 920-921: OSError reading run.yaml in deliver phase is swallowed."""
 
-    def test_deliver_phase_run_yaml_read_exception_swallowed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_deliver_phase_run_yaml_read_exception_swallowed(self, tmp_path: Path) -> None:
         """When reading run.yaml raises in deliver phase, exception is suppressed."""
         from trw_mcp.state.validation import check_phase_exit
 
@@ -772,22 +845,25 @@ class TestValidationDeliverRunYamlReadException:
 
         # Write events with sync event
         import json
+
         events = [
             {"event": "trw_claude_md_sync_complete", "ts": "2026-01-01T00:00:00Z"},
         ]
-        (meta / "events.jsonl").write_text(
-            "\n".join(json.dumps(e) for e in events) + "\n"
-        )
+        (meta / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
 
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
-        with patch(
-            "trw_mcp.state.persistence.FileStateReader.read_yaml",
-            side_effect=StateError("read failed"),
-        ), patch(
-            "trw_mcp.state.validation._best_effort_build_check",
-        ), patch(
-            "trw_mcp.state.validation._best_effort_integration_check",
+        with (
+            patch(
+                "trw_mcp.state.persistence.FileStateReader.read_yaml",
+                side_effect=StateError("read failed"),
+            ),
+            patch(
+                "trw_mcp.state.validation._best_effort_build_check",
+            ),
+            patch(
+                "trw_mcp.state.validation._best_effort_integration_check",
+            ),
         ):
             result = check_phase_exit(Phase.DELIVER, run_path, config)
 
@@ -884,12 +960,15 @@ class TestValidationAutoProgressOSError:
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
         # All of these are function-local imports inside auto_progress_prds
-        with patch(
-            "trw_mcp.state.prd_utils.discover_governing_prds",
-            return_value=["PRD-CORE-001"],
-        ), patch(
-            "trw_mcp.state.prd_utils.parse_frontmatter",
-            side_effect=OSError("cannot read prd"),
+        with (
+            patch(
+                "trw_mcp.state.prd_utils.discover_governing_prds",
+                return_value=["PRD-CORE-001"],
+            ),
+            patch(
+                "trw_mcp.state.prd_utils.parse_frontmatter",
+                side_effect=OSError("cannot read prd"),
+            ),
         ):
             results = auto_progress_prds(run_path, "plan", prds_dir, config)
 
@@ -913,19 +992,20 @@ class TestValidationAutoProgressOSError:
         prd_file.write_text(prd_content)
 
         # Write run.yaml with prd_scope so discover_governing_prds finds the PRD
-        (meta_dir / "run.yaml").write_text(
-            _yaml.dump({"run_id": "test-run", "prd_scope": ["PRD-CORE-002"]})
-        )
+        (meta_dir / "run.yaml").write_text(_yaml.dump({"run_id": "test-run", "prd_scope": ["PRD-CORE-002"]}))
 
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
         # Patch the consumer module (prd_progression) not the source module (prd_utils),
         # since prd_progression imports these names at module load time.
-        with patch(
-            "trw_mcp.state.validation.prd_progression.update_frontmatter",
-        ), patch(
-            "trw_mcp.state.index_sync.sync_index_md",
-            side_effect=RuntimeError("index sync failed"),
+        with (
+            patch(
+                "trw_mcp.state.validation.prd_progression.update_frontmatter",
+            ),
+            patch(
+                "trw_mcp.state.index_sync.sync_index_md",
+                side_effect=RuntimeError("index sync failed"),
+            ),
         ):
             # Should not raise
             results = auto_progress_prds(run_path, "plan", prds_dir, config)
@@ -978,15 +1058,12 @@ class TestValidationCheckIntegrationServerOSError:
         # Don't create the tests dir so test files won't be found
 
         # Create a tool file with register function — no matching test file
-        (tools_dir / "newtool.py").write_text(
-            "def register_newtool_tools(server):\n    pass\n"
-        )
+        (tools_dir / "newtool.py").write_text("def register_newtool_tools(server):\n    pass\n")
 
         # server.py that imports and calls the tool (so it IS registered)
         server_path = src_dir / "server.py"
         server_path.write_text(
-            "from trw_mcp.tools.newtool import register_newtool_tools\n"
-            "register_newtool_tools(server)\n"
+            "from trw_mcp.tools.newtool import register_newtool_tools\nregister_newtool_tools(server)\n"
         )
 
         result = check_integration(src_dir)
@@ -1002,6 +1079,7 @@ class TestValidationCheckIntegrationServerOSError:
 # ---------------------------------------------------------------------------
 # 6. state/reflection.py
 # ---------------------------------------------------------------------------
+
 
 class TestReflectionPersistWithRunPath:
     """Lines 251-260: persist_reflection with run_path that has a valid meta/ dir."""
@@ -1049,6 +1127,7 @@ class TestReflectionPersistWithRunPath:
 
         # Verify event was logged to run events.jsonl
         import json
+
         logged = [json.loads(line) for line in events_file.read_text().splitlines() if line.strip()]
         reflection_events = [e for e in logged if e.get("event") == "reflection_complete"]
         assert len(reflection_events) == 1
@@ -1087,9 +1166,7 @@ class TestReflectionPersistWithRunPath:
         reflection_files = list((trw_dir / "reflections").glob("*.yaml"))
         assert len(reflection_files) == 1
 
-    def test_persist_reflection_run_path_missing_meta_skips_event(
-        self, tmp_path: Path
-    ) -> None:
+    def test_persist_reflection_run_path_missing_meta_skips_event(self, tmp_path: Path) -> None:
         """When run meta/ dir doesn't exist, event is not written."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "reflections").mkdir(parents=True)
@@ -1134,6 +1211,7 @@ class TestReflectionPersistWithRunPath:
 # ceremony.py lines 74-75: _get_run_status exception path
 # ---------------------------------------------------------------------------
 
+
 class TestCeremonyGetRunStatus:
     """Lines 74-75: _get_run_status exception handler."""
 
@@ -1171,6 +1249,7 @@ class TestCeremonyGetRunStatus:
 # learning.py line 143: inactive entry skipped in distribution loop
 # ---------------------------------------------------------------------------
 
+
 class TestLearningDistributionSkipsInactiveEntries:
     """Line 143: inactive entries (status != 'active') are skipped with continue."""
 
@@ -1186,26 +1265,39 @@ class TestLearningDistributionSkipsInactiveEntries:
 
         # list_active_learnings already filters to active only.
         # Return only the active entry (resolved is excluded by the adapter).
-        with patch(
-            "trw_mcp.tools.learning.get_config",
-            return_value=cfg,
-        ), patch(
-            "trw_mcp.tools.learning.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.learning.generate_learning_id",
-            return_value="L-new001",
-        ), patch(
-            "trw_mcp.tools.learning.adapter_store",
-            return_value={"learning_id": "L-new001", "path": "sqlite://L-new001", "status": "recorded", "distribution_warning": ""},
-        ), patch(
-            "trw_mcp.tools.learning.update_analytics",
-        ), patch(
-            "trw_mcp.tools.learning.list_active_learnings",
-            return_value=[{"id": "L-active", "impact": 0.5}],  # resolved excluded
-        ), patch(
-            "trw_mcp.scoring.enforce_tier_distribution",
-            return_value=[],  # No demotions
+        with (
+            patch(
+                "trw_mcp.tools.learning.get_config",
+                return_value=cfg,
+            ),
+            patch(
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.learning.generate_learning_id",
+                return_value="L-new001",
+            ),
+            patch(
+                "trw_mcp.tools.learning.adapter_store",
+                return_value={
+                    "learning_id": "L-new001",
+                    "path": "sqlite://L-new001",
+                    "status": "recorded",
+                    "distribution_warning": "",
+                },
+            ),
+            patch(
+                "trw_mcp.tools.learning.update_analytics",
+            ),
+            patch(
+                "trw_mcp.tools.learning.list_active_learnings",
+                return_value=[{"id": "L-active", "impact": 0.5}],  # resolved excluded
+            ),
+            patch(
+                "trw_mcp.scoring.enforce_tier_distribution",
+                return_value=[],  # No demotions
+            ),
         ):
             result = tool(
                 summary="new summary",
@@ -1221,6 +1313,7 @@ class TestLearningDistributionSkipsInactiveEntries:
 # learning.py lines 301-302: recall_tracking exception in trw_recall
 # ---------------------------------------------------------------------------
 
+
 class TestLearningRecallTrackingException:
     """Lines 301-302: record_recall raises, exception is silently swallowed."""
 
@@ -1233,26 +1326,34 @@ class TestLearningRecallTrackingException:
         mock_record_recall = MagicMock(side_effect=RuntimeError("tracking db down"))
 
         # trw_recall now uses adapter_recall (SQLite). Patch it to return a result.
-        with patch(
-            "trw_mcp.tools.learning.resolve_trw_dir",
-            return_value=tmp_path / ".trw",
-        ), patch(
-            "trw_mcp.tools.learning.adapter_recall",
-            return_value=[{"id": "L-001", "summary": "test"}],
-        ), patch(
-            "trw_mcp.tools.learning.adapter_update_access",
-        ), patch(
-            "trw_mcp.tools.learning.search_patterns",
-            return_value=[],
-        ), patch(
-            "trw_mcp.tools.learning.rank_by_utility",
-            return_value=[{"id": "L-001", "summary": "test"}],
-        ), patch(
-            "trw_mcp.tools.learning.collect_context",
-            return_value={},
-        ), patch.dict(
-            "sys.modules",
-            {"trw_mcp.state.recall_tracking": MagicMock(record_recall=mock_record_recall)},
+        with (
+            patch(
+                "trw_mcp.tools.learning.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.learning.adapter_recall",
+                return_value=[{"id": "L-001", "summary": "test"}],
+            ),
+            patch(
+                "trw_mcp.tools.learning.adapter_update_access",
+            ),
+            patch(
+                "trw_mcp.tools.learning.search_patterns",
+                return_value=[],
+            ),
+            patch(
+                "trw_mcp.tools.learning.rank_by_utility",
+                return_value=[{"id": "L-001", "summary": "test"}],
+            ),
+            patch(
+                "trw_mcp.tools.learning.collect_context",
+                return_value={},
+            ),
+            patch.dict(
+                "sys.modules",
+                {"trw_mcp.state.recall_tracking": MagicMock(record_recall=mock_record_recall)},
+            ),
         ):
             result = tool(query="test")
 
@@ -1264,6 +1365,7 @@ class TestLearningRecallTrackingException:
 # ---------------------------------------------------------------------------
 # requirements.py line 327: template has no frontmatter (else branch)
 # ---------------------------------------------------------------------------
+
 
 class TestRequirementsTemplateNoFrontmatter:
     """Line 327: _load_template_body else branch when no --- frontmatter found."""
@@ -1298,10 +1400,15 @@ class TestRequirementsTemplateNoFrontmatter:
                         return no_frontmatter_content
                     return original_rt(self, *args, **kwargs)
 
-                with patch.object(Path, "read_text", fake_read_text), \
-                     patch.object(Path, "exists", lambda self: True if self.name == "prd_template.md" else Path.exists(self)):
+                with (
+                    patch.object(Path, "read_text", fake_read_text),
+                    patch.object(
+                        Path, "exists", lambda self: True if self.name == "prd_template.md" else Path.exists(self)
+                    ),
+                ):
                     req_mod._CACHED_TEMPLATE_BODY = None
                     from trw_mcp.tools.requirements import _load_template_body
+
                     body = _load_template_body()
 
             # Body should be the raw content (the else branch at line 327)
@@ -1316,14 +1423,18 @@ class TestRequirementsTemplateNoFrontmatter:
 # Additional edge cases for validation.py line 622-623 (ValueError branch)
 # ---------------------------------------------------------------------------
 
+
 class TestValidationBuildStatusTimestampParseError:
     """Line 622-623: explicit ValueError and TypeError in timestamp parsing."""
 
-    @pytest.mark.parametrize("bad_ts", [
-        "not-a-date",
-        "2026-13-45T99:99:99",  # invalid month/day
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "bad_ts",
+        [
+            "not-a-date",
+            "2026-13-45T99:99:99",  # invalid month/day
+            "",
+        ],
+    )
     def test_bad_timestamp_treated_as_fresh(self, tmp_path: Path, bad_ts: str) -> None:
         """Unparseable timestamps cause ValueError; staleness defaults to False."""
         from trw_mcp.state.validation import _check_build_status
@@ -1333,9 +1444,7 @@ class TestValidationBuildStatusTimestampParseError:
         cache = trw_dir / "context" / "build-status.yaml"
 
         if bad_ts:
-            cache.write_text(
-                f"tests_passed: true\nmypy_clean: true\ntimestamp: '{bad_ts}'\n"
-            )
+            cache.write_text(f"tests_passed: true\nmypy_clean: true\ntimestamp: '{bad_ts}'\n")
         else:
             # Empty timestamp string -> skip ts branch entirely
             cache.write_text("tests_passed: true\nmypy_clean: true\n")
@@ -1354,14 +1463,18 @@ class TestValidationBuildStatusTimestampParseError:
 # Bonus: requirements.py — cover line 327 (validate missing file)
 # ---------------------------------------------------------------------------
 
+
 class TestRequirementsValidateMissingFile:
     """trw_prd_validate raises StateError when file doesn't exist."""
 
     def test_prd_validate_missing_file_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: tmp_path,
         )
         server = _make_server()
         register_requirements_tools(server)

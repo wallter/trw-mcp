@@ -188,9 +188,7 @@ def init_project(
 
     # Validate target is a git repo
     if not (target_dir / ".git").exists():
-        result["errors"].append(
-            f"{target_dir} is not a git repository (.git/ not found)"
-        )
+        result["errors"].append(f"{target_dir} is not a git repository (.git/ not found)")
         return result
 
     # 1. Create directory structure
@@ -204,8 +202,11 @@ def init_project(
 
     # 3. Write generated config and seed files (includes target_platforms)
     _write_initial_config(
-        target_dir, force, result,
-        source_package=source_package, test_path=test_path,
+        target_dir,
+        force,
+        result,
+        source_package=source_package,
+        test_path=test_path,
         runs_root=runs_root,
         target_platforms=ide_targets,
         on_progress=on_progress,

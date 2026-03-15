@@ -16,10 +16,12 @@ if TYPE_CHECKING:
     from trw_mcp.state.persistence import FileStateReader
 
 import structlog
+
 from trw_mcp.state._helpers import iter_yaml_entry_files
 
 try:
     import sqlite_vec  # type: ignore[import-untyped]
+
     _SQLITE_VEC_AVAILABLE = True
 except ImportError:
     _SQLITE_VEC_AVAILABLE = False
@@ -61,17 +63,12 @@ class MemoryStore:
 
     def _ensure_schema(self) -> None:
         """Create tables if they do not exist."""
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("_ensure_schema called before connection was established")
         self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS entries("
-            "rowid INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "entry_id TEXT UNIQUE NOT NULL"
-            ")"
+            "CREATE TABLE IF NOT EXISTS entries(rowid INTEGER PRIMARY KEY AUTOINCREMENT, entry_id TEXT UNIQUE NOT NULL)"
         )
-        self._conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_entries "
-            f"USING vec0(embedding float[{self._dim}])"
-        )
+        self._conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_entries USING vec0(embedding float[{self._dim}])")
         self._conn.commit()
 
     @classmethod
@@ -99,12 +96,8 @@ class MemoryStore:
         emb_bytes = struct.pack(f"{self._dim}f", *embedding)
 
         # Upsert into entries table to get/create rowid
-        self._conn.execute(
-            "INSERT OR IGNORE INTO entries(entry_id) VALUES(?)", (entry_id,)
-        )
-        row = self._conn.execute(
-            "SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)
-        ).fetchone()
+        self._conn.execute("INSERT OR IGNORE INTO entries(entry_id) VALUES(?)", (entry_id,))
+        row = self._conn.execute("SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)).fetchone()
         rowid: int = row[0]
 
         # Delete old vector if exists, then insert fresh
@@ -159,9 +152,7 @@ class MemoryStore:
         if self._conn is None:
             return
 
-        row = self._conn.execute(
-            "SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)
-        ).fetchone()
+        row = self._conn.execute("SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)).fetchone()
         if row is None:
             return
         rowid: int = row[0]
@@ -196,7 +187,8 @@ class MemoryStore:
         Returns:
             Dict with 'migrated', 'skipped', and 'total' counts.
         """
-        from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch, embedding_available
+        from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch
+        from trw_mcp.state.memory_adapter import embedding_available
 
         if self._conn is None or not embedding_available():
             return {"migrated": 0, "skipped": 0, "total": 0}
@@ -252,7 +244,7 @@ def get_memory_store(db_path: Path) -> MemoryStore:
 
     Re-creates the store if ``db_path`` differs from the cached instance.
     """
-    global _store, _store_path  # noqa: PLW0603
+    global _store, _store_path
     if _store is not None and _store_path == db_path:
         return _store
     if _store is not None:
@@ -264,7 +256,7 @@ def get_memory_store(db_path: Path) -> MemoryStore:
 
 def reset_memory_store() -> None:
     """Close and discard the shared MemoryStore singleton."""
-    global _store, _store_path  # noqa: PLW0603
+    global _store, _store_path
     if _store is not None:
         _store.close()
     _store = None

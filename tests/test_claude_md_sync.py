@@ -12,10 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -152,9 +149,7 @@ class TestInstructionsSync:
         # CLAUDE.md should not have TRW markers injected
         claude_md = tmp_path / "CLAUDE.md"
         claude_content = claude_md.read_text(encoding="utf-8")
-        assert TRW_MARKER_START not in claude_content, (
-            "CLAUDE.md should NOT be modified when client='opencode'"
-        )
+        assert TRW_MARKER_START not in claude_content, "CLAUDE.md should NOT be modified when client='opencode'"
 
     def test_fr13_client_override_claude_code_only(self, tmp_path: Path) -> None:
         """client='claude-code' writes only CLAUDE.md, not AGENTS.md."""
@@ -247,8 +242,7 @@ class TestInstructionsSync:
         """Existing AGENTS.md user content outside TRW markers is preserved."""
         agents_md = tmp_path / "AGENTS.md"
         agents_md.write_text(
-            "# AGENTS.md\n\nUser content here.\n\n"
-            f"{TRW_MARKER_START}\nOld TRW section\n{TRW_MARKER_END}\n",
+            f"# AGENTS.md\n\nUser content here.\n\n{TRW_MARKER_START}\nOld TRW section\n{TRW_MARKER_END}\n",
             encoding="utf-8",
         )
         (tmp_path / ".opencode").mkdir()
@@ -262,8 +256,7 @@ class TestInstructionsSync:
 
     def test_fr13_tool_accepts_client_parameter(self, tmp_path: Path) -> None:
         """The MCP tool trw_claude_md_sync accepts a client parameter."""
-        from trw_mcp.tools.learning import register_learning_tools
-        from tests.conftest import make_test_server, get_tools_sync
+        from tests.conftest import get_tools_sync, make_test_server
 
         server = make_test_server("learning")
         tools = get_tools_sync(server)
@@ -273,7 +266,6 @@ class TestInstructionsSync:
         tool = tools["trw_claude_md_sync"]
         # The tool schema should expose the client parameter
         import inspect
+
         sig = inspect.signature(tool.fn)
-        assert "client" in sig.parameters, (
-            "trw_claude_md_sync must accept a 'client' parameter"
-        )
+        assert "client" in sig.parameters, "trw_claude_md_sync must accept a 'client' parameter"

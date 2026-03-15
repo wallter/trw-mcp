@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.state.dry_check import (
     BlockLocation,
     DuplicatedBlock,
@@ -43,20 +41,15 @@ class TestFindDuplicatedBlocks:
 
     def test_detects_exact_duplicate_blocks(self, tmp_path: Path) -> None:
         """Two files with identical 5-line blocks should be detected."""
-        block = (
-            "def helper():\n"
-            "    a = 1\n"
-            "    b = 2\n"
-            "    c = a + b\n"
-            "    return c\n"
-        )
+        block = "def helper():\n    a = 1\n    b = 2\n    c = a + b\n    return c\n"
         file1 = tmp_path / "file1.py"
         file2 = tmp_path / "file2.py"
         file1.write_text(f"# File 1\n{block}\ndef other1():\n    pass\n")
         file2.write_text(f"# File 2\n{block}\ndef other2():\n    pass\n")
 
         results = find_duplicated_blocks(
-            [str(file1), str(file2)], min_block_size=5,
+            [str(file1), str(file2)],
+            min_block_size=5,
         )
         assert len(results) >= 1
         assert any(len(b.locations) >= 2 for b in results)
@@ -73,7 +66,8 @@ class TestFindDuplicatedBlocks:
         )
 
         results = find_duplicated_blocks(
-            [str(file1), str(file2)], min_block_size=5,
+            [str(file1), str(file2)],
+            min_block_size=5,
         )
         assert len(results) == 0
 
@@ -95,25 +89,21 @@ class TestFindDuplicatedBlocks:
 
         # min_block_size=5 should not catch 3-line blocks
         results = find_duplicated_blocks(
-            [str(file1), str(file2)], min_block_size=5,
+            [str(file1), str(file2)],
+            min_block_size=5,
         )
         assert len(results) == 0
 
         # min_block_size=3 should catch them
         results = find_duplicated_blocks(
-            [str(file1), str(file2)], min_block_size=3,
+            [str(file1), str(file2)],
+            min_block_size=3,
         )
         assert len(results) >= 1
 
     def test_detects_intra_file_duplication(self, tmp_path: Path) -> None:
         """Duplication within a single file should also be detected."""
-        block = (
-            "result = process(data)\n"
-            "validate(result)\n"
-            "store(result)\n"
-            "log_success(result)\n"
-            "return result\n"
-        )
+        block = "result = process(data)\nvalidate(result)\nstore(result)\nlog_success(result)\nreturn result\n"
         file1 = tmp_path / "intra.py"
         file1.write_text(
             f"def func1():\n{block}\ndef func2():\n{block}\n",
@@ -125,7 +115,8 @@ class TestFindDuplicatedBlocks:
     def test_handles_nonexistent_files(self, tmp_path: Path) -> None:
         """Non-existent files should be silently skipped."""
         results = find_duplicated_blocks(
-            [str(tmp_path / "nonexistent.py")], min_block_size=5,
+            [str(tmp_path / "nonexistent.py")],
+            min_block_size=5,
         )
         assert len(results) == 0
 
@@ -136,39 +127,29 @@ class TestFindDuplicatedBlocks:
 
     def test_ignores_import_only_blocks(self, tmp_path: Path) -> None:
         """Blocks consisting entirely of imports should be ignored."""
-        imports = (
-            "from pathlib import Path\n"
-            "import os\n"
-            "import sys\n"
-            "import re\n"
-            "import json\n"
-        )
+        imports = "from pathlib import Path\nimport os\nimport sys\nimport re\nimport json\n"
         file1 = tmp_path / "imp1.py"
         file2 = tmp_path / "imp2.py"
         file1.write_text(imports + "\ndef func1():\n    pass\n")
         file2.write_text(imports + "\ndef func2():\n    pass\n")
 
         results = find_duplicated_blocks(
-            [str(file1), str(file2)], min_block_size=5,
+            [str(file1), str(file2)],
+            min_block_size=5,
         )
         assert len(results) == 0
 
     def test_reports_file_paths_and_line_ranges(self, tmp_path: Path) -> None:
         """FR-1: Results must include file paths, line ranges, and content."""
-        block = (
-            "x = compute()\n"
-            "y = transform(x)\n"
-            "z = validate(y)\n"
-            "w = persist(z)\n"
-            "return w\n"
-        )
+        block = "x = compute()\ny = transform(x)\nz = validate(y)\nw = persist(z)\nreturn w\n"
         file1 = tmp_path / "a.py"
         file2 = tmp_path / "b.py"
         file1.write_text(block)
         file2.write_text(block)
 
         results = find_duplicated_blocks(
-            [str(file1), str(file2)], min_block_size=5,
+            [str(file1), str(file2)],
+            min_block_size=5,
         )
         assert len(results) >= 1
         dup = results[0]
@@ -183,13 +164,7 @@ class TestFindDuplicatedBlocks:
     def test_custom_ignore_patterns(self, tmp_path: Path) -> None:
         """Custom ignore patterns should filter out matching lines."""
         # All lines match the custom pattern
-        block = (
-            "LOG.debug('a')\n"
-            "LOG.debug('b')\n"
-            "LOG.debug('c')\n"
-            "LOG.debug('d')\n"
-            "LOG.debug('e')\n"
-        )
+        block = "LOG.debug('a')\nLOG.debug('b')\nLOG.debug('c')\nLOG.debug('d')\nLOG.debug('e')\n"
         file1 = tmp_path / "log1.py"
         file2 = tmp_path / "log2.py"
         file1.write_text(block)
@@ -216,10 +191,14 @@ class TestFormatDryReport:
             block_hash="abc123",
             locations=[
                 BlockLocation(
-                    file_path="file1.py", start_line=10, end_line=14,
+                    file_path="file1.py",
+                    start_line=10,
+                    end_line=14,
                 ),
                 BlockLocation(
-                    file_path="file2.py", start_line=20, end_line=24,
+                    file_path="file2.py",
+                    start_line=20,
+                    end_line=24,
                 ),
             ],
         )
@@ -236,10 +215,14 @@ class TestFormatDryReport:
                 block_hash=f"hash{i}",
                 locations=[
                     BlockLocation(
-                        file_path="f.py", start_line=i, end_line=i + 4,
+                        file_path="f.py",
+                        start_line=i,
+                        end_line=i + 4,
                     ),
                     BlockLocation(
-                        file_path="g.py", start_line=i, end_line=i + 4,
+                        file_path="g.py",
+                        start_line=i,
+                        end_line=i + 4,
                     ),
                 ],
             )

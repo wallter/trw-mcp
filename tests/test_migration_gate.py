@@ -1,11 +1,10 @@
 """Tests for migration verification gate (PRD-INFRA-035)."""
+
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from trw_mcp.models.requirements import ValidationFailure
 
@@ -78,9 +77,9 @@ class TestGetChangedFiles:
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(stdout="a.py\n"),      # diff HEAD
-                MagicMock(stdout="b.py\n"),      # cached/staged
-                MagicMock(stdout="c.py\n"),      # untracked
+                MagicMock(stdout="a.py\n"),  # diff HEAD
+                MagicMock(stdout="b.py\n"),  # cached/staged
+                MagicMock(stdout="c.py\n"),  # untracked
             ]
             result = _get_changed_files(tmp_path)
             assert sorted(result) == ["a.py", "b.py", "c.py"]
@@ -92,9 +91,7 @@ class TestCheckNullableDefaults:
     def test_warns_nullable_false_without_server_default(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _check_nullable_defaults
 
-        diff_output = (
-            "+    status = Column(String(32), nullable=False, default='active')\n"
-        )
+        diff_output = "+    status = Column(String(32), nullable=False, default='active')\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
             warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
@@ -104,9 +101,7 @@ class TestCheckNullableDefaults:
     def test_no_warning_with_server_default(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _check_nullable_defaults
 
-        diff_output = (
-            "+    status = Column(String(32), nullable=False, server_default='active')\n"
-        )
+        diff_output = "+    status = Column(String(32), nullable=False, server_default='active')\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
             warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
@@ -115,9 +110,7 @@ class TestCheckNullableDefaults:
     def test_no_warning_for_nullable_true(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _check_nullable_defaults
 
-        diff_output = (
-            "+    name = Column(String(100))\n"  # nullable defaults to True
-        )
+        diff_output = "+    name = Column(String(100))\n"  # nullable defaults to True
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
             warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
@@ -126,9 +119,7 @@ class TestCheckNullableDefaults:
     def test_ignores_removed_lines(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _check_nullable_defaults
 
-        diff_output = (
-            "-    status = Column(String(32), nullable=False)\n"
-        )
+        diff_output = "-    status = Column(String(32), nullable=False)\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
             warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
@@ -137,10 +128,7 @@ class TestCheckNullableDefaults:
     def test_ignores_diff_header_lines(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _check_nullable_defaults
 
-        diff_output = (
-            "+++ b/backend/models/database.py\n"
-            "+    status = Column(String(32), nullable=False)\n"
-        )
+        diff_output = "+++ b/backend/models/database.py\n+    status = Column(String(32), nullable=False)\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
             warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
@@ -165,9 +153,7 @@ class TestCheckNullableDefaults:
                 MagicMock(stdout=diff1),
                 MagicMock(stdout=diff2),
             ]
-            warnings = _check_nullable_defaults(
-                tmp_path, ["models/a.py", "models/b.py"]
-            )
+            warnings = _check_nullable_defaults(tmp_path, ["models/a.py", "models/b.py"])
             assert len(warnings) == 2
 
     def test_handles_file_not_found(self, tmp_path: Path) -> None:
@@ -187,9 +173,7 @@ class TestCheckMigrationGate:
 
         with patch("trw_mcp.state.validation.phase_gates_build._get_changed_files") as mock_files:
             mock_files.return_value = ["backend/models/database.py"]
-            with patch(
-                "trw_mcp.state.validation.phase_gates_build._check_nullable_defaults"
-            ) as mock_null:
+            with patch("trw_mcp.state.validation.phase_gates_build._check_nullable_defaults") as mock_null:
                 mock_null.return_value = []
                 warnings = check_migration_gate(tmp_path)
                 assert len(warnings) == 1
@@ -203,9 +187,7 @@ class TestCheckMigrationGate:
                 "backend/models/database.py",
                 "backend/alembic/versions/001_add_status.py",
             ]
-            with patch(
-                "trw_mcp.state.validation.phase_gates_build._check_nullable_defaults"
-            ) as mock_null:
+            with patch("trw_mcp.state.validation.phase_gates_build._check_nullable_defaults") as mock_null:
                 mock_null.return_value = []
                 warnings = check_migration_gate(tmp_path)
                 assert len(warnings) == 0
@@ -231,12 +213,8 @@ class TestCheckMigrationGate:
 
         with patch("trw_mcp.state.validation.phase_gates_build._get_changed_files") as mock_files:
             mock_files.return_value = ["backend/models/database.py"]
-            with patch(
-                "trw_mcp.state.validation.phase_gates_build._check_nullable_defaults"
-            ) as mock_null:
-                mock_null.return_value = [
-                    "NOT NULL column without server_default: ..."
-                ]
+            with patch("trw_mcp.state.validation.phase_gates_build._check_nullable_defaults") as mock_null:
+                mock_null.return_value = ["NOT NULL column without server_default: ..."]
                 warnings = check_migration_gate(tmp_path)
                 assert len(warnings) == 2  # migration warning + nullable warning
 
@@ -247,9 +225,7 @@ class TestCheckMigrationGate:
             mock_files.return_value = [
                 "some/project/models/database_v2.py",
             ]
-            with patch(
-                "trw_mcp.state.validation.phase_gates_build._check_nullable_defaults"
-            ) as mock_null:
+            with patch("trw_mcp.state.validation.phase_gates_build._check_nullable_defaults") as mock_null:
                 mock_null.return_value = []
                 warnings = check_migration_gate(tmp_path)
                 assert len(warnings) == 1
@@ -266,15 +242,9 @@ class TestBestEffortMigrationCheck:
         config.migration_gate_enabled = True
         failures: list[ValidationFailure] = []
 
-        with patch(
-            "trw_mcp.state.validation.phase_gates_build.check_migration_gate"
-        ) as mock_gate:
-            mock_gate.return_value = [
-                "database.py modified but no new Alembic migration detected"
-            ]
-            with patch(
-                "trw_mcp.state._paths.resolve_project_root"
-            ) as mock_root:
+        with patch("trw_mcp.state.validation.phase_gates_build.check_migration_gate") as mock_gate:
+            mock_gate.return_value = ["database.py modified but no new Alembic migration detected"]
+            with patch("trw_mcp.state._paths.resolve_project_root") as mock_root:
                 mock_root.return_value = Path("/project")
                 _best_effort_migration_check(config, failures)
 
@@ -299,13 +269,9 @@ class TestBestEffortMigrationCheck:
         config.migration_gate_enabled = True
         failures: list[ValidationFailure] = []
 
-        with patch(
-            "trw_mcp.state.validation.phase_gates_build.check_migration_gate"
-        ) as mock_gate:
+        with patch("trw_mcp.state.validation.phase_gates_build.check_migration_gate") as mock_gate:
             mock_gate.side_effect = RuntimeError("unexpected")
-            with patch(
-                "trw_mcp.state._paths.resolve_project_root"
-            ) as mock_root:
+            with patch("trw_mcp.state._paths.resolve_project_root") as mock_root:
                 mock_root.return_value = Path("/project")
                 # Should not raise
                 _best_effort_migration_check(config, failures)
@@ -318,16 +284,12 @@ class TestBestEffortMigrationCheck:
         config.migration_gate_enabled = True
         failures: list[ValidationFailure] = []
 
-        with patch(
-            "trw_mcp.state.validation.phase_gates_build.check_migration_gate"
-        ) as mock_gate:
+        with patch("trw_mcp.state.validation.phase_gates_build.check_migration_gate") as mock_gate:
             mock_gate.return_value = [
                 "database.py modified but no new Alembic migration detected",
                 "NOT NULL column without server_default in database.py: col = Column(Integer, nullable=False)",
             ]
-            with patch(
-                "trw_mcp.state._paths.resolve_project_root"
-            ) as mock_root:
+            with patch("trw_mcp.state._paths.resolve_project_root") as mock_root:
                 mock_root.return_value = Path("/project")
                 _best_effort_migration_check(config, failures)
 
@@ -341,18 +303,12 @@ class TestBestEffortMigrationCheck:
 
         config = MagicMock()
         config.migration_gate_enabled = True
-        existing = ValidationFailure(
-            field="other", rule="other_rule", message="pre-existing"
-        )
+        existing = ValidationFailure(field="other", rule="other_rule", message="pre-existing")
         failures: list[ValidationFailure] = [existing]
 
-        with patch(
-            "trw_mcp.state.validation.phase_gates_build.check_migration_gate"
-        ) as mock_gate:
+        with patch("trw_mcp.state.validation.phase_gates_build.check_migration_gate") as mock_gate:
             mock_gate.return_value = ["some warning"]
-            with patch(
-                "trw_mcp.state._paths.resolve_project_root"
-            ) as mock_root:
+            with patch("trw_mcp.state._paths.resolve_project_root") as mock_root:
                 mock_root.return_value = Path("/project")
                 _best_effort_migration_check(config, failures)
 

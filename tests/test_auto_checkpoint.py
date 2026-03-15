@@ -224,7 +224,10 @@ class TestPreCompactCheckpoint:
     """trw_pre_compact_checkpoint MCP tool."""
 
     def test_creates_checkpoint_with_active_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """Active run -> creates pre-compaction safety checkpoint."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -242,7 +245,9 @@ class TestPreCompactCheckpoint:
         assert data["message"] == "pre-compaction safety checkpoint"
 
     def test_skips_without_active_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """No active run -> returns skip status."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -254,7 +259,9 @@ class TestPreCompactCheckpoint:
         assert result["reason"] == "no_active_run"
 
     def test_skips_when_disabled(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Config auto_checkpoint_pre_compact=False -> returns skip status."""
         cfg = TRWConfig(auto_checkpoint_pre_compact=False)
@@ -267,7 +274,9 @@ class TestPreCompactCheckpoint:
         assert "auto_checkpoint_pre_compact" in result["reason"]
 
     def test_handles_checkpoint_failure(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Exception during checkpoint -> returns failed status."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -284,7 +293,10 @@ class TestPreCompactCheckpoint:
         assert "error" in result
 
     def test_event_logged_on_checkpoint(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_dir: Path,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
     ) -> None:
         """Checkpoint should also log an event to events.jsonl."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -293,10 +305,7 @@ class TestPreCompactCheckpoint:
             tools["trw_pre_compact_checkpoint"].fn()
 
         events_path = run_dir / "meta" / "events.jsonl"
-        lines = [
-            line for line in events_path.read_text(encoding="utf-8").strip().split("\n")
-            if line
-        ]
+        lines = [line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line]
         assert len(lines) >= 1
         event = json.loads(lines[0])
         assert event["event"] == "checkpoint"

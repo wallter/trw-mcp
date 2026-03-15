@@ -39,9 +39,7 @@ PHASE_STATUS_MAPPING: dict[str, PRDStatus] = {
 }
 
 # Terminal statuses that should never be auto-progressed.
-_TERMINAL_STATUSES: frozenset[PRDStatus] = frozenset(
-    {PRDStatus.DONE, PRDStatus.MERGED, PRDStatus.DEPRECATED}
-)
+_TERMINAL_STATUSES: frozenset[PRDStatus] = frozenset({PRDStatus.DONE, PRDStatus.MERGED, PRDStatus.DEPRECATED})
 
 
 def _compute_transition_path(
@@ -76,7 +74,7 @@ def _compute_transition_path(
         for neighbor in VALID_TRANSITIONS.get(node, set()):
             if neighbor in visited:
                 continue
-            new_path = path + [neighbor]
+            new_path = [*path, neighbor]
             if neighbor == target:
                 return new_path
             # Only continue through forward-progression statuses
@@ -87,7 +85,7 @@ def _compute_transition_path(
     return None
 
 
-def auto_progress_prds(
+def auto_progress_prds(  # noqa: C901
     run_path: Path,
     phase: str,
     prds_dir: Path,
@@ -191,7 +189,10 @@ def auto_progress_prds(
                 # Re-read content for accurate guard check at each step
                 content = prd_file.read_text(encoding="utf-8")
                 guard = check_transition_guards(
-                    step_current, step_target, content, config,
+                    step_current,
+                    step_target,
+                    content,
+                    config,
                 )
                 if not guard.allowed:
                     # Guard failed — stop here (partial progression)
@@ -221,7 +222,7 @@ def auto_progress_prds(
                     entry["partial"] = True
                     entry["stopped_at"] = stopped_at
                     entry["stop_reason"] = stop_reason
-                results.append(cast(ProgressionItem, entry))
+                results.append(cast("ProgressionItem", entry))
             elif stopped_at is not None:
                 # Guard failed on the very first step
                 entry = {
@@ -234,20 +235,27 @@ def auto_progress_prds(
                 }
                 if dry_run:
                     entry["would_apply"] = False
-                results.append(cast(ProgressionItem, entry))
+                results.append(cast("ProgressionItem", entry))
             else:
                 # No steps were applied and no guard failed — shouldn't happen
-                results.append(cast(ProgressionItem, {
-                    "prd_id": prd_id,
-                    "from_status": current_str,
-                    "to_status": target_status.value,
-                    "applied": False,
-                    "reason": "no_steps_applied",
-                }))
+                results.append(
+                    cast(
+                        "ProgressionItem",
+                        {
+                            "prd_id": prd_id,
+                            "from_status": current_str,
+                            "to_status": target_status.value,
+                            "applied": False,
+                            "reason": "no_steps_applied",
+                        },
+                    )
+                )
 
         except (OSError, ValueError, TypeError) as exc:
             logger.warning(
-                "auto_progress_error", prd_id=prd_id, error=str(exc),
+                "auto_progress_error",
+                prd_id=prd_id,
+                error=str(exc),
             )
             continue
 

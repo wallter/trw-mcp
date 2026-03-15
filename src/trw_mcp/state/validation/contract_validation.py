@@ -83,16 +83,16 @@ class FileContractValidator:
             reader = FileStateReader()
             try:
                 data = reader.read_yaml(file_path)
-                for key in contract.schema_keys:
-                    if key not in data:
-                        failures.append(
-                            ValidationFailure(
-                                field=f"{contract.file}:{key}",
-                                rule="required_key",
-                                message=f"Required key missing in {contract.file}: {key}",
-                                severity="error",
-                            )
-                        )
+                failures.extend(
+                    ValidationFailure(
+                        field=f"{contract.file}:{key}",
+                        rule="required_key",
+                        message=f"Required key missing in {contract.file}: {key}",
+                        severity="error",
+                    )
+                    for key in contract.schema_keys
+                    if key not in data
+                )
             except Exception as exc:  # justified: scan-resilience, unparseable contract file is a validation failure
                 failures.append(
                     ValidationFailure(

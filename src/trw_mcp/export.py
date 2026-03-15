@@ -21,6 +21,7 @@ from typing import cast
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.models.typed_dicts import (
     ExportAnalyticsSection,
     ExportMetadata,
@@ -29,9 +30,6 @@ from trw_mcp.models.typed_dicts import (
     ImportLearningsResult,
     LearningEntryDict,
 )
-
-logger = structlog.get_logger()
-from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state._helpers import load_project_config as _load_project_config
 from trw_mcp.state.analytics import (
     compute_jaccard_similarity,
@@ -41,6 +39,8 @@ from trw_mcp.state.analytics import (
 )
 from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+logger = structlog.get_logger()
 
 
 @contextmanager
@@ -90,7 +90,7 @@ def _collect_learnings(
             if created < since:
                 continue
 
-        results.append(cast(LearningEntryDict, data))
+        results.append(cast("LearningEntryDict", data))
 
     return results
 
@@ -99,8 +99,16 @@ def _learnings_to_csv(entries: list[LearningEntryDict]) -> str:
     """Convert learning entries to CSV string."""
     output = io.StringIO()
     fieldnames = [
-        "id", "summary", "impact", "status", "tags", "q_value",
-        "access_count", "source_type", "created", "updated",
+        "id",
+        "summary",
+        "impact",
+        "status",
+        "tags",
+        "q_value",
+        "access_count",
+        "source_type",
+        "created",
+        "updated",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
@@ -155,7 +163,7 @@ def _collect_analytics(
     if report_path.exists():
         try:
             cached = reader.read_yaml(report_path)
-            analytics["ceremony_aggregates"] = cast(dict[str, object], cached.get("aggregate", {}))
+            analytics["ceremony_aggregates"] = cast("dict[str, object]", cached.get("aggregate", {}))
         except (OSError, StateError):
             logger.debug("ceremony_aggregates_load_failed", exc_info=True)
 
@@ -201,7 +209,10 @@ def export_data(
 
     if scope in ("learnings", "all"):
         learnings = _collect_learnings(
-            trw_dir, config, min_impact=min_impact, since=since,
+            trw_dir,
+            config,
+            min_impact=min_impact,
+            since=since,
         )
         if fmt == "csv" and scope == "learnings":
             result["learnings_csv"] = _learnings_to_csv(learnings)
@@ -219,7 +230,40 @@ def export_data(
     return result
 
 
-def import_learnings(
+def _should_import_entry(
+    entry: dict[str, object],
+    min_impact: float,
+    tags: list[str] | None,
+    existing_summaries: list[str],
+) -> tuple[bool, str]:
+    """Check if entry passes filters. Return (should_import, skip_reason)."""
+    if not isinstance(entry, dict):
+        return False, ""
+
+    # Impact filter
+    impact = float(str(entry.get("impact", 0)))
+    if impact < min_impact:
+        return False, "filter"
+
+    # Tag filter
+    if tags:
+        entry_tags = entry.get("tags", [])
+        if not isinstance(entry_tags, list):
+            entry_tags = []
+        entry_tag_strs = {str(t) for t in entry_tags}
+        if not entry_tag_strs.intersection(tags):
+            return False, "filter"
+
+    # Dedup via Jaccard similarity
+    summary = str(entry.get("summary", ""))
+    for existing in existing_summaries:
+        if compute_jaccard_similarity(summary, existing) >= 0.8:
+            return False, "duplicate"
+
+    return True, ""
+
+
+def import_learnings(  # noqa: C901 — multi-format import with validation
     source_file: Path,
     target_dir: Path,
     *,

@@ -18,7 +18,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.build import (
@@ -67,9 +66,7 @@ class TestGetChangedFiles:
     """Tests for _get_changed_files."""
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_returns_filtered_py_files_within_source_path(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_returns_filtered_py_files_within_source_path(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Returns .py files that start with source_package_path."""
         mock_run.return_value = _make_completed_process(
             returncode=0,
@@ -90,28 +87,20 @@ class TestGetChangedFiles:
         "trw_mcp.tools.mutations.subprocess.run",
         side_effect=subprocess.TimeoutExpired("git", 30),
     )
-    def test_returns_empty_list_on_subprocess_timeout(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_returns_empty_list_on_subprocess_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Returns empty list when git diff times out."""
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == []
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_returns_empty_list_on_non_zero_return_code(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_returns_empty_list_on_non_zero_return_code(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Returns empty list when git exits with non-zero code."""
-        mock_run.return_value = _make_completed_process(
-            returncode=1, stdout="fatal: not a git repository\n"
-        )
+        mock_run.return_value = _make_completed_process(returncode=1, stdout="fatal: not a git repository\n")
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == []
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_filters_out_non_py_files(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_filters_out_non_py_files(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Non-.py files are excluded even if they are under source_package_path."""
         mock_run.return_value = _make_completed_process(
             returncode=0,
@@ -125,16 +114,11 @@ class TestGetChangedFiles:
         assert result == ["trw-mcp/src/trw_mcp/tools/build.py"]
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_filters_out_files_outside_source_path(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_filters_out_files_outside_source_path(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Files that don't start with source_package_path are excluded."""
         mock_run.return_value = _make_completed_process(
             returncode=0,
-            stdout=(
-                "trw-mcp/src/trw_mcp/tools/build.py\n"
-                "other-pkg/src/other/module.py\n"
-            ),
+            stdout=("trw-mcp/src/trw_mcp/tools/build.py\nother-pkg/src/other/module.py\n"),
         )
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == ["trw-mcp/src/trw_mcp/tools/build.py"]
@@ -143,17 +127,13 @@ class TestGetChangedFiles:
         "trw_mcp.tools.mutations.subprocess.run",
         side_effect=OSError("git not found"),
     )
-    def test_returns_empty_list_on_oserror(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_returns_empty_list_on_oserror(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Returns empty list when git is not available (OSError)."""
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == []
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_empty_diff_returns_empty_list(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_empty_diff_returns_empty_list(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Empty git diff returns empty list."""
         mock_run.return_value = _make_completed_process(returncode=0, stdout="")
         result = _get_changed_files(tmp_path, "trw-mcp/src")
@@ -180,45 +160,35 @@ class TestClassifyThresholdTier:
     def test_returns_critical_for_tools_path(self) -> None:
         """File in tools/ → 'critical' with critical threshold."""
         config = self._config()
-        tier, threshold = _classify_threshold_tier(
-            "trw-mcp/src/trw_mcp/tools/build.py", config
-        )
+        tier, threshold = _classify_threshold_tier("trw-mcp/src/trw_mcp/tools/build.py", config)
         assert tier == "critical"
         assert threshold == 0.70
 
     def test_returns_critical_for_state_path(self) -> None:
         """File in state/ → 'critical' with critical threshold."""
         config = self._config()
-        tier, threshold = _classify_threshold_tier(
-            "trw-mcp/src/trw_mcp/state/persistence.py", config
-        )
+        tier, threshold = _classify_threshold_tier("trw-mcp/src/trw_mcp/state/persistence.py", config)
         assert tier == "critical"
         assert threshold == 0.70
 
     def test_returns_critical_for_models_path(self) -> None:
         """File in models/ → 'critical' with critical threshold."""
         config = self._config()
-        tier, threshold = _classify_threshold_tier(
-            "trw-mcp/src/trw_mcp/models/config.py", config
-        )
+        tier, threshold = _classify_threshold_tier("trw-mcp/src/trw_mcp/models/config.py", config)
         assert tier == "critical"
         assert threshold == 0.70
 
     def test_returns_experimental_for_scratch_path(self) -> None:
         """File in scratch/ → 'experimental' with experimental threshold."""
         config = self._config()
-        tier, threshold = _classify_threshold_tier(
-            "scratch/trw-tester/prototype.py", config
-        )
+        tier, threshold = _classify_threshold_tier("scratch/trw-tester/prototype.py", config)
         assert tier == "experimental"
         assert threshold == 0.30
 
     def test_returns_standard_for_unmatched_file(self) -> None:
         """File not matching any tier path → 'standard' with standard threshold."""
         config = self._config()
-        tier, threshold = _classify_threshold_tier(
-            "trw-mcp/tests/test_build.py", config
-        )
+        tier, threshold = _classify_threshold_tier("trw-mcp/tests/test_build.py", config)
         assert tier == "standard"
         assert threshold == 0.50
 
@@ -230,9 +200,7 @@ class TestClassifyThresholdTier:
             mutation_threshold_critical=0.70,
             mutation_threshold_experimental=0.30,
         )
-        tier, threshold = _classify_threshold_tier(
-            "trw-mcp/src/trw_mcp/state/analytics.py", config
-        )
+        tier, threshold = _classify_threshold_tier("trw-mcp/src/trw_mcp/state/analytics.py", config)
         assert tier == "critical"
         assert threshold == 0.70
 
@@ -259,12 +227,14 @@ class TestParseMutmutResults:
 
     def test_parses_valid_json_killed_survived(self) -> None:
         """Parses basic killed/survived counts from valid JSON."""
-        data = json.dumps({
-            "killed": 30,
-            "survived": 10,
-            "timeout": 2,
-            "suspicious": 1,
-        })
+        data = json.dumps(
+            {
+                "killed": 30,
+                "survived": 10,
+                "timeout": 2,
+                "suspicious": 1,
+            }
+        )
         result = _parse_mutmut_results(data)
         assert result["killed"] == 30
         assert result["survived"] == 10
@@ -306,11 +276,13 @@ class TestParseMutmutResults:
             {"file": "foo.py", "line": 10, "description": "mutated Y"},
             {"file": "foo.py", "line": 30, "description": "mutated Z"},
         ]
-        data = json.dumps({
-            "killed": 5,
-            "survived": 3,
-            "survived_mutants": mutants,
-        })
+        data = json.dumps(
+            {
+                "killed": 5,
+                "survived": 3,
+                "survived_mutants": mutants,
+            }
+        )
         result = _parse_mutmut_results(data)
         survivors = result["surviving_mutants"]
         assert isinstance(survivors, list)
@@ -320,26 +292,27 @@ class TestParseMutmutResults:
 
     def test_surviving_mutants_capped_at_20(self) -> None:
         """More than 20 surviving mutants are truncated to 20."""
-        mutants = [
-            {"file": "foo.py", "line": i, "description": f"mut {i}"}
-            for i in range(1, 35)
-        ]
-        data = json.dumps({
-            "killed": 10,
-            "survived": 34,
-            "survived_mutants": mutants,
-        })
+        mutants = [{"file": "foo.py", "line": i, "description": f"mut {i}"} for i in range(1, 35)]
+        data = json.dumps(
+            {
+                "killed": 10,
+                "survived": 34,
+                "survived_mutants": mutants,
+            }
+        )
         result = _parse_mutmut_results(data)
         assert len(result["surviving_mutants"]) == 20
 
     def test_total_mutants_includes_timeout_and_suspicious(self) -> None:
         """total_mutants = killed + survived + timeout + suspicious."""
-        data = json.dumps({
-            "killed": 10,
-            "survived": 5,
-            "timeout": 3,
-            "suspicious": 2,
-        })
+        data = json.dumps(
+            {
+                "killed": 10,
+                "survived": 5,
+                "timeout": 3,
+                "suspicious": 2,
+            }
+        )
         result = _parse_mutmut_results(data)
         assert result["total_mutants"] == 20
 
@@ -347,11 +320,13 @@ class TestParseMutmutResults:
         """Mutant description strings are truncated to 200 characters."""
         long_desc = "x" * 300
         mutants = [{"file": "foo.py", "line": 1, "description": long_desc}]
-        data = json.dumps({
-            "killed": 1,
-            "survived": 1,
-            "survived_mutants": mutants,
-        })
+        data = json.dumps(
+            {
+                "killed": 1,
+                "survived": 1,
+                "survived_mutants": mutants,
+            }
+        )
         result = _parse_mutmut_results(data)
         desc = result["surviving_mutants"][0]["description"]
         assert len(str(desc)) <= 200
@@ -371,9 +346,7 @@ class TestRunMutationCheck:
     """Tests for run_mutation_check."""
 
     @patch("trw_mcp.tools.mutations._get_changed_files", return_value=[])
-    def test_returns_mutation_skipped_when_no_changed_files(
-        self, mock_changed: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_returns_mutation_skipped_when_no_changed_files(self, mock_changed: MagicMock, tmp_path: Path) -> None:
         """Returns mutation_skipped=True when no changed .py files."""
         config = TRWConfig()
         result = run_mutation_check(tmp_path, config)
@@ -416,9 +389,7 @@ class TestRunMutationCheck:
         tmp_path: Path,
     ) -> None:
         """Returns mutation_passed, score, tier on successful run."""
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout='{"killed": 8, "survived": 2}'
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout='{"killed": 8, "survived": 2}')
         mock_parse.return_value = {
             "killed": 8,
             "survived": 2,
@@ -726,9 +697,7 @@ class TestRunPipAudit:
     """Tests for _run_pip_audit."""
 
     @patch("trw_mcp.tools.build._audit._find_executable", return_value=None)
-    def test_skips_when_pip_audit_not_installed(
-        self, mock_find: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_skips_when_pip_audit_not_installed(self, mock_find: MagicMock, tmp_path: Path) -> None:
         """Returns pip_audit_skipped=True when pip-audit is not installed."""
         config = TRWConfig()
         result = _run_pip_audit(tmp_path, config)
@@ -762,9 +731,7 @@ class TestRunPipAudit:
                 ],
             }
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_vulnerability_count") == 1
@@ -800,9 +767,7 @@ class TestRunPipAudit:
                 ],
             }
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(
             dep_audit_level="high",
             dep_audit_block_on_patchable_only=True,
@@ -821,9 +786,7 @@ class TestRunPipAudit:
         tmp_path: Path,
     ) -> None:
         """pip_audit_passed=True when no vulnerabilities meet blocking criteria."""
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps([])
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps([]))
         config = TRWConfig()
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_passed") is True
@@ -854,9 +817,7 @@ class TestRunPipAudit:
         tmp_path: Path,
     ) -> None:
         """Returns pip_audit_skipped=True when pip-audit output is not valid JSON."""
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=1, stdout="not json output"
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=1, stdout="not json output")
         config = TRWConfig()
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_skipped") is True
@@ -884,9 +845,7 @@ class TestRunPipAudit:
                 ],
             }
         ]
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(pip_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(pip_data))
         config = TRWConfig(dep_audit_level="high")
         result = _run_pip_audit(tmp_path, config)
         assert result.get("pip_audit_vulnerability_count") == 1
@@ -900,29 +859,19 @@ class TestRunPipAudit:
 class TestRunNpmAudit:
     """Tests for _run_npm_audit."""
 
-    def test_skips_when_no_platform_package_json_changes(
-        self, tmp_path: Path
-    ) -> None:
+    def test_skips_when_no_platform_package_json_changes(self, tmp_path: Path) -> None:
         """Returns npm_audit_skipped=True when no platform/package.json in changeset."""
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["src/mymodule.py", "tests/test_foo.py"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["src/mymodule.py", "tests/test_foo.py"])
         assert result.get("npm_audit_skipped") is True
-        assert "no platform/package.json" in str(
-            result.get("npm_audit_skip_reason", "")
-        )
+        assert "no platform/package.json" in str(result.get("npm_audit_skip_reason", ""))
 
     @patch("trw_mcp.tools.build._audit.shutil.which", return_value=None)
-    def test_skips_when_npm_not_installed(
-        self, mock_which: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_skips_when_npm_not_installed(self, mock_which: MagicMock, tmp_path: Path) -> None:
         """Returns npm_audit_skipped=True when npm is not on PATH."""
         (tmp_path / "platform").mkdir()
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_skipped") is True
         assert "npm not installed" in str(result.get("npm_audit_skip_reason", ""))
 
@@ -943,13 +892,9 @@ class TestRunNpmAudit:
                 "express": {"severity": "low", "via": "minor xss"},
             }
         }
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=1, stdout=json.dumps(npm_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=1, stdout=json.dumps(npm_data))
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_high_plus_count") == 2
         assert result.get("npm_audit_passed") is False
 
@@ -968,22 +913,16 @@ class TestRunNpmAudit:
                 "express": {"severity": "low", "via": "minor"},
             }
         }
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout=json.dumps(npm_data)
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout=json.dumps(npm_data))
         config = TRWConfig()
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_passed") is True
 
     def test_skips_when_platform_dir_not_found(self, tmp_path: Path) -> None:
         """Returns npm_audit_skipped=True when platform/ directory is missing."""
         config = TRWConfig()
         # platform dir does not exist
-        result = _run_npm_audit(
-            tmp_path, config, changed_files=["platform/package.json"]
-        )
+        result = _run_npm_audit(tmp_path, config, changed_files=["platform/package.json"])
         assert result.get("npm_audit_skipped") is True
 
 
@@ -998,9 +937,7 @@ class TestDetectUnlistedImports:
     def test_detects_imports_not_in_pyproject(self, tmp_path: Path) -> None:
         """Detects third-party import that is absent from pyproject.toml."""
         py_file = tmp_path / "mymodule.py"
-        py_file.write_text(
-            "import requests\nimport os\nfrom pathlib import Path\n", encoding="utf-8"
-        )
+        py_file.write_text("import requests\nimport os\nfrom pathlib import Path\n", encoding="utf-8")
         # No pyproject.toml — requests should be flagged
         result = _detect_unlisted_imports(tmp_path, ["mymodule.py"])
         assert "requests" in result
@@ -1018,9 +955,7 @@ class TestDetectUnlistedImports:
 
     def test_handles_missing_files_gracefully(self, tmp_path: Path) -> None:
         """Missing files are skipped without raising an exception."""
-        result = _detect_unlisted_imports(
-            tmp_path, ["nonexistent/module.py"]
-        )
+        result = _detect_unlisted_imports(tmp_path, ["nonexistent/module.py"])
         assert result == []
 
     def test_listed_dep_not_flagged(self, tmp_path: Path) -> None:
@@ -1046,9 +981,7 @@ class TestDetectUnlistedImports:
     def test_handles_from_import_syntax(self, tmp_path: Path) -> None:
         """Both 'import X' and 'from X import Y' syntaxes are detected."""
         py_file = tmp_path / "mymodule.py"
-        py_file.write_text(
-            "import numpy\nfrom pandas import DataFrame\n", encoding="utf-8"
-        )
+        py_file.write_text("import numpy\nfrom pandas import DataFrame\n", encoding="utf-8")
         result = _detect_unlisted_imports(tmp_path, ["mymodule.py"])
         assert "numpy" in result
         assert "pandas" in result
@@ -1158,9 +1091,7 @@ class TestRunDepAudit:
         py_file = tmp_path / "module.py"
         py_file.write_text("import some_unlisted_pkg\n", encoding="utf-8")
         # git diff returns our py file
-        mock_git.return_value = _make_completed_process(
-            returncode=0, stdout="module.py\n"
-        )
+        mock_git.return_value = _make_completed_process(returncode=0, stdout="module.py\n")
         mock_pip.return_value = {"pip_audit_passed": True}
         mock_npm.return_value = {"npm_audit_skipped": True}
         config = TRWConfig(source_package_path="")
@@ -1227,16 +1158,12 @@ class TestRunApiFuzz:
     """Tests for _run_api_fuzz."""
 
     @patch("trw_mcp.tools.build._audit._find_executable", return_value=None)
-    def test_skips_when_schemathesis_not_installed(
-        self, mock_find: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_skips_when_schemathesis_not_installed(self, mock_find: MagicMock, tmp_path: Path) -> None:
         """Returns api_fuzz_skipped=True when neither schemathesis nor st is installed."""
         config = TRWConfig()
         result = _run_api_fuzz(tmp_path, config)
         assert result.get("api_fuzz_skipped") is True
-        assert "schemathesis not installed" in str(
-            result.get("api_fuzz_skip_reason", "")
-        )
+        assert "schemathesis not installed" in str(result.get("api_fuzz_skip_reason", ""))
 
     @patch(
         "trw_mcp.tools.build._audit._find_executable",
@@ -1253,9 +1180,7 @@ class TestRunApiFuzz:
     ) -> None:
         """api_fuzz_passed=True when schemathesis exits 0."""
         mock_urlopen.return_value = MagicMock()
-        mock_subprocess.return_value = _make_completed_process(
-            returncode=0, stdout="All checks passed"
-        )
+        mock_subprocess.return_value = _make_completed_process(returncode=0, stdout="All checks passed")
         config = TRWConfig(api_fuzz_base_url="http://localhost:8000")
         result = _run_api_fuzz(tmp_path, config)
         assert result.get("api_fuzz_passed") is True
@@ -1342,11 +1267,7 @@ class TestRunApiFuzz:
         mock_urlopen.return_value = MagicMock()
         mock_subprocess.return_value = _make_completed_process(
             returncode=1,
-            stdout=(
-                "Running checks...\n"
-                "FAILED /api/items - Defect found\n"
-                "ERROR /api/users - 500 Server Error\n"
-            ),
+            stdout=("Running checks...\nFAILED /api/items - Defect found\nERROR /api/users - 500 Server Error\n"),
         )
         config = TRWConfig()
         result = _run_api_fuzz(tmp_path, config)
@@ -1729,53 +1650,37 @@ class TestGetChangedFilesEdgeCases:
         "trw_mcp.tools.mutations.subprocess.run",
         side_effect=FileNotFoundError("git: No such file or directory"),
     )
-    def test_returns_empty_list_on_file_not_found_error(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_returns_empty_list_on_file_not_found_error(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """FileNotFoundError (git binary missing) → returns []."""
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == []
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_whitespace_only_output_returns_empty_list(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_whitespace_only_output_returns_empty_list(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Stdout containing only whitespace/newlines → no files extracted."""
-        mock_run.return_value = _make_completed_process(
-            returncode=0, stdout="\n  \n\t\n"
-        )
+        mock_run.return_value = _make_completed_process(returncode=0, stdout="\n  \n\t\n")
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == []
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_no_py_files_in_source_path_returns_empty(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_no_py_files_in_source_path_returns_empty(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """All changed files are outside source path → returns []."""
         mock_run.return_value = _make_completed_process(
             returncode=0,
-            stdout=(
-                "platform/src/app/page.tsx\n"
-                "docs/README.md\n"
-                "Makefile\n"
-            ),
+            stdout=("platform/src/app/page.tsx\ndocs/README.md\nMakefile\n"),
         )
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == []
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_git_timeout_expired_returns_empty_list(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_git_timeout_expired_returns_empty_list(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """subprocess.TimeoutExpired during git diff → returns []."""
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
         result = _get_changed_files(tmp_path, "trw-mcp/src")
         assert result == []
 
     @patch("trw_mcp.tools.mutations.subprocess.run")
-    def test_passes_project_root_as_cwd(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_passes_project_root_as_cwd(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """subprocess.run is called with cwd=str(project_root)."""
         mock_run.return_value = _make_completed_process(returncode=0, stdout="")
         _get_changed_files(tmp_path, "trw-mcp/src")
@@ -1815,38 +1720,44 @@ class TestParseMutmutResultsEdgeCases:
 
     def test_survived_mutants_non_list_is_ignored(self) -> None:
         """survived_mutants field as dict (not list) → surviving_mutants is empty."""
-        data = json.dumps({
-            "killed": 5,
-            "survived": 3,
-            "survived_mutants": {"file": "foo.py", "line": 1},
-        })
+        data = json.dumps(
+            {
+                "killed": 5,
+                "survived": 3,
+                "survived_mutants": {"file": "foo.py", "line": 1},
+            }
+        )
         result = _parse_mutmut_results(data)
         assert result["surviving_mutants"] == []
         assert result["killed"] == 5
 
     def test_survived_mutants_with_non_dict_items_skipped(self) -> None:
         """Non-dict items in survived_mutants list are silently skipped."""
-        data = json.dumps({
-            "killed": 2,
-            "survived": 2,
-            "survived_mutants": [
-                "not-a-dict",
-                42,
-                None,
-                {"file": "foo.py", "line": 5, "description": "valid"},
-            ],
-        })
+        data = json.dumps(
+            {
+                "killed": 2,
+                "survived": 2,
+                "survived_mutants": [
+                    "not-a-dict",
+                    42,
+                    None,
+                    {"file": "foo.py", "line": 5, "description": "valid"},
+                ],
+            }
+        )
         result = _parse_mutmut_results(data)
         assert len(result["surviving_mutants"]) == 1
         assert result["surviving_mutants"][0]["file"] == "foo.py"
 
     def test_mutant_missing_file_and_line_defaults_to_empty_and_zero(self) -> None:
         """Mutant dict missing file/line/description defaults gracefully."""
-        data = json.dumps({
-            "killed": 1,
-            "survived": 1,
-            "survived_mutants": [{}],
-        })
+        data = json.dumps(
+            {
+                "killed": 1,
+                "survived": 1,
+                "survived_mutants": [{}],
+            }
+        )
         result = _parse_mutmut_results(data)
         assert len(result["surviving_mutants"]) == 1
         mutant = result["surviving_mutants"][0]
@@ -1862,12 +1773,14 @@ class TestParseMutmutResultsEdgeCases:
 
     def test_total_mutants_excludes_score_none_case(self) -> None:
         """total_mutants sums all four fields even when score is None."""
-        data = json.dumps({
-            "killed": 0,
-            "survived": 0,
-            "timeout": 4,
-            "suspicious": 2,
-        })
+        data = json.dumps(
+            {
+                "killed": 0,
+                "survived": 0,
+                "timeout": 4,
+                "suspicious": 2,
+            }
+        )
         result = _parse_mutmut_results(data)
         assert result["total_mutants"] == 6
         assert result["mutation_score"] is None  # killed+survived = 0
@@ -1881,18 +1794,14 @@ class TestParseMutmutResultsEdgeCases:
 class TestRunMutationCheckEdgeCases:
     """Additional edge cases for run_mutation_check."""
 
-    def test_uses_default_source_path_when_config_is_empty_string(
-        self, tmp_path: Path
-    ) -> None:
+    def test_uses_default_source_path_when_config_is_empty_string(self, tmp_path: Path) -> None:
         """source_package_path='' (empty string) in config → falls back to 'trw-mcp/src'.
 
         The source: `source_path = config.source_package_path or "trw-mcp/src"`.
         An empty string is falsy, so the default is used.
         """
         config = TRWConfig(source_package_path="")
-        with patch(
-            "trw_mcp.tools.mutations._get_changed_files", return_value=[]
-        ) as mock_changed:
+        with patch("trw_mcp.tools.mutations._get_changed_files", return_value=[]) as mock_changed:
             result = run_mutation_check(tmp_path, config)
 
         # Called with the default fallback path

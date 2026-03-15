@@ -11,7 +11,6 @@ from unittest.mock import patch
 from fastmcp import FastMCP
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import TRW_MARKER_END, TRW_MARKER_START, merge_trw_section
 from trw_mcp.tools.learning import register_learning_tools
@@ -179,7 +178,8 @@ class TestAgentsMdCreation:
 
         with _patched_learning_env(tmp_project, agents_md_enabled=True) as tools:
             result = tools["trw_claude_md_sync"].fn(
-                scope="sub", target_dir=str(sub_dir),
+                scope="sub",
+                target_dir=str(sub_dir),
             )
 
         assert result["agents_md_synced"] is False

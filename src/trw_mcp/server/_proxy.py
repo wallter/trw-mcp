@@ -73,10 +73,15 @@ def _spawn_http_server(
     import subprocess
 
     cmd = [
-        sys.executable, "-m", "trw_mcp.server",
-        "--transport", config.mcp_transport,
-        "--host", config.mcp_host,
-        "--port", str(config.mcp_port),
+        sys.executable,
+        "-m",
+        "trw_mcp.server",
+        "--transport",
+        config.mcp_transport,
+        "--host",
+        config.mcp_host,
+        "--port",
+        str(config.mcp_port),
     ]
     if debug:
         cmd.append("--debug")
@@ -86,7 +91,7 @@ def _spawn_http_server(
     log_file = logs_dir / "mcp-server.log"
 
     with open(log_file, "a") as log_out:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # noqa: S603 — shell=False (default); cmd uses sys.executable (fully-qualified) with validated config args
             cmd,
             stdout=log_out,
             stderr=log_out,
@@ -161,32 +166,31 @@ def ensure_http_server(
 
     _clean_stale_pid(pid_path, log)
 
-    lock_fd = open(lock_path, "w")  # noqa: SIM115
-    try:
-        # Non-blocking lock attempt
-        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        # Another process holds the lock -- wait, then re-check port
-        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
-        if _is_port_open(host, port):
-            return url
+    with open(lock_path, "w") as lock_fd:
+        try:
+            # Non-blocking lock attempt
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # Another process holds the lock -- wait, then re-check port
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            if _is_port_open(host, port):
+                return url
 
-    try:
-        pid = _spawn_http_server(config, trw_dir, debug=debug)
+        try:
+            pid = _spawn_http_server(config, trw_dir, debug=debug)
 
-        # WSL2 cold starts can take 15-20s due to filesystem I/O latency
-        if _wait_for_port(host, port):
-            log.info("mcp_server_started", pid=pid, url=url)
-            return url
+            # WSL2 cold starts can take 15-20s due to filesystem I/O latency
+            if _wait_for_port(host, port):
+                log.info("mcp_server_started", pid=pid, url=url)
+                return url
 
-        log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=30)
-        return None
-    except Exception:  # justified: boundary, subprocess spawn can fail in many ways
-        log.warning("mcp_server_start_failed", exc_info=True)
-        return None
-    finally:
-        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-        lock_fd.close()
+            log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=30)
+            return None
+        except Exception:  # justified: boundary, subprocess spawn can fail in many ways
+            log.warning("mcp_server_start_failed", exc_info=True)
+            return None
+        finally:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
 
 
 async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
@@ -215,76 +219,79 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     for attempt in range(max_retries):
         try:
             async with streamable_http_client(url) as (read, write, _), ClientSession(read, write) as session:
-                    await session.initialize()
+                await session.initialize()
 
-                    # Discover remote capabilities once at startup
-                    tools_result = await session.list_tools()
-                    resources_result = await session.list_resources()
-                    prompts_result = await session.list_prompts()
+                # Discover remote capabilities once at startup
+                tools_result = await session.list_tools()
+                resources_result = await session.list_resources()
+                prompts_result = await session.list_prompts()
 
-                    log.info(
-                        "stdio_proxy_connected",
-                        url=url,
-                        tools=len(tools_result.tools),
-                        attempt=attempt + 1,
+                log.info(
+                    "stdio_proxy_connected",
+                    url=url,
+                    tools=len(tools_result.tools),
+                    attempt=attempt + 1,
+                )
+
+                proxy = Server("trw-proxy")
+
+                @proxy.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
+                async def handle_list_tools(
+                    _tr: object = tools_result,
+                ) -> list[types.Tool]:
+                    return _tr.tools  # type: ignore[attr-defined, no-any-return]
+
+                @proxy.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
+                async def handle_call_tool(
+                    name: str,
+                    arguments: dict[str, object] | None = None,
+                ) -> types.CallToolResult:
+                    return await session.call_tool(name, arguments)
+
+                @proxy.list_resources()  # type: ignore[no-untyped-call, untyped-decorator]
+                async def handle_list_resources(
+                    _rr: object = resources_result,
+                ) -> list[types.Resource]:
+                    return _rr.resources  # type: ignore[attr-defined, no-any-return]
+
+                @proxy.read_resource()  # type: ignore[no-untyped-call, untyped-decorator]
+                async def handle_read_resource(uri: AnyUrl) -> str:
+                    result = await session.read_resource(uri)
+                    if result.contents:
+                        c = result.contents[0]
+                        text = getattr(c, "text", None)
+                        if text is not None:
+                            return str(text)
+                        blob = getattr(c, "blob", None)
+                        if blob is not None:
+                            return str(blob)
+                    return ""
+
+                @proxy.list_prompts()  # type: ignore[no-untyped-call, untyped-decorator]
+                async def handle_list_prompts(
+                    _pr: object = prompts_result,
+                ) -> list[types.Prompt]:
+                    return _pr.prompts  # type: ignore[attr-defined, no-any-return]
+
+                @proxy.get_prompt()  # type: ignore[no-untyped-call, untyped-decorator]
+                async def handle_get_prompt(
+                    name: str,
+                    arguments: dict[str, str] | None = None,
+                ) -> types.GetPromptResult:
+                    return await session.get_prompt(name, arguments)
+
+                # Run the proxy on stdio -- Claude Code communicates here
+                async with stdio_server() as (stdio_read, stdio_write):
+                    await proxy.run(
+                        stdio_read,
+                        stdio_write,
+                        proxy.create_initialization_options(),
                     )
-
-                    proxy = Server("trw-proxy")
-
-                    @proxy.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_list_tools(
-                        _tr: object = tools_result,
-                    ) -> list[types.Tool]:
-                        return _tr.tools  # type: ignore[attr-defined, no-any-return]
-
-                    @proxy.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
-                    async def handle_call_tool(
-                        name: str, arguments: dict[str, object] | None = None,
-                    ) -> types.CallToolResult:
-                        return await session.call_tool(name, arguments)
-
-                    @proxy.list_resources()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_list_resources(
-                        _rr: object = resources_result,
-                    ) -> list[types.Resource]:
-                        return _rr.resources  # type: ignore[attr-defined, no-any-return]
-
-                    @proxy.read_resource()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_read_resource(uri: AnyUrl) -> str:
-                        result = await session.read_resource(uri)
-                        if result.contents:
-                            c = result.contents[0]
-                            text = getattr(c, "text", None)
-                            if text is not None:
-                                return str(text)
-                            blob = getattr(c, "blob", None)
-                            if blob is not None:
-                                return str(blob)
-                        return ""
-
-                    @proxy.list_prompts()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_list_prompts(
-                        _pr: object = prompts_result,
-                    ) -> list[types.Prompt]:
-                        return _pr.prompts  # type: ignore[attr-defined, no-any-return]
-
-                    @proxy.get_prompt()  # type: ignore[no-untyped-call, untyped-decorator]
-                    async def handle_get_prompt(
-                        name: str, arguments: dict[str, str] | None = None,
-                    ) -> types.GetPromptResult:
-                        return await session.get_prompt(name, arguments)
-
-                    # Run the proxy on stdio -- Claude Code communicates here
-                    async with stdio_server() as (stdio_read, stdio_write):
-                        await proxy.run(
-                            stdio_read, stdio_write,
-                            proxy.create_initialization_options(),
-                        )
-                    return  # Clean exit
-        except (ConnectionError, OSError, Exception) as exc:
+                return  # Clean exit
+        except (ConnectionError, OSError, Exception) as exc:  # per-item error handling: retry logic per connection attempt  # noqa: PERF203
             last_error = exc
             if attempt < max_retries - 1:
-                delay = 2 ** attempt  # 1s, 2s, 4s
+                delay = 2**attempt  # 1s, 2s, 4s
                 log.warning(
                     "stdio_proxy_connect_retry",
                     url=url,
@@ -301,6 +308,4 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
         attempts=max_retries,
         last_error=str(last_error),
     )
-    raise ConnectionError(
-        f"Failed to connect to MCP server at {url} after {max_retries} attempts"
-    ) from last_error
+    raise ConnectionError(f"Failed to connect to MCP server at {url} after {max_retries} attempts") from last_error

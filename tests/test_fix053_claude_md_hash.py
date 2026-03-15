@@ -9,8 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def _make_sync_args(tmp_path: Path) -> dict:
     """Build minimal args for execute_claude_md_sync using tmp_path as root."""
@@ -101,15 +99,17 @@ class TestClaudeMdHashDetection:
 
             # Add a learning — should invalidate the hash
             store_learning(
-                trw_dir, "L-hash001", "New learning summary", "New detail",
-                tags=["test"], impact=0.8,
+                trw_dir,
+                "L-hash001",
+                "New learning summary",
+                "New detail",
+                tags=["test"],
+                impact=0.8,
             )
 
             # Second sync should re-render
             result2 = execute_claude_md_sync(**args)
-            assert result2["status"] == "synced", (
-                "After adding a learning, sync must re-render (not return unchanged)"
-            )
+            assert result2["status"] == "synced", "After adding a learning, sync must re-render (not return unchanged)"
 
     def test_unchanged_returns_hash_field(self, tmp_path: Path) -> None:
         """When status=unchanged, response includes hash field."""

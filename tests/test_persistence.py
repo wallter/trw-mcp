@@ -166,9 +166,7 @@ class TestReadJsonlNonDictLine:
         jsonl_file = tmp_path / "data.jsonl"
         # Mix: valid dict, list (non-dict), another valid dict
         jsonl_file.write_text(
-            '{"key": "value1"}\n'
-            '[1, 2, 3]\n'
-            '{"key": "value2"}\n',
+            '{"key": "value1"}\n[1, 2, 3]\n{"key": "value2"}\n',
             encoding="utf-8",
         )
 
@@ -188,8 +186,7 @@ class TestReadJsonlNonDictLine:
         """Scalar JSON values in JSONL are also skipped."""
         jsonl_file = tmp_path / "data.jsonl"
         jsonl_file.write_text(
-            '{"a": 1}\n'
-            '"just a string"\n',
+            '{"a": 1}\n"just a string"\n',
             encoding="utf-8",
         )
 
@@ -230,10 +227,7 @@ class TestReadJsonlErrorPaths:
         """Line 151: blank lines inside JSONL file are skipped (continue)."""
         jsonl_file = tmp_path / "data.jsonl"
         jsonl_file.write_text(
-            '{"a": 1}\n'
-            '\n'
-            '   \n'
-            '{"b": 2}\n',
+            '{"a": 1}\n\n   \n{"b": 2}\n',
             encoding="utf-8",
         )
 

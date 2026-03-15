@@ -21,7 +21,6 @@ from trw_mcp.state.prd_utils import (
     parse_frontmatter,
 )
 
-
 # =============================================================================
 # parse_frontmatter — edge cases
 # =============================================================================
@@ -71,20 +70,14 @@ class TestParseFrontmatterEdge:
 
     def test_multiline_string_values_preserved(self) -> None:
         """Multiline YAML values in frontmatter are preserved."""
-        content = (
-            "---\nid: PRD-CORE-001\ndescription: |\n"
-            "  This is a\n  multiline description.\n---\n\n# Body"
-        )
+        content = "---\nid: PRD-CORE-001\ndescription: |\n  This is a\n  multiline description.\n---\n\n# Body"
         result = parse_frontmatter(content)
         assert result["id"] == "PRD-CORE-001"
         assert "multiline" in str(result["description"])
 
     def test_nested_prd_with_multiple_top_level_keys(self) -> None:
         """Flattening 'prd' key preserves all other top-level keys."""
-        content = (
-            "---\nprd:\n  id: PRD-CORE-099\n  status: draft\n"
-            "extra1: val1\nextra2: val2\n---\n\n# Body"
-        )
+        content = "---\nprd:\n  id: PRD-CORE-099\n  status: draft\nextra1: val1\nextra2: val2\n---\n\n# Body"
         result = parse_frontmatter(content)
         assert result["id"] == "PRD-CORE-099"
         assert result["status"] == "draft"
@@ -94,10 +87,7 @@ class TestParseFrontmatterEdge:
 
     def test_top_level_key_overrides_prd_key_on_conflict(self) -> None:
         """When both prd.X and top-level X exist, top-level wins (flattening order)."""
-        content = (
-            "---\nprd:\n  id: prd-inner\n"
-            "id: top-level\n---\n\n# Body"
-        )
+        content = "---\nprd:\n  id: prd-inner\nid: top-level\n---\n\n# Body"
         result = parse_frontmatter(content)
         # The flattening loop adds top-level keys AFTER prd contents,
         # so top-level 'id' overwrites prd 'id'
@@ -215,13 +205,15 @@ class TestComputeContentDensityEdge:
 
     def test_mixed_non_substantive_patterns(self) -> None:
         """Each non-substantive pattern type is correctly filtered."""
-        content = "\n".join([
-            "",                    # blank
-            "---",                 # horizontal rule
-            "<!-- placeholder -->", # HTML comment
-            "|---|---|",           # table separator
-            "# Heading",          # heading
-        ])
+        content = "\n".join(
+            [
+                "",  # blank
+                "---",  # horizontal rule
+                "<!-- placeholder -->",  # HTML comment
+                "|---|---|",  # table separator
+                "# Heading",  # heading
+            ]
+        )
         density = compute_content_density(content)
         assert density == 0.0
 
@@ -344,26 +336,22 @@ class TestIsValidTransitionComprehensive:
             (PRDStatus.DEPRECATED, PRDStatus.DONE),
         ],
     )
-    def test_terminal_states_reject_transitions(
-        self, current: PRDStatus, target: PRDStatus
-    ) -> None:
+    def test_terminal_states_reject_transitions(self, current: PRDStatus, target: PRDStatus) -> None:
         assert is_valid_transition(current, target) is False
 
     # Invalid skip transitions
     @pytest.mark.parametrize(
         "current, target",
         [
-            (PRDStatus.DRAFT, PRDStatus.APPROVED),   # skip review
-            (PRDStatus.DRAFT, PRDStatus.IMPLEMENTED), # skip review+approved
-            (PRDStatus.DRAFT, PRDStatus.DONE),        # skip all
-            (PRDStatus.REVIEW, PRDStatus.IMPLEMENTED), # skip approved
-            (PRDStatus.REVIEW, PRDStatus.DONE),       # skip approved+implemented
-            (PRDStatus.APPROVED, PRDStatus.DONE),     # skip implemented
+            (PRDStatus.DRAFT, PRDStatus.APPROVED),  # skip review
+            (PRDStatus.DRAFT, PRDStatus.IMPLEMENTED),  # skip review+approved
+            (PRDStatus.DRAFT, PRDStatus.DONE),  # skip all
+            (PRDStatus.REVIEW, PRDStatus.IMPLEMENTED),  # skip approved
+            (PRDStatus.REVIEW, PRDStatus.DONE),  # skip approved+implemented
+            (PRDStatus.APPROVED, PRDStatus.DONE),  # skip implemented
         ],
     )
-    def test_skip_transitions_rejected(
-        self, current: PRDStatus, target: PRDStatus
-    ) -> None:
+    def test_skip_transitions_rejected(self, current: PRDStatus, target: PRDStatus) -> None:
         assert is_valid_transition(current, target) is False
 
     def test_draft_cannot_deprecate(self) -> None:
@@ -391,9 +379,7 @@ class TestValidTransitionsStructure:
     def test_terminal_states_have_empty_sets(self) -> None:
         """DONE, MERGED, DEPRECATED must have empty transition sets."""
         for terminal in (PRDStatus.DONE, PRDStatus.MERGED, PRDStatus.DEPRECATED):
-            assert VALID_TRANSITIONS[terminal] == set(), (
-                f"{terminal} should have no outgoing transitions"
-            )
+            assert VALID_TRANSITIONS[terminal] == set(), f"{terminal} should have no outgoing transitions"
 
     def test_no_self_loops_in_explicit_transitions(self) -> None:
         """No status should list itself as an explicit transition target.
@@ -401,18 +387,14 @@ class TestValidTransitionsStructure:
         Identity transitions are handled separately in is_valid_transition.
         """
         for status, targets in VALID_TRANSITIONS.items():
-            assert status not in targets, (
-                f"{status} has itself in explicit transitions"
-            )
+            assert status not in targets, f"{status} has itself in explicit transitions"
 
     def test_transition_targets_are_all_valid_statuses(self) -> None:
         """All target statuses in the transition map must be valid PRDStatus values."""
         valid_statuses = set(PRDStatus)
         for source, targets in VALID_TRANSITIONS.items():
             for target in targets:
-                assert target in valid_statuses, (
-                    f"Invalid target {target} from {source}"
-                )
+                assert target in valid_statuses, f"Invalid target {target} from {source}"
 
 
 # =============================================================================

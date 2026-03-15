@@ -373,7 +373,7 @@ class TestHandleCrossModelMode:
         data = FileStateReader().read_yaml(run_dir / "meta" / "review.yaml")
         severities = [f["severity"] for f in data["cross_model_findings"]]
         assert "critical" in severities  # "high" → "critical"
-        assert "warning" in severities   # "medium" → "warning"
+        assert "warning" in severities  # "medium" → "warning"
         assert result["cross_model_skipped"] is False
         assert result["verdict"] == "block"
 
@@ -399,9 +399,7 @@ class TestHandleCrossModelMode:
     def test_review_id_in_result(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_cross_model_mode(
-                config, run_dir, "review-id-check", "2026-03-01T00:00:00Z"
-            )
+            result = handle_cross_model_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z")
         assert result["review_id"] == "review-id-check"
 
     def test_total_findings_zero_when_skipped(self, run_dir: Path) -> None:
@@ -422,14 +420,23 @@ class TestHandleAutoMode:
     def test_filters_findings_below_threshold(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=80)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "warning", "description": "High confidence"},
-            {"reviewer_role": "style", "confidence": 50, "category": "style",
-             "severity": "info", "description": "Low confidence"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "warning",
+                "description": "High confidence",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 50,
+                "category": "style",
+                "severity": "info",
+                "description": "Low confidence",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      reviewer_findings)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 1
         assert result["total_findings_count"] == 2
 
@@ -437,55 +444,85 @@ class TestHandleAutoMode:
         """Finding at exactly the threshold is surfaced (>=)."""
         config = _make_config(confidence_threshold=75)
         reviewer_findings = [
-            {"reviewer_role": "security", "confidence": 75, "category": "sec",
-             "severity": "critical", "description": "At threshold"},
-            {"reviewer_role": "style", "confidence": 74, "category": "style",
-             "severity": "warning", "description": "Below threshold"},
+            {
+                "reviewer_role": "security",
+                "confidence": 75,
+                "category": "sec",
+                "severity": "critical",
+                "description": "At threshold",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 74,
+                "category": "style",
+                "severity": "warning",
+                "description": "Below threshold",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      reviewer_findings)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 1
 
     def test_verdict_from_surfaced_only(self, run_dir: Path) -> None:
         """Verdict computed from surfaced findings; filtered critical does not block."""
         config = _make_config(confidence_threshold=80)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 40, "category": "logic",
-             "severity": "critical", "description": "Low confidence critical"},
-            {"reviewer_role": "style", "confidence": 90, "category": "style",
-             "severity": "warning", "description": "High confidence warning"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 40,
+                "category": "logic",
+                "severity": "critical",
+                "description": "Low confidence critical",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 90,
+                "category": "style",
+                "severity": "warning",
+                "description": "High confidence warning",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      reviewer_findings)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["verdict"] == "warn"
 
     def test_all_below_threshold_verdict_is_pass(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=80)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 20, "category": "logic",
-             "severity": "critical", "description": "Low confidence critical"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 20,
+                "category": "logic",
+                "severity": "critical",
+                "description": "Low confidence critical",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      reviewer_findings)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 0
         assert result["verdict"] == "pass"
 
     def test_all_above_threshold_all_surfaced(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=50)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "A"},
-            {"reviewer_role": "security", "confidence": 85, "category": "sec",
-             "severity": "warning", "description": "B"},
-            {"reviewer_role": "style", "confidence": 60, "category": "style",
-             "severity": "info", "description": "C"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "A",
+            },
+            {
+                "reviewer_role": "security",
+                "confidence": 85,
+                "category": "sec",
+                "severity": "warning",
+                "description": "B",
+            },
+            {"reviewer_role": "style", "confidence": 60, "category": "style", "severity": "info", "description": "C"},
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      reviewer_findings)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 3
         assert result["total_findings_count"] == 3
 
@@ -493,8 +530,13 @@ class TestHandleAutoMode:
         """When reviewer_findings is not None, _run_multi_reviewer_analysis is not called."""
         config = _make_config(confidence_threshold=0)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "warning", "description": "Pre-collected"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "warning",
+                "description": "Pre-collected",
+            },
         ]
         with (
             patch("trw_mcp.tools.review._get_git_diff", return_value="some diff"),
@@ -502,14 +544,14 @@ class TestHandleAutoMode:
                 "trw_mcp.tools.review._run_multi_reviewer_analysis",
             ) as mock_analysis,
         ):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      reviewer_findings)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         # _run_multi_reviewer_analysis must NOT be called when reviewer_findings provided
         mock_analysis.assert_not_called()
         assert result["surfaced_findings_count"] == 1
 
     def test_calls_multi_reviewer_analysis_when_reviewer_findings_is_none(
-        self, run_dir: Path,
+        self,
+        run_dir: Path,
     ) -> None:
         """When reviewer_findings is None, _run_multi_reviewer_analysis is called."""
         config = _make_config(confidence_threshold=0)
@@ -531,14 +573,23 @@ class TestHandleAutoMode:
     def test_writes_review_yaml_with_surfaced_findings(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=80)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 95, "category": "logic",
-             "severity": "warning", "description": "Surfaced"},
-            {"reviewer_role": "style", "confidence": 30, "category": "style",
-             "severity": "info", "description": "Filtered"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 95,
+                "category": "logic",
+                "severity": "warning",
+                "description": "Surfaced",
+            },
+            {
+                "reviewer_role": "style",
+                "confidence": 30,
+                "category": "style",
+                "severity": "info",
+                "description": "Filtered",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                             reviewer_findings)
+            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         review_path = run_dir / "meta" / "review.yaml"
         assert review_path.exists()
         data = FileStateReader().read_yaml(review_path)
@@ -549,14 +600,17 @@ class TestHandleAutoMode:
     def test_writes_review_all_yaml_with_all_findings(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=80)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 95, "category": "logic",
-             "severity": "warning", "description": "High"},
-            {"reviewer_role": "style", "confidence": 30, "category": "style",
-             "severity": "info", "description": "Low"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 95,
+                "category": "logic",
+                "severity": "warning",
+                "description": "High",
+            },
+            {"reviewer_role": "style", "confidence": 30, "category": "style", "severity": "info", "description": "Low"},
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                             reviewer_findings)
+            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         review_all_path = run_dir / "meta" / "review-all.yaml"
         assert review_all_path.exists()
         data = FileStateReader().read_yaml(review_all_path)
@@ -564,18 +618,28 @@ class TestHandleAutoMode:
         assert len(data["findings"]) == 2
 
     def test_writes_integration_review_yaml_when_integration_findings_exist(
-        self, run_dir: Path,
+        self,
+        run_dir: Path,
     ) -> None:
         config = _make_config(confidence_threshold=0)
         reviewer_findings = [
-            {"reviewer_role": "integration", "confidence": 90, "category": "wiring",
-             "severity": "warning", "description": "Integration issue"},
-            {"reviewer_role": "correctness", "confidence": 85, "category": "logic",
-             "severity": "info", "description": "Normal finding"},
+            {
+                "reviewer_role": "integration",
+                "confidence": 90,
+                "category": "wiring",
+                "severity": "warning",
+                "description": "Integration issue",
+            },
+            {
+                "reviewer_role": "correctness",
+                "confidence": 85,
+                "category": "logic",
+                "severity": "info",
+                "description": "Normal finding",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                             reviewer_findings)
+            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         integration_path = run_dir / "meta" / "integration-review.yaml"
         assert integration_path.exists()
         data = FileStateReader().read_yaml(integration_path)
@@ -585,12 +649,16 @@ class TestHandleAutoMode:
     def test_does_not_write_integration_review_yaml_when_none(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=0)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "No integration findings"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "No integration findings",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                             reviewer_findings)
+            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         integration_path = run_dir / "meta" / "integration-review.yaml"
         assert not integration_path.exists()
 
@@ -605,43 +673,44 @@ class TestHandleAutoMode:
         """With no run, review-all.yaml is not written."""
         config = _make_config(confidence_threshold=0)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "Finding"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "Finding",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            handle_auto_mode(config, None, "review-none", "2026-03-01T00:00:00Z",
-                             reviewer_findings)
+            handle_auto_mode(config, None, "review-none", "2026-03-01T00:00:00Z", reviewer_findings)
         # No run path → meta/ never created under tmp_path
         assert not (tmp_path / "meta" / "review-all.yaml").exists()
 
     def test_confidence_threshold_in_result(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=75)
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      None)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", None)
         assert result["confidence_threshold"] == 75
 
     def test_mode_field_is_auto(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=0)
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z",
-                                      None)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", None)
         assert result["mode"] == "auto"
 
     def test_review_id_in_result(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=0)
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-id-check",
-                                      "2026-03-01T00:00:00Z", None)
+            result = handle_auto_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z", None)
         assert result["review_id"] == "review-id-check"
 
     def test_reviewer_roles_run_in_result_from_precollected(self, run_dir: Path) -> None:
         """reviewer_roles_run comes from REVIEWER_ROLES when using pre-collected findings."""
         from trw_mcp.tools.review import REVIEWER_ROLES
+
         config = _make_config(confidence_threshold=0)
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto",
-                                      "2026-03-01T00:00:00Z", [])
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", [])
         assert result["reviewer_roles_run"] == list(REVIEWER_ROLES)
 
     def test_non_dict_items_in_reviewer_findings_are_skipped(self, run_dir: Path) -> None:
@@ -650,46 +719,61 @@ class TestHandleAutoMode:
         reviewer_findings = [
             None,
             "not-a-dict",
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "Valid"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "Valid",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto",
-                                      "2026-03-01T00:00:00Z", reviewer_findings)  # type: ignore[arg-type]
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)  # type: ignore[arg-type]
         assert result["surfaced_findings_count"] == 1
 
     def test_finding_missing_confidence_defaults_to_zero(self, run_dir: Path) -> None:
         """Finding without confidence key defaults to 0 → filtered at threshold > 0."""
         config = _make_config(confidence_threshold=80)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "category": "logic",
-             "severity": "critical", "description": "No confidence field"},
+            {
+                "reviewer_role": "correctness",
+                "category": "logic",
+                "severity": "critical",
+                "description": "No confidence field",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto",
-                                      "2026-03-01T00:00:00Z", reviewer_findings)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 0
 
     def test_review_all_yaml_contains_review_id(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=0)
         reviewer_findings = [
-            {"reviewer_role": "correctness", "confidence": 90, "category": "logic",
-             "severity": "info", "description": "Finding"},
+            {
+                "reviewer_role": "correctness",
+                "confidence": 90,
+                "category": "logic",
+                "severity": "info",
+                "description": "Finding",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            handle_auto_mode(config, run_dir, "review-id-check",
-                             "2026-03-01T00:00:00Z", reviewer_findings)
+            handle_auto_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z", reviewer_findings)
         data = FileStateReader().read_yaml(run_dir / "meta" / "review-all.yaml")
         assert data["review_id"] == "review-id-check"
 
     def test_integration_review_yaml_contains_review_id(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=0)
         reviewer_findings = [
-            {"reviewer_role": "integration", "confidence": 90, "category": "wiring",
-             "severity": "warning", "description": "Integration"},
+            {
+                "reviewer_role": "integration",
+                "confidence": 90,
+                "category": "wiring",
+                "severity": "warning",
+                "description": "Integration",
+            },
         ]
         with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
-            handle_auto_mode(config, run_dir, "review-id-check",
-                             "2026-03-01T00:00:00Z", reviewer_findings)
+            handle_auto_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z", reviewer_findings)
         data = FileStateReader().read_yaml(run_dir / "meta" / "integration-review.yaml")
         assert data["review_id"] == "review-id-check"

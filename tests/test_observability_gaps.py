@@ -19,7 +19,6 @@ import structlog.contextvars
 
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
-
 # Mark all tests as unit tests
 pytestmark = pytest.mark.unit
 
@@ -256,7 +255,8 @@ class TestDistinctEventNames:
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
         (meta / "run.yaml").write_text(
-            "run_id: test\nstatus: active\nphase: implement\n", encoding="utf-8",
+            "run_id: test\nstatus: active\nphase: implement\n",
+            encoding="utf-8",
         )
         (meta / "events.jsonl").write_text("", encoding="utf-8")
         # Create review.yaml on disk so review_path.exists() returns True
@@ -274,10 +274,7 @@ class TestDistinctEventNames:
         warning_calls = mock_logger.warning.call_args_list
         assert len(warning_calls) >= 1
         # Find the call for review gate failure
-        review_events = [
-            c for c in warning_calls
-            if "review" in str(c[0][0]).lower()
-        ]
+        review_events = [c for c in warning_calls if "review" in str(c[0][0]).lower()]
         assert len(review_events) >= 1
         assert review_events[0][0][0] != "maintenance_step_failed"
         assert review_events[0][0][0] == "maintenance_review_gate_failed"
@@ -362,10 +359,7 @@ class TestEventLoggedLevel:
         mock_logger.info.assert_not_called()
 
         # Find the specific 'event_logged' debug call among all debug calls
-        event_logged_calls = [
-            c for c in mock_logger.debug.call_args_list
-            if c[0][0] == "event_logged"
-        ]
+        event_logged_calls = [c for c in mock_logger.debug.call_args_list if c[0][0] == "event_logged"]
         assert len(event_logged_calls) == 1
         assert event_logged_calls[0][1]["event_type"] == "test_event"
 
@@ -393,9 +387,9 @@ class TestStaleCountError:
 
     def test_stale_count_error_set_on_exception(self) -> None:
         """When count_stale_runs raises, result should include stale_count_error=True."""
-        from trw_mcp.tools.orchestration import register_orchestration_tools
-
         from fastmcp import FastMCP
+
+        from trw_mcp.tools.orchestration import register_orchestration_tools
 
         server = FastMCP("test")
         register_orchestration_tools(server)
@@ -428,7 +422,6 @@ class TestStaleCountError:
 
             # Import and call trw_status directly
             # The function is registered on the server, we need the inner function
-            import trw_mcp.tools.orchestration as orch_mod
             # Re-read to get the actual function reference
             # We'll call the tool function directly through the module's registered tools
 
@@ -441,24 +434,14 @@ class TestStaleCountError:
 
     def test_stale_count_error_flag_in_source(self) -> None:
         """Verify the except block in trw_status sets stale_count_error=True."""
-        source_path = (
-            Path(__file__).parent.parent
-            / "src" / "trw_mcp" / "tools" / "orchestration.py"
-        )
+        source_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools" / "orchestration.py"
         source = source_path.read_text(encoding="utf-8")
 
-        assert "stale_count_error" in source, (
-            "orchestration.py should contain stale_count_error indicator"
-        )
+        assert "stale_count_error" in source, "orchestration.py should contain stale_count_error indicator"
 
     def test_stale_count_scan_failure_logged_as_warning(self) -> None:
         """Verify stale count scan failure is logged at warning level."""
-        source_path = (
-            Path(__file__).parent.parent
-            / "src" / "trw_mcp" / "tools" / "orchestration.py"
-        )
+        source_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools" / "orchestration.py"
         source = source_path.read_text(encoding="utf-8")
 
-        assert "stale_count_scan_failed" in source, (
-            "orchestration.py should log stale_count_scan_failed"
-        )
+        assert "stale_count_scan_failed" in source, "orchestration.py should log stale_count_scan_failed"

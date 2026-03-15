@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trw_mcp.state.semantic_checks import (
     SemanticCheck,
     SemanticCheckResult,
@@ -259,12 +257,8 @@ class TestFormatSemanticReport:
             checks_run=5,
             files_scanned=2,
             findings=[
-                SemanticFinding(
-                    "bare-except", "Bare except", "warning", "f.py", 10, "except:"
-                ),
-                SemanticFinding(
-                    "hardcoded-secret", "Secret", "error", "g.py", 5, 'key="abc"'
-                ),
+                SemanticFinding("bare-except", "Bare except", "warning", "f.py", 10, "except:"),
+                SemanticFinding("hardcoded-secret", "Secret", "error", "g.py", 5, 'key="abc"'),
             ],
         )
         report = format_semantic_report(result)
@@ -308,9 +302,7 @@ class TestBestEffortSemanticCheck:
 
         mock_result = SemanticCheckResult(
             findings=[
-                SemanticFinding(
-                    "bare-except", "Bare except", "warning", "f.py", 10, "except:"
-                ),
+                SemanticFinding("bare-except", "Bare except", "warning", "f.py", 10, "except:"),
             ]
         )
 
@@ -350,9 +342,7 @@ class TestBestEffortSemanticCheck:
 
         mock_result = SemanticCheckResult(
             findings=[
-                SemanticFinding(
-                    "todo-fixme", "TODO comment", "info", "f.py", 1, "TODO"
-                ),
+                SemanticFinding("todo-fixme", "TODO comment", "info", "f.py", 1, "TODO"),
             ]
         )
 
@@ -399,12 +389,7 @@ class TestBestEffortSemanticCheck:
 
         # Create 15 warning findings
         mock_result = SemanticCheckResult(
-            findings=[
-                SemanticFinding(
-                    f"check-{i}", "desc", "warning", "f.py", i, "match"
-                )
-                for i in range(15)
-            ]
+            findings=[SemanticFinding(f"check-{i}", "desc", "warning", "f.py", i, "match") for i in range(15)]
         )
 
         with patch(
@@ -461,11 +446,7 @@ class TestLoadSemanticChecksEdgeCases:
         """Checks with missing optional fields get sensible defaults."""
         rubric = tmp_path / "minimal.yaml"
         rubric.write_text(
-            "checks:\n"
-            "  - id: minimal\n"
-            "    description: Minimal check\n"
-            "    severity: warning\n"
-            "    automated: true\n"
+            "checks:\n  - id: minimal\n    description: Minimal check\n    severity: warning\n    automated: true\n"
         )
         checks = load_semantic_checks(rubric)
         assert len(checks) == 1
@@ -538,8 +519,12 @@ class TestRunSemanticChecksEdgeCases:
         """Empty file list returns zero scanned, zero findings."""
         checks = [
             SemanticCheck(
-                id="test", description="d", severity="warning",
-                automated=True, pattern="x", language="any",
+                id="test",
+                description="d",
+                severity="warning",
+                automated=True,
+                pattern="x",
+                language="any",
             )
         ]
         result = run_semantic_checks([], checks=checks)
@@ -556,9 +541,12 @@ class TestRunSemanticChecksEdgeCases:
 
         checks = [
             SemanticCheck(
-                id="bare-except", description="Bare except",
-                severity="warning", automated=True,
-                pattern=r"except\s*:", language="python",
+                id="bare-except",
+                description="Bare except",
+                severity="warning",
+                automated=True,
+                pattern=r"except\s*:",
+                language="python",
             )
         ]
         result = run_semantic_checks([str(f1), str(f2)], checks=checks)
@@ -576,14 +564,15 @@ class TestRunSemanticChecksEdgeCases:
 
         checks = [
             SemanticCheck(
-                id="fixme", description="FIXME found",
-                severity="info", automated=True,
-                pattern=r"FIXME", language="any",
+                id="fixme",
+                description="FIXME found",
+                severity="info",
+                automated=True,
+                pattern=r"FIXME",
+                language="any",
             )
         ]
-        result = run_semantic_checks(
-            [str(py_file), str(ts_file), str(go_file)], checks=checks
-        )
+        result = run_semantic_checks([str(py_file), str(ts_file), str(go_file)], checks=checks)
         assert result.files_scanned == 3
         assert len(result.findings) == 3
 
@@ -594,9 +583,12 @@ class TestRunSemanticChecksEdgeCases:
 
         checks = [
             SemanticCheck(
-                id="no-pattern", description="Manual only",
-                severity="warning", automated=True,
-                pattern=None, language="any",
+                id="no-pattern",
+                description="Manual only",
+                severity="warning",
+                automated=True,
+                pattern=None,
+                language="any",
             )
         ]
         result = run_semantic_checks([str(f)], checks=checks)
@@ -611,9 +603,12 @@ class TestRunSemanticChecksEdgeCases:
 
         checks = [
             SemanticCheck(
-                id="go-check", description="Go pattern",
-                severity="warning", automated=True,
-                pattern=r"goroutine", language="go",
+                id="go-check",
+                description="Go pattern",
+                severity="warning",
+                automated=True,
+                pattern=r"goroutine",
+                language="go",
             )
         ]
         result = run_semantic_checks([str(f)], checks=checks)
@@ -627,9 +622,12 @@ class TestRunSemanticChecksEdgeCases:
 
         checks = [
             SemanticCheck(
-                id="todo", description="TODO found",
-                severity="info", automated=True,
-                pattern=r"TODO", language="any",
+                id="todo",
+                description="TODO found",
+                severity="info",
+                automated=True,
+                pattern=r"TODO",
+                language="any",
             )
         ]
         result = run_semantic_checks([str(f)], checks=checks)
@@ -645,9 +643,12 @@ class TestRunSemanticChecksEdgeCases:
 
         checks = [
             SemanticCheck(
-                id="test", description="d",
-                severity="warning", automated=True,
-                pattern=r"anything", language="any",
+                id="test",
+                description="d",
+                severity="warning",
+                automated=True,
+                pattern=r"anything",
+                language="any",
             )
         ]
         result = run_semantic_checks([str(f)], checks=checks)
@@ -680,9 +681,12 @@ class TestRunSemanticChecksEdgeCases:
 
         checks = [
             SemanticCheck(
-                id="attr-check", description="Attribute test",
-                severity="error", automated=True,
-                pattern=r"MATCH_HERE", language="python",
+                id="attr-check",
+                description="Attribute test",
+                severity="error",
+                automated=True,
+                pattern=r"MATCH_HERE",
+                language="python",
             )
         ]
         result = run_semantic_checks([str(f)], checks=checks)
@@ -784,14 +788,11 @@ class TestFormatSemanticReportEdgeCases:
 
     def test_findings_capped_at_20_per_severity(self, tmp_path: Path) -> None:
         """No more than 20 findings shown per severity group."""
-        findings = [
-            SemanticFinding(
-                f"check-{i}", "desc", "warning", "f.py", i, "match"
-            )
-            for i in range(30)
-        ]
+        findings = [SemanticFinding(f"check-{i}", "desc", "warning", "f.py", i, "match") for i in range(30)]
         result = SemanticCheckResult(
-            checks_run=1, files_scanned=1, findings=findings,
+            checks_run=1,
+            files_scanned=1,
+            findings=findings,
         )
         report = format_semantic_report(result)
         # Count how many "check-" entries appear under WARNING
@@ -828,8 +829,8 @@ class TestFormatSemanticReportEdgeCases:
         )
         report = format_semantic_report(result)
         assert "[!!!]" in report  # error icon
-        assert "[!!]" in report   # warning icon
-        assert "[i]" in report    # info icon
+        assert "[!!]" in report  # warning icon
+        assert "[i]" in report  # info icon
 
     def test_report_ends_with_newline(self) -> None:
         """Both empty and non-empty reports end with a newline."""
@@ -851,15 +852,22 @@ class TestSemanticCheckDataclass:
 
     def test_defaults(self) -> None:
         check = SemanticCheck(
-            id="test", description="desc", severity="info", automated=False,
+            id="test",
+            description="desc",
+            severity="info",
+            automated=False,
         )
         assert check.pattern is None
         assert check.language == "any"
 
     def test_all_fields_set(self) -> None:
         check = SemanticCheck(
-            id="test", description="desc", severity="error",
-            automated=True, pattern=r"\bfoo\b", language="go",
+            id="test",
+            description="desc",
+            severity="error",
+            automated=True,
+            pattern=r"\bfoo\b",
+            language="go",
         )
         assert check.id == "test"
         assert check.pattern == r"\bfoo\b"

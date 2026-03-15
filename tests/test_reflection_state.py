@@ -39,27 +39,39 @@ def run_dir(tmp_path: Path) -> Path:
     writer = FileStateWriter()
     rd = tmp_path / "runs" / "test-run"
     (rd / "meta").mkdir(parents=True)
-    writer.write_yaml(rd / "meta" / "run.yaml", {
-        "run_id": "test-run-001",
-        "task": "test",
-        "phase": "implement",
-        "status": "active",
-    })
-    writer.append_jsonl(rd / "meta" / "events.jsonl", {
-        "ts": "2026-02-16T00:00:00Z",
-        "event": "run_init",
-        "data": {"task": "test"},
-    })
-    writer.append_jsonl(rd / "meta" / "events.jsonl", {
-        "ts": "2026-02-16T00:01:00Z",
-        "event": "error",
-        "data": {"message": "import failed"},
-    })
-    writer.append_jsonl(rd / "meta" / "events.jsonl", {
-        "ts": "2026-02-16T00:02:00Z",
-        "event": "phase_transition",
-        "data": {"from": "research", "to": "plan"},
-    })
+    writer.write_yaml(
+        rd / "meta" / "run.yaml",
+        {
+            "run_id": "test-run-001",
+            "task": "test",
+            "phase": "implement",
+            "status": "active",
+        },
+    )
+    writer.append_jsonl(
+        rd / "meta" / "events.jsonl",
+        {
+            "ts": "2026-02-16T00:00:00Z",
+            "event": "run_init",
+            "data": {"task": "test"},
+        },
+    )
+    writer.append_jsonl(
+        rd / "meta" / "events.jsonl",
+        {
+            "ts": "2026-02-16T00:01:00Z",
+            "event": "error",
+            "data": {"message": "import failed"},
+        },
+    )
+    writer.append_jsonl(
+        rd / "meta" / "events.jsonl",
+        {
+            "ts": "2026-02-16T00:02:00Z",
+            "event": "phase_transition",
+            "data": {"from": "research", "to": "plan"},
+        },
+    )
     return rd
 
 
@@ -92,8 +104,13 @@ class TestGenerateReflectionLearnings:
 
     def test_empty_inputs(self, trw_dir: Path) -> None:
         inputs = ReflectionInputs(
-            events=[], run_id=None, error_events=[], phase_transitions=[],
-            repeated_ops=[], success_patterns=[], tool_sequences=[],
+            events=[],
+            run_id=None,
+            error_events=[],
+            phase_transitions=[],
+            repeated_ops=[],
+            success_patterns=[],
+            tool_sequences=[],
             validated_learnings=[],
         )
         learnings, llm_used, positive = generate_reflection_learnings(inputs, trw_dir)
@@ -119,17 +136,20 @@ class TestGenerateReflectionLearnings:
     def test_success_patterns_no_longer_create_learnings(self, trw_dir: Path) -> None:
         """PRD-FIX-021: success patterns are analytics data only — not learnings."""
         inputs = ReflectionInputs(
-            events=[], run_id=None, error_events=[], phase_transitions=[],
-            repeated_ops=[], tool_sequences=[], validated_learnings=[],
+            events=[],
+            run_id=None,
+            error_events=[],
+            phase_transitions=[],
+            repeated_ops=[],
+            tool_sequences=[],
+            validated_learnings=[],
             success_patterns=[
                 {"summary": "Success: build_check (3x)", "detail": "good", "count": "3"},
             ],
         )
         learnings, _, positive = generate_reflection_learnings(inputs, trw_dir)
         assert positive == 0
-        assert all(
-            not l["summary"].startswith("Success:") for l in learnings
-        )
+        assert all(not l["summary"].startswith("Success:") for l in learnings)
 
 
 class TestCreateReflectionRecord:

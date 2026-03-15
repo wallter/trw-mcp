@@ -19,28 +19,38 @@ from trw_mcp.tools._ceremony_helpers import check_delivery_gates, copy_complianc
 def _write_review_yaml(run_path: Path, writer: FileStateWriter, verdict: str, critical_count: int = 0) -> None:
     meta = run_path / "meta"
     meta.mkdir(parents=True, exist_ok=True)
-    writer.write_yaml(meta / "review.yaml", {
-        "review_id": "rev-test",
-        "verdict": verdict,
-        "critical_count": critical_count,
-        "findings": [],
-    })
+    writer.write_yaml(
+        meta / "review.yaml",
+        {
+            "review_id": "rev-test",
+            "verdict": verdict,
+            "critical_count": critical_count,
+            "findings": [],
+        },
+    )
 
 
-def _write_integration_review_yaml(run_path: Path, writer: FileStateWriter, verdict: str, findings: list[dict] | None = None) -> None:
+def _write_integration_review_yaml(
+    run_path: Path, writer: FileStateWriter, verdict: str, findings: list[dict] | None = None
+) -> None:
     meta = run_path / "meta"
     meta.mkdir(parents=True, exist_ok=True)
-    writer.write_yaml(meta / "integration-review.yaml", {
-        "review_id": "int-rev-test",
-        "verdict": verdict,
-        "findings": findings or [],
-    })
+    writer.write_yaml(
+        meta / "integration-review.yaml",
+        {
+            "review_id": "int-rev-test",
+            "verdict": verdict,
+            "findings": findings or [],
+        },
+    )
 
 
 class TestCheckDeliveryGatesIntegrationReview:
     """Tests for integration review gate in check_delivery_gates."""
 
-    def test_integration_review_block_sets_block_key(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_integration_review_block_sets_block_key(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         _write_review_yaml(tmp_path, writer, "pass")
         _write_integration_review_yaml(
             tmp_path,
@@ -54,7 +64,9 @@ class TestCheckDeliveryGatesIntegrationReview:
         assert "integration_review_block" in result
         assert "critical finding" in result["integration_review_block"]  # type: ignore[operator]
 
-    def test_integration_review_warn_sets_warning_key(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_integration_review_warn_sets_warning_key(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         _write_review_yaml(tmp_path, writer, "pass")
         _write_integration_review_yaml(tmp_path, writer, verdict="warn")
 
@@ -63,7 +75,9 @@ class TestCheckDeliveryGatesIntegrationReview:
         assert "integration_review_warning" in result
         assert "integration_review_block" not in result
 
-    def test_no_integration_review_file_no_error(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_no_integration_review_file_no_error(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         _write_review_yaml(tmp_path, writer, "pass")
         # No integration-review.yaml
 
@@ -72,7 +86,9 @@ class TestCheckDeliveryGatesIntegrationReview:
         assert "integration_review_block" not in result
         assert "integration_review_warning" not in result
 
-    def test_integration_review_pass_no_keys(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_integration_review_pass_no_keys(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         _write_review_yaml(tmp_path, writer, "pass")
         _write_integration_review_yaml(tmp_path, writer, verdict="pass")
 
@@ -81,7 +97,9 @@ class TestCheckDeliveryGatesIntegrationReview:
         assert "integration_review_block" not in result
         assert "integration_review_warning" not in result
 
-    def test_integration_review_block_counts_criticals(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_integration_review_block_counts_criticals(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         _write_review_yaml(tmp_path, writer, "pass")
         _write_integration_review_yaml(
             tmp_path,
@@ -124,7 +142,9 @@ class TestCopyComplianceArtifacts:
         assert "compliance_artifacts_copied" in result
         assert "review.yaml" in result["compliance_artifacts_copied"]  # type: ignore[operator]
 
-    def test_copies_integration_review_yaml(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_copies_integration_review_yaml(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         run_path = tmp_path / "run-test456"
         meta = run_path / "meta"
         meta.mkdir(parents=True)
@@ -159,7 +179,9 @@ class TestCopyComplianceArtifacts:
         # No files to copy, result should be empty
         assert result == {}
 
-    def test_none_run_path_returns_empty(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_none_run_path_returns_empty(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
 
@@ -169,7 +191,9 @@ class TestCopyComplianceArtifacts:
 
         assert result == {}
 
-    def test_compliance_dir_path_contains_run_id(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_compliance_dir_path_contains_run_id(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         run_path = tmp_path / "20260303T050000Z-abc12345"
         meta = run_path / "meta"
         meta.mkdir(parents=True)

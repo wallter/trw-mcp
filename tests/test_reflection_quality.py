@@ -168,10 +168,8 @@ class TestReflectionQuality:
         _write_reflection(reflections, "r1", new_learnings=["L-a", "L-b"])
         _write_reflection(reflections, "r2", new_learnings=["L-c"])
         _write_reflection(reflections, "r3", new_learnings=["L-d", "L-e"])
-        _write_learning(entries, "a", access_count=3, q_observations=2,
-                        tags=["error", "gotcha"])
-        _write_learning(entries, "b", access_count=1, source_type="human",
-                        tags=["testing"])
+        _write_learning(entries, "a", access_count=3, q_observations=2, tags=["error", "gotcha"])
+        _write_learning(entries, "b", access_count=1, source_type="human", tags=["testing"])
         result = compute_reflection_quality(trw_dir)
         score = result["score"]
         assert score > 0.0
@@ -222,7 +220,7 @@ class TestAutoPruneExcess:
     def test_prunes_when_over_threshold(self, trw_dir: Path) -> None:
         entries = trw_dir / "learnings" / "entries"
         for i in range(5):
-            _write_learning(entries, f"e{i}", summary=f"unique topic number {i} about {i*2}")
+            _write_learning(entries, f"e{i}", summary=f"unique topic number {i} about {i * 2}")
         # Also add some duplicates
         _write_learning(entries, "d1", summary="duplicate summary words exactly here")
         _write_learning(entries, "d2", summary="duplicate summary words exactly here too")

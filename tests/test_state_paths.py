@@ -28,7 +28,9 @@ class TestResolveProjectRoot:
     """Tests for resolve_project_root()."""
 
     def test_uses_env_var(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Returns TRW_PROJECT_ROOT env var when set."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -40,6 +42,7 @@ class TestResolveProjectRoot:
     def test_falls_back_to_cwd(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns CWD when env var is not set."""
         import os as _os
+
         monkeypatch.delenv("TRW_PROJECT_ROOT", raising=False)
 
         # Bypass the autouse _isolate_trw_dir fixture patch by calling the
@@ -61,7 +64,9 @@ class TestResolveProjectRoot:
         assert result == Path.cwd().resolve()
 
     def test_resolves_to_absolute(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Result is always an absolute path."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -75,7 +80,9 @@ class TestResolveTrwDir:
     """Tests for resolve_trw_dir()."""
 
     def test_returns_trw_subdir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Returns project_root / .trw."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -85,7 +92,9 @@ class TestResolveTrwDir:
         assert result == tmp_path.resolve() / ".trw"
 
     def test_is_absolute(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Result is always an absolute path."""
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -99,13 +108,16 @@ class TestResolveRunPath:
     """Tests for resolve_run_path() — PRD-FIX-007."""
 
     def test_explicit_path_returns_given(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02a: Explicit run_path resolves when it exists."""
         run = tmp_path / "myrun"
         run.mkdir()
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: tmp_path,
         )
         assert resolve_run_path(str(run)) == run.resolve()
 
@@ -115,7 +127,9 @@ class TestResolveRunPath:
             resolve_run_path(str(tmp_path / "nonexistent"))
 
     def test_auto_detect_single_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02b: Auto-detection with single run directory."""
         project = tmp_path / "project"
@@ -123,12 +137,15 @@ class TestResolveRunPath:
         (run1 / "meta").mkdir(parents=True)
         (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         assert resolve_run_path() == run1
 
     def test_auto_detect_most_recent(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02b: Auto-detection selects most recently modified run.yaml."""
         project = tmp_path / "project"
@@ -141,36 +158,45 @@ class TestResolveRunPath:
         (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
         os.utime(run2 / "meta" / "run.yaml", (2000, 2000))
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         assert resolve_run_path() == run2
 
     def test_no_runs_root_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02c: StateError when .trw/runs/ directory not found."""
         project = tmp_path / "project"
         project.mkdir()
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         with pytest.raises(StateError, match=r"\.trw/runs/ directory not found"):
             resolve_run_path()
 
     def test_empty_runs_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02c: StateError when runs_root exists but contains no run dirs."""
         project = tmp_path / "project"
         (project / ".trw" / "runs" / "task1").mkdir(parents=True)
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         with pytest.raises(StateError, match="No active runs"):
             resolve_run_path()
 
     def test_ignores_dirs_without_run_yaml(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR02b: Directories without meta/run.yaml are skipped."""
         project = tmp_path / "project"
@@ -182,18 +208,22 @@ class TestResolveRunPath:
         (good / "meta").mkdir(parents=True)
         (good / "meta" / "run.yaml").write_text("run_id: run-good\n")
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         assert resolve_run_path() == good
 
     def test_error_includes_project_root(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """FR06: Error context includes project_root for debugging."""
         project = tmp_path / "project"
         project.mkdir()
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         with pytest.raises(StateError) as exc_info:
             resolve_run_path()
@@ -201,7 +231,9 @@ class TestResolveRunPath:
         assert str(project) in str(exc_info.value.context["project_root"])
 
     def test_auto_detect_across_task_dirs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto-detection works across multiple task directories."""
         project = tmp_path / "project"
@@ -214,18 +246,22 @@ class TestResolveRunPath:
         (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
         os.utime(run2 / "meta" / "run.yaml", (2000, 2000))
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         assert resolve_run_path() == run2
 
     def test_explicit_path_returns_absolute(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Explicit path is resolved to absolute."""
         run = tmp_path / "myrun"
         run.mkdir()
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: tmp_path,
         )
         result = resolve_run_path(str(run))
         assert result.is_absolute()
@@ -240,7 +276,9 @@ class TestResolveRunPathConfigWiring:
     """Tests for config-driven runs_root in path resolution."""
 
     def test_custom_runs_root_auto_detect(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Custom runs_root='work/runs' finds runs under work/runs/."""
         config = TRWConfig(runs_root="work/runs")
@@ -251,12 +289,15 @@ class TestResolveRunPathConfigWiring:
         (run / "meta").mkdir(parents=True)
         (run / "meta" / "run.yaml").write_text("run_id: run-001\n")
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         assert resolve_run_path() == run
 
     def test_custom_runs_root_error_no_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Custom runs_root='work/runs' error references 'work/runs/'."""
         config = TRWConfig(runs_root="work/runs")
@@ -265,13 +306,16 @@ class TestResolveRunPathConfigWiring:
         project = tmp_path / "project"
         project.mkdir()
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         with pytest.raises(StateError, match="work/runs/ directory not found"):
             resolve_run_path()
 
     def test_custom_runs_root_no_runs_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Custom runs_root='work/runs' error when no runs found."""
         config = TRWConfig(runs_root="work/runs")
@@ -280,7 +324,8 @@ class TestResolveRunPathConfigWiring:
         project = tmp_path / "project"
         (project / "work" / "runs" / "task1").mkdir(parents=True)
         monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: project,
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: project,
         )
         with pytest.raises(StateError, match=r"No active runs found in work/runs/"):
             resolve_run_path()
@@ -313,6 +358,7 @@ def _make_run(
         writer.write_yaml(meta / "run.yaml", data)
     else:
         import yaml
+
         (meta / "run.yaml").write_text(yaml.dump(data))
     return run_dir
 
@@ -325,9 +371,7 @@ def _make_run(
 class TestFindActiveRun:
     """Tests for find_active_run() -- lexicographic most-recent run."""
 
-    def test_no_task_root_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_task_root_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns None when task_root directory does not exist."""
         project = tmp_path / "project"
         project.mkdir()
@@ -400,9 +444,7 @@ class TestFindActiveRun:
         result = find_active_run()
         assert result == valid_run
 
-    def test_empty_runs_root_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_runs_root_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty runs_root with no subdirs returns None."""
         project = tmp_path / "project"
         (project / ".trw" / "runs").mkdir(parents=True)
@@ -410,10 +452,9 @@ class TestFindActiveRun:
         result = find_active_run()
         assert result is None
 
-    def test_oserror_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_oserror_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """OSError during scan returns None (graceful degradation)."""
+
         def raise_oserror() -> Path:
             raise OSError("permission denied")
 
@@ -430,9 +471,7 @@ class TestFindActiveRun:
 class TestDetectCurrentPhase:
     """Tests for detect_current_phase() -- reads phase from latest run.yaml."""
 
-    def test_no_task_root_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_task_root_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns None when task_root directory does not exist."""
         project = tmp_path / "project"
         project.mkdir()
@@ -492,9 +531,7 @@ class TestDetectCurrentPhase:
         # Should skip the completed and failed runs, return the older active run's phase
         assert result == "implement"
 
-    def test_no_runs_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_runs_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns None when no run directories exist."""
         project = tmp_path / "project"
         (project / ".trw" / "runs" / "task1").mkdir(parents=True)
@@ -502,9 +539,7 @@ class TestDetectCurrentPhase:
         result = detect_current_phase()
         assert result is None
 
-    def test_missing_phase_field_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_phase_field_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns None when phase field is missing from run.yaml."""
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
@@ -516,10 +551,9 @@ class TestDetectCurrentPhase:
         result = detect_current_phase()
         assert result is None
 
-    def test_oserror_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_oserror_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """OSError during scan returns None gracefully."""
+
         def raise_oserror() -> Path:
             raise OSError("permission denied")
 
@@ -551,8 +585,9 @@ class TestDetectCurrentPhase:
         """Pinned run with non-active status returns None."""
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
-        done_run = _make_run(runs_root, "task1", "20260219T100000Z-done",
-                             status="complete", phase="deliver", writer=writer)
+        done_run = _make_run(
+            runs_root, "task1", "20260219T100000Z-done", status="complete", phase="deliver", writer=writer
+        )
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         pin_active_run(done_run)

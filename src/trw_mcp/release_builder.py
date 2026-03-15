@@ -64,6 +64,7 @@ def _read_version() -> str:
     # Fallback
     try:
         from trw_mcp import __version__
+
         return __version__
     except (ImportError, AttributeError):
         return "0.0.0"
@@ -72,6 +73,7 @@ def _read_version() -> str:
 def _read_framework_version() -> str:
     """Read framework version from bundled FRAMEWORK.md first line."""
     from trw_mcp.state._helpers import read_framework_version
+
     return read_framework_version()
 
 

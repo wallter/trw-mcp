@@ -12,7 +12,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import get_tools_sync
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.state.dedup import (
@@ -28,6 +27,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def mock_embed(text: str) -> list[float]:
     """Return a deterministic 384-dim vector based on text content.
 
@@ -35,6 +35,7 @@ def mock_embed(text: str) -> list[float]:
     and identical texts produce identical vectors.
     """
     import hashlib
+
     h = hashlib.sha256(text.encode()).digest()
     vec = [float(b) / 255.0 for b in h] * 12  # 32 * 12 = 384
     norm = sum(v * v for v in vec) ** 0.5
@@ -46,25 +47,29 @@ def mock_embed(text: str) -> list[float]:
 def write_entry(entries_dir: Path, writer: FileStateWriter, entry_id: str, summary: str, detail: str) -> Path:
     """Write a minimal learning entry YAML for testing."""
     path = entries_dir / f"{entry_id}.yaml"
-    writer.write_yaml(path, {
-        "id": entry_id,
-        "summary": summary,
-        "detail": detail,
-        "tags": ["test"],
-        "evidence": [],
-        "impact": 0.5,
-        "status": "active",
-        "recurrence": 1,
-        "created": "2026-01-01",
-        "updated": "2026-01-01",
-        "merged_from": [],
-    })
+    writer.write_yaml(
+        path,
+        {
+            "id": entry_id,
+            "summary": summary,
+            "detail": detail,
+            "tags": ["test"],
+            "evidence": [],
+            "impact": 0.5,
+            "status": "active",
+            "recurrence": 1,
+            "created": "2026-01-01",
+            "updated": "2026-01-01",
+            "merged_from": [],
+        },
+    )
     return path
 
 
 # ---------------------------------------------------------------------------
 # Unit tests: cosine_similarity
 # ---------------------------------------------------------------------------
+
 
 class TestCosineSimilarity:
     def test_identical_vectors_return_one(self) -> None:
@@ -104,6 +109,7 @@ class TestCosineSimilarity:
 # Unit tests: check_duplicate
 # ---------------------------------------------------------------------------
 
+
 class TestCheckDuplicate:
     """Tests for the check_duplicate() function."""
 
@@ -120,7 +126,9 @@ class TestCheckDuplicate:
         assert result.existing_id is None
         assert result.similarity == 0.0
 
-    def test_skip_when_identical_entry_exists(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_skip_when_identical_entry_exists(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Identical entry exists → 'skip' with similarity >= 0.95."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -137,7 +145,9 @@ class TestCheckDuplicate:
         assert result.existing_id == "L-existing01"
         assert result.similarity >= 0.95
 
-    def test_merge_when_near_duplicate_exists(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_merge_when_near_duplicate_exists(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Near-duplicate entry exists → 'merge' with 0.85 <= sim < 0.95.
 
         We construct a controlled embed function that returns an identical vector
@@ -168,8 +178,9 @@ class TestCheckDuplicate:
         # Build a new vector at exactly cos(angle) = 0.90 from existing_vec
         # new_vec = cos(θ) * existing_vec + sin(θ) * orth
         import math
+
         cos_theta = 0.90
-        sin_theta = math.sqrt(1 - cos_theta ** 2)
+        sin_theta = math.sqrt(1 - cos_theta**2)
         new_vec = [cos_theta * e + sin_theta * o for e, o in zip(existing_vec, orth)]
         # Verify it's already unit (should be since we combined two orthonormal vecs)
         new_norm = sum(v * v for v in new_vec) ** 0.5
@@ -184,15 +195,20 @@ class TestCheckDuplicate:
 
         with patch("trw_mcp.state.dedup.embed", side_effect=controlled_embed):
             result = check_duplicate(
-                new_text, "",
-                entries_dir, reader, config=config,
+                new_text,
+                "",
+                entries_dir,
+                reader,
+                config=config,
             )
 
         # The new_vec is at 0.90 similarity, which is in the merge zone [0.85, 0.95)
         assert result.action == "merge"
         assert 0.85 <= result.similarity < 0.95
 
-    def test_store_when_no_embeddings_available(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_store_when_no_embeddings_available(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When embed() returns None → graceful degradation to 'store'."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -207,7 +223,9 @@ class TestCheckDuplicate:
         assert result.existing_id is None
         assert result.similarity == 0.0
 
-    def test_store_when_below_merge_threshold(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_store_when_below_merge_threshold(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Completely different entry exists → 'store' (similarity < 0.85)."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -252,24 +270,29 @@ class TestCheckDuplicate:
         config = TRWConfig(embeddings_enabled=True)
 
         path = entries_dir / "L-resolved01.yaml"
-        writer.write_yaml(path, {
-            "id": "L-resolved01",
-            "summary": "unique test summary for dedup",
-            "detail": "unique test detail for dedup",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "resolved",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-        })
+        writer.write_yaml(
+            path,
+            {
+                "id": "L-resolved01",
+                "summary": "unique test summary for dedup",
+                "detail": "unique test detail for dedup",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "resolved",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+            },
+        )
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
             result = check_duplicate(
                 "unique test summary for dedup",
                 "unique test detail for dedup",
-                entries_dir, reader, config=config,
+                entries_dir,
+                reader,
+                config=config,
             )
 
         # Resolved entries are skipped, so no match
@@ -279,6 +302,7 @@ class TestCheckDuplicate:
 # ---------------------------------------------------------------------------
 # Unit tests: merge_entries
 # ---------------------------------------------------------------------------
+
 
 class TestMergeEntries:
     """Tests for the merge_entries() function.
@@ -321,7 +345,9 @@ class TestMergeEntries:
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
-            tmp_path, existing_impact=0.5, new_impact=0.8,
+            tmp_path,
+            existing_impact=0.5,
+            new_impact=0.8,
         )
         merge_entries(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
@@ -332,7 +358,9 @@ class TestMergeEntries:
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
-            tmp_path, existing_recurrence=2, new_impact=0.5,
+            tmp_path,
+            existing_recurrence=2,
+            new_impact=0.5,
         )
         merge_entries(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
@@ -343,7 +371,9 @@ class TestMergeEntries:
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
-            tmp_path, new_id="L-newmerge05", new_impact=0.5,
+            tmp_path,
+            new_id="L-newmerge05",
+            new_impact=0.5,
         )
         merge_entries(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
@@ -368,7 +398,8 @@ class TestMergeEntries:
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
-            tmp_path, new_impact=0.5,
+            tmp_path,
+            new_impact=0.5,
         )
         returned_path = merge_entries(path, new_data, reader, writer)
         assert returned_path == path
@@ -377,6 +408,7 @@ class TestMergeEntries:
 # ---------------------------------------------------------------------------
 # Model tests
 # ---------------------------------------------------------------------------
+
 
 class TestLearningEntryMergedFrom:
     """Tests for the merged_from field added to LearningEntry."""
@@ -405,6 +437,7 @@ class TestLearningEntryMergedFrom:
 # Integration tests: trw_learn tool
 # ---------------------------------------------------------------------------
 
+
 class TestTrwLearnDedup:
     """Integration tests for the dedup check in trw_learn()."""
 
@@ -415,7 +448,11 @@ class TestTrwLearnDedup:
         return entries
 
     def test_trw_learn_returns_skipped_duplicate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """When a duplicate exists, trw_learn returns 'skipped_duplicate'."""
         from fastmcp import FastMCP
@@ -427,7 +464,9 @@ class TestTrwLearnDedup:
         logs_dir.mkdir(parents=True)
 
         # Patch module singletons
-        mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        mock_config = TRWConfig(
+            dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85
+        )
 
         monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: mock_config)
         monkeypatch.setattr(
@@ -438,19 +477,22 @@ class TestTrwLearnDedup:
         # Write an identical entry already in the entries_dir
         summary = "pytest fixture isolation pattern"
         detail = "use autouse fixtures with yield for clean teardown"
-        writer.write_yaml(entries_dir / "L-existing99.yaml", {
-            "id": "L-existing99",
-            "summary": summary,
-            "detail": detail,
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            entries_dir / "L-existing99.yaml",
+            {
+                "id": "L-existing99",
+                "summary": summary,
+                "detail": detail,
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         # Patch embed to return deterministic vectors
         monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
@@ -476,7 +518,11 @@ class TestTrwLearnDedup:
         assert float(result["similarity"]) >= 0.95
 
     def test_trw_learn_normal_store_when_dedup_disabled(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """When dedup_enabled=False, trw_learn stores normally."""
         self._make_entries_dir(tmp_path)
@@ -512,7 +558,11 @@ class TestTrwLearnDedup:
         assert result["learning_id"] == "L-storedtest"
 
     def test_trw_learn_returns_merged_when_near_duplicate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """When a near-duplicate exists, trw_learn returns 'merged'."""
         entries_dir = self._make_entries_dir(tmp_path)
@@ -540,19 +590,22 @@ class TestTrwLearnDedup:
 
         existing_summary = "existing learning entry"
         existing_detail = "existing detail about some topic"
-        writer.write_yaml(entries_dir / "L-existingmerge.yaml", {
-            "id": "L-existingmerge",
-            "summary": existing_summary,
-            "detail": existing_detail,
-            "tags": ["a"],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            entries_dir / "L-existingmerge.yaml",
+            {
+                "id": "L-existingmerge",
+                "summary": existing_summary,
+                "detail": existing_detail,
+                "tags": ["a"],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         existing_vec = mock_embed(existing_summary + " " + existing_detail)
 
@@ -587,6 +640,7 @@ class TestTrwLearnDedup:
 # Edge cases: check_duplicate
 # ---------------------------------------------------------------------------
 
+
 class TestCheckDuplicateEdgeCases:
     """Additional edge cases for check_duplicate to reach line coverage."""
 
@@ -609,25 +663,33 @@ class TestCheckDuplicateEdgeCases:
         config = TRWConfig(embeddings_enabled=True)
 
         # Write index.yaml (should be skipped) and a real entry
-        writer.write_yaml(entries_dir / "index.yaml", {
-            "id": "L-index",
-            "summary": "same summary exact match",
-            "detail": "same detail exact match",
-            "tags": [],
-            "status": "active",
-        })
+        writer.write_yaml(
+            entries_dir / "index.yaml",
+            {
+                "id": "L-index",
+                "summary": "same summary exact match",
+                "detail": "same detail exact match",
+                "tags": [],
+                "status": "active",
+            },
+        )
 
         # Only write index.yaml (no real entries) so result must be 'store'
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
             result = check_duplicate(
-                "same summary exact match", "same detail exact match",
-                entries_dir, reader, config=config,
+                "same summary exact match",
+                "same detail exact match",
+                entries_dir,
+                reader,
+                config=config,
             )
 
         # index.yaml is skipped, so no duplicate found → store
         assert result.action == "store"
 
-    def test_corrupt_yaml_entry_is_skipped(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_corrupt_yaml_entry_is_skipped(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Unreadable YAML entries are silently skipped — no exception raised."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -641,13 +703,18 @@ class TestCheckDuplicateEdgeCases:
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
             # Should not raise — the corrupt file is skipped
             result = check_duplicate(
-                "completely different topic", "unrelated info",
-                entries_dir, reader, config=config,
+                "completely different topic",
+                "unrelated info",
+                entries_dir,
+                reader,
+                config=config,
             )
 
         assert result is not None  # No exception
 
-    def test_entry_embed_returns_none_is_skipped(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_entry_embed_returns_none_is_skipped(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When embed returns None for existing entry, that entry is skipped."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -656,6 +723,7 @@ class TestCheckDuplicateEdgeCases:
         write_entry(entries_dir, writer, "L-skip-embed", "some summary", "some detail")
 
         call_count = [0]
+
         def selective_none_embed(text: str) -> list[float] | None:
             call_count[0] += 1
             if call_count[0] == 1:
@@ -670,7 +738,9 @@ class TestCheckDuplicateEdgeCases:
         # Existing entry embed returns None → skipped → action is 'store'
         assert result.action == "store"
 
-    def test_threshold_boundary_exactly_at_skip(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_threshold_boundary_exactly_at_skip(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Similarity exactly at skip_threshold (0.95) → 'skip' action."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -681,8 +751,9 @@ class TestCheckDuplicateEdgeCases:
 
         # Create a new vector exactly at 0.95 cosine similarity
         import math as _math
+
         cos_theta = 0.95
-        sin_theta = _math.sqrt(1.0 - cos_theta ** 2)
+        sin_theta = _math.sqrt(1.0 - cos_theta**2)
         # Build orthogonal to existing_vec
         orth = [0.0] * len(existing_vec)
         orth[0] = -existing_vec[1]
@@ -696,6 +767,7 @@ class TestCheckDuplicateEdgeCases:
             new_vec = [v / new_norm for v in new_vec]
 
         call_count = [0]
+
         def boundary_embed(text: str) -> list[float]:
             call_count[0] += 1
             if call_count[0] == 1:
@@ -709,7 +781,9 @@ class TestCheckDuplicateEdgeCases:
         assert result.action == "skip"
         assert result.similarity >= 0.95
 
-    def test_threshold_boundary_exactly_at_merge(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_threshold_boundary_exactly_at_merge(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Similarity exactly at merge_threshold (0.85) → 'merge' action.
 
         We use controlled embed functions that return a precise vector for the new entry
@@ -726,8 +800,9 @@ class TestCheckDuplicateEdgeCases:
         existing_vec = mock_embed(existing_text)
 
         import math as _math
+
         cos_theta = 0.87  # In merge zone (0.85 <= 0.87 < 0.95)
-        sin_theta = _math.sqrt(1.0 - cos_theta ** 2)
+        sin_theta = _math.sqrt(1.0 - cos_theta**2)
         orth = [0.0] * len(existing_vec)
         orth[0] = -existing_vec[1]
         orth[1] = existing_vec[0]
@@ -749,7 +824,9 @@ class TestCheckDuplicateEdgeCases:
             result = check_duplicate(
                 "totally different new query",
                 "",  # Empty detail so text = "totally different new query "
-                entries_dir, reader, config=config,
+                entries_dir,
+                reader,
+                config=config,
             )
 
         # new_vec is at 0.87 similarity → in merge zone [0.85, 0.95) → merge action
@@ -761,28 +838,34 @@ class TestCheckDuplicateEdgeCases:
 # Edge cases: merge_entries
 # ---------------------------------------------------------------------------
 
+
 class TestMergeEntriesEdgeCases:
     """Additional edge cases for merge_entries coverage."""
 
-    def test_merge_empty_existing_detail_uses_new_directly(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_merge_empty_existing_detail_uses_new_directly(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When existing detail is empty and new detail is longer, use new detail directly."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
         existing_path = entries_dir / "L-empty-det.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-empty-det",
-            "summary": "s",
-            "detail": "",  # Empty existing detail
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            existing_path,
+            {
+                "id": "L-empty-det",
+                "summary": "s",
+                "detail": "",  # Empty existing detail
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         new_data = {
             "id": "L-new-det",
@@ -800,25 +883,30 @@ class TestMergeEntriesEdgeCases:
         assert "this is new detail" in str(updated["detail"])
         assert "\n\n" not in str(updated["detail"])
 
-    def test_merge_same_length_detail_unchanged(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_merge_same_length_detail_unchanged(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When new detail is not longer than existing, detail is unchanged."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
         existing_path = entries_dir / "L-same-len.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-same-len",
-            "summary": "s",
-            "detail": "existing detail is long enough already",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            existing_path,
+            {
+                "id": "L-same-len",
+                "summary": "s",
+                "detail": "existing detail is long enough already",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         new_data = {
             "id": "L-new-same",
@@ -834,25 +922,30 @@ class TestMergeEntriesEdgeCases:
         updated = reader.read_yaml(existing_path)
         assert str(updated["detail"]) == "existing detail is long enough already"
 
-    def test_merge_duplicate_merged_from_not_added_twice(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_merge_duplicate_merged_from_not_added_twice(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When new_id is already in merged_from, it should not be duplicated."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
         existing_path = entries_dir / "L-dedup-mf.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-dedup-mf",
-            "summary": "s",
-            "detail": "d",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": ["L-already-there"],  # Pre-existing merged_from
-        })
+        writer.write_yaml(
+            existing_path,
+            {
+                "id": "L-dedup-mf",
+                "summary": "s",
+                "detail": "d",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": ["L-already-there"],  # Pre-existing merged_from
+            },
+        )
 
         new_data = {
             "id": "L-already-there",  # Same as existing merged_from entry
@@ -869,25 +962,30 @@ class TestMergeEntriesEdgeCases:
         # L-already-there should appear only once
         assert updated["merged_from"].count("L-already-there") == 1
 
-    def test_merge_empty_new_id_not_added_to_merged_from(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_merge_empty_new_id_not_added_to_merged_from(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When new entry id is empty string, it is not added to merged_from."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
         existing_path = entries_dir / "L-noid.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-noid",
-            "summary": "s",
-            "detail": "d",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            existing_path,
+            {
+                "id": "L-noid",
+                "summary": "s",
+                "detail": "d",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         new_data = {
             "id": "",  # Empty id
@@ -909,28 +1007,34 @@ class TestMergeEntriesEdgeCases:
 # FR03: Merge audit trail
 # ---------------------------------------------------------------------------
 
+
 class TestMergeAuditTrail:
     """Tests for FR03 — audit trail format in merge_entries."""
 
-    def test_merge_detail_uses_audit_trail_format(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_merge_detail_uses_audit_trail_format(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Merged detail uses '\\n---\\nMerged from {id} on {date}:\\n' format."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
         existing_path = entries_dir / "L-audit01.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-audit01",
-            "summary": "s",
-            "detail": "short existing",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            existing_path,
+            {
+                "id": "L-audit01",
+                "summary": "s",
+                "detail": "short existing",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         new_data = {
             "id": "L-new-audit",
@@ -950,25 +1054,30 @@ class TestMergeAuditTrail:
         assert "Merged from L-new-audit on" in detail
         assert "this is a much longer detail" in detail
 
-    def test_merge_detail_no_audit_marker_when_new_shorter(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_merge_detail_no_audit_marker_when_new_shorter(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """No audit trail appended when new detail is not longer."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
         existing_path = entries_dir / "L-audit02.yaml"
-        writer.write_yaml(existing_path, {
-            "id": "L-audit02",
-            "summary": "s",
-            "detail": "much longer existing detail that is certainly long enough",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            existing_path,
+            {
+                "id": "L-audit02",
+                "summary": "s",
+                "detail": "much longer existing detail that is certainly long enough",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         new_data = {
             "id": "L-short-new",
@@ -992,10 +1101,13 @@ class TestMergeAuditTrail:
 # FR06: Threshold validation
 # ---------------------------------------------------------------------------
 
+
 class TestThresholdValidation:
     """Tests for FR06 — invalid threshold resets to defaults."""
 
-    def test_check_duplicate_resets_invalid_thresholds(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_check_duplicate_resets_invalid_thresholds(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When merge_threshold >= skip_threshold, defaults are used."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
@@ -1032,11 +1144,16 @@ class TestThresholdValidation:
 # FR04: Skip updates access_count
 # ---------------------------------------------------------------------------
 
+
 class TestSkipUpdatesAccessCount:
     """Tests for FR04 — skip action updates access_count on existing entry."""
 
     def test_skip_increments_access_count(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """When dedup action=skip, existing entry's access_count is incremented."""
         from fastmcp import FastMCP
@@ -1048,7 +1165,9 @@ class TestSkipUpdatesAccessCount:
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)
 
-        mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        mock_config = TRWConfig(
+            dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85
+        )
 
         monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: mock_config)
         monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
@@ -1056,20 +1175,23 @@ class TestSkipUpdatesAccessCount:
 
         summary = "unique skip access count test"
         detail = "detail for skip access count test"
-        writer.write_yaml(entries_dir / "L-existing-skip.yaml", {
-            "id": "L-existing-skip",
-            "summary": summary,
-            "detail": detail,
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "access_count": 3,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            entries_dir / "L-existing-skip.yaml",
+            {
+                "id": "L-existing-skip",
+                "summary": summary,
+                "detail": detail,
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "access_count": 3,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
 
@@ -1092,6 +1214,7 @@ class TestSkipUpdatesAccessCount:
 # FR05: Batch dedup migration
 # ---------------------------------------------------------------------------
 
+
 class TestBatchDedup:
     """Tests for FR05 — batch_dedup and is_migration_needed."""
 
@@ -1113,7 +1236,9 @@ class TestBatchDedup:
         marker.write_text("completed: true\n", encoding="utf-8")
         assert is_migration_needed(trw_dir) is False
 
-    def test_batch_dedup_skips_when_no_entries_dir(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_batch_dedup_skips_when_no_entries_dir(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """batch_dedup returns 'skipped' when entries directory doesn't exist."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -1123,7 +1248,9 @@ class TestBatchDedup:
         assert result["status"] == "skipped"
         assert "no entries directory" in str(result.get("reason", ""))
 
-    def test_batch_dedup_skips_when_embeddings_unavailable(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_batch_dedup_skips_when_embeddings_unavailable(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """batch_dedup returns 'skipped' when embeddings unavailable."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1136,7 +1263,9 @@ class TestBatchDedup:
         assert result["status"] == "skipped"
         assert "embeddings unavailable" in str(result.get("reason", ""))
 
-    def test_batch_dedup_writes_migration_marker(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_batch_dedup_writes_migration_marker(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """batch_dedup writes dedup_migration.yaml marker after completion."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1154,7 +1283,9 @@ class TestBatchDedup:
         assert marker_data.get("completed") is True
         assert "run_at" in marker_data
 
-    def test_batch_dedup_merges_near_duplicates(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_batch_dedup_merges_near_duplicates(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """batch_dedup merges entries above merge threshold."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1168,8 +1299,9 @@ class TestBatchDedup:
         # Control vectors: L-batch01 and L-batch02 will be at 0.90 similarity
         existing_vec = mock_embed("batch test alpha first detail here alpha")
         import math as _math
+
         cos_theta = 0.90
-        sin_theta = _math.sqrt(1 - cos_theta ** 2)
+        sin_theta = _math.sqrt(1 - cos_theta**2)
         orth = [0.0] * len(existing_vec)
         orth[0] = -existing_vec[1]
         orth[1] = existing_vec[0]
@@ -1181,6 +1313,7 @@ class TestBatchDedup:
         near_vec = [v / near_norm for v in near_vec]
 
         call_count = [0]
+
         def controlled_embed(text: str) -> list[float]:
             call_count[0] += 1
             if "L-batch02" in text or "second detail here beta" in text or "batch test beta" in text:
@@ -1194,7 +1327,9 @@ class TestBatchDedup:
         assert result["status"] == "completed"
         assert int(str(result.get("entries_scanned", 0))) == 2
 
-    def test_batch_dedup_completes_with_no_active_entries(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_batch_dedup_completes_with_no_active_entries(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """batch_dedup completes cleanly with zero active entries."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1203,19 +1338,22 @@ class TestBatchDedup:
 
         # Write only resolved entries
         path = entries_dir / "L-resolved.yaml"
-        writer.write_yaml(path, {
-            "id": "L-resolved",
-            "summary": "s",
-            "detail": "d",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "resolved",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            path,
+            {
+                "id": "L-resolved",
+                "summary": "s",
+                "detail": "d",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "resolved",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         with patch("trw_mcp.state.dedup.embedding_available", return_value=True):
             with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
@@ -1225,7 +1363,9 @@ class TestBatchDedup:
         assert int(str(result.get("entries_scanned", 0))) == 0
         assert int(str(result.get("entries_merged", 0))) == 0
 
-    def test_batch_dedup_obsoletes_exact_duplicates(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_batch_dedup_obsoletes_exact_duplicates(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """batch_dedup marks exact duplicates (>=skip_threshold) as obsolete."""
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -1251,6 +1391,7 @@ class TestBatchDedup:
 # FR01: Graceful degradation — trw_learn returns "recorded" when embed=None
 # ---------------------------------------------------------------------------
 
+
 class TestTrwLearnGracefulDegradation:
     """CORE-042-FR01: When embed() returns None, trw_learn falls back to 'store' (recorded)."""
 
@@ -1267,7 +1408,9 @@ class TestTrwLearnGracefulDegradation:
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)
 
-        mock_config = TRWConfig(dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        mock_config = TRWConfig(
+            dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85
+        )
 
         monkeypatch.setattr("trw_mcp.tools.learning._config", mock_config)
         monkeypatch.setattr("trw_mcp.tools.learning._reader", reader)
@@ -1297,9 +1440,7 @@ class TestTrwLearnGracefulDegradation:
             detail="embed returns None so dedup is skipped",
         )
 
-        assert result["status"] == "recorded", (
-            f"FR01: Expected 'recorded' when embed=None, got {result['status']!r}"
-        )
+        assert result["status"] == "recorded", f"FR01: Expected 'recorded' when embed=None, got {result['status']!r}"
         assert "learning_id" in result
 
     def test_trw_learn_recorded_when_new_entry_embed_none(
@@ -1310,19 +1451,22 @@ class TestTrwLearnGracefulDegradation:
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
 
         # Write an existing entry
-        writer.write_yaml(entries_dir / "L-existing-gr.yaml", {
-            "id": "L-existing-gr",
-            "summary": "graceful fallback existing",
-            "detail": "detail for existing entry",
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        writer.write_yaml(
+            entries_dir / "L-existing-gr.yaml",
+            {
+                "id": "L-existing-gr",
+                "summary": "graceful fallback existing",
+                "detail": "detail for existing entry",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         # embed returns None for ALL calls
         monkeypatch.setattr("trw_mcp.state.dedup.embed", lambda text: None)
@@ -1339,6 +1483,7 @@ class TestTrwLearnGracefulDegradation:
 # ---------------------------------------------------------------------------
 # FR04: Return dict key contract — learning_id present, path absent for skip/merge
 # ---------------------------------------------------------------------------
+
 
 class TestTrwLearnReturnDictKeys:
     """CORE-042-FR04: Verify return dict structure for skip, merge, and recorded paths."""
@@ -1359,7 +1504,9 @@ class TestTrwLearnReturnDictKeys:
         entries_dir.mkdir(parents=True)
         (tmp_path / ".trw" / "logs").mkdir(parents=True)
 
-        cfg = TRWConfig(dedup_enabled=dedup_enabled, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
+        cfg = TRWConfig(
+            dedup_enabled=dedup_enabled, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85
+        )
 
         monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: cfg)
         monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
@@ -1371,8 +1518,11 @@ class TestTrwLearnReturnDictKeys:
         return get_tools_sync(server)["trw_learn"].fn
 
     def test_recorded_result_has_learning_id_and_path(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """FR04: Normal store ('recorded') result has learning_id and path."""
         tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer)
@@ -1388,8 +1538,11 @@ class TestTrwLearnReturnDictKeys:
         assert result.get("learning_id") == "L-key-test"
 
     def test_skip_result_has_learning_id_and_duplicate_of(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """FR04: Skip ('skipped') result has learning_id and duplicate_of per PRD spec."""
         tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer)
@@ -1397,35 +1550,39 @@ class TestTrwLearnReturnDictKeys:
 
         summary = "pytest fixture isolation pattern for key test"
         detail = "use autouse fixtures with yield for clean teardown"
-        FileStateWriter().write_yaml(entries_dir / "L-skip-key.yaml", {
-            "id": "L-skip-key",
-            "summary": summary,
-            "detail": detail,
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        FileStateWriter().write_yaml(
+            entries_dir / "L-skip-key.yaml",
+            {
+                "id": "L-skip-key",
+                "summary": summary,
+                "detail": detail,
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         result = tool_fn(summary=summary, detail=detail)
 
         assert result["status"] == "skipped"
         assert "learning_id" in result, "skip result must have learning_id"
-        assert "duplicate_of" in result, (
-            "skip result must have 'duplicate_of' per PRD-CORE-042"
-        )
+        assert "duplicate_of" in result, "skip result must have 'duplicate_of' per PRD-CORE-042"
         # 'path' should not be present for skipped entries (no new file written)
         assert result.get("path") is None or "path" not in result, (
             "skip result should not have a 'path' (no new file written)"
         )
 
     def test_merged_result_has_learning_id_and_merged_into(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """FR03: Merge ('merged') result has learning_id and merged_into per PRD spec."""
         tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer)
@@ -1433,19 +1590,22 @@ class TestTrwLearnReturnDictKeys:
 
         existing_summary = "pytest fixture autouse yield pattern"
         existing_detail = "use autouse fixtures with yield for clean teardown in pytest"
-        FileStateWriter().write_yaml(entries_dir / "L-merge-key.yaml", {
-            "id": "L-merge-key",
-            "summary": existing_summary,
-            "detail": existing_detail,
-            "tags": [],
-            "evidence": [],
-            "impact": 0.5,
-            "status": "active",
-            "recurrence": 1,
-            "created": "2026-01-01",
-            "updated": "2026-01-01",
-            "merged_from": [],
-        })
+        FileStateWriter().write_yaml(
+            entries_dir / "L-merge-key.yaml",
+            {
+                "id": "L-merge-key",
+                "summary": existing_summary,
+                "detail": existing_detail,
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "active",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+                "merged_from": [],
+            },
+        )
 
         # New entry is similar but not identical (should trigger merge)
         new_summary = "pytest fixture autouse yield teardown"
@@ -1463,8 +1623,11 @@ class TestTrwLearnReturnDictKeys:
             assert "duplicate_of" in result, "skipped result must have 'duplicate_of' per PRD"
 
     def test_all_paths_always_return_learning_id(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        reader: FileStateReader, writer: FileStateWriter,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
     ) -> None:
         """FR04: Every trw_learn response contains 'learning_id' regardless of path.
 
@@ -1480,9 +1643,7 @@ class TestTrwLearnReturnDictKeys:
         )
         assert "learning_id" in result, f"recorded: learning_id missing from {result}"
 
-    def test_skip_threshold_boundary(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_skip_threshold_boundary(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR04/CORE-042 AC: skip_threshold >= 0.95 means >=0.95 similarity triggers skip."""
         from trw_mcp.state.dedup import check_duplicate as cd
 

@@ -15,7 +15,6 @@ existing callers and test patches continue to work unchanged.
 from __future__ import annotations
 
 import structlog
-
 from trw_memory.embeddings.local import LocalEmbeddingProvider
 
 logger = structlog.get_logger()
@@ -49,7 +48,7 @@ def _load_model() -> object | None:
 
     if _provider.available():
         # Cache the raw model object so the ``_model is not None`` guard works.
-        _model = _provider._model  # noqa: SLF001 — intentional access for caching
+        _model = _provider._model
         return _model
 
     return None

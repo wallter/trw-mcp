@@ -175,10 +175,7 @@ class TestLlmExtractLearnings:
     @staticmethod
     def _make_events(count: int = 3) -> list[dict[str, object]]:
         """Create sample event dicts."""
-        return [
-            {"event": f"event_{i}", "data": f"data for event {i}"}
-            for i in range(count)
-        ]
+        return [{"event": f"event_{i}", "data": f"data for event {i}"} for i in range(count)]
 
     def test_extracts_learnings_from_json_lines(self) -> None:
         response = (
@@ -196,10 +193,7 @@ class TestLlmExtractLearnings:
         assert llm_extract_learnings(self._make_events(2), _make_mock_llm(None)) is None
 
     def test_lines_missing_summary_filtered_out(self) -> None:
-        response = (
-            '{"detail": "no summary here", "tags": ["x"]}\n'
-            '{"summary": "Has summary", "detail": "ok"}'
-        )
+        response = '{"detail": "no summary here", "tags": ["x"]}\n{"summary": "Has summary", "detail": "ok"}'
         result = llm_extract_learnings(self._make_events(2), _make_mock_llm(response))
 
         assert result is not None
@@ -254,9 +248,7 @@ class TestLlmSummarizeLearnings:
         learning_cap: int = 10,
         pattern_cap: int = 10,
     ) -> str | None:
-        return llm_summarize_learnings(
-            learnings, patterns, llm, learning_cap=learning_cap, pattern_cap=pattern_cap
-        )
+        return llm_summarize_learnings(learnings, patterns, llm, learning_cap=learning_cap, pattern_cap=pattern_cap)
 
     def test_returns_markdown_as_is(self) -> None:
         markdown = "### Architecture\n- Key insight here"

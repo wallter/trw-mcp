@@ -176,25 +176,19 @@ class TestResolveEventReward:
 
     def test_test_run_passed_data_aware(self) -> None:
         """test_run with passed=True routes to tests_passed reward."""
-        reward, label = scoring_mod._resolve_event_reward(
-            EventType.TEST_RUN, event_data={"passed": True}
-        )
+        reward, label = scoring_mod._resolve_event_reward(EventType.TEST_RUN, event_data={"passed": True})
         assert reward == REWARD_MAP[EventType.TESTS_PASSED]
         assert label == EventType.TESTS_PASSED
 
     def test_test_run_failed_data_aware(self) -> None:
         """test_run with passed=False routes to tests_failed reward."""
-        reward, label = scoring_mod._resolve_event_reward(
-            EventType.TEST_RUN, event_data={"passed": False}
-        )
+        reward, label = scoring_mod._resolve_event_reward(EventType.TEST_RUN, event_data={"passed": False})
         assert reward == REWARD_MAP[EventType.TESTS_FAILED]
         assert label == EventType.TESTS_FAILED
 
     def test_test_run_passed_string_true(self) -> None:
         """test_run with passed='true' (string) also routes to tests_passed."""
-        reward, label = scoring_mod._resolve_event_reward(
-            EventType.TEST_RUN, event_data={"passed": "true"}
-        )
+        reward, label = scoring_mod._resolve_event_reward(EventType.TEST_RUN, event_data={"passed": "true"})
         assert label == EventType.TESTS_PASSED
 
     def test_prd_status_change_to_approved(self) -> None:
@@ -214,16 +208,12 @@ class TestResolveEventReward:
 
     def test_compliance_check_passing_score(self) -> None:
         """compliance_check with score >= 0.8 returns compliance_passed reward."""
-        reward, label = scoring_mod._resolve_event_reward(
-            EventType.COMPLIANCE_CHECK, event_data={"score": 0.9}
-        )
+        reward, label = scoring_mod._resolve_event_reward(EventType.COMPLIANCE_CHECK, event_data={"score": 0.9})
         assert reward == REWARD_MAP[EventType.COMPLIANCE_PASSED]
 
     def test_compliance_check_failing_score(self) -> None:
         """compliance_check with score < 0.8 returns None."""
-        reward, label = scoring_mod._resolve_event_reward(
-            EventType.COMPLIANCE_CHECK, event_data={"score": 0.5}
-        )
+        reward, label = scoring_mod._resolve_event_reward(EventType.COMPLIANCE_CHECK, event_data={"score": 0.5})
         assert reward is None
 
     def test_compliance_check_invalid_score(self) -> None:
@@ -324,7 +314,8 @@ class TestEnsureUtc:
 
     def test_naive_datetime_gets_utc(self) -> None:
         """Naive datetime gets UTC timezone assigned."""
-        naive = datetime(2026, 2, 22, 10, 0, 0)
+        aware = datetime(2026, 2, 22, 10, 0, 0, tzinfo=timezone.utc)
+        naive = aware.replace(tzinfo=None)  # intentionally strip tz to test _ensure_utc
         result = scoring_mod._ensure_utc(naive)
         assert result.tzinfo == timezone.utc
 
@@ -418,9 +409,7 @@ class TestRankByUtility:
         human_entry = self._make_entry("human learning", impact=0.7)
         human_entry["source_type"] = "human"
 
-        result = rank_by_utility(
-            [agent_entry, human_entry], query_tokens=[], lambda_weight=1.0
-        )
+        result = rank_by_utility([agent_entry, human_entry], query_tokens=[], lambda_weight=1.0)
         assert result[0]["summary"] == "human learning"
 
     def test_tag_hits_boost_relevance(self) -> None:
@@ -527,9 +516,7 @@ class TestEnforceTierDistributionWithDates:
     effective tier score below the threshold.
     """
 
-    def _make_entries(
-        self, count: int, base_score: float = 0.95
-    ) -> list[tuple[str, float]]:
+    def _make_entries(self, count: int, base_score: float = 0.95) -> list[tuple[str, float]]:
         """Make N entries all at base_score."""
         return [(f"L-{i:03d}", base_score) for i in range(count)]
 
@@ -627,9 +614,7 @@ class TestEnforceTierDistributionWithDates:
         assert isinstance(result, list)
         # With raw scores all at 0.95 (critical), tier cap exceeded → demotions expected
         result_no_dates = scoring_mod.enforce_tier_distribution(entries, entry_dates=None)
-        assert len(result) == len(result_no_dates), (
-            "Invalid dates should fall back to same behavior as no dates"
-        )
+        assert len(result) == len(result_no_dates), "Invalid dates should fall back to same behavior as no dates"
 
     def test_entry_dates_empty_string_falls_back_to_raw(self) -> None:
         """Empty string date in entry_dates uses raw score (no decay)."""
@@ -641,9 +626,7 @@ class TestEnforceTierDistributionWithDates:
         assert isinstance(result, list)
         # With raw scores all at 0.95 (critical), tier cap exceeded → demotions expected
         result_no_dates = scoring_mod.enforce_tier_distribution(entries, entry_dates=None)
-        assert len(result) == len(result_no_dates), (
-            "Empty-string dates should fall back to same behavior as no dates"
-        )
+        assert len(result) == len(result_no_dates), "Empty-string dates should fall back to same behavior as no dates"
 
     def test_entry_dates_fresh_entries_unchanged(self) -> None:
         """Very recent entries have near-zero decay — tier classification unchanged."""
@@ -700,7 +683,7 @@ class TestDoubleDecayFix:
             "created": created_iso,
             "last_accessed": created_iso,
         }
-        actual_score = _entry_utility(entry, today=date.today())
+        actual_score = _entry_utility(entry, today=datetime.now(tz=timezone.utc).date())
 
         # Simulate old double-decay behavior
         decayed_impact = apply_time_decay(0.8, created_dt)

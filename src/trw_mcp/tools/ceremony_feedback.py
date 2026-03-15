@@ -41,7 +41,7 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         from trw_mcp.state.ceremony_feedback import get_ceremony_status
 
         trw_dir = resolve_trw_dir()
-        return cast(CeremonyStatusResult, get_ceremony_status(trw_dir, task_class))
+        return cast("CeremonyStatusResult", get_ceremony_status(trw_dir, task_class))
 
     @server.tool()
     @log_tool_call
@@ -61,7 +61,7 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         from trw_mcp.state.ceremony_feedback import approve_proposal
 
         trw_dir = resolve_trw_dir()
-        return cast(CeremonyApproveResult, approve_proposal(trw_dir, proposal_id))
+        return cast("CeremonyApproveResult", approve_proposal(trw_dir, proposal_id))
 
     @server.tool()
     @log_tool_call
@@ -80,4 +80,4 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         from trw_mcp.state.ceremony_feedback import revert_change
 
         trw_dir = resolve_trw_dir()
-        return cast(CeremonyRevertResult, revert_change(trw_dir, change_id))
+        return cast("CeremonyRevertResult", revert_change(trw_dir, change_id))

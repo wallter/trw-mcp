@@ -10,6 +10,7 @@ import pytest
 # BM25 search
 # ---------------------------------------------------------------------------
 
+
 class TestBM25Search:
     def test_returns_ranked_results(self) -> None:
         from trw_mcp.state.retrieval import bm25_search
@@ -48,8 +49,7 @@ class TestBM25Search:
         from trw_mcp.state.retrieval import bm25_search
 
         entries = [
-            {"id": f"e{i}", "summary": f"entry {i} test query", "detail": "detail", "tags": []}
-            for i in range(10)
+            {"id": f"e{i}", "summary": f"entry {i} test query", "detail": "detail", "tags": []} for i in range(10)
         ]
         results = bm25_search("test query", entries, top_k=3)
         assert len(results) <= 3
@@ -69,12 +69,15 @@ class TestBM25Search:
 
     def test_returns_empty_when_rank_bm25_unavailable(self) -> None:
         import sys
+
         with patch.dict(sys.modules, {"rank_bm25": None}):
             import trw_mcp.state.retrieval as ret_mod
+
             original = ret_mod._BM25_AVAILABLE
             try:
                 ret_mod._BM25_AVAILABLE = False
                 from trw_mcp.state.retrieval import bm25_search
+
                 results = bm25_search("query", [{"id": "x", "summary": "test", "detail": "", "tags": []}], top_k=5)
                 assert results == []
             finally:
@@ -84,6 +87,7 @@ class TestBM25Search:
 # ---------------------------------------------------------------------------
 # RRF fusion
 # ---------------------------------------------------------------------------
+
 
 class TestRRFFuse:
     def test_fuses_two_rankings(self) -> None:
@@ -151,6 +155,7 @@ class TestRRFFuse:
 # Config fields
 # ---------------------------------------------------------------------------
 
+
 class TestConfigFields:
     def test_hybrid_retrieval_config_fields_exist(self) -> None:
         from trw_mcp.models.config import TRWConfig
@@ -176,6 +181,7 @@ class TestConfigFields:
 # ---------------------------------------------------------------------------
 # BM25 edge cases: all-zero scores and empty-id fallback
 # ---------------------------------------------------------------------------
+
 
 class TestBM25EdgeCases:
     """Additional BM25 edge cases to cover token-overlap fallback path."""
@@ -255,6 +261,7 @@ class TestBM25EdgeCases:
 
         # Force all-zero BM25 scores by patching BM25Okapi
         import trw_mcp.state.retrieval as ret_mod
+
         if not ret_mod._BM25_AVAILABLE:
             pytest.skip("rank_bm25 not available")
 

@@ -166,8 +166,7 @@ class TestReviewGateAdvisory:
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
         (meta / "run.yaml").write_text(
-            "run_id: test\nstatus: active\nphase: review\n"
-            "task_name: test\ncreated_at: '2026-02-01T00:00:00Z'\n",
+            "run_id: test\nstatus: active\nphase: review\ntask_name: test\ncreated_at: '2026-02-01T00:00:00Z'\n",
             encoding="utf-8",
         )
         (meta / "events.jsonl").write_text(

@@ -61,9 +61,7 @@ def write_trust_registry(trw_dir: Path, data: dict[str, object]) -> None:
 # --- FR02: Trust Level Calculation ---
 
 
-def trust_level_calculate(
-    trw_dir: Path, config: TRWConfig | None = None
-) -> TrustLevelResult:
+def trust_level_calculate(trw_dir: Path, config: TRWConfig | None = None) -> TrustLevelResult:
     """Calculate current trust tier from session count.
 
     Returns dict with: tier, session_count, review_mode, review_sample_rate,
@@ -146,37 +144,32 @@ def requires_human_review(
     # Tier-based review
     if tier == "crawl":
         return {"required": True, "reason": "crawl_mandatory", "override_tier": False}
-    elif tier == "walk":
+    if tier == "walk":
         return {"required": True, "reason": "sampled_review", "override_tier": False}
-    else:  # run
-        # Risk-based: check changed files for risk patterns
-        risk_patterns = (
-            "auth",
-            "secret",
-            "permission",
-            "encrypt",
-            "password",
-            "token",
-            "key",
-        )
-        has_risk = any(
-            any(p in f.lower() for p in risk_patterns) for f in changed_files
-        )
-        if has_risk:
-            return {
-                "required": True,
-                "reason": "risk_based_file_pattern",
-                "override_tier": False,
-            }
-        return {"required": False, "reason": "risk_based", "override_tier": False}
+    # run — Risk-based: check changed files for risk patterns
+    risk_patterns = (
+        "auth",
+        "secret",
+        "permission",
+        "encrypt",
+        "password",
+        "token",
+        "key",
+    )
+    has_risk = any(any(p in f.lower() for p in risk_patterns) for f in changed_files)
+    if has_risk:
+        return {
+            "required": True,
+            "reason": "risk_based_file_pattern",
+            "override_tier": False,
+        }
+    return {"required": False, "reason": "risk_based", "override_tier": False}
 
 
 # --- FR05: Session Count Increment ---
 
 
-def increment_session_count(
-    trw_dir: Path, agent_id: str | None = None
-) -> TrustSessionIncrementResult:
+def increment_session_count(trw_dir: Path, agent_id: str | None = None) -> TrustSessionIncrementResult:
     """Increment session count after successful delivery.
 
     Called from trw_deliver when build_check passed.
@@ -224,10 +217,7 @@ def increment_session_count(
             previous_tier=old_tier,
             new_tier=new_tier,
             session_count=new_count,
-            boundary_crossed=(
-                config.trust_crawl_boundary if new_tier == "walk"
-                else config.trust_walk_boundary
-            ),
+            boundary_crossed=(config.trust_crawl_boundary if new_tier == "walk" else config.trust_walk_boundary),
             triggered_by="session_count",
         )
 
@@ -239,7 +229,7 @@ def _tier_for_count(count: int, config: TRWConfig) -> str:
     walk_boundary = config.trust_walk_boundary
     if count <= crawl_boundary:
         return "crawl"
-    elif count <= walk_boundary:
+    if count <= walk_boundary:
         return "walk"
     return "run"
 

@@ -21,9 +21,9 @@ import structlog
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import PublishResult
 from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import strip_pii
-from trw_mcp.state.memory_adapter import embed_text as embed
 
 logger = structlog.get_logger()
 
@@ -79,9 +79,7 @@ def _save_hashes(entries_dir: Path, hashes: dict[str, str]) -> None:
         logger.debug("publish_hash_save_failed", path=str(path))
 
 
-def publish_learnings(
-    min_impact: float = 0.5, *, force: bool = False
-) -> PublishResult:
+def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> PublishResult:
     """Publish high-impact learnings to the platform backend.
 
     Returns dict with: published, skipped, unchanged, errors, skipped_reason.
@@ -192,8 +190,7 @@ def publish_learnings(
                     any_success = any(results)
                 else:
                     any_success = any(
-                        _post_learning(url, payload, cfg.platform_api_key.get_secret_value())
-                        for url in urls
+                        _post_learning(url, payload, cfg.platform_api_key.get_secret_value()) for url in urls
                     )
 
                 if any_success:
@@ -237,17 +234,17 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
             headers: dict[str, str] = {"Content-Type": "application/json"}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
-            req = urllib.request.Request(
+            req = urllib.request.Request(  # noqa: S310 — URL built from platform_url (operator-configured TRW platform endpoint, not user input)
                 url,
                 data=data,
                 headers=headers,
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — see Request comment above
                 return bool(200 <= response.status < 300)
-        except urllib.error.HTTPError as e:
+        except urllib.error.HTTPError as e:  # per-item error handling: retry on 429, continue retry loop on other HTTP errors  # noqa: PERF203
             if e.code == 429 and attempt < max_attempts - 1:
-                retry_after = int(e.headers.get("Retry-After", str(2 ** attempt)))
+                retry_after = int(e.headers.get("Retry-After", str(2**attempt)))
                 logger.debug(
                     "learning_post_rate_limited",
                     url=platform_url,

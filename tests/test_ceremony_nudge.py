@@ -7,11 +7,7 @@ All tests use tmp_path fixture for filesystem isolation.
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
@@ -39,8 +35,8 @@ from trw_mcp.state.ceremony_nudge import (
     write_ceremony_state,
 )
 
-
 # --- Helpers ---
+
 
 def _trw_dir(tmp_path: Path) -> Path:
     """Create and return the .trw directory under tmp_path."""
@@ -192,6 +188,7 @@ def test_fr04_mark_checkpoint(tmp_path: Path) -> None:
     assert result.last_checkpoint_ts is not None
     # Timestamp must be a parseable ISO string
     from datetime import datetime
+
     ts = datetime.fromisoformat(result.last_checkpoint_ts.replace("Z", "+00:00"))
     assert ts is not None
 
@@ -397,14 +394,21 @@ class TestNudgeEngine:
             CeremonyState(session_started=True, checkpoint_count=1),
             CeremonyState(session_started=True, checkpoint_count=1, build_check_result="passed"),
             CeremonyState(session_started=True, checkpoint_count=1, build_check_result="passed", phase="validate"),
-            CeremonyState(session_started=True, checkpoint_count=1, build_check_result="passed", deliver_called=True, phase="done"),
-            CeremonyState(session_started=True, checkpoint_count=1, build_check_result="passed", deliver_called=True, learnings_this_session=5, phase="done"),
+            CeremonyState(
+                session_started=True, checkpoint_count=1, build_check_result="passed", deliver_called=True, phase="done"
+            ),
+            CeremonyState(
+                session_started=True,
+                checkpoint_count=1,
+                build_check_result="passed",
+                deliver_called=True,
+                learnings_this_session=5,
+                phase="done",
+            ),
         ]
         for state in combos:
             result = compute_nudge(state, available_learnings=10)
-            assert len(result) <= 600, (
-                f"Nudge too long ({len(result)} chars) for state: {state}\n{result!r}"
-            )
+            assert len(result) <= 600, f"Nudge too long ({len(result)} chars) for state: {state}\n{result!r}"
 
     def test_fr01_status_line_format(self, tmp_path: Path) -> None:
         """Status line uses checkmark/cross format for each step."""
@@ -416,8 +420,14 @@ class TestNudgeEngine:
         assert "\u2717" in result  # ✗
 
         # Session started — session_start should show ✓
-        state2 = CeremonyState(session_started=True, checkpoint_count=1, phase="done",
-                               build_check_result="passed", review_called=True, deliver_called=True)
+        state2 = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            phase="done",
+            build_check_result="passed",
+            review_called=True,
+            deliver_called=True,
+        )
         result2 = compute_nudge(state2, available_learnings=0)
         assert "--- TRW Session ---" in result2
         assert "\u2713" in result2  # ✓
@@ -428,8 +438,7 @@ class TestNudgeEngine:
             CeremonyState(session_started=False),
             CeremonyState(session_started=True, files_modified_since_checkpoint=5),
             CeremonyState(session_started=True, checkpoint_count=1, phase="validate"),
-            CeremonyState(session_started=True, checkpoint_count=1, phase="deliver",
-                          build_check_result="passed"),
+            CeremonyState(session_started=True, checkpoint_count=1, phase="deliver", build_check_result="passed"),
         ]
         forbidden = ["you must", "critical", "always", "never", "consider", "you may want to", "perhaps"]
         for state in states:
@@ -446,10 +455,13 @@ class TestNudgeEngine:
         state = CeremonyState()
         # Patch _build_status_line to raise
         from trw_mcp.state import ceremony_nudge
+
         original = ceremony_nudge._build_status_line
         try:
+
             def _broken(s: CeremonyState) -> str:
                 raise RuntimeError("simulated error")
+
             ceremony_nudge._build_status_line = _broken  # type: ignore[assignment]
             result = compute_nudge(state)
             assert isinstance(result, str)
@@ -522,6 +534,7 @@ class TestNudgeValueExpression:
         assert "min ago" in result
         # The minute count should be ~45 (allow ±2 for test timing)
         import re
+
         match = re.search(r"(\d+) min ago", result)
         assert match is not None, f"No 'N min ago' found in: {result!r}"
         mins = int(match.group(1))
@@ -574,19 +587,25 @@ class TestNudgeValueExpression:
             CeremonyState(session_started=False, nudge_counts={"session_start": 3}),
             CeremonyState(session_started=False, nudge_counts={"session_start": 7}),
             CeremonyState(session_started=True, files_modified_since_checkpoint=5),
-            CeremonyState(session_started=True, files_modified_since_checkpoint=5,
-                          nudge_counts={"checkpoint": 3}),
-            CeremonyState(session_started=True, files_modified_since_checkpoint=5,
-                          nudge_counts={"checkpoint": 6}),
+            CeremonyState(session_started=True, files_modified_since_checkpoint=5, nudge_counts={"checkpoint": 3}),
+            CeremonyState(session_started=True, files_modified_since_checkpoint=5, nudge_counts={"checkpoint": 6}),
             CeremonyState(session_started=True, checkpoint_count=1, phase="validate"),
-            CeremonyState(session_started=True, checkpoint_count=1, phase="validate",
-                          nudge_counts={"build_check": 5}),
-            CeremonyState(session_started=True, checkpoint_count=1,
-                          build_check_result="passed", phase="deliver",
-                          learnings_this_session=2),
-            CeremonyState(session_started=True, checkpoint_count=1,
-                          build_check_result="passed", phase="deliver",
-                          learnings_this_session=2, nudge_counts={"deliver": 6}),
+            CeremonyState(session_started=True, checkpoint_count=1, phase="validate", nudge_counts={"build_check": 5}),
+            CeremonyState(
+                session_started=True,
+                checkpoint_count=1,
+                build_check_result="passed",
+                phase="deliver",
+                learnings_this_session=2,
+            ),
+            CeremonyState(
+                session_started=True,
+                checkpoint_count=1,
+                build_check_result="passed",
+                phase="deliver",
+                learnings_this_session=2,
+                nudge_counts={"deliver": 6},
+            ),
         ]
         for state in states:
             result = compute_nudge(state, available_learnings=5).lower()
@@ -602,8 +621,7 @@ class TestNudgeValueExpression:
             CeremonyState(session_started=False),
             CeremonyState(session_started=True, checkpoint_count=0),
             CeremonyState(session_started=True, checkpoint_count=1, phase="validate"),
-            CeremonyState(session_started=True, checkpoint_count=1,
-                          build_check_result="passed", phase="deliver"),
+            CeremonyState(session_started=True, checkpoint_count=1, build_check_result="passed", phase="deliver"),
         ]
         for state in states:
             result = compute_nudge(state, available_learnings=3).lower()
@@ -688,9 +706,7 @@ class TestProgressiveUrgency:
         )
         result = _select_nudge_message("checkpoint", state, available_learnings=0)
         # Medium urgency: adds "no recovery path" or similar concrete risk
-        assert any(phrase in result.lower() for phrase in (
-            "no recovery", "recovery path", "compaction risk", "risk"
-        ))
+        assert any(phrase in result.lower() for phrase in ("no recovery", "recovery path", "compaction risk", "risk"))
 
     def test_fr03_urgency_high_5_nudges(self, tmp_path: Path) -> None:
         """After 5 nudges, checkpoint message adds consequence + effort framing."""
@@ -763,9 +779,7 @@ class TestProgressiveUrgency:
         )
         result = _select_nudge_message("session_start", state, available_learnings=5)
         # Medium nudge adds agent cost framing
-        assert any(phrase in result.lower() for phrase in (
-            "re-discover", "rediscover", "cost", "agent"
-        ))
+        assert any(phrase in result.lower() for phrase in ("re-discover", "rediscover", "cost", "agent"))
 
     def test_fr03_high_urgency_session_start_no_learnings(self, tmp_path: Path) -> None:
         """High urgency for session_start (no prior learnings) mentions invisible work."""
@@ -779,9 +793,9 @@ class TestProgressiveUrgency:
     def test_fr03_token_limit_preserved_at_all_urgency_levels(self, tmp_path: Path) -> None:
         """Token limit (400 chars) is respected at all urgency levels."""
         nudge_count_sets = [
-            {},                          # low
-            {"checkpoint": 3},           # medium
-            {"checkpoint": 6},           # high
+            {},  # low
+            {"checkpoint": 3},  # medium
+            {"checkpoint": 6},  # high
         ]
         for nudge_counts in nudge_count_sets:
             state = CeremonyState(
@@ -839,9 +853,7 @@ class TestLocalModelScoping:
                     learnings_this_session=5,
                 )
                 nudge = compute_nudge_minimal(state, available_learnings=20)
-                assert len(nudge) <= 200, (
-                    f"Minimal nudge too long ({len(nudge)}): {nudge}"
-                )
+                assert len(nudge) <= 200, f"Minimal nudge too long ({len(nudge)}): {nudge}"
 
     def test_fr12_minimal_nudge_deliver_pending(self, tmp_path: Path) -> None:
         """Minimal nudge mentions deliver when session started but not delivered."""
@@ -875,9 +887,7 @@ class TestLocalModelScoping:
                 build_check_result=None,
             )
             nudge = compute_nudge_minimal(state)
-            assert "build" not in nudge.lower(), (
-                f"Minimal nudge mentions build for phase={phase}: {nudge}"
-            )
+            assert "build" not in nudge.lower(), f"Minimal nudge mentions build for phase={phase}: {nudge}"
 
 
 # -------------------------------------------------------------------------
@@ -898,6 +908,7 @@ class TestFR01CeremonyStateExtension:
     def test_fr01_steps_includes_review(self) -> None:
         """_STEPS tuple includes 'review' between build_check and deliver."""
         from trw_mcp.state.ceremony_nudge import _STEPS
+
         assert "review" in _STEPS
         idx_build = _STEPS.index("build_check")
         idx_review = _STEPS.index("review")
@@ -925,18 +936,21 @@ class TestFR01CeremonyStateExtension:
     def test_fr01_step_complete_review(self) -> None:
         """_step_complete returns True for review when review_called is True."""
         from trw_mcp.state.ceremony_nudge import _step_complete
+
         state = CeremonyState(review_called=True)
         assert _step_complete("review", state) is True
 
     def test_fr01_step_incomplete_review(self) -> None:
         """_step_complete returns False for review when review_called is False."""
         from trw_mcp.state.ceremony_nudge import _step_complete
+
         state = CeremonyState(review_called=False)
         assert _step_complete("review", state) is False
 
     def test_fr01_review_in_status_line(self) -> None:
         """_build_status_line includes review step."""
         from trw_mcp.state.ceremony_nudge import _build_status_line
+
         state = CeremonyState(review_called=True)
         line = _build_status_line(state)
         assert "review" in line
@@ -944,6 +958,7 @@ class TestFR01CeremonyStateExtension:
     def test_fr01_review_pending_in_priority(self) -> None:
         """Review shows as pending when in review phase and not called."""
         from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
+
         state = CeremonyState(
             session_started=True,
             checkpoint_count=1,
@@ -956,6 +971,7 @@ class TestFR01CeremonyStateExtension:
     def test_fr01_review_not_pending_when_called(self) -> None:
         """Review is not pending when already called."""
         from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
+
         state = CeremonyState(
             session_started=True,
             checkpoint_count=1,
@@ -1013,8 +1029,12 @@ class TestFR01CeremonyStateExtension:
     def test_fr01_review_not_pending_in_validate_phase(self) -> None:
         """phase=validate with review_called=False -> pending step is build_check, not review."""
         from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
+
         state = CeremonyState(
-            session_started=True, checkpoint_count=1, phase="validate", review_called=False,
+            session_started=True,
+            checkpoint_count=1,
+            phase="validate",
+            review_called=False,
         )
         result = _highest_priority_pending_step(state)
         assert result == "build_check"  # review not yet applicable in validate phase
@@ -1049,6 +1069,7 @@ class TestFR02NudgeContext:
     def test_fr02_append_ceremony_nudge_accepts_context(self, tmp_path: Path) -> None:
         """append_ceremony_nudge accepts optional context parameter."""
         from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
         trw = _trw_dir(tmp_path)
         write_ceremony_state(trw, CeremonyState(session_started=True, checkpoint_count=1))
         ctx = NudgeContext(tool_name="checkpoint")
@@ -1237,6 +1258,7 @@ class TestFR04NextTwoSteps:
     def test_fr04_step_rationale_defined(self) -> None:
         """All steps have rationale strings."""
         from trw_mcp.state.ceremony_nudge import _STEP_RATIONALE
+
         for step in ("session_start", "checkpoint", "build_check", "review", "deliver"):
             assert step in _STEP_RATIONALE
             assert len(_STEP_RATIONALE[step]) > 0
@@ -1391,7 +1413,8 @@ class TestFR09ComponentAwareTruncation:
     def test_fr09_assemble_nudge_optional_components(self) -> None:
         """_assemble_nudge includes optional components within budget."""
         result = _assemble_nudge(
-            "status", "msg",
+            "status",
+            "msg",
             next_then="NEXT: foo THEN: bar",
             reversion="reversion hint",
             budget=600,
@@ -1403,7 +1426,8 @@ class TestFR09ComponentAwareTruncation:
         """_assemble_nudge drops optional components that exceed budget."""
         long_next = "N" * 500
         result = _assemble_nudge(
-            "status", "msg",
+            "status",
+            "msg",
             next_then=long_next,
             budget=100,
         )
@@ -1468,10 +1492,13 @@ class TestBackwardsCompatibility:
         """compute_nudge with context still fail-open on errors."""
         state = CeremonyState()
         from trw_mcp.state import ceremony_nudge
+
         original = ceremony_nudge._build_status_line
         try:
+
             def _broken(s: CeremonyState) -> str:
                 raise RuntimeError("simulated error")
+
             ceremony_nudge._build_status_line = _broken  # type: ignore[assignment]
             ctx = NudgeContext(tool_name="checkpoint")
             result = compute_nudge(state, context=ctx)
@@ -1482,6 +1509,7 @@ class TestBackwardsCompatibility:
     def test_append_ceremony_nudge_without_context(self, tmp_path: Path) -> None:
         """append_ceremony_nudge still works without context (backwards compat)."""
         from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
         trw = _trw_dir(tmp_path)
         write_ceremony_state(trw, CeremonyState())
         response: dict[str, object] = {"status": "ok"}

@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
 from trw_mcp.models.config import TRWConfig
@@ -38,7 +37,6 @@ from trw_mcp.state.knowledge_topology import (
     sanitize_slug,
 )
 from trw_mcp.state.persistence import FileStateWriter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -205,9 +203,7 @@ class TestAssignEntriesToClusters:
 class TestMergeSmallClusters:
     """Direct tests for the undersized-cluster merge/drop pass."""
 
-    def _make_cluster(
-        self, tags: set[str], count: int
-    ) -> dict[str, Any]:
+    def _make_cluster(self, tags: set[str], count: int) -> dict[str, Any]:
         return {
             "tag_set": tags,
             "entry_list": [_entry(f"L-{i:03d}", tags=list(tags)) for i in range(count)],
@@ -482,8 +478,7 @@ class TestWriteKnowledgeFiles:
         knowledge_dir.mkdir()
         # Pre-seed file with manual markers
         existing = (
-            "<!-- trw:auto-generated -->\n# old\n\n"
-            "<!-- trw:manual-start -->MY CUSTOM NOTES<!-- trw:manual-end -->\n"
+            "<!-- trw:auto-generated -->\n# old\n\n<!-- trw:manual-start -->MY CUSTOM NOTES<!-- trw:manual-end -->\n"
         )
         (knowledge_dir / "topic-a.md").write_text(existing, encoding="utf-8")
 

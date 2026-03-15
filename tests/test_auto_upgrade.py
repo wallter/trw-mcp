@@ -35,6 +35,7 @@ def reset_cfg() -> None:
 # Helper: build a valid .tar.gz in memory with a data/ directory
 # ---------------------------------------------------------------------------
 
+
 def _make_tar_gz_bytes(members: dict[str, bytes] | None = None) -> bytes:
     """Build a tar.gz archive in memory.
 
@@ -205,11 +206,13 @@ class TestCheckForUpdate:
         assert "channel=lts" in captured[0]
 
     def test_sends_auth_header(self) -> None:
-        _reset_config(TRWConfig(
-            platform_url="https://example.com",
-            platform_api_key="test-key",
-            update_channel="latest",
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="https://example.com",
+                platform_api_key="test-key",
+                update_channel="latest",
+            )
+        )
         captured: list[object] = []
 
         def fake_urlopen(req: object, timeout: int = 3) -> MagicMock:
@@ -222,11 +225,13 @@ class TestCheckForUpdate:
         assert captured[0].get_header("Authorization") == "Bearer test-key"
 
     def test_no_auth_without_key(self) -> None:
-        _reset_config(TRWConfig(
-            platform_url="https://example.com",
-            platform_api_key="",
-            update_channel="latest",
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="https://example.com",
+                platform_api_key="",
+                update_channel="latest",
+            )
+        )
         captured: list[object] = []
 
         def fake_urlopen(req: object, timeout: int = 3) -> MagicMock:
@@ -239,11 +244,13 @@ class TestCheckForUpdate:
 
     def test_fallback_urls_tries_next(self) -> None:
         """When first URL fails, tries the next one."""
-        _reset_config(TRWConfig(
-            platform_url="",
-            platform_urls=["https://fail.example.com", "https://ok.example.com"],
-            update_channel="latest",
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="",
+                platform_urls=["https://fail.example.com", "https://ok.example.com"],
+                update_channel="latest",
+            )
+        )
         call_count = 0
 
         def fake_urlopen(req: object, timeout: int = 3) -> MagicMock:
@@ -329,10 +336,12 @@ class TestFetchArtifactInfo:
         assert captured[0].get_header("Authorization") is None
 
     def test_fallback_to_second_url(self) -> None:
-        _reset_config(TRWConfig(
-            platform_url="",
-            platform_urls=["https://bad.example.com", "https://good.example.com"],
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="",
+                platform_urls=["https://bad.example.com", "https://good.example.com"],
+            )
+        )
         call_count = 0
 
         def fake_urlopen(req: object, timeout: int = 5) -> MagicMock:
@@ -350,19 +359,28 @@ class TestFetchArtifactInfo:
         assert call_count == 2
 
     def test_all_urls_fail_returns_none(self) -> None:
-        _reset_config(TRWConfig(
-            platform_url="",
-            platform_urls=["https://a.example.com", "https://b.example.com"],
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="",
+                platform_urls=["https://a.example.com", "https://b.example.com"],
+            )
+        )
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("fail")):
             result = _fetch_artifact_info("1.0.0")
         assert result is None
 
     def test_http_error_returns_none(self) -> None:
         _reset_config(TRWConfig(platform_url="https://example.com"))
-        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
-            "url", 403, "Forbidden", {}, None  # type: ignore[arg-type]
-        )):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                "url",
+                403,
+                "Forbidden",
+                {},
+                None,  # type: ignore[arg-type]
+            ),
+        ):
             result = _fetch_artifact_info("1.0.0")
         assert result is None
 
@@ -508,11 +526,13 @@ class TestPerformUpgrade:
 
     def _setup_config(self, tmp_path: Path, api_key: str = "") -> None:
         """Reset config with a platform URL pointing to a temp project."""
-        _reset_config(TRWConfig(
-            platform_url="https://example.com",
-            platform_api_key=api_key,
-            update_channel="latest",
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="https://example.com",
+                platform_api_key=api_key,
+                update_channel="latest",
+            )
+        )
 
     def test_lock_contention_returns_not_applied(self, tmp_path: Path) -> None:
         """When flock raises OSError, returns 'Another upgrade is in progress'."""
@@ -595,11 +615,14 @@ class TestPerformUpgrade:
         with patch.object(Path, "cwd", return_value=tmp_path):
             with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
                 with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
-                    with patch("trw_mcp.bootstrap.update_project", return_value={
-                        "errors": ["permission denied"],
-                        "updated": [],
-                        "created": [],
-                    }):
+                    with patch(
+                        "trw_mcp.bootstrap.update_project",
+                        return_value={
+                            "errors": ["permission denied"],
+                            "updated": [],
+                            "created": [],
+                        },
+                    ):
                         result = perform_upgrade(update_info)
 
         assert result["applied"] is False
@@ -622,11 +645,14 @@ class TestPerformUpgrade:
         with patch.object(Path, "cwd", return_value=tmp_path):
             with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
                 with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
-                    with patch("trw_mcp.bootstrap.update_project", return_value={
-                        "errors": [],
-                        "updated": ["a.txt", "b.txt"],
-                        "created": ["c.txt"],
-                    }):
+                    with patch(
+                        "trw_mcp.bootstrap.update_project",
+                        return_value={
+                            "errors": [],
+                            "updated": ["a.txt", "b.txt"],
+                            "created": ["c.txt"],
+                        },
+                    ):
                         result = perform_upgrade(update_info)
 
         assert result["applied"] is True
@@ -662,11 +688,14 @@ class TestPerformUpgrade:
         with patch.object(Path, "cwd", return_value=tmp_path):
             with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
                 with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
-                    with patch("trw_mcp.bootstrap.update_project", return_value={
-                        "errors": [],
-                        "updated": ["a.txt"],
-                        "created": [],
-                    }):
+                    with patch(
+                        "trw_mcp.bootstrap.update_project",
+                        return_value={
+                            "errors": [],
+                            "updated": ["a.txt"],
+                            "created": [],
+                        },
+                    ):
                         result = perform_upgrade(update_info)
 
         assert result["applied"] is True
@@ -724,11 +753,14 @@ class TestPerformUpgrade:
         with patch.object(Path, "cwd", return_value=tmp_path):
             with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
                 with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
-                    with patch("trw_mcp.bootstrap.update_project", return_value={
-                        "errors": [],
-                        "updated": ["a.txt"],
-                        "created": [],
-                    }):
+                    with patch(
+                        "trw_mcp.bootstrap.update_project",
+                        return_value={
+                            "errors": [],
+                            "updated": ["a.txt"],
+                            "created": [],
+                        },
+                    ):
                         with patch.object(Path, "unlink", unlink_that_fails):
                             result = perform_upgrade(update_info)
 
@@ -821,9 +853,16 @@ class TestCheckForUpdateEdge:
     def test_http_error_is_caught(self) -> None:
         """HTTPError (not just URLError) is caught — fail-open."""
         _reset_config(TRWConfig(platform_url="https://example.com", update_channel="latest"))
-        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
-            "url", 500, "Internal Server Error", {}, None  # type: ignore[arg-type]
-        )):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                "url",
+                500,
+                "Internal Server Error",
+                {},
+                None,  # type: ignore[arg-type]
+            ),
+        ):
             result = check_for_update()
         assert result["available"] is False
 
@@ -861,11 +900,13 @@ class TestCheckForUpdateEdge:
 
     def test_all_urls_fail_returns_fallback(self) -> None:
         """When all platform_urls fail, returns not-available with current as latest."""
-        _reset_config(TRWConfig(
-            platform_url="",
-            platform_urls=["https://a.example.com", "https://b.example.com"],
-            update_channel="latest",
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="",
+                platform_urls=["https://a.example.com", "https://b.example.com"],
+                update_channel="latest",
+            )
+        )
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
             result = check_for_update()
         assert result["available"] is False
@@ -1013,11 +1054,13 @@ class TestPerformUpgradeEdge:
     """Edge cases for perform_upgrade."""
 
     def _setup_config(self, tmp_path: Path, api_key: str = "") -> None:
-        _reset_config(TRWConfig(
-            platform_url="https://example.com",
-            platform_api_key=api_key,
-            update_channel="latest",
-        ))
+        _reset_config(
+            TRWConfig(
+                platform_url="https://example.com",
+                platform_api_key=api_key,
+                update_channel="latest",
+            )
+        )
 
     def test_missing_latest_key_in_update_info(self, tmp_path: Path) -> None:
         """When update_info has no 'latest' key, version defaults to empty string."""
@@ -1047,11 +1090,14 @@ class TestPerformUpgradeEdge:
         with patch.object(Path, "cwd", return_value=tmp_path):
             with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
                 with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
-                    with patch("trw_mcp.bootstrap.update_project", return_value={
-                        "errors": [],
-                        "updated": ["a.txt"],
-                        "created": [],
-                    }):
+                    with patch(
+                        "trw_mcp.bootstrap.update_project",
+                        return_value={
+                            "errors": [],
+                            "updated": ["a.txt"],
+                            "created": [],
+                        },
+                    ):
                         result = perform_upgrade(update_info)
 
         assert result["applied"] is True
@@ -1072,11 +1118,14 @@ class TestPerformUpgradeEdge:
         with patch.object(Path, "cwd", return_value=tmp_path):
             with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
                 with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
-                    with patch("trw_mcp.bootstrap.update_project", return_value={
-                        "errors": [],
-                        "updated": [],
-                        "created": [],
-                    }):
+                    with patch(
+                        "trw_mcp.bootstrap.update_project",
+                        return_value={
+                            "errors": [],
+                            "updated": [],
+                            "created": [],
+                        },
+                    ):
                         result = perform_upgrade(update_info)
 
         assert result["applied"] is True
@@ -1098,11 +1147,14 @@ class TestPerformUpgradeEdge:
         with patch.object(Path, "cwd", return_value=tmp_path):
             with patch("trw_mcp.state.auto_upgrade._fetch_artifact_info", return_value=artifact_info):
                 with patch("trw_mcp.state.auto_upgrade.download_release_artifact", return_value=data_dir):
-                    with patch("trw_mcp.bootstrap.update_project", return_value={
-                        "errors": ["err1", "err2", "err3"],
-                        "updated": [],
-                        "created": [],
-                    }):
+                    with patch(
+                        "trw_mcp.bootstrap.update_project",
+                        return_value={
+                            "errors": ["err1", "err2", "err3"],
+                            "updated": [],
+                            "created": [],
+                        },
+                    ):
                         result = perform_upgrade(update_info)
 
         assert result["applied"] is False

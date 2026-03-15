@@ -28,10 +28,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers: lazy import so tests still *collect* even before pipeline.py exists
 # ---------------------------------------------------------------------------
+
 
 def _import_pipeline() -> Any:
     """Import TelemetryPipeline, skipping the test if the module is absent."""
@@ -45,6 +45,7 @@ def _import_pipeline() -> Any:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _reset_pipeline_singleton() -> None:
@@ -115,6 +116,7 @@ def jsonl_path(tmp_path: Path) -> Path:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     """Read all non-empty lines from a JSONL file."""
     if not path.exists():
@@ -137,6 +139,7 @@ def _make_event(**kwargs: object) -> dict[str, object]:
 # ===========================================================================
 # 1. Disabled pipeline — enqueue is a no-op
 # ===========================================================================
+
 
 class TestDisabledPipeline:
     """Tests for pipeline with _enabled=False."""
@@ -169,6 +172,7 @@ class TestDisabledPipeline:
 # 2. Enrichment — installation_id and version injection
 # ===========================================================================
 
+
 class TestEnrichment:
     """Events are enriched with installation_id and framework_version."""
 
@@ -193,16 +197,11 @@ class TestEnrichment:
             lines = _read_jsonl(jsonl)
             if lines:
                 # At least one record should have installation_id or event data
-                assert any(
-                    "installation_id" in rec or "event_type" in rec
-                    for rec in lines
-                )
+                assert any("installation_id" in rec or "event_type" in rec for rec in lines)
         # Pipeline was active; either enqueue or flush must have touched something
         assert result["sent"] >= 0  # result dict shape is correct
 
-    def test_enrichment_does_not_overwrite_existing_installation_id(
-        self, fast_pipeline: Any
-    ) -> None:
+    def test_enrichment_does_not_overwrite_existing_installation_id(self, fast_pipeline: Any) -> None:
         """Existing installation_id in event must not be overwritten by enrichment."""
         p = fast_pipeline
         p.enqueue({"event_type": "tool_invocation", "installation_id": "caller-provided-id"})
@@ -217,6 +216,7 @@ class TestEnrichment:
 # ===========================================================================
 # 3. Anonymization — path redaction
 # ===========================================================================
+
 
 class TestAnonymization:
     """Events containing filesystem paths are redacted before storage.
@@ -235,12 +235,8 @@ class TestAnonymization:
         # so the bound reference lives in the pipeline module namespace.
         # Must patch BOTH sites to ensure enqueue() sees the right project root.
         project_root = str(tmp_path)
-        monkeypatch.setattr(
-            "trw_mcp.telemetry.pipeline.resolve_project_root", lambda: tmp_path
-        )
-        monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path
-        )
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
 
         p = fast_pipeline
         raw_error = f"{project_root}/src/foo.py not found"
@@ -249,8 +245,7 @@ class TestAnonymization:
         queued = list(p._queue)[0]
         error_val = str(queued.get("error", raw_error))
         assert project_root not in error_val, (
-            f"project root '{project_root}' must be redacted from error field, "
-            f"got: {error_val!r}"
+            f"project root '{project_root}' must be redacted from error field, got: {error_val!r}"
         )
 
     def test_anonymization_redacts_string_values(
@@ -258,12 +253,8 @@ class TestAnonymization:
     ) -> None:
         """All string event values containing the project root are redacted."""
         project_root = str(tmp_path)
-        monkeypatch.setattr(
-            "trw_mcp.telemetry.pipeline.resolve_project_root", lambda: tmp_path
-        )
-        monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: tmp_path
-        )
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
 
         p = fast_pipeline
         raw_path = f"{project_root}/some/deeply/nested/file.py"
@@ -272,9 +263,7 @@ class TestAnonymization:
         queued = list(p._queue)[0]
         if "file_path" in queued:
             val = str(queued["file_path"])
-            assert project_root not in val, (
-                f"project root must be redacted from file_path, got: {val!r}"
-            )
+            assert project_root not in val, f"project root must be redacted from file_path, got: {val!r}"
 
     def test_anonymization_preserves_non_path_strings(self, fast_pipeline: Any) -> None:
         """Non-path string values pass through without modification."""
@@ -290,6 +279,7 @@ class TestAnonymization:
 # ===========================================================================
 # 4. Queue overflow
 # ===========================================================================
+
 
 class TestQueueOverflow:
     """max_queue_size enforcement: oldest events evicted, counter incremented."""
@@ -328,12 +318,11 @@ class TestQueueOverflow:
 # 5. flush_now — local JSONL write (offline mode)
 # ===========================================================================
 
+
 class TestFlushNowOffline:
     """flush_now writes to JSONL when no platform URLs are configured."""
 
-    def test_flush_now_writes_to_jsonl(
-        self, fast_pipeline: Any, tmp_path: Path
-    ) -> None:
+    def test_flush_now_writes_to_jsonl(self, fast_pipeline: Any, tmp_path: Path) -> None:
         """Offline flush_now writes enqueued events to pipeline-events.jsonl."""
         p = fast_pipeline
         p.enqueue(_make_event(tool_name="trw_learn"))
@@ -347,9 +336,7 @@ class TestFlushNowOffline:
         lines = _read_jsonl(jsonl)
         assert len(lines) >= 2
 
-    def test_flush_now_result_has_required_keys(
-        self, fast_pipeline: Any
-    ) -> None:
+    def test_flush_now_result_has_required_keys(self, fast_pipeline: Any) -> None:
         """flush_now result TypedDict contains sent, failed, overflow, skipped_reason."""
         p = fast_pipeline
         p.enqueue(_make_event())
@@ -358,9 +345,7 @@ class TestFlushNowOffline:
         for key in ("sent", "failed", "skipped_reason"):
             assert key in result, f"Missing key '{key}' in flush_now result"
 
-    def test_flush_now_empty_queue_returns_skipped(
-        self, fast_pipeline: Any
-    ) -> None:
+    def test_flush_now_empty_queue_returns_skipped(self, fast_pipeline: Any) -> None:
         """flush_now on empty queue returns skipped_reason (no events to send)."""
         p = fast_pipeline
         result = p.flush_now()
@@ -372,6 +357,7 @@ class TestFlushNowOffline:
 # ===========================================================================
 # 6. flush_now — HTTP POST (online mode)
 # ===========================================================================
+
 
 class TestFlushNowOnline:
     """flush_now sends events to backend when platform_urls are configured."""
@@ -390,9 +376,7 @@ class TestFlushNowOnline:
         def _fake_trw_dir() -> Path:
             return trw_dir
 
-        monkeypatch.setattr(
-            "trw_mcp.telemetry.pipeline.resolve_trw_dir", _fake_trw_dir, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_trw_dir", _fake_trw_dir, raising=False)
         monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", _fake_trw_dir)
 
         fake_cfg = MagicMock()
@@ -405,12 +389,8 @@ class TestFlushNowOnline:
         fake_cfg.logs_dir = "logs"
         fake_cfg.telemetry_file = "pipeline-events.jsonl"
 
-        monkeypatch.setattr(
-            "trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False
-        )
-        return pipeline_cls(
-            flush_interval_secs=60.0, batch_size=100, max_retries=1, backoff_base=0.0
-        )
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False)
+        return pipeline_cls(flush_interval_secs=60.0, batch_size=100, max_retries=1, backoff_base=0.0)
 
     def test_flush_now_sends_to_backend(
         self, pipeline_cls: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -499,12 +479,11 @@ class TestFlushNowOnline:
 # 7. Timer thread lifecycle
 # ===========================================================================
 
+
 class TestTimerThread:
     """start()/stop() manage the background flush thread correctly."""
 
-    def test_timer_thread_starts_and_stops(
-        self, fast_pipeline: Any
-    ) -> None:
+    def test_timer_thread_starts_and_stops(self, fast_pipeline: Any) -> None:
         """After start() the thread is alive; after stop() it is dead."""
         p = fast_pipeline
         p.start()
@@ -535,6 +514,7 @@ class TestTimerThread:
 # ===========================================================================
 # 8. Thread safety — concurrent enqueues
 # ===========================================================================
+
 
 class TestThreadSafety:
     """Concurrent enqueues must not lose events or corrupt the queue."""
@@ -569,6 +549,7 @@ class TestThreadSafety:
 # ===========================================================================
 # 9. stop(drain=True) — flush before exit
 # ===========================================================================
+
 
 class TestStopDrain:
     """stop(drain=True) triggers a final flush before the thread exits."""
@@ -614,9 +595,7 @@ class TestStopDrain:
         fake_cfg.logs_dir = "logs"
         fake_cfg.telemetry_file = "pipeline-events.jsonl"
 
-        monkeypatch.setattr(
-            "trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False)
 
         p = pipeline_cls(flush_interval_secs=0.05, batch_size=100, max_retries=1, backoff_base=0.0)
 
@@ -638,6 +617,7 @@ class TestStopDrain:
 # ===========================================================================
 # 10. Singleton — get_instance uniqueness and reset
 # ===========================================================================
+
 
 class TestSingleton:
     """get_instance() is thread-safe and returns the same object."""
@@ -688,27 +668,22 @@ class TestSingleton:
 # 11. Lazy config resolution
 # ===========================================================================
 
+
 class TestLazyConfigResolution:
     """get_config() is called at flush time, not at construction time."""
 
-    def test_lazy_config_resolution(
-        self, pipeline_cls: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_lazy_config_resolution(self, pipeline_cls: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """flush_now picks up config values set after pipeline construction."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
-        monkeypatch.setattr(
-            "trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False)
 
         config_holder: dict[str, Any] = {}
 
         def dynamic_get_config() -> Any:
             return config_holder["cfg"]
 
-        monkeypatch.setattr(
-            "trw_mcp.models.config.get_config", dynamic_get_config, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.models.config.get_config", dynamic_get_config, raising=False)
 
         # Config #1: telemetry disabled
         cfg1 = MagicMock()
@@ -748,6 +723,7 @@ class TestLazyConfigResolution:
 # 12. Retry with backoff
 # ===========================================================================
 
+
 class TestRetryWithBackoff:
     """HTTP sends retry up to max_retries times with backoff before failing."""
 
@@ -757,9 +733,7 @@ class TestRetryWithBackoff:
         """Failing twice then succeeding results in 3 total HTTP calls and sent > 0."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
-        monkeypatch.setattr(
-            "trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False)
         monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
 
         fake_cfg = MagicMock()
@@ -771,9 +745,7 @@ class TestRetryWithBackoff:
         fake_cfg.framework_version = "v0"
         fake_cfg.logs_dir = "logs"
         fake_cfg.telemetry_file = "pipeline-events.jsonl"
-        monkeypatch.setattr(
-            "trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False)
 
         p = pipeline_cls(
             flush_interval_secs=60.0,
@@ -815,9 +787,7 @@ class TestRetryWithBackoff:
         """When all retries fail, sent==0 and events are preserved."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
-        monkeypatch.setattr(
-            "trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False)
         monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
 
         fake_cfg = MagicMock()
@@ -829,9 +799,7 @@ class TestRetryWithBackoff:
         fake_cfg.framework_version = "v0"
         fake_cfg.logs_dir = "logs"
         fake_cfg.telemetry_file = "pipeline-events.jsonl"
-        monkeypatch.setattr(
-            "trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False)
 
         p = pipeline_cls(max_retries=2, backoff_base=0.0)
         p.enqueue(_make_event(tool_name="trw_fail_test"))
@@ -851,6 +819,7 @@ class TestRetryWithBackoff:
 # 13. No double-send after drain
 # ===========================================================================
 
+
 class TestNoDoubleSend:
     """JSONL is empty after a successful flush — no duplicate sends on retry."""
 
@@ -860,9 +829,7 @@ class TestNoDoubleSend:
         """After flush_now succeeds, pipeline-events.jsonl is empty (nothing to re-send)."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
-        monkeypatch.setattr(
-            "trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False)
         monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
 
         fake_cfg = MagicMock()
@@ -874,9 +841,7 @@ class TestNoDoubleSend:
         fake_cfg.framework_version = "v0"
         fake_cfg.logs_dir = "logs"
         fake_cfg.telemetry_file = "pipeline-events.jsonl"
-        monkeypatch.setattr(
-            "trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False
-        )
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: fake_cfg, raising=False)
 
         p = pipeline_cls(max_retries=1, backoff_base=0.0)
         p.enqueue(_make_event(tool_name="trw_drain_test"))
@@ -906,6 +871,7 @@ class TestNoDoubleSend:
 # 14. Pipeline flush result shape
 # ===========================================================================
 
+
 class TestFlushResultShape:
     """PipelineFlushResult TypedDict has the correct keys."""
 
@@ -927,9 +893,7 @@ class TestFlushResultShape:
         assert isinstance(result["failed"], int)
         assert result["skipped_reason"] is None or isinstance(result["skipped_reason"], str)
 
-    def test_flush_result_sent_plus_failed_equals_queue_size(
-        self, fast_pipeline: Any
-    ) -> None:
+    def test_flush_result_sent_plus_failed_equals_queue_size(self, fast_pipeline: Any) -> None:
         """When all events are processed, sent + failed == original queue length."""
         p = fast_pipeline
         for i in range(5):

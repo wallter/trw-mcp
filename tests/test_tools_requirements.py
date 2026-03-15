@@ -17,6 +17,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     # Reset template cache so each test starts fresh
     import trw_mcp.tools.requirements as req_mod
+
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
     monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
 
@@ -73,13 +74,13 @@ class TestTrwPrdCreate:
 
     def test_invalid_priority(self, tmp_path: Path) -> None:
         from trw_mcp.exceptions import ValidationError
+
         tools = _get_tools()
         with pytest.raises(ValidationError, match="Invalid priority"):
             tools["trw_prd_create"].fn(
                 input_text="test",
                 priority="P99",
             )
-
 
     def test_priority_affects_confidence(self, tmp_path: Path) -> None:
         """P0 → 0.9, P1 → 0.7, P2 → 0.6, P3 → 0.5 in both frontmatter and body."""
@@ -256,6 +257,7 @@ The system should be fast.
 
     def test_file_not_found(self, tmp_path: Path) -> None:
         from trw_mcp.exceptions import StateError
+
         tools = _get_tools()
         with pytest.raises(StateError, match="not found"):
             tools["trw_prd_validate"].fn(prd_path=str(tmp_path / "nonexistent.md"))
@@ -335,10 +337,13 @@ class TestTemplateLoading:
         def fake_exists(self: Path) -> bool:
             if str(self) == str(original_parent):
                 return False
-            return Path.exists.__wrapped__(self) if hasattr(Path.exists, '__wrapped__') else type(self).exists.fget(self)  # type: ignore[attr-defined]
+            return (
+                Path.exists.__wrapped__(self) if hasattr(Path.exists, "__wrapped__") else type(self).exists.fget(self)
+            )  # type: ignore[attr-defined]
 
         # Use monkeypatch to make the template path non-existent
         import unittest.mock
+
         with unittest.mock.patch.object(Path, "exists", return_value=False):
             # Reset again inside the mock
             req_mod._CACHED_TEMPLATE_BODY = None
@@ -369,6 +374,7 @@ class TestTemplateVersionExtraction:
         monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
 
         import unittest.mock
+
         with unittest.mock.patch.object(Path, "exists", return_value=False):
             req_mod._CACHED_TEMPLATE_BODY = None
             req_mod._CACHED_TEMPLATE_VERSION = None

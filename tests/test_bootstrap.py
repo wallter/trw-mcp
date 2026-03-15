@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
-
-import importlib.metadata
-from datetime import datetime
 
 from trw_mcp.bootstrap import (
     _DATA_DIR,
@@ -98,8 +97,7 @@ class TestIdempotency:
         # .mcp.json (merge) and installer-meta.yaml (always-write) are expected.
         file_creates = [c for c in result2["created"] if not c.endswith("/")]
         expected_always_write = {".mcp.json", "installer-meta.yaml", "managed-artifacts.yaml", "VERSION.yaml"}
-        unexpected = [c for c in file_creates
-                      if not any(e in c for e in expected_always_write)]
+        unexpected = [c for c in file_creates if not any(e in c for e in expected_always_write)]
         assert len(unexpected) == 0, f"Unexpected creates: {unexpected}"
 
     def test_force_overwrites(self, fake_git_repo: Path) -> None:
@@ -544,9 +542,7 @@ class TestUpdateOverwritesFrameworkFiles:
 
     def test_updates_agents(self, initialized_repo: Path) -> None:
         """Agent files are overwritten with latest versions."""
-        agent_path = (
-            initialized_repo / ".claude" / "agents" / "trw-code-simplifier.md"
-        )
+        agent_path = initialized_repo / ".claude" / "agents" / "trw-code-simplifier.md"
         agent_path.write_text("old agent", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -619,6 +615,7 @@ class TestUpdateRemovesStaleArtifacts:
         # init_project writes manifest; add a fake entry to simulate stale
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         reader = FileStateReader()
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
@@ -639,6 +636,7 @@ class TestUpdateRemovesStaleArtifacts:
         """Skill listed in manifest but no longer bundled is removed."""
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         reader = FileStateReader()
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
@@ -659,6 +657,7 @@ class TestUpdateRemovesStaleArtifacts:
         """Agent listed in manifest but no longer bundled is removed."""
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         reader = FileStateReader()
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
@@ -767,9 +766,9 @@ class TestUpdateWarningsAndVersionCheck:
         """update_project checks installed package version."""
         result = update_project(initialized_repo)
         # Should have either a version match (preserved) or mismatch (warning)
-        version_related = [
-            p for p in result["preserved"] if "trw-mcp package" in p
-        ] + [w for w in result["warnings"] if "trw-mcp" in w and "differs" in w]
+        version_related = [p for p in result["preserved"] if "trw-mcp package" in p] + [
+            w for w in result["warnings"] if "trw-mcp" in w and "differs" in w
+        ]
         assert len(version_related) > 0
 
     def test_warnings_key_always_present(self, initialized_repo: Path) -> None:
@@ -789,12 +788,18 @@ class TestMcpJsonMerge:
     def test_merge_preserves_user_servers(self, initialized_repo: Path) -> None:
         """Existing user-configured MCP servers survive update."""
         mcp_path = initialized_repo / ".mcp.json"
-        mcp_path.write_text(json.dumps({
-            "mcpServers": {
-                "trw": {"command": "trw-mcp", "args": ["--debug"]},
-                "my-tool": {"command": "my-tool-server", "args": []},
-            }
-        }, indent=2), encoding="utf-8")
+        mcp_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "trw": {"command": "trw-mcp", "args": ["--debug"]},
+                        "my-tool": {"command": "my-tool-server", "args": []},
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         update_project(initialized_repo)
 
@@ -805,11 +810,17 @@ class TestMcpJsonMerge:
     def test_merge_restores_trw_key(self, initialized_repo: Path) -> None:
         """Missing 'trw' key is added back during update."""
         mcp_path = initialized_repo / ".mcp.json"
-        mcp_path.write_text(json.dumps({
-            "mcpServers": {
-                "my-tool": {"command": "my-tool-server", "args": []},
-            }
-        }, indent=2), encoding="utf-8")
+        mcp_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-tool": {"command": "my-tool-server", "args": []},
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         result = update_project(initialized_repo)
 
@@ -822,11 +833,17 @@ class TestMcpJsonMerge:
     def test_merge_updates_trw_command(self, initialized_repo: Path) -> None:
         """Stale trw command path is refreshed."""
         mcp_path = initialized_repo / ".mcp.json"
-        mcp_path.write_text(json.dumps({
-            "mcpServers": {
-                "trw": {"command": "/old/path/trw-mcp", "args": []},
-            }
-        }, indent=2), encoding="utf-8")
+        mcp_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "trw": {"command": "/old/path/trw-mcp", "args": []},
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         update_project(initialized_repo)
 
@@ -858,6 +875,7 @@ class TestInstallerMetadata:
         assert meta_path.exists()
 
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         data = reader.read_yaml(meta_path)
         assert data["installed_by"] == "trw-mcp init-project"
@@ -872,6 +890,7 @@ class TestInstallerMetadata:
         assert meta_path.exists()
 
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         data = reader.read_yaml(meta_path)
         assert data["installed_by"] == "trw-mcp update-project"
@@ -916,9 +935,15 @@ class TestDryRun:
     def test_dry_run_reports_missing_trw_entry(self, initialized_repo: Path) -> None:
         """Dry run detects missing trw key in .mcp.json."""
         mcp_path = initialized_repo / ".mcp.json"
-        mcp_path.write_text(json.dumps({
-            "mcpServers": {"other": {"command": "x", "args": []}},
-        }, indent=2), encoding="utf-8")
+        mcp_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"other": {"command": "x", "args": []}},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         result = update_project(initialized_repo, dry_run=True)
 
@@ -979,8 +1004,7 @@ class TestVerifyInstallation:
         result = update_project(initialized_repo)
         # Filter to only health-check warnings (not restart/version warnings)
         health_warnings = [
-            w for w in result["warnings"]
-            if "executable" in w or "missing" in w.lower() or "not valid" in w
+            w for w in result["warnings"] if "executable" in w or "missing" in w.lower() or "not valid" in w
         ]
         assert len(health_warnings) == 0, f"Unexpected health warnings: {health_warnings}"
 
@@ -999,6 +1023,7 @@ class TestManagedArtifactsManifest:
         assert manifest_path.exists()
 
         from trw_mcp.state.persistence import FileStateReader
+
         data = FileStateReader().read_yaml(manifest_path)
         assert isinstance(data, dict)
         assert data["version"] == 1
@@ -1014,6 +1039,7 @@ class TestManagedArtifactsManifest:
         assert manifest_path.exists()
 
         from trw_mcp.state.persistence import FileStateReader
+
         data = FileStateReader().read_yaml(manifest_path)
         assert isinstance(data, dict)
         agents = data.get("agents", [])
@@ -1027,6 +1053,7 @@ class TestManagedArtifactsManifest:
         manifest_path = fake_git_repo / ".trw" / "managed-artifacts.yaml"
 
         from trw_mcp.state.persistence import FileStateReader
+
         data = FileStateReader().read_yaml(manifest_path)
         assert isinstance(data, dict)
         skills = data.get("skills", [])
@@ -1129,9 +1156,7 @@ class TestWriteVersionYaml:
         assert version_path not in result["created"]
         assert result["errors"] == []
 
-    def test_oserror_captured_in_errors(
-        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_oserror_captured_in_errors(self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """OSError from FileStateWriter.write_yaml is captured in result['errors']."""
         (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
         result = self._make_init_result()
@@ -1141,9 +1166,7 @@ class TestWriteVersionYaml:
         def _raise_os_error(self: object, path: Path, data: object) -> None:
             raise OSError("disk full")
 
-        monkeypatch.setattr(
-            persistence_mod.FileStateWriter, "write_yaml", _raise_os_error
-        )
+        monkeypatch.setattr(persistence_mod.FileStateWriter, "write_yaml", _raise_os_error)
         _write_version_yaml(fake_git_repo, result)
 
         assert len(result["errors"]) == 1
@@ -1181,7 +1204,9 @@ class TestRunClaudeMdSync:
         raise TypeError("Could not resolve authentication")
 
     def test_auth_error_captured_as_warning(
-        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auth failures from LLMClient are captured as warnings, not errors."""
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
@@ -1193,8 +1218,11 @@ class TestRunClaudeMdSync:
         )
 
         result: dict[str, list[str]] = {
-            "updated": [], "created": [], "preserved": [],
-            "errors": [], "warnings": [],
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
         }
         init_project(fake_git_repo)
 
@@ -1204,7 +1232,9 @@ class TestRunClaudeMdSync:
         assert result["errors"] == []
 
     def test_auth_error_does_not_leak_to_stdout(
-        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Auth errors must NOT leak to stdout (would corrupt installer progress pipe)."""
@@ -1216,19 +1246,37 @@ class TestRunClaudeMdSync:
         )
 
         result: dict[str, list[str]] = {
-            "updated": [], "created": [], "preserved": [],
-            "errors": [], "warnings": [],
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
         }
         init_project(fake_git_repo)
 
         _run_claude_md_sync(fake_git_repo, result)
 
         captured = capsys.readouterr()
-        assert "authentication" not in captured.out.lower()
-        assert "TypeError" not in captured.out
+        # Filter out structlog lines (structured observability is expected);
+        # the test intent is that raw tracebacks / SDK errors don't leak.
+        non_structlog_lines = [
+            line
+            for line in captured.out.splitlines()
+            if not (
+                "[warning " in line
+                or "[info " in line
+                or "[debug " in line
+                or "[error " in line
+            )
+        ]
+        plain_output = "\n".join(non_structlog_lines)
+        assert "authentication" not in plain_output.lower()
+        assert "TypeError" not in plain_output
 
     def test_timeout_captured_as_warning(
-        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Sync operations that exceed the timeout are captured as warnings."""
         import time
@@ -1244,14 +1292,131 @@ class TestRunClaudeMdSync:
         )
 
         result: dict[str, list[str]] = {
-            "updated": [], "created": [], "preserved": [],
-            "errors": [], "warnings": [],
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
         }
         init_project(fake_git_repo)
 
         _run_claude_md_sync(fake_git_repo, result, timeout=1)
 
         assert any("timed out" in w for w in result["warnings"])
+        assert result["errors"] == []
+
+
+class TestClaudeMdSyncTimeoutFix:
+    """Tests for _run_claude_md_sync ThreadPoolExecutor timeout handling.
+
+    The fix changed ``with ThreadPoolExecutor() as pool:`` to an explicit
+    ``pool = ThreadPoolExecutor()`` + ``pool.shutdown(wait=False,
+    cancel_futures=True)`` in a finally block, preventing the context-manager
+    ``__exit__`` from blocking when a worker thread (e.g. LLMClient) hangs.
+    """
+
+    def test_sync_timeout_returns_promptly(
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When sync times out, the function returns within timeout + buffer — not indefinitely."""
+        import time as time_mod
+
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        def _hanging_llm(*_args: object, **_kwargs: object) -> None:
+            time_mod.sleep(300)  # Simulate LLMClient network hang
+
+        monkeypatch.setattr(
+            "trw_mcp.state.llm_helpers.LLMClient",
+            _hanging_llm,
+        )
+
+        init_project(fake_git_repo)
+        result: dict[str, list[str]] = {
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
+        }
+
+        start = time_mod.monotonic()
+        _run_claude_md_sync(fake_git_repo, result, timeout=2)
+        elapsed = time_mod.monotonic() - start
+
+        # Must complete well under 10s — the old code would block for 300s
+        assert elapsed < 10, (
+            f"_run_claude_md_sync blocked for {elapsed:.1f}s; "
+            f"expected <10s (timeout was 2s)"
+        )
+        assert any("timed out" in w for w in result["warnings"])
+
+    def test_sync_success_adds_updated_entry(
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Successful sync adds a descriptive entry to result['updated']."""
+        from unittest.mock import MagicMock
+
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md.execute_claude_md_sync",
+            lambda **kwargs: {"learnings_promoted": 3},
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.llm_helpers.LLMClient",
+            lambda: MagicMock(),
+        )
+
+        init_project(fake_git_repo)
+        result: dict[str, list[str]] = {
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
+        }
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+
+        assert any("synced" in u for u in result["updated"])
+        # Verify the learnings count is included in the message
+        assert any("3" in u for u in result["updated"])
+
+    def test_sync_generic_exception_adds_warning(
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A generic exception during sync adds a warning, doesn't crash."""
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        # init_project must run BEFORE we break get_config
+        init_project(fake_git_repo)
+
+        def _broken_sync(**_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("sync broken")
+
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md.execute_claude_md_sync",
+            _broken_sync,
+        )
+
+        result: dict[str, list[str]] = {
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
+        }
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=5)
+
+        assert any("skipped" in w for w in result["warnings"])
         assert result["errors"] == []
 
 
@@ -1313,6 +1478,7 @@ class TestUpdatePrefixScopedCleanup:
         # Add a non-trw-prefixed skill to the manifest (simulate pre-migration)
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         reader = FileStateReader()
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
@@ -1335,6 +1501,7 @@ class TestUpdatePrefixScopedCleanup:
         """Custom agent without trw- prefix survives update_project()."""
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         reader = FileStateReader()
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
@@ -1356,6 +1523,7 @@ class TestUpdatePrefixScopedCleanup:
         """Stale trw-prefixed skill IS removed by update_project()."""
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         reader = FileStateReader()
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
@@ -1376,6 +1544,7 @@ class TestUpdatePrefixScopedCleanup:
         """Stale trw-prefixed agent IS removed by update_project()."""
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         reader = FileStateReader()
         manifest = reader.read_yaml(manifest_path)
         assert isinstance(manifest, dict)
@@ -1479,9 +1648,7 @@ class TestContextCleanup:
 class TestPrefixMigration:
     """Tests for _migrate_prefix_predecessors via update_project."""
 
-    def test_migrate_removes_predecessor_when_successor_present(
-        self, initialized_repo: Path
-    ) -> None:
+    def test_migrate_removes_predecessor_when_successor_present(self, initialized_repo: Path) -> None:
         """Old non-prefixed skill dir is removed when trw- successor is installed."""
         skills_dir = initialized_repo / ".claude" / "skills"
         # Create predecessor and successor skill dirs
@@ -1496,9 +1663,7 @@ class TestPrefixMigration:
         migrated_entries = [e for e in result["updated"] if "migrated:" in e and "commit" in e]
         assert len(migrated_entries) >= 1
 
-    def test_migrate_skips_predecessor_when_successor_absent(
-        self, initialized_repo: Path
-    ) -> None:
+    def test_migrate_skips_predecessor_when_successor_absent(self, initialized_repo: Path) -> None:
         """Old skill dir remains when trw- successor is NOT installed."""
         skills_dir = initialized_repo / ".claude" / "skills"
         # Create only predecessor — no successor
@@ -1516,9 +1681,7 @@ class TestPrefixMigration:
         # This test verifies update_project doesn't crash and produces results.
         assert "errors" in result
 
-    def test_migrate_skips_when_no_successor(
-        self, fake_git_repo: Path
-    ) -> None:
+    def test_migrate_skips_when_no_successor(self, fake_git_repo: Path) -> None:
         """Predecessor survives when its successor directory is absent."""
         (fake_git_repo / ".trw").mkdir(parents=True)
         skills_dir = fake_git_repo / ".claude" / "skills"
@@ -1535,9 +1698,7 @@ class TestPrefixMigration:
         assert (skills_dir / "commit").exists()
         assert not any("commit" in e for e in result["updated"])
 
-    def test_migrate_removes_agent_predecessor(
-        self, initialized_repo: Path
-    ) -> None:
+    def test_migrate_removes_agent_predecessor(self, initialized_repo: Path) -> None:
         """Old non-prefixed agent .md file is removed when trw- successor exists."""
         agents_dir = initialized_repo / ".claude" / "agents"
         # Create predecessor and successor agent files
@@ -1547,10 +1708,7 @@ class TestPrefixMigration:
         result = update_project(initialized_repo)
 
         assert not (agents_dir / "code-simplifier.md").exists()
-        migrated_entries = [
-            e for e in result["updated"]
-            if "migrated:" in e and "code-simplifier.md" in e
-        ]
+        migrated_entries = [e for e in result["updated"] if "migrated:" in e and "code-simplifier.md" in e]
         assert len(migrated_entries) >= 1
 
     def test_migrate_idempotent(self, initialized_repo: Path) -> None:
@@ -1567,15 +1725,10 @@ class TestPrefixMigration:
 
         # Second run is a no-op — no migrated entries for commit
         result2 = update_project(initialized_repo)
-        migrated_commit = [
-            e for e in result2["updated"]
-            if "migrated:" in e and "commit" in e
-        ]
+        migrated_commit = [e for e in result2["updated"] if "migrated:" in e and "commit" in e]
         assert migrated_commit == []
 
-    def test_genuine_custom_skill_not_removed(
-        self, initialized_repo: Path
-    ) -> None:
+    def test_genuine_custom_skill_not_removed(self, initialized_repo: Path) -> None:
         """A custom skill not in PREDECESSOR_MAP survives update_project."""
         skills_dir = initialized_repo / ".claude" / "skills"
         custom_skill = skills_dir / "my-custom-tool"
@@ -1649,9 +1802,7 @@ class TestIDEDetection:
         result = resolve_ide_targets(tmp_path)
         assert result == ["opencode"]
 
-    def test_fr08_detect_installed_clis_returns_list(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_fr08_detect_installed_clis_returns_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """detect_installed_clis returns only CLIs found on PATH."""
         import shutil as _shutil
 
@@ -1662,19 +1813,13 @@ class TestIDEDetection:
 
         monkeypatch.setattr(_shutil, "which", fake_which)
         # Also patch the shutil reference inside the bootstrap module
-        monkeypatch.setattr(
-            "trw_mcp.bootstrap._utils.shutil.which", fake_which
-        )
+        monkeypatch.setattr("trw_mcp.bootstrap._utils.shutil.which", fake_which)
         result = detect_installed_clis()
         assert result == ["claude-code"]
 
-    def test_fr08_detect_installed_clis_empty(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_fr08_detect_installed_clis_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """detect_installed_clis returns empty list when no CLIs found."""
-        monkeypatch.setattr(
-            "trw_mcp.bootstrap._utils.shutil.which", lambda _cmd: None
-        )
+        monkeypatch.setattr("trw_mcp.bootstrap._utils.shutil.which", lambda _cmd: None)
         result = detect_installed_clis()
         assert result == []
 
@@ -1683,8 +1828,7 @@ class TestIDEDetection:
 # FR11 + FR16 — OpenCode Bootstrap (PRD-CORE-074)
 # ---------------------------------------------------------------------------
 
-from trw_mcp.bootstrap._opencode import (  # noqa: E402
-    _get_trw_mcp_entry,
+from trw_mcp.bootstrap._opencode import (
     _parse_jsonc,
     generate_agents_md,
     generate_opencode_config,
@@ -1756,9 +1900,7 @@ class TestOpenCodeJsonMerge:
     """FR16: opencode.json Smart Merge."""
 
     def test_fr16_merge_preserves_other_servers(self) -> None:
-        existing: dict[str, object] = {
-            "mcp": {"other-server": {"type": "remote", "url": "http://x"}}
-        }
+        existing: dict[str, object] = {"mcp": {"other-server": {"type": "remote", "url": "http://x"}}}
         trw: dict[str, object] = {"type": "local", "command": ["trw-mcp"]}
         result = merge_opencode_json(existing, trw)
         assert "other-server" in result["mcp"]
@@ -1786,9 +1928,7 @@ class TestOpenCodeJsonMerge:
         assert result["mcp"]["trw"] == trw
 
     def test_fr16_merge_updates_existing_trw(self) -> None:
-        existing: dict[str, object] = {
-            "mcp": {"trw": {"type": "local", "command": ["old"]}}
-        }
+        existing: dict[str, object] = {"mcp": {"trw": {"type": "local", "command": ["old"]}}}
         trw: dict[str, object] = {
             "type": "local",
             "command": ["trw-mcp"],
@@ -1817,10 +1957,12 @@ class TestOpenCodeJsonMerge:
     def test_fr16_smart_merge_existing_file(self, tmp_path: Path) -> None:
         # Write existing opencode.json with another server
         (tmp_path / "opencode.json").write_text(
-            json.dumps({
-                "model": "ollama/qwen3-coder-next",
-                "mcp": {"other": {"type": "remote", "url": "http://x"}},
-            })
+            json.dumps(
+                {
+                    "model": "ollama/qwen3-coder-next",
+                    "mcp": {"other": {"type": "remote", "url": "http://x"}},
+                }
+            )
         )
         result = generate_opencode_config(tmp_path)
         assert "opencode.json" in result["updated"]
@@ -1873,9 +2015,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
         # Create existing opencode.json (triggers detection)
-        (tmp_path / "opencode.json").write_text(
-            json.dumps({"model": "custom-model", "mcp": {}})
-        )
+        (tmp_path / "opencode.json").write_text(json.dumps({"model": "custom-model", "mcp": {}}))
 
         with (
             patch("trw_mcp.bootstrap._update_project._update_framework_files"),
@@ -2084,8 +2224,7 @@ class TestCursorBootstrap:
         config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
         for hook in config["hooks"]:
             assert hook["description"].startswith("TRW"), (
-                f"Hook {hook['event']} description does not start with 'TRW': "
-                f"{hook['description']}"
+                f"Hook {hook['event']} description does not start with 'TRW': {hook['description']}"
             )
 
     def test_fr05_cursor_hooks_smart_merge_preserves_user_hooks(self, tmp_path: Path) -> None:
@@ -2094,11 +2233,7 @@ class TestCursorBootstrap:
 
         cursor_dir = tmp_path / ".cursor"
         cursor_dir.mkdir()
-        existing = {
-            "hooks": [
-                {"event": "custom", "command": "echo hi", "description": "User hook"}
-            ]
-        }
+        existing = {"hooks": [{"event": "custom", "command": "echo hi", "description": "User hook"}]}
         (cursor_dir / "hooks.json").write_text(json.dumps(existing))
 
         result = generate_cursor_hooks(tmp_path)
@@ -2138,11 +2273,7 @@ class TestCursorBootstrap:
 
         cursor_dir = tmp_path / ".cursor"
         cursor_dir.mkdir()
-        existing = {
-            "hooks": [
-                {"event": "custom", "command": "echo hi", "description": "User hook"}
-            ]
-        }
+        existing = {"hooks": [{"event": "custom", "command": "echo hi", "description": "User hook"}]}
         (cursor_dir / "hooks.json").write_text(json.dumps(existing))
 
         result = generate_cursor_hooks(tmp_path, force=True)

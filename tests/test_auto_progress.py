@@ -52,8 +52,7 @@ def run_dir(tmp_path: Path) -> Path:
 def _write_prd(prds_dir: Path, prd_id: str, status: str, density: float = 0.5) -> Path:
     """Write a PRD file with given status and enough content for density checks."""
     content_lines = "\n".join(
-        f"Requirement {i}: description of the requirement for testing."
-        for i in range(int(density * 100))
+        f"Requirement {i}: description of the requirement for testing." for i in range(int(density * 100))
     )
     prd_file = prds_dir / f"{prd_id}.md"
     prd_file.write_text(
@@ -70,13 +69,15 @@ def _write_run_yaml(run_dir: Path, prd_scope: list[str]) -> None:
     import yaml
 
     (run_dir / "meta" / "run.yaml").write_text(
-        yaml.dump({
-            "run_id": "test-run",
-            "status": "active",
-            "phase": "implement",
-            "task_name": "test-task",
-            "prd_scope": prd_scope,
-        }),
+        yaml.dump(
+            {
+                "run_id": "test-run",
+                "status": "active",
+                "phase": "implement",
+                "task_name": "test-task",
+                "prd_scope": prd_scope,
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -114,7 +115,10 @@ class TestAutoProgressPrds:
     """PRD-CORE-025-FR02: auto_progress_prds function."""
 
     def test_returns_empty_for_unmapped_phase(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "draft")
@@ -122,7 +126,10 @@ class TestAutoProgressPrds:
         assert result == []
 
     def test_advances_draft_to_review_on_plan_exit(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "draft", density=0.5)
@@ -137,7 +144,10 @@ class TestAutoProgressPrds:
         assert "status: review" in content
 
     def test_advances_approved_to_implemented_on_implement_exit(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "approved")
@@ -147,7 +157,10 @@ class TestAutoProgressPrds:
         assert result[0]["applied"] is True
 
     def test_advances_implemented_to_done_on_validate_exit(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "implemented")
@@ -157,7 +170,10 @@ class TestAutoProgressPrds:
         assert result[0]["applied"] is True
 
     def test_skips_prds_not_in_scope(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "draft", density=0.5)
@@ -169,7 +185,10 @@ class TestAutoProgressPrds:
         assert "PRD-CORE-002" not in prd_ids
 
     def test_skips_terminal_statuses(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001", "PRD-CORE-002", "PRD-CORE-003"])
         _write_prd(prds_dir, "PRD-CORE-001", "done")
@@ -184,7 +203,10 @@ class TestAutoProgressPrds:
         assert PRDStatus.DEPRECATED in _TERMINAL_STATUSES
 
     def test_skips_invalid_transition(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         # draft → implemented: with BFS multi-step (FIX-053-FR05), this may
         # partially progress (draft→review) or fully traverse. The key is
@@ -197,7 +219,10 @@ class TestAutoProgressPrds:
         assert result[0].get("reason", "") != "invalid_transition"
 
     def test_returns_empty_for_no_prd_scope(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, [])
         result = auto_progress_prds(run_dir, "plan", prds_dir, config)
@@ -208,7 +233,10 @@ class TestAutoProgressGuards:
     """PRD-CORE-025-FR05: Guard respect."""
 
     def test_guard_failure_prevents_progression(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         # Very low content density — lots of non-substantive lines (blanks, headings, rules)
@@ -227,7 +255,10 @@ class TestAutoProgressGuards:
         assert result[0]["guard_failed"] is True
 
     def test_multiple_prds_partial_progression(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001", "PRD-CORE-002"])
         # One with good density, one with low density (mostly non-substantive lines)
@@ -250,12 +281,19 @@ class TestAutoProgressDryRun:
     """PRD-CORE-025-FR07: Dry-run mode."""
 
     def test_dry_run_does_not_write(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "draft", density=0.5)
         result = auto_progress_prds(
-            run_dir, "plan", prds_dir, config, dry_run=True,
+            run_dir,
+            "plan",
+            prds_dir,
+            config,
+            dry_run=True,
         )
         assert len(result) == 1
         assert result[0]["applied"] is False
@@ -265,7 +303,10 @@ class TestAutoProgressDryRun:
         assert "status: draft" in content
 
     def test_dry_run_guard_failure_shows_would_apply_false(
-        self, run_dir: Path, prds_dir: Path, config: TRWConfig,
+        self,
+        run_dir: Path,
+        prds_dir: Path,
+        config: TRWConfig,
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         prd_file = prds_dir / "PRD-CORE-001.md"
@@ -277,7 +318,11 @@ class TestAutoProgressDryRun:
             encoding="utf-8",
         )
         result = auto_progress_prds(
-            run_dir, "plan", prds_dir, config, dry_run=True,
+            run_dir,
+            "plan",
+            prds_dir,
+            config,
+            dry_run=True,
         )
         assert len(result) == 1
         assert result[0]["applied"] is False

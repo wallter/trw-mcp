@@ -12,10 +12,9 @@ Covers gaps not addressed in test_learning_injection.py:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # _resolve_trw_dir
@@ -178,9 +177,7 @@ class TestSelectLearningsEdge:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="test",
@@ -210,9 +207,7 @@ class TestSelectLearningsEdge:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             with pytest.raises(ValueError, match="could not convert"):
                 select_learnings_for_task(
@@ -226,9 +221,7 @@ class TestSelectLearningsEdge:
         """When both tag-filtered and fallback recall raise, returns []."""
         from trw_mcp.state.learning_injection import select_learnings_for_task
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.side_effect = RuntimeError("down")
             results = select_learnings_for_task(
                 task_description="test",
@@ -255,9 +248,7 @@ class TestSelectLearningsEdge:
             for i in range(10)
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="test admin",
@@ -271,9 +262,7 @@ class TestSelectLearningsEdge:
         """Explicit min_impact=0.9 is forwarded to recall, not config default 0.5."""
         from trw_mcp.state.learning_injection import select_learnings_for_task
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = []
             select_learnings_for_task(
                 task_description="test",
@@ -306,9 +295,7 @@ class TestSelectLearningsEdge:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="test",
@@ -344,9 +331,7 @@ class TestSelectLearningsEdge:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="admin endpoint",
@@ -371,9 +356,7 @@ class TestSelectLearningsEdge:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = mock_results
             results = select_learnings_for_task(
                 task_description="generic task",
@@ -387,9 +370,7 @@ class TestSelectLearningsEdge:
         """recall_learnings is called with max_results * 3 for first call."""
         from trw_mcp.state.learning_injection import select_learnings_for_task
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.return_value = [
                 {
                     "id": "L-001",
@@ -429,9 +410,7 @@ class TestSelectLearningsEdge:
                 },
             ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.side_effect = side_effect
             select_learnings_for_task(
                 task_description="test",
@@ -463,9 +442,7 @@ class TestSelectLearningsEdge:
                 },
             ]
 
-        with patch(
-            "trw_mcp.state.learning_injection.recall_learnings"
-        ) as mock_recall:
+        with patch("trw_mcp.state.learning_injection.recall_learnings") as mock_recall:
             mock_recall.side_effect = side_effect
             results = select_learnings_for_task(
                 task_description="test",
@@ -540,8 +517,7 @@ class TestFormatLearningInjectionEdge:
         from trw_mcp.state.learning_injection import format_learning_injection
 
         learnings: list[dict[str, object]] = [
-            {"id": f"L-{i:03d}", "summary": f"Entry {i}", "impact": 0.5, "tags": []}
-            for i in range(3)
+            {"id": f"L-{i:03d}", "summary": f"Entry {i}", "impact": 0.5, "tags": []} for i in range(3)
         ]
         result = format_learning_injection(learnings)
         lines = [ln for ln in result.split("\n") if ln.startswith("- **[")]

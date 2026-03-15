@@ -10,7 +10,7 @@ Verifies:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -128,16 +128,13 @@ class TestSuppressInternalEventsFlag:
         logger = FileEventLogger(writer=mock_writer)
 
         with suppress_internal_events():
-            logger.log_event(events_path, "yaml_written", {})   # suppressed
+            logger.log_event(events_path, "yaml_written", {})  # suppressed
             logger.log_event(events_path, "tool_invocation", {"tool": "trw_learn"})  # not suppressed
             logger.log_event(events_path, "jsonl_appended", {})  # suppressed
             logger.log_event(events_path, "checkpoint", {"message": "mid-task"})  # not suppressed
 
         # Only 2 calls: tool_invocation and checkpoint
         assert mock_writer.append_jsonl.call_count == 2
-        written_event_types = [
-            call_args[0][1].get("event")
-            for call_args in mock_writer.append_jsonl.call_args_list
-        ]
+        written_event_types = [call_args[0][1].get("event") for call_args in mock_writer.append_jsonl.call_args_list]
         assert "tool_invocation" in written_event_types
         assert "checkpoint" in written_event_types

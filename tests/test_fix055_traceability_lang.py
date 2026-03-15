@@ -23,7 +23,6 @@ from trw_mcp.state.validation.prd_quality import (
     score_traceability_v2,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -341,13 +340,9 @@ class TestScoreTraceabilityV2Integration:
 
     def test_typescript_matrix_score_positive(self) -> None:
         """US-001: TypeScript .test.tsx refs must produce matrix_score > 0."""
-        prd = _make_prd_with_matrix(
-            "| FR01 | `src/Form.tsx` | `Form.test.tsx` | Pending |\n"
-        )
+        prd = _make_prd_with_matrix("| FR01 | `src/Form.tsx` | `Form.test.tsx` | Pending |\n")
         result = score_traceability_v2(self._FRONTMATTER_WITH_FIELDS, prd)
-        assert result.details["matrix_score"] > 0.0, (
-            "TypeScript test refs not counted — matrix_score was 0"
-        )
+        assert result.details["matrix_score"] > 0.0, "TypeScript test refs not counted — matrix_score was 0"
 
     def test_go_matrix_score_positive(self) -> None:
         """US-002: Go _test.go refs must produce matrix_score > 0."""
@@ -360,25 +355,19 @@ class TestScoreTraceabilityV2Integration:
 
     def test_java_matrix_score_positive(self) -> None:
         """Java *Test.java refs must produce matrix_score > 0."""
-        prd = _make_prd_with_matrix(
-            "| FR01 | `UserService.java` | `UserServiceTest.java` | Pending |\n"
-        )
+        prd = _make_prd_with_matrix("| FR01 | `UserService.java` | `UserServiceTest.java` | Pending |\n")
         result = score_traceability_v2(self._FRONTMATTER_WITH_FIELDS, prd)
         assert result.details["matrix_score"] > 0.0
 
     def test_ruby_matrix_score_positive(self) -> None:
         """Ruby *_spec.rb refs must produce matrix_score > 0."""
-        prd = _make_prd_with_matrix(
-            "| FR01 | `user.rb` | `user_spec.rb` | Pending |\n"
-        )
+        prd = _make_prd_with_matrix("| FR01 | `user.rb` | `user_spec.rb` | Pending |\n")
         result = score_traceability_v2(self._FRONTMATTER_WITH_FIELDS, prd)
         assert result.details["matrix_score"] > 0.0
 
     def test_rust_tests_dir_matrix_score_positive(self) -> None:
         """Rust tests/ dir refs must produce matrix_score > 0."""
-        prd = _make_prd_with_matrix(
-            "| FR01 | `src/lib.rs` | `tests/integration.rs` | Pending |\n"
-        )
+        prd = _make_prd_with_matrix("| FR01 | `src/lib.rs` | `tests/integration.rs` | Pending |\n")
         result = score_traceability_v2(self._FRONTMATTER_WITH_FIELDS, prd)
         assert result.details["matrix_score"] > 0.0
 
@@ -456,6 +445,4 @@ class TestRegexPerformance:
 
     def test_regex_is_precompiled(self) -> None:
         """_TEST_REF_RE must be a compiled Pattern (not a string)."""
-        assert isinstance(_TEST_REF_RE, re.Pattern), (
-            "_TEST_REF_RE should be a compiled re.Pattern for performance"
-        )
+        assert isinstance(_TEST_REF_RE, re.Pattern), "_TEST_REF_RE should be a compiled re.Pattern for performance"

@@ -28,7 +28,6 @@ from ._utils import (
     _verify_installation,
     _write_installer_metadata,
     _write_version_yaml,
-    detect_ide,
     resolve_ide_targets,
 )
 
@@ -54,14 +53,16 @@ _NEVER_OVERWRITE = {
 }
 
 # Files in .trw/context/ that are always preserved during cleanup.
-_CONTEXT_ALLOWLIST: frozenset[str] = frozenset({
-    "analytics.yaml",
-    "behavioral_protocol.yaml",
-    "build-status.yaml",
-    "messages.yaml",
-    "pre_compact_state.json",
-    "hooks-reference.yaml",
-})
+_CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "analytics.yaml",
+        "behavioral_protocol.yaml",
+        "build-status.yaml",
+        "messages.yaml",
+        "pre_compact_state.json",
+        "hooks-reference.yaml",
+    }
+)
 
 # CLAUDE.md markers for the auto-generated section.
 _TRW_START_MARKER = "<!-- trw:start -->"
@@ -74,6 +75,7 @@ _MANIFEST_FILE = "managed-artifacts.yaml"
 def _coerce_manifest_list(value: object) -> list[str]:
     """Coerce a manifest field to ``list[str]``, returning ``[]`` for non-lists."""
     return [str(item) for item in value] if isinstance(value, list) else []
+
 
 # PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
 # Used by _migrate_prefix_predecessors() to remove stale predecessors during
@@ -258,7 +260,10 @@ def _update_hooks(
             if hook_file.suffix == ".sh":
                 dest = target_dir / ".claude" / "hooks" / hook_file.name
                 _update_or_report(
-                    hook_file, dest, result, dry_run,
+                    hook_file,
+                    dest,
+                    result,
+                    dry_run,
                     make_executable=True,
                     on_progress=on_progress,
                 )
@@ -442,9 +447,7 @@ def _update_claude_md_trw_section(
         except OSError as exc:
             result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
     else:
-        result["errors"].append(
-            "CLAUDE.md has malformed TRW markers — found start but not end"
-        )
+        result["errors"].append("CLAUDE.md has malformed TRW markers — found start but not end")
 
 
 def _minimal_claude_md_trw_block() -> str:
@@ -479,15 +482,11 @@ def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
     agents_source = effective / "agents"
     hooks_source = effective / "hooks"
     return {
-        "skills": sorted(
-            d.name for d in skills_source.iterdir() if d.is_dir()
-        ) if skills_source.is_dir() else [],
-        "agents": sorted(
-            f.name for f in agents_source.iterdir() if f.suffix == ".md"
-        ) if agents_source.is_dir() else [],
-        "hooks": sorted(
-            f.name for f in hooks_source.iterdir() if f.suffix == ".sh"
-        ) if hooks_source.is_dir() else [],
+        "skills": sorted(d.name for d in skills_source.iterdir() if d.is_dir()) if skills_source.is_dir() else [],
+        "agents": sorted(f.name for f in agents_source.iterdir() if f.suffix == ".md")
+        if agents_source.is_dir()
+        else [],
+        "hooks": sorted(f.name for f in hooks_source.iterdir() if f.suffix == ".sh") if hooks_source.is_dir() else [],
     }
 
 
@@ -501,23 +500,18 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
 
     skills_dir = target_dir / ".claude" / "skills"
     if skills_dir.is_dir():
-        result["skills"] = sorted(
-            d.name for d in skills_dir.iterdir()
-            if d.is_dir() and d.name not in bundled_skills
-        )
+        result["skills"] = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and d.name not in bundled_skills)
 
     agents_dir = target_dir / ".claude" / "agents"
     if agents_dir.is_dir():
         result["agents"] = sorted(
-            f.name for f in agents_dir.iterdir()
-            if f.suffix == ".md" and f.name not in bundled_agents
+            f.name for f in agents_dir.iterdir() if f.suffix == ".md" and f.name not in bundled_agents
         )
 
     hooks_dir = target_dir / ".claude" / "hooks"
     if hooks_dir.is_dir():
         result["hooks"] = sorted(
-            f.name for f in hooks_dir.iterdir()
-            if f.suffix == ".sh" and f.name not in bundled_hooks
+            f.name for f in hooks_dir.iterdir() if f.suffix == ".sh" and f.name not in bundled_hooks
         )
 
     return result
@@ -547,8 +541,12 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
         return {
             key: _coerce_manifest_list(data.get(key, []))
             for key in (
-                "skills", "agents", "hooks",
-                "custom_skills", "custom_agents", "custom_hooks",
+                "skills",
+                "agents",
+                "hooks",
+                "custom_skills",
+                "custom_agents",
+                "custom_hooks",
             )
         }
     except OSError:
@@ -659,12 +657,20 @@ def _migrate_prefix_predecessors(
     agents_dir = target_dir / ".claude" / "agents"
 
     _migrate_predecessor_set(
-        skills_dir, PREDECESSOR_MAP["skills"], result,
-        is_dir_artifact=True, log_event="predecessor_skill_removal_failed", dry_run=dry_run,
+        skills_dir,
+        PREDECESSOR_MAP["skills"],
+        result,
+        is_dir_artifact=True,
+        log_event="predecessor_skill_removal_failed",
+        dry_run=dry_run,
     )
     _migrate_predecessor_set(
-        agents_dir, PREDECESSOR_MAP["agents"], result,
-        is_dir_artifact=False, log_event="predecessor_agent_removal_failed", dry_run=dry_run,
+        agents_dir,
+        PREDECESSOR_MAP["agents"],
+        result,
+        is_dir_artifact=False,
+        log_event="predecessor_agent_removal_failed",
+        dry_run=dry_run,
     )
 
 
@@ -881,25 +887,44 @@ def _run_claude_md_sync(
             finally:
                 sys.stdout, sys.stderr = saved_stdout, saved_stderr
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
             future = pool.submit(_do_sync)
             sync_result = future.result(timeout=timeout)
+        finally:
+            # shutdown(wait=False) so a hung worker thread (e.g. LLMClient
+            # blocking on network) doesn't block the installer indefinitely.
+            pool.shutdown(wait=False, cancel_futures=True)
 
-        result["updated"].append(
-            f"CLAUDE.md synced (learnings promoted: {sync_result.get('learnings_promoted', 0)})"
+        learnings_promoted = sync_result.get("learnings_promoted", 0)
+        logger.info(
+            "claude_md_sync_completed",
+            learnings_promoted=learnings_promoted,
+            target_dir=str(target_dir),
         )
+        result["updated"].append(f"CLAUDE.md synced (learnings promoted: {learnings_promoted})")
     except concurrent.futures.TimeoutError:
+        logger.warning(
+            "claude_md_sync_timeout",
+            timeout_seconds=timeout,
+            target_dir=str(target_dir),
+        )
         result["warnings"].append(
-            f"CLAUDE.md sync timed out ({timeout}s) "
-            "\u2014 will complete on next trw_session_start()"
+            f"CLAUDE.md sync timed out ({timeout}s) \u2014 will complete on next trw_session_start()"
         )
     except Exception as exc:  # justified: fail-open, CLAUDE.md sync is best-effort
+        logger.warning(
+            "claude_md_sync_failed",
+            error=str(exc),
+            target_dir=str(target_dir),
+        )
         result["warnings"].append(f"CLAUDE.md sync skipped: {exc}")
     finally:
         os.chdir(original_cwd)
         # Reset config back to original project
         try:
             from trw_mcp.models.config import _reset_config
+
             _reset_config()
         except Exception:  # justified: cleanup, config reset is best-effort during finally
             logger.debug("config_reset_failed", exc_info=True)
@@ -1066,7 +1091,7 @@ def _update_config_target_platforms(
 # ---------------------------------------------------------------------------
 
 
-def update_project(
+def update_project(  # noqa: C901
     target_dir: Path,
     *,
     pip_install: bool = False,
@@ -1121,8 +1146,7 @@ def update_project(
     # Validate target has TRW installed
     if not (target_dir / ".trw").exists():
         result["errors"].append(
-            f"{target_dir} does not have TRW installed (.trw/ not found). "
-            "Run `trw-mcp init-project` first."
+            f"{target_dir} does not have TRW installed (.trw/ not found). Run `trw-mcp init-project` first."
         )
         return result
 

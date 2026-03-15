@@ -29,15 +29,18 @@ def _write_usage_record(
     success: bool = True,
 ) -> None:
     """Write a single usage record to the JSONL log."""
-    writer.append_jsonl(log_path, {
-        "ts": "2026-02-20T12:00:00Z",
-        "model": model,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "latency_ms": latency_ms,
-        "caller": caller,
-        "success": success,
-    })
+    writer.append_jsonl(
+        log_path,
+        {
+            "ts": "2026-02-20T12:00:00Z",
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": latency_ms,
+            "caller": caller,
+            "success": success,
+        },
+    )
 
 
 def _get_report_tool_fn() -> Callable[..., Any]:
@@ -106,9 +109,7 @@ class TestComputeCost:
 class TestUsageReportEmpty:
     """Test usage report with no JSONL file."""
 
-    async def test_usage_report_empty_log(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_usage_report_empty_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """No JSONL file returns zero counts with message."""
         (tmp_path / ".trw" / "logs").mkdir(parents=True)
 
@@ -127,9 +128,7 @@ class TestUsageReportEmpty:
         assert result["by_caller"] == {}
         assert "No LLM usage data found" in str(result.get("message", ""))
 
-    async def test_usage_report_missing_trw_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_usage_report_missing_trw_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing .trw dir returns empty result without error."""
         monkeypatch.setattr(
             "trw_mcp.tools.usage.resolve_trw_dir",
@@ -152,7 +151,8 @@ class TestUsageReportSingleRecord:
         log_path = log_dir / "llm_usage.jsonl"
 
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="claude-haiku-4-5-20251001",
             input_tokens=150,
             output_tokens=80,
@@ -207,19 +207,25 @@ class TestUsageReportMultipleRecords:
         log_path = log_dir / "llm_usage.jsonl"
 
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="claude-haiku-4-5-20251001",
-            input_tokens=100, output_tokens=50,
+            input_tokens=100,
+            output_tokens=50,
         )
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="claude-haiku-4-5-20251001",
-            input_tokens=200, output_tokens=100,
+            input_tokens=200,
+            output_tokens=100,
         )
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="claude-sonnet-4-6",
-            input_tokens=500, output_tokens=250,
+            input_tokens=500,
+            output_tokens=250,
         )
 
         monkeypatch.setattr(
@@ -308,7 +314,8 @@ class TestUsageReportCostEstimation:
         log_path = log_dir / "llm_usage.jsonl"
 
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="claude-haiku-4-5-20251001",
             input_tokens=1_000_000,
             output_tokens=0,
@@ -327,7 +334,8 @@ class TestUsageReportCostEstimation:
         log_path = log_dir / "llm_usage.jsonl"
 
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="claude-haiku-4-5-20251001",
             input_tokens=0,
             output_tokens=1_000_000,
@@ -345,7 +353,8 @@ class TestUsageReportCostEstimation:
         log_path = log_dir / "llm_usage.jsonl"
 
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="claude-sonnet-4-6",
             input_tokens=1_000_000,
             output_tokens=1_000_000,
@@ -364,7 +373,8 @@ class TestUsageReportCostEstimation:
         log_path = log_dir / "llm_usage.jsonl"
 
         _write_usage_record(
-            writer, log_path,
+            writer,
+            log_path,
             model="some-unknown-model-v999",
             input_tokens=1_000_000,
             output_tokens=1_000_000,
@@ -374,9 +384,7 @@ class TestUsageReportCostEstimation:
         # Same as sonnet rate (default fallback)
         assert result["total_cost_estimate_usd"] == pytest.approx(18.00, rel=1e-5)
 
-    async def test_usage_report_result_includes_log_path(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_usage_report_result_includes_log_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Result dict includes log_path and period keys."""
         result = await self._run_report(tmp_path, monkeypatch)
         assert "log_path" in result
@@ -408,17 +416,13 @@ class TestConfigUsageFields:
         config = TRWConfig()
         assert config.llm_usage_log_file == "llm_usage.jsonl"
 
-    def test_config_usage_log_enabled_env_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_config_usage_log_enabled_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """llm_usage_log_enabled can be overridden via env var."""
         monkeypatch.setenv("TRW_LLM_USAGE_LOG_ENABLED", "false")
         config = TRWConfig()
         assert config.llm_usage_log_enabled is False
 
-    def test_config_usage_log_file_env_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_config_usage_log_file_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """llm_usage_log_file can be overridden via env var."""
         monkeypatch.setenv("TRW_LLM_USAGE_LOG_FILE", "custom_usage.jsonl")
         config = TRWConfig()
@@ -434,9 +438,7 @@ class TestConfigUsageFields:
 class TestUsageReportGroupBy:
     """Tests for group_by parameter on trw_usage_report."""
 
-    async def test_group_by_model(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_group_by_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """group_by='model' groups records by model field."""
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)
@@ -460,9 +462,7 @@ class TestUsageReportGroupBy:
         assert grouped["claude-sonnet-4-6"]["calls"] == 1
         assert result["group_by"] == "model"
 
-    async def test_group_by_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_group_by_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """group_by='none' (default) does not add grouped_by key."""
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)
@@ -478,9 +478,7 @@ class TestUsageReportGroupBy:
 
         assert "grouped_by" not in result
 
-    async def test_group_by_invalid_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_group_by_invalid_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Invalid group_by value raises ValueError."""
         logs_dir = tmp_path / ".trw" / "logs"
         logs_dir.mkdir(parents=True)

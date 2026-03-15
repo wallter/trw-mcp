@@ -13,7 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -38,7 +38,7 @@ def make_entry(
     created: str | None = None,
 ) -> LearningEntry:
     """Build a minimal LearningEntry for testing."""
-    today = date.today().isoformat()
+    today = datetime.now(tz=timezone.utc).date().isoformat()
     return LearningEntry(
         id=entry_id,
         summary=summary,
@@ -62,18 +62,21 @@ def write_entry_yaml(
     created: str | None = None,
 ) -> Path:
     """Write a minimal learning entry YAML for testing."""
-    today = date.today().isoformat()
+    today = datetime.now(tz=timezone.utc).date().isoformat()
     path = entries_dir / f"{entry_id}.yaml"
-    writer.write_yaml(path, {
-        "id": entry_id,
-        "summary": summary,
-        "detail": f"detail for {entry_id}",
-        "tags": ["test"],
-        "impact": impact,
-        "status": status,
-        "last_accessed_at": last_accessed_at,
-        "created": created or today,
-    })
+    writer.write_yaml(
+        path,
+        {
+            "id": entry_id,
+            "summary": summary,
+            "detail": f"detail for {entry_id}",
+            "tags": ["test"],
+            "impact": impact,
+            "status": status,
+            "last_accessed_at": last_accessed_at,
+            "created": created or today,
+        },
+    )
     return path
 
 
@@ -92,7 +95,7 @@ def make_tier_manager(tmp_path: Path, config: TRWConfig | None = None) -> TierMa
 
 def days_ago(n: int) -> str:
     """Return ISO date string for N days ago."""
-    return (date.today() - timedelta(days=n)).isoformat()
+    return (datetime.now(tz=timezone.utc).date() - timedelta(days=n)).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +162,11 @@ class TestHotTier:
         yaml_path = entries_dir / "e0.yaml"
         writer.write_yaml(yaml_path, {"id": "e0", "summary": "evict me", "last_accessed_at": None})
 
-        mgr = TierManager(trw_dir=trw_dir, reader=reader, writer=writer,
-                          config=TRWConfig(memory_hot_max_entries=1))
+        mgr = TierManager(trw_dir=trw_dir, reader=reader, writer=writer, config=TRWConfig(memory_hot_max_entries=1))
         mgr.hot_put("e0", make_entry("e0"))
         mgr.hot_put("e1", make_entry("e1"))  # evicts e0
 
-        assert reader.read_yaml(yaml_path).get("last_accessed_at") == date.today().isoformat()
+        assert reader.read_yaml(yaml_path).get("last_accessed_at") == datetime.now(tz=timezone.utc).date().isoformat()
 
     def test_hot_eviction_no_file_is_noop(self, tmp_path: Path) -> None:
         """Eviction when no YAML file exists does not raise."""
@@ -306,7 +308,7 @@ class TestColdTier:
         mgr.cold_archive("c1", src)
 
         assert not src.exists()
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         partition = tmp_path / ".trw" / "memory" / "cold" / str(today.year) / f"{today.month:02d}"
         assert len(list(partition.glob("*.yaml"))) == 1
 
@@ -317,7 +319,7 @@ class TestColdTier:
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
         src = write_entry_yaml(entries_dir, writer, "c2")
 
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         partition = tmp_path / ".trw" / "memory" / "cold" / str(today.year) / f"{today.month:02d}"
         assert not partition.exists()
         mgr.cold_archive("c2", src)
@@ -332,7 +334,7 @@ class TestColdTier:
         src_data = reader.read_yaml(src)
         mgr.cold_archive("c3", src)
 
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         partition = tmp_path / ".trw" / "memory" / "cold" / str(today.year) / f"{today.month:02d}"
         archived_data = reader.read_yaml(list(partition.glob("*.yaml"))[0])
         assert archived_data["id"] == src_data["id"]
@@ -398,7 +400,7 @@ class TestColdTier:
         assert result is not None
         assert isinstance(result, dict)
         assert str(result.get("id", "")) == "p2"
-        assert str(result.get("last_accessed_at", "")) == date.today().isoformat()
+        assert str(result.get("last_accessed_at", "")) == datetime.now(tz=timezone.utc).date().isoformat()
 
     def test_cold_promote_removes_entry_from_cold(self, tmp_path: Path) -> None:
         """After promotion, entry is no longer in cold archive."""
@@ -428,9 +430,7 @@ class TestSweep:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
-        return trw_dir, TierManager(
-            trw_dir=trw_dir, reader=FileStateReader(), writer=FileStateWriter(), config=cfg
-        )
+        return trw_dir, TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=FileStateWriter(), config=cfg)
 
     def test_sweep_hot_to_warm(self, tmp_path: Path) -> None:
         """Stale hot entries are demoted to warm tier."""
@@ -458,8 +458,7 @@ class TestSweep:
         _reset_config(cfg)
         trw_dir, mgr = self._cold_setup(tmp_path, cfg)
         write_entry_yaml(
-            trw_dir / "learnings" / "entries", FileStateWriter(),
-            "old-low", impact=0.2, last_accessed_at=days_ago(60)
+            trw_dir / "learnings" / "entries", FileStateWriter(), "old-low", impact=0.2, last_accessed_at=days_ago(60)
         )
         result = mgr.sweep()
         assert result.demoted >= 1
@@ -475,17 +474,20 @@ class TestSweep:
         mgr.sweep()
         assert (entries_dir / "high-impact.yaml").exists()
 
-    @pytest.mark.parametrize("impact,stale_days,expect_archived", [
-        # Well above importance threshold: impact=0.8, recent recency → importance well above 0.22
-        # With default weights (w1=0.4, w2=0.3, w3=0.3) and 60 stale days:
-        # recency ≈ exp(-0.693/100 * 60) ≈ 0.659; score = 0.3*0.659 + 0.3*0.8 ≈ 0.438 > 0.22 → protected
-        (0.8, 60, False),
-        # Well below importance threshold: impact=0.01 + 200 stale days
-        # recency ≈ exp(-0.693/100 * 200) ≈ 0.25; score = 0.3*0.25 + 0.3*0.01 ≈ 0.078 < 0.22 → archived
-        (0.01, 200, True),
-        # Entry NOT stale enough: any impact, only 5 days old → cold_threshold not exceeded
-        (0.01, 5, False),
-    ])
+    @pytest.mark.parametrize(
+        "impact,stale_days,expect_archived",
+        [
+            # Well above importance threshold: impact=0.8, recent recency → importance well above 0.22
+            # With default weights (w1=0.4, w2=0.3, w3=0.3) and 60 stale days:
+            # recency ≈ exp(-0.693/100 * 60) ≈ 0.659; score = 0.3*0.659 + 0.3*0.8 ≈ 0.438 > 0.22 → protected
+            (0.8, 60, False),
+            # Well below importance threshold: impact=0.01 + 200 stale days
+            # recency ≈ exp(-0.693/100 * 200) ≈ 0.25; score = 0.3*0.25 + 0.3*0.01 ≈ 0.078 < 0.22 → archived
+            (0.01, 200, True),
+            # Entry NOT stale enough: any impact, only 5 days old → cold_threshold not exceeded
+            (0.01, 5, False),
+        ],
+    )
     def test_sweep_warm_to_cold_importance_boundary(
         self,
         tmp_path: Path,
@@ -508,20 +510,25 @@ class TestSweep:
         trw_dir.mkdir(exist_ok=True)
         (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
         mgr = TierManager(
-            trw_dir=trw_dir, reader=FileStateReader(), writer=FileStateWriter(), config=cfg,
+            trw_dir=trw_dir,
+            reader=FileStateReader(),
+            writer=FileStateWriter(),
+            config=cfg,
         )
         entries_dir = trw_dir / "learnings" / "entries"
-        entry_id = f"boundary-{int(impact*100)}-{stale_days}d"
+        entry_id = f"boundary-{int(impact * 100)}-{stale_days}d"
         write_entry_yaml(
-            entries_dir, FileStateWriter(), entry_id,
-            impact=impact, last_accessed_at=days_ago(stale_days),
+            entries_dir,
+            FileStateWriter(),
+            entry_id,
+            impact=impact,
+            last_accessed_at=days_ago(stale_days),
         )
         mgr.sweep()
         cold_base = trw_dir / "memory" / "cold"
         was_archived = cold_base.exists() and any(cold_base.rglob("*.yaml"))
         assert was_archived == expect_archived, (
-            f"impact={impact}, stale={stale_days}d: expected archived={expect_archived}, "
-            f"got archived={was_archived}"
+            f"impact={impact}, stale={stale_days}d: expected archived={expect_archived}, got archived={was_archived}"
         )
 
     def test_sweep_cold_to_purge(self, tmp_path: Path) -> None:
@@ -531,14 +538,22 @@ class TestSweep:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         writer = FileStateWriter()
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         partition = trw_dir / "memory" / "cold" / str(today.year) / f"{today.month:02d}"
         partition.mkdir(parents=True)
         cold_yaml = partition / "purge-target.yaml"
-        writer.write_yaml(cold_yaml, {
-            "id": "purge-target", "summary": "old entry", "impact": 0.1,
-            "last_accessed_at": days_ago(200), "created": days_ago(200), "status": "active", "tags": [],
-        })
+        writer.write_yaml(
+            cold_yaml,
+            {
+                "id": "purge-target",
+                "summary": "old entry",
+                "impact": 0.1,
+                "last_accessed_at": days_ago(200),
+                "created": days_ago(200),
+                "status": "active",
+                "tags": [],
+            },
+        )
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer, config=cfg)
         result = mgr.sweep()
         assert result.purged >= 1
@@ -551,14 +566,22 @@ class TestSweep:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         writer = FileStateWriter()
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         partition = trw_dir / "memory" / "cold" / str(today.year) / f"{today.month:02d}"
         partition.mkdir(parents=True)
         cold_yaml = partition / "keep-me.yaml"
-        writer.write_yaml(cold_yaml, {
-            "id": "keep-me", "summary": "recent entry", "impact": 0.1,
-            "last_accessed_at": days_ago(10), "created": days_ago(10), "status": "active", "tags": [],
-        })
+        writer.write_yaml(
+            cold_yaml,
+            {
+                "id": "keep-me",
+                "summary": "recent entry",
+                "impact": 0.1,
+                "last_accessed_at": days_ago(10),
+                "created": days_ago(10),
+                "status": "active",
+                "tags": [],
+            },
+        )
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer, config=cfg)
         result = mgr.sweep()
         assert cold_yaml.exists()
@@ -571,13 +594,21 @@ class TestSweep:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         writer = FileStateWriter()
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         partition = trw_dir / "memory" / "cold" / str(today.year) / f"{today.month:02d}"
         partition.mkdir(parents=True)
-        writer.write_yaml(partition / "audit-entry.yaml", {
-            "id": "audit-check", "summary": "audit test", "impact": 0.05,
-            "last_accessed_at": days_ago(200), "created": days_ago(200), "status": "active", "tags": [],
-        })
+        writer.write_yaml(
+            partition / "audit-entry.yaml",
+            {
+                "id": "audit-check",
+                "summary": "audit test",
+                "impact": 0.05,
+                "last_accessed_at": days_ago(200),
+                "created": days_ago(200),
+                "status": "active",
+                "tags": [],
+            },
+        )
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer, config=cfg)
         mgr.sweep()
 
@@ -621,10 +652,12 @@ class TestSweep:
         mgr.sweep()
 
         cold_base = trw_dir / "memory" / "cold"
-        cold_ids = {str(reader.read_yaml(f).get("id", ""))
-                    for f in cold_base.rglob("*.yaml")} if cold_base.exists() else set()
-        warm_ids = {str(reader.read_yaml(f).get("id", ""))
-                    for f in entries_dir.glob("*.yaml") if f.name != "index.yaml"}
+        cold_ids = (
+            {str(reader.read_yaml(f).get("id", "")) for f in cold_base.rglob("*.yaml")} if cold_base.exists() else set()
+        )
+        warm_ids = {
+            str(reader.read_yaml(f).get("id", "")) for f in entries_dir.glob("*.yaml") if f.name != "index.yaml"
+        }
 
         assert cold_ids.isdisjoint(warm_ids), f"Duplicate IDs across tiers: {cold_ids & warm_ids}"
 
@@ -655,9 +688,11 @@ class TestImportanceScoring:
 
     def _entry(self, impact: float = 0.5, last_accessed_at: str | None = None) -> dict[str, object]:
         return {
-            "id": "x", "summary": "test entry", "detail": "detail",
+            "id": "x",
+            "summary": "test entry",
+            "detail": "detail",
             "impact": impact,
-            "last_accessed_at": last_accessed_at or date.today().isoformat(),
+            "last_accessed_at": last_accessed_at or datetime.now(tz=timezone.utc).date().isoformat(),
         }
 
     def test_score_in_range_zero_to_one(self) -> None:
@@ -667,35 +702,32 @@ class TestImportanceScoring:
 
     def test_score_range_with_very_old_entry(self) -> None:
         """Score stays in [0.0, 1.0] for entries accessed 500 days ago."""
-        score = compute_importance_score(
-            self._entry(last_accessed_at=days_ago(500)), ["x"], config=TRWConfig()
-        )
+        score = compute_importance_score(self._entry(last_accessed_at=days_ago(500)), ["x"], config=TRWConfig())
         assert 0.0 <= score <= 1.0
 
     def test_relevance_ordering(self) -> None:
         """Higher token overlap → higher score when recency and importance are equal."""
         cfg = TRWConfig(memory_score_w1=0.8, memory_score_w2=0.1, memory_score_w3=0.1)
-        today = date.today().isoformat()
+        today = datetime.now(tz=timezone.utc).date().isoformat()
         hi = {"id": "hi", "summary": "pytest fixture pattern", "detail": "", "impact": 0.5, "last_accessed_at": today}
         lo = {"id": "lo", "summary": "zzz unrelated text", "detail": "", "impact": 0.5, "last_accessed_at": today}
         tokens = ["pytest", "fixture", "pattern"]
-        assert (compute_importance_score(hi, tokens, config=cfg) >
-                compute_importance_score(lo, tokens, config=cfg))
+        assert compute_importance_score(hi, tokens, config=cfg) > compute_importance_score(lo, tokens, config=cfg)
 
     def test_recency_ordering(self) -> None:
         """More recent entry scores higher when relevance and importance are equal."""
         cfg = TRWConfig(memory_score_w1=0.1, memory_score_w2=0.8, memory_score_w3=0.1)
         recent = self._entry(impact=0.5, last_accessed_at=days_ago(1))
         old = self._entry(impact=0.5, last_accessed_at=days_ago(200))
-        assert (compute_importance_score(recent, [], config=cfg) >
-                compute_importance_score(old, [], config=cfg))
+        assert compute_importance_score(recent, [], config=cfg) > compute_importance_score(old, [], config=cfg)
 
     def test_importance_ordering(self) -> None:
         """Higher impact → higher score when relevance and recency are equal."""
         cfg = TRWConfig(memory_score_w1=0.0, memory_score_w2=0.0, memory_score_w3=1.0)
-        today = date.today().isoformat()
-        assert (compute_importance_score(self._entry(impact=0.9, last_accessed_at=today), [], config=cfg) >
-                compute_importance_score(self._entry(impact=0.1, last_accessed_at=today), [], config=cfg))
+        today = datetime.now(tz=timezone.utc).date().isoformat()
+        assert compute_importance_score(
+            self._entry(impact=0.9, last_accessed_at=today), [], config=cfg
+        ) > compute_importance_score(self._entry(impact=0.1, last_accessed_at=today), [], config=cfg)
 
     def test_weight_normalization(self) -> None:
         """Non-unit weights are normalized; score stays in [0, 1]."""
@@ -706,11 +738,17 @@ class TestImportanceScoring:
     def test_token_overlap_fallback_when_no_embedding(self) -> None:
         """Token overlap is used for relevance when no embeddings provided."""
         cfg = TRWConfig(memory_score_w1=0.9, memory_score_w2=0.05, memory_score_w3=0.05)
-        today = date.today().isoformat()
-        entry = {"id": "x", "summary": "sqlalchemy orm pattern", "detail": "database access",
-                 "impact": 0.5, "last_accessed_at": today}
-        assert (compute_importance_score(entry, ["sqlalchemy", "orm"], config=cfg) >
-                compute_importance_score(entry, ["unrelated", "terms"], config=cfg))
+        today = datetime.now(tz=timezone.utc).date().isoformat()
+        entry = {
+            "id": "x",
+            "summary": "sqlalchemy orm pattern",
+            "detail": "database access",
+            "impact": 0.5,
+            "last_accessed_at": today,
+        }
+        assert compute_importance_score(entry, ["sqlalchemy", "orm"], config=cfg) > compute_importance_score(
+            entry, ["unrelated", "terms"], config=cfg
+        )
 
     def test_zero_query_tokens_returns_zero_relevance(self) -> None:
         """Empty query tokens → zero relevance component."""
@@ -721,16 +759,15 @@ class TestImportanceScoring:
         """Identical embeddings → cosine = 1.0 → score near w1."""
         cfg = TRWConfig(memory_score_w1=1.0, memory_score_w2=0.0, memory_score_w3=0.0)
         vec = [0.1] * 384
-        score = compute_importance_score(
-            self._entry(), [], query_embedding=vec, entry_embedding=vec, config=cfg
-        )
+        score = compute_importance_score(self._entry(), [], query_embedding=vec, entry_embedding=vec, config=cfg)
         assert abs(score - 1.0) < 0.01
 
     def test_antiparallel_embeddings_clamp_to_zero(self) -> None:
         """Negative cosine similarity is clamped to 0.0."""
         cfg = TRWConfig(memory_score_w1=1.0, memory_score_w2=0.0, memory_score_w3=0.0)
         score = compute_importance_score(
-            self._entry(), [],
+            self._entry(),
+            [],
             query_embedding=[1.0] + [0.0] * 383,
             entry_embedding=[-1.0] + [0.0] * 383,
             config=cfg,
@@ -748,7 +785,7 @@ class TestImportanceScoring:
     def test_impact_field_clamped_to_unit_interval(self) -> None:
         """Impact values outside [0,1] in raw dict are clamped."""
         cfg = TRWConfig(memory_score_w1=0.0, memory_score_w2=0.0, memory_score_w3=1.0)
-        today = date.today().isoformat()
+        today = datetime.now(tz=timezone.utc).date().isoformat()
         over = {"id": "x", "summary": "", "detail": "", "impact": "2.5", "last_accessed_at": today}
         under = {"id": "y", "summary": "", "detail": "", "impact": "-0.5", "last_accessed_at": today}
         assert compute_importance_score(over, [], config=cfg) <= 1.0
@@ -893,8 +930,11 @@ class TestSweepWarmToColdSQLite:
         # Write YAML file so cold_archive can find it
         writer = FileStateWriter()
         write_entry_yaml(
-            entries_dir, writer, "sqlite-old",
-            impact=0.2, last_accessed_at=days_ago(60),
+            entries_dir,
+            writer,
+            "sqlite-old",
+            impact=0.2,
+            last_accessed_at=days_ago(60),
         )
 
         # Mock list_active_learnings to return entry data from "SQLite"
@@ -911,12 +951,15 @@ class TestSweepWarmToColdSQLite:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.memory_adapter.list_active_learnings",
-            return_value=fake_entries,
-        ) as mock_sqlite, patch(
-            "trw_mcp.state.memory_adapter.find_yaml_path_for_entry",
-            return_value=entries_dir / "sqlite-old.yaml",
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.list_active_learnings",
+                return_value=fake_entries,
+            ) as mock_sqlite,
+            patch(
+                "trw_mcp.state.memory_adapter.find_yaml_path_for_entry",
+                return_value=entries_dir / "sqlite-old.yaml",
+            ),
         ):
             mgr = TierManager(
                 trw_dir=trw_dir,
@@ -940,8 +983,11 @@ class TestSweepWarmToColdSQLite:
 
         writer = FileStateWriter()
         write_entry_yaml(
-            entries_dir, writer, "yaml-old",
-            impact=0.2, last_accessed_at=days_ago(60),
+            entries_dir,
+            writer,
+            "yaml-old",
+            impact=0.2,
+            last_accessed_at=days_ago(60),
         )
 
         with patch(
@@ -981,12 +1027,15 @@ class TestSweepWarmToColdSQLite:
             },
         ]
 
-        with patch(
-            "trw_mcp.state.memory_adapter.list_active_learnings",
-            return_value=fake_entries,
-        ), patch(
-            "trw_mcp.state.memory_adapter.find_yaml_path_for_entry",
-            return_value=None,  # No YAML file found
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.list_active_learnings",
+                return_value=fake_entries,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.find_yaml_path_for_entry",
+                return_value=None,  # No YAML file found
+            ),
         ):
             mgr = TierManager(
                 trw_dir=trw_dir,
@@ -1007,15 +1056,22 @@ class TestSweepWarmToColdSQLite:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         writer = FileStateWriter()
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
         partition = trw_dir / "memory" / "cold" / str(today.year) / f"{today.month:02d}"
         partition.mkdir(parents=True)
         cold_yaml = partition / "purge-target.yaml"
-        writer.write_yaml(cold_yaml, {
-            "id": "purge-target", "summary": "old entry", "impact": 0.1,
-            "last_accessed_at": days_ago(200), "created": days_ago(200),
-            "status": "active", "tags": [],
-        })
+        writer.write_yaml(
+            cold_yaml,
+            {
+                "id": "purge-target",
+                "summary": "old entry",
+                "impact": 0.1,
+                "last_accessed_at": days_ago(200),
+                "created": days_ago(200),
+                "status": "active",
+                "tags": [],
+            },
+        )
 
         # Even with SQLite patched to fail, Cold→Purge should still work
         with patch(
@@ -1060,27 +1116,35 @@ class TestAssignImpactTiers:
     ) -> Path:
         """Write a minimal entry YAML for tier assignment tests."""
         path = entries_dir / f"{entry_id}.yaml"
-        writer.write_yaml(path, {
-            "id": entry_id,
-            "summary": f"summary for {entry_id}",
-            "detail": f"detail for {entry_id}",
-            "tags": ["test"],
-            "impact": impact,
-            "status": status,
-        })
+        writer.write_yaml(
+            path,
+            {
+                "id": entry_id,
+                "summary": f"summary for {entry_id}",
+                "detail": f"detail for {entry_id}",
+                "tags": ["test"],
+                "impact": impact,
+                "status": status,
+            },
+        )
         return path
 
     def test_assign_impact_tiers_critical(self, tmp_path: Path) -> None:
         """Entry with impact=0.95 gets tier='critical' (>= 0.9 boundary)."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-crit", impact=0.95)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "e-crit", "impact": 0.95, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "e-crit", "impact": 0.95, "status": "active"},
+            ],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["critical"] == 1
@@ -1088,14 +1152,19 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_high(self, tmp_path: Path) -> None:
         """Entry with impact=0.75 gets tier='high' (>= 0.7, < 0.9)."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-high", impact=0.75)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "e-high", "impact": 0.75, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "e-high", "impact": 0.75, "status": "active"},
+            ],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["high"] == 1
@@ -1103,14 +1172,19 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_medium(self, tmp_path: Path) -> None:
         """Entry with impact=0.5 gets tier='medium' (>= 0.4, < 0.7)."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-med", impact=0.5)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "e-med", "impact": 0.5, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "e-med", "impact": 0.5, "status": "active"},
+            ],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["medium"] == 1
@@ -1118,14 +1192,19 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_low(self, tmp_path: Path) -> None:
         """Entry with impact=0.2 gets tier='low' (< 0.4)."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-low", impact=0.2)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "e-low", "impact": 0.2, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "e-low", "impact": 0.2, "status": "active"},
+            ],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["low"] == 1
@@ -1133,14 +1212,19 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_boundary_at_0_9(self, tmp_path: Path) -> None:
         """Entry with impact exactly 0.9 gets tier='critical'."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-boundary-crit", impact=0.9)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "e-boundary-crit", "impact": 0.9, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "e-boundary-crit", "impact": 0.9, "status": "active"},
+            ],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["critical"] == 1
@@ -1148,14 +1232,19 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_boundary_at_0_7(self, tmp_path: Path) -> None:
         """Entry with impact exactly 0.7 gets tier='high'."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-boundary-high", impact=0.7)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "e-boundary-high", "impact": 0.7, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "e-boundary-high", "impact": 0.7, "status": "active"},
+            ],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["high"] == 1
@@ -1163,7 +1252,9 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_idempotent(self, tmp_path: Path) -> None:
         """Running assign_impact_tiers twice produces the same distribution."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-idem", impact=0.8)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
@@ -1179,15 +1270,20 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_writes_yaml(self, tmp_path: Path) -> None:
         """After assignment, the YAML file contains the correct impact_tier field."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         reader = FileStateReader()
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         self._write_entry(entries_dir, writer, "e-yaml", impact=0.92)
         mgr = TierManager(trw_dir=trw_dir, reader=reader, writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "e-yaml", "impact": 0.92, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "e-yaml", "impact": 0.92, "status": "active"},
+            ],
+        ):
             mgr.assign_impact_tiers(trw_dir)
 
         data = reader.read_yaml(entries_dir / "e-yaml.yaml")
@@ -1196,7 +1292,9 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_distribution_sums_to_entry_count(self, tmp_path: Path) -> None:
         """Distribution counts sum to total number of active entries processed."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         for eid, imp in [("e1", 0.95), ("e2", 0.75), ("e3", 0.5), ("e4", 0.2)]:
             self._write_entry(entries_dir, writer, eid, impact=imp)
@@ -1221,13 +1319,18 @@ class TestAssignImpactTiers:
     def test_assign_impact_tiers_skips_missing_yaml(self, tmp_path: Path) -> None:
         """Entry in SQLite but with no YAML file on disk is skipped gracefully."""
         from unittest.mock import patch
+
         from trw_mcp.state.tiers import TierManager
+
         trw_dir, entries_dir, writer = self._setup_entries_dir(tmp_path)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[
-            {"id": "missing-yaml-entry", "impact": 0.8, "status": "active"},
-        ]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[
+                {"id": "missing-yaml-entry", "impact": 0.8, "status": "active"},
+            ],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert sum(dist.values()) == 0
@@ -1235,12 +1338,15 @@ class TestAssignImpactTiers:
     def test_impact_tier_field_default_is_question_mark(self) -> None:
         """LearningEntry.impact_tier defaults to '?' when not set (FR02)."""
         from trw_mcp.models.learning import LearningEntry
+
         entry = LearningEntry(id="test", summary="x", detail="y")
         assert entry.impact_tier == "?"
 
     def test_impact_tier_invalid_value_raises(self) -> None:
         """LearningEntry with invalid impact_tier raises ValidationError (Literal type)."""
         from pydantic import ValidationError
+
         from trw_mcp.models.learning import LearningEntry
+
         with pytest.raises(ValidationError):
             LearningEntry(id="t", summary="x", detail="y", impact_tier="invalid")  # type: ignore[arg-type]

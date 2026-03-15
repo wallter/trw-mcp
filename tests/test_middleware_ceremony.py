@@ -205,7 +205,8 @@ class TestCeremonyMiddleware:
 
     @pytest.mark.asyncio
     async def test_non_ceremony_tool_without_ceremony_gets_warning(
-        self, middleware: CeremonyMiddleware,
+        self,
+        middleware: CeremonyMiddleware,
     ) -> None:
         """Non-exempt tool called before ceremony gets warning prepended."""
         result = FakeToolResult(content=[TextContent(type="text", text="status result")])
@@ -226,7 +227,8 @@ class TestCeremonyMiddleware:
 
     @pytest.mark.asyncio
     async def test_non_ceremony_tool_after_ceremony_no_warning(
-        self, middleware: CeremonyMiddleware,
+        self,
+        middleware: CeremonyMiddleware,
     ) -> None:
         """Non-exempt tool called AFTER ceremony has no warning."""
         start_result = FakeToolResult(content=[TextContent(type="text", text="started")])

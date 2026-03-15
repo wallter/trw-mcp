@@ -8,15 +8,15 @@ applying status updates, and extracting learnings (mechanical + LLM).
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
 
 import trw_mcp.state.analytics.core as _ac
 from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.models.learning import LearningEntry, LearningStatus
+from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
@@ -57,18 +57,21 @@ def surface_validated_learnings(
     # Primary: read from SQLite via adapter
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
+
         all_active = list_active_learnings(trw_dir)
         for entry in all_active:
             q_value = float(str(entry.get("q_value", 0.0)))
             q_observations = int(str(entry.get("q_observations", 0)))
             if q_value >= q_threshold and q_observations >= cold_start_threshold:
-                validated.append({
-                    "learning_id": str(entry.get("id", "")),
-                    "summary": str(entry.get("summary", "")),
-                    "q_value": q_value,
-                    "q_observations": q_observations,
-                    "tags": entry.get("tags", []),
-                })
+                validated.append(
+                    {
+                        "learning_id": str(entry.get("id", "")),
+                        "summary": str(entry.get("summary", "")),
+                        "q_value": q_value,
+                        "q_observations": q_observations,
+                        "tags": entry.get("tags", []),
+                    }
+                )
         validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
         return validated
     except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
@@ -87,13 +90,15 @@ def surface_validated_learnings(
         q_observations = _ac._safe_int(data, "q_observations")
 
         if q_value >= q_threshold and q_observations >= cold_start_threshold:
-            validated.append({
-                "learning_id": str(data.get("id", "")),
-                "summary": str(data.get("summary", "")),
-                "q_value": q_value,
-                "q_observations": q_observations,
-                "tags": data.get("tags", []),
-            })
+            validated.append(
+                {
+                    "learning_id": str(data.get("id", "")),
+                    "summary": str(data.get("summary", "")),
+                    "q_value": q_value,
+                    "q_observations": q_observations,
+                    "tags": data.get("tags", []),
+                }
+            )
 
     validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
     return validated
@@ -120,6 +125,7 @@ def has_existing_success_learning(
     # Check SQLite first, then YAML (entries may exist in either during migration)
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
+
         all_active = list_active_learnings(trw_dir)
         for entry in all_active:
             if str(entry.get("summary", ""))[:50].lower() == target:
@@ -133,8 +139,7 @@ def has_existing_success_learning(
         return False
 
     return any(
-        str(data.get("summary", ""))[:50].lower() == target
-        for _path, data in _ac._iter_entry_files(entries_dir)
+        str(data.get("summary", ""))[:50].lower() == target for _path, data in _ac._iter_entry_files(entries_dir)
     )
 
 
@@ -157,6 +162,7 @@ def has_existing_mechanical_learning(
     # Check SQLite first, then YAML fallback (entries may exist in either during migration)
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
+
         all_active = list_active_learnings(trw_dir)
         target = prefix.lower()
         for entry in all_active:
@@ -206,7 +212,7 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     if inferred:
         entry = entry.model_copy(update={"tags": list(entry.tags) + inferred})
 
-    raw = entry.summary[:_ac._SLUG_MAX_LEN].lower()
+    raw = entry.summary[: _ac._SLUG_MAX_LEN].lower()
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
     filename = f"{entry.created.isoformat()}-{slug}.yaml"
     entry_path = _ac._entries_path(trw_dir) / filename
@@ -238,21 +244,21 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
             index_data = reader.read_yaml(index_path)
 
         raw = index_data.get("entries", [])
-        entries: list[dict[str, object]] = (
-            [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
-        )
+        entries: list[dict[str, object]] = [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
 
-        entries.append({
-            "id": entry.id,
-            "summary": entry.summary,
-            "tags": entry.tags,
-            "impact": entry.impact,
-            "created": entry.created.isoformat(),
-        })
+        entries.append(
+            {
+                "id": entry.id,
+                "summary": entry.summary,
+                "tags": entry.tags,
+                "impact": entry.impact,
+                "created": entry.created.isoformat(),
+            }
+        )
 
         if len(entries) > cfg.learning_max_entries:
             entries.sort(key=lambda e: float(str(e.get("impact", 0.0))))
-            entries = entries[-cfg.learning_max_entries:]
+            entries = entries[-cfg.learning_max_entries :]
 
         index_data["entries"] = entries
         index_data["total_count"] = len(entries)
@@ -274,14 +280,16 @@ def resync_learning_index(trw_dir: Path) -> None:
     entries: list[dict[str, object]] = []
     if entries_dir.exists():
         for _path, data in _ac._iter_entry_files(entries_dir, sorted_order=True):
-            entries.append({
-                "id": data.get("id", ""),
-                "summary": data.get("summary", ""),
-                "tags": data.get("tags", []),
-                "impact": data.get("impact", 0.5),
-                "status": data.get("status", "active"),
-                "created": str(data.get("created", "")),
-            })
+            entries.append(
+                {
+                    "id": data.get("id", ""),
+                    "summary": data.get("summary", ""),
+                    "tags": data.get("tags", []),
+                    "impact": data.get("impact", 0.5),
+                    "status": data.get("status", "active"),
+                    "created": str(data.get("created", "")),
+                }
+            )
 
     index_data: dict[str, object] = {
         "entries": entries,
@@ -307,6 +315,7 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
     # Primary: update in SQLite
     try:
         from trw_mcp.state.memory_adapter import get_backend
+
         backend = get_backend(trw_dir)
         entry = backend.get(learning_id)
         if entry is not None:
@@ -343,9 +352,9 @@ def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> Non
     if found is not None:
         entry_file, data = found
         data["status"] = new_status
-        data["updated"] = date.today().isoformat()
+        data["updated"] = datetime.now(tz=timezone.utc).date().isoformat()
         if new_status == LearningStatus.RESOLVED.value:
-            data["resolved_at"] = date.today().isoformat()
+            data["resolved_at"] = datetime.now(tz=timezone.utc).date().isoformat()
         FileStateWriter().write_yaml(entry_file, data)
 
 
@@ -493,7 +502,7 @@ def backfill_source_attribution(
         if not dry_run:
             data["source_type"] = "agent"
             data["source_identity"] = ""
-            data["updated"] = date.today().isoformat()
+            data["updated"] = datetime.now(tz=timezone.utc).date().isoformat()
             FileStateWriter().write_yaml(entry_file, data)
         updated += 1
 

@@ -60,9 +60,7 @@ def trw_dir(tmp_path: Path) -> Path:
 class TestEmbedText:
     def test_returns_none_when_embedder_unavailable(self) -> None:
         """embed_text returns None when get_embedder() returns None."""
-        with patch(
-            "trw_mcp.state.memory_adapter.get_embedder", return_value=None
-        ):
+        with patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None):
             result = embed_text("some text")
             assert result is None
 
@@ -139,9 +137,7 @@ class TestEmbedTextBatch:
 
     def test_returns_none_list_when_embedder_unavailable(self) -> None:
         """embed_text_batch returns [None, None, ...] when embedder is None."""
-        with patch(
-            "trw_mcp.state.memory_adapter.get_embedder", return_value=None
-        ):
+        with patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None):
             result = embed_text_batch(["a", "b", "c"])
             assert result == [None, None, None]
 
@@ -245,10 +241,23 @@ class TestMemoryToLearningDict:
         entry = self._make_entry()
         result = _memory_to_learning_dict(entry, compact=False)
         expected_keys = {
-            "id", "summary", "tags", "impact", "status",
-            "detail", "evidence", "source_type", "source_identity",
-            "created", "updated", "access_count", "last_accessed_at",
-            "q_value", "q_observations", "recurrence", "shard_id",
+            "id",
+            "summary",
+            "tags",
+            "impact",
+            "status",
+            "detail",
+            "evidence",
+            "source_type",
+            "source_identity",
+            "created",
+            "updated",
+            "access_count",
+            "last_accessed_at",
+            "q_value",
+            "q_observations",
+            "recurrence",
+            "shard_id",
             "outcome_history",
         }
         assert expected_keys == set(result.keys())
@@ -358,8 +367,11 @@ class TestLearningToMemoryEntry:
     def test_default_tags_and_evidence(self) -> None:
         """None tags/evidence default to empty lists."""
         entry = _learning_to_memory_entry(
-            "L-def001", "s", "d",
-            tags=None, evidence=None,
+            "L-def001",
+            "s",
+            "d",
+            tags=None,
+            evidence=None,
         )
         assert entry.tags == []
         assert entry.evidence == []
@@ -448,7 +460,8 @@ class TestUpdateLearningMultiChange:
         """Updating status, detail, summary, and impact in one call."""
         store_learning(trw_dir, "L-mc1", "Original summary", "Original detail", impact=0.5)
         result = update_learning(
-            trw_dir, "L-mc1",
+            trw_dir,
+            "L-mc1",
             status="resolved",
             detail="New detail",
             summary="New summary",
@@ -543,14 +556,14 @@ class TestResetIdempotency:
 
     def test_reset_backend_also_resets_embedder(self) -> None:
         """reset_backend() calls reset_embedder() internally."""
-        with patch(
-            "trw_mcp.state.memory_adapter.reset_embedder"
-        ) as mock_reset_emb:
+        with patch("trw_mcp.state.memory_adapter.reset_embedder") as mock_reset_emb:
             # We can't directly call reset_backend here because it would
             # actually call reset_embedder. Instead verify the relationship.
-            from trw_mcp.state import memory_adapter
             # Verify the function calls reset_embedder by inspecting source
             import inspect
+
+            from trw_mcp.state import memory_adapter
+
             source = inspect.getsource(memory_adapter.reset_backend)
             assert "reset_embedder" in source
 
@@ -643,9 +656,7 @@ class TestListActiveLearningsBoundary:
 class TestStoreLearningEmbedding:
     def test_embed_input_is_summary_plus_detail(self, trw_dir: Path) -> None:
         """store_learning passes 'summary detail' to _embed_and_store."""
-        with patch(
-            "trw_mcp.state.memory_adapter._embed_and_store"
-        ) as mock_embed:
+        with patch("trw_mcp.state.memory_adapter._embed_and_store") as mock_embed:
             with patch(
                 "trw_mcp.state.analytics.infer_topic_tags",
                 return_value=[],

@@ -20,6 +20,7 @@ from trw_mcp.state.receipts import log_recall_receipt, prune_recall_receipts
 
 def _receipt_path(trw_dir: Path, config: TRWConfig | None = None) -> Path:
     from trw_mcp.models.config import get_config
+
     cfg = config or get_config()
     return trw_dir / cfg.learnings_dir / cfg.receipts_dir / "recall_log.jsonl"
 
@@ -70,9 +71,7 @@ class TestLogRecallReceipt:
     def test_shard_id_included_when_provided(self, tmp_project: Path) -> None:
         """Shard ID is included in the record when provided."""
         trw_dir = tmp_project / ".trw"
-        log_recall_receipt(
-            trw_dir, query="test", matched_ids=["L-aaa"], shard_id="shard-01"
-        )
+        log_recall_receipt(trw_dir, query="test", matched_ids=["L-aaa"], shard_id="shard-01")
 
         path = _receipt_path(trw_dir)
         record = json.loads(path.read_text().strip())
@@ -114,6 +113,7 @@ class TestLogRecallReceipt:
         path = _receipt_path(trw_dir)
         record = json.loads(path.read_text().strip())
         from datetime import datetime
+
         # Should not raise
         dt = datetime.fromisoformat(record["ts"])
         assert dt.tzinfo is not None  # timezone-aware
@@ -148,9 +148,7 @@ class TestPruneRecallReceipts:
         removed = prune_recall_receipts(trw_dir)
         assert removed == 0
 
-    def test_over_limit_prunes_oldest(
-        self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_over_limit_prunes_oldest(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Prunes oldest records, keeping only the most recent `limit` entries."""
         trw_dir = tmp_project / ".trw"
 
@@ -175,9 +173,7 @@ class TestPruneRecallReceipts:
         assert "q2" in queries
         assert "q4" in queries
 
-    def test_prune_at_exact_limit(
-        self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_prune_at_exact_limit(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When records == limit, no pruning occurs."""
         trw_dir = tmp_project / ".trw"
 
@@ -190,9 +186,7 @@ class TestPruneRecallReceipts:
         removed = prune_recall_receipts(trw_dir)
         assert removed == 0
 
-    def test_prune_limit_one_keeps_latest(
-        self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_prune_limit_one_keeps_latest(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Limit of 1 keeps only the most recent record."""
         trw_dir = tmp_project / ".trw"
 

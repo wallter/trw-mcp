@@ -25,11 +25,13 @@ from mcp.types import CallToolRequestParams, TextContent
 _session_state: dict[str, bool] = {}
 
 # Tools that ARE the ceremony — calling them marks the session as active.
-CEREMONY_TOOLS: frozenset[str] = frozenset({
-    "trw_session_start",
-    "trw_init",
-    "trw_recall",
-})
+CEREMONY_TOOLS: frozenset[str] = frozenset(
+    {
+        "trw_session_start",
+        "trw_init",
+        "trw_recall",
+    }
+)
 
 # Warning prepended to every non-exempt tool response when ceremony
 # has not been run. Value-oriented framing — explains what the agent gains

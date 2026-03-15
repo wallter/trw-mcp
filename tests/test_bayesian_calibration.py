@@ -67,13 +67,16 @@ def test_bayesian_calibrate_default_weights() -> None:
     assert result == pytest.approx(0.7, abs=1e-6)
 
 
-@pytest.mark.parametrize("user_impact,org_mean,user_weight,org_weight,expected", [
-    (0.0, 0.5, 1.0, 1.0, 0.25),
-    (1.0, 0.5, 1.0, 1.0, 0.75),
-    (0.5, 0.5, 1.0, 1.0, 0.5),
-    (0.9, 0.4, 1.0, 0.5, pytest.approx((0.9 + 0.2) / 1.5, abs=1e-6)),
-    (0.3, 0.7, 2.0, 1.0, pytest.approx((0.6 + 0.7) / 3.0, abs=1e-6)),
-])
+@pytest.mark.parametrize(
+    "user_impact,org_mean,user_weight,org_weight,expected",
+    [
+        (0.0, 0.5, 1.0, 1.0, 0.25),
+        (1.0, 0.5, 1.0, 1.0, 0.75),
+        (0.5, 0.5, 1.0, 1.0, 0.5),
+        (0.9, 0.4, 1.0, 0.5, pytest.approx((0.9 + 0.2) / 1.5, abs=1e-6)),
+        (0.3, 0.7, 2.0, 1.0, pytest.approx((0.6 + 0.7) / 3.0, abs=1e-6)),
+    ],
+)
 def test_bayesian_calibrate_parametrized(
     user_impact: float,
     org_mean: float,

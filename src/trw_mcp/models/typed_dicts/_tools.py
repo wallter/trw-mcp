@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from typing import TypedDict
+
 from typing_extensions import NotRequired
 
 from trw_mcp.models.typed_dicts._ceremony import AutoRecalledItemDict
-from trw_mcp.models.typed_dicts._learning import LearningEntryDict
-
 
 # ---------------------------------------------------------------------------
 # trw_usage_report shapes

@@ -26,7 +26,6 @@ import time
 from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
@@ -40,7 +39,6 @@ from trw_mcp.state.persistence import (
     model_to_dict,
 )
 
-
 # ---------------------------------------------------------------------------
 # FileStateReader: malformed YAML syntax
 # ---------------------------------------------------------------------------
@@ -49,9 +47,7 @@ from trw_mcp.state.persistence import (
 class TestReadYamlMalformedSyntax:
     """read_yaml wraps YAML syntax errors as StateError."""
 
-    def test_unclosed_bracket_raises_state_error(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_unclosed_bracket_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Unclosed YAML flow sequence produces a parse error wrapped in StateError."""
         bad_yaml = tmp_path / "bad.yaml"
         bad_yaml.write_text("items: [a, b, c\n", encoding="utf-8")
@@ -59,9 +55,7 @@ class TestReadYamlMalformedSyntax:
         with pytest.raises(StateError, match="Failed to read YAML"):
             reader.read_yaml(bad_yaml)
 
-    def test_invalid_indentation_raises_state_error(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_invalid_indentation_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """YAML with bad indentation that causes a parse error is wrapped."""
         bad_yaml = tmp_path / "indent.yaml"
         bad_yaml.write_text("key:\n  sub: 1\n sub2: 2\n", encoding="utf-8")
@@ -75,9 +69,7 @@ class TestReadYamlMalformedSyntax:
         except StateError:
             pass  # Expected — malformed YAML wrapped correctly
 
-    def test_tab_characters_in_yaml_raises_state_error(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_tab_characters_in_yaml_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """YAML with tab indentation (forbidden by spec) raises StateError."""
         bad_yaml = tmp_path / "tabs.yaml"
         bad_yaml.write_text("key:\n\tvalue: 1\n", encoding="utf-8")
@@ -85,9 +77,7 @@ class TestReadYamlMalformedSyntax:
         with pytest.raises(StateError, match="Failed to read YAML"):
             reader.read_yaml(bad_yaml)
 
-    def test_duplicate_key_yaml_raises_state_error(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_duplicate_key_yaml_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """YAML with duplicate keys raises StateError (ruamel strict mode)."""
         yaml_file = tmp_path / "dup.yaml"
         yaml_file.write_text("key: first\nkey: second\n", encoding="utf-8")
@@ -104,9 +94,7 @@ class TestReadYamlMalformedSyntax:
 class TestReadYamlUnicode:
     """read_yaml handles unicode content correctly."""
 
-    def test_unicode_values_preserved(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_unicode_values_preserved(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Unicode characters in values survive write/read roundtrip."""
         yaml_file = tmp_path / "unicode.yaml"
         data: dict[str, object] = {
@@ -121,9 +109,7 @@ class TestReadYamlUnicode:
         assert result["emoji"] == "⚡ lightning"
         assert result["math"] == "∑(x²)"
 
-    def test_unicode_keys_preserved(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_unicode_keys_preserved(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Unicode characters in keys survive write/read roundtrip."""
         yaml_file = tmp_path / "ukeys.yaml"
         data: dict[str, object] = {"schlüssel": "wert", "ключ": "значение"}
@@ -142,9 +128,7 @@ class TestReadYamlUnicode:
 class TestWriteReadYamlRoundtrip:
     """write_yaml followed by read_yaml preserves data types."""
 
-    def test_nested_dict_roundtrip(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_nested_dict_roundtrip(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Nested dictionaries survive a write/read cycle."""
         yaml_file = tmp_path / "nested.yaml"
         data: dict[str, object] = {
@@ -164,18 +148,14 @@ class TestWriteReadYamlRoundtrip:
         assert level1["level2"]["flag"] is True
         assert list(level1["items"]) == ["a", "b", "c"]
 
-    def test_empty_dict_roundtrip(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_empty_dict_roundtrip(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """An empty dict written and read back returns empty dict."""
         yaml_file = tmp_path / "empty.yaml"
         writer.write_yaml(yaml_file, {})
         result = reader.read_yaml(yaml_file)
         assert result == {}
 
-    def test_numeric_types_roundtrip(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_numeric_types_roundtrip(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Integer and float values are preserved through YAML roundtrip."""
         yaml_file = tmp_path / "nums.yaml"
         data: dict[str, object] = {
@@ -192,9 +172,7 @@ class TestWriteReadYamlRoundtrip:
         assert abs(float(str(result["float_val"])) - 3.14) < 0.001
         assert result["zero"] == 0
 
-    def test_none_value_roundtrip(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_none_value_roundtrip(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """None values are preserved through YAML roundtrip (as null)."""
         yaml_file = tmp_path / "nulls.yaml"
         data: dict[str, object] = {"present": "yes", "absent": None}
@@ -204,9 +182,7 @@ class TestWriteReadYamlRoundtrip:
         assert result["present"] == "yes"
         assert result["absent"] is None
 
-    def test_write_yaml_creates_parent_directories(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_write_yaml_creates_parent_directories(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """write_yaml creates missing parent directories automatically."""
         deep_path = tmp_path / "a" / "b" / "c" / "data.yaml"
         assert not deep_path.parent.exists()
@@ -251,9 +227,7 @@ class TestAppendJsonlEdgeCases:
         assert len(records) == 3
         assert [r["seq"] for r in records] == [1, 2, 3]
 
-    def test_append_jsonl_creates_parent_dirs(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_append_jsonl_creates_parent_dirs(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """append_jsonl creates missing parent directories."""
         deep_path = tmp_path / "logs" / "sub" / "events.jsonl"
         assert not deep_path.parent.exists()
@@ -265,18 +239,14 @@ class TestAppendJsonlEdgeCases:
         record = json.loads(content)
         assert record["event"] == "test"
 
-    def test_append_jsonl_non_serializable_raises_state_error(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_append_jsonl_non_serializable_raises_state_error(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Non-serializable value (set) in record raises StateError."""
         jsonl_file = tmp_path / "bad.jsonl"
 
         with pytest.raises(StateError, match="Failed to append JSONL"):
             writer.append_jsonl(jsonl_file, {"data": {1, 2, 3}})
 
-    def test_append_jsonl_date_value_serialized(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_append_jsonl_date_value_serialized(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """date objects in record values are serialized via json_serializer."""
         jsonl_file = tmp_path / "dates.jsonl"
         d = date(2026, 3, 11)
@@ -315,9 +285,7 @@ class TestAppendJsonlEdgeCases:
 class TestWriteTextEdgeCases:
     """Edge cases for FileStateWriter.write_text."""
 
-    def test_write_text_creates_parent_directories(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_write_text_creates_parent_directories(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """write_text creates missing parent directories."""
         deep_path = tmp_path / "x" / "y" / "z" / "file.md"
         assert not deep_path.parent.exists()
@@ -326,9 +294,7 @@ class TestWriteTextEdgeCases:
         assert deep_path.exists()
         assert deep_path.read_text(encoding="utf-8") == "# Hello\n"
 
-    def test_write_text_overwrites_atomically(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_write_text_overwrites_atomically(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """write_text replaces file content completely."""
         text_file = tmp_path / "doc.txt"
         writer.write_text(text_file, "version one")
@@ -336,9 +302,7 @@ class TestWriteTextEdgeCases:
 
         assert text_file.read_text(encoding="utf-8") == "version two"
 
-    def test_write_text_empty_string(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_write_text_empty_string(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """write_text with empty string creates an empty file."""
         text_file = tmp_path / "empty.txt"
         writer.write_text(text_file, "")
@@ -346,9 +310,7 @@ class TestWriteTextEdgeCases:
         assert text_file.exists()
         assert text_file.read_text(encoding="utf-8") == ""
 
-    def test_write_text_unicode_content(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_write_text_unicode_content(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """write_text preserves unicode content."""
         text_file = tmp_path / "unicode.txt"
         content = "日本語テスト — ñ — ö — ∞"
@@ -356,9 +318,7 @@ class TestWriteTextEdgeCases:
 
         assert text_file.read_text(encoding="utf-8") == content
 
-    def test_write_text_multiline(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_write_text_multiline(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """write_text handles multiline content with mixed line endings."""
         text_file = tmp_path / "multi.txt"
         content = "line1\nline2\nline3\n"
@@ -387,9 +347,7 @@ class TestFileEventLoggerEdgeCases:
         assert record["event"] == "test_event"
         assert record["key"] == "val"
 
-    def test_event_has_iso_timestamp_with_timezone(
-        self, tmp_path: Path, event_logger: FileEventLogger
-    ) -> None:
+    def test_event_has_iso_timestamp_with_timezone(self, tmp_path: Path, event_logger: FileEventLogger) -> None:
         """Event record contains ISO 8601 timestamp with UTC timezone."""
         events_path = tmp_path / "events.jsonl"
         event_logger.log_event(events_path, "ts_check", {})
@@ -402,9 +360,7 @@ class TestFileEventLoggerEdgeCases:
         parsed = datetime.fromisoformat(ts)
         assert parsed.tzinfo is not None  # Has timezone
 
-    def test_data_keys_merged_into_record(
-        self, tmp_path: Path, event_logger: FileEventLogger
-    ) -> None:
+    def test_data_keys_merged_into_record(self, tmp_path: Path, event_logger: FileEventLogger) -> None:
         """Additional data keys are merged alongside ts and event."""
         events_path = tmp_path / "events.jsonl"
         event_logger.log_event(
@@ -587,9 +543,7 @@ class TestLockForRmwReadModifyWrite:
 class TestReadJsonlAdditionalEdges:
     """Additional read_jsonl edge cases."""
 
-    def test_integer_json_line_skipped(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_integer_json_line_skipped(self, tmp_path: Path, reader: FileStateReader) -> None:
         """A bare integer on a JSONL line is skipped (not a dict)."""
         jsonl_file = tmp_path / "ints.jsonl"
         jsonl_file.write_text('{"a": 1}\n42\n{"b": 2}\n', encoding="utf-8")
@@ -599,9 +553,7 @@ class TestReadJsonlAdditionalEdges:
         assert records[0]["a"] == 1
         assert records[1]["b"] == 2
 
-    def test_null_json_line_skipped(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_null_json_line_skipped(self, tmp_path: Path, reader: FileStateReader) -> None:
         """A bare null on a JSONL line is skipped."""
         jsonl_file = tmp_path / "nulls.jsonl"
         jsonl_file.write_text('{"ok": true}\nnull\n', encoding="utf-8")
@@ -610,9 +562,7 @@ class TestReadJsonlAdditionalEdges:
         assert len(records) == 1
         assert records[0]["ok"] is True
 
-    def test_boolean_json_line_skipped(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_boolean_json_line_skipped(self, tmp_path: Path, reader: FileStateReader) -> None:
         """A bare boolean on a JSONL line is skipped."""
         jsonl_file = tmp_path / "bools.jsonl"
         jsonl_file.write_text('true\n{"valid": 1}\nfalse\n', encoding="utf-8")
@@ -621,21 +571,15 @@ class TestReadJsonlAdditionalEdges:
         assert len(records) == 1
         assert records[0]["valid"] == 1
 
-    def test_whitespace_only_lines_skipped(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_whitespace_only_lines_skipped(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Lines containing only spaces and tabs are skipped."""
         jsonl_file = tmp_path / "ws.jsonl"
-        jsonl_file.write_text(
-            '{"a": 1}\n   \t  \n{"b": 2}\n', encoding="utf-8"
-        )
+        jsonl_file.write_text('{"a": 1}\n   \t  \n{"b": 2}\n', encoding="utf-8")
 
         records = reader.read_jsonl(jsonl_file)
         assert len(records) == 2
 
-    def test_large_record_roundtrip(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
+    def test_large_record_roundtrip(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """A record with many keys survives append/read cycle."""
         jsonl_file = tmp_path / "large.jsonl"
         big_record: dict[str, object] = {f"key_{i}": i for i in range(200)}
@@ -692,17 +636,13 @@ class TestExistsEdgeCases:
         f.write_text("content", encoding="utf-8")
         assert reader.exists(f) is True
 
-    def test_exists_for_directory(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_exists_for_directory(self, tmp_path: Path, reader: FileStateReader) -> None:
         """exists() returns True for a directory."""
         d = tmp_path / "subdir"
         d.mkdir()
         assert reader.exists(d) is True
 
-    def test_exists_for_symlink(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_exists_for_symlink(self, tmp_path: Path, reader: FileStateReader) -> None:
         """exists() returns True for a valid symlink."""
         target = tmp_path / "target.txt"
         target.write_text("data", encoding="utf-8")
@@ -710,9 +650,7 @@ class TestExistsEdgeCases:
         link.symlink_to(target)
         assert reader.exists(link) is True
 
-    def test_exists_for_broken_symlink(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_exists_for_broken_symlink(self, tmp_path: Path, reader: FileStateReader) -> None:
         """exists() returns False for a broken symlink."""
         target = tmp_path / "gone.txt"
         target.write_text("data", encoding="utf-8")

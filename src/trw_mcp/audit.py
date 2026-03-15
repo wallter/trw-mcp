@@ -17,16 +17,6 @@ from pathlib import Path
 from typing import cast
 
 from trw_mcp.models.config import TRWConfig, _reset_config
-from trw_mcp.state._helpers import load_project_config as _load_project_config
-from trw_mcp.state.analytics import (
-    apply_status_update,
-    auto_prune_excess_entries,
-    compute_reflection_quality,
-    find_duplicate_learnings,
-    resync_learning_index,
-)
-from trw_mcp.state.analytics.report import scan_all_runs
-from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.models.typed_dicts import (
     AuditCeremonyComplianceResult,
     AuditDuplicatePairDict,
@@ -41,6 +31,16 @@ from trw_mcp.models.typed_dicts import (
     AuditTelemetryBloatDict,
     LearningEntryDict,
 )
+from trw_mcp.state._helpers import load_project_config as _load_project_config
+from trw_mcp.state.analytics import (
+    apply_status_update,
+    auto_prune_excess_entries,
+    compute_reflection_quality,
+    find_duplicate_learnings,
+    resync_learning_index,
+)
+from trw_mcp.state.analytics.report import scan_all_runs
+from trw_mcp.state.persistence import FileStateReader
 
 # Thresholds for PASS/WARN/FAIL verdicts
 _BLOAT_WARN_PCT = 0.20
@@ -56,8 +56,8 @@ def _iter_entries(entries_dir: Path) -> list[LearningEntryDict]:
     entries: list[LearningEntryDict] = []
     for f in iter_yaml_entry_files(entries_dir):
         try:
-            entries.append(cast(LearningEntryDict, reader.read_yaml(f)))
-        except Exception:  # justified: fail-open, skip malformed YAML entries
+            entries.append(cast("LearningEntryDict", reader.read_yaml(f)))
+        except Exception:  # per-item error handling: fail-open, skip malformed YAML entries  # noqa: PERF203, S112
             continue
     return entries
 
@@ -121,10 +121,7 @@ def _audit_learnings(
 def _audit_duplicates(entries_dir: Path) -> AuditDuplicatesResult:
     """Duplicate detection via Jaccard similarity."""
     duplicates = find_duplicate_learnings(entries_dir, threshold=0.8)
-    pairs: list[AuditDuplicatePairDict] = [
-        {"older_id": o, "newer_id": n, "similarity": s}
-        for o, n, s in duplicates
-    ]
+    pairs: list[AuditDuplicatePairDict] = [{"older_id": o, "newer_id": n, "similarity": s} for o, n, s in duplicates]
     return {
         "pairs": pairs,
         "count": len(duplicates),
@@ -160,9 +157,7 @@ def _audit_recall_effectiveness(
     config: TRWConfig,
 ) -> AuditRecallEffectivenessResult:
     """Parse recall_log.jsonl for query effectiveness stats."""
-    receipt_path = (
-        trw_dir / config.learnings_dir / config.receipts_dir / "recall_log.jsonl"
-    )
+    receipt_path = trw_dir / config.learnings_dir / config.receipts_dir / "recall_log.jsonl"
     if not receipt_path.exists():
         return {"total_queries": 0, "verdict": "SKIP"}
 
@@ -250,7 +245,7 @@ def _audit_reflection_quality(trw_dir: Path) -> AuditReflectionQualityResult:
         else:
             os.environ.pop("TRW_PROJECT_ROOT", None)
         _reset_config()
-    return cast(AuditReflectionQualityResult, result)
+    return cast("AuditReflectionQualityResult", result)
 
 
 def _audit_hook_versions(target_dir: Path) -> AuditHookVersionsResult:
@@ -272,12 +267,8 @@ def _audit_hook_versions(target_dir: Path) -> AuditHookVersionsResult:
         if not bundled.is_file():
             continue
 
-        deployed_hash = hashlib.sha256(
-            deployed.read_bytes()
-        ).hexdigest()
-        bundled_hash = hashlib.sha256(
-            bundled.read_bytes()
-        ).hexdigest()
+        deployed_hash = hashlib.sha256(deployed.read_bytes()).hexdigest()
+        bundled_hash = hashlib.sha256(bundled.read_bytes()).hexdigest()
 
         if deployed_hash == bundled_hash:
             up_to_date += 1
@@ -426,8 +417,10 @@ def _format_learnings_section(learnings: object) -> list[str]:
     if isinstance(by_impact, dict):
         lines.append("| Impact | Count |")
         lines.append("|--------|-------|")
-        for bucket in ("high", "medium", "low"):
-            lines.append(f"| {bucket} (>={'0.7' if bucket == 'high' else '0.4' if bucket == 'medium' else '0'}) | {by_impact.get(bucket, 0)} |")
+        lines.extend(
+            f"| {bucket} (>={'0.7' if bucket == 'high' else '0.4' if bucket == 'medium' else '0'}) | {by_impact.get(bucket, 0)} |"
+            for bucket in ("high", "medium", "low")
+        )
         lines.append("")
 
     bloat = learnings.get("telemetry_bloat", {})
@@ -453,12 +446,11 @@ def _format_duplicates_section(dups: object) -> list[str]:
     lines.append(f"## Duplicates — **{verdict}**")
     if isinstance(pairs, list) and pairs:
         lines.append("")
-        for pair in pairs:
-            if isinstance(pair, dict):
-                lines.append(
-                    f"- {pair.get('older_id')} ↔ {pair.get('newer_id')} "
-                    f"(similarity: {pair.get('similarity')})"
-                )
+        lines.extend(
+            f"- {pair.get('older_id')} ↔ {pair.get('newer_id')} (similarity: {pair.get('similarity')})"
+            for pair in pairs
+            if isinstance(pair, dict)
+        )
     else:
         lines.append("No duplicates found.")
     lines.append("")
@@ -498,8 +490,7 @@ def _format_recall_section(recall: object) -> list[str]:
     zero_queries = recall.get("top_zero_match_queries", [])
     if isinstance(zero_queries, list) and zero_queries:
         lines.append("- Top zero-match queries:")
-        for q in zero_queries:
-            lines.append(f"  - `{q}`")
+        lines.extend(f"  - `{q}`" for q in zero_queries)
     lines.append("")
     return lines
 
@@ -548,8 +539,7 @@ def _format_hooks_section(hooks: object) -> list[str]:
     outdated = hooks.get("outdated", [])
     if isinstance(outdated, list) and outdated:
         lines.append("- Outdated:")
-        for h in outdated:
-            lines.append(f"  - {h}")
+        lines.extend(f"  - {h}" for h in outdated)
     lines.append("")
     return lines
 

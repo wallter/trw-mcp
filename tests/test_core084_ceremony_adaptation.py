@@ -10,13 +10,12 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._defaults import LIGHT_MODE_RECALL_CAP
-
 
 # ---------------------------------------------------------------------------
 # FR04: ceremony_mode config field
@@ -156,8 +155,8 @@ class TestRecallCappingLightMode:
 
     def test_light_mode_caps_recall_results(self, tmp_path: Path) -> None:
         """With ceremony_mode=light and 25 learnings, at most 10 are returned."""
-        from trw_mcp.tools._ceremony_helpers import perform_session_recalls
         from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
@@ -169,10 +168,7 @@ class TestRecallCappingLightMode:
         )
 
         # Create 25 fake learnings
-        all_learnings = [
-            {"id": f"L-{i:04d}", "summary": f"Learning {i}", "impact": 0.8}
-            for i in range(25)
-        ]
+        all_learnings = [{"id": f"L-{i:04d}", "summary": f"Learning {i}", "impact": 0.8} for i in range(25)]
         reader = FileStateReader()
 
         def mock_recall(
@@ -194,15 +190,18 @@ class TestRecallCappingLightMode:
             patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
         ):
             learnings, _auto, _extra = perform_session_recalls(
-                trw_dir, "", config, reader,
+                trw_dir,
+                "",
+                config,
+                reader,
             )
 
         assert len(learnings) <= LIGHT_MODE_RECALL_CAP
 
     def test_full_mode_uses_configured_recall_max(self, tmp_path: Path) -> None:
         """With ceremony_mode=full, recall_max_results is used as-is."""
-        from trw_mcp.tools._ceremony_helpers import perform_session_recalls
         from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
@@ -213,10 +212,7 @@ class TestRecallCappingLightMode:
             recall_max_results=25,
         )
 
-        all_learnings = [
-            {"id": f"L-{i:04d}", "summary": f"Learning {i}", "impact": 0.8}
-            for i in range(25)
-        ]
+        all_learnings = [{"id": f"L-{i:04d}", "summary": f"Learning {i}", "impact": 0.8} for i in range(25)]
         reader = FileStateReader()
 
         def mock_recall(
@@ -238,7 +234,10 @@ class TestRecallCappingLightMode:
             patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
         ):
             learnings, _auto, _extra = perform_session_recalls(
-                trw_dir, "", config, reader,
+                trw_dir,
+                "",
+                config,
+                reader,
             )
 
         # Full mode should return all 25
@@ -258,8 +257,8 @@ class TestRecallCappingLightMode:
 
     def test_light_mode_focused_recall_also_capped(self, tmp_path: Path) -> None:
         """Focused (non-empty query) recall is also capped in light mode."""
-        from trw_mcp.tools._ceremony_helpers import perform_session_recalls
         from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
@@ -270,10 +269,7 @@ class TestRecallCappingLightMode:
             recall_max_results=25,
         )
 
-        all_learnings = [
-            {"id": f"L-{i:04d}", "summary": f"Learning {i}", "impact": 0.8}
-            for i in range(25)
-        ]
+        all_learnings = [{"id": f"L-{i:04d}", "summary": f"Learning {i}", "impact": 0.8} for i in range(25)]
         reader = FileStateReader()
 
         captured_max_results: list[int] = []
@@ -297,7 +293,10 @@ class TestRecallCappingLightMode:
             patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
         ):
             learnings, _auto, _extra = perform_session_recalls(
-                trw_dir, "testing query", config, reader,
+                trw_dir,
+                "testing query",
+                config,
+                reader,
             )
 
         # Both focused and baseline recalls should use capped max
@@ -458,7 +457,10 @@ class TestSessionStartLightMode:
     """FR07: session_start uses compact response for light mode."""
 
     def _invoke_session_start(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ceremony_mode: str,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        ceremony_mode: str,
     ) -> dict[str, object]:
         """Invoke trw_session_start via the MCP tool path with mocked infra."""
         from tests.conftest import get_tools_sync, make_test_server
@@ -488,7 +490,9 @@ class TestSessionStartLightMode:
         return result
 
     def test_light_mode_framework_reminder_content(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Light mode framework_reminder says 'Call trw_deliver() when done'."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "light")
@@ -497,7 +501,9 @@ class TestSessionStartLightMode:
         assert "FRAMEWORK.md" not in reminder
 
     def test_full_mode_framework_reminder_mentions_framework(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Full mode framework_reminder references FRAMEWORK.md."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "full")
@@ -505,14 +511,18 @@ class TestSessionStartLightMode:
         assert "FRAMEWORK.md" in reminder
 
     def test_light_mode_skips_ceremony_nudge(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """In light mode, ceremony_status nudge is not injected into session_start."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "light")
         assert "ceremony_status" not in result
 
     def test_full_mode_includes_ceremony_nudge(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """In full mode, ceremony_status nudge IS injected."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "full")

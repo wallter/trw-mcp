@@ -34,7 +34,7 @@ def _linear_slope(values: list[float]) -> float | None:
     xs = list(range(n))
     sum_x = sum(xs)
     sum_y = sum(values)
-    sum_xy = sum(x * y for x, y in zip(xs, values))
+    sum_xy = sum(x * y for x, y in zip(xs, values, strict=True))
     sum_x2 = sum(x * x for x in xs)
     denom = n * sum_x2 - sum_x * sum_x
     if denom == 0:
@@ -175,7 +175,7 @@ def detect_degradation(
         # Try to extract ISO timestamp from first session in streak
         first_session = sessions[start]
         ts_str = str(first_session.get("timestamp") or first_session.get("ts") or "")
-        first_occurrence = ts_str if ts_str else datetime.now(timezone.utc).isoformat()
+        first_occurrence = ts_str or datetime.now(timezone.utc).isoformat()
         length = len(scores)
         return {
             "type": "ceremony_degradation",
@@ -290,7 +290,7 @@ def compare_sprints(
     }
 
 
-def aggregate_dashboard(
+def aggregate_dashboard(  # noqa: C901
     trw_dir: Path,
     window_days: int = 90,
     compare_sprint: str = "",
@@ -353,8 +353,13 @@ def aggregate_dashboard(
         source = data if isinstance(data, dict) else evt
 
         for field in (
-            "ceremony_score", "coverage_pct", "review_verdict",
-            "task_name", "phase", "tests_passed", "mypy_clean",
+            "ceremony_score",
+            "coverage_pct",
+            "review_verdict",
+            "task_name",
+            "phase",
+            "tests_passed",
+            "mypy_clean",
         ):
             if field in source:
                 session[field] = source[field]
@@ -393,7 +398,9 @@ def aggregate_dashboard(
             idx = sprint_ids.index(compare_sprint)
             if idx > 0:
                 sprint_comparison = compare_sprints(
-                    sessions, sprint_ids[idx - 1], compare_sprint,
+                    sessions,
+                    sprint_ids[idx - 1],
+                    compare_sprint,
                 )
 
     return {

@@ -65,7 +65,7 @@ def _enqueue_to_pipeline(event_data: dict[str, object]) -> None:
 
         pipeline = TelemetryPipeline.get_instance()
         pipeline.enqueue(dict(event_data))
-    except Exception:  # noqa: BLE001 — fail-open: pipeline must never block tool execution
+    except Exception:  # justified: fail-open, telemetry pipeline enqueue must never block tool execution  # noqa: S110
         pass
 
 
@@ -115,7 +115,10 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
             duration_ms = round((time.monotonic() - start) * 1000, 2)
             try:
                 _write_tool_event(
-                    func.__name__, duration_ms, success, error_msg,
+                    func.__name__,
+                    duration_ms,
+                    success,
+                    error_msg,
                 )
             except Exception:  # justified: fail-open telemetry, never blocks tool execution
                 logger.debug("telemetry_write_failed", tool=func.__name__)
@@ -128,16 +131,16 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
             # detailed records here.  The getattr fallback handles tests
             # that override config.telemetry to a plain bool.
             _tel = config.telemetry
-            _detailed = (
-                getattr(_tel, "platform_telemetry_enabled", False)
-                if not isinstance(_tel, bool)
-                else _tel
-            )
+            _detailed = getattr(_tel, "platform_telemetry_enabled", False) if not isinstance(_tel, bool) else _tel
             if _detailed:
                 try:
                     _write_telemetry_record(
-                        func.__name__, args, kwargs, duration_ms,
-                        result_val if success else None, success,
+                        func.__name__,
+                        args,
+                        kwargs,
+                        duration_ms,
+                        result_val if success else None,
+                        success,
                     )
                 except Exception as exc:  # justified: fail-open telemetry, never blocks tool execution
                     logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
@@ -188,14 +191,18 @@ def _write_tool_event(
         event_data["error"] = error
 
     # OTEL span emission (fail-open, gated by config.otel_enabled)
-    emit_tool_span(tool_name, duration_ms, {
-        "agent_id": agent_id,
-        "phase": phase,
-    })
+    emit_tool_span(
+        tool_name,
+        duration_ms,
+        {
+            "agent_id": agent_id,
+            "phase": phase,
+        },
+    )
 
     # Pipeline enqueue — BEFORE any early return so events always reach the
     # backend, not just when there's no active run directory.
-    _enqueue_to_pipeline(cast(dict[str, object], event_data))
+    _enqueue_to_pipeline(cast("dict[str, object]", event_data))
 
     config = get_config()
     writer = FileStateWriter()
@@ -205,7 +212,7 @@ def _write_tool_event(
     if run_dir is not None:
         events_path = run_dir / "meta" / "events.jsonl"
         if events_path.parent.exists():
-            events.log_event(events_path, "tool_invocation", cast(dict[str, object], event_data))
+            events.log_event(events_path, "tool_invocation", cast("dict[str, object]", event_data))
             return
 
     # Fallback: session-level events
@@ -214,7 +221,7 @@ def _write_tool_event(
         context_dir = trw_dir / config.context_dir
         writer.ensure_dir(context_dir)
         fallback = context_dir / "session-events.jsonl"
-        events.log_event(fallback, "tool_invocation", cast(dict[str, object], event_data))
+        events.log_event(fallback, "tool_invocation", cast("dict[str, object]", event_data))
     except Exception as exc:  # justified: fail-open telemetry, session-level fallback write
         logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
@@ -247,4 +254,4 @@ def _write_telemetry_record(
     logs_dir = trw_dir / config.logs_dir
     writer.ensure_dir(logs_dir)
     telemetry_path = logs_dir / config.telemetry_file
-    events.log_event(telemetry_path, "tool_call", cast(dict[str, object], record))
+    events.log_event(telemetry_path, "tool_call", cast("dict[str, object]", record))

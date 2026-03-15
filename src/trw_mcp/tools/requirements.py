@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import re
-from datetime import date
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import cast
@@ -30,19 +30,23 @@ from trw_mcp.models.requirements import (
     Priority,
     RiskLevel,
 )
+from trw_mcp.models.typed_dicts import PrdCreateResultDict, PrdFrontmatterDict, ValidateResultDict
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
     _FRONTMATTER_RE,
     extract_prd_refs,
-    extract_sections as _extract_sections,
     next_prd_sequence,
+)
+from trw_mcp.state.prd_utils import (
+    extract_sections as _extract_sections,
 )
 from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
+)
+from trw_mcp.state.validation import (
     validate_prd_quality_v2,
 )
-from trw_mcp.models.typed_dicts import PrdCreateResultDict, PrdFrontmatterDict, ValidateResultDict
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -57,7 +61,10 @@ def __getattr__(name: str) -> object:
 
 # Priority → base confidence score mapping
 _PRIORITY_CONFIDENCE: dict[str, float] = {
-    "P0": 0.9, "P1": 0.7, "P2": 0.6, "P3": 0.5,
+    "P0": 0.9,
+    "P1": 0.7,
+    "P2": 0.6,
+    "P3": 0.5,
 }
 
 
@@ -128,8 +135,12 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Generate PRD body from template (populates version cache)
         body = _generate_prd_body(
-            prd_id, title, input_text, category,
-            priority=priority, confidence=base_confidence,
+            prd_id,
+            title,
+            input_text,
+            category,
+            priority=priority,
+            confidence=base_confidence,
         )
 
         # Extract SLOs from prefill for frontmatter
@@ -172,15 +183,15 @@ def register_requirements_tools(server: FastMCP) -> None:
                 traceability_coverage_min=config.traceability_coverage_min,
             ),
             dates=PRDDates(
-                created=date.today(),
-                updated=date.today(),
+                created=datetime.now(tz=timezone.utc).date(),
+                updated=datetime.now(tz=timezone.utc).date(),
             ),
             template_version=_CACHED_TEMPLATE_VERSION,
             wave_source=None,
             slos=prefill_slos,
         )
 
-        frontmatter_dict = cast(PrdFrontmatterDict, model_to_dict(frontmatter))
+        frontmatter_dict = cast("PrdFrontmatterDict", model_to_dict(frontmatter))
         prd_content = _render_prd(frontmatter_dict, body)
 
         output_path = ""
@@ -280,8 +291,10 @@ def register_requirements_tools(server: FastMCP) -> None:
             "sections_expected": _EXPECTED_SECTIONS,
             "failures": [
                 {
-                    "field": f.field, "rule": f.rule,
-                    "message": f.message, "severity": f.severity,
+                    "field": f.field,
+                    "rule": f.rule,
+                    "message": f.message,
+                    "severity": f.severity,
                 }
                 for f in v2_result.failures
             ],
@@ -289,14 +302,13 @@ def register_requirements_tools(server: FastMCP) -> None:
             "total_score": v2_result.total_score,
             "quality_tier": v2_result.quality_tier,
             "grade": v2_result.grade,
-            "dimensions": [
-                {"name": d.name, "score": d.score, "max_score": d.max_score}
-                for d in v2_result.dimensions
-            ],
+            "dimensions": [{"name": d.name, "score": d.score, "max_score": d.max_score} for d in v2_result.dimensions],
             "improvement_suggestions": [
                 {
-                    "dimension": s.dimension, "priority": s.priority,
-                    "message": s.message, "current_score": s.current_score,
+                    "dimension": s.dimension,
+                    "priority": s.priority,
+                    "message": s.message,
+                    "current_score": s.current_score,
                     "potential_gain": s.potential_gain,
                 }
                 for s in v2_result.improvement_suggestions[:5]
@@ -304,8 +316,10 @@ def register_requirements_tools(server: FastMCP) -> None:
             # Rich diagnostics (PRD-FIX-011: previously discarded)
             "smell_findings": [
                 {
-                    "category": sf.category, "matched_text": sf.matched_text,
-                    "line_number": sf.line_number, "severity": sf.severity,
+                    "category": sf.category,
+                    "matched_text": sf.matched_text,
+                    "line_number": sf.line_number,
+                    "severity": sf.severity,
                     "suggestion": sf.suggestion,
                 }
                 for sf in v2_result.smell_findings
@@ -361,7 +375,7 @@ def _load_template_body() -> str:
     # Strip YAML frontmatter (between first --- pair)
     fm_match = _FRONTMATTER_RE.match(raw)
     if fm_match:
-        body = raw[fm_match.end():].lstrip("\n")
+        body = raw[fm_match.end() :].lstrip("\n")
     else:
         body = raw
 
@@ -505,19 +519,13 @@ def _apply_prefill(
     if prefill.get("file_refs"):
         body = body.replace(
             "| `path/to/file.py` | {Description of changes} |",
-            "\n".join(
-                f"| `{f}` | <!-- changes needed --> |"
-                for f in prefill["file_refs"]
-            ),
+            "\n".join(f"| `{f}` | <!-- changes needed --> |" for f in prefill["file_refs"]),
         )
 
     if prefill.get("prd_deps"):
         body = body.replace(
             "| DEP-001 | {Dependency} | Resolved/Pending | Yes/No |",
-            "\n".join(
-                f"| DEP-{i:03d} | {dep} | Pending | Yes |"
-                for i, dep in enumerate(prefill["prd_deps"], 1)
-            ),
+            "\n".join(f"| DEP-{i:03d} | {dep} | Pending | Yes |" for i, dep in enumerate(prefill["prd_deps"], 1)),
         )
 
     return body
@@ -557,7 +565,7 @@ def _filter_sections_for_category(body: str, category: str) -> str:
     kept_sections: list[tuple[str, str]] = []  # (header_line, body_text)
 
     for i in range(1, len(parts) - 1, 2):
-        header_line = parts[i]          # e.g. "## 3. User Stories"
+        header_line = parts[i]  # e.g. "## 3. User Stories"
         section_body = parts[i + 1] if i + 1 < len(parts) else ""
 
         # Extract section name: strip "## N. " prefix
@@ -582,13 +590,13 @@ def _filter_sections_for_category(body: str, category: str) -> str:
         _NON_NUMBERED_RE = re.compile(r"^(## (?!\d+\.).+)$", re.MULTILINE)
         m = _NON_NUMBERED_RE.search(last_body)
         if m:
-            trailing = last_body[m.start():]
+            trailing = last_body[m.start() :]
             # Trim trailing from the last section body if it was kept
             if kept_sections:
                 last_name, last_body_text = kept_sections[-1]
                 cut_m = _NON_NUMBERED_RE.search(last_body_text)
                 if cut_m:
-                    kept_sections[-1] = (last_name, last_body_text[:cut_m.start()])
+                    kept_sections[-1] = (last_name, last_body_text[: cut_m.start()])
 
     # Rebuild with renumbered headings
     result_parts = [preamble]
@@ -628,8 +636,13 @@ def _generate_prd_body(
     """
     body = _load_template_body()
     body = _substitute_template(
-        body, prd_id, title, category,
-        int(prd_id.split("-")[-1]), priority, confidence,
+        body,
+        prd_id,
+        title,
+        category,
+        int(prd_id.split("-")[-1]),
+        priority,
+        confidence,
     )
     body = _apply_prefill(body, _extract_prefill(input_text), input_text)
     # PRD-CORE-080-FR01: filter to only sections required by category variant
@@ -683,12 +696,14 @@ def _strip_deprecated_fields(frontmatter: PrdFrontmatterDict) -> PrdFrontmatterD
         Cleaned dict with deprecated/null fields removed.
     """
     _DEPRECATED_TOP_KEYS = frozenset({"aaref_components"})
-    result: dict[str, object] = {k: v for k, v in frontmatter.items() if v is not None and k not in _DEPRECATED_TOP_KEYS}
+    result: dict[str, object] = {
+        k: v for k, v in frontmatter.items() if v is not None and k not in _DEPRECATED_TOP_KEYS
+    }
     # Strip conflicts_with from nested traceability dict
     traceability = result.get("traceability")
     if isinstance(traceability, dict) and "conflicts_with" in traceability:
         result["traceability"] = {k: v for k, v in traceability.items() if k != "conflicts_with"}
-    return cast(PrdFrontmatterDict, result)
+    return cast("PrdFrontmatterDict", result)
 
 
 def _render_prd(frontmatter: PrdFrontmatterDict, body: str) -> str:

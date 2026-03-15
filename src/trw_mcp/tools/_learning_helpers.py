@@ -21,7 +21,6 @@ from typing import cast
 import structlog
 
 from trw_mcp.exceptions import StateError
-
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import DedupHandleResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -84,7 +83,7 @@ def calibrate_impact(impact: float, config: TRWConfig) -> float:
         from trw_mcp.state.recall_tracking import get_recall_stats
 
         recall_stats = get_recall_stats()
-        user_weight = compute_calibration_accuracy(cast(dict[str, object], recall_stats))
+        user_weight = compute_calibration_accuracy(cast("dict[str, object]", recall_stats))
         return bayesian_calibrate(
             user_impact=impact,
             user_weight=user_weight,
@@ -113,10 +112,7 @@ def check_soft_cap(
         Tuple of (possibly adjusted impact, warning message or None).
     """
     try:
-        high_count = sum(
-            1 for e in active_entries
-            if float(str(e.get("impact", 0.5))) >= 0.8
-        )
+        high_count = sum(1 for e in active_entries if float(str(e.get("impact", 0.5))) >= 0.8)
         total = len(active_entries)
         new_total = total + 1
         new_high = high_count + (1 if impact >= 0.8 else 0)
@@ -177,7 +173,11 @@ def check_and_handle_dedup(
         from trw_mcp.state.dedup import check_duplicate, merge_entries
 
         dedup_result = check_duplicate(
-            params.summary, params.detail, entries_dir, reader, config=config,
+            params.summary,
+            params.detail,
+            entries_dir,
+            reader,
+            config=config,
         )
 
         if dedup_result.action == "skip":

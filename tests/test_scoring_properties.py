@@ -41,8 +41,8 @@ _pos_int = st.integers(min_value=1, max_value=10_000)
 
 # Datetime strategy: UTC datetimes from 5 years ago to 1 day in the future
 _past_datetime = st.datetimes(
-    min_value=datetime(2020, 1, 1),
-    max_value=datetime(2026, 12, 31),
+    min_value=datetime(2020, 1, 1),  # naive bounds required by hypothesis when timezones= is provided
+    max_value=datetime(2026, 12, 31),  # naive bounds required by hypothesis when timezones= is provided
     timezones=st.just(timezone.utc),
 )
 
@@ -121,10 +121,7 @@ def test_compute_utility_score_monotone_impact(
         base_impact=impact_high,
         q_observations=0,
     )
-    assert low <= high, (
-        f"Expected utility(impact={impact_low}) <= utility(impact={impact_high}), "
-        f"got {low} > {high}"
-    )
+    assert low <= high, f"Expected utility(impact={impact_low}) <= utility(impact={impact_high}), got {low} > {high}"
 
 
 @given(
@@ -152,9 +149,7 @@ def test_compute_utility_score_zero_impact_yields_low_utility(
         access_count=0,
         source_type="agent",
     )
-    assert result == pytest.approx(0.0, abs=1e-9), (
-        f"Expected 0.0 for zero-impact/zero-q, got {result}"
-    )
+    assert result == pytest.approx(0.0, abs=1e-9), f"Expected 0.0 for zero-impact/zero-q, got {result}"
 
 
 # ---------------------------------------------------------------------------
@@ -183,9 +178,7 @@ def test_apply_time_decay_never_below_floor_times_impact(
     # Therefore: result = clamp(impact * decay_factor) >= impact * _TIME_DECAY_FLOOR
     # (modulo floating-point edge cases at exact floor boundary)
     lower_bound = impact * _TIME_DECAY_FLOOR
-    assert result >= lower_bound - 1e-9, (
-        f"result={result} below floor bound={lower_bound} for impact={impact}"
-    )
+    assert result >= lower_bound - 1e-9, f"result={result} below floor bound={lower_bound} for impact={impact}"
 
 
 @given(impact=_impact)
@@ -196,9 +189,7 @@ def test_apply_time_decay_zero_age_no_reduction(impact: float) -> None:
     now = datetime.now(timezone.utc)
     result = apply_time_decay(impact, now)
     # days=0 -> decay_factor = max(0.3, 1.0 - 0*0.3/365) = 1.0
-    assert result == pytest.approx(impact, abs=1e-9), (
-        f"For days=0, expected output={impact}, got {result}"
-    )
+    assert result == pytest.approx(impact, abs=1e-9), f"For days=0, expected output={impact}, got {result}"
 
 
 @given(
@@ -219,8 +210,7 @@ def test_apply_time_decay_monotonically_decreasing(
     result_older = apply_time_decay(impact, older)
     # Older should not exceed newer (decay is non-increasing with age)
     assert result_older <= result_newer + 1e-9, (
-        f"Older entry (days={days_old+1}) scored {result_older} > "
-        f"newer entry (days={days_old}) {result_newer}"
+        f"Older entry (days={days_old + 1}) scored {result_older} > newer entry (days={days_old}) {result_newer}"
     )
 
 
@@ -300,8 +290,7 @@ def test_apply_impact_decay_never_exceeds_original(
     new_impact = float(str(result_entries[0]["impact"]))
     # Allow tiny floating-point rounding tolerance
     assert new_impact <= impact + 1e-9, (
-        f"new_impact={new_impact} > original={impact} "
-        f"(days_old={days_old}, half_life={half_life_days})"
+        f"new_impact={new_impact} > original={impact} (days_old={days_old}, half_life={half_life_days})"
     )
 
 
@@ -359,9 +348,7 @@ def test_update_q_value_bounded(q_old: float, reward: float) -> None:
     q_old=_q_value,
     reward=_reward,
     alpha=st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
-    recurrence_bonus=st.floats(
-        min_value=0.0, max_value=0.2, allow_nan=False, allow_infinity=False
-    ),
+    recurrence_bonus=st.floats(min_value=0.0, max_value=0.2, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=500)
 def test_update_q_value_bounded_custom_alpha(
@@ -381,9 +368,7 @@ def test_update_q_value_bounded_custom_alpha(
 def test_update_q_value_reward_equals_q_is_stable(q_old: float) -> None:
     """When reward == q_old, the Q-value does not change (fixed point)."""
     result = update_q_value(q_old, reward=q_old, alpha=0.15, recurrence_bonus=0.0)
-    assert result == pytest.approx(q_old, abs=1e-9), (
-        f"Fixed point violated: q_old={q_old}, result={result}"
-    )
+    assert result == pytest.approx(q_old, abs=1e-9), f"Fixed point violated: q_old={q_old}, result={result}"
 
 
 @given(
@@ -399,9 +384,7 @@ def test_update_q_value_positive_reward_increases_q(
 ) -> None:
     """A reward strictly greater than q_old moves the Q-value upward."""
     result = update_q_value(q_old, reward=reward, alpha=alpha, recurrence_bonus=0.0)
-    assert result >= q_old - 1e-9, (
-        f"Expected result >= q_old={q_old} when reward={reward} > q_old, got {result}"
-    )
+    assert result >= q_old - 1e-9, f"Expected result >= q_old={q_old} when reward={reward} > q_old, got {result}"
 
 
 # ---------------------------------------------------------------------------
@@ -457,9 +440,7 @@ def test_enforce_tier_distribution_new_impact_less_than_original(
 
     for lid, new_score in demotions:
         orig = original[lid]
-        assert new_score < orig + 1e-9, (
-            f"Demotion of {lid}: new_score={new_score} not < original={orig}"
-        )
+        assert new_score < orig + 1e-9, f"Demotion of {lid}: new_score={new_score} not < original={orig}"
 
 
 @given(
@@ -476,9 +457,7 @@ def test_enforce_tier_distribution_at_most_two_demotions(
     """A single call produces at most 2 demotions (one per tier: critical + high)."""
     entries = _make_entries(scores)
     demotions = enforce_tier_distribution(entries)
-    assert len(demotions) <= 2, (
-        f"Expected at most 2 demotions per call, got {len(demotions)}: {demotions}"
-    )
+    assert len(demotions) <= 2, f"Expected at most 2 demotions per call, got {len(demotions)}: {demotions}"
 
 
 @given(
@@ -495,9 +474,7 @@ def test_enforce_tier_distribution_small_set_no_demotions(
     """Sets with fewer than 5 entries never trigger demotions."""
     entries = _make_entries(scores)
     demotions = enforce_tier_distribution(entries)
-    assert demotions == [], (
-        f"Expected no demotions for small set (size={len(scores)}), got {demotions}"
-    )
+    assert demotions == [], f"Expected no demotions for small set (size={len(scores)}), got {demotions}"
 
 
 @given(

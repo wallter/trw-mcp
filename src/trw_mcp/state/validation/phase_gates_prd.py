@@ -63,6 +63,7 @@ def _check_prd_enforcement(
     if run_yaml.exists():
         try:
             from trw_mcp.state.persistence import FileStateReader
+
             reader = FileStateReader()
             state = reader.read_yaml(run_yaml)
             if state.get("run_type") == "research":
@@ -81,10 +82,7 @@ def _check_prd_enforcement(
             ValidationFailure(
                 field="prd_scope",
                 rule="prd_discovery",
-                message=(
-                    "No governing PRDs associated with this run. "
-                    "Consider adding prd_scope to run.yaml."
-                ),
+                message=("No governing PRDs associated with this run. Consider adding prd_scope to run.yaml."),
                 severity="warning",  # Advisory — always warning, never error
             )
         )

@@ -15,12 +15,12 @@ from unittest.mock import patch
 import pytest
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.state._helpers import safe_float
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import (
     collect_context,
     search_patterns,
 )
-from trw_mcp.state._helpers import safe_float
 from trw_mcp.state.report import (
     _date_in_range,
     _parse_date,
@@ -34,8 +34,6 @@ from trw_mcp.state.report import (
 # ===========================================================================
 
 
-
-
 class TestSearchPatternsExceptionHandling:
     """Cover lines 119 and 127-128: exception handling in search_patterns."""
 
@@ -44,12 +42,20 @@ class TestSearchPatternsExceptionHandling:
         patterns_dir = tmp_path / "patterns"
         patterns_dir.mkdir()
         # Write index.yaml — should be skipped
-        writer.write_yaml(patterns_dir / "index.yaml", {
-            "name": "should not appear", "description": "skipped",
-        })
-        writer.write_yaml(patterns_dir / "actual.yaml", {
-            "name": "real pattern", "description": "this should appear",
-        })
+        writer.write_yaml(
+            patterns_dir / "index.yaml",
+            {
+                "name": "should not appear",
+                "description": "skipped",
+            },
+        )
+        writer.write_yaml(
+            patterns_dir / "actual.yaml",
+            {
+                "name": "real pattern",
+                "description": "this should appear",
+            },
+        )
 
         matches = search_patterns(patterns_dir, query_tokens=[], reader=reader)
         names = [str(m.get("name", "")) for m in matches]
@@ -63,9 +69,7 @@ class TestSearchPatternsExceptionHandling:
         patterns_dir = tmp_path / "patterns"
         patterns_dir.mkdir()
         (patterns_dir / "bad.yaml").write_text("{invalid", encoding="utf-8")
-        (patterns_dir / "good.yaml").write_text(
-            "name: good\ndescription: works\n", encoding="utf-8"
-        )
+        (patterns_dir / "good.yaml").write_text("name: good\ndescription: works\n", encoding="utf-8")
 
         # Don't monkeypatch — rely on actual reader raising on corrupt YAML
         # The corrupt file raises StateError internally and is skipped
@@ -74,26 +78,32 @@ class TestSearchPatternsExceptionHandling:
         assert "good" in names
 
 
-
 class TestCollectContextConventions:
     """Cover line 189: collect_context with conventions.yaml present."""
 
-    def test_collects_conventions_when_present(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_collects_conventions_when_present(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """When conventions.yaml exists, it is included in context (line 189)."""
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
         context_dir.mkdir(parents=True)
 
-        writer.write_yaml(context_dir / "conventions.yaml", {
-            "naming": "snake_case",
-            "indent": 4,
-        })
+        writer.write_yaml(
+            context_dir / "conventions.yaml",
+            {
+                "naming": "snake_case",
+                "indent": 4,
+            },
+        )
 
         result = collect_context(trw_dir, "context", reader)
         assert "conventions" in result
         assert isinstance(result["conventions"], dict)
 
-    def test_collects_both_when_both_present(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_collects_both_when_both_present(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Both architecture and conventions are collected when both exist."""
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
@@ -147,7 +157,9 @@ class TestComputeLearningYieldSQLiteFailure:
     """Cover exception handling when list_active_learnings raises."""
 
     def test_sqlite_error_returns_empty_summary(
-        self, tmp_path: Path, reader: FileStateReader,
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
     ) -> None:
         """When list_active_learnings raises, return empty LearningSummary."""
         trw_dir = tmp_path / ".trw"
@@ -254,12 +266,15 @@ class TestAssembleReportBuildStatusException:
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
 
-        writer.write_yaml(meta / "run.yaml", {
-            "run_id": "20260101T000000Z-aaaa0001",
-            "task": "task",
-            "status": "active",
-            "phase": "research",
-        })
+        writer.write_yaml(
+            meta / "run.yaml",
+            {
+                "run_id": "20260101T000000Z-aaaa0001",
+                "task": "task",
+                "status": "active",
+                "phase": "research",
+            },
+        )
 
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
@@ -267,10 +282,13 @@ class TestAssembleReportBuildStatusException:
         # Write a build-status.yaml with content that causes int() conversion to fail
         # We need to trigger the except Exception branch at line 271
         # Write a valid YAML file then monkeypatch reader to raise
-        writer.write_yaml(context_dir / "build-status.yaml", {
-            "tests_passed": True,
-            "test_count": "not-an-int",  # int(str(...)) will succeed, need another approach
-        })
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": True,
+                "test_count": "not-an-int",  # int(str(...)) will succeed, need another approach
+            },
+        )
 
         # Monkeypatch reader.read_yaml to raise for build-status.yaml
         original_read = reader.read_yaml
@@ -303,9 +321,15 @@ class TestComputeImpactDistributionReadException:
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
-        writer.write_yaml(entries_dir / "good.yaml", {
-            "id": "L-ok", "summary": "ok", "impact": 0.9, "status": "active",
-        })
+        writer.write_yaml(
+            entries_dir / "good.yaml",
+            {
+                "id": "L-ok",
+                "summary": "ok",
+                "impact": 0.9,
+                "status": "active",
+            },
+        )
         # Write a corrupt file that the reader will fail to parse
         (entries_dir / "bad.yaml").write_text("{not: valid: yaml: [", encoding="utf-8")
 
@@ -396,10 +420,9 @@ class TestUtilityBasedPruneCandidatesTier3:
             entry = self._make_entry("L-t3-reason", "2025-10-01", impact=0.5)
             result = utility_based_prune_candidates([entry])
 
-            assert any(
-                "prune threshold" in str(r.get("reason", ""))
-                for r in result
-            ), f"Expected 'prune threshold' in reasons, got: {[r.get('reason') for r in result]}"
+            assert any("prune threshold" in str(r.get("reason", "")) for r in result), (
+                f"Expected 'prune threshold' in reasons, got: {[r.get('reason') for r in result]}"
+            )
 
 
 class TestFindSessionStartTs:
@@ -418,6 +441,7 @@ class TestFindSessionStartTs:
     @staticmethod
     def _task_root_patch():
         from trw_mcp.models.config import TRWConfig
+
         cfg = TRWConfig()
         object.__setattr__(cfg, "task_root", "tasks")
         return patch("trw_mcp.scoring._correlation.get_config", return_value=cfg)
@@ -431,9 +455,13 @@ class TestFindSessionStartTs:
         task_dir = tmp_path / "tasks" / "my-task"
         meta_dir = task_dir / "runs" / "20260101T000000Z-abc12345" / "meta"
         meta_dir.mkdir(parents=True)
-        FileStateWriter().append_jsonl(meta_dir / "events.jsonl", {
-            "ts": "2026-01-01T10:00:00+00:00", "event": "run_init",
-        })
+        FileStateWriter().append_jsonl(
+            meta_dir / "events.jsonl",
+            {
+                "ts": "2026-01-01T10:00:00+00:00",
+                "event": "run_init",
+            },
+        )
 
         with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
@@ -448,9 +476,13 @@ class TestFindSessionStartTs:
         trw_dir.mkdir()
         meta_dir = tmp_path / "tasks" / "another-task" / "runs" / "20260115T000000Z-def67890" / "meta"
         meta_dir.mkdir(parents=True)
-        writer.append_jsonl(meta_dir / "events.jsonl", {
-            "ts": "2026-01-15T08:00:00+00:00", "event": "session_start",
-        })
+        writer.append_jsonl(
+            meta_dir / "events.jsonl",
+            {
+                "ts": "2026-01-15T08:00:00+00:00",
+                "event": "session_start",
+            },
+        )
 
         with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
@@ -466,9 +498,13 @@ class TestFindSessionStartTs:
         trw_dir.mkdir()
         meta_dir = tmp_path / "tasks" / "bad-ts-task" / "runs" / "20260101T000000Z-bad12345" / "meta"
         meta_dir.mkdir(parents=True)
-        writer.append_jsonl(meta_dir / "events.jsonl", {
-            "ts": "not-a-timestamp", "event": "run_init",
-        })
+        writer.append_jsonl(
+            meta_dir / "events.jsonl",
+            {
+                "ts": "not-a-timestamp",
+                "event": "run_init",
+            },
+        )
 
         with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
@@ -482,9 +518,13 @@ class TestFindSessionStartTs:
         trw_dir.mkdir()
         meta_dir = tmp_path / "tasks" / "no-session-task" / "runs" / "20260101T000000Z-ccc12345" / "meta"
         meta_dir.mkdir(parents=True)
-        writer.append_jsonl(meta_dir / "events.jsonl", {
-            "ts": "2026-01-01T10:00:00+00:00", "event": "checkpoint",
-        })
+        writer.append_jsonl(
+            meta_dir / "events.jsonl",
+            {
+                "ts": "2026-01-01T10:00:00+00:00",
+                "event": "checkpoint",
+            },
+        )
 
         with self._task_root_patch():
             result = _find_session_start_ts(trw_dir)
@@ -536,21 +576,23 @@ class TestCorrelateRecalls:
         result = correlate_recalls(trw_dir, 30)
         assert result == []
 
-    def test_session_scope_calls_find_session_start(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_session_scope_calls_find_session_start(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """scope='session' triggers session-start lookup (line 782 branch)."""
         from trw_mcp.scoring import correlate_recalls
 
         now = datetime.now(timezone.utc)
         recent_ts = (now - timedelta(minutes=5)).isoformat()
 
-        trw_dir = self._make_receipt_log(tmp_path, writer, [
-            {
-                "ts": recent_ts,
-                "matched_ids": ["L-session"],
-            }
-        ])
+        trw_dir = self._make_receipt_log(
+            tmp_path,
+            writer,
+            [
+                {
+                    "ts": recent_ts,
+                    "matched_ids": ["L-session"],
+                }
+            ],
+        )
 
         # With scope="session" and no session start found, falls back to window
         result = correlate_recalls(trw_dir, 60, scope="session")
@@ -558,57 +600,65 @@ class TestCorrelateRecalls:
         ids = [lid for lid, _ in result]
         assert "L-session" in ids
 
-    def test_empty_ts_field_is_skipped(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_empty_ts_field_is_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Record with empty ts is skipped (line 792 continue)."""
         from trw_mcp.scoring import correlate_recalls
 
-        trw_dir = self._make_receipt_log(tmp_path, writer, [
-            {"ts": "", "matched_ids": ["L-empty-ts"]},  # Empty ts -> skip
-        ])
+        trw_dir = self._make_receipt_log(
+            tmp_path,
+            writer,
+            [
+                {"ts": "", "matched_ids": ["L-empty-ts"]},  # Empty ts -> skip
+            ],
+        )
 
         result = correlate_recalls(trw_dir, 30)
         assert result == []
 
-    def test_invalid_ts_format_is_skipped(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_invalid_ts_format_is_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Record with invalid ISO ts is skipped via ValueError (lines 795-796)."""
         from trw_mcp.scoring import correlate_recalls
 
-        trw_dir = self._make_receipt_log(tmp_path, writer, [
-            {"ts": "not-a-timestamp", "matched_ids": ["L-bad-ts"]},
-        ])
+        trw_dir = self._make_receipt_log(
+            tmp_path,
+            writer,
+            [
+                {"ts": "not-a-timestamp", "matched_ids": ["L-bad-ts"]},
+            ],
+        )
 
         result = correlate_recalls(trw_dir, 30)
         assert result == []
 
-    def test_receipt_outside_window_skipped(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_receipt_outside_window_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Receipt older than the window is skipped (receipt_ts < cutoff_ts)."""
         from trw_mcp.scoring import correlate_recalls
 
         # 2 hours ago, window is 30 minutes
         old_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-        trw_dir = self._make_receipt_log(tmp_path, writer, [
-            {"ts": old_ts, "matched_ids": ["L-old"]},
-        ])
+        trw_dir = self._make_receipt_log(
+            tmp_path,
+            writer,
+            [
+                {"ts": old_ts, "matched_ids": ["L-old"]},
+            ],
+        )
 
         result = correlate_recalls(trw_dir, 30)
         assert result == []
 
-    def test_non_string_learning_ids_skipped(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_non_string_learning_ids_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Non-string or empty learning IDs in matched_ids are skipped."""
         from trw_mcp.scoring import correlate_recalls
 
         now_ts = datetime.now(timezone.utc).isoformat()
-        trw_dir = self._make_receipt_log(tmp_path, writer, [
-            {"ts": now_ts, "matched_ids": [None, "", 42, "L-valid"]},
-        ])
+        trw_dir = self._make_receipt_log(
+            tmp_path,
+            writer,
+            [
+                {"ts": now_ts, "matched_ids": [None, "", 42, "L-valid"]},
+            ],
+        )
 
         result = correlate_recalls(trw_dir, 30)
         ids = [lid for lid, _ in result]
@@ -616,16 +666,18 @@ class TestCorrelateRecalls:
         assert None not in ids
         assert "" not in ids
 
-    def test_recent_receipt_produces_discount(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_recent_receipt_produces_discount(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Recent receipt produces a recency discount between floor and 1.0."""
         from trw_mcp.scoring import correlate_recalls
 
         now_ts = datetime.now(timezone.utc).isoformat()
-        trw_dir = self._make_receipt_log(tmp_path, writer, [
-            {"ts": now_ts, "matched_ids": ["L-recent"]},
-        ])
+        trw_dir = self._make_receipt_log(
+            tmp_path,
+            writer,
+            [
+                {"ts": now_ts, "matched_ids": ["L-recent"]},
+            ],
+        )
 
         result = correlate_recalls(trw_dir, 30)
         assert len(result) == 1
@@ -646,19 +698,12 @@ class TestProcessOutcome:
         import trw_mcp.scoring as scoring_mod
 
         trw_dir = tmp_path / ".trw"
-        receipts_dir = (
-            trw_dir
-            / scoring_mod._config.learnings_dir
-            / scoring_mod._config.receipts_dir
-        )
+        receipts_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.receipts_dir
         receipts_dir.mkdir(parents=True, exist_ok=True)
         return trw_dir
 
-    def test_entries_dir_missing_returns_empty(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_entries_dir_missing_returns_empty(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When entries_dir doesn't exist after correlation, returns [] (line 857)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome
 
         trw_dir = self._setup_trw_dir(tmp_path, writer)
@@ -675,9 +720,7 @@ class TestProcessOutcome:
         result = process_outcome(trw_dir, 0.8, "tests_passed")
         assert result == []
 
-    def test_unknown_learning_id_skipped(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_unknown_learning_id_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Learning ID in receipt but not found in entries is skipped (line 866)."""
         import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome
@@ -685,9 +728,7 @@ class TestProcessOutcome:
         trw_dir = self._setup_trw_dir(tmp_path, writer)
 
         # Create entries_dir but don't write the referenced entry
-        entries_dir = (
-            trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
-        )
+        entries_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
         entries_dir.mkdir(parents=True, exist_ok=True)
 
         now_ts = datetime.now(timezone.utc).isoformat()
@@ -709,25 +750,26 @@ class TestProcessOutcome:
 
         trw_dir = self._setup_trw_dir(tmp_path, writer)
 
-        entries_dir = (
-            trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
-        )
+        entries_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
         entries_dir.mkdir(parents=True, exist_ok=True)
 
         # Write an entry with outcome_history as a string (not a list) -> triggers line 890
         # File named {id}.yaml so process_outcome can find it for write-back.
-        writer.write_yaml(entries_dir / "L-corrupt.yaml", {
-            "id": "L-corrupt",
-            "summary": "corrupt history",
-            "detail": "d",
-            "impact": 0.7,
-            "q_value": 0.7,
-            "q_observations": 5,
-            "recurrence": 1,
-            "access_count": 0,
-            "source_type": "agent",
-            "outcome_history": "this should be a list",  # triggers line 890
-        })
+        writer.write_yaml(
+            entries_dir / "L-corrupt.yaml",
+            {
+                "id": "L-corrupt",
+                "summary": "corrupt history",
+                "detail": "d",
+                "impact": 0.7,
+                "q_value": 0.7,
+                "q_observations": 5,
+                "recurrence": 1,
+                "access_count": 0,
+                "source_type": "agent",
+                "outcome_history": "this should be a list",  # triggers line 890
+            },
+        )
 
         now_ts = datetime.now(timezone.utc).isoformat()
         # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
@@ -749,40 +791,36 @@ class TestProcessOutcome:
 class TestProcessOutcomeForEventException:
     """Cover lines 999-1001: process_outcome_for_event exception handling."""
 
-    def test_state_error_returns_empty_list(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_state_error_returns_empty_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """StateError from resolve_trw_dir returns [] without propagating (lines 999-1001)."""
         import trw_mcp.scoring as scoring_mod
         from trw_mcp.exceptions import StateError
         from trw_mcp.scoring import process_outcome_for_event
 
         monkeypatch.setattr(
-            scoring_mod, "resolve_trw_dir",
+            scoring_mod,
+            "resolve_trw_dir",
             lambda: (_ for _ in ()).throw(StateError("no .trw", path="none")),
         )
 
         result = process_outcome_for_event("tests_passed")
         assert result == []
 
-    def test_os_error_returns_empty_list(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_os_error_returns_empty_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """OSError from resolve_trw_dir returns [] without propagating (lines 999-1001)."""
         import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome_for_event
 
         monkeypatch.setattr(
-            scoring_mod, "resolve_trw_dir",
+            scoring_mod,
+            "resolve_trw_dir",
             lambda: (_ for _ in ()).throw(OSError("permission denied")),
         )
 
         result = process_outcome_for_event("tests_passed")
         assert result == []
 
-    def test_none_reward_returns_empty_without_resolve(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_none_reward_returns_empty_without_resolve(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Events with no reward don't call resolve_trw_dir at all."""
         import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome_for_event
@@ -799,9 +837,7 @@ class TestProcessOutcomeForEventException:
         assert result == []
         assert not resolve_called[0]
 
-    def test_success_path_calls_process_outcome(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_success_path_calls_process_outcome(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Happy path: resolve_trw_dir succeeds and process_outcome is called (lines 997-998)."""
         import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome_for_event
@@ -816,7 +852,6 @@ class TestProcessOutcomeForEventException:
         result = process_outcome_for_event("tests_passed")
         # No receipts exist -> correlate_recalls returns [] -> process_outcome returns []
         assert isinstance(result, list)
-
 
 
 class TestSearchPatternsNonExistentDir:
@@ -849,10 +884,22 @@ class TestComputeUtilityScoreAccessBoost:
         from trw_mcp.scoring import compute_utility_score
 
         score_moderate = compute_utility_score(
-            0.5, 0, 1, 0.5, 5, access_count=10, access_count_boost_cap=0.15,
+            0.5,
+            0,
+            1,
+            0.5,
+            5,
+            access_count=10,
+            access_count_boost_cap=0.15,
         )
         score_high = compute_utility_score(
-            0.5, 0, 1, 0.5, 5, access_count=10000, access_count_boost_cap=0.15,
+            0.5,
+            0,
+            1,
+            0.5,
+            5,
+            access_count=10000,
+            access_count_boost_cap=0.15,
         )
         # Both should be capped at the same boost
         assert abs(score_high - score_moderate) < 0.001 or score_high >= score_moderate
@@ -911,10 +958,15 @@ class TestEnforceTierDistribution:
         # 1 critical out of 10 = 10% -> depends on config critical_cap (default 0.25)
         entries = [
             ("L-c1", 0.95),
-            ("L-h1", 0.85), ("L-h2", 0.80),
-            ("L-m1", 0.50), ("L-m2", 0.55),
-            ("L-m3", 0.45), ("L-m4", 0.40),
-            ("L-l1", 0.30), ("L-l2", 0.25), ("L-l3", 0.20),
+            ("L-h1", 0.85),
+            ("L-h2", 0.80),
+            ("L-m1", 0.50),
+            ("L-m2", 0.55),
+            ("L-m3", 0.45),
+            ("L-m4", 0.40),
+            ("L-l1", 0.30),
+            ("L-l2", 0.25),
+            ("L-l3", 0.20),
         ]
         result = enforce_tier_distribution(entries, critical_cap=0.25, high_cap=0.5)
         # With 1/10=10% critical (below 25% cap) and 2/10=20% high (below 50% cap),
@@ -927,7 +979,10 @@ class TestEnforceTierDistribution:
 
         # 4 critical out of 5 = 80%, cap = 0.05 (5%) -> demotion triggered
         entries = [
-            ("L-c1", 0.91), ("L-c2", 0.93), ("L-c3", 0.95), ("L-c4", 0.97),
+            ("L-c1", 0.91),
+            ("L-c2", 0.93),
+            ("L-c3", 0.95),
+            ("L-c4", 0.97),
             ("L-m1", 0.50),
         ]
         result = enforce_tier_distribution(entries, critical_cap=0.05, high_cap=0.5)
@@ -945,7 +1000,10 @@ class TestEnforceTierDistribution:
 
         # 4 high out of 5 = 80%, high_cap = 0.05 -> demotion triggered
         entries = [
-            ("L-h1", 0.71), ("L-h2", 0.75), ("L-h3", 0.80), ("L-h4", 0.85),
+            ("L-h1", 0.71),
+            ("L-h2", 0.75),
+            ("L-h3", 0.80),
+            ("L-h4", 0.85),
             ("L-m1", 0.50),
         ]
         result = enforce_tier_distribution(entries, critical_cap=0.5, high_cap=0.05)
@@ -962,8 +1020,16 @@ class TestEnforceTierDistribution:
 
         # 5 critical + 5 high out of 10 = very high percentages
         entries = [
-            ("L-c1", 0.91), ("L-c2", 0.92), ("L-c3", 0.93), ("L-c4", 0.94), ("L-c5", 0.95),
-            ("L-h1", 0.71), ("L-h2", 0.75), ("L-h3", 0.80), ("L-h4", 0.85), ("L-h5", 0.88),
+            ("L-c1", 0.91),
+            ("L-c2", 0.92),
+            ("L-c3", 0.93),
+            ("L-c4", 0.94),
+            ("L-c5", 0.95),
+            ("L-h1", 0.71),
+            ("L-h2", 0.75),
+            ("L-h3", 0.80),
+            ("L-h4", 0.85),
+            ("L-h5", 0.88),
         ]
         result = enforce_tier_distribution(entries, critical_cap=0.05, high_cap=0.05)
         # Both tiers exceed caps -> at least 2 demotions
@@ -1026,9 +1092,13 @@ class TestCorrelateRecallsAdvancedPaths:
         session_start_ts = (now - timedelta(hours=2)).replace(microsecond=0)
         receipt_ts = (now - timedelta(hours=1)).replace(microsecond=0)
 
-        trw_dir = self._make_receipt_log(tmp_path, writer, [
-            {"ts": receipt_ts.isoformat(), "matched_ids": ["L-in-session"]},
-        ])
+        trw_dir = self._make_receipt_log(
+            tmp_path,
+            writer,
+            [
+                {"ts": receipt_ts.isoformat(), "matched_ids": ["L-in-session"]},
+            ],
+        )
 
         with (
             patch("trw_mcp.scoring._correlation.get_config", return_value=cfg),
@@ -1041,9 +1111,7 @@ class TestCorrelateRecallsAdvancedPaths:
         ids = [lid for lid, _ in result]
         assert "L-in-session" in ids
 
-    def test_future_timestamp_receipt_is_skipped(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_future_timestamp_receipt_is_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Receipt with timestamp in the future has elapsed_secs < 0 -> skipped (line 803)."""
         from trw_mcp.scoring import correlate_recalls
 
@@ -1054,10 +1122,13 @@ class TestCorrelateRecallsAdvancedPaths:
         # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
         logs_dir = trw_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
-        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", {
-            "ts": future_ts,
-            "matched_ids": ["L-future"],
-        })
+        writer.append_jsonl(
+            logs_dir / "recall_tracking.jsonl",
+            {
+                "ts": future_ts,
+                "matched_ids": ["L-future"],
+            },
+        )
 
         result = correlate_recalls(trw_dir, 30)
         # Future timestamps have elapsed_secs < 0 -> skipped
@@ -1076,13 +1147,9 @@ class TestProcessOutcomeHistoryCap:
         from trw_mcp.scoring import process_outcome
 
         trw_dir = tmp_path / ".trw"
-        receipts_dir = (
-            trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.receipts_dir
-        )
+        receipts_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.receipts_dir
         receipts_dir.mkdir(parents=True)
-        entries_dir = (
-            trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
-        )
+        entries_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
         entries_dir.mkdir(parents=True)
 
         # Get the history cap
@@ -1090,27 +1157,34 @@ class TestProcessOutcomeHistoryCap:
 
         # Write entry with outcome_history already AT the cap (so adding 1 will trigger trim)
         existing_history = [f"2026-01-0{i % 9 + 1}:+0.8:tests_passed" for i in range(history_cap)]
-        writer.write_yaml(entries_dir / "2026-01-01-L-capped.yaml", {
-            "id": "L-capped",
-            "summary": "capped history learning",
-            "detail": "d",
-            "impact": 0.7,
-            "q_value": 0.7,
-            "q_observations": 5,
-            "recurrence": 1,
-            "access_count": 0,
-            "source_type": "agent",
-            "outcome_history": existing_history,
-        })
+        writer.write_yaml(
+            entries_dir / "2026-01-01-L-capped.yaml",
+            {
+                "id": "L-capped",
+                "summary": "capped history learning",
+                "detail": "d",
+                "impact": 0.7,
+                "q_value": 0.7,
+                "q_observations": 5,
+                "recurrence": 1,
+                "access_count": 0,
+                "source_type": "agent",
+                "outcome_history": existing_history,
+            },
+        )
 
         # Write receipt pointing to this entry
         # PRD-QUAL-032: correlate_recalls reads from logs/recall_tracking.jsonl
         now_ts = datetime.now(timezone.utc).isoformat()
         logs_dir = trw_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
-        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", {
-            "ts": now_ts, "matched_ids": ["L-capped"],
-        })
+        writer.append_jsonl(
+            logs_dir / "recall_tracking.jsonl",
+            {
+                "ts": now_ts,
+                "matched_ids": ["L-capped"],
+            },
+        )
 
         result = process_outcome(trw_dir, 0.8, "tests_passed")
         assert "L-capped" in result
@@ -1126,7 +1200,8 @@ class TestProcessOutcomeForEventSuccessPath:
     """Cover line 997-998: successful resolve_trw_dir + process_outcome call."""
 
     def test_process_outcome_called_with_valid_trw_dir(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When resolve_trw_dir succeeds, process_outcome is invoked (lines 997-998)."""
         from trw_mcp.scoring import process_outcome_for_event
@@ -1151,24 +1226,30 @@ class TestProcessOutcomeForEventSuccessPath:
         logs_dir = trw_dir / "logs"
         logs_dir.mkdir(parents=True)
         now_ts = datetime.now(timezone.utc).isoformat()
-        writer.append_jsonl(logs_dir / "recall_tracking.jsonl", {
-            "ts": now_ts,
-            "matched_ids": ["L-target"],
-        })
+        writer.append_jsonl(
+            logs_dir / "recall_tracking.jsonl",
+            {
+                "ts": now_ts,
+                "matched_ids": ["L-target"],
+            },
+        )
 
         entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
         entries_dir.mkdir(parents=True)
-        writer.write_yaml(entries_dir / "2026-01-01-L-target.yaml", {
-            "id": "L-target",
-            "summary": "target learning",
-            "detail": "d",
-            "impact": 0.7,
-            "q_value": 0.7,
-            "q_observations": 5,
-            "recurrence": 1,
-            "access_count": 0,
-            "source_type": "agent",
-        })
+        writer.write_yaml(
+            entries_dir / "2026-01-01-L-target.yaml",
+            {
+                "id": "L-target",
+                "summary": "target learning",
+                "detail": "d",
+                "impact": 0.7,
+                "q_value": 0.7,
+                "q_observations": 5,
+                "recurrence": 1,
+                "access_count": 0,
+                "source_type": "agent",
+            },
+        )
 
         with patch("trw_mcp.scoring._utils.resolve_trw_dir", return_value=trw_dir):
             result = process_outcome_for_event("tests_passed")

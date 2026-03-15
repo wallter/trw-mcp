@@ -12,10 +12,10 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.typed_dicts import AnalyticsReport, RunReportResultDict
 from trw_mcp.state._paths import resolve_run_path, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.report import assemble_report
-from trw_mcp.models.typed_dicts import AnalyticsReport, RunReportResultDict
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -54,7 +54,7 @@ def register_report_tools(server: FastMCP) -> None:
             reader = FileStateReader()
             report = assemble_report(resolved_path, reader, trw_dir)
             logger.info("trw_run_report_generated", run_id=report.run_id)
-            result: RunReportResultDict = cast(RunReportResultDict, report.model_dump())
+            result: RunReportResultDict = cast("RunReportResultDict", report.model_dump())
             return result
         except StateError as exc:
             return {"error": str(exc), "status": "failed"}
@@ -81,4 +81,4 @@ def register_report_tools(server: FastMCP) -> None:
             )
             return report
         except Exception as exc:  # justified: boundary, scan_all_runs reads many run dirs
-            return cast(AnalyticsReport, {"error": str(exc), "status": "failed"})
+            return cast("AnalyticsReport", {"error": str(exc), "status": "failed"})

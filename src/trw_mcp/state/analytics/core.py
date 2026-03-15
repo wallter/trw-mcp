@@ -26,21 +26,21 @@ _safe_float = safe_float
 _safe_int = safe_int
 
 __all__ = [
-    "_safe_float",
-    "_safe_int",
-    "_SLUG_MAX_LEN",
     "_ERROR_KEYWORDS",
+    "_SLUG_MAX_LEN",
     "_SUCCESS_KEYWORDS",
     "_TOPIC_KEYWORD_MAP",
     "_TOPIC_TAG_MAX",
-    "infer_topic_tags",
     "_entries_path",
-    "_iter_entry_files",
     "_get_event_type",
-    "is_error_event",
-    "is_success_event",
+    "_iter_entry_files",
+    "_safe_float",
+    "_safe_int",
     "find_entry_by_id",
     "generate_learning_id",
+    "infer_topic_tags",
+    "is_error_event",
+    "is_success_event",
 ]
 
 
@@ -51,8 +51,15 @@ __all__ = [
 _SLUG_MAX_LEN = 40
 _ERROR_KEYWORDS = ("error", "fail", "exception", "crash", "timeout")
 _SUCCESS_KEYWORDS = (
-    "complete", "success", "pass", "done", "finish",
-    "delivered", "approved", "resolved", "merged",
+    "complete",
+    "success",
+    "pass",
+    "done",
+    "finish",
+    "delivered",
+    "approved",
+    "resolved",
+    "merged",
 )
 
 # ---------------------------------------------------------------------------
@@ -61,41 +68,72 @@ _SUCCESS_KEYWORDS = (
 
 _TOPIC_KEYWORD_MAP: dict[str, str] = {
     # Testing
-    "test": "testing", "tests": "testing", "pytest": "testing",
-    "coverage": "testing", "fixture": "testing", "mock": "testing",
+    "test": "testing",
+    "tests": "testing",
+    "pytest": "testing",
+    "coverage": "testing",
+    "fixture": "testing",
+    "mock": "testing",
     # Architecture
-    "architecture": "architecture", "design": "architecture",
-    "pattern": "architecture", "refactor": "architecture",
+    "architecture": "architecture",
+    "design": "architecture",
+    "pattern": "architecture",
+    "refactor": "architecture",
     # Configuration
-    "config": "configuration", "settings": "configuration",
-    "env": "configuration", "environment": "configuration",
+    "config": "configuration",
+    "settings": "configuration",
+    "env": "configuration",
+    "environment": "configuration",
     # Deployment
-    "deploy": "deployment", "bootstrap": "deployment",
-    "install": "deployment", "package": "deployment",
+    "deploy": "deployment",
+    "bootstrap": "deployment",
+    "install": "deployment",
+    "package": "deployment",
     # Performance
-    "performance": "performance", "cache": "performance",
-    "latency": "performance", "timeout": "performance",
+    "performance": "performance",
+    "cache": "performance",
+    "latency": "performance",
+    "timeout": "performance",
     # Security
-    "security": "security", "auth": "security",
-    "token": "security", "jwt": "security", "rbac": "security",
+    "security": "security",
+    "auth": "security",
+    "token": "security",
+    "jwt": "security",
+    "rbac": "security",
     # Database
-    "database": "database", "sqlite": "database",
-    "migration": "database", "sql": "database", "query": "database",
+    "database": "database",
+    "sqlite": "database",
+    "migration": "database",
+    "sql": "database",
+    "query": "database",
     # API
-    "api": "api", "endpoint": "api", "route": "api",
-    "rest": "api", "mcp": "api",
+    "api": "api",
+    "endpoint": "api",
+    "route": "api",
+    "rest": "api",
+    "mcp": "api",
     # Documentation
-    "docs": "documentation", "readme": "documentation",
-    "prd": "documentation", "changelog": "documentation",
+    "docs": "documentation",
+    "readme": "documentation",
+    "prd": "documentation",
+    "changelog": "documentation",
     # Debugging
-    "debug": "debugging", "error": "debugging",
-    "bug": "debugging", "fix": "debugging", "trace": "debugging",
+    "debug": "debugging",
+    "error": "debugging",
+    "bug": "debugging",
+    "fix": "debugging",
+    "trace": "debugging",
     # Pricing / Cost
-    "cost": "pricing", "price": "pricing", "pricing": "pricing",
-    "billing": "pricing", "budget": "pricing",
+    "cost": "pricing",
+    "price": "pricing",
+    "pricing": "pricing",
+    "billing": "pricing",
+    "budget": "pricing",
     # Rate limiting
-    "rate": "rate-limiting", "limit": "rate-limiting",
-    "throttle": "rate-limiting", "ratelimit": "rate-limiting",
+    "rate": "rate-limiting",
+    "limit": "rate-limiting",
+    "throttle": "rate-limiting",
+    "ratelimit": "rate-limiting",
 }
 
 _TOPIC_TAG_MAX = 3
@@ -222,7 +260,7 @@ def find_entry_by_id(
             data = reader.read_yaml(entry_file)
             if data.get("id") == learning_id:
                 return entry_file, data
-        except (StateError, ValueError, TypeError):
+        except (StateError, ValueError, TypeError):  # per-item error handling: skip unparseable entry files  # noqa: PERF203
             continue
     return None
 

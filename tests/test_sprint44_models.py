@@ -53,28 +53,20 @@ class TestReviewFindingNewFields:
         assert finding.evidence == "Line 42 uses string interpolation in query"
 
     def test_review_finding_confidence_at_zero(self) -> None:
-        finding = ReviewFinding(
-            category="quality", severity="info", description="test", confidence=0.0
-        )
+        finding = ReviewFinding(category="quality", severity="info", description="test", confidence=0.0)
         assert finding.confidence == 0.0
 
     def test_review_finding_confidence_at_one(self) -> None:
-        finding = ReviewFinding(
-            category="quality", severity="info", description="test", confidence=1.0
-        )
+        finding = ReviewFinding(category="quality", severity="info", description="test", confidence=1.0)
         assert finding.confidence == 1.0
 
     def test_review_finding_confidence_below_zero_invalid(self) -> None:
         with pytest.raises(ValidationError):
-            ReviewFinding(
-                category="quality", severity="info", description="test", confidence=-0.1
-            )
+            ReviewFinding(category="quality", severity="info", description="test", confidence=-0.1)
 
     def test_review_finding_confidence_above_one_invalid(self) -> None:
         with pytest.raises(ValidationError):
-            ReviewFinding(
-                category="quality", severity="info", description="test", confidence=1.1
-            )
+            ReviewFinding(category="quality", severity="info", description="test", confidence=1.1)
 
     def test_review_finding_is_frozen(self) -> None:
         finding = ReviewFinding(category="quality", severity="warning", description="test")
@@ -106,30 +98,45 @@ class TestIntegrationReviewArtifact:
 
     def test_integration_review_artifact_verdict_pass(self) -> None:
         artifact = IntegrationReviewArtifact(
-            run_id="r", reviewer_id="", reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z", git_diff_hash="",
-            shards_reviewed=[], checks_performed=[],
-            findings=[], verdict="pass",
+            run_id="r",
+            reviewer_id="",
+            reviewer_role="integration",
+            timestamp="2026-03-03T00:00:00Z",
+            git_diff_hash="",
+            shards_reviewed=[],
+            checks_performed=[],
+            findings=[],
+            verdict="pass",
             human_escalation_path="",
         )
         assert artifact.verdict == "pass"
 
     def test_integration_review_artifact_verdict_warn(self) -> None:
         artifact = IntegrationReviewArtifact(
-            run_id="r", reviewer_id="", reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z", git_diff_hash="",
-            shards_reviewed=[], checks_performed=[],
-            findings=[], verdict="warn",
+            run_id="r",
+            reviewer_id="",
+            reviewer_role="integration",
+            timestamp="2026-03-03T00:00:00Z",
+            git_diff_hash="",
+            shards_reviewed=[],
+            checks_performed=[],
+            findings=[],
+            verdict="warn",
             human_escalation_path="",
         )
         assert artifact.verdict == "warn"
 
     def test_integration_review_artifact_verdict_block(self) -> None:
         artifact = IntegrationReviewArtifact(
-            run_id="r", reviewer_id="", reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z", git_diff_hash="",
-            shards_reviewed=[], checks_performed=[],
-            findings=[], verdict="block",
+            run_id="r",
+            reviewer_id="",
+            reviewer_role="integration",
+            timestamp="2026-03-03T00:00:00Z",
+            git_diff_hash="",
+            shards_reviewed=[],
+            checks_performed=[],
+            findings=[],
+            verdict="block",
             human_escalation_path="",
         )
         assert artifact.verdict == "block"
@@ -137,10 +144,15 @@ class TestIntegrationReviewArtifact:
     def test_integration_review_artifact_invalid_verdict(self) -> None:
         with pytest.raises(ValidationError):
             IntegrationReviewArtifact(
-                run_id="r", reviewer_id="", reviewer_role="integration",
-                timestamp="2026-03-03T00:00:00Z", git_diff_hash="",
-                shards_reviewed=[], checks_performed=[],
-                findings=[], verdict="unknown",  # type: ignore[arg-type]
+                run_id="r",
+                reviewer_id="",
+                reviewer_role="integration",
+                timestamp="2026-03-03T00:00:00Z",
+                git_diff_hash="",
+                shards_reviewed=[],
+                checks_performed=[],
+                findings=[],
+                verdict="unknown",  # type: ignore[arg-type]
                 human_escalation_path="",
             )
 
@@ -170,10 +182,15 @@ class TestIntegrationReviewArtifact:
 
     def test_integration_review_artifact_is_frozen(self) -> None:
         artifact = IntegrationReviewArtifact(
-            run_id="r", reviewer_id="", reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z", git_diff_hash="",
-            shards_reviewed=[], checks_performed=[],
-            findings=[], verdict="pass",
+            run_id="r",
+            reviewer_id="",
+            reviewer_role="integration",
+            timestamp="2026-03-03T00:00:00Z",
+            git_diff_hash="",
+            shards_reviewed=[],
+            checks_performed=[],
+            findings=[],
+            verdict="pass",
             human_escalation_path="",
         )
         with pytest.raises(ValidationError):

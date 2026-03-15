@@ -14,10 +14,10 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.exceptions import StateError
-
-logger = structlog.get_logger()
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader
+
+logger = structlog.get_logger()
 
 
 def __getattr__(name: str) -> object:

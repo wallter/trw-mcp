@@ -16,7 +16,7 @@ def _crash_log(exc: BaseException) -> None:
     """
     tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
     ts = datetime.now(timezone.utc).isoformat()
-    msg = f"\n{'='*60}\nTRW MCP CRASH — {ts}\n{'='*60}\n{''.join(tb)}\n"
+    msg = f"\n{'=' * 60}\nTRW MCP CRASH — {ts}\n{'=' * 60}\n{''.join(tb)}\n"
 
     # Always write to stderr so Claude Code can surface it
     sys.stderr.write(msg)

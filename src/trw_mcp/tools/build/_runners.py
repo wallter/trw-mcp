@@ -65,7 +65,9 @@ def _run_pytest(
     custom_cmd = config.build_check_pytest_cmd
     if custom_cmd:
         result = _run_subprocess(
-            custom_cmd.split(), project_root, timeout_secs,
+            custom_cmd.split(),
+            project_root,
+            timeout_secs,
         )
         if isinstance(result, str):
             is_timeout = "timed out" in result
@@ -86,8 +88,7 @@ def _run_pytest(
 
     # Pytest runs from project_root (where tests/ lives).
     # Mypy runs from build_root (where src/ lives) — handled in _run_mypy.
-    source_path = config.source_package_path or "trw-mcp/src"
-    build_root = str(Path(source_path).parent)
+    # Mypy runs from build_root (where src/ lives) — handled in _run_mypy.
     cwd = project_root  # pytest cwd = project root (tests/ is here)
 
     # Test directory relative to project root

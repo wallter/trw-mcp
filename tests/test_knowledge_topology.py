@@ -18,11 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests.conftest import get_tools_sync
-
 import pytest
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
+from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.knowledge_topology import (
     build_cooccurrence_matrix,
@@ -142,10 +141,9 @@ class TestBuildCooccurrenceMatrix:
 
     def test_basic_cooccurrence(self) -> None:
         # 5 entries with ["a", "b"], 3 with ["a", "c"]
-        entries = (
-            [_make_entry(f"L-{i:03d}", tags=["a", "b"]) for i in range(5)]
-            + [_make_entry(f"L-{i+5:03d}", tags=["a", "c"]) for i in range(3)]
-        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["a", "b"]) for i in range(5)] + [
+            _make_entry(f"L-{i + 5:03d}", tags=["a", "c"]) for i in range(3)
+        ]
         matrix = build_cooccurrence_matrix(entries)
         assert ("a", "b") in matrix
         assert matrix[("a", "b")] == 5
@@ -201,9 +199,7 @@ class TestBuildCooccurrenceMatrix:
 
     def test_three_tags_produces_three_pairs(self) -> None:
         # ["a", "b", "c"] appearing 3 times produces pairs (a,b), (a,c), (b,c)
-        entries = [
-            _make_entry(f"L-{i:03d}", tags=["a", "b", "c"]) for i in range(3)
-        ]
+        entries = [_make_entry(f"L-{i:03d}", tags=["a", "b", "c"]) for i in range(3)]
         matrix = build_cooccurrence_matrix(entries)
         assert ("a", "b") in matrix
         assert ("a", "c") in matrix
@@ -220,10 +216,9 @@ class TestFormJaccardClusters:
 
     def test_two_distinct_clusters(self) -> None:
         # 10 entries with ["pydantic", "testing"], 8 with ["fastapi", "api"]
-        entries = (
-            [_make_entry(f"L-{i:03d}", tags=["pydantic", "testing"]) for i in range(10)]
-            + [_make_entry(f"L-{i+10:03d}", tags=["fastapi", "api"]) for i in range(8)]
-        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["pydantic", "testing"]) for i in range(10)] + [
+            _make_entry(f"L-{i + 10:03d}", tags=["fastapi", "api"]) for i in range(8)
+        ]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         assert len(clusters) == 2
         slugs = {c["slug"] for c in clusters}
@@ -231,19 +226,16 @@ class TestFormJaccardClusters:
         assert len(slugs) == 2
 
     def test_entries_with_no_tags_skipped(self) -> None:
-        entries = (
-            [_make_entry(f"L-{i:03d}", tags=[]) for i in range(5)]
-            + [_make_entry(f"L-{i+5:03d}", tags=["testing", "python"]) for i in range(5)]
-        )
+        entries = [_make_entry(f"L-{i:03d}", tags=[]) for i in range(5)] + [
+            _make_entry(f"L-{i + 5:03d}", tags=["testing", "python"]) for i in range(5)
+        ]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         # Only entries with tags get clustered
         total_ids = sum(len(c["entry_ids"]) for c in clusters)
         assert total_ids == 5  # only the 5 tagged entries
 
     def test_all_entries_same_tags_one_cluster(self) -> None:
-        entries = [
-            _make_entry(f"L-{i:03d}", tags=["testing", "python"]) for i in range(8)
-        ]
+        entries = [_make_entry(f"L-{i:03d}", tags=["testing", "python"]) for i in range(8)]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         assert len(clusters) == 1
         assert len(clusters[0]["entry_ids"]) == 8
@@ -251,19 +243,16 @@ class TestFormJaccardClusters:
     def test_cluster_below_min_size_merged(self) -> None:
         # 6 entries forming cluster A, 2 forming cluster B (below min_size=3)
         # B should be merged into A
-        entries = (
-            [_make_entry(f"L-{i:03d}", tags=["main", "topic"]) for i in range(6)]
-            + [_make_entry(f"L-{i+6:03d}", tags=["main", "small"]) for i in range(2)]
-        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["main", "topic"]) for i in range(6)] + [
+            _make_entry(f"L-{i + 6:03d}", tags=["main", "small"]) for i in range(2)
+        ]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         # After merge, should be 1 cluster with all 8 entries
         total_ids = sum(len(c["entry_ids"]) for c in clusters)
         assert total_ids == 8
 
     def test_cluster_output_structure(self) -> None:
-        entries = [
-            _make_entry(f"L-{i:03d}", tags=["testing"]) for i in range(5)
-        ]
+        entries = [_make_entry(f"L-{i:03d}", tags=["testing"]) for i in range(5)]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         assert len(clusters) >= 1
         cluster = clusters[0]
@@ -274,10 +263,7 @@ class TestFormJaccardClusters:
         assert "avg_importance" in cluster
 
     def test_avg_importance_computed(self) -> None:
-        entries = [
-            _make_entry(f"L-{i:03d}", tags=["testing"], importance=float(i) / 10)
-            for i in range(1, 6)
-        ]
+        entries = [_make_entry(f"L-{i:03d}", tags=["testing"], importance=float(i) / 10) for i in range(1, 6)]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         assert len(clusters) >= 1
         avg = clusters[0]["avg_importance"]
@@ -291,10 +277,9 @@ class TestFormJaccardClusters:
     def test_high_threshold_splits_similar_clusters(self) -> None:
         # threshold=1.0 means entries need 100% tag overlap to join — each
         # unique tag set seeds its own cluster, then undersized ones get merged/dropped
-        entries = (
-            [_make_entry(f"L-{i:03d}", tags=["a", "b"]) for i in range(5)]
-            + [_make_entry(f"L-{i+5:03d}", tags=["c", "d"]) for i in range(5)]
-        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["a", "b"]) for i in range(5)] + [
+            _make_entry(f"L-{i + 5:03d}", tags=["c", "d"]) for i in range(5)
+        ]
         clusters = form_jaccard_clusters(entries, threshold=1.0, min_size=3)
         # With threshold=1.0 and identical tag sets within groups, should form 2 clusters
         total_entries = sum(len(c["entry_ids"]) for c in clusters)
@@ -302,19 +287,17 @@ class TestFormJaccardClusters:
 
     def test_cluster_slug_is_most_common_tag(self) -> None:
         # "pydantic" appears in all 5, "testing" in 3, "fastapi" in 2
-        entries = (
-            [_make_entry(f"L-{i:03d}", tags=["pydantic", "testing"]) for i in range(3)]
-            + [_make_entry(f"L-{i+3:03d}", tags=["pydantic", "fastapi"]) for i in range(2)]
-        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["pydantic", "testing"]) for i in range(3)] + [
+            _make_entry(f"L-{i + 3:03d}", tags=["pydantic", "fastapi"]) for i in range(2)
+        ]
         clusters = form_jaccard_clusters(entries, threshold=0.1, min_size=1)
         # Pydantic appears 5 times, should be slug
         assert any("pydantic" in str(c["slug"]) for c in clusters)
 
     def test_tags_in_cluster_are_union(self) -> None:
-        entries = (
-            [_make_entry(f"L-{i:03d}", tags=["a", "b"]) for i in range(4)]
-            + [_make_entry(f"L-{i+4:03d}", tags=["a", "c"]) for i in range(4)]
-        )
+        entries = [_make_entry(f"L-{i:03d}", tags=["a", "b"]) for i in range(4)] + [
+            _make_entry(f"L-{i + 4:03d}", tags=["a", "c"]) for i in range(4)
+        ]
         clusters = form_jaccard_clusters(entries, threshold=0.1, min_size=3)
         # Should form one big cluster (a connects both groups)
         all_tags: list[str] = []
@@ -323,9 +306,7 @@ class TestFormJaccardClusters:
         assert "a" in all_tags
 
     def test_cluster_entry_ids_match_entries(self) -> None:
-        entries = [
-            _make_entry(f"L-{i:03d}", tags=["topic"]) for i in range(5)
-        ]
+        entries = [_make_entry(f"L-{i:03d}", tags=["topic"]) for i in range(5)]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         for cluster in clusters:
             ids = cluster["entry_ids"]
@@ -372,9 +353,9 @@ class TestRenderTopicDocument:
         cluster = self._make_cluster()
         rendered = render_topic_document(cluster)
         # 0.8 entry should appear before 0.7 before 0.6
-        idx_one = rendered.index("Summary one")   # importance 0.8
+        idx_one = rendered.index("Summary one")  # importance 0.8
         idx_three = rendered.index("Summary three")  # importance 0.7
-        idx_two = rendered.index("Summary two")   # importance 0.6
+        idx_two = rendered.index("Summary two")  # importance 0.6
         assert idx_one < idx_three < idx_two
 
     def test_long_detail_truncated(self) -> None:
@@ -518,9 +499,7 @@ class TestPreserveManualMarkers:
 
     def test_paired_markers_preserved(self) -> None:
         existing = (
-            "<!-- trw:auto-generated -->\n"
-            "Old content\n"
-            "<!-- trw:manual-start -->Custom notes<!-- trw:manual-end -->"
+            "<!-- trw:auto-generated -->\nOld content\n<!-- trw:manual-start -->Custom notes<!-- trw:manual-end -->"
         )
         new = "New auto-generated content"
         result = preserve_manual_markers(existing, new)
@@ -530,10 +509,7 @@ class TestPreserveManualMarkers:
         assert "<!-- trw:manual-end -->" in result
 
     def test_unpaired_opening_preserves_to_eof(self) -> None:
-        existing = (
-            "Auto section\n"
-            "<!-- trw:manual-start -->Notes that continue to EOF\nMore notes"
-        )
+        existing = "Auto section\n<!-- trw:manual-start -->Notes that continue to EOF\nMore notes"
         new = "Fresh content"
         result = preserve_manual_markers(existing, new)
         assert "Notes that continue to EOF" in result
@@ -544,10 +520,7 @@ class TestPreserveManualMarkers:
         assert "<!-- trw:manual-end -->" not in result
 
     def test_crlf_handling(self) -> None:
-        existing = (
-            "Auto\r\n"
-            "<!-- trw:manual-start -->\r\nManual content\r\n<!-- trw:manual-end -->"
-        )
+        existing = "Auto\r\n<!-- trw:manual-start -->\r\nManual content\r\n<!-- trw:manual-end -->"
         new = "New content"
         result = preserve_manual_markers(existing, new)
         assert "Manual content" in result
@@ -557,10 +530,7 @@ class TestPreserveManualMarkers:
         assert result == "New content"
 
     def test_manual_block_appended_after_new_content(self) -> None:
-        existing = (
-            "Old\n"
-            "<!-- trw:manual-start -->My notes<!-- trw:manual-end -->"
-        )
+        existing = "Old\n<!-- trw:manual-start -->My notes<!-- trw:manual-end -->"
         new = "New generated"
         result = preserve_manual_markers(existing, new)
         # New content should come first, then manual block
@@ -813,9 +783,7 @@ class TestExecuteKnowledgeSync:
         assert "errors" in result
         assert isinstance(result["errors"], list)
 
-    def test_partial_render_failure_collected_not_raised(
-        self, trw_dir: Path, tmp_path: Path
-    ) -> None:
+    def test_partial_render_failure_collected_not_raised(self, trw_dir: Path, tmp_path: Path) -> None:
         config = _make_config(tmp_path, knowledge_sync_threshold=5, knowledge_min_cluster_size=2)
         entries = [_make_entry(f"L-{i:03d}", tags=["testing", "python"]) for i in range(6)]
 
@@ -901,9 +869,7 @@ class TestRecallTopicFilter:
             slug: entry_ids,
             "updated_at": "2026-01-01T00:00:00+00:00",
         }
-        (knowledge_dir / "clusters.json").write_text(
-            json.dumps(data), encoding="utf-8"
-        )
+        (knowledge_dir / "clusters.json").write_text(json.dumps(data), encoding="utf-8")
 
     def test_topic_filters_to_matching_entries(self, tmp_path: Path) -> None:
         trw_dir = tmp_path / ".trw"
@@ -937,6 +903,7 @@ class TestRecallTopicFilter:
 
             # Import and call the internal topic filter logic directly
             import json as _json
+
             clusters_path = trw_dir / "knowledge" / "clusters.json"
             clusters_data = _json.loads(clusters_path.read_text(encoding="utf-8"))
             allowed_ids = set(clusters_data["pydantic"])
@@ -1183,10 +1150,7 @@ class TestEdgeCases:
 
     def test_form_clusters_single_oversized_cluster(self) -> None:
         # All 20 entries have same tags — one cluster with 20 entries
-        entries = [
-            _make_entry(f"L-{i:03d}", tags=["alpha", "beta", "gamma"])
-            for i in range(20)
-        ]
+        entries = [_make_entry(f"L-{i:03d}", tags=["alpha", "beta", "gamma"]) for i in range(20)]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=3)
         assert len(clusters) == 1
         assert len(clusters[0]["entry_ids"]) == 20
@@ -1252,9 +1216,7 @@ class TestEdgeCases:
 
     def test_form_clusters_zero_threshold(self) -> None:
         # threshold=0.0 means all non-empty-tag entries join first cluster
-        entries = [
-            _make_entry(f"L-{i:03d}", tags=[f"tag{i}"]) for i in range(10)
-        ]
+        entries = [_make_entry(f"L-{i:03d}", tags=[f"tag{i}"]) for i in range(10)]
         clusters = form_jaccard_clusters(entries, threshold=0.0, min_size=1)
         # All entries with unique tags join the first cluster via threshold=0.0
         # (sim >= 0.0 is always true for non-empty tag sets)
@@ -1291,9 +1253,7 @@ class TestEdgeCases:
         # Exception caught — existing_content returned
         assert result == bad_existing
 
-    def test_execute_sync_oserror_reading_existing_file(
-        self, tmp_path: Path
-    ) -> None:
+    def test_execute_sync_oserror_reading_existing_file(self, tmp_path: Path) -> None:
         """OSError reading existing topic file is silently ignored (line 429-430)."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()

@@ -11,12 +11,8 @@ Covers:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Unit tests: _sanitize_summary
@@ -316,6 +312,7 @@ class TestGenerateReviewMd:
         so the system would exclude entries with impact < 0.7.
         """
         from unittest.mock import MagicMock
+
         from trw_mcp.state.claude_md._sync import generate_review_md
 
         trw_dir = tmp_path / ".trw"
@@ -345,6 +342,7 @@ class TestGenerateReviewMd:
         entries are excluded before they reach REVIEW.md.
         """
         from unittest.mock import MagicMock
+
         from trw_mcp.state.claude_md._sync import generate_review_md
 
         trw_dir = tmp_path / ".trw"
@@ -416,11 +414,14 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
-            patch("trw_mcp.state.claude_md._sync.generate_review_md", return_value={
-                "path": str(tmp_path / "REVIEW.md"),
-                "rules_count": 0,
-                "status": "generated",
-            }) as mock_gen,
+            patch(
+                "trw_mcp.state.claude_md._sync.generate_review_md",
+                return_value={
+                    "path": str(tmp_path / "REVIEW.md"),
+                    "rules_count": 0,
+                    "status": "generated",
+                },
+            ) as mock_gen,
         ):
             result = execute_claude_md_sync(**args)  # type: ignore[arg-type]
 
@@ -466,11 +467,14 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
-            patch("trw_mcp.state.claude_md._sync.generate_review_md", return_value={
-                "path": str(tmp_path / "REVIEW.md"),
-                "rules_count": 0,
-                "status": "generated",
-            }) as mock_gen,
+            patch(
+                "trw_mcp.state.claude_md._sync.generate_review_md",
+                return_value={
+                    "path": str(tmp_path / "REVIEW.md"),
+                    "rules_count": 0,
+                    "status": "generated",
+                },
+            ) as mock_gen,
         ):
             execute_claude_md_sync(**args)  # type: ignore[arg-type]
 

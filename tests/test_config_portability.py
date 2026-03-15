@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # _trw_mcp_server_entry — portable command generation
 # ---------------------------------------------------------------------------

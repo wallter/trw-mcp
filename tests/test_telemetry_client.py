@@ -432,9 +432,7 @@ class TestTelemetryClientEnabled:
 
 
 class TestTelemetryClientThreadSafety:
-    def test_concurrent_record_event_does_not_corrupt_queue(
-        self, tmp_path: Path
-    ) -> None:
+    def test_concurrent_record_event_does_not_corrupt_queue(self, tmp_path: Path) -> None:
         output = tmp_path / "telemetry.jsonl"
         client = TelemetryClient(enabled=True, output_path=output)
         n_threads = 20
@@ -476,10 +474,7 @@ class TestTelemetryClientThreadSafety:
             except Exception as exc:
                 errors.append(exc)
 
-        threads = [
-            threading.Thread(target=_record if i % 2 == 0 else _flush)
-            for i in range(10)
-        ]
+        threads = [threading.Thread(target=_record if i % 2 == 0 else _flush) for i in range(10)]
         for t in threads:
             t.start()
         for t in threads:
@@ -499,9 +494,7 @@ class TestTelemetryClientErrorHandling:
         mock_writer = MagicMock()
         mock_writer.append_jsonl.side_effect = OSError("disk full")
 
-        client = TelemetryClient(
-            enabled=True, output_path=output, writer=mock_writer
-        )
+        client = TelemetryClient(enabled=True, output_path=output, writer=mock_writer)
         client.record_event(_base_event())
         # Should not raise
         result = client.flush()
@@ -524,9 +517,7 @@ class TestTelemetryClientErrorHandling:
 
         mock_writer.append_jsonl.side_effect = _side_effect
 
-        client = TelemetryClient(
-            enabled=True, output_path=output, writer=mock_writer
-        )
+        client = TelemetryClient(enabled=True, output_path=output, writer=mock_writer)
         client.record_event(_base_event())
         client.record_event(_base_event())
         # Should not raise; one write succeeds
@@ -543,9 +534,7 @@ class TestTelemetryClientErrorHandling:
 
 
 class TestTelemetryClientFromConfig:
-    def test_from_config_disabled_when_telemetry_enabled_false(
-        self, tmp_path: Path
-    ) -> None:
+    def test_from_config_disabled_when_telemetry_enabled_false(self, tmp_path: Path) -> None:
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -564,9 +553,7 @@ class TestTelemetryClientFromConfig:
 
         assert client.enabled is False
 
-    def test_from_config_enabled_when_telemetry_enabled_true(
-        self, tmp_path: Path
-    ) -> None:
+    def test_from_config_enabled_when_telemetry_enabled_true(self, tmp_path: Path) -> None:
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -584,9 +571,7 @@ class TestTelemetryClientFromConfig:
 
         assert client.enabled is True
 
-    def test_from_config_output_path_uses_logs_dir_and_telemetry_file(
-        self, tmp_path: Path
-    ) -> None:
+    def test_from_config_output_path_uses_logs_dir_and_telemetry_file(self, tmp_path: Path) -> None:
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -622,9 +607,7 @@ class TestFlushDataLossPrevention:
         mock_writer = MagicMock()
         mock_writer.append_jsonl.side_effect = OSError("disk full")
 
-        client = TelemetryClient(
-            enabled=True, output_path=output, writer=mock_writer
-        )
+        client = TelemetryClient(enabled=True, output_path=output, writer=mock_writer)
         for _ in range(3):
             client.record_event(_base_event())
 
@@ -646,9 +629,7 @@ class TestFlushDataLossPrevention:
 
         mock_writer.append_jsonl.side_effect = _side_effect
 
-        client = TelemetryClient(
-            enabled=True, output_path=output, writer=mock_writer
-        )
+        client = TelemetryClient(enabled=True, output_path=output, writer=mock_writer)
         for _ in range(3):
             client.record_event(_base_event())
 
@@ -670,9 +651,7 @@ class TestFlushDataLossPrevention:
 
         mock_writer.append_jsonl.side_effect = _side_effect
 
-        client = TelemetryClient(
-            enabled=True, output_path=output, writer=mock_writer
-        )
+        client = TelemetryClient(enabled=True, output_path=output, writer=mock_writer)
         client.record_event(_base_event())
 
         # First flush fails

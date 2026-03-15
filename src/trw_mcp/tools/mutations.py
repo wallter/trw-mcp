@@ -44,7 +44,7 @@ def _get_changed_files(
     """
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
             capture_output=True,
             text=True,
             timeout=30,
@@ -144,13 +144,15 @@ def _parse_mutmut_results(json_output: str) -> ParseMutmutResultDict:
     # Extract surviving mutant details (first 20, sorted by line)
     surviving_mutants: list[SurvivingMutantDict] = []
     if isinstance(survivors_raw, list):
-        for mutant in survivors_raw[:20]:
-            if isinstance(mutant, dict):
-                surviving_mutants.append({
-                    "file": str(mutant.get("file", "")),
-                    "line": int(mutant.get("line", 0)),
-                    "description": str(mutant.get("description", ""))[:200],
-                })
+        surviving_mutants = [
+            {
+                "file": str(mutant.get("file", "")),
+                "line": int(mutant.get("line", 0)),
+                "description": str(mutant.get("description", ""))[:200],
+            }
+            for mutant in survivors_raw[:20]
+            if isinstance(mutant, dict)
+        ]
         surviving_mutants.sort(key=lambda m: int(str(m.get("line", 0))))
 
     logger.debug(
@@ -284,4 +286,4 @@ def cache_mutation_status(
     """Write mutation testing results to .trw/context/mutation-status.yaml."""
     from trw_mcp.tools.build import _cache_to_context
 
-    return _cache_to_context(trw_dir, "mutation-status.yaml", cast(dict[str, object], result))
+    return _cache_to_context(trw_dir, "mutation-status.yaml", cast("dict[str, object]", result))

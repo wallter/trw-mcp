@@ -14,6 +14,7 @@ Design constraints:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -21,11 +22,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Tool name constants — use these instead of string literals to catch typos
 # at import time (AttributeError) rather than silent mismatch at runtime.
 # ---------------------------------------------------------------------------
+
 
 class ToolName:
     """Constants for NudgeContext tool_name values."""
@@ -45,28 +46,30 @@ class ToolName:
 # State dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CeremonyState:
     """Tracks ceremony step completion for the current session."""
 
     session_started: bool = False
     checkpoint_count: int = 0
-    last_checkpoint_ts: str | None = None        # ISO timestamp
+    last_checkpoint_ts: str | None = None  # ISO timestamp
     files_modified_since_checkpoint: int = 0
-    build_check_result: str | None = None        # "passed" | "failed" | None
+    build_check_result: str | None = None  # "passed" | "failed" | None
     deliver_called: bool = False
     learnings_this_session: int = 0
     nudge_counts: dict[str, int] = field(default_factory=dict)  # step -> nudge count
     phase: str = "early"  # early, implement, validate, review, deliver, done
     # FR01 (PRD-CORE-084): Review tracking fields
     review_called: bool = False
-    review_verdict: str | None = None    # "pass" | "warn" | "block" | None
+    review_verdict: str | None = None  # "pass" | "warn" | "block" | None
     review_p0_count: int = 0
 
 
 # ---------------------------------------------------------------------------
 # FR02 (PRD-CORE-084): NudgeContext dataclass
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class NudgeContext:
@@ -84,6 +87,7 @@ class NudgeContext:
 # File path helper
 # ---------------------------------------------------------------------------
 
+
 def _state_path(trw_dir: Path) -> Path:
     return trw_dir / "context" / "ceremony-state.json"
 
@@ -91,6 +95,7 @@ def _state_path(trw_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Read / Write
 # ---------------------------------------------------------------------------
+
 
 def read_ceremony_state(trw_dir: Path) -> CeremonyState:
     """Read ceremony state from .trw/context/ceremony-state.json.
@@ -122,19 +127,15 @@ def write_ceremony_state(trw_dir: Path, state: CeremonyState) -> None:
 
     content = json.dumps(asdict(state), separators=(",", ":"))
     # Write to a temp file in the same directory to guarantee same-filesystem rename
-    fd, tmp_path_str = tempfile.mkstemp(
-        dir=path.parent, prefix=".ceremony-state-", suffix=".tmp"
-    )
+    fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=".ceremony-state-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         os.rename(tmp_path_str, path)
     except Exception:  # justified: fail-open, ceremony state persistence is best-effort
         # Clean up the temp file on failure; do not propagate (fail-open)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path_str)
-        except OSError:
-            pass
 
 
 def reset_ceremony_state(trw_dir: Path) -> None:
@@ -145,6 +146,7 @@ def reset_ceremony_state(trw_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 # Update helpers
 # ---------------------------------------------------------------------------
+
 
 def mark_session_started(trw_dir: Path) -> None:
     """Set session_started = True."""
@@ -294,9 +296,7 @@ def _select_message_by_urgency(
     return medium if urgency == "medium" else low
 
 
-def _select_nudge_message(
-    step: str, state: CeremonyState, available_learnings: int
-) -> str:
+def _select_nudge_message(step: str, state: CeremonyState, available_learnings: int) -> str:
     """Select the value-expressing static nudge message for the given step.
 
     Messages follow the value-expression template (FR02):
@@ -445,10 +445,7 @@ def _select_nudge_message(
             )
         return _select_message_by_urgency(
             urgency,
-            low=(
-                "\u26a1 Session complete — "
-                "trw_deliver() persists the run and any learnings for future sessions."
-            ),
+            low=("\u26a1 Session complete — trw_deliver() persists the run and any learnings for future sessions."),
             medium=(
                 "\u26a1 Session complete but not delivered — "
                 "run record won't persist for future sessions without trw_deliver()."
@@ -470,10 +467,7 @@ def _highest_priority_pending_step(state: CeremonyState) -> str | None:
         return "session_start"
 
     # Priority 2: checkpoint (if files modified > 3 OR no checkpoint in session)
-    needs_checkpoint = (
-        state.files_modified_since_checkpoint > 3
-        or state.checkpoint_count == 0
-    )
+    needs_checkpoint = state.files_modified_since_checkpoint > 3 or state.checkpoint_count == 0
     if needs_checkpoint:
         return "checkpoint"
 
@@ -495,6 +489,7 @@ def _highest_priority_pending_step(state: CeremonyState) -> str | None:
 # ---------------------------------------------------------------------------
 # FR03 (PRD-CORE-084): Context-reactive messages
 # ---------------------------------------------------------------------------
+
 
 def _context_reactive_message(
     context: NudgeContext,
@@ -566,10 +561,7 @@ def _context_reactive_message(
         return "Session complete. Learnings persisted for future sessions."
 
     if tool == ToolName.INIT:
-        return (
-            "Run bootstrapped. NEXT: Begin implementation. "
-            "THEN: trw_checkpoint() at first milestone."
-        )
+        return "Run bootstrapped. NEXT: Begin implementation. THEN: trw_checkpoint() at first milestone."
 
     if tool == ToolName.RECALL:
         return "Learnings recalled. Review them for relevant patterns before proceeding."
@@ -619,9 +611,8 @@ def _next_two_steps(state: CeremonyState) -> tuple[str | None, str | None]:
 # FR05 (PRD-CORE-084): Phase reversion active prompting
 # ---------------------------------------------------------------------------
 
-def _reversion_prompt(
-    context: NudgeContext | None, state: CeremonyState
-) -> str | None:
+
+def _reversion_prompt(context: NudgeContext | None, state: CeremonyState) -> str | None:
     """Return a phase-reversion prompt if conditions warrant it.
 
     Returns None when no reversion is appropriate, or when the caller is a subagent.
@@ -635,17 +626,11 @@ def _reversion_prompt(
 
     # Trigger 1: Build failure
     if context.build_passed is False:
-        return (
-            "If failures reveal a design flaw, revert to PLAN. "
-            "If implementation bugs, fix in-phase."
-        )
+        return "If failures reveal a design flaw, revert to PLAN. If implementation bugs, fix in-phase."
 
     # Trigger 2: P0 findings from review
     if context.review_p0_count > 0:
-        return (
-            "If P0 requires architectural change, revert to PLAN. "
-            "If isolated fix, remediate and re-validate."
-        )
+        return "If P0 requires architectural change, revert to PLAN. If isolated fix, remediate and re-validate."
 
     # Trigger 3: Scope creep (many checkpoint nudges + many files modified)
     checkpoint_nudges = state.nudge_counts.get("checkpoint", 0)
@@ -662,6 +647,7 @@ def _reversion_prompt(
 # FR09 (PRD-CORE-084): Component-aware nudge assembly
 # ---------------------------------------------------------------------------
 
+
 def _assemble_nudge(
     status_line: str,
     reactive_msg: str | None,
@@ -677,18 +663,22 @@ def _assemble_nudge(
     components: list[str] = [status_line]
     if reactive_msg:
         components.append(reactive_msg)
-    base = "\n".join(components)
-    if next_then and len(base) + len(next_then) + 1 <= budget:
+
+    current = "\n".join(components)
+    if next_then and len(current) + len(next_then) + 1 <= budget:
         components.append(next_then)
-        base = "\n".join(components)
-    if reversion and len(base) + len(reversion) + 1 <= budget:
+        current = "\n".join(components)
+
+    if reversion and len(current) + len(reversion) + 1 <= budget:
         components.append(reversion)
+
     return "\n".join(components)
 
 
 # ---------------------------------------------------------------------------
 # Main nudge computation (updated for PRD-CORE-084)
 # ---------------------------------------------------------------------------
+
 
 def compute_nudge(
     state: CeremonyState,
@@ -745,8 +735,10 @@ def compute_nudge(
             # reactive_msg already contains NEXT/THEN for most tools, so skip
 
             return _assemble_nudge(
-                header_and_status, reactive_msg,
-                next_then=next_then_str, reversion=reversion,
+                header_and_status,
+                reactive_msg,
+                next_then=next_then_str,
+                reversion=reversion,
                 budget=600,
             )
 
@@ -791,11 +783,7 @@ def is_local_model(model_id: str) -> bool:
     - Contains "localhost"
     """
     model_lower = model_id.lower()
-    return (
-        model_lower.startswith("ollama/")
-        or model_lower.startswith("local/")
-        or "localhost" in model_lower
-    )
+    return model_lower.startswith(("ollama/", "local/")) or "localhost" in model_lower
 
 
 def _build_minimal_status_line(state: CeremonyState) -> str:
@@ -856,17 +844,18 @@ def compute_nudge_minimal(state: CeremonyState, available_learnings: int = 0) ->
 # Internal deserialization helper
 # ---------------------------------------------------------------------------
 
+
 def _from_dict(data: dict[str, object]) -> CeremonyState:
     """Deserialize a CeremonyState from a plain dict.
 
     Unknown or malformed fields are silently ignored (fail-open).
     """
     nudge_raw = data.get("nudge_counts", {})
-    nudge_counts: dict[str, int] = {}
-    if isinstance(nudge_raw, dict):
-        for k, v in nudge_raw.items():
-            if isinstance(k, str) and isinstance(v, int):
-                nudge_counts[k] = v
+    nudge_counts: dict[str, int] = (
+        {k: v for k, v in nudge_raw.items() if isinstance(k, str) and isinstance(v, int)}
+        if isinstance(nudge_raw, dict)
+        else {}
+    )
 
     def _bool(key: str, default: bool = False) -> bool:
         val = data.get(key, default)

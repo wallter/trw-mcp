@@ -60,15 +60,13 @@ def check_for_update() -> dict[str, object]:
             _key = cfg.platform_api_key.get_secret_value()
             if _key:
                 headers["Authorization"] = f"Bearer {_key}"
-            req = urllib.request.Request(url, method="GET", headers=headers)
-            with urllib.request.urlopen(req, timeout=3) as response:
+            req = urllib.request.Request(url, method="GET", headers=headers)  # noqa: S310 — URL from cfg.effective_platform_urls (operator config, not user input)
+            with urllib.request.urlopen(req, timeout=3) as response:  # noqa: S310 — see Request comment above
                 if 200 <= response.status < 300:
                     data: dict[str, object] = json.loads(response.read().decode("utf-8"))
                     latest = str(data.get("version", current))
                     available = _compare_versions(current, latest)
-                    advisory: str | None = (
-                        f"TRW v{latest} available (you have v{current}). " if available else None
-                    )
+                    advisory: str | None = f"TRW v{latest} available (you have v{current}). " if available else None
                     return {
                         "available": available,
                         "current": current,
@@ -76,7 +74,13 @@ def check_for_update() -> dict[str, object]:
                         "channel": cfg.update_channel,
                         "advisory": advisory,
                     }
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError, KeyError):
+        except (  # noqa: PERF203
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+        ):
             logger.debug("version_check_failed", base_url=base_url)
 
     return {
@@ -88,14 +92,25 @@ def check_for_update() -> dict[str, object]:
     }
 
 
+def _parse_version(version: str) -> tuple[int, int, int]:
+    """Parse version string to semver tuple (3 parts), raise on failure."""
+    return tuple(int(x) for x in version.split(".")[:3])  # type: ignore[return-value]
+
+
 def _compare_versions(current: str, latest: str) -> bool:
     """Return True if latest is newer than current using semver tuple comparison."""
     try:
-        cur_parts = tuple(int(x) for x in current.split(".")[:3])
-        lat_parts = tuple(int(x) for x in latest.split(".")[:3])
-        return lat_parts > cur_parts
+        return _parse_version(latest) > _parse_version(current)
     except (ValueError, TypeError):
         return False
+
+
+def _is_compatible(current: str, min_version: str) -> bool:
+    """Return True if current version meets minimum compatibility requirement."""
+    try:
+        return _parse_version(current) >= _parse_version(min_version)
+    except (ValueError, TypeError):
+        return True  # Fail-open: assume compatible if parsing fails
 
 
 def download_release_artifact(
@@ -126,8 +141,8 @@ def download_release_artifact(
         _key = cfg.platform_api_key.get_secret_value()
         if _key:
             headers["Authorization"] = f"Bearer {_key}"
-        req = urllib.request.Request(artifact_url, method="GET", headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as response:
+        req = urllib.request.Request(artifact_url, method="GET", headers=headers)  # noqa: S310 — artifact_url comes from the backend API response (operator-controlled platform); checksum is verified after download
+        with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 — see Request comment above
             archive_path.write_bytes(response.read())
 
         # Mandatory checksum verification (PRD-QUAL-042-FR08)
@@ -278,22 +293,17 @@ def _fetch_artifact_info(version: str) -> dict[str, object] | None:
             _key = cfg.platform_api_key.get_secret_value()
             if _key:
                 headers["Authorization"] = f"Bearer {_key}"
-            req = urllib.request.Request(url, method="GET", headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as response:
+            req = urllib.request.Request(url, method="GET", headers=headers)  # noqa: S310 — URL from cfg.effective_platform_urls (operator config, not user input)
+            with urllib.request.urlopen(req, timeout=5) as response:  # noqa: S310 — see Request comment above
                 if 200 <= response.status < 300:
                     result: dict[str, object] = json.loads(response.read().decode("utf-8"))
                     return result
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
+        except (  # noqa: PERF203
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            OSError,
+            json.JSONDecodeError,
+        ):
             continue
 
     return None
-
-
-def _is_compatible(current: str, min_version: str) -> bool:
-    """Return True if current version meets minimum compatibility requirement."""
-    try:
-        cur = tuple(int(x) for x in current.split(".")[:3])
-        minimum = tuple(int(x) for x in min_version.split(".")[:3])
-        return cur >= minimum
-    except (ValueError, TypeError):
-        return True  # Fail-open: assume compatible if parsing fails

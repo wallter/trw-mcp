@@ -434,8 +434,16 @@ class TestBackwardCompat:
         from fastmcp.tools.tool import Tool
 
         tools = [
-            Tool(name="trw_learn", description="Full desc.", parameters={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}),
-            Tool(name="trw_recall", description="Another full desc.", parameters={"type": "object", "properties": {"q": {"type": "string"}}, "required": []}),
+            Tool(
+                name="trw_learn",
+                description="Full desc.",
+                parameters={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+            ),
+            Tool(
+                name="trw_recall",
+                description="Another full desc.",
+                parameters={"type": "object", "properties": {"q": {"type": "string"}}, "required": []},
+            ),
         ]
 
         # Without middleware, tools pass through unchanged

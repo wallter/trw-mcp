@@ -13,6 +13,7 @@ from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
+
 def _dump_yaml(data: dict[str, object]) -> str:
     """Serialize a dict to YAML text.
 
@@ -65,9 +66,7 @@ def register_config_resources(server: FastMCP) -> None:
         config = get_config()
         reader = FileStateReader()
         project_root = resolve_project_root()
-        version_path = (
-            project_root / config.trw_dir / config.frameworks_dir / "VERSION.yaml"
-        )
+        version_path = project_root / config.trw_dir / config.frameworks_dir / "VERSION.yaml"
 
         if not reader.exists(version_path):
             return "# No frameworks deployed yet\n# Run trw_init to deploy.\n"

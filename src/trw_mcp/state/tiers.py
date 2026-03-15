@@ -16,15 +16,13 @@ from pathlib import Path
 from typing import cast
 
 import structlog
-
 from trw_memory.lifecycle.tiers import TierSweepResult as TierSweepResult
 
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry
-from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.models.typed_dicts import TierDistribution
-from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.scoring import _days_since_access
+from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -81,11 +79,7 @@ def compute_importance_score(
         relevance = max(0.0, cosine_similarity(query_embedding, entry_embedding))
     else:
         # Token overlap ratio fallback
-        entry_text = (
-            str(entry.get("summary", "")).lower()
-            + " "
-            + str(entry.get("detail", "")).lower()
-        )
+        entry_text = str(entry.get("summary", "")).lower() + " " + str(entry.get("detail", "")).lower()
         entry_tokens = set(entry_text.split())
         query_set = {t.lower() for t in query_tokens}
         if query_set:
@@ -94,7 +88,7 @@ def compute_importance_score(
             relevance = 0.0
 
     # Recency: exponential decay based on days since access
-    today = date.today()
+    today = datetime.now(tz=timezone.utc).date()
     days = _days_since_access(entry, today)
     half_life = cfg.learning_decay_half_life_days
     decay_rate = math.log(2) / half_life if half_life > 0 else 0.0
@@ -215,9 +209,7 @@ class TierManager:
             entry_id: ID of the evicted entry.
         """
         cfg = self._config or get_config()
-        entries_dir = (
-            self._trw_dir / cfg.learnings_dir / cfg.entries_dir
-        )
+        entries_dir = self._trw_dir / cfg.learnings_dir / cfg.entries_dir
         # Derive exact filename from entry.id (same slugify convention as the codebase)
         sanitized = re.sub(r"[^a-zA-Z0-9_\-]", "-", entry_id)
         target = entries_dir / f"{sanitized}.yaml"
@@ -226,9 +218,9 @@ class TierManager:
             return
         try:
             data = self._reader.read_yaml(target)
-            data["last_accessed_at"] = date.today().isoformat()
+            data["last_accessed_at"] = datetime.now(tz=timezone.utc).date().isoformat()
             self._writer.write_yaml(target, data)
-        except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
+        except Exception:
             logger.warning(
                 "hot_tier_flush_failed",
                 entry_id=entry_id,
@@ -288,9 +280,7 @@ class TierManager:
         """Path to the warm tier keyword-search sidecar (JSONL)."""
         return self._get_warm_db_path().with_suffix(".jsonl")
 
-    def _warm_sidecar_upsert(
-        self, entry_id: str, entry_data: dict[str, object]
-    ) -> None:
+    def _warm_sidecar_upsert(self, entry_id: str, entry_data: dict[str, object]) -> None:
         """Write entry metadata to the warm sidecar JSONL for keyword search."""
         sidecar = self._warm_sidecar_path()
         records: list[dict[str, object]] = []
@@ -380,9 +370,7 @@ class TierManager:
         # Keyword LIKE fallback via sidecar
         return self._warm_keyword_search(query_tokens, top_k)
 
-    def _warm_keyword_search(
-        self, query_tokens: list[str], top_k: int
-    ) -> list[dict[str, object]]:
+    def _warm_keyword_search(self, query_tokens: list[str], top_k: int) -> list[dict[str, object]]:
         """Search the warm sidecar JSONL for keyword matches.
 
         Args:
@@ -492,14 +480,14 @@ class TierManager:
         for yaml_file in cold_base.rglob("*.yaml"):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:  # noqa: BLE001 — justified: scan-resilience, skip unreadable cold-tier files
+            except Exception:
                 logger.warning("cold_tier_file_unreadable", path=str(yaml_file), exc_info=True)
                 continue
             if str(data.get("id", "")) != entry_id:
                 continue
 
             # Found — update last_accessed_at and move to warm
-            data["last_accessed_at"] = date.today().isoformat()
+            data["last_accessed_at"] = datetime.now(tz=timezone.utc).date().isoformat()
             # Write back updated data before warm_add
             try:
                 self._writer.write_yaml(yaml_file, data)
@@ -539,7 +527,7 @@ class TierManager:
         for yaml_file in sorted(cold_base.rglob("*.yaml")):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:  # noqa: BLE001 — justified: scan-resilience, skip unreadable cold-tier files
+            except Exception:
                 logger.warning("cold_tier_file_unreadable", path=str(yaml_file), exc_info=True)
                 continue
 
@@ -604,7 +592,7 @@ class TierManager:
 
         try:
             active_entries = list_active_learnings(trw_dir)
-        except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
+        except Exception:
             logger.warning("assign_impact_tiers_list_failed", exc_info=True)
             return distribution
 
@@ -617,7 +605,8 @@ class TierManager:
             tier = self._compute_impact_tier(impact)
 
             # Derive YAML path using same slug convention as rest of codebase
-            yaml_path = entries_dir / f"{re.sub(r'[^a-zA-Z0-9_\-]', '-', entry_id)}.yaml"
+            slug = re.sub(r"[^a-zA-Z0-9_\-]", "-", entry_id)
+            yaml_path = entries_dir / f"{slug}.yaml"
             if not yaml_path.exists():
                 logger.debug("assign_impact_tiers_no_yaml", entry_id=entry_id)
                 continue
@@ -626,8 +615,8 @@ class TierManager:
                 file_data = self._reader.read_yaml(yaml_path)
                 file_data["impact_tier"] = tier
                 self._writer.write_yaml(yaml_path, file_data)
-                cast(dict[str, int], distribution)[tier] += 1
-            except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
+                cast("dict[str, int]", distribution)[tier] += 1
+            except Exception:
                 logger.warning(
                     "assign_impact_tiers_write_failed",
                     entry_id=entry_id,
@@ -644,7 +633,9 @@ class TierManager:
     # -----------------------------------------------------------------------
 
     def _sweep_hot_to_warm(
-        self, cfg: TRWConfig, today: date,
+        self,
+        cfg: TRWConfig,
+        today: date,
     ) -> tuple[int, int]:
         """Phase 1: evict stale hot-tier entries into warm tier.
 
@@ -675,14 +666,17 @@ class TierManager:
                 self._flush_last_accessed(entry_id)
                 demoted += 1
                 logger.debug("sweep_hot_to_warm", entry_id=entry_id)
-            except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
+            except Exception:  # per-item error handling: one failed eviction must not abort the sweep  # noqa: PERF203
                 logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
                 errors += 1
 
         return demoted, errors
 
     def _sweep_warm_to_cold(
-        self, cfg: TRWConfig, today: date, entries_dir: Path,
+        self,
+        cfg: TRWConfig,
+        today: date,
+        entries_dir: Path,
     ) -> tuple[int, int]:
         """Phase 2: demote idle low-importance warm entries to cold archive.
 
@@ -708,6 +702,7 @@ class TierManager:
                 find_yaml_path_for_entry,
                 list_active_learnings,
             )
+
             active_entries = list_active_learnings(self._trw_dir)
             for data in active_entries:
                 entry_id = str(data.get("id", ""))
@@ -733,7 +728,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
+                except Exception:
                     logger.warning(
                         "sweep_warm_to_cold_failed",
                         entry_id=entry_id,
@@ -770,7 +765,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
+                except Exception:
                     logger.warning(
                         "sweep_warm_to_cold_failed",
                         path=str(yaml_file),
@@ -781,7 +776,10 @@ class TierManager:
         return demoted, errors
 
     def _sweep_cold_to_purge(
-        self, cfg: TRWConfig, today: date, purge_audit_path: Path,
+        self,
+        cfg: TRWConfig,
+        today: date,
+        purge_audit_path: Path,
     ) -> tuple[int, int]:
         """Phase 3: purge expired cold-tier entries past retention.
 
@@ -831,7 +829,7 @@ class TierManager:
                             days=days,
                             importance_score=importance,
                         )
-                except Exception:  # noqa: BLE001 — justified: fail-open, tier operation errors must not block
+                except Exception:  # per-item error handling: skip unreadable cold files, continue purge sweep  # noqa: PERF203
                     logger.warning(
                         "sweep_cold_purge_failed",
                         path=str(yaml_file),
@@ -858,7 +856,7 @@ class TierManager:
             TierSweepResult with counts of promoted, demoted, purged, and errors.
         """
         cfg = get_config()
-        today = date.today()
+        today = datetime.now(tz=timezone.utc).date()
 
         entries_dir = self._trw_dir / cfg.learnings_dir / cfg.entries_dir
         purge_audit_path = self._trw_dir / "memory" / "purge_audit.jsonl"
@@ -868,12 +866,16 @@ class TierManager:
 
         # Phase 2: Warm → Cold
         warm_demoted, warm_errors = self._sweep_warm_to_cold(
-            cfg, today, entries_dir,
+            cfg,
+            today,
+            entries_dir,
         )
 
         # Phase 3: Cold → Purge
         purged, purge_errors = self._sweep_cold_to_purge(
-            cfg, today, purge_audit_path,
+            cfg,
+            today,
+            purge_audit_path,
         )
 
         demoted = hot_demoted + warm_demoted

@@ -27,7 +27,6 @@ from trw_mcp.state.claude_md._parser import (
     render_template,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test 1: render_template resolves all markers
 # ---------------------------------------------------------------------------
@@ -122,9 +121,7 @@ class TestBundledTemplateHasNoHardcodedText:
                 continue
             # Every remaining line must be a pure placeholder reference
             cleaned = re.sub(r"\{\{\w+\}\}", "", stripped)
-            assert cleaned == "", (
-                f"Line {lineno} has hardcoded text outside placeholders: {line!r}"
-            )
+            assert cleaned == "", f"Line {lineno} has hardcoded text outside placeholders: {line!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -165,12 +162,8 @@ class TestBundledTemplateKeysMatchSyncContext:
         missing_from_template = sync_keys - template_keys
         extra_in_template = template_keys - sync_keys
 
-        assert not missing_from_template, (
-            f"Template is missing keys that _sync.py provides: {missing_from_template}"
-        )
-        assert not extra_in_template, (
-            f"Template has keys that _sync.py does not provide: {extra_in_template}"
-        )
+        assert not missing_from_template, f"Template is missing keys that _sync.py provides: {missing_from_template}"
+        assert not extra_in_template, f"Template has keys that _sync.py does not provide: {extra_in_template}"
 
 
 # ---------------------------------------------------------------------------
@@ -380,12 +373,7 @@ class TestMergePreservesUserContent:
         )
         target.write_text(user_content, encoding="utf-8")
 
-        new_section = (
-            f"\n{TRW_AUTO_COMMENT}\n"
-            f"{TRW_MARKER_START}\n"
-            "New TRW content\n"
-            f"{TRW_MARKER_END}\n"
-        )
+        new_section = f"\n{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\nNew TRW content\n{TRW_MARKER_END}\n"
 
         merge_trw_section(target, new_section, max_lines=500)
 

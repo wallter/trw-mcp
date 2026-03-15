@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import cast
 
 import structlog
 
@@ -189,11 +188,7 @@ def select_learnings_for_task(
     scored: list[tuple[float, dict[str, object]]] = []
     for entry in results:
         entry_tags_raw = entry.get("tags", [])
-        tag_list: list[str] = (
-            [str(t) for t in entry_tags_raw]
-            if isinstance(entry_tags_raw, list)
-            else []
-        )
+        tag_list: list[str] = [str(t) for t in entry_tags_raw] if isinstance(entry_tags_raw, list) else []
 
         # Tag overlap score (0-1)
         if domain_tags and tag_list:
@@ -253,15 +248,11 @@ def format_learning_injection(learnings: list[dict[str, object]]) -> str:
         summary = str(entry.get("summary", ""))
         impact = float(str(entry.get("impact", 0.0)))
         tags_raw = entry.get("tags", [])
-        tag_list: list[str] = (
-            [str(t) for t in tags_raw] if isinstance(tags_raw, list) else []
-        )
+        tag_list: list[str] = [str(t) for t in tags_raw] if isinstance(tags_raw, list) else []
         # Truncate to first 5 tags
         tag_str = ", ".join(tag_list[:5])
 
-        lines.append(
-            f"- **[{entry_id}]** {summary} (impact: {impact:.1f}, tags: {tag_str})"
-        )
+        lines.append(f"- **[{entry_id}]** {summary} (impact: {impact:.1f}, tags: {tag_str})")
 
     lines.append("")
     return "\n".join(lines)

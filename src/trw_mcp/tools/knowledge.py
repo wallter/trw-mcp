@@ -13,9 +13,9 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import KnowledgeSyncResultDict
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.knowledge_topology import execute_knowledge_sync
-from trw_mcp.models.typed_dicts import KnowledgeSyncResultDict
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger()
@@ -55,4 +55,4 @@ def register_knowledge_tools(server: FastMCP) -> None:
             threshold_met=result.get("threshold_met", False),
         )
 
-        return cast(KnowledgeSyncResultDict, result)
+        return cast("KnowledgeSyncResultDict", result)

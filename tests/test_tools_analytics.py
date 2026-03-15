@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import get_tools_sync
-
 import trw_mcp.state.analytics.report as analytics_mod
+from tests.conftest import get_tools_sync
 from trw_mcp.state.analytics.report import (
     _parse_run_id_timestamp,
     compute_ceremony_score,
@@ -390,9 +389,7 @@ class TestScanAllRuns:
         )
 
         # Corrupt run (directory exists but run.yaml is binary garbage)
-        corrupt_run_dir = (
-            tmp_path / ".trw" / "runs" / "bad-task" / "20260102T000000Z-bad00001" / "meta"
-        )
+        corrupt_run_dir = tmp_path / ".trw" / "runs" / "bad-task" / "20260102T000000Z-bad00001" / "meta"
         corrupt_run_dir.mkdir(parents=True)
         (corrupt_run_dir / "run.yaml").write_bytes(b"\xff\xfe INVALID\x00")
 
@@ -413,9 +410,7 @@ class TestScanAllRuns:
         assert len(trend) == 3
 
         started_ats = [str(entry["started_at"]) for entry in trend]
-        assert started_ats == sorted(started_ats), (
-            f"ceremony_trend not sorted ascending: {started_ats}"
-        )
+        assert started_ats == sorted(started_ats), f"ceremony_trend not sorted ascending: {started_ats}"
 
     def test_future_date_filter_returns_empty(
         self,
@@ -489,9 +484,18 @@ class TestScanAllRuns:
         """Each run entry contains required fields."""
         result = scan_all_runs()
         required_fields = {
-            "run_id", "started_at", "task", "status", "phase",
-            "score", "session_start", "deliver",
-            "checkpoint_count", "learn_count", "build_check", "build_passed",
+            "run_id",
+            "started_at",
+            "task",
+            "status",
+            "phase",
+            "score",
+            "session_start",
+            "deliver",
+            "checkpoint_count",
+            "learn_count",
+            "build_check",
+            "build_passed",
         }
         for run in result["runs"]:
             missing = required_fields - set(run.keys())
@@ -633,7 +637,9 @@ class TestAnalyticsReportToolLayer:
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
-            analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw",
+            analytics_mod,
+            "resolve_trw_dir",
+            lambda: tmp_path / ".trw",
         )
 
         srv = FastMCP("report-callable-test")
@@ -668,9 +674,15 @@ class TestAnalyticsIntegration:
         monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: trw_dir)
 
-        _write_run(writer, tmp_path, "cache-task", "20260101T000000Z-cache000", events=[
-            {"event": "session_start"},
-        ])
+        _write_run(
+            writer,
+            tmp_path,
+            "cache-task",
+            "20260101T000000Z-cache000",
+            events=[
+                {"event": "session_start"},
+            ],
+        )
 
         scan_all_runs()
 
@@ -691,12 +703,20 @@ class TestAnalyticsIntegration:
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
         monkeypatch.setattr(
-            analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw",
+            analytics_mod,
+            "resolve_trw_dir",
+            lambda: tmp_path / ".trw",
         )
 
-        _write_run(writer, tmp_path, "task-a", "20260101T000000Z-aaaa1111", events=[
-            {"event": "session_start"},
-        ])
+        _write_run(
+            writer,
+            tmp_path,
+            "task-a",
+            "20260101T000000Z-aaaa1111",
+            events=[
+                {"event": "session_start"},
+            ],
+        )
 
         result = scan_all_runs(since="not-a-date")
         assert any("not a valid ISO date" in str(e) for e in result["parse_errors"])

@@ -37,16 +37,12 @@ class TestFrameworkMdEnforcement:
     def test_reversion_must_revert(self) -> None:
         """Phase reversion section uses MUST revert, not SHOULD revert."""
         content = _framework_content()
-        assert "MUST revert" in content, (
-            "FRAMEWORK.md phase reversion must use 'MUST revert' language"
-        )
+        assert "MUST revert" in content, "FRAMEWORK.md phase reversion must use 'MUST revert' language"
 
     def test_phase_must_not_advance(self) -> None:
         """Phase transitions use MUST NOT advance language."""
         content = _framework_content()
-        assert "MUST NOT advance" in content, (
-            "FRAMEWORK.md must contain 'MUST NOT advance' for phase transitions"
-        )
+        assert "MUST NOT advance" in content, "FRAMEWORK.md must contain 'MUST NOT advance' for phase transitions"
 
     def test_watchlist_review_entry(self) -> None:
         """Rationalization watchlist contains review skip entry."""

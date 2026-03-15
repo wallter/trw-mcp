@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.state.index_sync import (
+    _INDEX_SUMMARY_RE,
+    _ROADMAP_TOTAL_RE,
     INDEX_CATALOGUE_END,
     INDEX_CATALOGUE_START,
     ROADMAP_CATALOGUE_END,
     ROADMAP_CATALOGUE_START,
     PRDEntry,
-    _INDEX_SUMMARY_RE,
-    _ROADMAP_TOTAL_RE,
     _build_index_stats,
     _build_roadmap_stats,
     _group_by_status,
@@ -107,8 +107,7 @@ class TestScanPrdFrontmatters:
         d.mkdir()
         (d / "PRD-BAD-001.md").write_text("no frontmatter here", encoding="utf-8")
         (d / "PRD-GOOD-001.md").write_text(
-            "---\nprd:\n  id: PRD-GOOD-001\n  title: Good\n"
-            "  status: draft\n  priority: P1\n  category: CORE\n---\n",
+            "---\nprd:\n  id: PRD-GOOD-001\n  title: Good\n  status: draft\n  priority: P1\n  category: CORE\n---\n",
             encoding="utf-8",
         )
         entries = scan_prd_frontmatters(d)
@@ -316,7 +315,9 @@ class TestSyncRoadmapMd:
         roadmap_path = tmp_path / "ROADMAP.md"
         content = (
             "# Roadmap\n\n"
-            + ROADMAP_CATALOGUE_START + "\nold table\n" + ROADMAP_CATALOGUE_END
+            + ROADMAP_CATALOGUE_START
+            + "\nold table\n"
+            + ROADMAP_CATALOGUE_END
             + "\n\n## Sprint 1\n\nDetailed sprint info.\n"
         )
         roadmap_path.write_text(content, encoding="utf-8")
@@ -344,21 +345,25 @@ class TestStatsParts:
     """Header stats string builder."""
 
     def test_basic_parts(self) -> None:
-        groups = _group_by_status([
-            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
-            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
-        ])
+        groups = _group_by_status(
+            [
+                PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+                PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+            ]
+        )
         parts = _stats_parts(groups)
         assert parts == ["1 done", "1 draft"]
 
     def test_all_statuses(self) -> None:
-        groups = _group_by_status([
-            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
-            PRDEntry(id="B", title="", priority="P1", status="merged", category="C"),
-            PRDEntry(id="C", title="", priority="P2", status="deprecated", category="C"),
-            PRDEntry(id="D", title="", priority="P1", status="review", category="C"),
-            PRDEntry(id="E", title="", priority="P1", status="draft", category="C"),
-        ])
+        groups = _group_by_status(
+            [
+                PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+                PRDEntry(id="B", title="", priority="P1", status="merged", category="C"),
+                PRDEntry(id="C", title="", priority="P2", status="deprecated", category="C"),
+                PRDEntry(id="D", title="", priority="P1", status="review", category="C"),
+                PRDEntry(id="E", title="", priority="P1", status="draft", category="C"),
+            ]
+        )
         parts = _stats_parts(groups)
         assert "1 done" in parts
         assert "1 merged" in parts
@@ -371,10 +376,12 @@ class TestBuildIndexStats:
     """INDEX.md format: ``(N total: X done, ...)``."""
 
     def test_format(self) -> None:
-        groups = _group_by_status([
-            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
-            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
-        ])
+        groups = _group_by_status(
+            [
+                PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+                PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+            ]
+        )
         result = _build_index_stats(groups, 2)
         assert result == "(2 total: 1 done, 1 draft)"
 
@@ -383,10 +390,12 @@ class TestBuildRoadmapStats:
     """ROADMAP.md format: ``N (X done, ...)``."""
 
     def test_format(self) -> None:
-        groups = _group_by_status([
-            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
-            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
-        ])
+        groups = _group_by_status(
+            [
+                PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+                PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+            ]
+        )
         result = _build_roadmap_stats(groups, 2)
         assert result == "2 (1 done, 1 draft)"
 
@@ -399,21 +408,29 @@ class TestUpdateHeaderStats:
 
     def test_updates_index_summary_line(self) -> None:
         content = "# Index\n\n## Summary (10 total: 5 done, 5 draft)\n\nMore text."
-        groups = _group_by_status([
-            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
-            PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
-        ])
+        groups = _group_by_status(
+            [
+                PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+                PRDEntry(id="B", title="", priority="P1", status="draft", category="C"),
+            ]
+        )
         result = _update_header_stats(
-            content, groups, 2, _INDEX_SUMMARY_RE, index_format=True,
+            content,
+            groups,
+            2,
+            _INDEX_SUMMARY_RE,
+            index_format=True,
         )
         assert "## Summary (2 total: 1 done, 1 draft)" in result
         assert "More text." in result
 
     def test_updates_roadmap_total_line(self) -> None:
         content = "# Roadmap\n\n**PRD Total**: 100 (50 done, 50 draft)\n\nSprints."
-        groups = _group_by_status([
-            PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
-        ])
+        groups = _group_by_status(
+            [
+                PRDEntry(id="A", title="", priority="P0", status="done", category="C"),
+            ]
+        )
         result = _update_header_stats(content, groups, 1, _ROADMAP_TOTAL_RE)
         assert "**PRD Total**: 1 (1 done, 0 draft)" in result
         assert "Sprints." in result
@@ -435,7 +452,9 @@ class TestSyncIndexMdHeaderStats:
         index_path = tmp_path / "INDEX.md"
         content = (
             "# Index\n\n## Summary (0 total: 0 done, 0 draft)\n\n"
-            + INDEX_CATALOGUE_START + "\nold\n" + INDEX_CATALOGUE_END
+            + INDEX_CATALOGUE_START
+            + "\nold\n"
+            + INDEX_CATALOGUE_END
         )
         index_path.write_text(content, encoding="utf-8")
         sync_index_md(index_path, prds_dir)
@@ -451,7 +470,9 @@ class TestSyncRoadmapMdHeaderStats:
         roadmap_path = tmp_path / "ROADMAP.md"
         content = (
             "# Roadmap\n\n**PRD Total**: 0 (0 done, 0 draft)\n\n"
-            + ROADMAP_CATALOGUE_START + "\nold\n" + ROADMAP_CATALOGUE_END
+            + ROADMAP_CATALOGUE_START
+            + "\nold\n"
+            + ROADMAP_CATALOGUE_END
         )
         roadmap_path.write_text(content, encoding="utf-8")
         sync_roadmap_md(roadmap_path, prds_dir)

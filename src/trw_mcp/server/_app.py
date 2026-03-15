@@ -104,8 +104,14 @@ def configure_logging(*, debug: bool, config: TRWConfig) -> None:
 
         # Suppress FastMCP / Redis / HTTP noise (~1.25M lines/day, 145 MB vs ~800 TRW events)
         for logger_name in (
-            "fastmcp", "redis", "redis.asyncio", "redis.connection",
-            "httpcore", "httpx", "asyncio", "urllib3",
+            "fastmcp",
+            "redis",
+            "redis.asyncio",
+            "redis.connection",
+            "httpcore",
+            "httpx",
+            "asyncio",
+            "urllib3",
         ):
             logging.getLogger(logger_name).setLevel(logging.WARNING)
 

@@ -75,10 +75,7 @@ class TestExtractSections:
     """Tests for extract_sections()."""
 
     def test_standard_12_sections(self) -> None:
-        sections_md = "\n".join(
-            f"## {i}. Section {i}\n\nContent for section {i}."
-            for i in range(1, 13)
-        )
+        sections_md = "\n".join(f"## {i}. Section {i}\n\nContent for section {i}." for i in range(1, 13))
         result = extract_sections(sections_md)
         assert len(result) == 12
 
@@ -110,29 +107,33 @@ class TestComputeContentDensity:
     """Tests for compute_content_density()."""
 
     def test_fully_written_high_density(self) -> None:
-        content = "\n".join([
-            "This is a substantive line.",
-            "Another real content line with details.",
-            "Technical specification: 500ms latency target.",
-            "The module handles all edge cases explicitly.",
-            "Users authenticate via JWT tokens.",
-        ])
+        content = "\n".join(
+            [
+                "This is a substantive line.",
+                "Another real content line with details.",
+                "Technical specification: 500ms latency target.",
+                "The module handles all edge cases explicitly.",
+                "Users authenticate via JWT tokens.",
+            ]
+        )
         density = compute_content_density(content)
         assert density > 0.6
 
     def test_template_placeholders_low_density(self) -> None:
-        content = "\n".join([
-            "---",
-            "<!-- Goal 1 -->",
-            "<!-- Goal 2 -->",
-            "",
-            "---",
-            "<!-- Describe the problem -->",
-            "",
-            "<!-- Impact details -->",
-            "",
-            "---",
-        ])
+        content = "\n".join(
+            [
+                "---",
+                "<!-- Goal 1 -->",
+                "<!-- Goal 2 -->",
+                "",
+                "---",
+                "<!-- Describe the problem -->",
+                "",
+                "<!-- Impact details -->",
+                "",
+                "---",
+            ]
+        )
         density = compute_content_density(content)
         assert density < 0.4
 
@@ -140,24 +141,28 @@ class TestComputeContentDensity:
         assert compute_content_density("") == 0.0
 
     def test_mixed_content(self) -> None:
-        content = "\n".join([
-            "## 1. Problem Statement",
-            "",
-            "The system has a critical bug.",
-            "<!-- More detail needed -->",
-            "",
-            "Users are affected when they login.",
-            "---",
-        ])
+        content = "\n".join(
+            [
+                "## 1. Problem Statement",
+                "",
+                "The system has a critical bug.",
+                "<!-- More detail needed -->",
+                "",
+                "Users are affected when they login.",
+                "---",
+            ]
+        )
         density = compute_content_density(content)
         assert 0.2 < density < 0.6
 
     def test_table_separators_non_substantive(self) -> None:
-        content = "\n".join([
-            "| Header | Value |",
-            "|--------|-------|",
-            "| data   | 42    |",
-        ])
+        content = "\n".join(
+            [
+                "| Header | Value |",
+                "|--------|-------|",
+                "| data   | 42    |",
+            ]
+        )
         density = compute_content_density(content)
         # 2 substantive (header row + data row), 1 non-substantive (separator)
         assert 0.5 < density < 0.8
@@ -183,7 +188,10 @@ class TestExtractPrdRefs:
         content = "PRD-CORE-001 PRD-FIX-003 PRD-QUAL-005 PRD-INFRA-001"
         result = extract_prd_refs(content)
         assert result == [
-            "PRD-CORE-001", "PRD-FIX-003", "PRD-INFRA-001", "PRD-QUAL-005",
+            "PRD-CORE-001",
+            "PRD-FIX-003",
+            "PRD-INFRA-001",
+            "PRD-QUAL-005",
         ]
 
     def test_refs_in_markdown_context(self) -> None:
