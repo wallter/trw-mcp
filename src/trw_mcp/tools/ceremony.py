@@ -470,12 +470,19 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         results["errors"] = errors
         results["success"] = len(errors) == 0
-        results["framework_reminder"] = (
-            "Read .trw/frameworks/FRAMEWORK.md — it defines the methodology "
-            "your tools implement (6-phase execution model, exit criteria, "
-            "formations, quality gates, phase reversion). Re-read after "
-            "context compaction."
-        )
+
+        # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
+        if config.ceremony_mode == "light":
+            results["framework_reminder"] = (
+                "Call trw_deliver() when done to persist your work."
+            )
+        else:
+            results["framework_reminder"] = (
+                "Read .trw/frameworks/FRAMEWORK.md — it defines the methodology "
+                "your tools implement (6-phase execution model, exit criteria, "
+                "formations, quality gates, phase reversion). Re-read after "
+                "context compaction."
+            )
 
         # Mark session started in ceremony state tracker (PRD-CORE-074 FR04)
         try:
@@ -485,14 +492,16 @@ def register_ceremony_tools(server: FastMCP) -> None:
             pass
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            available = int(str(results.get("learnings_count", 0)))
-            ctx = NudgeContext(tool_name=ToolName.SESSION_START)
-            append_ceremony_nudge(cast(dict[str, object], results), resolve_trw_dir(), available_learnings=available, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block session start
-            pass
+        # FR07 (PRD-CORE-084): Skip detailed ceremony nudge for light mode.
+        if config.ceremony_mode != "light":
+            try:
+                from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+                from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+                available = int(str(results.get("learnings_count", 0)))
+                ctx = NudgeContext(tool_name=ToolName.SESSION_START)
+                append_ceremony_nudge(cast(dict[str, object], results), resolve_trw_dir(), available_learnings=available, context=ctx)
+            except Exception:  # justified: fail-open, nudge injection must not block session start
+                pass
 
         logger.info(
             "trw_session_start_complete",

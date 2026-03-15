@@ -25,6 +25,7 @@ from trw_mcp.models.typed_dicts import (
     RunStatusDict,
     SessionRecallExtrasDict,
 )
+from trw_mcp.models.config._defaults import LIGHT_MODE_RECALL_CAP
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_nudge import NudgeContext, compute_nudge, read_ceremony_state
@@ -130,15 +131,22 @@ def perform_session_recalls(
     extra: SessionRecallExtrasDict = {}
     learnings: list[dict[str, object]] = []
 
+    # FR05 (PRD-CORE-084): Cap recall results for light ceremony mode.
+    effective_max = (
+        min(config.recall_max_results, LIGHT_MODE_RECALL_CAP)
+        if config.ceremony_mode == "light"
+        else config.recall_max_results
+    )
+
     # Step 1: Core recall
     if is_focused:
         focused = adapter_recall(
             trw_dir, query=query, min_impact=0.3,
-            max_results=config.recall_max_results, compact=True,
+            max_results=effective_max, compact=True,
         )
         baseline = adapter_recall(
             trw_dir, query="*", min_impact=0.7,
-            max_results=config.recall_max_results, compact=True,
+            max_results=effective_max, compact=True,
         )
         seen_ids: set[str] = set()
         for entry in focused + baseline:
@@ -146,7 +154,7 @@ def perform_session_recalls(
             if lid and lid not in seen_ids:
                 seen_ids.add(lid)
                 learnings.append(entry)
-        learnings = learnings[:config.recall_max_results]
+        learnings = learnings[:effective_max]
         extra["query"] = query
         extra["query_matched"] = len([
             e for e in focused if str(e.get("id", "")) in seen_ids
@@ -154,7 +162,7 @@ def perform_session_recalls(
     else:
         learnings = adapter_recall(
             trw_dir, query="*", min_impact=0.7,
-            max_results=config.recall_max_results, compact=True,
+            max_results=effective_max, compact=True,
         )
 
     # Update access tracking

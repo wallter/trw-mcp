@@ -19,3 +19,6 @@ DEFAULT_PARALLELISM_MAX: int = 10
 
 # -- Scoring --
 DEFAULT_SCORING_DEFAULT_DAYS_UNUSED: int = 30
+
+# -- Ceremony adaptation (CORE-084) --
+LIGHT_MODE_RECALL_CAP: int = 10

@@ -940,10 +940,12 @@ def _update_opencode_artifacts(
         result["warnings"].append(f"opencode.json update skipped: {exc}")
         return
 
-    # Update AGENTS.md with the same TRW section content
+    # Update AGENTS.md with platform-generic TRW section
     try:
-        trw_section = _extract_trw_section_content()
-        agents_result = generate_agents_md(target_dir, trw_section)
+        from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+        agents_section = render_agents_trw_section()
+        agents_result = generate_agents_md(target_dir, agents_section)
         result["created"].extend(agents_result.get("created", []))
         result["updated"].extend(agents_result.get("updated", []))
         result["errors"].extend(agents_result.get("errors", []))

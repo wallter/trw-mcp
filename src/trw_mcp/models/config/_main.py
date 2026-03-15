@@ -25,6 +25,7 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_RECALL_MAX_RESULTS,
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
+    LIGHT_MODE_RECALL_CAP,
 )
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
@@ -101,6 +102,7 @@ class TRWConfig(BaseSettings):
     49. Compaction (CORE-066) ........ compact_instructions_template
     50. Progressive disclosure (067) .. progressive_disclosure
     57. Learning injection (CORE-075) .. agent_learning_injection
+    58. Ceremony adaptation (CORE-084) . ceremony_mode
     """
 
     model_config = SettingsConfigDict(
@@ -226,6 +228,12 @@ class TRWConfig(BaseSettings):
             "Controls which files are written (CLAUDE.md, AGENTS.md, .cursorrules, etc)."
         ),
     )
+    ceremony_mode: Literal["full", "light"] = "full"
+
+    # AGENTS.md learning injection (CORE-084-FR06)
+    agents_md_learning_injection: bool = False
+    agents_md_learning_max: int = 5
+    agents_md_learning_min_impact: float = 0.7
 
     # -- 12. Scoring subsystem --
     # Outcome-based utility, Sprint 8 extraction
@@ -240,6 +248,7 @@ class TRWConfig(BaseSettings):
     # -- 13. Directory structure & paths --
 
     task_root: str = "docs"
+    runs_root: str = ".trw/runs"
     trw_dir: str = ".trw"
     worktree_dir: str = ".trees"  # INFRA-025-FR06
     learnings_dir: str = "learnings"

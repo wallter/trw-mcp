@@ -318,6 +318,51 @@ def render_minimal_protocol() -> str:
     )
 
 
+def render_agents_trw_section() -> str:
+    """Render the complete TRW section for AGENTS.md — platform-generic.
+
+    AGENTS.md is consumed by non-Claude Code platforms (opencode, local models,
+    Cursor, Codex, Aider, etc.). Content must be:
+    - Free of Claude Code-specific features (Agent Teams, subagents, slash commands)
+    - Focused on MCP tools as the universal interface
+    - Concise for smaller context windows (local models)
+    - Self-contained (no references to Claude-specific FRAMEWORK.md)
+
+    Returns:
+        Complete markdown string for the TRW auto-generated section.
+    """
+    return (
+        "TRW (The Real Work) is an engineering memory framework that persists "
+        "patterns, gotchas, and project knowledge across sessions. It works "
+        "with any AI coding assistant that supports MCP (Model Context Protocol).\n"
+        "\n"
+        "## TRW Tools\n"
+        "\n"
+        "These MCP tools are available when the TRW server is configured:\n"
+        "\n"
+        "- `trw_session_start()` \u2014 loads prior learnings and recovers any active run\n"
+        "- `trw_checkpoint(message)` \u2014 saves progress so you can resume after interruptions\n"
+        "- `trw_learn(summary, detail)` \u2014 records discoveries for all future sessions\n"
+        "- `trw_deliver()` \u2014 persists everything when done "
+        "(learnings, checkpoint, instruction sync)\n"
+        "- `trw_recall(query)` \u2014 retrieves relevant learnings for a specific topic\n"
+        "- `trw_build_check()` \u2014 runs lint, type-check, and tests to verify your work\n"
+        "\n"
+        "## Workflow\n"
+        "\n"
+        "1. **Start**: call `trw_session_start()` to load context from prior sessions\n"
+        "2. **During**: call `trw_learn()` when you discover gotchas, patterns, or errors\n"
+        "3. **During**: call `trw_checkpoint()` after milestones to save progress\n"
+        "4. **Finish**: call `trw_deliver()` to persist your work for future sessions\n"
+        "\n"
+        "## Session Boundaries\n"
+        "\n"
+        "Every session that loads learnings via `trw_session_start()` should persist "
+        "them at session end \u2014 this is how your work compounds across sessions "
+        "instead of being lost.\n"
+    )
+
+
 def render_agent_teams_protocol() -> str:
     """Render Agent Teams protocol section for CLAUDE.md auto-generation.
 

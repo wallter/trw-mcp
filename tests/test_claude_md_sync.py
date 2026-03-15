@@ -191,8 +191,8 @@ class TestInstructionsSync:
         assert TRW_MARKER_START in content, f"Missing {TRW_MARKER_START!r} in AGENTS.md"
         assert TRW_MARKER_END in content, f"Missing {TRW_MARKER_END!r} in AGENTS.md"
 
-    def test_fr13_same_content_in_both_files(self, tmp_path: Path) -> None:
-        """TRW section content is identical in CLAUDE.md and AGENTS.md."""
+    def test_fr13_agents_md_has_platform_generic_content(self, tmp_path: Path) -> None:
+        """AGENTS.md gets platform-generic content, distinct from CLAUDE.md."""
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".opencode").mkdir()
         (tmp_path / "CLAUDE.md").write_text("# My Project\n", encoding="utf-8")
@@ -202,22 +202,18 @@ class TestInstructionsSync:
         claude_content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
         agents_content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
 
-        # Extract TRW sections from both files
-        def _extract_trw_section(text: str) -> str:
-            start = text.find(TRW_MARKER_START)
-            end = text.find(TRW_MARKER_END)
-            if start == -1 or end == -1:
-                return ""
-            return text[start: end + len(TRW_MARKER_END)]
+        # Both must have TRW markers
+        assert TRW_MARKER_START in claude_content
+        assert TRW_MARKER_START in agents_content
 
-        claude_section = _extract_trw_section(claude_content)
-        agents_section = _extract_trw_section(agents_content)
+        # AGENTS.md should have platform-generic content (no Claude-specific terms)
+        assert "Agent Teams" not in agents_content
+        assert "subagents" not in agents_content
+        assert "/trw-ceremony-guide" not in agents_content
+        assert "MCP (Model Context Protocol)" in agents_content
 
-        assert claude_section, "CLAUDE.md must have TRW section"
-        assert agents_section, "AGENTS.md must have TRW section"
-        assert claude_section == agents_section, (
-            "TRW section in CLAUDE.md and AGENTS.md must be identical"
-        )
+        # CLAUDE.md should have orchestration-specific content
+        assert "orchestration" in claude_content
 
     def test_fr13_auto_no_ide_defaults_to_claude(self, tmp_path: Path) -> None:
         """With client='auto' and no IDE dirs, defaults to writing CLAUDE.md only."""

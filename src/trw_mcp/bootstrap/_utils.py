@@ -147,6 +147,7 @@ def _default_config(
         "# TRW Framework Configuration",
         "# See trw://config resource for all available fields.",
         "task_root: docs",
+        "runs_root: .trw/runs",
         "debug: false",
         "claude_md_max_lines: 500",
         f"framework_version: {config.framework_version}",
