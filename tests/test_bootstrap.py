@@ -1211,6 +1211,33 @@ class TestRunClaudeMdSync:
         assert "authentication" not in captured.out.lower()
         assert "TypeError" not in captured.out
 
+    def test_timeout_captured_as_warning(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Sync operations that exceed the timeout are captured as warnings."""
+        import time
+
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        def _slow_llm_client() -> None:
+            time.sleep(10)  # Will exceed the 1-second timeout below
+
+        monkeypatch.setattr(
+            "trw_mcp.state.llm_helpers.LLMClient",
+            _slow_llm_client,
+        )
+
+        result: dict[str, list[str]] = {
+            "updated": [], "created": [], "preserved": [],
+            "errors": [], "warnings": [],
+        }
+        init_project(fake_git_repo)
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=1)
+
+        assert any("timed out" in w for w in result["warnings"])
+        assert result["errors"] == []
+
 
 # ── Root FRAMEWORK.md Tests (PRD-FIX-025) ──────────────────────────────
 

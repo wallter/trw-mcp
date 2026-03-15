@@ -222,6 +222,45 @@ def _phase_contextual_recall(
     ]
 
 
+def _check_version_sentinel(
+    trw_dir: Path,
+    maintenance: AutoMaintenanceDict,
+) -> None:
+    """Detect if the installer wrote a newer version since this process started.
+
+    The installer writes ``.trw/installed-version.json`` after upgrading.
+    If the on-disk version is newer than the running version, inject an
+    ``update_advisory`` telling the user to run ``/mcp`` to reload.
+    """
+    import json
+
+    sentinel = trw_dir / "installed-version.json"
+    if not sentinel.is_file():
+        return
+
+    try:
+        data = json.loads(sentinel.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+
+    installed_version = str(data.get("version", ""))
+    if not installed_version:
+        return
+
+    # Compare with running version
+    try:
+        from importlib.metadata import version as pkg_version
+        running_version = pkg_version("trw-mcp")
+    except Exception:  # justified: importlib.metadata may fail in edge cases
+        return
+
+    if installed_version != running_version and "update_advisory" not in maintenance:
+        maintenance["update_advisory"] = (
+            f"TRW v{installed_version} was installed but this MCP server is still "
+            f"running v{running_version}. Run /mcp to reload."
+        )
+
+
 def run_auto_maintenance(
     trw_dir: Path,
     config: TRWConfig,
@@ -233,6 +272,12 @@ def run_auto_maintenance(
     All operations are fail-open — individual failures do not affect others.
     """
     maintenance: AutoMaintenanceDict = {}
+
+    # Version sentinel check — detect if installer ran since this process started
+    try:
+        _check_version_sentinel(trw_dir, maintenance)
+    except Exception:  # justified: fail-open, version sentinel check must not block session start
+        logger.warning("maintenance_version_sentinel_failed", exc_info=True)
 
     # Auto-upgrade check (PRD-INFRA-014)
     try:

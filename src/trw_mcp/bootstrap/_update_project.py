@@ -825,7 +825,11 @@ def _cleanup_stale_artifacts(
 # ---------------------------------------------------------------------------
 
 
-def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
+def _run_claude_md_sync(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    timeout: int = 30,
+) -> None:
     """Run CLAUDE.md sync after update to resolve placeholders and promote learnings.
 
     Temporarily changes cwd to the target project so that resolve_project_root()
@@ -834,7 +838,11 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
 
     Stdout/stderr are suppressed during sync to prevent structlog noise and
     SDK error messages from leaking into the installer's progress pipe.
+
+    A *timeout* (seconds, default 30) prevents the sync from blocking the
+    installer indefinitely when LLM initialisation or network calls stall.
     """
+    import concurrent.futures
     import io
     import os
     import sys
@@ -854,26 +862,36 @@ def _run_claude_md_sync(target_dir: Path, result: dict[str, list[str]]) -> None:
         reader = FileStateReader()
         writer = FileStateWriter()
 
-        # Suppress stdout/stderr so structlog noise and SDK auth errors
-        # don't leak into the installer's subprocess pipe.
-        saved_stdout, saved_stderr = sys.stdout, sys.stderr
-        sys.stdout = io.StringIO()
-        sys.stderr = io.StringIO()
-        try:
-            llm = LLMClient()
-            sync_result = execute_claude_md_sync(
-                scope="root",
-                target_dir=None,
-                config=config,
-                reader=reader,
-                writer=writer,
-                llm=llm,
-            )
-        finally:
-            sys.stdout, sys.stderr = saved_stdout, saved_stderr
+        def _do_sync() -> dict[str, object]:
+            # Suppress stdout/stderr so structlog noise and SDK auth errors
+            # don't leak into the installer's subprocess pipe.
+            saved_stdout, saved_stderr = sys.stdout, sys.stderr
+            sys.stdout = io.StringIO()
+            sys.stderr = io.StringIO()
+            try:
+                llm = LLMClient()
+                return execute_claude_md_sync(
+                    scope="root",
+                    target_dir=None,
+                    config=config,
+                    reader=reader,
+                    writer=writer,
+                    llm=llm,
+                )
+            finally:
+                sys.stdout, sys.stderr = saved_stdout, saved_stderr
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_do_sync)
+            sync_result = future.result(timeout=timeout)
 
         result["updated"].append(
             f"CLAUDE.md synced (learnings promoted: {sync_result.get('learnings_promoted', 0)})"
+        )
+    except concurrent.futures.TimeoutError:
+        result["warnings"].append(
+            f"CLAUDE.md sync timed out ({timeout}s) "
+            "\u2014 will complete on next trw_session_start()"
         )
     except Exception as exc:  # justified: fail-open, CLAUDE.md sync is best-effort
         result["warnings"].append(f"CLAUDE.md sync skipped: {exc}")

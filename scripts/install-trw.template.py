@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import random
 import re
 import shutil
 import subprocess
@@ -47,6 +48,22 @@ DIM = "\033[2m" if _USE_COLOR else ""
 NC = "\033[0m" if _USE_COLOR else ""
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+# Tips shown randomly after install — a teaching moment while the user is engaged.
+_TIPS = [
+    "Use trw_recall('topic') to search prior session learnings",
+    "Every trw_learn() call compounds across all future sessions",
+    "Call trw_session_start() at the beginning of every session",
+    "Use Agent Teams for multi-file implementations \u2014 focused context wins",
+    "Run /trw-project-health to check your installation's vitals",
+    "Use trw_checkpoint() before large operations to save progress",
+    "Run trw_deliver() at session end to persist your discoveries",
+    "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
+    "Export learnings anytime: trw-mcp export . learnings --format csv",
+    "Your learnings auto-decay \u2014 high-impact ones persist longest",
+    "Set CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6 for faster subagents",
+    "TRW hooks run automatically \u2014 no setup needed after install",
+]
 
 
 def _visible_len(text: str) -> int:
@@ -295,6 +312,8 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
                 prior["telemetry"] = value.lower() == "true"
             elif key == "embeddings_enabled":
                 prior["embeddings"] = value.lower() == "true"
+            elif key == "sqlite_vec_enabled":
+                prior["sqlite_vec"] = value.lower() == "true"
     except OSError:
         pass
     return prior
@@ -466,8 +485,15 @@ def update_config(
     project_name: str,
     api_key: str,
     telemetry_enabled: bool,
+    *,
+    embeddings_enabled: bool | None = None,
+    sqlite_vec_enabled: bool | None = None,
 ) -> bool:
-    """Update .trw/config.yaml with installation settings."""
+    """Update .trw/config.yaml with installation settings.
+
+    Optional *embeddings_enabled* and *sqlite_vec_enabled* persist feature
+    flags so reinstalls skip the "Optional Features" prompts.
+    """
     if not config_path.is_file():
         return False
 
@@ -492,6 +518,14 @@ def update_config(
             val = "true" if telemetry_enabled else "false"
             out.append(f"platform_telemetry_enabled: {val}\n")
             updated.add("platform_telemetry_enabled")
+            continue
+        if s.startswith("embeddings_enabled:") and embeddings_enabled is not None:
+            out.append(f"embeddings_enabled: {'true' if embeddings_enabled else 'false'}\n")
+            updated.add("embeddings_enabled")
+            continue
+        if s.startswith("sqlite_vec_enabled:") and sqlite_vec_enabled is not None:
+            out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
+            updated.add("sqlite_vec_enabled")
             continue
         if s.startswith("platform_urls:"):
             updated.add("platform_urls")
@@ -522,9 +556,205 @@ def update_config(
     if api_key or telemetry_enabled:
         out.append("platform_urls:\n")
         out.append(f'  - "{platform_url}"\n')
+    if embeddings_enabled and "embeddings_enabled" not in updated:
+        out.append("embeddings_enabled: true\n")
+    if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
+        out.append("sqlite_vec_enabled: true\n")
 
     config_path.write_text("".join(out), encoding="utf-8")
     return True
+
+
+# ── Health check ─────────────────────────────────────────────────
+
+def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
+    """Probe a backend health endpoint. Returns status dict.
+
+    Uses only stdlib — no external dependencies.
+    """
+    import json
+    import urllib.request
+    import urllib.error
+
+    health_url = f"{url.rstrip('/')}/v1/health"
+    try:
+        req = urllib.request.Request(health_url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {"url": url, "reachable": True, "status": data.get("status", "ok")}
+    except urllib.error.HTTPError as exc:
+        return {"url": url, "reachable": True, "status": f"http-{exc.code}"}
+    except Exception:
+        return {"url": url, "reachable": False, "status": "unreachable"}
+
+
+def _check_all_backends(
+    target_dir: Path,
+    prior_config: dict[str, object],
+) -> list[dict[str, object]]:
+    """Check connectivity to all configured platform backends.
+
+    Reads platform_urls from config.yaml (simple line parsing) and probes
+    each one. Also checks localhost:8000 if a docker-compose.yml exists
+    in the project (indicating a local backend may be running).
+    """
+    results: list[dict[str, object]] = []
+    urls: list[str] = []
+
+    # Read platform_urls from config.yaml
+    config_path = target_dir / ".trw" / "config.yaml"
+    if config_path.is_file():
+        try:
+            in_urls = False
+            for line in config_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("platform_urls:"):
+                    in_urls = True
+                    continue
+                if in_urls:
+                    if stripped.startswith("- "):
+                        url = stripped[2:].strip().strip('"').strip("'")
+                        if url:
+                            urls.append(url)
+                    elif stripped and not stripped.startswith("#"):
+                        in_urls = False
+        except OSError:
+            pass
+
+    # Check for local Docker backend
+    if (target_dir / "docker-compose.yml").is_file() or (
+        target_dir / "docker-compose.yaml"
+    ).is_file():
+        local_url = "http://localhost:8000"
+        if local_url not in urls:
+            urls.insert(0, local_url)
+
+    # Probe all backends in parallel for faster results
+    if not urls:
+        return results
+    if len(urls) == 1:
+        return [_check_backend_health(urls[0])]
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=min(len(urls), 4)) as pool:
+        futures = {pool.submit(_check_backend_health, url): url for url in urls}
+        for future in as_completed(futures, timeout=10):
+            try:
+                results.append(future.result())
+            except Exception:
+                results.append({"url": futures[future], "reachable": False, "status": "error"})
+
+    # Preserve original URL ordering
+    url_order = {url: i for i, url in enumerate(urls)}
+    results.sort(key=lambda r: url_order.get(str(r["url"]), 999))
+    return results
+
+
+# ── MCP server restart ───────────────────────────────────────────
+
+def _is_process_alive(pid: int) -> bool:
+    """Check if a process with the given PID is running. Cross-platform.
+
+    - Unix/macOS: ``os.kill(pid, 0)`` (signal 0 = existence check).
+    - Windows: ``os.kill(pid, 0)`` raises SystemError on Windows
+      (CPython issue #14480). Use ``kernel32.OpenProcess`` instead.
+    """
+    import os
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, 0, pid)  # type: ignore[union-attr]
+            if handle == 0:
+                return False
+            ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[union-attr]
+            return True
+        except (OSError, AttributeError):
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, OSError):
+            return False
+
+
+def _terminate_process(pid: int) -> bool:
+    """Terminate a process by PID. Cross-platform.
+
+    - Unix/macOS: sends SIGTERM for graceful shutdown.
+    - Windows: ``os.kill(pid, SIGTERM)`` calls ``TerminateProcess``
+      (forceful but reliable — no graceful path without
+      ``CREATE_NEW_PROCESS_GROUP`` at spawn time). Falls back to
+      ``taskkill /PID`` if that fails.
+
+    Returns True if the process was signalled successfully.
+    """
+    import os
+    import signal
+
+    try:
+        if sys.platform == "win32":
+            # On Windows, os.kill(pid, SIGTERM) calls TerminateProcess —
+            # always forceful. No graceful alternative without spawn-time
+            # CREATE_NEW_PROCESS_GROUP flag (see uvicorn PR #1909).
+            try:
+                os.kill(pid, signal.SIGTERM)
+                return True
+            except OSError:
+                # Fallback: taskkill handles more edge cases on Windows
+                return _run_quiet(["taskkill", "/PID", str(pid), "/F"])
+        else:
+            os.kill(pid, signal.SIGTERM)
+            return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
+    """Restart MCP server(s) after install/upgrade.
+
+    Cross-platform approach:
+      - HTTP mode: kill the background process via PID file; it will be
+        auto-started on the next tool call via ``ensure_http_server()``.
+      - All modes: write a version sentinel so the server detects the
+        upgrade on the next tool call and advises ``/mcp``.
+    """
+    import json
+
+    trw_dir = target_dir / ".trw"
+    pid_path = trw_dir / "mcp-server.pid"
+
+    # HTTP mode: kill the background server process
+    if pid_path.is_file():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+            if _is_process_alive(pid):
+                if _terminate_process(pid):
+                    ui.step_ok("MCP server stopped (will auto-start on next use)")
+                pid_path.unlink(missing_ok=True)
+            else:
+                # Already dead — clean up stale PID
+                pid_path.unlink(missing_ok=True)
+        except (ValueError, OSError):
+            pid_path.unlink(missing_ok=True)
+
+    # Write version sentinel for stdio instances to detect upgrade
+    sentinel_path = trw_dir / "installed-version.json"
+    try:
+        sentinel_path.write_text(
+            json.dumps({"version": TRW_VERSION, "timestamp": _iso_now()}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # Best-effort
+
+
+def _iso_now() -> str:
+    """Return current UTC timestamp in ISO 8601 format."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ── Banners ──────────────────────────────────────────────────────────
@@ -548,20 +778,21 @@ def show_banner(ui: UI) -> None:
         print()
 
 
-def show_success_banner(ui: UI, platform_status: str, features: list[str]) -> None:
-    """Display the post-install success banner with summary."""
+def show_success_banner(
+    ui: UI,
+    platform_status: str,
+    features: list[str],
+    is_reinstall: bool = False,
+    backend_results: list[dict[str, object]] | None = None,
+) -> None:
+    """Display the post-install success banner with summary.
+
+    Content adapts to fresh vs. reinstall scenarios, shows real backend
+    connectivity, and includes a random tip to teach users capabilities.
+    """
     if ui.quiet:
         ui.info(f"TRW Framework v{TRW_VERSION} installed.")
         return
-
-    status_map = {
-        "connected": f"{GREEN}\u2022{NC} Connected to trwframework.com",
-        "telemetry": f"{BLUE}\u2022{NC} Anonymous telemetry enabled",
-    }
-    status_line = status_map.get(
-        platform_status,
-        f"{DIM}\u2022 Offline mode (re-run installer to connect){NC}",
-    )
 
     if ui.interactive:
         print()
@@ -571,18 +802,50 @@ def show_success_banner(ui: UI, platform_status: str, features: list[str]) -> No
         )
         print()
 
-        # Summary
-        print(f"  {status_line}")
+        # Backend connectivity (real health check results)
+        if backend_results:
+            for br in backend_results:
+                url = str(br["url"])
+                # Friendly label for known URLs
+                if "localhost" in url or "127.0.0.1" in url:
+                    label = f"Local backend ({url})"
+                elif "trwframework.com" in url:
+                    label = "trwframework.com"
+                else:
+                    label = url
+                if br["reachable"]:
+                    print(f"  {GREEN}\u2022{NC} {label}")
+                else:
+                    print(f"  {DIM}\u2022 {label} (unreachable){NC}")
+        elif platform_status == "connected":
+            print(f"  {DIM}\u2022 API key configured (backend not verified){NC}")
+        elif platform_status == "telemetry":
+            print(f"  {BLUE}\u2022{NC} Anonymous telemetry enabled")
+        else:
+            print(f"  {DIM}\u2022 Offline mode (re-run installer to connect){NC}")
+
         if features:
             feat_str = ", ".join(features)
             print(f"  {DIM}Extras: {feat_str}{NC}")
         print()
 
-        # Next steps
-        print(f"  {BOLD}Get started:{NC}")
-        print(f"    {CYAN}1.{NC} Open your project in Claude Code:  {BOLD}claude{NC}")
-        print(f"    {CYAN}2.{NC} TRW tools load automatically \u2014 just start working")
-        print(f"    {CYAN}3.{NC} Call {BOLD}trw_session_start(){NC} for context from prior sessions")
+        # Dynamic next-steps based on install type
+        if is_reinstall:
+            print(f"  {BOLD}After updating:{NC}")
+            print(f"    {CYAN}\u2022{NC} Active MCP servers have been signaled to restart")
+            print(f"    {CYAN}\u2022{NC} Run {BOLD}/mcp{NC} in Claude Code if tools aren't loading")
+            print(f"    {CYAN}\u2022{NC} Your prior learnings carry forward automatically")
+        else:
+            print(f"  {BOLD}Get started:{NC}")
+            print(f"    {CYAN}1.{NC} Open your project in Claude Code:  {BOLD}claude{NC}")
+            print(f"    {CYAN}2.{NC} TRW tools load automatically \u2014 just start working")
+            print(f"    {CYAN}3.{NC} Call {BOLD}trw_session_start(){NC} for context from prior sessions")
+
+        # Random tip
+        print()
+        tip = random.choice(_TIPS)  # noqa: S311 — not security-sensitive
+        print(f"  {DIM}\u25b8 Tip: {tip}{NC}")
+
         print()
         print(f"  {DIM}Upgrade anytime: python3 install-trw.py --upgrade{NC}")
         print(f"  {DIM}Full docs: {DOCS_BASE}/integration{NC}")
@@ -590,7 +853,14 @@ def show_success_banner(ui: UI, platform_status: str, features: list[str]) -> No
         print()
         print(f"{GREEN}{BOLD}TRW Framework v{TRW_VERSION} \u2014 ready{NC}")
         print()
-        ui.info("Next: open your project in Claude Code — TRW tools load automatically.")
+        if backend_results:
+            for br in backend_results:
+                status = "ok" if br["reachable"] else "unreachable"
+                ui.info(f"Backend {br['url']}: {status}")
+        if is_reinstall:
+            ui.info("Updated. MCP servers signaled to restart.")
+        else:
+            ui.info("Next: open your project in Claude Code \u2014 TRW tools load automatically.")
         ui.info(f"Docs: {DOCS_BASE}/integration")
 
 
@@ -679,15 +949,6 @@ def find_trw_cmd(python: str) -> list[str]:
 
 # ── Installation phases ──────────────────────────────────────────────
 
-def phase_check_python(ui: UI, step: int, total: int) -> str:
-    """Phase 1: Verify Python version. Returns executable path."""
-    ui.step_header(step, total, "Checking Python environment")
-    python = check_python_version(ui)
-    major, minor = sys.version_info[:2]
-    ui.step_ok(f"Python {major}.{minor} ({python})")
-    return python
-
-
 def phase_extract_wheels(ui: UI, step: int, total: int, tmpdir: Path) -> tuple[Path, Path]:
     """Phase 2: Extract embedded wheel files."""
     ui.step_header(step, total, "Extracting embedded packages")
@@ -711,16 +972,37 @@ def phase_prompt_features(
     install_sqlitevec: bool | None,
     prior_extras: dict[str, bool] | None = None,
 ) -> tuple[bool, bool]:
-    """Prompt for optional features (interactive only). Skips if already answered."""
+    """Prompt for optional features (interactive only). Skips if already answered.
+
+    When both extras are already configured (prior install or CLI flags),
+    shows a compact summary line instead of the full prompt section.
+    """
     if prior_extras is None:
         prior_extras = {}
 
-    if install_ai is None or install_sqlitevec is None:
-        draw_divider("Optional Features")
+    ai_configured = prior_extras.get("ai", False)
+    vec_configured = prior_extras.get("sqlite_vec", False)
+
+    # Both already determined via CLI flags — nothing to show
+    if install_ai is not None and install_sqlitevec is not None:
+        return bool(install_ai), bool(install_sqlitevec)
+
+    # Both from prior install — compact one-liner, no prompts
+    if ai_configured and vec_configured and install_ai is None and install_sqlitevec is None:
+        names = []
+        if ai_configured:
+            names.append("AI/LLM")
+        if vec_configured:
+            names.append("sqlite-vec")
+        print(f"  {GREEN}\u2713{NC} Extras: {', '.join(names)} (from prior install)")
+        return True, True
+
+    # Need to prompt for at least one — show the feature section
+    draw_divider("Optional Features")
 
     if install_ai is None:
-        if prior_extras.get("ai"):
-            ui.step_ok("AI extras: already installed")
+        if ai_configured:
+            print(f"  {GREEN}\u2713{NC} AI extras (from prior install)")
             install_ai = True
         else:
             print()
@@ -730,8 +1012,8 @@ def phase_prompt_features(
             install_ai = prompt_yes_no("Install AI/LLM features?")
 
     if install_sqlitevec is None:
-        if prior_extras.get("sqlite_vec"):
-            ui.step_ok("sqlite-vec: already installed")
+        if vec_configured:
+            print(f"  {GREEN}\u2713{NC} sqlite-vec (from prior install)")
             install_sqlitevec = True
         else:
             print()
@@ -790,34 +1072,30 @@ def phase_install_extras(
     python: str,
     install_ai: bool,
     install_sqlitevec: bool,
-) -> tuple[int, list[str]]:
-    """Install optional extras. Returns (next_step, feature_names)."""
+) -> list[str]:
+    """Install optional extras as a single step. Returns feature names."""
+    ui.step_header(step, total, "Installing extras")
     features: list[str] = []
-    s = step
 
     if install_ai:
-        ui.step_header(s, total, "Installing AI extras")
         ui.start_spinner("Installing trw-mcp[ai]...")
         ok = pip_install(python, "trw-mcp[ai]", "trw-mcp[ai]", ui)
         ui.stop_spinner(ok, "AI features enabled", "AI extras failed (non-fatal)")
         if ok:
             features.append("AI/LLM")
         else:
-            ui.step_warn("AI extras failed — base TRW still works fine")
-        s += 1
+            ui.step_warn("AI extras failed \u2014 base TRW still works fine")
 
     if install_sqlitevec:
-        ui.step_header(s, total, "Installing sqlite-vec")
         ui.start_spinner("Installing sqlite-vec...")
         ok = pip_install(python, "sqlite-vec", "sqlite-vec", ui)
         ui.stop_spinner(ok, "sqlite-vec enabled", "sqlite-vec failed (non-fatal)")
         if ok:
             features.append("sqlite-vec")
         else:
-            ui.step_warn("sqlite-vec failed — TRW works without it")
-        s += 1
+            ui.step_warn("sqlite-vec failed \u2014 TRW works without it")
 
-    return s, features
+    return features
 
 
 def phase_project_setup(
@@ -887,6 +1165,9 @@ def phase_configure(
     opt_api_key: str,
     opt_telemetry: bool | None,
     prior_config: dict[str, object] | None = None,
+    *,
+    install_ai: bool = False,
+    install_vec: bool = False,
 ) -> str:
     """Configure project identity, API key, and telemetry. Returns platform_status."""
     ui.step_header(step, total, "Configure your project")
@@ -949,9 +1230,13 @@ def phase_configure(
             telemetry_enabled = False
         ui.step_ok(f"Project: {project_name}")
 
-    # Write to config
+    # Write to config (including feature flags for future reinstall detection)
     config_path = target_dir / ".trw" / "config.yaml"
-    if update_config(config_path, project_name, api_key, telemetry_enabled):
+    if update_config(
+        config_path, project_name, api_key, telemetry_enabled,
+        embeddings_enabled=install_ai or None,
+        sqlite_vec_enabled=install_vec or None,
+    ):
         ui.step_ok("Configuration saved to .trw/config.yaml")
     else:
         ui.step_warn("Config file not found — run project setup first")
@@ -1057,81 +1342,114 @@ def main() -> None:
 
     show_banner(ui)
 
-    # Load prior installation state (before python check — no python needed yet)
+    # ── Preflight ────────────────────────────────────────────────────
+    # Gather all information BEFORE showing numbered steps so the step
+    # count never changes mid-flow.
+
     prior_config = _load_prior_config(target_dir)
     is_reinstall = bool(prior_config)
 
     if is_reinstall and interactive:
-        ui.info("Existing TRW installation detected — reusing prior settings")
+        ui.info("Existing TRW installation detected \u2014 reusing prior settings")
 
-    # Calculate step count
-    total = 4  # python + extract + install + project-setup
+    if interactive:
+        draw_divider("Preflight")
+
+    # Python check (preflight — not a numbered step)
+    python = check_python_version(ui)
+    major, minor = sys.version_info[:2]
+    if interactive:
+        print(f"  {GREEN}\u2713{NC} Python {major}.{minor} ({python})")
+    else:
+        ui.info(f"Python {major}.{minor} ({python})")
+
+    # Detect already-installed extras via runtime imports
+    prior_extras: dict[str, bool] = _detect_installed_extras(python) if is_reinstall else {}
+    # Also honour config-level feature flags (user's prior choice persists
+    # even if the venv was recreated or packages temporarily missing)
+    if prior_config.get("embeddings"):
+        prior_extras.setdefault("ai", True)
+    if prior_config.get("sqlite_vec"):
+        prior_extras.setdefault("sqlite_vec", True)
+
+    # Feature selection (interactive: prompt now; script: already resolved)
+    if interactive:
+        install_ai, install_vec = phase_prompt_features(
+            ui, install_ai, install_vec, prior_extras=prior_extras,
+        )
+
+    install_ai = bool(install_ai)
+    install_vec = bool(install_vec)
+    has_extras = install_ai or install_vec
     has_config = interactive or args.name or args.api_key
-    # We may not know ai/vec yet in interactive mode, so add after prompt
-    # Use a mutable list so phases can reference the final count
-    extra = 0
-    if install_ai:
-        extra += 1
-    if install_vec:
-        extra += 1
+
+    # ── Step count (stable from here on) ─────────────────────────────
+    total = 3  # extract + install + project-setup
+    if has_extras:
+        total += 1
     if has_config:
-        extra += 1
-    total += extra
+        total += 1
 
     # Create temp dir for wheel extraction
     tmpdir = Path(tempfile.mkdtemp(prefix="trw-install-"))
     try:
-        # Phase 1: Python check
-        python = phase_check_python(ui, 1, total)
+        step = 0
 
-        # Detect already-installed extras now that we have the python path
-        prior_extras: dict[str, bool] = _detect_installed_extras(python) if is_reinstall else {}
+        # Step 1: Extract wheels
+        step += 1
+        memory_whl, mcp_whl = phase_extract_wheels(ui, step, total, tmpdir)
 
-        # Phase 2: Extract wheels
-        memory_whl, mcp_whl = phase_extract_wheels(ui, 2, total, tmpdir)
+        # Step 2: Install base packages
+        step += 1
+        phase_install_packages(ui, step, total, python, memory_whl, mcp_whl)
 
-        # Feature prompts (between extract and install)
-        if interactive:
-            install_ai, install_vec = phase_prompt_features(
-                ui, install_ai, install_vec, prior_extras=prior_extras,
+        # Step 3 (conditional): Install extras
+        features: list[str] = []
+        if has_extras:
+            step += 1
+            features = phase_install_extras(
+                ui, step, total, python, install_ai, install_vec,
             )
-            # Recalculate total now that we know selections
-            total = 4
-            if install_ai:
-                total += 1
-            if install_vec:
-                total += 1
-            if has_config:
-                total += 1
 
-        install_ai = bool(install_ai)
-        install_vec = bool(install_vec)
-
-        # Phase 3: Install base packages
-        phase_install_packages(ui, 3, total, python, memory_whl, mcp_whl)
-
-        # Phase 3+: Install extras
-        next_step, features = phase_install_extras(ui, 4, total, python, install_ai, install_vec)
-
-        # Phase N: Project setup
+        # Step N: Project setup
+        step += 1
         phase_project_setup(
-            ui, next_step, total, python, target_dir, args.upgrade,
+            ui, step, total, python, target_dir, args.upgrade,
             interactive=interactive,
             ide=args.ide,
         )
-        next_step += 1
 
-        # Phase N+1: Configure
+        # Step N+1 (conditional): Configure
         platform_status = "offline"
         if has_config:
+            step += 1
             platform_status = phase_configure(
-                ui, next_step, total, target_dir, interactive,
+                ui, step, total, target_dir, interactive,
                 args.name, args.api_key, args.telemetry,
                 prior_config=prior_config,
+                install_ai=install_ai,
+                install_vec=install_vec,
             )
 
+        # Post-install: restart MCP servers and health-check backends
+        _restart_mcp_servers(target_dir, ui)
+
+        backend_results: list[dict[str, object]] = []
+        if platform_status in ("connected", "telemetry") or (
+            target_dir / "docker-compose.yml"
+        ).is_file() or (target_dir / "docker-compose.yaml").is_file():
+            if interactive:
+                ui.start_spinner("Checking backend connectivity...")
+            backend_results = _check_all_backends(target_dir, prior_config)
+            if interactive:
+                ui.stop_spinner(True, "Backend connectivity checked")
+
         # Done!
-        show_success_banner(ui, platform_status, features)
+        show_success_banner(
+            ui, platform_status, features,
+            is_reinstall=is_reinstall,
+            backend_results=backend_results,
+        )
 
     finally:
         try:
