@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-03-14
+
+### Fixed
+
+- **Installer pip install timeout** — `_run_quiet` now has a 120-second timeout to prevent hangs when pip stalls on PEP 668 externally-managed system Pythons without a venv activated. Previously would hang indefinitely on `--break-system-packages` fallback.
+
 ## [0.16.0] — 2026-03-14
 
 ### Added

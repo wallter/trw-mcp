@@ -412,13 +412,18 @@ def extract_wheels(tmpdir: Path) -> tuple[Path, Path]:
 
 # ── pip install with fallback ────────────────────────────────────────
 
-def _run_quiet(cmd: list[str]) -> bool:
-    """Run a command silently, return True if exit code == 0."""
+def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
+    """Run a command silently, return True if exit code == 0.
+
+    *timeout* (seconds, default 120) prevents hangs when pip stalls on
+    PEP 668 externally-managed system Pythons without a venv.
+    """
     try:
         return subprocess.run(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=timeout,
         ).returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
