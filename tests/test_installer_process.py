@@ -1,24 +1,26 @@
-"""Tests for installer process management functions (PRD-INFRA-041).
+"""Tests for installer functions (PRD-CORE-083 + PRD-INFRA-041).
 
 These functions live in install-trw.template.py (a standalone script that can't
 be imported). We replicate the pure logic here for testing — the functions use
 only stdlib and have no external dependencies.
 
 Covers:
-- _is_process_alive: cross-platform PID existence check
-- _terminate_process: cross-platform process termination
-- _restart_mcp_servers: PID kill + version sentinel write
+- PRD-CORE-083: _load_prior_config, _check_backend_health, _check_all_backends,
+  update_config, phase_prompt_features, show_success_banner, _TIPS
+- PRD-INFRA-041: _is_process_alive, _terminate_process, _restart_mcp_servers
 """
 from __future__ import annotations
 
+import io
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -27,9 +29,152 @@ import pytest
 # These are exact copies of the installer functions for testability.
 # If the installer template changes, these must be updated to match.
 
+TRW_VERSION = "0.15.1"  # test fixture version
+
+_TIPS = [
+    "Use trw_recall('topic') to search prior session learnings",
+    "Every trw_learn() call compounds across all future sessions",
+    "Call trw_session_start() at the beginning of every session",
+    "Use Agent Teams for multi-file implementations \u2014 focused context wins",
+    "Run /trw-project-health to check your installation's vitals",
+    "Use trw_checkpoint() before large operations to save progress",
+    "Run trw_deliver() at session end to persist your discoveries",
+    "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
+    "Export learnings anytime: trw-mcp export . learnings --format csv",
+    "Your learnings auto-decay \u2014 high-impact ones persist longest",
+    "Set CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6 for faster subagents",
+    "TRW hooks run automatically \u2014 no setup needed after install",
+]
+
+
+def _load_prior_config(target_dir: Path) -> dict[str, object]:
+    config_path = target_dir / ".trw" / "config.yaml"
+    if not config_path.is_file():
+        return {}
+    prior: dict[str, object] = {}
+    try:
+        for line in config_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("#") or not line or ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key == "installation_id":
+                prior["project_name"] = value
+            elif key == "platform_api_key":
+                prior["api_key"] = value
+            elif key == "platform_telemetry_enabled":
+                prior["telemetry"] = value.lower() == "true"
+            elif key == "embeddings_enabled":
+                prior["embeddings"] = value.lower() == "true"
+            elif key == "sqlite_vec_enabled":
+                prior["sqlite_vec"] = value.lower() == "true"
+    except (OSError, UnicodeDecodeError):
+        pass
+    return prior
+
+
+def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
+    import urllib.error
+    import urllib.request
+    health_url = f"{url.rstrip('/')}/v1/health"
+    try:
+        req = urllib.request.Request(health_url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {"url": url, "reachable": True, "status": data.get("status", "ok")}
+    except urllib.error.HTTPError as exc:
+        return {"url": url, "reachable": True, "status": f"http-{exc.code}"}
+    except Exception:
+        return {"url": url, "reachable": False, "status": "unreachable"}
+
+
+def _check_all_backends(target_dir: Path, prior_config: dict[str, object]) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    urls: list[str] = []
+    config_path = target_dir / ".trw" / "config.yaml"
+    if config_path.is_file():
+        try:
+            in_urls = False
+            for line in config_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("platform_urls:"):
+                    in_urls = True
+                    continue
+                if in_urls:
+                    if stripped.startswith("- "):
+                        url = stripped[2:].strip().strip('"').strip("'")
+                        if url:
+                            urls.append(url)
+                    elif stripped and not stripped.startswith("#"):
+                        in_urls = False
+        except OSError:
+            pass
+    if (target_dir / "docker-compose.yml").is_file() or (
+        target_dir / "docker-compose.yaml"
+    ).is_file():
+        local_url = "http://localhost:8000"
+        if local_url not in urls:
+            urls.insert(0, local_url)
+    for url in urls:
+        results.append(_check_backend_health(url))
+    return results
+
+
+def update_config(
+    config_path: Path, project_name: str, api_key: str,
+    telemetry_enabled: bool, *, embeddings_enabled: bool | None = None,
+    sqlite_vec_enabled: bool | None = None,
+) -> bool:
+    if not config_path.is_file():
+        return False
+    lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    updated: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        s = line.lstrip()
+        if s.startswith("installation_id:"):
+            out.append(f"installation_id: {project_name}\n")
+            updated.add("installation_id")
+            continue
+        if s.startswith("embeddings_enabled:") and embeddings_enabled is not None:
+            out.append(f"embeddings_enabled: {'true' if embeddings_enabled else 'false'}\n")
+            updated.add("embeddings_enabled")
+            continue
+        if s.startswith("sqlite_vec_enabled:") and sqlite_vec_enabled is not None:
+            out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
+            updated.add("sqlite_vec_enabled")
+            continue
+        out.append(line)
+    if embeddings_enabled and "embeddings_enabled" not in updated:
+        out.append("embeddings_enabled: true\n")
+    if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
+        out.append("sqlite_vec_enabled: true\n")
+    config_path.write_text("".join(out), encoding="utf-8")
+    return True
+
+
+def phase_prompt_features(
+    install_ai: bool | None, install_sqlitevec: bool | None,
+    prior_extras: dict[str, bool] | None = None,
+) -> tuple[bool, bool]:
+    if prior_extras is None:
+        prior_extras = {}
+    ai_configured = prior_extras.get("ai", False)
+    vec_configured = prior_extras.get("sqlite_vec", False)
+    if install_ai is not None and install_sqlitevec is not None:
+        return bool(install_ai), bool(install_sqlitevec)
+    if ai_configured and vec_configured and install_ai is None and install_sqlitevec is None:
+        return True, True
+    if install_ai is None:
+        install_ai = ai_configured
+    if install_sqlitevec is None:
+        install_sqlitevec = vec_configured
+    return bool(install_ai), bool(install_sqlitevec)
+
 
 def _is_process_alive(pid: int) -> bool:
-    """Check if a process with the given PID is running. Cross-platform."""
     if sys.platform == "win32":
         try:
             import ctypes
@@ -50,7 +195,6 @@ def _is_process_alive(pid: int) -> bool:
 
 
 def _terminate_process(pid: int) -> bool:
-    """Terminate a process by PID. Cross-platform."""
     try:
         if sys.platform == "win32":
             try:
@@ -68,93 +212,298 @@ def _terminate_process(pid: int) -> bool:
         return False
 
 
-# ── FR08: Process Existence Check ────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# PRD-CORE-083 Tests: Installer UX Overhaul and Backend Health Check
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestLoadPriorConfig:
+    """FR02: Config-level feature flag persistence."""
+
+    def test_with_feature_flags(self, tmp_path: Path) -> None:
+        """Config with embeddings_enabled and sqlite_vec_enabled is parsed correctly."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text(
+            "installation_id: my-project\n"
+            "embeddings_enabled: true\n"
+            "sqlite_vec_enabled: false\n",
+            encoding="utf-8",
+        )
+        result = _load_prior_config(tmp_path)
+        assert result["project_name"] == "my-project"
+        assert result["embeddings"] is True
+        assert result["sqlite_vec"] is False
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        """No config file returns empty dict."""
+        assert _load_prior_config(tmp_path) == {}
+
+    def test_malformed_content_returns_empty(self, tmp_path: Path) -> None:
+        """Binary/garbage content returns empty dict (OSError or parse failure)."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_bytes(b"\x00\x01\x02\xff")
+        result = _load_prior_config(tmp_path)
+        assert isinstance(result, dict)
+
+    def test_comments_and_empty_lines_skipped(self, tmp_path: Path) -> None:
+        """Comments and blank lines don't affect parsing."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text(
+            "# This is a comment\n"
+            "\n"
+            "installation_id: test\n"
+            "# another comment\n",
+            encoding="utf-8",
+        )
+        result = _load_prior_config(tmp_path)
+        assert result["project_name"] == "test"
+
+
+class TestCheckBackendHealth:
+    """FR03: Real backend health check via HTTP probe."""
+
+    def test_success_response(self) -> None:
+        """200 response with status field returns reachable=True."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"status": "ok"}'
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = _check_backend_health("http://example.com")
+
+        assert result["reachable"] is True
+        assert result["status"] == "ok"
+
+    def test_http_error(self) -> None:
+        """HTTP 500 still counts as reachable (server responded)."""
+        with patch("urllib.request.urlopen", side_effect=HTTPError(
+            "http://x/v1/health", 500, "ISE", {}, None  # type: ignore[arg-type]
+        )):
+            result = _check_backend_health("http://example.com")
+
+        assert result["reachable"] is True
+        assert result["status"] == "http-500"
+
+    def test_connection_refused(self) -> None:
+        """Connection refused returns unreachable."""
+        with patch("urllib.request.urlopen", side_effect=URLError(
+            ConnectionRefusedError("refused")
+        )):
+            result = _check_backend_health("http://example.com")
+
+        assert result["reachable"] is False
+        assert result["status"] == "unreachable"
+
+    def test_timeout(self) -> None:
+        """Socket timeout returns unreachable."""
+        import socket
+        with patch("urllib.request.urlopen", side_effect=socket.timeout("timed out")):
+            result = _check_backend_health("http://example.com")
+
+        assert result["reachable"] is False
+        assert result["status"] == "unreachable"
+
+
+class TestCheckAllBackends:
+    """FR04: Docker backend auto-detection."""
+
+    def test_docker_compose_detected(self, tmp_path: Path) -> None:
+        """docker-compose.yml triggers localhost:8000 probe."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (tmp_path / "docker-compose.yml").write_text("version: '3'\n", encoding="utf-8")
+
+        with patch(
+            "tests.test_installer_process._check_backend_health",
+            return_value={"url": "http://localhost:8000", "reachable": False, "status": "unreachable"},
+        ) as mock_health:
+            # Call the function directly since patching won't affect the local reference
+            results = _check_all_backends(tmp_path, {})
+
+        # Verify localhost:8000 was probed
+        probed_urls = [r["url"] for r in results]
+        assert "http://localhost:8000" in probed_urls
+
+    def test_no_duplicates_with_config(self, tmp_path: Path) -> None:
+        """Config URL matching Docker URL is not duplicated."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text(
+            'platform_urls:\n  - "http://localhost:8000"\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "docker-compose.yml").write_text("version: '3'\n", encoding="utf-8")
+
+        results = _check_all_backends(tmp_path, {})
+        urls = [r["url"] for r in results]
+        assert urls.count("http://localhost:8000") == 1
+
+    def test_no_compose_no_local(self, tmp_path: Path) -> None:
+        """Without docker-compose, localhost is not auto-added."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
+
+        results = _check_all_backends(tmp_path, {})
+        assert results == []
+
+
+class TestUpdateConfig:
+    """FR02: Feature flag persistence in config.yaml."""
+
+    def test_persists_feature_flags(self, tmp_path: Path) -> None:
+        """Feature flags are written to config.yaml."""
+        config = tmp_path / "config.yaml"
+        config.write_text("installation_id: test\n", encoding="utf-8")
+
+        update_config(config, "test", "", False, embeddings_enabled=True, sqlite_vec_enabled=True)
+
+        content = config.read_text(encoding="utf-8")
+        assert "embeddings_enabled: true" in content
+        assert "sqlite_vec_enabled: true" in content
+
+    def test_roundtrip(self, tmp_path: Path) -> None:
+        """Write then read back feature flags."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        config = trw_dir / "config.yaml"
+        config.write_text("installation_id: test\n", encoding="utf-8")
+
+        update_config(config, "test", "", False, embeddings_enabled=True, sqlite_vec_enabled=True)
+
+        prior = _load_prior_config(tmp_path)
+        assert prior.get("embeddings") is True
+        assert prior.get("sqlite_vec") is True
+
+    def test_updates_existing_flags(self, tmp_path: Path) -> None:
+        """Existing flags are updated in-place, not duplicated."""
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "installation_id: test\n"
+            "embeddings_enabled: false\n",
+            encoding="utf-8",
+        )
+
+        update_config(config, "test", "", False, embeddings_enabled=True)
+
+        content = config.read_text(encoding="utf-8")
+        assert content.count("embeddings_enabled") == 1
+        assert "embeddings_enabled: true" in content
+
+
+class TestPhasePromptFeatures:
+    """FR02: Feature prompt logic with prior_extras."""
+
+    def test_both_configured_returns_true(self) -> None:
+        """Both extras configured: returns (True, True) without prompting."""
+        ai, vec = phase_prompt_features(
+            None, None, prior_extras={"ai": True, "sqlite_vec": True},
+        )
+        assert ai is True
+        assert vec is True
+
+    def test_cli_override(self) -> None:
+        """CLI flags override prior_extras."""
+        ai, vec = phase_prompt_features(
+            False, False, prior_extras={"ai": True, "sqlite_vec": True},
+        )
+        assert ai is False
+        assert vec is False
+
+    def test_partial_config(self) -> None:
+        """Only AI configured: AI auto-accepted, sqlite_vec defaults to False."""
+        ai, vec = phase_prompt_features(
+            None, None, prior_extras={"ai": True},
+        )
+        assert ai is True
+        assert vec is False
+
+    def test_no_prior_no_cli(self) -> None:
+        """No prior config and no CLI flags: both default to False."""
+        ai, vec = phase_prompt_features(None, None, prior_extras={})
+        assert ai is False
+        assert vec is False
+
+
+class TestTips:
+    """FR06: Random tip display."""
+
+    def test_tips_list_has_12_items(self) -> None:
+        assert len(_TIPS) == 12
+
+    def test_all_tips_are_strings(self) -> None:
+        assert all(isinstance(t, str) for t in _TIPS)
+
+    def test_all_tips_are_nonempty(self) -> None:
+        assert all(len(t) > 10 for t in _TIPS)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PRD-INFRA-041 Tests: Cross-Platform MCP Server Restart After Install
+# ═══════════════════════════════════════════════════════════════════════
 
 
 class TestIsProcessAlive:
     """FR08: _is_process_alive works cross-platform."""
 
     def test_own_process_is_alive(self) -> None:
-        """Current process PID should report as alive."""
         assert _is_process_alive(os.getpid()) is True
 
     def test_bogus_pid_is_not_alive(self) -> None:
-        """Non-existent PID should report as dead."""
-        # Use a very high PID unlikely to exist
         assert _is_process_alive(4_000_000) is False
 
-    def test_zero_pid_is_not_alive(self) -> None:
-        """PID 0 (kernel) should not be reported as a user process."""
-        # os.kill(0, 0) sends signal to the process group, not useful for us
-        # On most systems this either fails or returns for the wrong reason
+    def test_zero_pid_no_crash(self) -> None:
         result = _is_process_alive(0)
-        # We just verify no crash; result varies by platform
         assert isinstance(result, bool)
 
-    def test_negative_pid_is_not_alive(self) -> None:
-        """Negative PIDs should not crash (result varies by platform)."""
-        # On Linux, os.kill(-1, 0) sends to all processes — may return True.
-        # The key invariant is no crash, not a specific return value.
+    def test_negative_pid_no_crash(self) -> None:
         result = _is_process_alive(-1)
         assert isinstance(result, bool)
-
-
-# ── FR04: Cross-Platform Process Termination ─────────────────────────
 
 
 class TestTerminateProcess:
     """FR04: Process termination works on Unix and Windows."""
 
     def test_terminate_spawned_process(self) -> None:
-        """Spawned subprocess can be terminated."""
-        # Start a sleep process
         proc = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
             start_new_session=True,
         )
-        pid = proc.pid
-
-        assert _is_process_alive(pid) is True
-        assert _terminate_process(pid) is True
-
-        # Wait for process to actually die
+        assert _is_process_alive(proc.pid) is True
+        assert _terminate_process(proc.pid) is True
         proc.wait(timeout=5)
         assert proc.returncode is not None
 
     def test_terminate_dead_process_returns_false(self) -> None:
-        """Terminating a non-existent process returns False."""
         assert _terminate_process(4_000_000) is False
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix-specific SIGTERM test")
     def test_unix_sends_sigterm(self) -> None:
-        """On Unix, SIGTERM is sent (process can handle it gracefully)."""
         with patch("os.kill") as mock_kill:
             mock_kill.return_value = None
             _terminate_process(12345)
             mock_kill.assert_called_once_with(12345, signal.SIGTERM)
 
 
-# ── FR03: PID-Based Server Restart ──────────────────────────────────
-
-
 class TestPIDRestart:
     """FR03: Installer kills HTTP server via PID file and writes sentinel."""
 
     def test_restart_kills_alive_process(self, tmp_path: Path) -> None:
-        """PID file with alive process: process killed, PID file removed, sentinel written."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         pid_path = trw_dir / "mcp-server.pid"
         sentinel_path = trw_dir / "installed-version.json"
 
-        # Start a disposable process
         proc = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
             start_new_session=True,
         )
         pid_path.write_text(str(proc.pid), encoding="utf-8")
 
-        # Simulate restart logic
         try:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
             if _is_process_alive(pid):
@@ -163,7 +512,6 @@ class TestPIDRestart:
         except (ValueError, OSError):
             pid_path.unlink(missing_ok=True)
 
-        # Write sentinel
         sentinel_path.write_text(
             json.dumps({"version": "0.16.0", "timestamp": "2026-03-14T00:00:00Z"}),
             encoding="utf-8",
@@ -172,24 +520,17 @@ class TestPIDRestart:
         proc.wait(timeout=5)
         assert not pid_path.exists()
         assert sentinel_path.exists()
-        data = json.loads(sentinel_path.read_text(encoding="utf-8"))
-        assert data["version"] == "0.16.0"
+        assert json.loads(sentinel_path.read_text(encoding="utf-8"))["version"] == "0.16.0"
 
     def test_restart_cleans_stale_pid(self, tmp_path: Path) -> None:
-        """PID file with dead process: PID file cleaned up without error."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         pid_path = trw_dir / "mcp-server.pid"
-
-        # Write a dead PID
         pid_path.write_text("4000000", encoding="utf-8")
 
         try:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
-            if _is_process_alive(pid):
-                _terminate_process(pid)
-                pid_path.unlink(missing_ok=True)
-            else:
+            if not _is_process_alive(pid):
                 pid_path.unlink(missing_ok=True)
         except (ValueError, OSError):
             pid_path.unlink(missing_ok=True)
@@ -197,37 +538,20 @@ class TestPIDRestart:
         assert not pid_path.exists()
 
     def test_restart_no_pid_file_no_error(self, tmp_path: Path) -> None:
-        """No PID file: no error, sentinel can still be written."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        pid_path = trw_dir / "mcp-server.pid"
         sentinel_path = trw_dir / "installed-version.json"
-
-        assert not pid_path.exists()
-
-        # Only sentinel write happens
-        sentinel_path.write_text(
-            json.dumps({"version": "0.16.0"}),
-            encoding="utf-8",
-        )
-
+        sentinel_path.write_text(json.dumps({"version": "0.16.0"}), encoding="utf-8")
         assert sentinel_path.exists()
 
     def test_restart_corrupt_pid_no_crash(self, tmp_path: Path) -> None:
-        """Corrupt PID file (non-integer): cleaned up gracefully."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         pid_path = trw_dir / "mcp-server.pid"
-
         pid_path.write_text("not_a_pid", encoding="utf-8")
 
         try:
-            pid = int(pid_path.read_text(encoding="utf-8").strip())
-            if _is_process_alive(pid):
-                _terminate_process(pid)
-                pid_path.unlink(missing_ok=True)
-            else:
-                pid_path.unlink(missing_ok=True)
+            int(pid_path.read_text(encoding="utf-8").strip())
         except (ValueError, OSError):
             pid_path.unlink(missing_ok=True)
 

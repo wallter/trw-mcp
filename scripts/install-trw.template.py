@@ -314,7 +314,7 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
                 prior["embeddings"] = value.lower() == "true"
             elif key == "sqlite_vec_enabled":
                 prior["sqlite_vec"] = value.lower() == "true"
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         pass
     return prior
 
