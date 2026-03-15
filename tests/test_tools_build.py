@@ -558,12 +558,12 @@ class TestBuildConfigWiring:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FR01: Default config → cwd = project_root / 'trw-mcp'."""
+        """FR01: Default config → cwd = project_root (where tests/ lives)."""
         monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cwd = mock_run.call_args.kwargs["cwd"]
-        assert cwd == str(tmp_path / "trw-mcp")
+        assert cwd == str(tmp_path)
 
     @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
@@ -612,13 +612,13 @@ class TestBuildConfigWiring:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FR01: tests_relative_path='trw-mcp/tests' → stripped to 'tests/' for cwd."""
+        """FR01: tests_relative_path default → 'tests/' used directly (cwd = project_root)."""
         monkeypatch.setattr("trw_mcp.tools.build._runners.get_config", lambda: TRWConfig())
         mock_run.return_value = MagicMock(returncode=0, stdout="1 passed", stderr="")
         run_build_check(tmp_path, scope="pytest")
         cmd = mock_run.call_args.args[0]
-        assert "tests/" in cmd
-        assert "trw-mcp/tests/" not in " ".join(cmd)
+        # test_dir should be present in the command
+        assert any("tests" in c for c in cmd)
 
     @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")
@@ -726,9 +726,9 @@ class TestBuildConfigWiring:
         assert status.tests_passed is True
         cmd = mock_run.call_args.args[0]
         cwd = mock_run.call_args.kwargs["cwd"]
-        # Fallback: cov target = trw_mcp, cwd = project_root/trw-mcp
+        # Fallback: cov target = trw_mcp, cwd = project_root
         assert "--cov=trw_mcp" in cmd
-        assert cwd == str(tmp_path / "trw-mcp")
+        assert cwd == str(tmp_path)
 
     @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/mypy")

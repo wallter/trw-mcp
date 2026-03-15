@@ -84,14 +84,15 @@ def _run_pytest(
     if pytest_path is None:
         return _pytest_error("pytest not found — install with: pip install pytest")
 
-    # Derive build root and cwd from config (PRD-INFRA-011-FR01)
+    # Pytest runs from project_root (where tests/ lives).
+    # Mypy runs from build_root (where src/ lives) — handled in _run_mypy.
     source_path = config.source_package_path or "trw-mcp/src"
     build_root = str(Path(source_path).parent)
-    cwd = project_root / build_root
+    cwd = project_root  # pytest cwd = project root (tests/ is here)
 
-    # Test directory relative to cwd (strip build_root prefix)
-    tests_full = config.tests_relative_path or "trw-mcp/tests"
-    test_dir = tests_full.removeprefix(build_root + "/") if build_root != "." else tests_full
+    # Test directory relative to project root
+    tests_full = config.tests_relative_path or "tests"
+    test_dir = tests_full
     if not test_dir.endswith("/"):
         test_dir += "/"
 
