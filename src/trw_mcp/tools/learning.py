@@ -305,10 +305,12 @@ def register_learning_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, ceremony state update must not block learning
             pass
 
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            append_ceremony_nudge(cast(dict[str, object], result_dict), trw_dir)
+            ctx = NudgeContext(tool_name=ToolName.LEARN)
+            append_ceremony_nudge(cast(dict[str, object], result_dict), trw_dir, context=ctx)
         except Exception:  # justified: fail-open, nudge injection must not block learning
             pass
 
@@ -516,10 +518,12 @@ def register_learning_tools(server: FastMCP) -> None:
             "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
         }
 
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            append_ceremony_nudge(cast(dict[str, object], recall_result), trw_dir, available_learnings=total_available)
+            ctx = NudgeContext(tool_name=ToolName.RECALL)
+            append_ceremony_nudge(cast(dict[str, object], recall_result), trw_dir, available_learnings=total_available, context=ctx)
         except Exception:  # justified: fail-open, nudge injection must not block recall
             pass
 

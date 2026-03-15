@@ -15,7 +15,12 @@ import pytest
 
 from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
+    NudgeContext,
+    _assemble_nudge,
     _compute_urgency,
+    _context_reactive_message,
+    _next_two_steps,
+    _reversion_prompt,
     _select_nudge_message,
     compute_nudge,
     compute_nudge_minimal,
@@ -26,6 +31,7 @@ from trw_mcp.state.ceremony_nudge import (
     mark_build_check,
     mark_checkpoint,
     mark_deliver,
+    mark_review,
     mark_session_started,
     read_ceremony_state,
     reset_ceremony_state,
@@ -364,6 +370,7 @@ class TestNudgeEngine:
             session_started=True,
             checkpoint_count=1,
             build_check_result="passed",
+            review_called=True,
             deliver_called=True,
             phase="done",
         )
@@ -395,7 +402,7 @@ class TestNudgeEngine:
         ]
         for state in combos:
             result = compute_nudge(state, available_learnings=10)
-            assert len(result) <= 400, (
+            assert len(result) <= 600, (
                 f"Nudge too long ({len(result)} chars) for state: {state}\n{result!r}"
             )
 
@@ -410,7 +417,7 @@ class TestNudgeEngine:
 
         # Session started — session_start should show ✓
         state2 = CeremonyState(session_started=True, checkpoint_count=1, phase="done",
-                               build_check_result="passed", deliver_called=True)
+                               build_check_result="passed", review_called=True, deliver_called=True)
         result2 = compute_nudge(state2, available_learnings=0)
         assert "--- TRW Session ---" in result2
         assert "\u2713" in result2  # ✓
@@ -784,8 +791,8 @@ class TestProgressiveUrgency:
                 phase="implement",
             )
             result = compute_nudge(state, available_learnings=10)
-            assert len(result) <= 400, (
-                f"Nudge exceeds 400 chars at nudge_counts={nudge_counts}: {len(result)} chars\n{result!r}"
+            assert len(result) <= 600, (
+                f"Nudge exceeds 600 chars at nudge_counts={nudge_counts}: {len(result)} chars\n{result!r}"
             )
 
 
@@ -871,3 +878,619 @@ class TestLocalModelScoping:
             assert "build" not in nudge.lower(), (
                 f"Minimal nudge mentions build for phase={phase}: {nudge}"
             )
+
+
+# -------------------------------------------------------------------------
+# PRD-CORE-084 tests: Context-Reactive Nudge Engine
+# -------------------------------------------------------------------------
+
+
+class TestFR01CeremonyStateExtension:
+    """FR01: CeremonyState schema extension with review fields."""
+
+    def test_fr01_ceremony_state_has_review_fields(self) -> None:
+        """CeremonyState has review_called, review_verdict, review_p0_count defaults."""
+        state = CeremonyState()
+        assert state.review_called is False
+        assert state.review_verdict is None
+        assert state.review_p0_count == 0
+
+    def test_fr01_steps_includes_review(self) -> None:
+        """_STEPS tuple includes 'review' between build_check and deliver."""
+        from trw_mcp.state.ceremony_nudge import _STEPS
+        assert "review" in _STEPS
+        idx_build = _STEPS.index("build_check")
+        idx_review = _STEPS.index("review")
+        idx_deliver = _STEPS.index("deliver")
+        assert idx_build < idx_review < idx_deliver
+
+    def test_fr01_mark_review(self, tmp_path: Path) -> None:
+        """mark_review sets review_called, review_verdict, review_p0_count."""
+        trw = _trw_dir(tmp_path)
+        mark_review(trw, verdict="pass", p0_count=0)
+        state = read_ceremony_state(trw)
+        assert state.review_called is True
+        assert state.review_verdict == "pass"
+        assert state.review_p0_count == 0
+
+    def test_fr01_mark_review_with_p0s(self, tmp_path: Path) -> None:
+        """mark_review with p0 findings records the count."""
+        trw = _trw_dir(tmp_path)
+        mark_review(trw, verdict="block", p0_count=3)
+        state = read_ceremony_state(trw)
+        assert state.review_called is True
+        assert state.review_verdict == "block"
+        assert state.review_p0_count == 3
+
+    def test_fr01_step_complete_review(self) -> None:
+        """_step_complete returns True for review when review_called is True."""
+        from trw_mcp.state.ceremony_nudge import _step_complete
+        state = CeremonyState(review_called=True)
+        assert _step_complete("review", state) is True
+
+    def test_fr01_step_incomplete_review(self) -> None:
+        """_step_complete returns False for review when review_called is False."""
+        from trw_mcp.state.ceremony_nudge import _step_complete
+        state = CeremonyState(review_called=False)
+        assert _step_complete("review", state) is False
+
+    def test_fr01_review_in_status_line(self) -> None:
+        """_build_status_line includes review step."""
+        from trw_mcp.state.ceremony_nudge import _build_status_line
+        state = CeremonyState(review_called=True)
+        line = _build_status_line(state)
+        assert "review" in line
+
+    def test_fr01_review_pending_in_priority(self) -> None:
+        """Review shows as pending when in review phase and not called."""
+        from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result="passed",
+            review_called=False,
+            phase="review",
+        )
+        assert _highest_priority_pending_step(state) == "review"
+
+    def test_fr01_review_not_pending_when_called(self) -> None:
+        """Review is not pending when already called."""
+        from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result="passed",
+            review_called=True,
+            phase="review",
+        )
+        # Should advance past review to deliver
+        assert _highest_priority_pending_step(state) != "review"
+
+    def test_fr01_from_dict_review_fields(self, tmp_path: Path) -> None:
+        """_from_dict deserializes review fields with fail-open defaults."""
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState(
+            review_called=True,
+            review_verdict="warn",
+            review_p0_count=2,
+        )
+        write_ceremony_state(trw, state)
+        result = read_ceremony_state(trw)
+        assert result.review_called is True
+        assert result.review_verdict == "warn"
+        assert result.review_p0_count == 2
+
+    def test_fr01_from_dict_missing_review_fields(self, tmp_path: Path) -> None:
+        """_from_dict handles missing review fields with defaults (fail-open)."""
+        trw = _trw_dir(tmp_path)
+        # Write raw JSON without review fields (simulates old state file)
+        context_dir = trw / "context"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        state_file = context_dir / "ceremony-state.json"
+        state_file.write_text(
+            '{"session_started":true,"checkpoint_count":1}',
+            encoding="utf-8",
+        )
+        result = read_ceremony_state(trw)
+        assert result.review_called is False
+        assert result.review_verdict is None
+        assert result.review_p0_count == 0
+
+    def test_fr01_all_complete_with_review(self) -> None:
+        """All steps complete includes review step."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result="passed",
+            review_called=True,
+            deliver_called=True,
+            phase="done",
+        )
+        result = compute_nudge(state)
+        # All should be checkmarks, no crosses
+        assert "\u2717" not in result
+
+    def test_fr01_review_not_pending_in_validate_phase(self) -> None:
+        """phase=validate with review_called=False -> pending step is build_check, not review."""
+        from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
+        state = CeremonyState(
+            session_started=True, checkpoint_count=1, phase="validate", review_called=False,
+        )
+        result = _highest_priority_pending_step(state)
+        assert result == "build_check"  # review not yet applicable in validate phase
+
+
+class TestFR02NudgeContext:
+    """FR02: NudgeContext dataclass."""
+
+    def test_fr02_nudge_context_defaults(self) -> None:
+        """NudgeContext has sensible defaults."""
+        ctx = NudgeContext()
+        assert ctx.tool_name == ""
+        assert ctx.tool_success is True
+        assert ctx.build_passed is None
+        assert ctx.review_verdict is None
+        assert ctx.review_p0_count == 0
+        assert ctx.is_subagent is False
+
+    def test_fr02_nudge_context_custom(self) -> None:
+        """NudgeContext accepts all fields."""
+        ctx = NudgeContext(
+            tool_name="build_check",
+            tool_success=True,
+            build_passed=True,
+            review_verdict="pass",
+            review_p0_count=0,
+            is_subagent=True,
+        )
+        assert ctx.tool_name == "build_check"
+        assert ctx.is_subagent is True
+
+    def test_fr02_append_ceremony_nudge_accepts_context(self, tmp_path: Path) -> None:
+        """append_ceremony_nudge accepts optional context parameter."""
+        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        trw = _trw_dir(tmp_path)
+        write_ceremony_state(trw, CeremonyState(session_started=True, checkpoint_count=1))
+        ctx = NudgeContext(tool_name="checkpoint")
+        response: dict[str, object] = {"status": "ok"}
+        result = append_ceremony_nudge(response.copy(), trw_dir=trw, context=ctx)
+        assert "ceremony_status" in result
+
+
+class TestFR03ContextReactiveMessages:
+    """FR03: Context-reactive messages based on tool/result combinations."""
+
+    def test_fr03_build_check_failed_message(self) -> None:
+        """build_check with build_passed=False returns design flaw message."""
+        ctx = NudgeContext(tool_name="build_check", build_passed=False)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "Build failed" in msg
+        assert "PLAN" in msg
+
+    def test_fr03_build_check_passed_message(self) -> None:
+        """build_check with build_passed=True returns review next message."""
+        ctx = NudgeContext(tool_name="build_check", build_passed=True)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "review" in msg.lower()
+
+    def test_fr03_review_with_p0s_message(self) -> None:
+        """review with p0_count > 0 returns remediation message."""
+        ctx = NudgeContext(tool_name="review", review_p0_count=3)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "P0" in msg
+        assert "separate agent" in msg.lower() or "remediate" in msg.lower()
+
+    def test_fr03_review_no_p0s_message(self) -> None:
+        """review with p0_count == 0 returns deliver next message."""
+        ctx = NudgeContext(tool_name="review", review_p0_count=0)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "deliver" in msg.lower()
+
+    def test_fr03_checkpoint_message(self) -> None:
+        """checkpoint tool returns progress saved message."""
+        ctx = NudgeContext(tool_name="checkpoint")
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "Progress saved" in msg
+
+    def test_fr03_learn_message(self) -> None:
+        """learn tool returns learning persisted message."""
+        ctx = NudgeContext(tool_name="learn")
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "Learning persisted" in msg
+
+    def test_fr03_session_start_message(self) -> None:
+        """session_start tool returns FRAMEWORK.md next message."""
+        ctx = NudgeContext(tool_name="session_start")
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "FRAMEWORK" in msg
+
+    def test_fr03_deliver_message(self) -> None:
+        """deliver tool returns session complete message."""
+        ctx = NudgeContext(tool_name="deliver")
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "Session complete" in msg
+
+    def test_fr03_init_message(self) -> None:
+        """init tool returns run bootstrapped message."""
+        ctx = NudgeContext(tool_name="init")
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "Run bootstrapped" in msg
+
+    def test_fr03_recall_message(self) -> None:
+        """recall tool returns learnings recalled message."""
+        ctx = NudgeContext(tool_name="recall")
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "Learnings recalled" in msg
+
+    def test_fr03_unknown_tool_returns_none(self) -> None:
+        """Unknown tool_name returns None (triggers fallback)."""
+        ctx = NudgeContext(tool_name="unknown_tool")
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is None
+
+    def test_fr03_compute_nudge_uses_context(self) -> None:
+        """compute_nudge with context uses context-reactive message."""
+        state = CeremonyState(session_started=True, checkpoint_count=1)
+        ctx = NudgeContext(tool_name="checkpoint")
+        result = compute_nudge(state, context=ctx)
+        assert "Progress saved" in result
+
+
+class TestFR04NextTwoSteps:
+    """FR04: Next-two-steps projection."""
+
+    def test_fr04_early_phase_steps(self) -> None:
+        """Early phase: session_start and checkpoint are applicable."""
+        state = CeremonyState(
+            session_started=False,
+            checkpoint_count=0,
+            phase="early",
+        )
+        nxt, then = _next_two_steps(state)
+        assert nxt == "session_start"
+        assert then == "checkpoint"
+
+    def test_fr04_implement_phase_after_start(self) -> None:
+        """Implement phase with session started: checkpoint is next."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=0,
+            phase="implement",
+        )
+        nxt, then = _next_two_steps(state)
+        assert nxt == "checkpoint"
+        assert then is None  # Only two steps applicable, one done
+
+    def test_fr04_validate_phase_all_applicable(self) -> None:
+        """Validate phase: session_start, checkpoint, build_check applicable."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result=None,
+            phase="validate",
+        )
+        nxt, then = _next_two_steps(state)
+        assert nxt == "build_check"
+        assert then is None
+
+    def test_fr04_review_phase_shows_review(self) -> None:
+        """Review phase with build passed: review is next."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result="passed",
+            review_called=False,
+            phase="review",
+        )
+        nxt, then = _next_two_steps(state)
+        assert nxt == "review"
+
+    def test_fr04_deliver_phase_all_steps(self) -> None:
+        """Deliver phase: all 5 steps applicable."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result="passed",
+            review_called=True,
+            deliver_called=False,
+            phase="deliver",
+        )
+        nxt, then = _next_two_steps(state)
+        assert nxt == "deliver"
+        assert then is None
+
+    def test_fr04_all_complete_returns_none_none(self) -> None:
+        """All steps complete: returns (None, None)."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result="passed",
+            review_called=True,
+            deliver_called=True,
+            phase="done",
+        )
+        nxt, then = _next_two_steps(state)
+        assert nxt is None
+        assert then is None
+
+    def test_fr04_step_rationale_defined(self) -> None:
+        """All steps have rationale strings."""
+        from trw_mcp.state.ceremony_nudge import _STEP_RATIONALE
+        for step in ("session_start", "checkpoint", "build_check", "review", "deliver"):
+            assert step in _STEP_RATIONALE
+            assert len(_STEP_RATIONALE[step]) > 0
+
+    def test_fr04_fallback_uses_next_two_when_no_context(self) -> None:
+        """compute_nudge without context uses _next_two_steps for projection."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result="passed",
+            review_called=False,
+            phase="review",
+        )
+        result = compute_nudge(state, context=None)
+        # Should include review as next step in some form
+        assert "review" in result.lower()
+
+    def test_fr04_review_complete_next_deliver(self) -> None:
+        """phase=deliver, review_called=True -> NEXT=deliver only."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            phase="deliver",
+            build_check_result="passed",
+            review_called=True,
+        )
+        nxt, then = _next_two_steps(state)
+        assert nxt == "deliver"
+        assert then is None
+
+
+class TestFR05ReversionPrompting:
+    """FR05: Phase reversion active prompting."""
+
+    def test_fr05_build_failed_reversion(self) -> None:
+        """Build failure triggers reversion prompt."""
+        ctx = NudgeContext(tool_name="build_check", build_passed=False)
+        state = CeremonyState()
+        prompt = _reversion_prompt(ctx, state)
+        assert prompt is not None
+        assert "PLAN" in prompt
+
+    def test_fr05_p0_findings_reversion(self) -> None:
+        """P0 findings trigger reversion prompt."""
+        ctx = NudgeContext(tool_name="review", review_p0_count=2)
+        state = CeremonyState()
+        prompt = _reversion_prompt(ctx, state)
+        assert prompt is not None
+        assert "PLAN" in prompt
+
+    def test_fr05_scope_creep_reversion(self) -> None:
+        """Many checkpoint nudges + many files triggers scope creep reversion."""
+        ctx = NudgeContext(tool_name="checkpoint")
+        state = CeremonyState(
+            nudge_counts={"checkpoint": 5},
+            files_modified_since_checkpoint=11,
+        )
+        prompt = _reversion_prompt(ctx, state)
+        assert prompt is not None
+        assert "Scope" in prompt or "plan" in prompt.lower()
+
+    def test_fr05_no_reversion_normal(self) -> None:
+        """No reversion prompt under normal conditions."""
+        ctx = NudgeContext(tool_name="checkpoint", build_passed=None)
+        state = CeremonyState()
+        prompt = _reversion_prompt(ctx, state)
+        assert prompt is None
+
+    def test_fr05_subagent_suppression(self) -> None:
+        """Reversion prompt is suppressed for subagents."""
+        ctx = NudgeContext(
+            tool_name="build_check",
+            build_passed=False,
+            is_subagent=True,
+        )
+        state = CeremonyState()
+        prompt = _reversion_prompt(ctx, state)
+        assert prompt is None
+
+    def test_fr05_no_context_returns_none(self) -> None:
+        """No context (None) returns no reversion prompt."""
+        state = CeremonyState()
+        prompt = _reversion_prompt(None, state)
+        assert prompt is None
+
+    def test_fr05_scope_below_nudge_threshold(self) -> None:
+        """nudge_counts[checkpoint]=3 AND files_modified=15 -> NO scope-creep reversion."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            phase="implement",
+            nudge_counts={"checkpoint": 3},
+            files_modified_since_checkpoint=15,
+        )
+        ctx = NudgeContext(tool_name="checkpoint")
+        result = _reversion_prompt(ctx, state)
+        assert result is None  # nudge count threshold (5) not met
+
+
+class TestFR06ProgressiveUrgencyDirectiveness:
+    """FR06: Progressive urgency directiveness for context-reactive messages."""
+
+    def test_fr06_low_urgency_no_rfc_terms(self) -> None:
+        """Low urgency context message has no RFC 2119 terms."""
+        ctx = NudgeContext(tool_name="build_check", build_passed=True)
+        state = CeremonyState(nudge_counts={})
+        msg = _context_reactive_message(ctx, state, urgency="low")
+        assert msg is not None
+        assert "SHOULD" not in msg
+        assert "recommended" not in msg.lower()
+
+    def test_fr06_medium_urgency_advisory(self) -> None:
+        """Medium urgency context message uses advisory language."""
+        ctx = NudgeContext(tool_name="build_check", build_passed=True)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state, urgency="medium")
+        assert msg is not None
+        assert "recommended" in msg.lower()
+
+    def test_fr06_high_urgency_directive(self) -> None:
+        """High urgency context message uses directive language."""
+        ctx = NudgeContext(tool_name="build_check", build_passed=True)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state, urgency="high")
+        assert msg is not None
+        assert "SHOULD" in msg
+
+    def test_fr06_first_nudge_concise(self) -> None:
+        """nudge_count=0 (first time) -> message is concise, no urgency escalation."""
+        state = CeremonyState(
+            session_started=True,
+            phase="validate",
+            build_check_result="failed",
+            nudge_counts={},
+        )
+        ctx = NudgeContext(tool_name="build_check", build_passed=False)
+        msg = _context_reactive_message(ctx, state, urgency="low")
+        assert msg is not None
+        assert len(msg) < 250  # concise
+        assert "SHOULD" not in msg  # no RFC 2119 escalation at low urgency
+
+
+class TestFR09ComponentAwareTruncation:
+    """FR09: Component-aware truncation replaces hardcoded truncation."""
+
+    def test_fr09_assemble_nudge_basic(self) -> None:
+        """_assemble_nudge assembles status + reactive message."""
+        result = _assemble_nudge("status line", "reactive message")
+        assert "status line" in result
+        assert "reactive message" in result
+
+    def test_fr09_assemble_nudge_optional_components(self) -> None:
+        """_assemble_nudge includes optional components within budget."""
+        result = _assemble_nudge(
+            "status", "msg",
+            next_then="NEXT: foo THEN: bar",
+            reversion="reversion hint",
+            budget=600,
+        )
+        assert "NEXT" in result
+        assert "reversion" in result
+
+    def test_fr09_assemble_nudge_respects_budget(self) -> None:
+        """_assemble_nudge drops optional components that exceed budget."""
+        long_next = "N" * 500
+        result = _assemble_nudge(
+            "status", "msg",
+            next_then=long_next,
+            budget=100,
+        )
+        assert long_next not in result
+        assert "status" in result
+
+    def test_fr09_assemble_nudge_no_reactive(self) -> None:
+        """_assemble_nudge works with None reactive message."""
+        result = _assemble_nudge("status", None)
+        assert result == "status"
+
+    def test_fr09_compute_nudge_uses_assembly(self) -> None:
+        """compute_nudge uses component-aware assembly instead of truncation."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            phase="implement",
+        )
+        ctx = NudgeContext(tool_name="checkpoint")
+        result = compute_nudge(state, context=ctx)
+        # Should not end with "..." from old truncation (unless genuinely over budget)
+        assert isinstance(result, str)
+        assert len(result) <= 600
+
+    def test_fr09_compute_nudge_budget_600(self) -> None:
+        """compute_nudge respects 600-char budget with context."""
+        state = CeremonyState(session_started=False)
+        ctx = NudgeContext(tool_name="session_start")
+        result = compute_nudge(state, context=ctx)
+        assert len(result) <= 600
+
+    def test_fr09_truncation_order(self) -> None:
+        """Reversion prompt dropped before THEN step in truncation.
+
+        Budget is set so that status+reactive+then_step fit, but adding
+        reversion would exceed it. Verifies reversion is dropped first.
+        """
+        status = "\u2713 s | \u2713 c | \u2713 b | \u2713 r | \u2713 d"  # ~37 chars
+        reactive = "Build failed. " + "x" * 200  # 214 chars
+        then_step = "THEN: trw_deliver()"  # 19 chars
+        reversion = "Consider reverting to PLAN."  # 27 chars
+        # status(37) + \n(1) + reactive(214) + \n(1) + then_step(19) = 272 fits in 280
+        # 272 + \n(1) + reversion(27) = 300 exceeds 280 → reversion dropped
+        result = _assemble_nudge(status, reactive, next_then=then_step, reversion=reversion, budget=280)
+        assert status in result
+        assert "Build failed" in result
+        assert then_step in result  # THEN step fits
+        assert reversion not in result  # reversion dropped before THEN
+
+
+class TestBackwardsCompatibility:
+    """Existing signatures remain backwards-compatible."""
+
+    def test_compute_nudge_no_context(self) -> None:
+        """compute_nudge works without context (backwards compat)."""
+        state = CeremonyState(session_started=False)
+        result = compute_nudge(state, available_learnings=5)
+        assert "session" in result.lower()
+        assert len(result) > 0
+
+    def test_compute_nudge_failopen_with_context(self) -> None:
+        """compute_nudge with context still fail-open on errors."""
+        state = CeremonyState()
+        from trw_mcp.state import ceremony_nudge
+        original = ceremony_nudge._build_status_line
+        try:
+            def _broken(s: CeremonyState) -> str:
+                raise RuntimeError("simulated error")
+            ceremony_nudge._build_status_line = _broken  # type: ignore[assignment]
+            ctx = NudgeContext(tool_name="checkpoint")
+            result = compute_nudge(state, context=ctx)
+            assert result == ""
+        finally:
+            ceremony_nudge._build_status_line = original
+
+    def test_append_ceremony_nudge_without_context(self, tmp_path: Path) -> None:
+        """append_ceremony_nudge still works without context (backwards compat)."""
+        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        trw = _trw_dir(tmp_path)
+        write_ceremony_state(trw, CeremonyState())
+        response: dict[str, object] = {"status": "ok"}
+        result = append_ceremony_nudge(response.copy(), trw_dir=trw)
+        assert "ceremony_status" in result
+
+    def test_existing_static_messages_unchanged(self) -> None:
+        """Static urgency-tier messages (PRD-CORE-074) are still used when no context."""
+        state = CeremonyState(session_started=False)
+        result = compute_nudge(state, available_learnings=5)
+        # Should use the existing static message with lightning bolt
+        assert "\u26a1" in result

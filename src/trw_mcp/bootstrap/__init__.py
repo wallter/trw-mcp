@@ -102,6 +102,7 @@ _TRW_DIRS = [
     ".trw/templates",
     ".trw/learnings/entries",
     ".trw/scripts",
+    ".trw/runs",
     ".claude/hooks",
     ".claude/skills",
     ".claude/agents",

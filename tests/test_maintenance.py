@@ -41,13 +41,13 @@ def _make_run_id(days_ago: int) -> str:
 
 
 def _create_run(
-    task_root: Path,
+    runs_root: Path,
     task_name: str,
     run_id: str,
     status: str = "active",
 ) -> Path:
     """Create a run directory with run.yaml at the expected path."""
-    run_dir = task_root / task_name / "runs" / run_id / "meta"
+    run_dir = runs_root / task_name / run_id / "meta"
     run_dir.mkdir(parents=True)
     _writer.write_yaml(run_dir / "run.yaml", {
         "run_id": run_id,
@@ -72,9 +72,9 @@ class TestAutoCloseStaleRuns:
 
     def test_stale_active_run_gets_closed(self, tmp_path: Path) -> None:
         """A run older than the threshold with status=active is abandoned."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id(days_ago=10)  # 10 days old, threshold default=7
-        run_dir = _create_run(task_root, "my-task", run_id)
+        run_dir = _create_run(runs_root, "my-task", run_id)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -96,9 +96,9 @@ class TestAutoCloseStaleRuns:
 
     def test_recent_active_run_is_not_closed(self, tmp_path: Path) -> None:
         """A run younger than the threshold is skipped even if active."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id(days_ago=0)  # 0 days old (< 48h threshold)
-        _create_run(task_root, "my-task", run_id)
+        _create_run(runs_root, "my-task", run_id)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -111,14 +111,14 @@ class TestAutoCloseStaleRuns:
         assert result["runs_closed"] == []
 
         # run.yaml must remain unchanged
-        data = _reader.read_yaml(tmp_path / "docs" / "my-task" / "runs" / run_id / "meta" / "run.yaml")
+        data = _reader.read_yaml(tmp_path / ".trw" / "runs" / "my-task" / run_id / "meta" / "run.yaml")
         assert data["status"] == "active"
 
     def test_non_active_run_is_skipped(self, tmp_path: Path) -> None:
         """Completed or abandoned runs are not touched, even when very old."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id(days_ago=30)
-        _create_run(task_root, "my-task", run_id, status="complete")
+        _create_run(runs_root, "my-task", run_id, status="complete")
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -131,9 +131,9 @@ class TestAutoCloseStaleRuns:
 
     def test_abandoned_run_is_skipped(self, tmp_path: Path) -> None:
         """Already-abandoned runs are skipped."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id(days_ago=30)
-        _create_run(task_root, "my-task", run_id, status="abandoned")
+        _create_run(runs_root, "my-task", run_id, status="abandoned")
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -162,10 +162,10 @@ class TestAutoCloseStaleRuns:
 
     def test_custom_age_days_overrides_config(self, tmp_path: Path) -> None:
         """age_days parameter overrides the config default."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         # 5 days old — normally below default threshold of 7
         run_id = _make_run_id(days_ago=5)
-        _create_run(task_root, "my-task", run_id)
+        _create_run(runs_root, "my-task", run_id)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -180,9 +180,9 @@ class TestAutoCloseStaleRuns:
 
     def test_custom_age_days_keeps_run_if_not_old_enough(self, tmp_path: Path) -> None:
         """age_days=30 keeps a 10-day-old run open."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id(days_ago=10)
-        _create_run(task_root, "my-task", run_id)
+        _create_run(runs_root, "my-task", run_id)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -195,7 +195,7 @@ class TestAutoCloseStaleRuns:
 
     def test_multiple_stale_runs_all_closed(self, tmp_path: Path) -> None:
         """All stale active runs across multiple tasks are closed."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_ids = [
             _make_run_id(days_ago=8),
             _make_run_id(days_ago=15),
@@ -203,7 +203,7 @@ class TestAutoCloseStaleRuns:
         ]
         # Use distinct task names to avoid run_id collisions between tasks
         for i, rid in enumerate(run_ids):
-            _create_run(task_root, f"task-{i}", rid)
+            _create_run(runs_root, f"task-{i}", rid)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -218,9 +218,9 @@ class TestAutoCloseStaleRuns:
 
     def test_unparseable_run_id_timestamp_is_skipped(self, tmp_path: Path) -> None:
         """Run whose run_id has an unparseable timestamp is skipped, not closed."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         bad_run_id = "not-a-timestamp-abcd1234"
-        run_dir = task_root / "my-task" / "runs" / bad_run_id / "meta"
+        run_dir = runs_root / "my-task" / bad_run_id / "meta"
         run_dir.mkdir(parents=True)
         _writer.write_yaml(run_dir / "run.yaml", {
             "run_id": bad_run_id,
@@ -241,8 +241,8 @@ class TestAutoCloseStaleRuns:
 
     def test_run_dir_without_run_yaml_is_skipped(self, tmp_path: Path) -> None:
         """Run directory missing run.yaml does not raise and is skipped."""
-        task_root = tmp_path / "docs"
-        run_dir = task_root / "my-task" / "runs" / "20260101T120000Z-noyaml" / "meta"
+        runs_root = tmp_path / ".trw" / "runs"
+        run_dir = runs_root / "my-task" / "20260101T120000Z-noyaml" / "meta"
         run_dir.mkdir(parents=True)
         # No run.yaml written
 
@@ -257,11 +257,11 @@ class TestAutoCloseStaleRuns:
 
     def test_mixed_stale_and_recent_runs_only_stale_closed(self, tmp_path: Path) -> None:
         """Only the stale run is closed; the recent run is left intact."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         stale_id = _make_run_id(days_ago=14)
         recent_id = _make_run_id(days_ago=0)  # 0 days old (< 48h threshold)
-        _create_run(task_root, "task-stale", stale_id)
-        _create_run(task_root, "task-recent", recent_id)
+        _create_run(runs_root, "task-stale", stale_id)
+        _create_run(runs_root, "task-recent", recent_id)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -277,9 +277,9 @@ class TestAutoCloseStaleRuns:
 
     def test_abandoned_reason_contains_age_and_threshold(self, tmp_path: Path) -> None:
         """The abandoned_reason field includes the age and threshold."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id(days_ago=10)
-        run_dir = _create_run(task_root, "my-task", run_id)
+        run_dir = _create_run(runs_root, "my-task", run_id)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),
@@ -295,9 +295,9 @@ class TestAutoCloseStaleRuns:
 
     def test_error_reading_yaml_captured_in_errors(self, tmp_path: Path) -> None:
         """If reading run.yaml raises, the error is captured in the errors list."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id(days_ago=10)
-        run_dir = task_root / "my-task" / "runs" / run_id / "meta"
+        run_dir = runs_root / "my-task" / run_id / "meta"
         run_dir.mkdir(parents=True)
         # Write corrupt YAML
         (run_dir / "run.yaml").write_text("{invalid yaml[", encoding="utf-8")
@@ -327,9 +327,9 @@ class TestAutoCloseStaleRuns:
 
     def test_task_dir_without_runs_subdir_is_skipped(self, tmp_path: Path) -> None:
         """Task directories that have no 'runs' subdir are silently skipped."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         # Create a task dir that has no runs/ directory
-        (task_root / "task-no-runs").mkdir(parents=True)
+        (runs_root / "task-no-runs").mkdir(parents=True)
 
         with (
             patch.object(analytics_mod, "_config", TRWConfig()),

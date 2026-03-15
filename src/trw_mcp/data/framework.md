@@ -22,8 +22,9 @@ RFC 2119/8174: MUST, MUST NOT, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED
 <variables>
 TASK       := task_short_desc
 TASK_DIR   := ./docs/{TASK}
+RUNS_ROOT  := ./.trw/runs
 RUN_ID     := {utc_ts}-{short_id}
-RUN_ROOT   := {TASK_DIR}/runs/{RUN_ID}
+RUN_ROOT   := {RUNS_ROOT}/{TASK}/{RUN_ID}
 REPO_ROOT  := $(git rev-parse --show-toplevel)
 BRANCH     := feat/{TASK}-{short_id}
 ORC        := Orchestrator
@@ -243,9 +244,9 @@ If a skill fails, ORC MAY fall back to raw MCP tools. Skills encapsulate best-pr
 
 <bootstrap-rules>
 - ORC MUST log `MCP_MODE` at bootstrap
-- ORC MUST restore latest `{TASK_DIR}/runs/**` or honor `{RUN_ID}` and recreate scaffolding
-- All writes MUST stay within `{REPO_ROOT}/**` and `{TASK_DIR}/**`
-- Run artifacts (`docs/{TASK}/runs/**`, `.ai/**`) MUST NOT be committed
+- ORC MUST restore latest `{RUNS_ROOT}/{TASK}/**` or honor `{RUN_ID}` and recreate scaffolding
+- All writes MUST stay within `{REPO_ROOT}/**` and `{TASK_DIR}/**` and `{RUNS_ROOT}/**`
+- Run artifacts (`{RUNS_ROOT}/**`, `.ai/**`) MUST NOT be committed
 - `docs/documentation/`, `docs/knowledge-catalogue/`, `docs/requirements-aare-f/` SHOULD be committed
 </bootstrap-rules>
 

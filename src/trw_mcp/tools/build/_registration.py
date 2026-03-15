@@ -199,6 +199,16 @@ def register_build_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, ceremony state update must not block build check
             pass
 
+        # Inject ceremony nudge into response (PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            build_passed = bool(result.get("tests_passed", False))
+            ctx = NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=build_passed)
+            append_ceremony_nudge(result, trw_dir, context=ctx)
+        except Exception:  # justified: fail-open, nudge injection must not block build check
+            pass
+
         # Dep audit on full scope (if enabled)
         if scope == "full" and config.dep_audit_enabled:
             dep_result = _run_dep_audit(project_root, config)

@@ -116,10 +116,10 @@ def resolve_trw_dir() -> Path:
     return resolve_project_root() / config.trw_dir
 
 
-def iter_run_dirs(task_root: Path) -> Iterator[tuple[Path, Path]]:
-    """Yield ``(run_dir, run_yaml_path)`` for all valid runs under *task_root*.
+def iter_run_dirs(runs_root: Path) -> Iterator[tuple[Path, Path]]:
+    """Yield ``(run_dir, run_yaml_path)`` for all valid runs under *runs_root*.
 
-    Scans ``task_root/*/runs/*/meta/run.yaml`` in sorted order and yields
+    Scans ``runs_root/{task}/{run_id}/meta/run.yaml`` in sorted order and yields
     each run directory paired with its ``run.yaml`` path.  Directories
     without a ``run.yaml`` are silently skipped.
 
@@ -128,25 +128,24 @@ def iter_run_dirs(task_root: Path) -> Iterator[tuple[Path, Path]]:
     instead of reimplementing the triple-nested loop.
 
     Args:
-        task_root: Base directory containing task subdirectories.
+        runs_root: Base directory containing task subdirectories with runs.
 
     Yields:
         Tuples of ``(run_dir, run_yaml_path)``.
     """
-    if not task_root.is_dir():
+    if not runs_root.is_dir():
         return
-    for task_dir in sorted(task_root.iterdir()):
-        runs_dir = task_dir / "runs"
-        if not runs_dir.is_dir():
+    for task_dir in sorted(runs_root.iterdir()):
+        if not task_dir.is_dir():
             continue
-        for run_dir in sorted(runs_dir.iterdir()):
+        for run_dir in sorted(task_dir.iterdir()):
             run_yaml = run_dir / "meta" / "run.yaml"
             if run_yaml.exists():
                 yield run_dir, run_yaml
 
 
 def _find_latest_run_dir(base_dir: Path) -> Path | None:
-    """Scan ``base_dir/*/runs/*/meta/run.yaml`` and return the run dir with the newest mtime.
+    """Scan ``base_dir/{task}/{run_id}/meta/run.yaml`` and return the run dir with the newest mtime.
 
     Returns:
         The run directory whose ``run.yaml`` was most recently modified,
@@ -169,7 +168,7 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
 
     Resolution order:
     1. Per-session pinned run (set by ``pin_active_run`` during ``trw_init``)
-    2. Filesystem scan: ``{task_root}/*/runs/*/meta/run.yaml``, highest
+    2. Filesystem scan: ``{runs_root}/{task}/{run_id}/meta/run.yaml``, highest
        lexicographic name (ISO timestamp prefix ensures chronological ordering),
        skipping runs with status "complete" or "failed" (PRD-FIX-042 FR02).
 
@@ -192,13 +191,13 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
         config = get_config()
         reader = FileStateReader()
         project_root = resolve_project_root()
-        task_root = project_root / config.task_root
-        if not task_root.exists():
+        runs_root = project_root / config.runs_root
+        if not runs_root.exists():
             return None
 
         latest_name = ""
         latest_dir: Path | None = None
-        for run_dir, run_yaml in iter_run_dirs(task_root):
+        for run_dir, run_yaml in iter_run_dirs(runs_root):
             # Status-aware: skip completed/failed runs (PRD-FIX-042 FR02)
             try:
                 data = reader.read_yaml(run_yaml)
@@ -255,17 +254,17 @@ def resolve_run_path(run_path: str | None = None) -> Path:
 
     config = get_config()
     project_root = resolve_project_root()
-    task_dir = project_root / config.task_root
-    if not task_dir.exists():
+    runs_dir = project_root / config.runs_root
+    if not runs_dir.exists():
         raise StateError(
-            f"Cannot auto-detect run path: {config.task_root}/ directory not found",
+            f"Cannot auto-detect run path: {config.runs_root}/ directory not found",
             project_root=str(project_root),
         )
 
-    latest_run = _find_latest_run_dir(task_dir)
+    latest_run = _find_latest_run_dir(runs_dir)
     if latest_run is None:
         raise StateError(
-            f"No active runs found in {config.task_root}/*/runs/",
+            f"No active runs found in {config.runs_root}/",
             project_root=str(project_root),
         )
 
@@ -277,7 +276,7 @@ def detect_current_phase() -> str | None:
 
     Resolution order:
     1. Pinned run directory (process-local, set by ``trw_init``)
-    2. Filesystem scan: ``{task_root}/*/runs/`` for the latest ``run.yaml``
+    2. Filesystem scan: ``{runs_root}/{task}/`` for the latest ``run.yaml``
 
     Only returns a phase when the run's ``status`` is ``"active"``.
 
@@ -299,13 +298,13 @@ def detect_current_phase() -> str | None:
                 return str(data.get("phase", "")) or None
             return None
 
-        task_root = resolve_project_root() / config.task_root
-        if not task_root.exists():
+        runs_root = resolve_project_root() / config.runs_root
+        if not runs_root.exists():
             return None
 
         latest_name = ""
         latest_yaml: Path | None = None
-        for run_dir, run_yaml in iter_run_dirs(task_root):
+        for run_dir, run_yaml in iter_run_dirs(runs_root):
             # Status-aware: skip completed/failed runs (matches find_active_run)
             try:
                 data = reader.read_yaml(run_yaml)

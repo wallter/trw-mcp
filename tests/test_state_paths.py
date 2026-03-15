@@ -119,7 +119,7 @@ class TestResolveRunPath:
     ) -> None:
         """FR02b: Auto-detection with single run directory."""
         project = tmp_path / "project"
-        run1 = project / "docs" / "task1" / "runs" / "run-001"
+        run1 = project / ".trw" / "runs" / "task1" / "run-001"
         (run1 / "meta").mkdir(parents=True)
         (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
         monkeypatch.setattr(
@@ -132,11 +132,11 @@ class TestResolveRunPath:
     ) -> None:
         """FR02b: Auto-detection selects most recently modified run.yaml."""
         project = tmp_path / "project"
-        run1 = project / "docs" / "task1" / "runs" / "run-001"
+        run1 = project / ".trw" / "runs" / "task1" / "run-001"
         (run1 / "meta").mkdir(parents=True)
         (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
         os.utime(run1 / "meta" / "run.yaml", (1000, 1000))
-        run2 = project / "docs" / "task1" / "runs" / "run-002"
+        run2 = project / ".trw" / "runs" / "task1" / "run-002"
         (run2 / "meta").mkdir(parents=True)
         (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
         os.utime(run2 / "meta" / "run.yaml", (2000, 2000))
@@ -145,24 +145,24 @@ class TestResolveRunPath:
         )
         assert resolve_run_path() == run2
 
-    def test_no_docs_raises(
+    def test_no_runs_root_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FR02c: StateError when docs/ directory not found."""
+        """FR02c: StateError when .trw/runs/ directory not found."""
         project = tmp_path / "project"
         project.mkdir()
         monkeypatch.setattr(
             "trw_mcp.state._paths.resolve_project_root", lambda: project,
         )
-        with pytest.raises(StateError, match="docs/ directory not found"):
+        with pytest.raises(StateError, match=r"\.trw/runs/ directory not found"):
             resolve_run_path()
 
     def test_empty_runs_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FR02c: StateError when runs/ exists but contains no run dirs."""
+        """FR02c: StateError when runs_root exists but contains no run dirs."""
         project = tmp_path / "project"
-        (project / "docs" / "task1" / "runs").mkdir(parents=True)
+        (project / ".trw" / "runs" / "task1").mkdir(parents=True)
         monkeypatch.setattr(
             "trw_mcp.state._paths.resolve_project_root", lambda: project,
         )
@@ -175,10 +175,10 @@ class TestResolveRunPath:
         """FR02b: Directories without meta/run.yaml are skipped."""
         project = tmp_path / "project"
         # run with meta/ but no run.yaml — should be skipped
-        no_yaml = project / "docs" / "task1" / "runs" / "run-bad"
+        no_yaml = project / ".trw" / "runs" / "task1" / "run-bad"
         (no_yaml / "meta").mkdir(parents=True)
         # run with run.yaml — should be found
-        good = project / "docs" / "task1" / "runs" / "run-good"
+        good = project / ".trw" / "runs" / "task1" / "run-good"
         (good / "meta").mkdir(parents=True)
         (good / "meta" / "run.yaml").write_text("run_id: run-good\n")
         monkeypatch.setattr(
@@ -205,11 +205,11 @@ class TestResolveRunPath:
     ) -> None:
         """Auto-detection works across multiple task directories."""
         project = tmp_path / "project"
-        run1 = project / "docs" / "task-a" / "runs" / "run-001"
+        run1 = project / ".trw" / "runs" / "task-a" / "run-001"
         (run1 / "meta").mkdir(parents=True)
         (run1 / "meta" / "run.yaml").write_text("run_id: run-001\n")
         os.utime(run1 / "meta" / "run.yaml", (1000, 1000))
-        run2 = project / "docs" / "task-b" / "runs" / "run-002"
+        run2 = project / ".trw" / "runs" / "task-b" / "run-002"
         (run2 / "meta").mkdir(parents=True)
         (run2 / "meta" / "run.yaml").write_text("run_id: run-002\n")
         os.utime(run2 / "meta" / "run.yaml", (2000, 2000))
@@ -232,22 +232,22 @@ class TestResolveRunPath:
 
 
 # ---------------------------------------------------------------------------
-# Config-driven task_root wiring — PRD-INFRA-011-FR04
+# Config-driven runs_root wiring
 # ---------------------------------------------------------------------------
 
 
 class TestResolveRunPathConfigWiring:
-    """Tests for config-driven task_root in path resolution — PRD-INFRA-011."""
+    """Tests for config-driven runs_root in path resolution."""
 
-    def test_custom_task_root_auto_detect(
+    def test_custom_runs_root_auto_detect(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FR04: task_root='work' → finds runs under work/ instead of docs/."""
-        config = TRWConfig(task_root="work")
+        """Custom runs_root='work/runs' finds runs under work/runs/."""
+        config = TRWConfig(runs_root="work/runs")
         monkeypatch.setattr("trw_mcp.state._paths.get_config", lambda: config)
 
         project = tmp_path / "project"
-        run = project / "work" / "task1" / "runs" / "run-001"
+        run = project / "work" / "runs" / "task1" / "run-001"
         (run / "meta").mkdir(parents=True)
         (run / "meta" / "run.yaml").write_text("run_id: run-001\n")
         monkeypatch.setattr(
@@ -255,11 +255,11 @@ class TestResolveRunPathConfigWiring:
         )
         assert resolve_run_path() == run
 
-    def test_custom_task_root_error_no_dir(
+    def test_custom_runs_root_error_no_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FR04: task_root='work' → error references 'work/' not 'docs/'."""
-        config = TRWConfig(task_root="work")
+        """Custom runs_root='work/runs' error references 'work/runs/'."""
+        config = TRWConfig(runs_root="work/runs")
         monkeypatch.setattr("trw_mcp.state._paths.get_config", lambda: config)
 
         project = tmp_path / "project"
@@ -267,22 +267,22 @@ class TestResolveRunPathConfigWiring:
         monkeypatch.setattr(
             "trw_mcp.state._paths.resolve_project_root", lambda: project,
         )
-        with pytest.raises(StateError, match="work/ directory not found"):
+        with pytest.raises(StateError, match="work/runs/ directory not found"):
             resolve_run_path()
 
-    def test_custom_task_root_no_runs_error(
+    def test_custom_runs_root_no_runs_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """FR04: task_root='work' → error references 'work/*/runs/'."""
-        config = TRWConfig(task_root="work")
+        """Custom runs_root='work/runs' error when no runs found."""
+        config = TRWConfig(runs_root="work/runs")
         monkeypatch.setattr("trw_mcp.state._paths.get_config", lambda: config)
 
         project = tmp_path / "project"
-        (project / "work" / "task1" / "runs").mkdir(parents=True)
+        (project / "work" / "runs" / "task1").mkdir(parents=True)
         monkeypatch.setattr(
             "trw_mcp.state._paths.resolve_project_root", lambda: project,
         )
-        with pytest.raises(StateError, match=r"work/\*/runs/"):
+        with pytest.raises(StateError, match=r"No active runs found in work/runs/"):
             resolve_run_path()
 
 
@@ -300,7 +300,7 @@ def _make_run(
     writer: FileStateWriter | None = None,
 ) -> Path:
     """Create a minimal run directory with run.yaml."""
-    run_dir = base / task / "runs" / run_id
+    run_dir = base / task / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     data = {
@@ -340,8 +340,8 @@ class TestFindActiveRun:
     ) -> None:
         """Single run directory is returned."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        run = _make_run(task_root, "task1", "20260219T100000Z-aaa", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        run = _make_run(runs_root, "task1", "20260219T100000Z-aaa", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = find_active_run()
@@ -352,9 +352,9 @@ class TestFindActiveRun:
     ) -> None:
         """Returns run with lexicographically largest run_id (ISO timestamp)."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        _make_run(task_root, "task1", "20260219T100000Z-aaa", writer=writer)
-        run2 = _make_run(task_root, "task1", "20260220T100000Z-bbb", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        _make_run(runs_root, "task1", "20260219T100000Z-aaa", writer=writer)
+        run2 = _make_run(runs_root, "task1", "20260220T100000Z-bbb", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = find_active_run()
@@ -365,9 +365,9 @@ class TestFindActiveRun:
     ) -> None:
         """Returns latest run across multiple task directories."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        _make_run(task_root, "task-a", "20260219T100000Z-aaa", writer=writer)
-        run2 = _make_run(task_root, "task-b", "20260221T120000Z-bbb", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        _make_run(runs_root, "task-a", "20260219T100000Z-aaa", writer=writer)
+        run2 = _make_run(runs_root, "task-b", "20260221T120000Z-bbb", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = find_active_run()
@@ -378,34 +378,34 @@ class TestFindActiveRun:
     ) -> None:
         """Directories without meta/run.yaml are ignored."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        bad_run = task_root / "task1" / "runs" / "20260220T120000Z-bad"
+        runs_root = project / ".trw" / "runs"
+        bad_run = runs_root / "task1" / "20260220T120000Z-bad"
         (bad_run / "meta").mkdir(parents=True)
-        good_run = _make_run(task_root, "task1", "20260219T100000Z-good", writer=writer)
+        good_run = _make_run(runs_root, "task1", "20260219T100000Z-good", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = find_active_run()
         assert result == good_run
 
-    def test_task_dir_without_runs_subdir_skipped(
+    def test_task_dir_without_run_subdirs_skipped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter
     ) -> None:
-        """Task directories without runs/ subdirectory are skipped."""
+        """Empty task directories without run subdirs are skipped."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        (task_root / "empty-task").mkdir(parents=True)
-        valid_run = _make_run(task_root, "valid-task", "20260219T100000Z-valid", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        (runs_root / "empty-task").mkdir(parents=True)
+        valid_run = _make_run(runs_root, "valid-task", "20260219T100000Z-valid", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = find_active_run()
         assert result == valid_run
 
-    def test_empty_task_root_returns_none(
+    def test_empty_runs_root_returns_none(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Empty task_root with no subdirs returns None."""
+        """Empty runs_root with no subdirs returns None."""
         project = tmp_path / "project"
-        (project / "docs").mkdir(parents=True)
+        (project / ".trw" / "runs").mkdir(parents=True)
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = find_active_run()
         assert result is None
@@ -445,8 +445,8 @@ class TestDetectCurrentPhase:
     ) -> None:
         """Returns phase when active run exists."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        _make_run(task_root, "task1", "20260219T100000Z-aaa", phase="implement", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        _make_run(runs_root, "task1", "20260219T100000Z-aaa", phase="implement", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = detect_current_phase()
@@ -457,8 +457,8 @@ class TestDetectCurrentPhase:
     ) -> None:
         """Returns None when run status is not 'active'."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        _make_run(task_root, "task1", "20260219T100000Z-done", status="complete", phase="deliver", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        _make_run(runs_root, "task1", "20260219T100000Z-done", status="complete", phase="deliver", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = detect_current_phase()
@@ -469,9 +469,9 @@ class TestDetectCurrentPhase:
     ) -> None:
         """Returns phase from lexicographically latest run."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        _make_run(task_root, "task1", "20260219T100000Z-old", phase="research", writer=writer)
-        _make_run(task_root, "task1", "20260220T100000Z-new", phase="validate", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        _make_run(runs_root, "task1", "20260219T100000Z-old", phase="research", writer=writer)
+        _make_run(runs_root, "task1", "20260220T100000Z-new", phase="validate", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = detect_current_phase()
@@ -482,10 +482,10 @@ class TestDetectCurrentPhase:
     ) -> None:
         """Skips completed/failed runs and returns phase from latest active run."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        _make_run(task_root, "task1", "20260219T100000Z-old", phase="implement", writer=writer)
-        _make_run(task_root, "task1", "20260220T100000Z-done", status="complete", phase="deliver", writer=writer)
-        _make_run(task_root, "task1", "20260221T100000Z-fail", status="failed", phase="validate", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        _make_run(runs_root, "task1", "20260219T100000Z-old", phase="implement", writer=writer)
+        _make_run(runs_root, "task1", "20260220T100000Z-done", status="complete", phase="deliver", writer=writer)
+        _make_run(runs_root, "task1", "20260221T100000Z-fail", status="failed", phase="validate", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = detect_current_phase()
@@ -497,7 +497,7 @@ class TestDetectCurrentPhase:
     ) -> None:
         """Returns None when no run directories exist."""
         project = tmp_path / "project"
-        (project / "docs" / "task1" / "runs").mkdir(parents=True)
+        (project / ".trw" / "runs" / "task1").mkdir(parents=True)
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
         result = detect_current_phase()
         assert result is None
@@ -507,8 +507,8 @@ class TestDetectCurrentPhase:
     ) -> None:
         """Returns None when phase field is missing from run.yaml."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        run_dir = task_root / "task1" / "runs" / "20260219T100000Z-aaa"
+        runs_root = project / ".trw" / "runs"
+        run_dir = runs_root / "task1" / "20260219T100000Z-aaa"
         (run_dir / "meta").mkdir(parents=True)
         (run_dir / "meta" / "run.yaml").write_text("status: active\n")
 
@@ -532,9 +532,9 @@ class TestDetectCurrentPhase:
     ) -> None:
         """When a run is pinned, detect_current_phase uses pinned run."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        old_run = _make_run(task_root, "task1", "20260219T100000Z-old", phase="research", writer=writer)
-        _make_run(task_root, "task1", "20260220T100000Z-new", phase="validate", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        old_run = _make_run(runs_root, "task1", "20260219T100000Z-old", phase="research", writer=writer)
+        _make_run(runs_root, "task1", "20260220T100000Z-new", phase="validate", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
@@ -550,8 +550,8 @@ class TestDetectCurrentPhase:
     ) -> None:
         """Pinned run with non-active status returns None."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        done_run = _make_run(task_root, "task1", "20260219T100000Z-done",
+        runs_root = project / ".trw" / "runs"
+        done_run = _make_run(runs_root, "task1", "20260219T100000Z-done",
                              status="complete", phase="deliver", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
@@ -584,9 +584,9 @@ class TestPinActiveRun:
     ) -> None:
         """Pinned run is returned instead of filesystem scan result."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        old_run = _make_run(task_root, "task1", "20260219T100000Z-old", writer=writer)
-        _make_run(task_root, "task1", "20260220T100000Z-new", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        old_run = _make_run(runs_root, "task1", "20260219T100000Z-old", writer=writer)
+        _make_run(runs_root, "task1", "20260220T100000Z-new", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
@@ -600,9 +600,9 @@ class TestPinActiveRun:
     ) -> None:
         """After unpin, find_active_run reverts to filesystem scan."""
         project = tmp_path / "project"
-        task_root = project / "docs"
-        old_run = _make_run(task_root, "task1", "20260219T100000Z-old", writer=writer)
-        new_run = _make_run(task_root, "task1", "20260220T100000Z-new", writer=writer)
+        runs_root = project / ".trw" / "runs"
+        old_run = _make_run(runs_root, "task1", "20260219T100000Z-old", writer=writer)
+        new_run = _make_run(runs_root, "task1", "20260220T100000Z-new", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
@@ -638,12 +638,12 @@ class TestPinActiveRun:
     ) -> None:
         """Simulates the parallel-instance hijack scenario from Sprint 28/29."""
         project = tmp_path / "project"
-        task_root = project / "docs"
+        runs_root = project / ".trw" / "runs"
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
-        run_a = _make_run(task_root, "sprint-28-track-a", "20260219T100000Z-aaaa", writer=writer)
+        run_a = _make_run(runs_root, "sprint-28-track-a", "20260219T100000Z-aaaa", writer=writer)
         pin_active_run(run_a)
 
-        _make_run(task_root, "sprint-28-track-b", "20260220T120000Z-bbbb", writer=writer)
+        _make_run(runs_root, "sprint-28-track-b", "20260220T120000Z-bbbb", writer=writer)
 
         assert find_active_run() == run_a.resolve()

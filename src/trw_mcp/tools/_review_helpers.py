@@ -410,6 +410,12 @@ def handle_auto_mode(
     ]
     verdict = _compute_verdict(surfaced_for_verdict)
 
+    # Count critical findings among surfaced for downstream ceremony tracking
+    critical_count = sum(
+        1 for f in surfaced
+        if isinstance(f, dict) and str(f.get("severity", "")).lower() == "critical"
+    )
+
     result: AutoReviewResult = {
         "review_id": review_id,
         "verdict": verdict,
@@ -419,6 +425,7 @@ def handle_auto_mode(
         "surfaced_findings_count": len(surfaced),
         "total_findings_count": len(all_auto_findings),
         "confidence_threshold": confidence_threshold,
+        "critical_count": critical_count,
         "run_path": str(resolved_run) if resolved_run else None,
     }
 

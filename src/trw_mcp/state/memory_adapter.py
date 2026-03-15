@@ -13,6 +13,7 @@ When ``embeddings_enabled=True`` in config, the adapter:
 from __future__ import annotations
 
 import contextlib
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -551,6 +552,9 @@ def _search_entries(
         return keyword_results
 
 
+_LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
+
+
 def _keyword_search(
     backend: SQLiteBackend,
     query: str,
@@ -560,9 +564,28 @@ def _keyword_search(
     mem_status: MemoryStatus | None = None,
     min_impact: float = 0.0,
 ) -> list[MemoryEntry]:
-    """Multi-token intersection keyword search."""
+    """Multi-token keyword search with learning-ID direct lookup.
+
+    Tokens matching the ``L-[0-9a-f]{8}`` pattern are resolved via direct
+    ``backend.get()`` (O(1) primary-key lookup).  Remaining keyword tokens
+    use intersection search (entry must match ALL keyword tokens).  The two
+    result sets are unioned (IDs first, then keyword matches) and deduped.
+    """
     tokens = query.split()
     if len(tokens) <= 1:
+        # Single token — check if it's a learning ID for direct lookup
+        if tokens and _LEARNING_ID_RE.match(tokens[0]):
+            entry = backend.get(tokens[0])
+            if entry is None:
+                return []
+            # Apply same filters as keyword search
+            if min_impact > 0.0 and entry.importance < min_impact:
+                return []
+            if mem_status is not None and entry.status != mem_status:
+                return []
+            if tags and not set(tags).issubset(set(entry.tags)):
+                return []
+            return [entry]
         return backend.search(
             query,
             top_k=top_k,
@@ -572,34 +595,79 @@ def _keyword_search(
             namespace=_NAMESPACE,
         )
 
-    # Intersect: entry must match ALL tokens
-    token_id_sets: list[set[str]] = []
-    token_entry_map: dict[str, MemoryEntry] = {}
-    first_token_ordered: list[MemoryEntry] = []
-    for i, token in enumerate(tokens):
-        token_results = backend.search(
-            token,
-            top_k=top_k,
-            tags=tags,
-            status=mem_status,
-            min_importance=min_impact,
-            namespace=_NAMESPACE,
-        )
-        token_ids: set[str] = set()
-        for e in token_results:
-            token_ids.add(e.id)
-            token_entry_map[e.id] = e
-        token_id_sets.append(token_ids)
-        if i == 0:
-            first_token_ordered = list(token_results)
+    # Partition tokens into learning IDs and keyword terms
+    id_tokens: list[str] = []
+    kw_tokens: list[str] = []
+    for t in tokens:
+        if _LEARNING_ID_RE.match(t):
+            id_tokens.append(t)
+        else:
+            kw_tokens.append(t)
 
-    if not token_id_sets:
-        return []
+    # Direct lookup for learning ID tokens (OR semantics — each is independent)
+    seen_ids: set[str] = set()
+    id_entries: list[MemoryEntry] = []
+    for lid in id_tokens:
+        entry = backend.get(lid)
+        if entry is not None and entry.id not in seen_ids:
+            # Apply same filters as keyword search
+            if min_impact > 0.0 and entry.importance < min_impact:
+                continue
+            if mem_status is not None and entry.status != mem_status:
+                continue
+            if tags and not set(tags).issubset(set(entry.tags)):
+                continue
+            id_entries.append(entry)
+            seen_ids.add(entry.id)
 
-    common_ids = token_id_sets[0]
-    for s in token_id_sets[1:]:
-        common_ids = common_ids & s
-    return [e for e in first_token_ordered if e.id in common_ids]
+    # Keyword search for remaining tokens (AND/intersection semantics)
+    kw_entries: list[MemoryEntry] = []
+    if kw_tokens:
+        if len(kw_tokens) == 1:
+            kw_entries = backend.search(
+                kw_tokens[0],
+                top_k=top_k,
+                tags=tags,
+                status=mem_status,
+                min_importance=min_impact,
+                namespace=_NAMESPACE,
+            )
+        else:
+            # Intersect: entry must match ALL keyword tokens
+            token_id_sets: list[set[str]] = []
+            token_entry_map: dict[str, MemoryEntry] = {}
+            first_token_ordered: list[MemoryEntry] = []
+            for i, token in enumerate(kw_tokens):
+                token_results = backend.search(
+                    token,
+                    top_k=top_k,
+                    tags=tags,
+                    status=mem_status,
+                    min_importance=min_impact,
+                    namespace=_NAMESPACE,
+                )
+                token_ids: set[str] = set()
+                for e in token_results:
+                    token_ids.add(e.id)
+                    token_entry_map[e.id] = e
+                token_id_sets.append(token_ids)
+                if i == 0:
+                    first_token_ordered = list(token_results)
+
+            if token_id_sets:
+                common_ids = token_id_sets[0]
+                for s in token_id_sets[1:]:
+                    common_ids = common_ids & s
+                kw_entries = [e for e in first_token_ordered if e.id in common_ids]
+
+    # Union: ID lookups first, then keyword results (deduped)
+    results: list[MemoryEntry] = list(id_entries)
+    for e in kw_entries:
+        if e.id not in seen_ids:
+            results.append(e)
+            seen_ids.add(e.id)
+
+    return results[:top_k]
 
 
 def recall_learnings(

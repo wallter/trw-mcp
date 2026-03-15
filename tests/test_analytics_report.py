@@ -48,14 +48,14 @@ def _make_run_id_hours_ago(hours_ago: float) -> str:
 
 
 def _create_run(
-    task_root: Path,
+    runs_root: Path,
     task_name: str,
     run_id: str,
     status: str = "active",
     phase: str = "implement",
 ) -> Path:
     """Create a run directory with run.yaml at the expected path."""
-    run_dir = task_root / task_name / "runs" / run_id
+    run_dir = runs_root / task_name / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     _writer.write_yaml(meta / "run.yaml", {
@@ -112,9 +112,9 @@ class TestStaleRunHourLevelTTL:
 
     def test_stale_run_hour_level_ttl(self, tmp_path: Path) -> None:
         """A run older than 48h with no checkpoints is closed."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(72)  # 72h old, threshold 48h
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
 
         p1, p2, p3 = _patch_config_and_root(tmp_path)
         with p1, p2, p3:
@@ -133,9 +133,9 @@ class TestStaleRunHourLevelTTL:
 
     def test_stale_run_within_ttl(self, tmp_path: Path) -> None:
         """A run within the TTL window is not closed."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(24)  # 24h old, threshold 48h
-        _create_run(task_root, "test-task", run_id)
+        _create_run(runs_root, "test-task", run_id)
 
         p1, p2, p3 = _patch_config_and_root(tmp_path)
         with p1, p2, p3:
@@ -155,10 +155,10 @@ class TestStaleRunCheckpointExtendsTTL:
 
     def test_stale_run_checkpoint_extends_ttl(self, tmp_path: Path) -> None:
         """An old run with a recent checkpoint is NOT closed."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         # Run created 72h ago (past the 48h threshold)
         run_id = _make_run_id_hours_ago(72)
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
 
         # But has a checkpoint from 12h ago (within threshold)
         _add_checkpoint(run_dir, hours_ago=12)
@@ -176,9 +176,9 @@ class TestStaleRunCheckpointExtendsTTL:
 
     def test_old_checkpoint_does_not_extend_ttl(self, tmp_path: Path) -> None:
         """A run with only old checkpoints is still closed."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(96)
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
 
         # Checkpoint also old (72h ago, still past 48h threshold)
         _add_checkpoint(run_dir, hours_ago=72)
@@ -195,9 +195,9 @@ class TestStaleRunCheckpointExtendsTTL:
 
     def test_multiple_checkpoints_uses_latest(self, tmp_path: Path) -> None:
         """When multiple checkpoints exist, the most recent one determines staleness."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(96)
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
 
         # Old checkpoint (72h ago) and recent checkpoint (6h ago)
         _add_checkpoint(run_dir, hours_ago=72)
@@ -221,9 +221,9 @@ class TestStaleRunArchiveSummary:
 
     def test_stale_run_archive_summary(self, tmp_path: Path) -> None:
         """summary.yaml is created with correct fields when a run is closed."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(72)
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
 
         # Add some events and checkpoints
         _add_events(run_dir, count=5)
@@ -252,9 +252,9 @@ class TestStaleRunArchiveSummary:
 
     def test_archive_summary_no_checkpoints(self, tmp_path: Path) -> None:
         """summary.yaml is created correctly even when no checkpoints exist."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(72)
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
 
         p1, p2, p3 = _patch_config_and_root(tmp_path)
         with p1, p2, p3:
@@ -278,9 +278,9 @@ class TestStaleRunNonActiveSkipped:
         self, tmp_path: Path, status: str,
     ) -> None:
         """A run with non-active status is never touched, even if very old."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(200)  # Very old
-        run_dir = _create_run(task_root, "test-task", run_id, status=status)
+        run_dir = _create_run(runs_root, "test-task", run_id, status=status)
 
         p1, p2, p3 = _patch_config_and_root(tmp_path)
         with p1, p2, p3:
@@ -304,15 +304,15 @@ class TestCountStaleRuns:
 
     def test_count_stale_runs_basic(self, tmp_path: Path) -> None:
         """Counts active runs past the TTL."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         # 2 stale runs
-        _create_run(task_root, "task-a", _make_run_id_hours_ago(72))
-        _create_run(task_root, "task-b", _make_run_id_hours_ago(96))
+        _create_run(runs_root, "task-a", _make_run_id_hours_ago(72))
+        _create_run(runs_root, "task-b", _make_run_id_hours_ago(96))
         # 1 recent run
-        _create_run(task_root, "task-c", _make_run_id_hours_ago(12))
+        _create_run(runs_root, "task-c", _make_run_id_hours_ago(12))
         # 1 completed run (old, should be skipped)
         _create_run(
-            task_root, "task-d", _make_run_id_hours_ago(200),
+            runs_root, "task-d", _make_run_id_hours_ago(200),
             status="completed",
         )
 
@@ -332,9 +332,9 @@ class TestCountStaleRuns:
 
     def test_count_stale_runs_does_not_modify(self, tmp_path: Path) -> None:
         """count_stale_runs does not modify any run.yaml files."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(72)
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
 
         p1, p2, p3 = _patch_config_and_root(tmp_path)
         with p1, p2, p3:
@@ -348,9 +348,9 @@ class TestCountStaleRuns:
 
     def test_count_with_checkpoint_extends_ttl(self, tmp_path: Path) -> None:
         """A run with a recent checkpoint is not counted as stale."""
-        task_root = tmp_path / "docs"
+        runs_root = tmp_path / ".trw" / "runs"
         run_id = _make_run_id_hours_ago(72)
-        run_dir = _create_run(task_root, "test-task", run_id)
+        run_dir = _create_run(runs_root, "test-task", run_id)
         _add_checkpoint(run_dir, hours_ago=6)  # Recent checkpoint
 
         p1, p2, p3 = _patch_config_and_root(tmp_path)

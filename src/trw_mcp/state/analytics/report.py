@@ -165,19 +165,18 @@ def scan_all_runs(
     writer = FileStateWriter()
 
     project_root = resolve_project_root()
-    task_root = project_root / config.task_root
+    runs_root = project_root / config.runs_root
     parse_errors: list[str] = []
     runs: list[RunAnalysisResult] = []
 
-    if not task_root.exists():
+    if not runs_root.exists():
         return _empty_report(parse_errors)
 
     # Scan all run directories
-    for task_dir in sorted(task_root.iterdir()):
-        runs_dir = task_dir / "runs"
-        if not runs_dir.is_dir():
+    for task_dir in sorted(runs_root.iterdir()):
+        if not task_dir.is_dir():
             continue
-        for run_dir in sorted(runs_dir.iterdir()):
+        for run_dir in sorted(task_dir.iterdir()):
             try:
                 run_data = _analyze_single_run(run_dir, trw_dir=resolve_trw_dir())
                 if run_data is not None:
@@ -531,20 +530,19 @@ def auto_close_stale_runs(
         threshold_hours = cfg.run_stale_ttl_hours
 
     project_root = resolve_project_root()
-    task_root = project_root / cfg.task_root
+    runs_root = project_root / cfg.runs_root
 
     closed: list[str] = []
     errors: list[str] = []
     now = datetime.now(timezone.utc)
 
-    if not task_root.exists():
+    if not runs_root.exists():
         return {"runs_closed": closed, "count": 0, "errors": errors}
 
-    for task_dir in sorted(task_root.iterdir()):
-        runs_dir = task_dir / "runs"
-        if not runs_dir.is_dir():
+    for task_dir in sorted(runs_root.iterdir()):
+        if not task_dir.is_dir():
             continue
-        for run_dir in sorted(runs_dir.iterdir()):
+        for run_dir in sorted(task_dir.iterdir()):
             run_yaml = run_dir / "meta" / "run.yaml"
             if not run_yaml.exists():
                 continue
@@ -598,18 +596,17 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
     reader = FileStateReader()
     threshold_hours = ttl_hours if ttl_hours is not None else cfg.run_stale_ttl_hours
     project_root = resolve_project_root()
-    task_root = project_root / cfg.task_root
+    runs_root = project_root / cfg.runs_root
     now = datetime.now(timezone.utc)
 
     count = 0
-    if not task_root.exists():
+    if not runs_root.exists():
         return 0
 
-    for task_dir in sorted(task_root.iterdir()):
-        runs_dir = task_dir / "runs"
-        if not runs_dir.is_dir():
+    for task_dir in sorted(runs_root.iterdir()):
+        if not task_dir.is_dir():
             continue
-        for run_dir in sorted(runs_dir.iterdir()):
+        for run_dir in sorted(task_dir.iterdir()):
             run_yaml = run_dir / "meta" / "run.yaml"
             if not run_yaml.exists():
                 continue

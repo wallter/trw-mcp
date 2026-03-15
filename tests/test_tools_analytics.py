@@ -33,16 +33,16 @@ def _write_run(
 
     Args:
         writer: FileStateWriter instance.
-        base: Project root directory (task dirs are created under base/docs/).
-        task: Task name (directory name under docs/).
-        run_id: Run ID string, used as directory name under task/runs/.
+        base: Project root directory (task dirs are created under base/.trw/runs/).
+        task: Task name (directory name under .trw/runs/).
+        run_id: Run ID string, used as directory name under task/.
         events: Optional list of event dicts; written to events.jsonl.
         run_yaml_content: Optional override for run.yaml contents.
 
     Returns:
         Path to the run directory.
     """
-    run_dir = base / "docs" / task / "runs" / run_id
+    run_dir = base / ".trw" / "runs" / task / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
 

@@ -151,7 +151,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         resolved_task_root = task_root if task_root is not None else config.task_root
 
         task_dir = project_root / resolved_task_root / task_name
-        run_root = task_dir / "runs" / run_id
+        resolved_runs_root = project_root / config.runs_root
+        run_root = resolved_runs_root / task_name / run_id
         run_subdirs = [
             "meta",
             "reports",
@@ -168,6 +169,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "TASK_DIR": str(task_dir),
             "RUN_ROOT": str(run_root),
             "TASK_ROOT": resolved_task_root,
+            "RUNS_ROOT": config.runs_root,
         }
 
         # PRD-CORE-060: Classify complexity if signals provided
@@ -241,6 +243,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
+
+        # Inject ceremony nudge into response (PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            ctx = NudgeContext(tool_name=ToolName.INIT)
+            append_ceremony_nudge(cast(dict[str, object], result), trw_dir, context=ctx)
+        except Exception:  # justified: fail-open, nudge injection must not block init
+            pass
 
         return result
 
@@ -369,11 +380,14 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         logger.info("trw_status_read", run_id=result["run_id"])
 
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
-            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir3
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            result = cast(TrwStatusDict, append_ceremony_nudge(cast(dict[str, object], result), _resolve_trw_dir3()))
+            _trw_dir = resolve_trw_dir()
+            ctx = NudgeContext(tool_name=ToolName.STATUS)
+            result = cast(TrwStatusDict, append_ceremony_nudge(cast(dict[str, object], result), _trw_dir, context=ctx))
         except Exception:  # justified: fail-open, nudge injection must not block status
             pass
 
@@ -460,21 +474,30 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if wave_id:
             result["wave_id"] = wave_id
 
-        # Mark checkpoint in ceremony state tracker (PRD-CORE-074 FR04)
+        # Resolve trw_dir once for ceremony state + nudge injection
         try:
-            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
-            from trw_mcp.state.ceremony_nudge import mark_checkpoint
-            mark_checkpoint(_resolve_trw_dir())
-        except Exception:  # justified: fail-open, ceremony state update must not block checkpoint
-            pass
+            from trw_mcp.state._paths import resolve_trw_dir
+            _trw_dir = resolve_trw_dir()
+        except Exception:  # justified: fail-open, ceremony features must not block checkpoint
+            _trw_dir = None
 
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01)
-        try:
-            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir2
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-            append_ceremony_nudge(cast(dict[str, object], result), _resolve_trw_dir2())
-        except Exception:  # justified: fail-open, nudge injection must not block checkpoint
-            pass
+        # Mark checkpoint in ceremony state tracker (PRD-CORE-074 FR04)
+        if _trw_dir is not None:
+            try:
+                from trw_mcp.state.ceremony_nudge import mark_checkpoint as _mark_cp
+                _mark_cp(_trw_dir)
+            except Exception:  # justified: fail-open, ceremony state update must not block checkpoint
+                pass
+
+        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        if _trw_dir is not None:
+            try:
+                from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+                from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+                ctx = NudgeContext(tool_name=ToolName.CHECKPOINT)
+                append_ceremony_nudge(cast(dict[str, object], result), _trw_dir, context=ctx)
+            except Exception:  # justified: fail-open, nudge injection must not block checkpoint
+                pass
 
         return result
 

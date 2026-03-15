@@ -135,6 +135,7 @@ class PathsConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     task_root: str = "docs"
+    runs_root: str = ".trw/runs"
     trw_dir: str = ".trw"
     context_dir: str = "context"
     logs_dir: str = "logs"

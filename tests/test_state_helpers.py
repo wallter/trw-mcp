@@ -160,9 +160,9 @@ class TestLoadProjectConfig:
         assert result.parallelism_max == TRWConfig().parallelism_max
 
 
-def _make_run(task_root: Path, task: str, run_name: str) -> Path:
+def _make_run(runs_root: Path, task: str, run_name: str) -> Path:
     """Helper: create a minimal run directory with run.yaml."""
-    run_dir = task_root / task / "runs" / run_name
+    run_dir = runs_root / task / run_name
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     (meta / "run.yaml").write_text(f"run_id: {run_name}\nstatus: active\n")
@@ -195,14 +195,14 @@ class TestIterRunDirs:
 
     def test_skips_dirs_without_run_yaml(self, tmp_path: Path) -> None:
         # Create a run dir missing run.yaml
-        (tmp_path / "task-a" / "runs" / "run-bad" / "meta").mkdir(parents=True)
+        (tmp_path / "task-a" / "run-bad" / "meta").mkdir(parents=True)
         _make_run(tmp_path, "task-a", "run-good")
         results = list(iter_run_dirs(tmp_path))
         assert len(results) == 1
         assert results[0][0].name == "run-good"
 
-    def test_skips_task_without_runs_subdir(self, tmp_path: Path) -> None:
-        (tmp_path / "task-no-runs").mkdir()
+    def test_skips_task_without_run_subdirs(self, tmp_path: Path) -> None:
+        (tmp_path / "task-no-runs").mkdir()  # Empty task dir — no run subdirs
         _make_run(tmp_path, "task-ok", "run-001")
         results = list(iter_run_dirs(tmp_path))
         assert len(results) == 1

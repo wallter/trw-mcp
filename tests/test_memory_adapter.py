@@ -454,3 +454,52 @@ class TestFindYamlPathForEntry:
         result = find_yaml_path_for_entry(trw_dir, "L-dated1")
         assert result is not None
         assert "L-dated1" in result.stem
+
+
+# ---------------------------------------------------------------------------
+# Recall by learning ID (PRD-FIX-055)
+# ---------------------------------------------------------------------------
+
+
+class TestRecallByLearningId:
+    """FIX-055: recall queries containing learning IDs (L-xxxxxxxx) resolve
+    via direct primary-key lookup instead of keyword intersection."""
+
+    def test_single_id_returns_exact_match(self, trw_dir_with_entries: Path) -> None:
+        """Querying a single learning ID returns that exact entry."""
+        results = recall_learnings(trw_dir_with_entries, query="L-test0001")
+        ids = [str(r["id"]) for r in results]
+        assert "L-test0001" in ids
+
+    def test_two_ids_returns_both(self, trw_dir_with_entries: Path) -> None:
+        """Querying two learning IDs returns both entries (OR, not AND)."""
+        results = recall_learnings(
+            trw_dir_with_entries, query="L-test0001 L-test0002",
+        )
+        ids = {str(r["id"]) for r in results}
+        assert "L-test0001" in ids
+        assert "L-test0002" in ids
+
+    def test_id_plus_keywords_returns_union(self, trw_dir_with_entries: Path) -> None:
+        """Mixed query with IDs and keywords returns union of both result sets."""
+        results = recall_learnings(
+            trw_dir_with_entries, query="L-test0001 mocking",
+        )
+        ids = {str(r["id"]) for r in results}
+        # ID lookup finds L-test0001, keyword "mocking" finds L-test0002
+        assert "L-test0001" in ids
+        assert "L-test0002" in ids
+
+    def test_nonexistent_id_returns_empty(self, trw_dir_with_entries: Path) -> None:
+        """Querying a non-existent learning ID returns no results."""
+        results = recall_learnings(trw_dir_with_entries, query="L-00000000")
+        assert results == []
+
+    def test_id_lookup_respects_status_filter(self, trw_dir_with_entries: Path) -> None:
+        """Direct ID lookup still applies status filter."""
+        # L-test0003 is obsolete in the fixture data
+        results = recall_learnings(
+            trw_dir_with_entries, query="L-test0003", status="active",
+        )
+        ids = [str(r["id"]) for r in results]
+        assert "L-test0003" not in ids

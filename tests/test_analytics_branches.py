@@ -100,7 +100,7 @@ def _write_run(
     run_yaml_content: dict[str, object] | None = None,
 ) -> Path:
     """Create a run directory with run.yaml and optional events.jsonl."""
-    run_dir = base / "docs" / task / "runs" / run_id
+    run_dir = base / ".trw" / "runs" / task / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
 
@@ -882,7 +882,7 @@ class TestScanAllRunsExceptionPaths:
         )
 
         # Create a run directory with a valid run.yaml structure
-        run_dir = tmp_path / "docs" / "task-exc" / "runs" / "20260101T000000Z-exc00000"
+        run_dir = tmp_path / ".trw" / "runs" / "task-exc" / "20260101T000000Z-exc00000"
         (run_dir / "meta").mkdir(parents=True)
         _writer.write_yaml(run_dir / "meta" / "run.yaml", {
             "run_id": "20260101T000000Z-exc00000",
@@ -958,7 +958,7 @@ class TestCeremonyScoreToolInvocationPaths:
         ]
         result = compute_ceremony_score(events)
         assert result["session_start"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
 
     def test_tool_invocation_deliver(self) -> None:
         """tool_invocation with tool_name=trw_deliver counts as deliver."""
@@ -967,7 +967,7 @@ class TestCeremonyScoreToolInvocationPaths:
         ]
         result = compute_ceremony_score(events)
         assert result["deliver"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
 
     def test_tool_invocation_reflect(self) -> None:
         """tool_invocation with tool_name=trw_reflect counts as deliver."""
@@ -984,7 +984,7 @@ class TestCeremonyScoreToolInvocationPaths:
         ]
         result = compute_ceremony_score(events)
         assert result["checkpoint_count"] == 1
-        assert result["score"] == 20
+        assert result["score"] == 15
 
     def test_tool_invocation_learn(self) -> None:
         """tool_invocation with tool_name=trw_learn counts as learn."""
@@ -1011,7 +1011,7 @@ class TestCeremonyScoreToolInvocationPaths:
         ]
         result = compute_ceremony_score(events)
         assert result["deliver"] is True
-        assert result["score"] == 30
+        assert result["score"] == 25
 
 
 # ===========================================================================

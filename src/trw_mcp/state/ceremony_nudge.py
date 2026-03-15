@@ -1,5 +1,7 @@
 """Ceremony State Tracker for Universal Ceremony Enforcement (PRD-CORE-074 FR04).
 
+Extended with context-reactive nudge engine (PRD-CORE-084).
+
 Tracks what ceremony steps have been completed in the current session.
 Persisted as JSON at .trw/context/ceremony-state.json.
 
@@ -21,6 +23,25 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
+# Tool name constants — use these instead of string literals to catch typos
+# at import time (AttributeError) rather than silent mismatch at runtime.
+# ---------------------------------------------------------------------------
+
+class ToolName:
+    """Constants for NudgeContext tool_name values."""
+
+    BUILD_CHECK = "build_check"
+    REVIEW = "review"
+    CHECKPOINT = "checkpoint"
+    LEARN = "learn"
+    SESSION_START = "session_start"
+    DELIVER = "deliver"
+    INIT = "init"
+    RECALL = "recall"
+    STATUS = "status"
+
+
+# ---------------------------------------------------------------------------
 # State dataclass
 # ---------------------------------------------------------------------------
 
@@ -36,7 +57,27 @@ class CeremonyState:
     deliver_called: bool = False
     learnings_this_session: int = 0
     nudge_counts: dict[str, int] = field(default_factory=dict)  # step -> nudge count
-    phase: str = "early"  # early, implement, validate, deliver, done
+    phase: str = "early"  # early, implement, validate, review, deliver, done
+    # FR01 (PRD-CORE-084): Review tracking fields
+    review_called: bool = False
+    review_verdict: str | None = None    # "pass" | "warn" | "block" | None
+    review_p0_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# FR02 (PRD-CORE-084): NudgeContext dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NudgeContext:
+    """Contextual information from the tool call that triggered the nudge."""
+
+    tool_name: str = ""
+    tool_success: bool = True
+    build_passed: bool | None = None
+    review_verdict: str | None = None
+    review_p0_count: int = 0
+    is_subagent: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +176,15 @@ def mark_deliver(trw_dir: Path) -> None:
     write_ceremony_state(trw_dir, state)
 
 
+def mark_review(trw_dir: Path, verdict: str, p0_count: int = 0) -> None:
+    """Set review_called = True, record verdict and P0 count (FR01, PRD-CORE-084)."""
+    state = read_ceremony_state(trw_dir)
+    state.review_called = True
+    state.review_verdict = verdict
+    state.review_p0_count = p0_count
+    write_ceremony_state(trw_dir, state)
+
+
 def increment_files_modified(trw_dir: Path, count: int = 1) -> None:
     """Increment files_modified_since_checkpoint by *count*."""
     state = read_ceremony_state(trw_dir)
@@ -169,8 +219,8 @@ def reset_nudge_count(trw_dir: Path, step: str) -> None:
 
 _HEADER = "--- TRW Session ---"
 
-# Step names in display order
-_STEPS = ("session_start", "checkpoint", "build_check", "deliver")
+# Step names in display order (FR01 PRD-CORE-084: includes review)
+_STEPS = ("session_start", "checkpoint", "build_check", "review", "deliver")
 
 
 def _step_complete(step: str, state: CeremonyState) -> bool:
@@ -181,6 +231,8 @@ def _step_complete(step: str, state: CeremonyState) -> bool:
         return state.checkpoint_count > 0 and state.files_modified_since_checkpoint <= 3
     if step == "build_check":
         return state.build_check_result == "passed"
+    if step == "review":
+        return state.review_called
     if step == "deliver":
         return state.deliver_called
     return False
@@ -205,7 +257,7 @@ def _build_status_line(state: CeremonyState) -> str:
                 label = "checkpoint (no checkpoint yet)"
         elif step == "build_check" and not _step_complete(step, state):
             phase = state.phase
-            if phase not in ("validate", "deliver", "done"):
+            if phase not in ("validate", "review", "deliver", "done"):
                 # Not yet at the phase — show without annotation
                 label = "build_check"
         elif step == "deliver" and state.learnings_this_session > 0 and not state.deliver_called:
@@ -245,11 +297,14 @@ def _select_message_by_urgency(
 def _select_nudge_message(
     step: str, state: CeremonyState, available_learnings: int
 ) -> str:
-    """Select the value-expressing nudge message for the given step.
+    """Select the value-expressing static nudge message for the given step.
 
     Messages follow the value-expression template (FR02):
       fact -> value -> consequence -> effort framing.
-    No prescriptive language ("MUST", "CRITICAL", etc.) or decision language.
+    No prescriptive language ("MUST", "CRITICAL", etc.) or decision language
+    in these static messages. (Context-reactive messages in
+    ``_context_reactive_message`` MAY use prescriptive language per
+    PRD-CORE-084 FR06.)
 
     Progressive urgency (FR03): messages grow more specific based on nudge_counts[step].
     """
@@ -423,42 +478,295 @@ def _highest_priority_pending_step(state: CeremonyState) -> str | None:
         return "checkpoint"
 
     # Priority 3: build_check (if phase >= validate and not run)
-    if state.phase in ("validate", "deliver", "done") and state.build_check_result != "passed":
+    if state.phase in ("validate", "review", "deliver", "done") and state.build_check_result != "passed":
         return "build_check"
 
-    # Priority 4: deliver (if phase >= deliver)
+    # Priority 4: review (if phase >= review and not called)
+    if state.phase in ("review", "deliver", "done") and not state.review_called:
+        return "review"
+
+    # Priority 5: deliver (if phase >= deliver)
     if state.phase in ("deliver", "done") and not state.deliver_called:
         return "deliver"
 
     return None
 
 
-def compute_nudge(state: CeremonyState, available_learnings: int = 0) -> str:
+# ---------------------------------------------------------------------------
+# FR03 (PRD-CORE-084): Context-reactive messages
+# ---------------------------------------------------------------------------
+
+def _context_reactive_message(
+    context: NudgeContext,
+    state: CeremonyState,
+    urgency: str = "low",
+) -> str | None:
+    """Select context-reactive nudge message based on tool result.
+
+    Returns None for unknown tool_name (triggers fallback to static messages).
+    FR06: urgency scales language from informational to directive.
+
+    Note: Unlike static urgency-tier messages (PRD-CORE-074), context-reactive
+    messages MAY use prescriptive language (MUST, SHALL, SHOULD) at medium
+    and high urgency levels per PRD-CORE-084 FR06.
+    """
+    tool = context.tool_name
+
+    if tool == ToolName.BUILD_CHECK:
+        if context.build_passed is False:
+            return (
+                "Build failed. If failures reveal a design flaw, revert to PLAN "
+                "— fixing a plan costs less than patching broken code. "
+                "If implementation bugs, fix in-phase and re-run."
+            )
+        if context.build_passed is True:
+            if urgency == "high":
+                return (
+                    "NEXT: trw_review() SHOULD be performed — independent verification "
+                    "catches spec drift that passing tests miss. THEN: trw_deliver()"
+                )
+            if urgency == "medium":
+                return (
+                    "NEXT: trw_review() is recommended — independent verification "
+                    "catches spec drift that passing tests miss. THEN: trw_deliver()"
+                )
+            return (
+                "NEXT: trw_review() — independent verification catches spec drift "
+                "that passing tests miss. THEN: trw_deliver()"
+            )
+
+    if tool == ToolName.REVIEW:
+        if context.review_p0_count > 0:
+            return (
+                "P0 findings detected. A separate agent MUST remediate "
+                "— the reviewer SHALL NOT fix its own findings. "
+                "THEN: re-validate with trw_build_check()."
+            )
+        return "NEXT: trw_deliver() — persist learnings and artifacts for future sessions."
+
+    if tool == ToolName.CHECKPOINT:
+        return (
+            "Progress saved. Has anything invalidated your current approach? "
+            "Reverting to PLAN is cheaper than pushing through a flawed design."
+        )
+
+    if tool == ToolName.LEARN:
+        return (
+            "Learning persisted. NEXT: trw_checkpoint() at next milestone. "
+            "THEN: trw_build_check() when implementation complete."
+        )
+
+    if tool == ToolName.SESSION_START:
+        return (
+            "NEXT: Read FRAMEWORK.md (phases, gates, reversion rules). "
+            "THEN: trw_init() for new work or trw_status() to resume."
+        )
+
+    if tool == ToolName.DELIVER:
+        return "Session complete. Learnings persisted for future sessions."
+
+    if tool == ToolName.INIT:
+        return (
+            "Run bootstrapped. NEXT: Begin implementation. "
+            "THEN: trw_checkpoint() at first milestone."
+        )
+
+    if tool == ToolName.RECALL:
+        return "Learnings recalled. Review them for relevant patterns before proceeding."
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# FR04 (PRD-CORE-084): Next-two-steps projection
+# ---------------------------------------------------------------------------
+
+_STEP_RATIONALE: dict[str, str] = {
+    "session_start": "loads prior learnings and run state",
+    "checkpoint": "saves progress against context compaction",
+    "build_check": "verifies tests pass and types check",
+    "review": "independent verification catches spec drift",
+    "deliver": "persists learnings for future sessions",
+}
+
+# Phase-to-applicable-steps mapping
+_PHASE_APPLICABLE_STEPS: dict[str, tuple[str, ...]] = {
+    "early": ("session_start", "checkpoint"),
+    "implement": ("session_start", "checkpoint"),
+    "validate": ("session_start", "checkpoint", "build_check"),
+    "review": ("session_start", "checkpoint", "build_check", "review"),
+    "deliver": _STEPS,
+    "done": _STEPS,
+}
+
+
+def _next_two_steps(state: CeremonyState) -> tuple[str | None, str | None]:
+    """Return the next two incomplete ceremony steps applicable to the current phase.
+
+    Returns (next, then) or (next, None) or (None, None).
+    """
+    applicable = _PHASE_APPLICABLE_STEPS.get(state.phase, _STEPS)
+    pending: list[str] = []
+    for step in applicable:
+        if not _step_complete(step, state) and len(pending) < 2:
+            pending.append(step)
+    nxt = pending[0] if len(pending) >= 1 else None
+    then = pending[1] if len(pending) >= 2 else None
+    return nxt, then
+
+
+# ---------------------------------------------------------------------------
+# FR05 (PRD-CORE-084): Phase reversion active prompting
+# ---------------------------------------------------------------------------
+
+def _reversion_prompt(
+    context: NudgeContext | None, state: CeremonyState
+) -> str | None:
+    """Return a phase-reversion prompt if conditions warrant it.
+
+    Returns None when no reversion is appropriate, or when the caller is a subagent.
+    """
+    if context is None:
+        return None
+
+    # Subagents should not receive reversion prompts
+    if context.is_subagent:
+        return None
+
+    # Trigger 1: Build failure
+    if context.build_passed is False:
+        return (
+            "If failures reveal a design flaw, revert to PLAN. "
+            "If implementation bugs, fix in-phase."
+        )
+
+    # Trigger 2: P0 findings from review
+    if context.review_p0_count > 0:
+        return (
+            "If P0 requires architectural change, revert to PLAN. "
+            "If isolated fix, remediate and re-validate."
+        )
+
+    # Trigger 3: Scope creep (many checkpoint nudges + many files modified)
+    checkpoint_nudges = state.nudge_counts.get("checkpoint", 0)
+    if checkpoint_nudges >= 5 and state.files_modified_since_checkpoint > 10:
+        return (
+            "Scope may have grown beyond the current plan. "
+            "Reverting to PLAN to reassess is a quality signal, not a failure."
+        )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# FR09 (PRD-CORE-084): Component-aware nudge assembly
+# ---------------------------------------------------------------------------
+
+def _assemble_nudge(
+    status_line: str,
+    reactive_msg: str | None,
+    next_then: str | None = None,
+    reversion: str | None = None,
+    budget: int = 600,
+) -> str:
+    """Assemble nudge components within a character budget.
+
+    Priority: status_line (always) > reactive_msg (always if present) >
+    next_then (if budget allows) > reversion (if budget allows).
+    """
+    components: list[str] = [status_line]
+    if reactive_msg:
+        components.append(reactive_msg)
+    base = "\n".join(components)
+    if next_then and len(base) + len(next_then) + 1 <= budget:
+        components.append(next_then)
+        base = "\n".join(components)
+    if reversion and len(base) + len(reversion) + 1 <= budget:
+        components.append(reversion)
+    return "\n".join(components)
+
+
+# ---------------------------------------------------------------------------
+# Main nudge computation (updated for PRD-CORE-084)
+# ---------------------------------------------------------------------------
+
+def compute_nudge(
+    state: CeremonyState,
+    available_learnings: int = 0,
+    context: NudgeContext | None = None,
+) -> str:
     """Compute the ceremony nudge message based on current state.
 
-    Priority order:
+    When context is provided (PRD-CORE-084), uses context-reactive messages.
+    When context is None, falls back to static urgency-tier messages (PRD-CORE-074).
+
+    Priority order for pending step detection:
     1. session_start (if not called)
     2. checkpoint (if files_modified > 3 or no checkpoint in session)
     3. build_check (if phase >= validate and not run)
-    4. deliver (if phase >= deliver)
-    5. None (all complete — minimal status line)
+    4. review (if phase >= review and not called)
+    5. deliver (if phase >= deliver)
+    6. None (all complete — minimal status line)
 
     Returns:
         Nudge string to append to tool responses. Empty string if any error occurs.
-        Never exceeds 100 tokens (~400 chars). Never blocks or refuses.
+        Budget: 600 chars with context, 400 chars without. Never blocks or refuses.
     """
     try:
         status_line = _build_status_line(state)
+        header_and_status = f"{_HEADER}\n{status_line}"
         pending = _highest_priority_pending_step(state)
 
+        if context is not None:
+            # PRD-CORE-084: Context-reactive path
+            urgency = _compute_urgency(state, pending) if pending else "low"
+            reactive_msg = _context_reactive_message(context, state, urgency=urgency)
+
+            if reactive_msg is None:
+                # Unknown tool — fall back to static messages
+                if pending is None:
+                    return header_and_status
+                nudge_msg = _select_nudge_message(pending, state, available_learnings)
+                return _assemble_nudge(header_and_status, nudge_msg, budget=600)
+
+            # Suppress reversion prompt when context-reactive message already
+            # includes reversion guidance (DRY: build_check failure and review P0
+            # reactive messages already contain reversion text).
+            reversion: str | None = None
+            _tools_with_reversion_in_reactive = (ToolName.BUILD_CHECK, ToolName.REVIEW)
+            if context.tool_name in _tools_with_reversion_in_reactive:
+                reversion = None  # reactive message already covers reversion
+            else:
+                reversion = _reversion_prompt(context, state)
+
+            # Next-two-steps projection (only when no reactive message already
+            # provides NEXT/THEN guidance)
+            next_then_str: str | None = None
+            # reactive_msg already contains NEXT/THEN for most tools, so skip
+
+            return _assemble_nudge(
+                header_and_status, reactive_msg,
+                next_then=next_then_str, reversion=reversion,
+                budget=600,
+            )
+
+        # PRD-CORE-074: Static urgency-tier path (no context)
         if pending is None:
             # All complete — single line
-            return f"{_HEADER}\n{status_line}"
+            return header_and_status
+
+        # Try next-two-steps projection as a supplement
+        nxt, then = _next_two_steps(state)
+        next_then_str = None
+        if nxt and then:
+            rationale_nxt = _STEP_RATIONALE.get(nxt, "")
+            rationale_then = _STEP_RATIONALE.get(then, "")
+            next_then_str = f"NEXT: {nxt} ({rationale_nxt}). THEN: {then} ({rationale_then})."
 
         nudge_msg = _select_nudge_message(pending, state, available_learnings)
-        full = f"{_HEADER}\n{status_line}\n{nudge_msg}"
+        full = f"{header_and_status}\n{nudge_msg}"
 
-        # Enforce token limit (~400 chars)
+        # Enforce token limit (~400 chars) for static path
         if len(full) > 400:
             full = full[:397] + "..."
 
@@ -586,4 +894,8 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         learnings_this_session=_int("learnings_this_session"),
         nudge_counts=nudge_counts,
         phase=_str("phase", "early"),
+        # FR01 (PRD-CORE-084): review fields with fail-open defaults
+        review_called=_bool("review_called"),
+        review_verdict=_opt_str("review_verdict"),
+        review_p0_count=_int("review_p0_count"),
     )

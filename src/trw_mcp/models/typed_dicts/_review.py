@@ -105,5 +105,6 @@ class AutoReviewResult(TypedDict, total=False):
     surfaced_findings_count: int
     total_findings_count: int
     confidence_threshold: int
+    critical_count: int
     run_path: str | None
     review_yaml: str

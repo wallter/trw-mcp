@@ -267,22 +267,47 @@ def register_review_tools(server: FastMCP) -> None:
         ts = datetime.now(timezone.utc).isoformat()
         review_id = "review-" + secrets.token_hex(4)
 
+        response: dict[str, object]
         if effective_mode == "manual":
-            return cast(dict[str, object], handle_manual_mode(
+            response = cast(dict[str, object], handle_manual_mode(
                 findings or [], resolved_run, review_id, ts,
             ))
-
-        if effective_mode == "reconcile":
-            return cast(dict[str, object], handle_reconcile_mode(
+        elif effective_mode == "reconcile":
+            response = cast(dict[str, object], handle_reconcile_mode(
                 config, resolved_run, review_id, ts, prd_ids,
             ))
-
-        if effective_mode == "cross_model":
-            return cast(dict[str, object], handle_cross_model_mode(
+        elif effective_mode == "cross_model":
+            response = cast(dict[str, object], handle_cross_model_mode(
                 config, resolved_run, review_id, ts,
             ))
+        else:
+            # Auto mode (QUAL-027)
+            response = cast(dict[str, object], handle_auto_mode(
+                config, resolved_run, review_id, ts, reviewer_findings,
+            ))
 
-        # Auto mode (QUAL-027)
-        return cast(dict[str, object], handle_auto_mode(
-            config, resolved_run, review_id, ts, reviewer_findings,
-        ))
+        # Mark review in ceremony state and inject nudge (PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName, mark_review
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            trw_dir = resolve_trw_dir()
+            verdict = str(response.get("verdict", ""))
+            p0_count = int(str(response.get("critical_count", 0)))
+
+            # Normalize reconcile verdicts to standard set {pass, warn, block}
+            if verdict == "drift_detected":
+                verdict = "warn"
+                # Use mismatch_count as p0_count if critical_count not set
+                if p0_count == 0:
+                    p0_count = int(str(response.get("mismatch_count", 0)))
+            elif verdict == "clean":
+                verdict = "pass"
+
+            mark_review(trw_dir, verdict=verdict, p0_count=p0_count)
+            ctx = NudgeContext(tool_name=ToolName.REVIEW, review_verdict=verdict, review_p0_count=p0_count)
+            append_ceremony_nudge(response, trw_dir, context=ctx)
+        except Exception:  # justified: fail-open, nudge injection must not block review
+            pass
+
+        return response
