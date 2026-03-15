@@ -4,6 +4,8 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-03-15
+
 ### Added
 
 - **Installer UX overhaul** (PRD-CORE-083) — preflight section moves Python check and feature prompts before numbered steps so step count never jumps mid-flow. Config-level feature flags (`embeddings_enabled`, `sqlite_vec_enabled`) persist user choices across reinstalls. Consolidated extras into single step. Dynamic success banner adapts to fresh install vs reinstall. Random tip from 12-item curated pool.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.15.0"
+version = "0.15.2"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "CC-BY-NC-SA-4.0"
