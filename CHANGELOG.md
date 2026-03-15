@@ -4,6 +4,26 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Added
+
+- **Installer UX overhaul** (PRD-CORE-083) — preflight section moves Python check and feature prompts before numbered steps so step count never jumps mid-flow. Config-level feature flags (`embeddings_enabled`, `sqlite_vec_enabled`) persist user choices across reinstalls. Consolidated extras into single step. Dynamic success banner adapts to fresh install vs reinstall. Random tip from 12-item curated pool.
+- **Real backend health check** (PRD-CORE-083) — installer probes each configured `platform_url` via `urllib.request` against `/v1/health` with 5s timeout. Auto-detects local Docker backends via `docker-compose.yml` presence. Parallel probing via `ThreadPoolExecutor`. Replaces cosmetic "Connected" message that only checked API key format.
+- **MCP server restart after upgrade** (PRD-INFRA-041) — version sentinel pattern (`.trw/installed-version.json`) written by installer, detected by `_check_version_sentinel()` during `trw_session_start()`. Injects `update_advisory` with both version numbers and `/mcp` instruction. HTTP-mode servers killed via PID file with cross-platform `_is_process_alive()` (ctypes on Windows, `os.kill(pid, 0)` on Unix).
+- **CLAUDE.md sync timeout** (PRD-INFRA-041) — 30-second `ThreadPoolExecutor` timeout prevents installer hang when LLM initialization or network calls stall during CLAUDE.md rendering.
+- **Cross-platform process management** — `_is_process_alive()` uses `ctypes.windll.kernel32.OpenProcess` on Windows (CPython issue #14480: `os.kill(pid, 0)` broken on Windows). `_terminate_process()` falls back to `taskkill /PID` on Windows.
+
+### Fixed
+
+- **Build check venv-first resolution** — `_find_executable()` now checks package venv → project venv → PATH (was PATH-first, finding system pytest without project dependencies). Also checks Windows `Scripts/` directory.
+- **Build check pytest cwd** — `_run_pytest()` runs from `project_root` (where `tests/` lives), not `project_root/build_root` (where `src/` lives). Fixes "file or directory not found: tests/" error.
+- **`_load_prior_config` UnicodeDecodeError** — now catches `UnicodeDecodeError` for binary config files.
+- **`llm.py` unused type: ignore** — added `unused-ignore` to `import anthropic` suppression for mypy --strict.
+
+### PRDs Completed
+
+- **PRD-CORE-083**: Installer UX Overhaul and Backend Health Check (8 FRs, 32 tests)
+- **PRD-INFRA-041**: Cross-Platform MCP Server Restart After Install (10 FRs, 45 tests)
+
 ## [0.15.1] — 2026-03-14
 
 ### Fixed
