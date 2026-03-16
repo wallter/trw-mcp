@@ -31,12 +31,12 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger()
 
 
-def register_build_tools(server: FastMCP) -> None:  # noqa: C901
+def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
 
     @server.tool()
     @log_tool_call
-    def trw_build_check(  # noqa: C901
+    def trw_build_check(
         scope: str = "full",
         run_path: str | None = None,
         timeout_secs: int | None = None,
@@ -74,40 +74,15 @@ def register_build_tools(server: FastMCP) -> None:  # noqa: C901
             600,
         )
 
-        _VALID_SCOPES = {"full", "pytest", "mypy", "quick", "mutations", "deps", "api"}
-        if scope not in _VALID_SCOPES:
-            return {
-                "status": "error",
-                "reason": f"Invalid scope '{scope}'. Valid scopes: {sorted(_VALID_SCOPES)}",
-            }
+        # Validate scope
+        validation_error = _validate_scope(scope)
+        if validation_error:
+            return validation_error
 
-        # --- Standalone scopes (no pytest/mypy) ---
-
-        if scope == "mutations":
-            if not config.mutation_enabled:
-                return {"status": "skipped", "reason": "mutation_enabled is False"}
-            from trw_mcp.tools.mutations import (
-                cache_mutation_status,
-                run_mutation_check,
-            )
-
-            mut_result = run_mutation_check(project_root, config)
-            cache_mutation_status(trw_dir, mut_result)
-            return cast("dict[str, object]", mut_result)
-
-        if scope == "deps":
-            if not config.dep_audit_enabled:
-                return {"status": "skipped", "reason": "dep_audit_enabled is False"}
-            dep_result: DepAuditResult = _run_dep_audit(project_root, config)
-            _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast("dict[str, object]", dep_result))
-            return cast("dict[str, object]", dep_result)
-
-        if scope == "api":
-            if not config.api_fuzz_enabled:
-                return {"status": "skipped", "reason": "api_fuzz_enabled is False"}
-            fuzz_result: ApiFuzzResult = _run_api_fuzz(project_root, config)
-            _cache_to_context(trw_dir, _API_FUZZ_FILE, cast("dict[str, object]", fuzz_result))
-            return cast("dict[str, object]", fuzz_result)
+        # Handle standalone scopes (mutations, deps, api)
+        standalone_result = _handle_standalone_scope(scope, config, project_root, trw_dir)
+        if standalone_result:
+            return standalone_result
 
         # --- Standard scopes (pytest/mypy) ---
 
@@ -122,7 +97,9 @@ def register_build_tools(server: FastMCP) -> None:  # noqa: C901
         cache_path = cache_build_status(trw_dir, status)
 
         # FIX-035-FR01: Auto-detect active run when not explicitly provided
+        from trw_mcp.models.run import Phase
         from trw_mcp.state._paths import find_active_run
+        from trw_mcp.state.phase import try_update_phase
 
         resolved_run: Path | None = None
         if run_path:
@@ -131,29 +108,10 @@ def register_build_tools(server: FastMCP) -> None:  # noqa: C901
             resolved_run = find_active_run()
 
         # FIX-035-FR05: Auto-update phase to VALIDATE
-        from trw_mcp.models.run import Phase
-        from trw_mcp.state.phase import try_update_phase
-
         try_update_phase(resolved_run, Phase.VALIDATE)
 
         # FIX-035-FR02: Log event with proper boolean types
-        if resolved_run is not None:
-            from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
-
-            events_path = resolved_run / "meta" / "events.jsonl"
-            if events_path.parent.exists():
-                event_logger = FileEventLogger(FileStateWriter())
-                event_logger.log_event(
-                    events_path,
-                    "build_check_complete",
-                    {
-                        "scope": scope,
-                        "tests_passed": status.tests_passed,
-                        "mypy_clean": status.mypy_clean,
-                        "coverage_pct": str(status.coverage_pct),
-                        "duration_secs": str(status.duration_secs),
-                    },
-                )
+        _log_build_event(resolved_run, scope, status)
 
         # Q-learning: reward recalled learnings based on build outcome
         try:
@@ -187,13 +145,7 @@ def register_build_tools(server: FastMCP) -> None:  # noqa: C901
         }
 
         # Coverage threshold enforcement (sprint-finish anti-regression)
-        if min_coverage is not None and status.coverage_pct < min_coverage:
-            result["tests_passed"] = False
-            result["coverage_threshold_failed"] = True
-            result["coverage_threshold"] = min_coverage
-            result["coverage_threshold_message"] = (
-                f"Coverage {status.coverage_pct:.1f}% is below required threshold {min_coverage:.1f}%"
-            )
+        _finalize_build_result(result, status, min_coverage)
 
         # Mark build check result in ceremony state tracker (PRD-CORE-074 FR04)
         try:
@@ -247,3 +199,95 @@ def register_build_tools(server: FastMCP) -> None:  # noqa: C901
         trw_dir = resolve_trw_dir()
         clamped_days = max(1, min(365, window_days))
         return aggregate_dashboard(trw_dir, clamped_days, compare_sprint)
+
+
+# --- Private helpers ---
+
+
+def _validate_scope(scope: str) -> dict[str, object] | None:
+    """Validate scope parameter. Returns error dict if invalid, None if valid."""
+    valid_scopes = {"full", "pytest", "mypy", "quick", "mutations", "deps", "api"}
+    if scope not in valid_scopes:
+        return {
+            "status": "error",
+            "reason": f"Invalid scope '{scope}'. Valid scopes: {sorted(valid_scopes)}",
+        }
+    return None
+
+
+def _handle_standalone_scope(
+    scope: str,
+    config: object,
+    project_root: Path,
+    trw_dir: Path,
+) -> dict[str, object] | None:
+    """Handle standalone scopes (mutations, deps, api). Returns result dict or None."""
+    from trw_mcp.models.config import TRWConfig
+
+    cfg = cast("TRWConfig", config)
+
+    if scope == "mutations":
+        if not cfg.mutation_enabled:
+            return {"status": "skipped", "reason": "mutation_enabled is False"}
+        from trw_mcp.tools.mutations import cache_mutation_status, run_mutation_check
+
+        mut_result = run_mutation_check(project_root, cfg)
+        cache_mutation_status(trw_dir, mut_result)
+        return cast("dict[str, object]", mut_result)
+
+    if scope == "deps":
+        if not cfg.dep_audit_enabled:
+            return {"status": "skipped", "reason": "dep_audit_enabled is False"}
+        dep_result: DepAuditResult = _run_dep_audit(project_root, cfg)
+        _cache_to_context(trw_dir, _DEP_AUDIT_FILE, cast("dict[str, object]", dep_result))
+        return cast("dict[str, object]", dep_result)
+
+    if scope == "api":
+        if not cfg.api_fuzz_enabled:
+            return {"status": "skipped", "reason": "api_fuzz_enabled is False"}
+        fuzz_result: ApiFuzzResult = _run_api_fuzz(project_root, cfg)
+        _cache_to_context(trw_dir, _API_FUZZ_FILE, cast("dict[str, object]", fuzz_result))
+        return cast("dict[str, object]", fuzz_result)
+
+    return None
+
+
+def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> None:
+    """Log build_check_complete event to run's events.jsonl."""
+    if resolved_run is None:
+        return
+    from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+
+    events_path = resolved_run / "meta" / "events.jsonl"
+    if not events_path.parent.exists():
+        return
+    event_logger = FileEventLogger(FileStateWriter())
+    event_logger.log_event(
+        events_path,
+        "build_check_complete",
+        {
+            "scope": scope,
+            "tests_passed": getattr(status, "tests_passed", False),
+            "mypy_clean": getattr(status, "mypy_clean", False),
+            "coverage_pct": str(getattr(status, "coverage_pct", 0)),
+            "duration_secs": str(getattr(status, "duration_secs", 0)),
+        },
+    )
+
+
+def _finalize_build_result(
+    result: dict[str, object],
+    status: object,
+    min_coverage: float | None,
+) -> None:
+    """Apply coverage threshold enforcement and enrich result dict."""
+    if min_coverage is None:
+        return
+    coverage_pct = float(getattr(status, "coverage_pct", 0))
+    if coverage_pct < min_coverage:
+        result["tests_passed"] = False
+        result["coverage_threshold_failed"] = True
+        result["coverage_threshold"] = min_coverage
+        result["coverage_threshold_message"] = (
+            f"Coverage {coverage_pct:.1f}% is below required threshold {min_coverage:.1f}%"
+        )

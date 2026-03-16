@@ -198,39 +198,32 @@ _TIER_EXPECTATIONS: dict[str, _TierExpectation] = {
 }
 
 
-def compute_tier_ceremony_score(  # noqa: C901
-    events: list[dict[str, object]],
-    complexity_class: ComplexityClass | str | None = None,
-) -> TierCeremonyScoreResult:
-    """Compute tier-aware ceremony score (PRD-CORE-060-FR03).
-
-    Normalizes ceremony scores against tier-appropriate phase sets and
-    event expectations so that MINIMAL tasks are not penalized against
-    COMPREHENSIVE baselines.
-
-    If complexity_class is None, defaults to STANDARD behavior
-    (backward compatibility).
+def _normalize_tier_string(complexity_class: ComplexityClass | str | None) -> str:
+    """Normalize complexity_class input to a valid tier string.
 
     Args:
-        events: List of event dicts from events.jsonl.
-        complexity_class: The tier to score against. Accepts enum or string.
+        complexity_class: The tier (enum, string, or None).
 
     Returns:
-        Dict with score (0-100), tier used, and per-component details.
+        Valid tier string from _TIER_EXPECTATIONS.
     """
-    # Normalize tier to string
     if complexity_class is None:
         tier_str = "STANDARD"
     elif isinstance(complexity_class, ComplexityClass):
         tier_str = complexity_class.value
     else:
         tier_str = str(complexity_class).upper()
-    if tier_str not in _TIER_EXPECTATIONS:
-        tier_str = "STANDARD"
+    return tier_str if tier_str in _TIER_EXPECTATIONS else "STANDARD"
 
-    tier_exp = _TIER_EXPECTATIONS[tier_str]
 
-    # Detect which expected events are present
+def _detect_ceremony_events(
+    events: list[dict[str, object]],
+) -> tuple[bool, bool, int, bool, bool, bool, bool]:
+    """Scan event list and detect presence of key ceremony events.
+
+    Returns tuple of (has_recall, has_init, checkpoint_count, has_learn,
+    has_build_check, has_deliver, has_review).
+    """
     has_recall = False
     has_init = False
     checkpoint_count = 0
@@ -261,10 +254,22 @@ def compute_tier_ceremony_score(  # noqa: C901
         elif event_type == "review_complete" or (is_tool and tool_name == "trw_review"):
             has_review = True
 
-    # Score: count matched expected events proportionally
+    return has_recall, has_init, checkpoint_count, has_learn, has_build_check, has_deliver, has_review
+
+
+def _count_matched_events(
+    tier_exp: _TierExpectation,
+    has_recall: bool,
+    has_init: bool,
+    checkpoint_count: int,
+    has_learn: bool,
+    has_build_check: bool,
+    has_deliver: bool,
+    has_review: bool,
+) -> int:
+    """Count how many expected events are present."""
     expected = tier_exp.events
     matched = 0
-    total_expected = len(expected)
 
     if "trw_recall" in expected and has_recall:
         matched += 1
@@ -281,14 +286,63 @@ def compute_tier_ceremony_score(  # noqa: C901
     if "trw_review" in expected and has_review:
         matched += 1
 
-    # Base score: proportion of expected events present, scaled to 100
-    score = round((matched / max(total_expected, 1)) * 100)
+    return matched
 
-    # Review bonus/penalty
+
+def _apply_review_adjustments(
+    score: int,
+    tier_exp: _TierExpectation,
+    has_review: bool,
+) -> int:
+    """Apply review bonus or penalty to the base score."""
     if has_review and tier_exp.review_bonus > 0:
         score = min(100, score + tier_exp.review_bonus)
     if tier_exp.review_mandatory and not has_review:
         score = max(0, score - tier_exp.missing_review_penalty)
+    return score
+
+
+def compute_tier_ceremony_score(
+    events: list[dict[str, object]],
+    complexity_class: ComplexityClass | str | None = None,
+) -> TierCeremonyScoreResult:
+    """Compute tier-aware ceremony score (PRD-CORE-060-FR03).
+
+    Normalizes ceremony scores against tier-appropriate phase sets and
+    event expectations so that MINIMAL tasks are not penalized against
+    COMPREHENSIVE baselines.
+
+    If complexity_class is None, defaults to STANDARD behavior
+    (backward compatibility).
+
+    Args:
+        events: List of event dicts from events.jsonl.
+        complexity_class: The tier to score against. Accepts enum or string.
+
+    Returns:
+        Dict with score (0-100), tier used, and per-component details.
+    """
+    tier_str = _normalize_tier_string(complexity_class)
+    tier_exp = _TIER_EXPECTATIONS[tier_str]
+
+    has_recall, has_init, checkpoint_count, has_learn, has_build_check, has_deliver, has_review = (
+        _detect_ceremony_events(events)
+    )
+
+    matched = _count_matched_events(
+        tier_exp,
+        has_recall,
+        has_init,
+        checkpoint_count,
+        has_learn,
+        has_build_check,
+        has_deliver,
+        has_review,
+    )
+
+    total_expected = len(tier_exp.events)
+    score = round((matched / max(total_expected, 1)) * 100)
+    score = _apply_review_adjustments(score, tier_exp, has_review)
 
     return TierCeremonyScoreResult(
         score=score,

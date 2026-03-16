@@ -101,7 +101,67 @@ def check_integration(source_dir: Path) -> dict[str, object]:
     }
 
 
-def check_orphan_modules(source_dir: Path) -> dict[str, object]:  # noqa: C901
+def _load_source_files(source_dir: Path) -> list[tuple[Path, str]]:
+    """Load all Python source files in the directory tree (excluding __pycache__)."""
+    all_source: list[tuple[Path, str]] = []
+    for py_file in sorted(source_dir.rglob("*.py")):
+        if "__pycache__" in str(py_file):
+            continue
+        try:
+            all_source.append((py_file, py_file.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    return all_source
+
+
+def _collect_candidate_modules(source_dir: Path) -> list[tuple[Path, str]]:
+    """Collect all modules (subdirectory and top-level) excluding entry points and __init__.
+
+    Returns list of (file_path, relative_display_name) tuples.
+    """
+    _ENTRY_POINTS = {"server", "__main__"}
+    candidates: list[tuple[Path, str]] = []
+
+    # Subdirectory modules (state/, tools/, models/, etc.)
+    for subdir in sorted(source_dir.iterdir()):
+        if not subdir.is_dir() or subdir.name.startswith("__"):
+            continue
+        for py_file in sorted(subdir.rglob("*.py")):
+            if py_file.name == "__init__.py" or "__pycache__" in str(py_file):
+                continue
+            rel = py_file.relative_to(source_dir)
+            candidates.append((py_file, str(rel)))
+
+    # Top-level modules (not entry points or __init__)
+    for py_file in sorted(source_dir.glob("*.py")):
+        if py_file.name == "__init__.py" or py_file.stem in _ENTRY_POINTS:
+            continue
+        candidates.append((py_file, py_file.name))
+
+    return candidates
+
+
+def _is_module_imported(
+    py_file: Path,
+    name: str,
+    all_source: list[tuple[Path, str]],
+) -> bool:
+    """Check if a module is imported by any other source file."""
+    escaped = re.escape(name)
+    import_re = re.compile(
+        rf"(?:from\s+\S*\.{escaped}\s+import"
+        rf"|import\s+\S*\.{escaped}(?:\s|$|,)"
+        rf"|from\s+\.\.?\s+import\s+[^)]*\b{escaped}\b)",
+    )
+    for other_path, content in all_source:
+        if other_path == py_file:
+            continue
+        if import_re.search(content):
+            return True
+    return False
+
+
+def check_orphan_modules(source_dir: Path) -> dict[str, object]:
     """Detect source modules not imported by any other production module.
 
     Scans all ``.py`` files under *source_dir* (excluding ``__init__.py``
@@ -121,66 +181,13 @@ def check_orphan_modules(source_dir: Path) -> dict[str, object]:  # noqa: C901
         Dict with ``orphans`` list, ``all_reachable`` bool, and
         ``modules_scanned`` count.
     """
-    # Entry points that legitimately have no importers
-    _ENTRY_POINTS = {"server", "__main__"}
-
-    # Read all source file contents once (excludes __pycache__)
-    all_source: list[tuple[Path, str]] = []
-    for py_file in sorted(source_dir.rglob("*.py")):
-        if "__pycache__" in str(py_file):
-            continue
-        try:
-            all_source.append((py_file, py_file.read_text(encoding="utf-8")))
-        except OSError:
-            continue
+    all_source = _load_source_files(source_dir)
+    candidates = _collect_candidate_modules(source_dir)
 
     orphans: list[str] = []
-    modules_scanned = 0
-
-    # Collect candidate modules: all .py files in subdirectories + top-level
-    candidates: list[tuple[Path, str]] = []  # (file_path, relative_display_name)
-
-    # Subdirectory modules (state/, tools/, models/, etc.)
-    for subdir in sorted(source_dir.iterdir()):
-        if not subdir.is_dir() or subdir.name.startswith("__"):
-            continue
-        for py_file in sorted(subdir.rglob("*.py")):
-            if py_file.name == "__init__.py" or "__pycache__" in str(py_file):
-                continue
-            rel = py_file.relative_to(source_dir)
-            candidates.append((py_file, str(rel)))
-
-    # Top-level modules (scoring.py, etc. — not entry points)
-    for py_file in sorted(source_dir.glob("*.py")):
-        if py_file.name == "__init__.py" or py_file.stem in _ENTRY_POINTS:
-            continue
-        candidates.append((py_file, py_file.name))
-
     for py_file, display_name in candidates:
-        modules_scanned += 1
         name = py_file.stem
-
-        # Build regex for import detection.  Matches:
-        #   from trw_mcp.state.foo import ...     (absolute)
-        #   from .foo import ...                   (relative)
-        #   import trw_mcp.state.foo               (full import)
-        #   from . import foo                      (package import)
-        escaped = re.escape(name)
-        import_re = re.compile(
-            rf"(?:from\s+\S*\.{escaped}\s+import"
-            rf"|import\s+\S*\.{escaped}(?:\s|$|,)"
-            rf"|from\s+\.\.?\s+import\s+[^)]*\b{escaped}\b)",
-        )
-
-        is_imported = False
-        for other_path, content in all_source:
-            if other_path == py_file:
-                continue
-            if import_re.search(content):
-                is_imported = True
-                break
-
-        if not is_imported:
+        if not _is_module_imported(py_file, name, all_source):
             orphans.append(display_name)
 
     if orphans:
@@ -193,7 +200,7 @@ def check_orphan_modules(source_dir: Path) -> dict[str, object]:  # noqa: C901
     return {
         "orphans": orphans,
         "all_reachable": len(orphans) == 0,
-        "modules_scanned": modules_scanned,
+        "modules_scanned": len(candidates),
     }
 
 

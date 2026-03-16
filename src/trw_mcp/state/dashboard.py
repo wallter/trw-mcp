@@ -290,29 +290,9 @@ def compare_sprints(
     }
 
 
-def aggregate_dashboard(  # noqa: C901
-    trw_dir: Path,
-    window_days: int = 90,
-    compare_sprint: str = "",
-) -> dict[str, object]:
-    """Main entry point — reads session events and aggregates all trends.
-
-    Reads from .trw/context/analytics.yaml for aggregate counters and
-    .trw/context/session-events.jsonl for per-session data.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        window_days: Number of days to include in the window.
-        compare_sprint: Optional sprint ID to compare against previous.
-
-    Returns:
-        Dict with all dashboard data.
-    """
-    context_dir = trw_dir / "context"
-
+def _load_analytics_yaml(context_dir: Path) -> dict[str, object]:
+    """Load analytics.yaml from context directory with fallback on error."""
     reader = FileStateReader()
-
-    # Read aggregate counters from analytics.yaml
     analytics: dict[str, object] = {}
     analytics_path = context_dir / "analytics.yaml"
     if analytics_path.exists():
@@ -320,23 +300,35 @@ def aggregate_dashboard(  # noqa: C901
             analytics = reader.read_yaml(analytics_path)
         except (OSError, StateError):
             logger.debug("analytics_yaml_load_failed", path=str(analytics_path), exc_info=True)
+    return analytics
 
-    # Read session events from session-events.jsonl
+
+def _load_session_events(context_dir: Path) -> list[dict[str, object]]:
+    """Load session-events.jsonl from context directory with fallback on error."""
+    reader = FileStateReader()
     events_path = context_dir / "session-events.jsonl"
-    raw_events: list[dict[str, object]] = []
-    if events_path.exists():
-        try:
-            raw_events = reader.read_jsonl(events_path)
-        except (OSError, StateError):
-            logger.debug("session_events_load_failed", path=str(events_path), exc_info=True)
+    if not events_path.exists():
+        return []
+    try:
+        return reader.read_jsonl(events_path)
+    except (OSError, StateError):
+        logger.debug("session_events_load_failed", path=str(events_path), exc_info=True)
+        return []
 
-    # Filter to window and extract session-like events
+
+def _filter_events_to_window(
+    raw_events: list[dict[str, object]],
+    window_days: int,
+) -> tuple[list[dict[str, object]], int]:
+    """Filter events to time window and extract session-like dicts.
+
+    Returns (sessions, legacy_skipped_count).
+    """
     cutoff = datetime.now(timezone.utc).timestamp() - (window_days * 86400)
     sessions: list[dict[str, object]] = []
     legacy_skipped = 0
 
     for evt in raw_events:
-        # Try to parse timestamp
         ts_str = safe_str(evt, "timestamp") or safe_str(evt, "ts")
         if ts_str:
             try:
@@ -369,39 +361,75 @@ def aggregate_dashboard(  # noqa: C901
         if session:
             sessions.append(session)
 
+    return sessions, legacy_skipped
+
+
+def _get_alert_thresholds() -> tuple[int, int]:
+    """Get ceremony alert thresholds from config with fallback defaults."""
+    try:
+        cfg = get_config()
+        return cfg.ceremony_alert_threshold, cfg.ceremony_alert_consecutive
+    except (ValueError, TypeError, AttributeError):
+        return 40, 3
+
+
+def _find_sprint_comparison(
+    sessions: list[dict[str, object]],
+    compare_sprint: str,
+) -> dict[str, object] | None:
+    """Find previous sprint and return comparison, or None if not applicable."""
+    sprint_ids: list[str] = []
+    seen: set[str] = set()
+    for s in sessions:
+        sid = _sprint_id(s)
+        if sid not in seen:
+            seen.add(sid)
+            sprint_ids.append(sid)
+
+    if compare_sprint not in sprint_ids:
+        return None
+    idx = sprint_ids.index(compare_sprint)
+    if idx == 0:
+        return None
+    return compare_sprints(
+        sessions,
+        sprint_ids[idx - 1],
+        compare_sprint,
+    )
+
+
+def aggregate_dashboard(
+    trw_dir: Path,
+    window_days: int = 90,
+    compare_sprint: str = "",
+) -> dict[str, object]:
+    """Main entry point — reads session events and aggregates all trends.
+
+    Reads from .trw/context/analytics.yaml for aggregate counters and
+    .trw/context/session-events.jsonl for per-session data.
+
+    Args:
+        trw_dir: Path to .trw directory.
+        window_days: Number of days to include in the window.
+        compare_sprint: Optional sprint ID to compare against previous.
+
+    Returns:
+        Dict with all dashboard data.
+    """
+    context_dir = trw_dir / "context"
+
+    analytics = _load_analytics_yaml(context_dir)
+    raw_events = _load_session_events(context_dir)
+    sessions, legacy_skipped = _filter_events_to_window(raw_events, window_days)
+
     ceremony = compute_ceremony_trend(sessions)
     coverage = compute_coverage_trend(sessions)
     review = compute_review_trend(sessions)
 
-    try:
-        cfg = get_config()
-        alert_threshold = cfg.ceremony_alert_threshold
-        alert_consecutive = cfg.ceremony_alert_consecutive
-    except (ValueError, TypeError, AttributeError):
-        alert_threshold = 40
-        alert_consecutive = 3
-
+    alert_threshold, alert_consecutive = _get_alert_thresholds()
     alerts = detect_degradation(sessions, alert_threshold, alert_consecutive)
 
-    # Sprint comparison
-    sprint_comparison: dict[str, object] | None = None
-    if compare_sprint:
-        # Find the "previous" sprint by looking at unique sprints
-        sprint_ids: list[str] = []
-        seen: set[str] = set()
-        for s in sessions:
-            sid = _sprint_id(s)
-            if sid not in seen:
-                seen.add(sid)
-                sprint_ids.append(sid)
-        if compare_sprint in sprint_ids:
-            idx = sprint_ids.index(compare_sprint)
-            if idx > 0:
-                sprint_comparison = compare_sprints(
-                    sessions,
-                    sprint_ids[idx - 1],
-                    compare_sprint,
-                )
+    sprint_comparison = _find_sprint_comparison(sessions, compare_sprint) if compare_sprint else None
 
     return {
         "ceremony_trend": ceremony,

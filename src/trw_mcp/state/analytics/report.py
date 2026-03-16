@@ -46,7 +46,72 @@ _CEREMONY_WEIGHTS: dict[str, int] = {
 }
 
 
-def compute_ceremony_score(  # noqa: C901
+def _classify_event(
+    event_type: str,
+    tool_name: str,
+    is_tool_invocation: bool,
+) -> tuple[bool, bool, bool, bool, bool, bool, bool | None]:
+    """Classify a single event and extract ceremony flags.
+
+    Returns tuple of: (has_session_start, has_deliver, has_checkpoint, has_learn,
+                       has_build_check, has_review, build_passed).
+    """
+    has_session_start = event_type == "session_start" or (is_tool_invocation and tool_name == "trw_session_start")
+    has_deliver = event_type in ("reflection_complete", "claude_md_synced", "trw_deliver_complete") or (
+        is_tool_invocation and tool_name in ("trw_deliver", "trw_reflect")
+    )
+    has_checkpoint = event_type == "checkpoint" or (is_tool_invocation and tool_name == "trw_checkpoint")
+    has_learn = "learn" in event_type or (is_tool_invocation and tool_name == "trw_learn")
+    has_build_check = event_type == "build_check_complete" or (is_tool_invocation and tool_name == "trw_build_check")
+    has_review = event_type in ("review_complete", "spec_reconciliation") or (
+        is_tool_invocation and tool_name == "trw_review"
+    )
+    build_passed: bool | None = None
+    return has_session_start, has_deliver, has_checkpoint, has_learn, has_build_check, has_review, build_passed
+
+
+def _accumulate_event_counts(
+    events: list[dict[str, object]],
+) -> tuple[bool, bool, int, int, bool, bool, bool | None]:
+    """Scan events and accumulate ceremony counts.
+
+    Returns: (has_session_start, has_deliver, checkpoint_count, learn_count,
+              has_build_check, has_review, build_passed).
+    """
+    has_session_start = False
+    has_deliver = False
+    checkpoint_count = 0
+    learn_count = 0
+    has_build_check = False
+    has_review = False
+    build_passed: bool | None = None
+
+    for evt in events:
+        event_type = str(evt.get("event", ""))
+        tool_name = str(evt.get("tool_name", ""))
+        is_tool_invocation = event_type == "tool_invocation"
+
+        ss, dl, cp, ln, bc, rv, _bp = _classify_event(event_type, tool_name, is_tool_invocation)
+
+        if ss:
+            has_session_start = True
+        if dl:
+            has_deliver = True
+        if cp:
+            checkpoint_count += 1
+        if ln:
+            learn_count += 1
+        if bc:
+            has_build_check = True
+            if "tests_passed" in evt:
+                build_passed = str(evt["tests_passed"]).lower() == "true"
+        if rv:
+            has_review = True
+
+    return has_session_start, has_deliver, checkpoint_count, learn_count, has_build_check, has_review, build_passed
+
+
+def compute_ceremony_score(
     events: list[dict[str, object]],
     trw_dir: Path | None = None,
 ) -> CeremonyScoreResult:
@@ -79,37 +144,10 @@ def compute_ceremony_score(  # noqa: C901
         events = _merge_session_events(list(events), trw_dir)
     else:
         events = list(events)
-    has_session_start = False
-    has_deliver = False
-    checkpoint_count = 0
-    learn_count = 0
-    has_build_check = False
-    has_review = False
-    build_passed: bool | None = None
 
-    for evt in events:
-        event_type = str(evt.get("event", ""))
-        tool_name = str(evt.get("tool_name", ""))
-        is_tool_invocation = event_type == "tool_invocation"
-
-        if event_type == "session_start" or (is_tool_invocation and tool_name == "trw_session_start"):
-            has_session_start = True
-        elif event_type in ("reflection_complete", "claude_md_synced", "trw_deliver_complete") or (
-            is_tool_invocation and tool_name in ("trw_deliver", "trw_reflect")
-        ):
-            has_deliver = True
-        elif event_type == "checkpoint" or (is_tool_invocation and tool_name == "trw_checkpoint"):
-            checkpoint_count += 1
-        elif "learn" in event_type or (is_tool_invocation and tool_name == "trw_learn"):
-            learn_count += 1
-        elif event_type == "build_check_complete" or (is_tool_invocation and tool_name == "trw_build_check"):
-            has_build_check = True
-            if "tests_passed" in evt:
-                build_passed = str(evt["tests_passed"]).lower() == "true"
-        elif event_type in ("review_complete", "spec_reconciliation") or (
-            is_tool_invocation and tool_name == "trw_review"
-        ):
-            has_review = True
+    has_session_start, has_deliver, checkpoint_count, learn_count, has_build_check, has_review, build_passed = (
+        _accumulate_event_counts(events)
+    )
 
     score = 0
     if has_session_start:

@@ -85,7 +85,138 @@ def _compute_transition_path(
     return None
 
 
-def auto_progress_prds(  # noqa: C901
+def _parse_current_status(
+    prd_id: str,
+    fm: dict[str, object],
+) -> PRDStatus | None:
+    """Parse and validate current PRD status from frontmatter.
+
+    Returns PRDStatus or None if invalid.
+    """
+    current_str = str(fm.get("status", "draft")).lower()
+    try:
+        return PRDStatus(current_str)
+    except ValueError:
+        logger.warning(
+            "auto_progress_invalid_status",
+            prd_id=prd_id,
+            status=current_str,
+        )
+        return None
+
+
+def _apply_transition_steps(
+    prd_file: Path,
+    transition_path: list[PRDStatus],
+    current_status: PRDStatus,
+    config: TRWConfig,
+    dry_run: bool,
+) -> tuple[bool, str, str | None, str | None]:
+    """Apply each step in the transition path, checking guards.
+
+    Returns: (final_applied, final_status_str, stopped_at, stop_reason).
+    """
+    step_current = current_status
+    step_current_str = current_status.value
+    final_applied = False
+    stopped_at: str | None = None
+    stop_reason: str | None = None
+
+    for step_target in transition_path:
+        content = prd_file.read_text(encoding="utf-8")
+        guard = check_transition_guards(
+            step_current,
+            step_target,
+            content,
+            config,
+        )
+        if not guard.allowed:
+            stopped_at = step_current.value
+            stop_reason = guard.reason
+            break
+
+        if not dry_run:
+            update_frontmatter(prd_file, {"status": step_target.value})
+
+        step_current = step_target
+        step_current_str = step_target.value
+        final_applied = True
+
+    return final_applied, step_current_str, stopped_at, stop_reason
+
+
+def _build_progression_result(
+    prd_id: str,
+    current_str: str,
+    target_status: PRDStatus,
+    final_applied: bool,
+    final_status_str: str,
+    stopped_at: str | None,
+    stop_reason: str | None,
+    dry_run: bool,
+) -> ProgressionItem:
+    """Build the progression result dict based on application outcome."""
+    if final_applied:
+        entry: dict[str, object] = {
+            "prd_id": prd_id,
+            "from_status": current_str,
+            "to_status": final_status_str,
+            "applied": True,
+        }
+        if dry_run:
+            entry["applied"] = False
+            entry["would_apply"] = True
+        if stopped_at is not None:
+            entry["partial"] = True
+            entry["stopped_at"] = stopped_at
+            entry["stop_reason"] = stop_reason
+        return cast("ProgressionItem", entry)
+
+    if stopped_at is not None:
+        entry = {
+            "prd_id": prd_id,
+            "from_status": current_str,
+            "to_status": target_status.value,
+            "applied": False,
+            "guard_failed": True,
+            "reason": stop_reason or "guard_failed",
+        }
+        if dry_run:
+            entry["would_apply"] = False
+        return cast("ProgressionItem", entry)
+
+    return cast(
+        "ProgressionItem",
+        {
+            "prd_id": prd_id,
+            "from_status": current_str,
+            "to_status": target_status.value,
+            "applied": False,
+            "reason": "no_steps_applied",
+        },
+    )
+
+
+def _sync_indices_if_progressed(
+    results: list[ProgressionItem],
+    prds_dir: Path,
+) -> None:
+    """Trigger index sync as best-effort side effect if any PRDs progressed."""
+    if not any(r.get("applied") for r in results):
+        return
+    try:
+        from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
+        from trw_mcp.state.persistence import FileStateWriter
+
+        writer = FileStateWriter()
+        aare_dir = prds_dir.parent
+        sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
+        sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
+    except Exception:
+        logger.debug("index_sync_failed", exc_info=True)
+
+
+def auto_progress_prds(
     run_path: Path,
     phase: str,
     prds_dir: Path,
@@ -135,121 +266,60 @@ def auto_progress_prds(  # noqa: C901
             content = prd_file.read_text(encoding="utf-8")
             fm = parse_frontmatter(content)
             current_str = str(fm.get("status", "draft")).lower()
-            try:
-                current_status = PRDStatus(current_str)
-            except ValueError:
-                logger.warning(
-                    "auto_progress_invalid_status",
-                    prd_id=prd_id,
-                    status=current_str,
-                )
+
+            current_status = _parse_current_status(prd_id, fm)
+            if current_status is None:
                 continue
 
-            # Skip terminal and identity transitions
-            if current_status in _TERMINAL_STATUSES:
-                continue
-            if current_status == target_status:
+            if current_status in _TERMINAL_STATUSES or current_status == target_status:
                 continue
 
             # Determine the transition path to apply
-            transition_path: list[PRDStatus]
             if is_valid_transition(current_status, target_status):
-                # Direct transition available — single step
                 transition_path = [target_status]
             else:
-                # FR05 (PRD-FIX-053): Compute multi-step path via BFS
                 bfs_path = _compute_transition_path(current_status, target_status)
                 if bfs_path is None:
-                    # No path found — log and skip
                     logger.warning(
                         "auto_progress_no_path",
                         prd_id=prd_id,
                         from_status=current_str,
                         to_status=target_status.value,
                     )
-                    no_path_item: ProgressionItem = {
-                        "prd_id": prd_id,
-                        "from_status": current_str,
-                        "to_status": target_status.value,
-                        "applied": False,
-                        "reason": "no_transition_path",
-                    }
-                    results.append(no_path_item)
+                    results.append(
+                        cast(
+                            "ProgressionItem",
+                            {
+                                "prd_id": prd_id,
+                                "from_status": current_str,
+                                "to_status": target_status.value,
+                                "applied": False,
+                                "reason": "no_transition_path",
+                            },
+                        )
+                    )
                     continue
                 transition_path = bfs_path
 
-            # Apply each step in the path
-            step_current = current_status
-            step_current_str = current_str
-            final_applied = False
-            stopped_at: str | None = None
-            stop_reason: str | None = None
+            final_applied, final_status_str, stopped_at, stop_reason = _apply_transition_steps(
+                prd_file,
+                transition_path,
+                current_status,
+                config,
+                dry_run,
+            )
 
-            for step_target in transition_path:
-                # Re-read content for accurate guard check at each step
-                content = prd_file.read_text(encoding="utf-8")
-                guard = check_transition_guards(
-                    step_current,
-                    step_target,
-                    content,
-                    config,
-                )
-                if not guard.allowed:
-                    # Guard failed — stop here (partial progression)
-                    stopped_at = step_current.value
-                    stop_reason = guard.reason
-                    break
-
-                if not dry_run:
-                    update_frontmatter(prd_file, {"status": step_target.value})
-
-                step_current = step_target
-                step_current_str = step_target.value
-                final_applied = True
-
-            if final_applied:
-                entry: dict[str, object] = {
-                    "prd_id": prd_id,
-                    "from_status": current_str,
-                    "to_status": step_current_str,
-                    "applied": True,
-                }
-                if dry_run:
-                    entry["applied"] = False
-                    entry["would_apply"] = True
-                # Report partial progression if stopped before target
-                if stopped_at is not None:
-                    entry["partial"] = True
-                    entry["stopped_at"] = stopped_at
-                    entry["stop_reason"] = stop_reason
-                results.append(cast("ProgressionItem", entry))
-            elif stopped_at is not None:
-                # Guard failed on the very first step
-                entry = {
-                    "prd_id": prd_id,
-                    "from_status": current_str,
-                    "to_status": target_status.value,
-                    "applied": False,
-                    "guard_failed": True,
-                    "reason": stop_reason or "guard_failed",
-                }
-                if dry_run:
-                    entry["would_apply"] = False
-                results.append(cast("ProgressionItem", entry))
-            else:
-                # No steps were applied and no guard failed — shouldn't happen
-                results.append(
-                    cast(
-                        "ProgressionItem",
-                        {
-                            "prd_id": prd_id,
-                            "from_status": current_str,
-                            "to_status": target_status.value,
-                            "applied": False,
-                            "reason": "no_steps_applied",
-                        },
-                    )
-                )
+            result = _build_progression_result(
+                prd_id,
+                current_str,
+                target_status,
+                final_applied,
+                final_status_str,
+                stopped_at,
+                stop_reason,
+                dry_run,
+            )
+            results.append(result)
 
         except (OSError, ValueError, TypeError) as exc:
             logger.warning(
@@ -259,18 +329,8 @@ def auto_progress_prds(  # noqa: C901
             )
             continue
 
-    # FR06: Trigger index sync as best-effort side effect
-    if not dry_run and any(r.get("applied") for r in results):
-        try:
-            from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
-            from trw_mcp.state.persistence import FileStateWriter
-
-            writer = FileStateWriter()
-            aare_dir = prds_dir.parent
-            sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
-            sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
-        except Exception:  # justified: fail-open, index sync is best-effort after progression
-            logger.debug("index_sync_failed", exc_info=True)
+    if not dry_run:
+        _sync_indices_if_progressed(results, prds_dir)
 
     logger.info(
         "auto_progress_complete",

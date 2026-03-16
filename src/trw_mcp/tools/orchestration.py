@@ -28,6 +28,7 @@ from trw_mcp.models.typed_dicts import (
     CheckpointEventDataDict,
     CheckpointRecordDict,
     DeployFrameworksVersionDataDict,
+    StatusReflectionDict,
     StatusReversionLatestDict,
     StatusReversionMetricsDict,
     TrwStatusDict,
@@ -56,6 +57,101 @@ def __getattr__(name: str) -> object:
     from trw_mcp.state._helpers import _compat_getattr
 
     return _compat_getattr(name)
+
+
+def _compute_reflection_metrics(events: list[dict[str, object]]) -> StatusReflectionDict:
+    """Count reflection completions and claude_md sync status from event stream."""
+    reflection_count = sum(1 for e in events if e.get("event") == "reflection_complete")
+    has_synced = any(e.get("event") == "claude_md_synced" for e in events)
+    return StatusReflectionDict(
+        count=reflection_count,
+        claude_md_synced=has_synced,
+    )
+
+
+def _compute_last_activity_ts(
+    reader: FileStateReader,
+    meta_path: Path,
+    events: list[dict[str, object]],
+) -> tuple[str, float | None]:
+    """Extract last activity timestamp and hours-since-activity."""
+    checkpoints_path = meta_path / "checkpoints.jsonl"
+    last_ts = ""
+    hours_since = None
+
+    if checkpoints_path.exists():
+        checkpoints = reader.read_jsonl(checkpoints_path)
+        if checkpoints:
+            last_cp = checkpoints[-1]
+            last_ts = str(last_cp.get("ts", ""))
+            if last_ts:
+                hours_since = _parse_timestamp_hours(last_ts)
+                if hours_since is not None:
+                    return last_ts, hours_since
+
+    # Fall back to run_init event
+    run_init_events = [e for e in events if str(e.get("event", "")) == "run_init"]
+    if run_init_events:
+        init_ts = str(run_init_events[0].get("ts", ""))
+        if init_ts:
+            last_ts = init_ts
+            hours_since = _parse_timestamp_hours(init_ts)
+
+    return last_ts, hours_since
+
+
+def _parse_timestamp_hours(ts: str) -> float | None:
+    """Parse ISO timestamp and return hours since then, or None on error."""
+    try:
+        last_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        return round((now - last_dt).total_seconds() / 3600, 1)
+    except (ValueError, TypeError):
+        logger.debug("timestamp_parse_failed", timestamp=ts)
+        return None
+
+
+def _update_wave_status(
+    reader: FileStateReader,
+    writer: FileStateWriter,
+    meta_path: Path,
+    wave_id: str,
+    ts: str,
+    message: str,
+) -> None:
+    """Update wave status in run.yaml with checkpoint metadata."""
+    try:
+        run_yaml = meta_path / "run.yaml"
+        if not run_yaml.exists():
+            return
+        run_data = reader.read_yaml(run_yaml)
+        if not isinstance(run_data, dict):
+            return
+        wave_status = run_data.get("wave_status", {})
+        if not isinstance(wave_status, dict):
+            wave_status = {}
+        wave_status[wave_id] = {
+            "last_checkpoint": ts,
+            "message": message,
+        }
+        run_data["wave_status"] = wave_status
+        writer.write_yaml(run_yaml, run_data)
+    except Exception:  # justified: fail-open, wave status metadata update must not block checkpoint
+        logger.debug("wave_status_update_failed", wave_id=wave_id)
+
+
+def _inject_ceremony_nudge(result: dict[str, str], _trw_dir: Path | None) -> None:
+    """Inject ceremony nudge into checkpoint response."""
+    if _trw_dir is None:
+        return
+    try:
+        from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
+        ctx = NudgeContext(tool_name=ToolName.CHECKPOINT)
+        append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
+    except Exception:  # justified: fail-open, nudge injection must not block checkpoint  # noqa: S110
+        pass
 
 
 def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
@@ -259,7 +355,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
     @server.tool()
     @log_tool_call
-    def trw_status(run_path: str | None = None) -> TrwStatusDict:  # noqa: C901
+    def trw_status(run_path: str | None = None) -> TrwStatusDict:
         """See your current phase, completed work, and what to do next — so you pick up where you left off instead of redoing work.
 
         Returns run state including phase, wave progress, shard status, confidence,
@@ -285,10 +381,6 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         events_path = meta_path / "events.jsonl"
         events = reader.read_jsonl(events_path)
 
-        # Reflection metrics (count only, no need to collect full lists)
-        reflection_count = sum(1 for e in events if e.get("event") == "reflection_complete")
-        has_synced = any(e.get("event") == "claude_md_synced" for e in events)
-
         result: TrwStatusDict = {
             "run_id": str(state_data.get("run_id", "unknown")),
             "task": str(state_data.get("task", "unknown")),
@@ -297,10 +389,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             "confidence": str(state_data.get("confidence", "unknown")),
             "framework": str(state_data.get("framework", "unknown")),
             "event_count": len(events),
-            "reflection": {
-                "count": reflection_count,
-                "claude_md_synced": has_synced,
-            },
+            "reflection": _compute_reflection_metrics(events),
         }
 
         if wave_data:
@@ -324,35 +413,11 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         result["reversions"] = reversion_metrics
 
         # Last activity tracking (RC-002: detect stale/abandoned tracks)
-        checkpoints_path = meta_path / "checkpoints.jsonl"
-        if checkpoints_path.exists():
-            checkpoints = reader.read_jsonl(checkpoints_path)
-            if checkpoints:
-                last_cp = checkpoints[-1]
-                last_ts = str(last_cp.get("ts", ""))
-                result["last_activity_ts"] = last_ts
-                if last_ts:
-                    try:
-                        last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
-                        now = datetime.now(timezone.utc)
-                        delta_hours = (now - last_dt).total_seconds() / 3600
-                        result["hours_since_activity"] = round(delta_hours, 1)
-                    except (ValueError, TypeError):
-                        logger.debug("checkpoint_timestamp_parse_failed", exc_info=True)
-        if "last_activity_ts" not in result:
-            # Fall back to run.yaml creation (run_init event)
-            run_init_events = [e for e in events if str(e.get("event", "")) == "run_init"]
-            if run_init_events:
-                init_ts = str(run_init_events[0].get("ts", ""))
-                if init_ts:
-                    result["last_activity_ts"] = init_ts
-                    try:
-                        init_dt = datetime.fromisoformat(init_ts.replace("Z", "+00:00"))
-                        now = datetime.now(timezone.utc)
-                        delta_hours = (now - init_dt).total_seconds() / 3600
-                        result["hours_since_activity"] = round(delta_hours, 1)
-                    except (ValueError, TypeError):
-                        logger.debug("init_timestamp_parse_failed", exc_info=True)
+        last_ts, hours_since = _compute_last_activity_ts(reader, meta_path, events)
+        if last_ts:
+            result["last_activity_ts"] = last_ts
+        if hours_since is not None:
+            result["hours_since_activity"] = hours_since
 
         # Stale framework version warning
         version_warning = _check_framework_version_staleness(
@@ -393,7 +458,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
     @server.tool()
     @log_tool_call
-    def trw_checkpoint(  # noqa: C901
+    def trw_checkpoint(
         run_path: str | None = None,
         message: str = "",
         shard_id: str | None = None,
@@ -417,9 +482,9 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         meta_path = resolved_path / "meta"
 
         state_data = reader.read_yaml(meta_path / "run.yaml")
+        ts = datetime.now(timezone.utc).isoformat()
 
         # Create checkpoint record
-        ts = datetime.now(timezone.utc).isoformat()
         checkpoint: CheckpointRecordDict = {
             "ts": ts,
             "message": message,
@@ -446,22 +511,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
         # Update wave status in run.yaml if wave_id provided (PRD-INFRA-036-FR02)
         if wave_id:
-            try:
-                run_yaml = meta_path / "run.yaml"
-                if run_yaml.exists():
-                    run_data = reader.read_yaml(run_yaml)
-                    if isinstance(run_data, dict):
-                        wave_status = run_data.get("wave_status", {})
-                        if not isinstance(wave_status, dict):
-                            wave_status = {}
-                        wave_status[wave_id] = {
-                            "last_checkpoint": ts,
-                            "message": message,
-                        }
-                        run_data["wave_status"] = wave_status
-                        writer.write_yaml(run_yaml, run_data)
-            except Exception:  # justified: fail-open, wave status metadata update must not block checkpoint
-                logger.debug("wave_status_update_failed", wave_id=wave_id)
+            _update_wave_status(reader, writer, meta_path, wave_id, ts, message)
 
         logger.info("trw_checkpoint_created", message=message)
         result: dict[str, str] = {
@@ -490,15 +540,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
                 pass
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        if _trw_dir is not None:
-            try:
-                from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-                from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-                ctx = NudgeContext(tool_name=ToolName.CHECKPOINT)
-                append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
-            except Exception:  # justified: fail-open, nudge injection must not block checkpoint  # noqa: S110
-                pass
+        _inject_ceremony_nudge(result, _trw_dir)
 
         return result
 

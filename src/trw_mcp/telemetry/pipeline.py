@@ -125,7 +125,70 @@ class TelemetryPipeline:
     # Enqueue
     # ------------------------------------------------------------------
 
-    def enqueue(self, event: dict[str, object]) -> None:  # noqa: C901
+    def _scrub_pii(self, event: dict[str, object]) -> None:
+        """Scrub PII and redact paths from event in-place."""
+        error_val = event.get("error")
+        if isinstance(error_val, str):
+            event["error"] = strip_pii(error_val)
+
+        try:
+            project_root = resolve_project_root()
+        except Exception:  # justified: fail-open, path resolution failure non-fatal
+            project_root = None
+
+        if project_root is not None:
+            for key, value in event.items():
+                if isinstance(value, str):
+                    event[key] = redact_paths(value, project_root)
+
+    def _enrich_installation_id(self, event: dict[str, object]) -> None:
+        """Add installation_id if missing."""
+        if "installation_id" in event:
+            return
+        try:
+            event["installation_id"] = _resolve_installation_id()
+        except Exception:  # justified: fail-open, enrichment failure non-fatal
+            event["installation_id"] = "unknown"
+
+    def _enrich_framework_version(self, event: dict[str, object]) -> None:
+        """Add framework_version if missing."""
+        if "framework_version" in event:
+            return
+        try:
+            from trw_mcp.models.config import get_config
+
+            event["framework_version"] = get_config().framework_version
+        except Exception:  # justified: fail-open, config resolution non-fatal  # noqa: S110
+            pass
+
+    def _enrich_event_type(self, event: dict[str, object]) -> None:
+        """Set event_type if missing."""
+        if "event_type" not in event:
+            event["event_type"] = "tool_invocation"
+
+    def _enrich_phase(self, event: dict[str, object]) -> None:
+        """Auto-populate phase from active run if missing."""
+        if "phase" in event:
+            return
+        try:
+            from trw_mcp.state._paths import find_active_run
+            from trw_mcp.state.persistence import FileStateReader
+
+            run_dir = find_active_run()
+            if run_dir is not None:
+                run_yaml = run_dir / "meta" / "run.yaml"
+                if run_yaml.exists():
+                    data = FileStateReader().read_yaml(run_yaml)
+                    event["phase"] = str(data.get("phase", "unknown"))
+        except Exception:  # justified: fail-open, phase enrichment non-critical  # noqa: S110
+            pass
+
+    def _enrich_timestamp(self, event: dict[str, object]) -> None:
+        """Add timestamp if missing."""
+        if "ts" not in event:
+            event["ts"] = datetime.now(timezone.utc).isoformat()
+
+    def enqueue(self, event: dict[str, object]) -> None:
         """Sanitize and enqueue a telemetry event.
 
         Fail-open: exceptions are caught and silently swallowed so that
@@ -139,62 +202,13 @@ class TelemetryPipeline:
             if not self._enabled:
                 return
 
-            # --- PII scrub ---
-            error_val = event.get("error")
-            if isinstance(error_val, str):
-                event["error"] = strip_pii(error_val)
+            self._scrub_pii(event)
+            self._enrich_installation_id(event)
+            self._enrich_framework_version(event)
+            self._enrich_event_type(event)
+            self._enrich_phase(event)
+            self._enrich_timestamp(event)
 
-            # Redact filesystem paths from all string values
-            try:
-                project_root = resolve_project_root()
-            except Exception:  # justified: fail-open, path resolution failure non-fatal
-                project_root = None
-
-            if project_root is not None:
-                for key, value in event.items():
-                    if isinstance(value, str):
-                        event[key] = redact_paths(value, project_root)
-
-            # --- Enrich missing fields ---
-            if "installation_id" not in event:
-                try:
-                    event["installation_id"] = _resolve_installation_id()
-                except Exception:  # justified: fail-open, enrichment failure non-fatal
-                    event["installation_id"] = "unknown"
-
-            if "framework_version" not in event:
-                try:
-                    from trw_mcp.models.config import get_config
-
-                    event["framework_version"] = get_config().framework_version
-                except Exception:  # justified: fail-open, config resolution non-fatal  # noqa: S110
-                    pass
-
-            if "event_type" not in event:
-                event["event_type"] = "tool_invocation"
-
-            # Auto-populate phase from active run when missing — ensures all
-            # events (not just tool_invocation) carry phase context for
-            # per-phase analytics at the backend.
-            if "phase" not in event:
-                try:
-                    from trw_mcp.state._paths import find_active_run
-
-                    run_dir = find_active_run()
-                    if run_dir is not None:
-                        run_yaml = run_dir / "meta" / "run.yaml"
-                        if run_yaml.exists():
-                            from trw_mcp.state.persistence import FileStateReader
-
-                            data = FileStateReader().read_yaml(run_yaml)
-                            event["phase"] = str(data.get("phase", "unknown"))
-                except Exception:  # justified: fail-open, phase enrichment non-critical  # noqa: S110
-                    pass
-
-            if "ts" not in event:
-                event["ts"] = datetime.now(timezone.utc).isoformat()
-
-            # --- Append to bounded deque ---
             with self._lock:
                 was_full = len(self._queue) == self._queue.maxlen
                 self._queue.append(event)

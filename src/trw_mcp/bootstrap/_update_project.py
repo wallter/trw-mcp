@@ -1091,7 +1091,85 @@ def _update_config_target_platforms(
 # ---------------------------------------------------------------------------
 
 
-def update_project(  # noqa: C901
+def _init_result_dict(dry_run: bool) -> dict[str, list[str]]:
+    """Initialize result dict with optional dry-run warning."""
+    result: dict[str, list[str]] = {
+        "updated": [],
+        "created": [],
+        "preserved": [],
+        "errors": [],
+        "warnings": [],
+        "cleaned": [],
+    }
+    if dry_run:
+        result["warnings"].append("DRY RUN — no files will be modified.")
+    return result
+
+
+def _run_core_update_phases(
+    target_dir: Path,
+    effective_data: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+    on_progress: ProgressCallback,
+) -> None:
+    """Execute core update phases (framework files, config, cleanup)."""
+    if not dry_run:
+        from . import _TRW_DIRS
+        for rel_dir in _TRW_DIRS:
+            _ensure_dir(target_dir / rel_dir, result, on_progress)
+
+    if on_progress:
+        on_progress("Phase", "Updating framework files...")
+    _update_framework_files(target_dir, effective_data, result, dry_run, on_progress)
+
+    if on_progress:
+        on_progress("Phase", "Updating configuration files...")
+    _update_mcp_config(target_dir, result, dry_run, on_progress)
+
+    if on_progress:
+        on_progress("Phase", "Cleaning stale artifacts...")
+    _cleanup_stale_artifacts(target_dir, result, effective_data, dry_run)
+
+    _check_package_version(result)
+
+
+def _run_post_update_phases(
+    target_dir: Path,
+    pip_install: bool,
+    ide: str | None,
+    result: dict[str, list[str]],
+    on_progress: ProgressCallback,
+) -> None:
+    """Execute post-update phases (package install, verification, IDE configs)."""
+    if pip_install:
+        if on_progress:
+            on_progress("Phase", "Reinstalling package...")
+        _pip_install_package(target_dir, result)
+
+    if on_progress:
+        on_progress("Phase", "Writing metadata...")
+    _write_installer_metadata(target_dir, "update-project", result, on_progress)
+    _write_version_yaml(target_dir, result, on_progress)
+
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
+    _update_config_target_platforms(target_dir, ide_targets, result)
+
+    if on_progress:
+        on_progress("Phase", "Verifying installation...")
+    _verify_installation(target_dir, result)
+
+    if on_progress:
+        on_progress("Phase", "Syncing CLAUDE.md...")
+    _run_claude_md_sync(target_dir, result)
+
+    if on_progress:
+        on_progress("Phase", "Updating IDE configs...")
+    _update_opencode_artifacts(target_dir, result, ide_override=ide)
+    _update_cursor_artifacts(target_dir, result, ide_override=ide)
+
+
+def update_project(
     target_dir: Path,
     *,
     pip_install: bool = False,
@@ -1128,92 +1206,20 @@ def update_project(  # noqa: C901
         Dict with ``updated``, ``created``, ``preserved``, ``errors``,
         and ``warnings`` lists.
     """
-    from . import _TRW_DIRS
+    result = _init_result_dict(dry_run)
 
-    effective_data = data_dir or _DATA_DIR
-    result: dict[str, list[str]] = {
-        "updated": [],
-        "created": [],
-        "preserved": [],
-        "errors": [],
-        "warnings": [],
-        "cleaned": [],
-    }
-
-    if dry_run:
-        result["warnings"].append("DRY RUN — no files will be modified.")
-
-    # Validate target has TRW installed
     if not (target_dir / ".trw").exists():
         result["errors"].append(
             f"{target_dir} does not have TRW installed (.trw/ not found). Run `trw-mcp init-project` first."
         )
         return result
 
-    # 1. Ensure directories exist
+    effective_data = data_dir or _DATA_DIR
+    _run_core_update_phases(target_dir, effective_data, result, dry_run, on_progress)
+
     if not dry_run:
-        for rel_dir in _TRW_DIRS:
-            _ensure_dir(target_dir / rel_dir, result, on_progress)
+        _run_post_update_phases(target_dir, pip_install, ide, result, on_progress)
 
-    # 2-6. Copy/update framework files, hooks, skills, agents
-    if on_progress:
-        on_progress("Phase", "Updating framework files...")
-    _update_framework_files(target_dir, effective_data, result, dry_run, on_progress)
-
-    # 7-8. Update .mcp.json and CLAUDE.md configuration
-    if on_progress:
-        on_progress("Phase", "Updating configuration files...")
-    _update_mcp_config(target_dir, result, dry_run, on_progress)
-
-    # 9a-9c. Remove stale and transient artifacts
-    if on_progress:
-        on_progress("Phase", "Cleaning stale artifacts...")
-    _cleanup_stale_artifacts(target_dir, result, data_dir, dry_run)
-
-    # 10. Check installed package version
-    _check_package_version(result)
-
-    # 11. Reinstall package if requested
-    if pip_install and not dry_run:
-        if on_progress:
-            on_progress("Phase", "Reinstalling package...")
-        _pip_install_package(target_dir, result)
-
-    # 12. Write installer metadata + VERSION.yaml
-    if not dry_run:
-        if on_progress:
-            on_progress("Phase", "Writing metadata...")
-        _write_installer_metadata(target_dir, "update-project", result, on_progress)
-        _write_version_yaml(target_dir, result, on_progress)
-
-    # 12b. Update target_platforms in config.yaml based on detected IDEs
-    if not dry_run:
-        ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
-        _update_config_target_platforms(target_dir, ide_targets, result)
-
-    # 13. Post-update verification
-    if not dry_run:
-        if on_progress:
-            on_progress("Phase", "Verifying installation...")
-        _verify_installation(target_dir, result)
-
-    # 13b. Post-update CLAUDE.md sync (resolve placeholders, promote learnings)
-    if not dry_run:
-        if on_progress:
-            on_progress("Phase", "Syncing CLAUDE.md...")
-        _run_claude_md_sync(target_dir, result)
-
-    # 13c. OpenCode updates (FR15: multi-IDE support)
-    if not dry_run:
-        if on_progress:
-            on_progress("Phase", "Updating IDE configs...")
-        _update_opencode_artifacts(target_dir, result, ide_override=ide)
-
-    # 13d. Cursor updates (FR05, FR06, FR07: Cursor IDE support)
-    if not dry_run:
-        _update_cursor_artifacts(target_dir, result, ide_override=ide)
-
-    # 14. Remind about running sessions
     result["warnings"].append(
         "Running Claude Code sessions use cached hooks/settings. "
         "Restart active sessions (or run /mcp) to pick up updates."

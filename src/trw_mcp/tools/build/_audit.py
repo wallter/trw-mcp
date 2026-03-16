@@ -31,7 +31,88 @@ _DEP_AUDIT_FILE = "dep-audit.yaml"
 _API_FUZZ_FILE = "api-fuzz-status.yaml"
 
 
-def _run_pip_audit(  # noqa: C901
+def _compute_severity_rank(severity: str) -> int:
+    """Map severity string to numeric rank for filtering."""
+    severity_map = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    return severity_map.get(severity.lower(), 0)
+
+
+def _parse_vuln_severity(vuln: dict[str, object]) -> tuple[str, int]:
+    """Extract severity and rank from vulnerability dict, with CVSS fallback."""
+    severity_map = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    severity = str(vuln.get("severity", "unknown")).lower()
+    vuln_rank = severity_map.get(severity, 0)
+
+    # Fallback to CVSS score if severity not found
+    if vuln_rank == 0:
+        cvss = vuln.get("cvss_score")
+        if cvss is not None:
+            try:
+                cvss_val = float(str(cvss))
+                if cvss_val >= 9.0:
+                    vuln_rank = 4
+                elif cvss_val >= 7.0:
+                    vuln_rank = 3
+                elif cvss_val >= 4.0:
+                    vuln_rank = 2
+                else:
+                    vuln_rank = 1
+            except (ValueError, TypeError):
+                pass
+
+    return severity, vuln_rank
+
+
+def _process_pip_vulnerabilities(
+    data: object,
+    min_rank: int,
+    block_patchable_only: bool,
+) -> tuple[list[dict[str, object]], int]:
+    """Process pip-audit JSON output and extract vulnerabilities."""
+    vulnerabilities: list[dict[str, object]] = []
+    blocking_count = 0
+
+    deps = data if isinstance(data, list) else data.get("dependencies", []) if isinstance(data, dict) else []
+    for dep in deps:
+        if not isinstance(dep, dict):
+            continue
+        vulns = dep.get("vulns", [])
+        if not isinstance(vulns, list):
+            continue
+        for vuln in vulns:
+            if not isinstance(vuln, dict):
+                continue
+            severity, vuln_rank = _parse_vuln_severity(vuln)
+            if vuln_rank < min_rank:
+                continue
+
+            fix_versions = vuln.get("fix_versions", [])
+            has_fix = bool(fix_versions)
+
+            entry: dict[str, object] = {
+                "package": str(dep.get("name", "")),
+                "version": str(dep.get("version", "")),
+                "cve_id": str(vuln.get("id", "")),
+                "severity": severity,
+                "fix_versions": fix_versions if isinstance(fix_versions, list) else [],
+            }
+            cvss = vuln.get("cvss_score")
+            if cvss is not None:
+                entry["cvss_score"] = float(str(cvss))
+
+            vulnerabilities.append(entry)
+
+            # Blocking logic
+            if block_patchable_only:
+                if has_fix:
+                    blocking_count += 1
+            else:
+                blocking_count += 1
+
+    return vulnerabilities, blocking_count
+
+
+def _run_pip_audit(
     project_root: Path,
     config: TRWConfig,
 ) -> PipAuditResult:
@@ -70,64 +151,12 @@ def _run_pip_audit(  # noqa: C901
             pip_audit_skip_reason=str(data.get("pip_audit_skip_reason", "")),
         )
 
-    # Severity ranking for filtering
-    severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-    min_rank = severity_rank.get(config.dep_audit_level, 3)
-
-    vulnerabilities: list[dict[str, object]] = []
-    blocking_count = 0
-
-    deps = data if isinstance(data, list) else data.get("dependencies", []) if isinstance(data, dict) else []
-    for dep in deps:
-        if not isinstance(dep, dict):
-            continue
-        vulns = dep.get("vulns", [])
-        if not isinstance(vulns, list):
-            continue
-        for vuln in vulns:
-            if not isinstance(vuln, dict):
-                continue
-            # Extract severity -- pip-audit may report it differently
-            severity = str(vuln.get("severity", "unknown")).lower()
-            vuln_rank = severity_rank.get(severity, 0)
-
-            # Also check CVSS score as fallback for severity
-            cvss = vuln.get("cvss_score")
-            if cvss is not None and vuln_rank == 0:
-                cvss_val = float(str(cvss))
-                if cvss_val >= 9.0:
-                    vuln_rank = 4
-                elif cvss_val >= 7.0:
-                    vuln_rank = 3
-                elif cvss_val >= 4.0:
-                    vuln_rank = 2
-                else:
-                    vuln_rank = 1
-
-            if vuln_rank < min_rank:
-                continue
-
-            fix_versions = vuln.get("fix_versions", [])
-            has_fix = bool(fix_versions)
-
-            entry: dict[str, object] = {
-                "package": str(dep.get("name", "")),
-                "version": str(dep.get("version", "")),
-                "cve_id": str(vuln.get("id", "")),
-                "severity": severity,
-                "fix_versions": fix_versions if isinstance(fix_versions, list) else [],
-            }
-            if cvss is not None:
-                entry["cvss_score"] = float(str(cvss))
-
-            vulnerabilities.append(entry)
-
-            # Blocking logic
-            if config.dep_audit_block_on_patchable_only:
-                if has_fix:
-                    blocking_count += 1
-            else:
-                blocking_count += 1
+    min_rank = _compute_severity_rank(config.dep_audit_level)
+    vulnerabilities, blocking_count = _process_pip_vulnerabilities(
+        data,
+        min_rank,
+        config.dep_audit_block_on_patchable_only,
+    )
 
     return PipAuditResult(
         pip_audit_passed=blocking_count == 0,
@@ -219,59 +248,43 @@ def _run_npm_audit(
     )
 
 
-def _detect_unlisted_imports(  # noqa: C901
-    project_root: Path,
-    changed_files: list[str],
-) -> list[str]:
-    """Detect imports in changed files not listed in pyproject.toml dependencies.
-
-    Scans added lines in changed ``.py`` files for import statements and
-    cross-references against ``[project.dependencies]`` in pyproject.toml.
-
-    Args:
-        project_root: Project root directory.
-        changed_files: List of changed file paths.
-
-    Returns:
-        List of package names that appear in imports but not in
-        pyproject.toml dependencies.
-    """
-    # Read pyproject.toml dependencies
+def _read_pyproject_deps(project_root: Path) -> set[str]:
+    """Read dependency names from pyproject.toml in various locations."""
     listed_deps: set[str] = set()
-
-    # Check multiple possible pyproject.toml locations
     for toml_path in [
         project_root / "pyproject.toml",
         project_root / "trw-mcp" / "pyproject.toml",
     ]:
-        if toml_path.exists():
-            try:
-                content = toml_path.read_text(encoding="utf-8")
-                # Simple parser: find lines under [project.dependencies]
-                in_deps = False
-                for line in content.splitlines():
-                    stripped = line.strip()
-                    if stripped == "[project.dependencies]" or stripped.startswith("dependencies"):
-                        in_deps = True
-                        continue
-                    if in_deps and stripped.startswith("["):
-                        in_deps = False
-                        continue
-                    if in_deps and stripped and not stripped.startswith("#"):
-                        # Extract package name (before version specifier)
-                        dep_name = stripped.strip('"').strip("'").strip(",")
-                        dep_name = dep_name.split(">=")[0].split("<=")[0]
-                        dep_name = dep_name.split("==")[0].split("~=")[0]
-                        dep_name = dep_name.split(">")[0].split("<")[0]
-                        dep_name = dep_name.split("[")[0].strip()
-                        if dep_name:
-                            # Normalize: pip uses - and _, Python uses _
-                            listed_deps.add(dep_name.lower().replace("-", "_"))
-            except OSError:
-                continue
+        if not toml_path.exists():
+            continue
+        try:
+            content = toml_path.read_text(encoding="utf-8")
+            in_deps = False
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped == "[project.dependencies]" or stripped.startswith("dependencies"):
+                    in_deps = True
+                    continue
+                if in_deps and stripped.startswith("["):
+                    in_deps = False
+                    continue
+                if in_deps and stripped and not stripped.startswith("#"):
+                    # Extract package name (before version specifier)
+                    dep_name = stripped.strip('"').strip("'").strip(",")
+                    dep_name = dep_name.split(">=")[0].split("<=")[0]
+                    dep_name = dep_name.split("==")[0].split("~=")[0]
+                    dep_name = dep_name.split(">")[0].split("<")[0]
+                    dep_name = dep_name.split("[")[0].strip()
+                    if dep_name:
+                        listed_deps.add(dep_name.lower().replace("-", "_"))
+        except OSError:
+            continue
+    return listed_deps
 
-    # Standard library modules to exclude from detection
-    stdlib_prefixes = {
+
+def _get_stdlib_modules() -> set[str]:
+    """Return set of Python standard library module names."""
+    return {
         "os",
         "sys",
         "re",
@@ -329,10 +342,10 @@ def _detect_unlisted_imports(  # noqa: C901
         "__future__",
     }
 
-    # Scan changed Python files for imports
-    imported_packages: set[str] = set()
-    py_files = [f for f in changed_files if f.endswith(".py")]
 
+def _scan_imports_from_files(project_root: Path, py_files: list[str]) -> set[str]:
+    """Scan Python files and extract imported package names."""
+    imported_packages: set[str] = set()
     for fpath in py_files:
         full_path = project_root / fpath
         if not full_path.exists():
@@ -354,6 +367,31 @@ def _detect_unlisted_imports(  # noqa: C901
                         imported_packages.add(pkg.lower().replace("-", "_"))
         except OSError:
             continue
+    return imported_packages
+
+
+def _detect_unlisted_imports(
+    project_root: Path,
+    changed_files: list[str],
+) -> list[str]:
+    """Detect imports in changed files not listed in pyproject.toml dependencies.
+
+    Scans added lines in changed ``.py`` files for import statements and
+    cross-references against ``[project.dependencies]`` in pyproject.toml.
+
+    Args:
+        project_root: Project root directory.
+        changed_files: List of changed file paths.
+
+    Returns:
+        List of package names that appear in imports but not in
+        pyproject.toml dependencies.
+    """
+    listed_deps = _read_pyproject_deps(project_root)
+    stdlib_prefixes = _get_stdlib_modules()
+
+    py_files = [f for f in changed_files if f.endswith(".py")]
+    imported_packages = _scan_imports_from_files(project_root, py_files)
 
     # Filter out stdlib and already-listed deps
     unlisted = sorted(

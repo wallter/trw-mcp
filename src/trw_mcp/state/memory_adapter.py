@@ -570,7 +570,80 @@ def _search_entries(
 _LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
 
 
-def _keyword_search(  # noqa: C901
+def _apply_entry_filters(
+    entry: MemoryEntry,
+    tags: list[str] | None,
+    mem_status: MemoryStatus | None,
+    min_impact: float,
+) -> bool:
+    """Check if an entry passes all filter criteria.
+
+    Returns True if entry should be included, False otherwise.
+    """
+    if min_impact > 0.0 and entry.importance < min_impact:
+        return False
+    if mem_status is not None and entry.status != mem_status:
+        return False
+    return not (tags and not set(tags).issubset(set(entry.tags)))
+
+
+def _lookup_id_tokens(
+    backend: SQLiteBackend,
+    id_tokens: list[str],
+    tags: list[str] | None,
+    mem_status: MemoryStatus | None,
+    min_impact: float,
+) -> tuple[list[MemoryEntry], set[str]]:
+    """Direct lookup for learning ID tokens (OR semantics).
+
+    Returns (id_entries, seen_ids).
+    """
+    seen_ids: set[str] = set()
+    id_entries: list[MemoryEntry] = []
+    for lid in id_tokens:
+        entry = backend.get(lid)
+        if entry is not None and entry.id not in seen_ids and _apply_entry_filters(entry, tags, mem_status, min_impact):
+            id_entries.append(entry)
+            seen_ids.add(entry.id)
+    return id_entries, seen_ids
+
+
+def _search_intersect_keywords(
+    backend: SQLiteBackend,
+    kw_tokens: list[str],
+    top_k: int,
+    tags: list[str] | None,
+    mem_status: MemoryStatus | None,
+    min_impact: float,
+) -> list[MemoryEntry]:
+    """Search for entries matching ALL keyword tokens (intersection semantics)."""
+    token_id_sets: list[set[str]] = []
+    first_token_ordered: list[MemoryEntry] = []
+
+    for i, token in enumerate(kw_tokens):
+        token_results = backend.search(
+            token,
+            top_k=top_k,
+            tags=tags,
+            status=mem_status,
+            min_importance=min_impact,
+            namespace=_NAMESPACE,
+        )
+        token_ids: set[str] = {e.id for e in token_results}
+        token_id_sets.append(token_ids)
+        if i == 0:
+            first_token_ordered = list(token_results)
+
+    if not token_id_sets:
+        return []
+
+    common_ids = token_id_sets[0]
+    for s in token_id_sets[1:]:
+        common_ids = common_ids & s
+    return [e for e in first_token_ordered if e.id in common_ids]
+
+
+def _keyword_search(
     backend: SQLiteBackend,
     query: str,
     *,
@@ -593,14 +666,9 @@ def _keyword_search(  # noqa: C901
             entry = backend.get(tokens[0])
             if entry is None:
                 return []
-            # Apply same filters as keyword search
-            if min_impact > 0.0 and entry.importance < min_impact:
-                return []
-            if mem_status is not None and entry.status != mem_status:
-                return []
-            if tags and not set(tags).issubset(set(entry.tags)):
-                return []
-            return [entry]
+            if _apply_entry_filters(entry, tags, mem_status, min_impact):
+                return [entry]
+            return []
         return backend.search(
             query,
             top_k=top_k,
@@ -619,21 +687,7 @@ def _keyword_search(  # noqa: C901
         else:
             kw_tokens.append(t)
 
-    # Direct lookup for learning ID tokens (OR semantics — each is independent)
-    seen_ids: set[str] = set()
-    id_entries: list[MemoryEntry] = []
-    for lid in id_tokens:
-        entry = backend.get(lid)
-        if entry is not None and entry.id not in seen_ids:
-            # Apply same filters as keyword search
-            if min_impact > 0.0 and entry.importance < min_impact:
-                continue
-            if mem_status is not None and entry.status != mem_status:
-                continue
-            if tags and not set(tags).issubset(set(entry.tags)):
-                continue
-            id_entries.append(entry)
-            seen_ids.add(entry.id)
+    id_entries, seen_ids = _lookup_id_tokens(backend, id_tokens, tags, mem_status, min_impact)
 
     # Keyword search for remaining tokens (AND/intersection semantics)
     kw_entries: list[MemoryEntry] = []
@@ -648,32 +702,14 @@ def _keyword_search(  # noqa: C901
                 namespace=_NAMESPACE,
             )
         else:
-            # Intersect: entry must match ALL keyword tokens
-            token_id_sets: list[set[str]] = []
-            token_entry_map: dict[str, MemoryEntry] = {}
-            first_token_ordered: list[MemoryEntry] = []
-            for i, token in enumerate(kw_tokens):
-                token_results = backend.search(
-                    token,
-                    top_k=top_k,
-                    tags=tags,
-                    status=mem_status,
-                    min_importance=min_impact,
-                    namespace=_NAMESPACE,
-                )
-                token_ids: set[str] = set()
-                for e in token_results:
-                    token_ids.add(e.id)
-                    token_entry_map[e.id] = e
-                token_id_sets.append(token_ids)
-                if i == 0:
-                    first_token_ordered = list(token_results)
-
-            if token_id_sets:
-                common_ids = token_id_sets[0]
-                for s in token_id_sets[1:]:
-                    common_ids = common_ids & s
-                kw_entries = [e for e in first_token_ordered if e.id in common_ids]
+            kw_entries = _search_intersect_keywords(
+                backend,
+                kw_tokens,
+                top_k,
+                tags,
+                mem_status,
+                min_impact,
+            )
 
     # Union: ID lookups first, then keyword results (deduped)
     results: list[MemoryEntry] = list(id_entries)

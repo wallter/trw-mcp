@@ -638,7 +638,95 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
         return {"skipped": True, "reason": str(exc)}
 
 
-def _step_ceremony_feedback(  # noqa: C901
+def _extract_ceremony_metrics(deliver_results: dict[str, object]) -> tuple[float, bool, float, int]:
+    """Extract ceremony score, build pass, coverage delta, and critical findings."""
+    # Ceremony score
+    ceremony_score_val = deliver_results.get("telemetry", {})
+    score = 0.0
+    if isinstance(ceremony_score_val, dict):
+        score = float(ceremony_score_val.get("ceremony_score", 0))
+
+    # Build passed
+    build_check_data = deliver_results.get("build_check", {})
+    build_passed = False
+    if isinstance(build_check_data, dict):
+        build_passed = bool(build_check_data.get("build_passed", False)) or bool(
+            build_check_data.get("tests_passed", False)
+        )
+
+    # Coverage delta
+    coverage_delta = 0.0
+    if isinstance(build_check_data, dict):
+        raw_delta = build_check_data.get("coverage_delta")
+        if raw_delta is not None:
+            try:
+                coverage_delta = float(str(raw_delta))
+            except (ValueError, TypeError):
+                coverage_delta = 0.0
+
+    # Critical findings
+    review_data = deliver_results.get("review", {})
+    critical_findings = 0
+    if isinstance(review_data, dict):
+        raw_cf = review_data.get("critical_findings")
+        if raw_cf is not None:
+            try:
+                critical_findings = int(str(raw_cf))
+            except (ValueError, TypeError):
+                critical_findings = 0
+
+    return score, build_passed, coverage_delta, critical_findings
+
+
+def _extract_run_metadata(resolved_run: Path | None) -> tuple[dict[str, object], str, str]:
+    """Extract run.yaml metadata and task details."""
+    run_state: dict[str, object] = {}
+    task_name = ""
+    task_description = ""
+
+    if resolved_run is None:
+        return run_state, task_name, task_description
+
+    run_yaml = resolved_run / "meta" / "run.yaml"
+    if run_yaml.exists():
+        reader = FileStateReader()
+        run_state = reader.read_yaml(run_yaml)
+
+    # FIX-050-FR03 / FIX-051-FR02: RunState model uses field "task", not "task_name".
+    task_name = str(run_state.get("task", ""))
+    # FIX-051-FR06: Pass objective for improved classification accuracy.
+    task_description = str(run_state.get("objective", ""))
+
+    return run_state, task_name, task_description
+
+
+def _process_ceremony_proposal(
+    trw_dir: Path,
+    task_class_str: str,
+    proposal: dict[str, object],
+) -> None:
+    """Persist ceremony reduction proposal to disk."""
+    from trw_mcp.state.ceremony_feedback import (
+        _overrides_path,
+        read_overrides,
+        register_proposal,
+    )
+    from trw_mcp.state.persistence import FileStateWriter as _FSW
+
+    register_proposal(proposal)
+    # Persist pending proposals to ceremony-overrides.yaml so
+    # trw_ceremony_status (on main thread) can read them on restart.
+    overrides = read_overrides(trw_dir)
+    pending_proposals = overrides.get("_pending_proposals", {})
+    if not isinstance(pending_proposals, dict):
+        pending_proposals = {}
+    pid = str(proposal.get("proposal_id", ""))
+    pending_proposals[pid] = proposal
+    overrides["_pending_proposals"] = pending_proposals
+    _FSW().write_yaml(_overrides_path(trw_dir), overrides)
+
+
+def _step_ceremony_feedback(
     resolved_run: Path | None,
     deliver_results: dict[str, object],
 ) -> CeremonyFeedbackStepResult | None:
@@ -655,58 +743,12 @@ def _step_ceremony_feedback(  # noqa: C901
         )
 
         trw_dir = _cer.resolve_trw_dir()
-        run_state: dict[str, object] = {}
-        if resolved_run is not None:
-            run_yaml = resolved_run / "meta" / "run.yaml"
-            if run_yaml.exists():
-                reader = FileStateReader()
-                run_state = reader.read_yaml(run_yaml)
 
-        # FIX-050-FR03 / FIX-051-FR02: RunState model uses field "task", not "task_name".
-        task_name = str(run_state.get("task", ""))
-        # FIX-051-FR06: Pass objective for improved classification accuracy.
-        task_description = str(run_state.get("objective", ""))
+        # Extract run metadata
+        run_state, task_name, task_description = _extract_run_metadata(resolved_run)
 
-        # deliver_results["telemetry"] has shape TelemetryStepResult
-        # (keys: status, events, ceremony_score) — .get() used because
-        # deliver_results itself is the untyped accumulator dict.
-        ceremony_score_val = deliver_results.get("telemetry", {})
-        if isinstance(ceremony_score_val, dict):
-            score = float(ceremony_score_val.get("ceremony_score", 0))
-        else:
-            score = 0.0
-
-        # FIX-050-FR04: Extract real build outcome instead of hardcoded defaults.
-        # build_passed: from build_check step result (if ran)
-        build_check_data = deliver_results.get("build_check", {})
-        if isinstance(build_check_data, dict):
-            build_passed = bool(build_check_data.get("build_passed", False)) or bool(
-                build_check_data.get("tests_passed", False)
-            )
-        else:
-            build_passed = False
-
-        # coverage_delta: from build_check if available; default 0.0 until
-        # trw_build_check returns coverage_delta directly (OQ-002).
-        coverage_delta = 0.0
-        if isinstance(build_check_data, dict):
-            raw_delta = build_check_data.get("coverage_delta")
-            if raw_delta is not None:
-                try:
-                    coverage_delta = float(str(raw_delta))
-                except (ValueError, TypeError):
-                    coverage_delta = 0.0
-
-        # critical_findings: from review step if it ran
-        review_data = deliver_results.get("review", {})
-        critical_findings = 0
-        if isinstance(review_data, dict):
-            raw_cf = review_data.get("critical_findings")
-            if raw_cf is not None:
-                try:
-                    critical_findings = int(str(raw_cf))
-                except (ValueError, TypeError):
-                    critical_findings = 0
+        # Extract ceremony metrics
+        score, build_passed, coverage_delta, critical_findings = _extract_ceremony_metrics(deliver_results)
 
         current_tier = "STANDARD"
         if run_state.get("complexity_class"):
@@ -740,24 +782,7 @@ def _step_ceremony_feedback(  # noqa: C901
         # this runs in a daemon thread invisible to the main MCP thread.
         proposal = generate_reduction_proposal(task_class_str, data)
         if proposal:
-            from trw_mcp.state.ceremony_feedback import (
-                _overrides_path,
-                read_overrides,
-                register_proposal,
-            )
-            from trw_mcp.state.persistence import FileStateWriter as _FSW
-
-            register_proposal(proposal)
-            # Persist pending proposals to ceremony-overrides.yaml so
-            # trw_ceremony_status (on main thread) can read them on restart.
-            overrides = read_overrides(trw_dir)
-            pending_proposals = overrides.get("_pending_proposals", {})
-            if not isinstance(pending_proposals, dict):
-                pending_proposals = {}
-            pid = str(proposal.get("proposal_id", ""))
-            pending_proposals[pid] = proposal
-            overrides["_pending_proposals"] = pending_proposals
-            _FSW().write_yaml(_overrides_path(trw_dir), overrides)
+            _process_ceremony_proposal(trw_dir, task_class_str, proposal)
 
         escalation = check_auto_escalation(task_class_str, data)
         if escalation:

@@ -292,7 +292,100 @@ def generate_review_md(
     }
 
 
-def execute_claude_md_sync(  # noqa: C901
+def _determine_write_targets(
+    client: str,
+    config: TRWConfig,
+    project_root: Path,
+    scope: str,
+) -> tuple[bool, bool]:
+    """Determine whether to write CLAUDE.md and/or AGENTS.md based on client param.
+
+    Returns (write_claude, write_agents).
+    """
+    write_claude: bool = True
+    write_agents: bool = False
+
+    if client == "auto":
+        from trw_mcp.bootstrap._utils import detect_ide
+
+        ides = detect_ide(project_root)
+        write_claude = "claude-code" in ides or not ides
+        write_agents = "opencode" in ides and config.agents_md_enabled and scope == "root"
+    elif client == "claude-code":
+        write_claude, write_agents = True, False
+    elif client == "opencode":
+        write_claude, write_agents = False, True
+    elif client == "all":
+        write_claude = True
+        write_agents = config.agents_md_enabled and scope == "root"
+
+    return write_claude, write_agents
+
+
+def _inject_learnings_to_agents(
+    trw_dir: Path,
+    config: TRWConfig,
+) -> str:
+    """Build learning injection string for AGENTS.md or return empty string on error."""
+    try:
+        learning_entries = recall_learnings(
+            trw_dir,
+            min_impact=config.agents_md_learning_min_impact,
+            status="active",
+            max_results=config.agents_md_learning_max,
+        )
+        bullet_lines: list[str] = []
+        for entry in learning_entries:
+            summary = _sanitize_summary(str(entry.get("summary", "")))
+            if summary:
+                bullet_lines.append(f"- {summary}")
+        if bullet_lines:
+            return "\n## Key Learnings\n\n" + "\n".join(bullet_lines) + "\n"
+    except Exception:
+        logger.warning("agents_md_learning_injection_failed", exc_info=True)
+    return ""
+
+
+def _sync_agents_md_if_needed(
+    write_agents: bool,
+    config: TRWConfig,
+    project_root: Path,
+    trw_dir: Path,
+) -> tuple[bool, str | None]:
+    """Generate and write AGENTS.md if needed.
+
+    Returns (agents_md_synced, agents_md_path).
+    """
+    if not write_agents:
+        return False, None
+
+    from trw_mcp.state.claude_md._static_sections import (
+        render_agents_trw_section,
+        render_minimal_protocol,
+    )
+
+    agents_target = project_root / "AGENTS.md"
+    if config.ceremony_mode == "light":
+        agents_body = render_minimal_protocol()
+    else:
+        agents_body = render_agents_trw_section()
+
+    if config.agents_md_learning_injection:
+        agents_body += _inject_learnings_to_agents(trw_dir, config)
+
+    agents_section = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{agents_body}\n{TRW_MARKER_END}\n"
+    agents_lines = agents_section.count("\n")
+    if agents_lines > config.max_auto_lines:
+        logger.warning(
+            "agents_md_section_oversized",
+            lines=agents_lines,
+            limit=config.max_auto_lines,
+        )
+    merge_trw_section(agents_target, agents_section, config.max_auto_lines)
+    return True, str(agents_target)
+
+
+def execute_claude_md_sync(
     scope: str,
     target_dir: str | None,
     config: TRWConfig,
@@ -425,27 +518,7 @@ def execute_claude_md_sync(  # noqa: C901
         target = project_root / "CLAUDE.md"
         max_lines = config.claude_md_max_lines
 
-    # FR13: Determine write targets based on client parameter.
-    # "auto" uses detect_ide() to check for .opencode/ or opencode.json.
-    # The legacy config.agents_md_enabled flag is respected only in auto/all modes.
-    write_claude: bool = True
-    write_agents: bool = False
-
-    if client == "auto":
-        from trw_mcp.bootstrap._utils import detect_ide
-
-        ides = detect_ide(project_root)
-        write_claude = "claude-code" in ides or not ides  # default to claude when no IDE found
-        # Write AGENTS.md if opencode detected, gated by agents_md_enabled config flag
-        write_agents = "opencode" in ides and config.agents_md_enabled and scope == "root"
-    elif client == "claude-code":
-        write_claude, write_agents = True, False
-    elif client == "opencode":
-        write_claude, write_agents = False, True
-    elif client == "all":
-        write_claude = True
-        write_agents = config.agents_md_enabled and scope == "root"
-    # else: fallback to default (write_claude=True, write_agents=False)
+    write_claude, write_agents = _determine_write_targets(client, config, project_root, scope)
 
     total_lines = 0
     if write_claude:
@@ -458,56 +531,12 @@ def execute_claude_md_sync(  # noqa: C901
         if isinstance(lid, str) and lid:
             mark_promoted(trw_dir, lid)
 
-    # FR13: Write AGENTS.md with platform-generic TRW section for non-Claude platforms.
-    # FR04 (PRD-CORE-084): ceremony_mode selects between full and minimal rendering.
-    # FR06 (PRD-CORE-084): Optional learning injection into AGENTS.md.
-    agents_md_synced = False
-    agents_md_path: str | None = None
-    if write_agents:
-        from trw_mcp.state.claude_md._static_sections import (
-            render_agents_trw_section,
-            render_minimal_protocol,
-        )
-
-        agents_target = project_root / "AGENTS.md"
-        if config.ceremony_mode == "light":
-            agents_body = render_minimal_protocol()
-        else:
-            agents_body = render_agents_trw_section()
-
-        # FR06: Append high-impact learnings when injection is enabled.
-        if config.agents_md_learning_injection:
-            try:
-                learning_entries = recall_learnings(
-                    trw_dir,
-                    min_impact=config.agents_md_learning_min_impact,
-                    status="active",
-                    max_results=config.agents_md_learning_max,
-                )
-                # Build bullet lines first, then only add header if there are actual bullets
-                bullet_lines: list[str] = []
-                for entry in learning_entries:
-                    summary = _sanitize_summary(str(entry.get("summary", "")))
-                    if summary:
-                        bullet_lines.append(f"- {summary}")
-                if bullet_lines:
-                    agents_body += "\n## Key Learnings\n\n" + "\n".join(bullet_lines) + "\n"
-            except Exception:
-                # Fail-open: render AGENTS.md without learnings on error.
-                logger.warning("agents_md_learning_injection_failed", exc_info=True)
-
-        # Wrap with markers so merge_trw_section can find/replace on updates.
-        agents_section = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{agents_body}\n{TRW_MARKER_END}\n"
-        agents_lines = agents_section.count("\n")
-        if agents_lines > config.max_auto_lines:
-            logger.warning(
-                "agents_md_section_oversized",
-                lines=agents_lines,
-                limit=config.max_auto_lines,
-            )
-        merge_trw_section(agents_target, agents_section, max_lines)
-        agents_md_synced = True
-        agents_md_path = str(agents_target)
+    agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
+        write_agents,
+        config,
+        project_root,
+        trw_dir,
+    )
 
     # FR04 (PRD-FIX-053): Store hash after successful render (root scope only).
     if scope != "sub":

@@ -227,7 +227,121 @@ def correlate_recalls(
     return results
 
 
-def process_outcome(  # noqa: C901
+def _deduplicate_recalls(
+    correlated: list[tuple[str, float]],
+) -> dict[str, float]:
+    """Keep highest discount per learning ID."""
+    best_discount: dict[str, float] = {}
+    for lid, discount in correlated:
+        if lid not in best_discount or discount > best_discount[lid]:
+            best_discount[lid] = discount
+    return best_discount
+
+
+def _lookup_learning_entry(
+    lid: str,
+    trw_dir: Path,
+    entries_dir: Path,
+) -> tuple[Path | None, dict[str, object] | None]:
+    """Find learning entry via SQLite fallback to YAML.
+
+    Returns (entry_path, entry_data).
+    """
+    from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
+    from trw_mcp.state.memory_adapter import find_entry_by_id as sqlite_find_entry_by_id
+
+    entry_path: Path | None = None
+    data: dict[str, object] | None = None
+
+    sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
+    if sqlite_data is not None:
+        data = sqlite_data
+        if entries_dir.exists():
+            yaml_found = yaml_find_entry_by_id(entries_dir, lid)
+            if yaml_found is not None:
+                entry_path = yaml_found[0]
+    else:
+        if entries_dir.exists():
+            yaml_found = yaml_find_entry_by_id(entries_dir, lid)
+            if yaml_found is not None:
+                entry_path, data = yaml_found
+
+    return entry_path, data
+
+
+def _update_entry_q_values(
+    data: dict[str, object],
+    reward: float,
+    discount: float,
+    cfg: TRWConfig,
+) -> tuple[float, dict[str, object]]:
+    """Compute new Q-value and update entry data dict.
+
+    Returns (q_new, updated_data).
+    """
+    q_old = safe_float(data, "q_value", safe_float(data, "impact", 0.5))
+    q_obs = safe_int(data, "q_observations", 0)
+    recurrence = safe_int(data, "recurrence", 1)
+
+    effective_reward = reward * discount
+    recurrence_bonus = cfg.q_recurrence_bonus if recurrence > 1 else 0.0
+    q_new = update_q_value(
+        q_old,
+        effective_reward,
+        alpha=cfg.q_learning_rate,
+        recurrence_bonus=recurrence_bonus,
+    )
+
+    today_iso = datetime.now(tz=timezone.utc).date().isoformat()
+    data["q_value"] = round(q_new, 4)
+    data["q_observations"] = q_obs + 1
+    data["updated"] = today_iso
+
+    return q_new, data
+
+
+def _update_entry_history(
+    data: dict[str, object],
+    reward: float,
+    event_label: str,
+    history_cap: int,
+) -> dict[str, object]:
+    """Append outcome_history entry (capped)."""
+    today_iso = datetime.now(tz=timezone.utc).date().isoformat()
+    history_entry = f"{today_iso}:{reward:+.1f}:{event_label}"
+    history = data.get("outcome_history", [])
+    if not isinstance(history, list):
+        history = []
+    history.append(history_entry)
+    if len(history) > history_cap:
+        history = history[-history_cap:]
+    data["outcome_history"] = history
+    return data
+
+
+def _sync_to_sqlite(
+    lid: str,
+    q_new: float,
+    q_obs: int,
+    history: list[str],
+    trw_dir: Path,
+) -> None:
+    """Sync Q-value and outcome_history back to SQLite (best-effort)."""
+    try:
+        from trw_mcp.state.memory_adapter import get_backend
+
+        backend = get_backend(trw_dir)
+        backend.update(
+            lid,
+            q_value=round(q_new, 4),
+            q_observations=q_obs + 1,
+            outcome_history=history,
+        )
+    except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)  # noqa: S110
+        pass
+
+
+def process_outcome(
     trw_dir: Path,
     reward: float,
     event_label: str,
@@ -250,9 +364,6 @@ def process_outcome(  # noqa: C901
     Returns:
         List of learning IDs whose Q-values were updated.
     """
-    from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
-    from trw_mcp.state.memory_adapter import find_entry_by_id as sqlite_find_entry_by_id
-
     cfg: TRWConfig = get_config()
     correlated = correlate_recalls(
         trw_dir,
@@ -262,88 +373,26 @@ def process_outcome(  # noqa: C901
     if not correlated:
         return []
 
-    # Deduplicate -- use highest discount per learning
-    best_discount: dict[str, float] = {}
-    for lid, discount in correlated:
-        if lid not in best_discount or discount > best_discount[lid]:
-            best_discount[lid] = discount
-
+    best_discount = _deduplicate_recalls(correlated)
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-
     updated_ids: list[str] = []
-    today_iso = datetime.now(tz=timezone.utc).date().isoformat()
-    history_cap = cfg.learning_outcome_history_cap
     writer = FileStateWriter()
 
     for lid, discount in best_discount.items():
-        # PRD-FIX-053-FR03: Try SQLite O(1) lookup first; fall back to YAML scan
-        entry_path: Path | None = None
-        data: dict[str, object] | None = None
-
-        sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
-        if sqlite_data is not None:
-            data = sqlite_data
-            # Look up the YAML file for dual-write back (file may have date-slug name)
-            if entries_dir.exists():
-                yaml_found = yaml_find_entry_by_id(entries_dir, lid)
-                if yaml_found is not None:
-                    entry_path = yaml_found[0]
-        else:
-            # YAML fallback for pre-migration entries not yet in SQLite
-            if entries_dir.exists():
-                yaml_found = yaml_find_entry_by_id(entries_dir, lid)
-                if yaml_found is not None:
-                    entry_path, data = yaml_found
-
+        entry_path, data = _lookup_learning_entry(lid, trw_dir, entries_dir)
         if data is None:
             continue
 
-        q_old = safe_float(data, "q_value", safe_float(data, "impact", 0.5))
-        q_obs = safe_int(data, "q_observations", 0)
-        recurrence = safe_int(data, "recurrence", 1)
+        q_new, data = _update_entry_q_values(data, reward, discount, cfg)
+        data = _update_entry_history(data, reward, event_label, cfg.learning_outcome_history_cap)
 
-        # Apply recency-discounted reward
-        effective_reward = reward * discount
-        recurrence_bonus = cfg.q_recurrence_bonus if recurrence > 1 else 0.0
-        q_new = update_q_value(
-            q_old,
-            effective_reward,
-            alpha=cfg.q_learning_rate,
-            recurrence_bonus=recurrence_bonus,
-        )
-
-        data["q_value"] = round(q_new, 4)
-        data["q_observations"] = q_obs + 1
-        data["updated"] = today_iso
-
-        # Append to outcome_history (capped)
-        history_entry = f"{today_iso}:{reward:+.1f}:{event_label}"
-        history = data.get("outcome_history", [])
-        if not isinstance(history, list):
-            history = []
-        history.append(history_entry)
-        if len(history) > history_cap:
-            history = history[-history_cap:]
-        data["outcome_history"] = history
-
-        # Write YAML back only when we have a valid path on disk
         if entry_path is not None:
             writer.write_yaml(entry_path, data)
 
-        # Sync Q-value and outcome_history back to SQLite so subsequent calls
-        # read updated values (best-effort — YAML is the authoritative write)
-        try:
-            from trw_mcp.state.memory_adapter import get_backend
-
-            backend = get_backend(trw_dir)
-            backend.update(
-                lid,
-                q_value=round(q_new, 4),
-                q_observations=q_obs + 1,
-                outcome_history=history,
-            )
-        except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)  # noqa: S110
-            pass
+        q_obs = safe_int(data, "q_observations", 0)
+        history = data.get("outcome_history", [])
+        if isinstance(history, list):
+            _sync_to_sqlite(lid, q_new, q_obs, history, trw_dir)
 
         updated_ids.append(lid)
 
@@ -358,7 +407,75 @@ def process_outcome(  # noqa: C901
     return updated_ids
 
 
-def _resolve_event_reward(  # noqa: C901
+def _resolve_test_run_reward(
+    event_data: dict[str, object],
+) -> tuple[float | None, str]:
+    """Resolve test_run event to tests_passed or tests_failed."""
+    passed = event_data.get("passed")
+    if passed is True or str(passed).lower() == "true":
+        return REWARD_MAP.get(EventType.TESTS_PASSED), EventType.TESTS_PASSED
+    return REWARD_MAP.get(EventType.TESTS_FAILED), EventType.TESTS_FAILED
+
+
+def _resolve_prd_status_change_reward(
+    event_data: dict[str, object],
+) -> tuple[float | None, str]:
+    """Resolve prd_status_change event."""
+    new_status = str(event_data.get("new_status", "")).lower()
+    if new_status == "approved":
+        return REWARD_MAP.get(EventType.PRD_APPROVED), EventType.PRD_APPROVED
+    return None, EventType.PRD_STATUS_CHANGE
+
+
+def _resolve_compliance_check_reward(
+    event_data: dict[str, object],
+) -> tuple[float | None, str]:
+    """Resolve compliance_check event based on score."""
+    score = event_data.get("score")
+    if score is not None:
+        try:
+            if float(str(score)) >= 0.8:
+                return REWARD_MAP.get(EventType.COMPLIANCE_PASSED), EventType.COMPLIANCE_PASSED
+        except (ValueError, TypeError):
+            logger.debug("compliance_score_parse_failed", exc_info=True)
+    return None, EventType.COMPLIANCE_CHECK
+
+
+def _resolve_data_aware_routing(
+    event_type: str,
+    event_data: dict[str, object],
+) -> tuple[float | None, str] | None:
+    """Try data-aware routing for composite events.
+
+    Returns (reward, label) tuple if matched, None otherwise.
+    """
+    if event_type == EventType.TEST_RUN:
+        return _resolve_test_run_reward(event_data)
+    if event_type == EventType.PRD_STATUS_CHANGE:
+        return _resolve_prd_status_change_reward(event_data)
+    if event_type == EventType.COMPLIANCE_CHECK:
+        return _resolve_compliance_check_reward(event_data)
+    return None
+
+
+def _resolve_alias_reward(event_type: str) -> tuple[float | None, str] | None:
+    """Resolve via EVENT_ALIASES.
+
+    Returns (reward, label) tuple if matched, None otherwise.
+    """
+    alias = EVENT_ALIASES.get(event_type)
+    if alias is None and event_type in EVENT_ALIASES:
+        return None, event_type
+    if isinstance(alias, (int, float)):
+        return float(alias), event_type
+    if isinstance(alias, str):
+        mapped_reward = REWARD_MAP.get(alias)
+        if mapped_reward is not None:
+            return mapped_reward, alias
+    return None
+
+
+def _resolve_event_reward(
     event_type: str,
     event_data: dict[str, object] | None = None,
 ) -> tuple[float | None, str]:
@@ -382,38 +499,16 @@ def _resolve_event_reward(  # noqa: C901
     if reward is not None:
         return reward, event_type
 
-    # 2. Data-aware routing for composite events (before alias resolution,
-    #    since data-aware events have None aliases as default fallback)
+    # 2. Data-aware routing for composite events
     if event_data:
-        if event_type == EventType.TEST_RUN:
-            passed = event_data.get("passed")
-            if passed is True or str(passed).lower() == "true":
-                return REWARD_MAP.get(EventType.TESTS_PASSED), EventType.TESTS_PASSED
-            return REWARD_MAP.get(EventType.TESTS_FAILED), EventType.TESTS_FAILED
-        if event_type == EventType.PRD_STATUS_CHANGE:
-            new_status = str(event_data.get("new_status", "")).lower()
-            if new_status == "approved":
-                return REWARD_MAP.get(EventType.PRD_APPROVED), EventType.PRD_APPROVED
-        if event_type == EventType.COMPLIANCE_CHECK:
-            score = event_data.get("score")
-            if score is not None:
-                try:
-                    if float(str(score)) >= 0.8:
-                        return REWARD_MAP.get(EventType.COMPLIANCE_PASSED), EventType.COMPLIANCE_PASSED
-                except (ValueError, TypeError):
-                    logger.debug("compliance_score_parse_failed", exc_info=True)
+        result = _resolve_data_aware_routing(event_type, event_data)
+        if result is not None:
+            return result
 
     # 3. EVENT_ALIASES resolution
-    alias = EVENT_ALIASES.get(event_type)
-    if alias is None and event_type in EVENT_ALIASES:
-        # Explicit None = deliberately no reward
-        return None, event_type
-    if isinstance(alias, (int, float)):
-        return float(alias), event_type
-    if isinstance(alias, str):
-        mapped_reward = REWARD_MAP.get(alias)
-        if mapped_reward is not None:
-            return mapped_reward, alias
+    result = _resolve_alias_reward(event_type)
+    if result is not None:
+        return result
 
     # 4. Error keyword fallback
     cfg_err: TRWConfig = get_config()
