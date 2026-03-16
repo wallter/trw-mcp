@@ -320,10 +320,15 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
 
 
 def _detect_installed_extras(python: str) -> dict[str, bool]:
-    """Detect which optional extras are already installed."""
+    """Detect which optional extras are already installed.
+
+    Uses a short timeout (10s) because import checks should resolve quickly.
+    Longer hangs indicate missing packages or environment issues (e.g. SDK
+    attempting network calls during import on system Python without a venv).
+    """
     extras: dict[str, bool] = {}
-    extras["ai"] = _run_quiet([python, "-c", "import anthropic"])
-    extras["sqlite_vec"] = _run_quiet([python, "-c", "import sqlite_vec"])
+    extras["ai"] = _run_quiet([python, "-c", "import anthropic"], timeout=10)
+    extras["sqlite_vec"] = _run_quiet([python, "-c", "import sqlite_vec"], timeout=10)
     return extras
 
 
@@ -417,6 +422,9 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
 
     *timeout* (seconds, default 120) prevents hangs when pip stalls on
     PEP 668 externally-managed system Pythons without a venv.
+
+    ``KeyboardInterrupt`` is intentionally not caught — it propagates to
+    the caller so the user can abort the entire installer with Ctrl-C.
     """
     try:
         return subprocess.run(
@@ -450,8 +458,13 @@ def pip_install(python: str, package: str, label: str, ui: UI) -> bool:
 
 # ── Run command with live progress ───────────────────────────────────
 
-def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str]) -> bool:
-    """Run *cmd* showing live progress. Returns True on success."""
+def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 180) -> bool:
+    """Run *cmd* showing live progress. Returns True on success.
+
+    A watchdog timer kills the subprocess if it hasn't exited after *timeout*
+    seconds (default 180).  This prevents the installer from hanging
+    indefinitely when the child stalls (e.g. during CLAUDE.md sync).
+    """
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -461,25 +474,46 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str]) -> bool:
 
     assert proc.stdout is not None
 
-    if ui.interactive:
-        ui.start_spinner(fallback_msg)
-        file_count = 0
-        for line in proc.stdout:
-            line = line.strip()
-            # Phase markers update the status message (e.g., "Phase: Syncing CLAUDE.md...")
-            if line.startswith("Phase:"):
-                phase_label = line.partition(":")[2].strip()
-                ui.update_spinner(f"{fallback_msg} ({file_count} files) {phase_label}")
-            elif re.match(r"  *(Updated|Created|Preserved|Skipped|synced|WARNING|Error):? ", line):
-                file_count += 1
-                short = re.sub(r"^  *(Updated|Created|Created \(new\)|Preserved|Skipped|Error): ", "", line)[:60]
-                ui.update_spinner(f"{fallback_msg} ({file_count} files) {DIM}{short}{NC}")
-    else:
-        for line in proc.stdout:
-            if not ui.quiet:
-                print(f"{GREEN}[TRW]{NC}   {line.rstrip()}")
+    killed_by_watchdog = False
 
-    proc.wait()
+    def _watchdog_kill() -> None:
+        nonlocal killed_by_watchdog
+        killed_by_watchdog = True
+        proc.kill()
+
+    watchdog = threading.Timer(timeout, _watchdog_kill)
+    watchdog.daemon = True
+    watchdog.start()
+
+    try:
+        if ui.interactive:
+            ui.start_spinner(fallback_msg)
+            file_count = 0
+            for line in proc.stdout:
+                line = line.strip()
+                # Phase markers update the status message (e.g., "Phase: Syncing CLAUDE.md...")
+                if line.startswith("Phase:"):
+                    phase_label = line.partition(":")[2].strip()
+                    ui.update_spinner(f"{fallback_msg} ({file_count} files) {phase_label}")
+                elif re.match(r"  *(Updated|Created|Preserved|Skipped|synced|WARNING|Error):? ", line):
+                    file_count += 1
+                    short = re.sub(r"^  *(Updated|Created|Created \(new\)|Preserved|Skipped|Error): ", "", line)[:60]
+                    ui.update_spinner(f"{fallback_msg} ({file_count} files) {DIM}{short}{NC}")
+        else:
+            for line in proc.stdout:
+                if not ui.quiet:
+                    print(f"{GREEN}[TRW]{NC}   {line.rstrip()}")
+
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    finally:
+        watchdog.cancel()
+
+    if killed_by_watchdog:
+        ui.step_warn(f"{fallback_msg} timed out after {timeout}s")
+
     return proc.returncode == 0
 
 
