@@ -4,6 +4,30 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-03-15
+
+### Added
+
+- **Multi-platform ceremony adaptation** (PRD-CORE-084) — `ceremony_mode` config field (`"full"` | `"light"`) controls ceremony depth for non-Claude Code platforms. Light mode uses `render_minimal_protocol()` (< 200 tokens) and caps recall to 10 learnings for small context windows.
+- **Learning injection into AGENTS.md** — high-impact learnings (impact >= 0.7) are now injected into the AGENTS.md auto-generated section during `trw_deliver()`, matching the CLAUDE.md learning promotion behavior. Controlled by `agents_md_learning_injection` config (default: `true`).
+- **Platform-generic AGENTS.md content** — `render_agents_trw_section()` produces content free of Claude Code-specific language (no Agent Teams, subagents, slash commands, or FRAMEWORK.md references). AGENTS.md is now suitable for opencode, Cursor, Codex, and other MCP-capable platforms.
+- **`target_platforms` config field** — list of platforms to sync instruction files for during deliver/sync. Installer auto-detects IDEs; updater keeps the field in sync when IDEs are added/removed.
+- **Tool relevance tiers documentation** — TRW_README.md includes a "Local Model Guide" with Essential/Recommended/Optional tool classification for context-constrained environments.
+- **Platform adaptation research** — `docs/research/platform-adaptation-research.md` with compatibility matrix, eval analysis, and TRW-light protocol design.
+
+### Fixed
+
+- **Cursor platform routing** — single-platform `target_platforms: ["cursor"]` now routes directly instead of falling to auto-detect.
+- **UTF-8 encoding** in `_update_config_target_platforms()` — matches all other bootstrap file operations.
+- **Empty "Key Learnings" header** — sanitized-away summaries no longer produce a spurious section header.
+- **`query_matched` inflation** — focused recall count computed before merge with baseline results.
+- **DRY in render functions** — extracted `_SESSION_BOUNDARY_TEXT` constant shared across renderers.
+
+### Changed
+
+- **Renamed `_do_claude_md_sync` → `_do_instruction_sync`** — platform-generic naming reflecting multi-platform support.
+- **AGENTS.md size gate** — warning logged when auto-generated section exceeds `max_auto_lines`.
+
 ## [0.19.2] — 2026-03-15
 
 ### Changed
