@@ -275,6 +275,29 @@ def _reset_telemetry_pipeline() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_telemetry_run_cache() -> Iterator[None]:
+    """Reset the cached run directory in telemetry between tests.
+
+    The telemetry module caches find_active_run() results with a 5-second
+    TTL. Without this reset, a stale cached path from a previous test's
+    tmp_path leaks into subsequent tests.
+    """
+    try:
+        import trw_mcp.tools.telemetry as tel_mod
+
+        tel_mod._cached_run_dir = (0.0, None)
+    except Exception:  # justified: fail-open — telemetry module may not be imported
+        pass
+    yield
+    try:
+        import trw_mcp.tools.telemetry as tel_mod
+
+        tel_mod._cached_run_dir = (0.0, None)
+    except Exception:  # justified: fail-open
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Redirect all resolve_trw_dir() and resolve_project_root() calls to tmp dirs.
 
@@ -309,6 +332,32 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
         pass  # Not yet imported
     try:
         monkeypatch.setattr("trw_mcp.tools.requirements.resolve_project_root", _fake_project_root)
+    except AttributeError:
+        pass  # Not yet imported
+
+    # Patch tools/orchestration — it does `from _paths import resolve_project_root`
+    # at module level. If orchestration is first imported while _paths is already
+    # patched, the from-import captures the fake into orchestration.__dict__.
+    # On teardown only _paths is restored, leaving orchestration with a stale fake.
+    # Patching explicitly here ensures each test gets the correct tmp_path closure.
+    try:
+        monkeypatch.setattr(
+            "trw_mcp.tools.orchestration.resolve_project_root", _fake_project_root
+        )
+    except AttributeError:
+        pass  # Not yet imported
+
+    # Patch tools/telemetry — resolve_trw_dir and find_active_run are
+    # module-level imports that suffer the same stale-closure problem.
+    try:
+        monkeypatch.setattr("trw_mcp.tools.telemetry.resolve_trw_dir", _fake_trw_dir)
+    except AttributeError:
+        pass  # Not yet imported
+    try:
+        monkeypatch.setattr(
+            "trw_mcp.tools.telemetry.find_active_run",
+            lambda session_id=None: None,
+        )
     except AttributeError:
         pass  # Not yet imported
 
