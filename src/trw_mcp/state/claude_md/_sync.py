@@ -452,6 +452,16 @@ def execute_claude_md_sync(
                 "agents_md_path": None,
                 "bounded_contexts_synced": 0,
             }
+            # PRD-CORE-084: AGENTS.md must still sync on cache hit because
+            # learning injection content may differ from the CLAUDE.md hash.
+            _write_claude, write_agents = _determine_write_targets(
+                client, config, project_root, scope,
+            )
+            synced, path = _sync_agents_md_if_needed(
+                write_agents, config, project_root, trw_dir,
+            )
+            early_return_dict["agents_md_synced"] = synced
+            early_return_dict["agents_md_path"] = path
             # PRD-CORE-084 FR08: Ensure REVIEW.md stays fresh even on cache hits.
             try:
                 review_result = generate_review_md(trw_dir, repo_root=project_root)
