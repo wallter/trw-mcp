@@ -8,10 +8,40 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-import fcntl
 import json
 import os
 import tempfile
+
+# Portability shim: fcntl is Unix-only. On Windows (ImportError),
+# advisory file locking is a no-op since Windows uses mandatory locking
+# at the OS level and fcntl-style advisory locks are not available.
+try:
+    import fcntl as _fcntl
+
+    def _lock_sh(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_SH)
+
+    def _lock_ex(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+
+    def _lock_ex_nb(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+
+    def _lock_un(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_UN)
+except ImportError:
+
+    def _lock_sh(fd: int) -> None:  # type: ignore[misc]
+        pass
+
+    def _lock_ex(fd: int) -> None:  # type: ignore[misc]
+        pass
+
+    def _lock_ex_nb(fd: int) -> None:  # type: ignore[misc]
+        pass
+
+    def _lock_un(fd: int) -> None:  # type: ignore[misc]
+        pass
 from collections.abc import Generator
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -146,11 +176,11 @@ class FileStateReader:
             raise StateError(f"YAML file not found: {path}", path=str(path))
         try:
             with path.open("r", encoding="utf-8") as fh:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
+                _lock_sh(fh.fileno())
                 try:
                     data = _new_yaml().load(fh)
                 finally:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    _lock_un(fh.fileno())
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
                 f"Failed to read YAML: {exc}",
@@ -183,7 +213,7 @@ class FileStateReader:
         try:
             records: list[dict[str, object]] = []
             with path.open("r", encoding="utf-8") as fh:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
+                _lock_sh(fh.fileno())
                 try:
                     for line_num, line in enumerate(fh, start=1):
                         stripped = line.strip()
@@ -199,7 +229,7 @@ class FileStateReader:
                                 line=line_num,
                             )
                 finally:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    _lock_un(fh.fileno())
             return records
         except json.JSONDecodeError as exc:
             raise StateError(
@@ -252,11 +282,11 @@ class FileStateWriter:
             tmp_path = Path(tmp_path_str)
             try:
                 with tmp_path.open("w", encoding="utf-8") as fh:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                    _lock_ex(fh.fileno())
                     try:
                         _new_yaml().dump(data, fh)
                     finally:
-                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                        _lock_un(fh.fileno())
                 tmp_path.rename(path)
             except Exception:  # justified: cleanup, temp file removal must not mask original error
                 tmp_path.unlink(missing_ok=True)
@@ -287,12 +317,12 @@ class FileStateWriter:
             path.parent.mkdir(parents=True, exist_ok=True)
             line = json.dumps(record, default=json_serializer) + "\n"
             with path.open("a", encoding="utf-8") as fh:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                _lock_ex(fh.fileno())
                 try:
                     fh.write(line)
                     fh.flush()
                 finally:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    _lock_un(fh.fileno())
             logger.debug("jsonl_appended", path=str(path), event_type=record.get("event"))
         except (OSError, TypeError, ValueError) as exc:
             raise StateError(
@@ -398,10 +428,10 @@ def lock_for_rmw(path: Path) -> Generator[Path, None, None]:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_fh = lock_path.open("w", encoding="utf-8")
     try:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        _lock_ex(lock_fh.fileno())
         yield path
     finally:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        _lock_un(lock_fh.fileno())
         lock_fh.close()
 
 

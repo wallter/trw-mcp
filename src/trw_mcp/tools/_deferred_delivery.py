@@ -20,11 +20,34 @@ module to avoid circular import issues at module-load time.
 
 from __future__ import annotations
 
-import fcntl
 import io
 import json
 import threading
 import time
+
+# Portability shim: fcntl is Unix-only. On Windows, advisory locking
+# is a no-op (see persistence.py for rationale).
+try:
+    import fcntl as _fcntl
+
+    def _lock_ex_nb(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+
+    def _lock_ex(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+
+    def _lock_un(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_UN)
+except ImportError:
+
+    def _lock_ex_nb(fd: int) -> None:  # type: ignore[misc]
+        pass
+
+    def _lock_ex(fd: int) -> None:  # type: ignore[misc]
+        pass
+
+    def _lock_un(fd: int) -> None:  # type: ignore[misc]
+        pass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -66,7 +89,7 @@ def _try_acquire_deferred_lock(trw_dir: Path) -> io.TextIOWrapper | None:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = lock_path.open("w", encoding="utf-8")
     try:
-        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_ex_nb(fd.fileno())
         # Write PID + timestamp as valid JSON so operators can inspect
         import os as _os
 
@@ -84,7 +107,7 @@ def _release_deferred_lock(fd: object) -> None:
         import io as _io
 
         if isinstance(fd, _io.TextIOWrapper):
-            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            _lock_un(fd.fileno())
             fd.close()
     except Exception:  # justified: fail-open, lock release cleanup
         # justified: lock release is best-effort cleanup — failing here
@@ -108,10 +131,10 @@ def _log_deferred_result(
     }
     try:
         with log_path.open("a", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            _lock_ex(f.fileno())
             f.write(json.dumps(entry, default=str) + "\n")
             f.flush()
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            _lock_un(f.fileno())
     except Exception:  # justified: fail-open, deferred log is diagnostic only
         logger.debug("deferred_log_write_failed", exc_info=True)
 

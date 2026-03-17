@@ -16,9 +16,6 @@ existing ``from trw_mcp.scoring import X`` imports continue to work.
 
 from __future__ import annotations
 
-# --- Re-exports from _utils (constants, trw_memory delegates, shared state) ---
-from trw_mcp.models.config import get_config as get_config
-
 # --- Re-exports from _complexity ---
 from trw_mcp.scoring._complexity import (
     _HIGH_RISK_SIGNALS as _HIGH_RISK_SIGNALS,
@@ -120,9 +117,6 @@ from trw_mcp.scoring._utils import (
     logger as logger,
 )
 from trw_mcp.scoring._utils import (
-    resolve_trw_dir as resolve_trw_dir,
-)
-from trw_mcp.scoring._utils import (
     safe_float as safe_float,
 )
 from trw_mcp.scoring._utils import (
@@ -130,12 +124,6 @@ from trw_mcp.scoring._utils import (
 )
 from trw_mcp.scoring._utils import (
     update_q_value as update_q_value,
-)
-from trw_mcp.state.persistence import (
-    FileStateReader as FileStateReader,
-)
-from trw_mcp.state.persistence import (
-    FileStateWriter as FileStateWriter,
 )
 
 

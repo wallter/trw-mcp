@@ -8,12 +8,29 @@ backend POST on a timer thread. Fail-open throughout.
 from __future__ import annotations
 
 import collections
-import fcntl
 import json
 import threading
 import time
 import urllib.error
 import urllib.request
+
+# Portability shim: fcntl is Unix-only. On Windows, advisory locking
+# is a no-op (see persistence.py for rationale).
+try:
+    import fcntl as _fcntl
+
+    def _lock_ex(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+
+    def _lock_un(fd: int) -> None:
+        _fcntl.flock(fd, _fcntl.LOCK_UN)
+except ImportError:
+
+    def _lock_ex(fd: int) -> None:  # type: ignore[misc]
+        pass
+
+    def _lock_un(fd: int) -> None:  # type: ignore[misc]
+        pass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar, TypedDict
@@ -435,19 +452,19 @@ class TelemetryPipeline:
     def _truncate_jsonl(path: Path) -> None:
         """Truncate the JSONL file under an advisory flock.
 
-        Uses fcntl.flock to coordinate with concurrent readers/writers
+        Uses advisory file locking to coordinate with concurrent readers/writers
         (same pattern as _deferred_delivery.py).
         """
         try:
             if not path.exists():
                 return
             with path.open("r+", encoding="utf-8") as fh:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                _lock_ex(fh.fileno())
                 try:
                     fh.truncate(0)
                     fh.seek(0)
                 finally:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    _lock_un(fh.fileno())
         except OSError:
             # Fail-open: if truncation fails, events remain for next cycle
             logger.debug("pipeline_truncate_error", exc_info=True)
