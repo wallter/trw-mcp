@@ -253,16 +253,15 @@ def recall_learnings(
 
     results: list[dict[str, object]] = []
     for entry in entries:
-        d = _memory_to_learning_dict(entry, compact=compact)
-        entry_impact = float(str(d.get("impact", 0.0)))
-        if entry_impact < min_impact:
+        # Wildcard path: list_entries doesn't filter by tags/impact, so apply
+        # _apply_entry_filters (AND semantics) to match the search path.
+        # Search path already applies these filters internally.
+        if is_wildcard and not _apply_entry_filters(entry, tags, mem_status, min_impact):
             continue
-        # Tag filter for list_entries (search already filters)
-        if tags and is_wildcard:
-            entry_tags = d.get("tags", [])
-            if isinstance(entry_tags, list) and not any(t in entry_tags for t in tags):
-                continue
-        results.append(d)
+        # Non-wildcard: still guard min_impact (search may not filter on dict-level impact)
+        if not is_wildcard and entry.importance < min_impact:
+            continue
+        results.append(_memory_to_learning_dict(entry, compact=compact))
 
     return results
 

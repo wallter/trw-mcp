@@ -6,9 +6,9 @@ direct lookup, and hybrid search (keyword + vector RRF fusion).
 This module is an internal implementation detail of ``memory_adapter.py``.
 External code should import from ``memory_adapter`` (the public facade).
 
-Note: ``get_embedder`` and ``get_config`` are imported inside function bodies
-(late binding) so that test patches on ``trw_mcp.state.memory_adapter.*``
-continue to work.  The sub-module never caches these at module level.
+Imports ``get_embedder`` from ``_memory_connection`` (its definition site) and
+``get_config`` from ``trw_mcp.models.config`` to avoid circular dependencies
+through the facade.
 """
 
 from __future__ import annotations
@@ -195,10 +195,7 @@ def _search_entries(
     multi-token intersection keyword search.
     """
     # Always run keyword search
-    # Late import: tests patch _keyword_search at trw_mcp.state.memory_adapter
-    from trw_mcp.state.memory_adapter import _keyword_search as _kw_search
-
-    keyword_results = _kw_search(
+    keyword_results = _keyword_search(
         backend,
         query,
         top_k=top_k,
@@ -208,10 +205,9 @@ def _search_entries(
     )
 
     # Try vector search when embedder is available
-    # Late import: tests patch these at trw_mcp.state.memory_adapter
-    from trw_mcp.state.memory_adapter import get_embedder as _get_embedder
+    from trw_mcp.state._memory_connection import get_embedder
 
-    embedder = _get_embedder()
+    embedder = get_embedder()
     if embedder is None:
         return keyword_results
 
@@ -220,7 +216,7 @@ def _search_entries(
         if query_vec is None:
             return keyword_results
 
-        from trw_mcp.state.memory_adapter import get_config
+        from trw_mcp.models.config import get_config
 
         cfg = get_config()
         vector_hits = backend.search_vectors(query_vec, top_k=cfg.hybrid_vector_candidates)
@@ -241,14 +237,7 @@ def _search_entries(
         for eid, _ in vector_hits:
             if eid not in entry_map:
                 entry = backend.get(eid)
-                if entry is not None:
-                    # Apply same filters as keyword search
-                    if min_impact > 0.0 and entry.importance < min_impact:
-                        continue
-                    if mem_status is not None and entry.status != mem_status:
-                        continue
-                    if tags and not set(tags).issubset(set(entry.tags)):
-                        continue
+                if entry is not None and _apply_entry_filters(entry, tags, mem_status, min_impact):
                     entry_map[eid] = entry
 
         results: list[MemoryEntry] = []

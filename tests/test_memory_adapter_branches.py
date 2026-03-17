@@ -72,7 +72,7 @@ class TestGetEmbedder:
     def test_embeddings_disabled_returns_none(self) -> None:
         """When embeddings_enabled=False, get_embedder returns None (lines 112-113)."""
         reset_embedder()
-        with patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg:
+        with patch("trw_mcp.models.config.get_config") as mock_cfg:
             cfg = MagicMock()
             cfg.embeddings_enabled = False
             mock_cfg.return_value = cfg
@@ -86,7 +86,7 @@ class TestGetEmbedder:
         mock_provider.available.return_value = False
 
         with (
-            patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg,
+            patch("trw_mcp.models.config.get_config") as mock_cfg,
             patch(
                 "trw_memory.embeddings.local.LocalEmbeddingProvider",
                 return_value=mock_provider,
@@ -106,7 +106,7 @@ class TestGetEmbedder:
         """When LocalEmbeddingProvider raises (lines 133-134)."""
         reset_embedder()
         with (
-            patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg,
+            patch("trw_mcp.models.config.get_config") as mock_cfg,
             patch(
                 "trw_memory.embeddings.local.LocalEmbeddingProvider",
                 side_effect=RuntimeError("import boom"),
@@ -136,7 +136,7 @@ class TestGetEmbedder:
             return mock_provider
 
         with (
-            patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg,
+            patch("trw_mcp.models.config.get_config") as mock_cfg,
             patch(
                 "trw_memory.embeddings.local.LocalEmbeddingProvider",
                 side_effect=_provider_factory,
@@ -164,7 +164,7 @@ class TestGetEmbedder:
         mock_provider.available.return_value = True
 
         with (
-            patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg,
+            patch("trw_mcp.models.config.get_config") as mock_cfg,
             patch(
                 "trw_memory.embeddings.local.LocalEmbeddingProvider",
                 return_value=mock_provider,
@@ -188,7 +188,7 @@ class TestGetEmbedder:
 class TestCheckEmbeddingsStatus:
     def test_disabled(self) -> None:
         """When embeddings_enabled=False, returns disabled status (line 158)."""
-        with patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg:
+        with patch("trw_mcp.models.config.get_config") as mock_cfg:
             cfg = MagicMock()
             cfg.embeddings_enabled = False
             mock_cfg.return_value = cfg
@@ -201,9 +201,9 @@ class TestCheckEmbeddingsStatus:
         """When embedder is available, returns enabled+available (line 162)."""
         mock_embedder = MagicMock()
         with (
-            patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg,
+            patch("trw_mcp.models.config.get_config") as mock_cfg,
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
         ):
@@ -217,8 +217,8 @@ class TestCheckEmbeddingsStatus:
     def test_enabled_not_available(self) -> None:
         """When embedder is None but enabled, returns advisory (lines 164-171)."""
         with (
-            patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg,
-            patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None),
+            patch("trw_mcp.models.config.get_config") as mock_cfg,
+            patch("trw_mcp.state._memory_connection.get_embedder", return_value=None),
         ):
             cfg = MagicMock()
             cfg.embeddings_enabled = True
@@ -239,7 +239,7 @@ class TestEmbedAndStore:
         """When embedder is None, _embed_and_store returns immediately (line 178)."""
         backend = _make_backend(trw_dir)
         try:
-            with patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None):
+            with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
                 # Should not raise
                 _embed_and_store(backend, "L-test", "some text")
         finally:
@@ -252,7 +252,7 @@ class TestEmbedAndStore:
             mock_embedder = MagicMock()
             mock_embedder.embed.side_effect = RuntimeError("embed failed")
             with patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ):
                 _embed_and_store(backend, "L-err", "text")
@@ -267,7 +267,7 @@ class TestEmbedAndStore:
             mock_embedder = MagicMock()
             mock_embedder.embed.return_value = None
             with patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ):
                 _embed_and_store(backend, "L-none", "text")
@@ -286,7 +286,7 @@ class TestEnsureMigratedErrors:
         backend = _make_backend(trw_dir)
         try:
             with patch(
-                "trw_mcp.state.memory_adapter.migrate_entries_dir",
+                "trw_memory.migration.from_trw.migrate_entries_dir",
                 side_effect=RuntimeError("read failed"),
             ):
                 result = ensure_migrated(trw_dir, backend)
@@ -305,7 +305,7 @@ class TestEnsureMigratedErrors:
                 namespace="",  # empty
             )
             with patch(
-                "trw_mcp.state.memory_adapter.migrate_entries_dir",
+                "trw_memory.migration.from_trw.migrate_entries_dir",
                 return_value=[entry],
             ):
                 result = ensure_migrated(trw_dir, backend)
@@ -337,7 +337,7 @@ class TestEnsureMigratedErrors:
             backend.store = failing_store  # type: ignore[assignment]
             try:
                 with patch(
-                    "trw_mcp.state.memory_adapter.migrate_entries_dir",
+                    "trw_memory.migration.from_trw.migrate_entries_dir",
                     return_value=[entry],
                 ):
                     result = ensure_migrated(trw_dir, backend)
@@ -391,7 +391,7 @@ class TestSearchEntriesHybrid:
         """When embedder is None, returns keyword results only (line 406)."""
         backend = get_backend(trw_dir)
         backend.store(MemoryEntry(id="L-fb1", content="fallback test", detail="d"))
-        with patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None):
+        with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
             results = _search_entries(backend, "fallback")
             assert isinstance(results, list)
 
@@ -402,7 +402,7 @@ class TestSearchEntriesHybrid:
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = None
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             results = _search_entries(backend, "embed")
@@ -416,7 +416,7 @@ class TestSearchEntriesHybrid:
         mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
         with (
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
             patch.object(backend, "search_vectors", return_value=[]),
@@ -442,7 +442,7 @@ class TestSearchEntriesHybrid:
 
         with (
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
             patch.object(backend, "search_vectors", return_value=vector_hits),
@@ -466,8 +466,6 @@ class TestSearchEntriesHybrid:
         vector_hits = [("L-vo1", 0.9), ("L-vo2", 0.8)]
 
         # Make keyword search return only entry1
-        original_keyword = memory_adapter._keyword_search
-
         def limited_keyword(be: Any, query: str, **kwargs: Any) -> list[MemoryEntry]:
             return [entry1]
 
@@ -475,11 +473,11 @@ class TestSearchEntriesHybrid:
 
         with (
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
             patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state.memory_adapter._keyword_search", limited_keyword),
+            patch("trw_mcp.state._memory_queries._keyword_search", limited_keyword),
             patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
         ):
             results = _search_entries(backend, "keyword")
@@ -505,11 +503,11 @@ class TestSearchEntriesHybrid:
 
         with (
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
             patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state.memory_adapter._keyword_search", limited_kw),
+            patch("trw_mcp.state._memory_queries._keyword_search", limited_kw),
             patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
         ):
             results = _search_entries(backend, "keyword", min_impact=0.5)
@@ -540,11 +538,11 @@ class TestSearchEntriesHybrid:
 
         with (
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
             patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state.memory_adapter._keyword_search", limited_kw),
+            patch("trw_mcp.state._memory_queries._keyword_search", limited_kw),
             patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
         ):
             results = _search_entries(backend, "kw", mem_status=MemoryStatus.ACTIVE)
@@ -570,11 +568,11 @@ class TestSearchEntriesHybrid:
 
         with (
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
             patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state.memory_adapter._keyword_search", limited_kw),
+            patch("trw_mcp.state._memory_queries._keyword_search", limited_kw),
             patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
         ):
             results = _search_entries(backend, "kw", tags=["python"])
@@ -590,7 +588,7 @@ class TestSearchEntriesHybrid:
         mock_embedder.embed.side_effect = RuntimeError("vector crash")
 
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             results = _search_entries(backend, "exception")
@@ -738,7 +736,7 @@ class TestAccessTrackingException:
 class TestBackfillEmbeddings:
     def test_no_embedder_returns_zeros(self, trw_dir: Path) -> None:
         """When embedder is None, returns all zeros (lines 750-751)."""
-        with patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None):
+        with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
             result = backfill_embeddings(trw_dir)
             assert result == {"embedded": 0, "skipped": 0, "failed": 0}
 
@@ -754,7 +752,7 @@ class TestBackfillEmbeddings:
 
         with (
             patch(
-                "trw_mcp.state.memory_adapter.get_embedder",
+                "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
             patch.object(backend, "upsert_vector") as mock_upsert,
@@ -774,7 +772,7 @@ class TestBackfillEmbeddings:
         mock_embedder = MagicMock()
 
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = backfill_embeddings(trw_dir)
@@ -789,7 +787,7 @@ class TestBackfillEmbeddings:
         mock_embedder.embed.return_value = None
 
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = backfill_embeddings(trw_dir)
@@ -803,7 +801,7 @@ class TestBackfillEmbeddings:
         mock_embedder.embed.side_effect = RuntimeError("embed error")
 
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = backfill_embeddings(trw_dir)

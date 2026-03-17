@@ -6,9 +6,10 @@ initialization, teardown, and one-time YAML-to-SQLite migration.
 This module is an internal implementation detail of ``memory_adapter.py``.
 External code should import from ``memory_adapter`` (the public facade).
 
-Note: ``get_config`` and ``migrate_entries_dir`` are imported inside function
-bodies (late binding) so that test patches on ``trw_mcp.state.memory_adapter.*``
-or ``trw_mcp.state._memory_connection.*`` both work correctly.
+Note: ``get_config`` is imported inside function bodies (late binding) to
+avoid circular imports with the config module.  ``migrate_entries_dir`` is
+likewise late-imported from ``trw_memory.migration.from_trw``.  All
+embedder/embed helpers call sibling functions defined in this module directly.
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
         memory_dir.mkdir(parents=True, exist_ok=True)
         db_path = memory_dir / "memory.db"
 
-        from trw_mcp.state.memory_adapter import get_config
+        from trw_mcp.models.config import get_config
 
         cfg = get_config()
         backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
@@ -121,7 +122,7 @@ def get_embedder() -> LocalEmbeddingProvider | None:
         if _embedder_checked:
             return _embedder  # pragma: no cover -- race guard
 
-        from trw_mcp.state.memory_adapter import get_config
+        from trw_mcp.models.config import get_config
 
         cfg = get_config()
         if not cfg.embeddings_enabled:
@@ -168,9 +169,7 @@ def reset_embedder() -> None:
 
 def embedding_available() -> bool:
     """Return True if an embedding provider is available (PRD-CORE-080)."""
-    from trw_mcp.state.memory_adapter import get_embedder as _get_embedder
-
-    return _get_embedder() is not None
+    return get_embedder() is not None
 
 
 def embed_text(text: str) -> list[float] | None:
@@ -178,9 +177,7 @@ def embed_text(text: str) -> list[float] | None:
 
     Returns None if embeddings are unavailable or text is empty.
     """
-    from trw_mcp.state.memory_adapter import get_embedder as _get_embedder
-
-    embedder = _get_embedder()
+    embedder = get_embedder()
     if embedder is None or not text.strip():
         return None
     try:
@@ -198,15 +195,11 @@ def embed_text_batch(texts: list[str]) -> list[list[float] | None]:
     """
     if not texts:
         return []
-    from trw_mcp.state.memory_adapter import get_embedder as _get_embedder
-
-    embedder = _get_embedder()
+    embedder = get_embedder()
     if embedder is None:
         return [None] * len(texts)
     try:
-        from trw_mcp.state.memory_adapter import embed_text as _embed_text
-
-        return [_embed_text(t) for t in texts]
+        return [embed_text(t) for t in texts]
     except (OSError, ValueError, RuntimeError):
         logger.debug("embed_text_batch_failed", text_count=len(texts))
         return [None] * len(texts)
@@ -236,7 +229,7 @@ def check_embeddings_status() -> dict[str, object]:
     - ``advisory``: human-readable message (empty when everything is fine)
     - ``recent_failures``: count of embed failures since process start (FR07)
     """
-    from trw_mcp.state.memory_adapter import get_config
+    from trw_mcp.models.config import get_config
 
     cfg = get_config()
     if not cfg.embeddings_enabled:
@@ -247,9 +240,7 @@ def check_embeddings_status() -> dict[str, object]:
             "recent_failures": _embed_failures,
         }
 
-    from trw_mcp.state.memory_adapter import get_embedder as _get_embedder
-
-    embedder = _get_embedder()
+    embedder = get_embedder()
     if embedder is not None:
         return {
             "enabled": True,
@@ -276,9 +267,7 @@ def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
     can surface this to agents via ``check_embeddings_status()``.
     """
     global _embed_failures
-    from trw_mcp.state.memory_adapter import get_embedder as _get_embedder
-
-    embedder = _get_embedder()
+    embedder = get_embedder()
     if embedder is None:
         _embed_failures += 1
         return
@@ -328,7 +317,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
     skipped = 0
 
     try:
-        from trw_mcp.state.memory_adapter import migrate_entries_dir
+        from trw_memory.migration.from_trw import migrate_entries_dir
 
         memory_entries = migrate_entries_dir(entries_dir)
     except Exception:  # justified: boundary, migration from YAML entries may fail on corrupt files
@@ -377,9 +366,7 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
 
     Returns counts: ``{"embedded": N, "skipped": N, "failed": N}``.
     """
-    from trw_mcp.state.memory_adapter import get_embedder as _get_embedder
-
-    embedder = _get_embedder()
+    embedder = get_embedder()
     if embedder is None:
         return {"embedded": 0, "skipped": 0, "failed": 0}
 

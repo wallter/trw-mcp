@@ -60,7 +60,7 @@ def trw_dir(tmp_path: Path) -> Path:
 class TestEmbedText:
     def test_returns_none_when_embedder_unavailable(self) -> None:
         """embed_text returns None when get_embedder() returns None."""
-        with patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None):
+        with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
             result = embed_text("some text")
             assert result is None
 
@@ -68,7 +68,7 @@ class TestEmbedText:
         """embed_text returns None for empty/whitespace-only text."""
         mock_embedder = MagicMock()
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             assert embed_text("") is None
@@ -83,7 +83,7 @@ class TestEmbedText:
         expected_vec = [0.1, 0.2, 0.3]
         mock_embedder.embed.return_value = expected_vec
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = embed_text("hello world")
@@ -95,7 +95,7 @@ class TestEmbedText:
         mock_embedder = MagicMock()
         mock_embedder.embed.side_effect = OSError("model file missing")
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = embed_text("test input")
@@ -106,7 +106,7 @@ class TestEmbedText:
         mock_embedder = MagicMock()
         mock_embedder.embed.side_effect = ValueError("bad input shape")
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = embed_text("test input")
@@ -117,7 +117,7 @@ class TestEmbedText:
         mock_embedder = MagicMock()
         mock_embedder.embed.side_effect = RuntimeError("inference failed")
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = embed_text("test input")
@@ -137,7 +137,7 @@ class TestEmbedTextBatch:
 
     def test_returns_none_list_when_embedder_unavailable(self) -> None:
         """embed_text_batch returns [None, None, ...] when embedder is None."""
-        with patch("trw_mcp.state.memory_adapter.get_embedder", return_value=None):
+        with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
             result = embed_text_batch(["a", "b", "c"])
             assert result == [None, None, None]
 
@@ -148,7 +148,7 @@ class TestEmbedTextBatch:
         vec2 = [0.3, 0.4]
         mock_embedder.embed.side_effect = [vec1, vec2]
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = embed_text_batch(["hello", "world"])
@@ -161,11 +161,11 @@ class TestEmbedTextBatch:
         """embed_text_batch catches exceptions and returns [None, ...]."""
         # The outer try/except in embed_text_batch catches OSError/ValueError/RuntimeError
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=MagicMock(),
         ):
             with patch(
-                "trw_mcp.state.memory_adapter.embed_text",
+                "trw_mcp.state._memory_connection.embed_text",
                 side_effect=RuntimeError("batch explosion"),
             ):
                 result = embed_text_batch(["a", "b"])
@@ -181,7 +181,7 @@ class TestEmbeddingAvailable:
     def test_true_when_embedder_exists(self) -> None:
         """embedding_available() returns True when get_embedder returns non-None."""
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=MagicMock(),
         ):
             assert embedding_available() is True
@@ -189,7 +189,7 @@ class TestEmbeddingAvailable:
     def test_false_when_embedder_none(self) -> None:
         """embedding_available() returns False when get_embedder returns None."""
         with patch(
-            "trw_mcp.state.memory_adapter.get_embedder",
+            "trw_mcp.state._memory_connection.get_embedder",
             return_value=None,
         ):
             assert embedding_available() is False
