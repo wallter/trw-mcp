@@ -23,7 +23,7 @@ import contextlib
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Union
 
 import structlog
 
@@ -285,7 +285,7 @@ def update_learning(
     if existing is None:
         return {"error": f"Learning {learning_id} not found", "status": "not_found"}
 
-    fields: dict[str, Any] = {}
+    fields: dict[str, Union[str, float, list[str]]] = {}
     changes: list[str] = []
 
     if status is not None:
