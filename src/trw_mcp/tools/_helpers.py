@@ -6,11 +6,14 @@ Extracted to avoid duplication across ceremony.py and _deferred_delivery.py.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import TypeVar
+
+_T = TypeVar("_T", bound=Mapping[str, object])
 
 
 def _run_step(
     name: str,
-    fn: Callable[[], Mapping[str, object] | None],
+    fn: Callable[[], _T | None],
     results: dict[str, object],
     errors: list[str],
 ) -> None:

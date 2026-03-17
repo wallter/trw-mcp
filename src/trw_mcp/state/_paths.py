@@ -271,6 +271,27 @@ def resolve_run_path(run_path: str | None = None) -> Path:
     return latest_run
 
 
+def resolve_installation_id() -> str:
+    """Resolve installation ID from config, generating a stable fallback.
+
+    Resolution order:
+    1. ``TRWConfig.installation_id`` (if non-empty after stripping whitespace).
+    2. A deterministic ``inst-<hash>`` derived from the project root path.
+
+    This is the **single source of truth** for installation ID resolution.
+    All modules that need an installation ID MUST call this function instead
+    of reimplementing the lookup.
+    """
+    import hashlib
+
+    cfg = get_config()
+    iid = cfg.installation_id.strip() if cfg.installation_id else ""
+    if iid:
+        return iid
+    project_root = str(resolve_project_root())
+    return "inst-" + hashlib.sha256(project_root.encode()).hexdigest()[:12]
+
+
 def detect_current_phase() -> str | None:
     """Detect the current phase from the active run.
 

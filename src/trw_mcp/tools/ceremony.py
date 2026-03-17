@@ -512,7 +512,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # Step 1: Reflect (extract learnings from events)
         if not skip_reflect:
-            _run_step("reflect", lambda: cast("dict[str, object]", _do_reflect(trw_dir, resolved_run)), _results_view, errors)
+            _run_step("reflect", lambda: _do_reflect(trw_dir, resolved_run), _results_view, errors)
         else:
             results["reflect"] = {"status": "skipped"}
 
@@ -523,7 +523,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
         # Step 3: Sync platform instruction files (CLAUDE.md, AGENTS.md, etc.)
-        _run_step("claude_md_sync", lambda: cast("dict[str, object]", _do_instruction_sync(trw_dir)), _results_view, errors)
+        _run_step("claude_md_sync", lambda: _do_instruction_sync(trw_dir), _results_view, errors)
 
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed

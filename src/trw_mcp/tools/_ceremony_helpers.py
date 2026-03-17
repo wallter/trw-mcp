@@ -118,8 +118,6 @@ def perform_session_recalls(
     query: str,
     config: TRWConfig,
     reader: FileStateReader,
-    run_dir: Path | None = None,
-    run_status: RunStatusDict | None = None,
 ) -> tuple[list[dict[str, object]], list[AutoRecalledItemDict], SessionRecallExtrasDict]:
     """Execute focused + baseline recalls, return merged results.
 
@@ -291,12 +289,12 @@ def step_telemetry_startup(
     Fail-open: exceptions are logged but never propagated.
     """
     from trw_mcp.models.config import get_config
+    from trw_mcp.state._paths import resolve_installation_id
     from trw_mcp.telemetry.client import TelemetryClient
     from trw_mcp.telemetry.models import SessionStartEvent
-    from trw_mcp.tools._deferred_delivery import _resolve_installation_id
 
     config = get_config()
-    inst_id = _resolve_installation_id()
+    inst_id = resolve_installation_id()
     tel_client = TelemetryClient.from_config()
     tel_client.record_event(SessionStartEvent(
         installation_id=inst_id,
@@ -307,15 +305,13 @@ def step_telemetry_startup(
     tel_client.flush()
     # Start the unified telemetry pipeline (periodic background flush
     # replaces the old fire-and-forget BatchSender thread).
+    # Note: the TelemetryClient.record_event + flush above already handles
+    # the session_start event via the typed path. We only need to start the
+    # pipeline here — no separate enqueue, which would create a duplicate event.
     try:
         from trw_mcp.telemetry.pipeline import TelemetryPipeline
         pipeline = TelemetryPipeline.get_instance()
         pipeline.start()
-        pipeline.enqueue({
-            "event_type": "session_start",
-            "learnings_loaded": int(str(results.get("learnings_count", 0))),
-            "run_id": str(run_dir.name) if run_dir else None,
-        })
     except Exception:  # justified: fail-open, pipeline start must not block session start
         logger.warning("pipeline_start_failed", exc_info=True)
 

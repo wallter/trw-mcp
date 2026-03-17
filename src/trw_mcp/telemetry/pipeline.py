@@ -16,6 +16,7 @@ import urllib.request
 
 # Portability shim: fcntl is Unix-only. On Windows, advisory locking
 # is a no-op (see persistence.py for rationale).
+# Only _lock_ex/_lock_un needed here — this module does not use shared or non-blocking locks.
 try:
     import fcntl as _fcntl
 
@@ -54,21 +55,14 @@ class PipelineFlushResult(TypedDict):
 
 
 def _resolve_installation_id() -> str:
-    """Resolve installation ID from config, generating a stable fallback.
+    """Resolve installation ID — delegates to canonical ``state._paths``.
 
-    Mirrors the helper in ``_deferred_delivery.py`` but avoids the circular
-    import through ``ceremony.py`` by importing ``get_config`` directly.
+    This wrapper preserves the module-local name for backward compatibility
+    with the ``enqueue`` call in ``TelemetryPipeline``.
     """
-    import hashlib
+    from trw_mcp.state._paths import resolve_installation_id
 
-    from trw_mcp.models.config import get_config  # local to avoid circular
-
-    cfg = get_config()
-    iid = cfg.installation_id.strip() if cfg.installation_id else ""
-    if iid:
-        return iid
-    project_root = str(resolve_project_root())
-    return "inst-" + hashlib.sha256(project_root.encode()).hexdigest()[:12]
+    return resolve_installation_id()
 
 
 class TelemetryPipeline:

@@ -6,7 +6,7 @@ Extracted from ceremony.py to reduce file complexity.  Contains:
 - The ``_run_deferred_steps`` orchestrator that executes all deferred steps
 - ``_launch_deferred`` which starts the background daemon thread
 - All ``_step_*`` helpers that implement individual deferred steps
-- ``_resolve_installation_id`` helper shared by telemetry steps
+- ``_resolve_installation_id`` wrapper delegating to ``state._paths``
 
 This module is internal (``_``-prefixed) — external code should import
 from ``trw_mcp.tools.ceremony`` which re-exports the public surface.
@@ -405,18 +405,15 @@ def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
 
 
 def _resolve_installation_id() -> str:
-    """Resolve installation ID from config, never falling back to 'local'."""
-    import trw_mcp.tools.ceremony as _cer  # late import for test compat
+    """Resolve installation ID from config, generating a stable fallback.
 
-    cfg = _cer.get_config()
-    iid = cfg.installation_id.strip() if cfg.installation_id else ""
-    if iid:
-        return iid
-    # Generate a stable ID from the project root path
-    import hashlib
+    Delegates to the canonical ``resolve_installation_id`` in
+    ``trw_mcp.state._paths`` — this wrapper preserves the underscore-prefixed
+    name for backward compatibility with existing callers and re-exports.
+    """
+    from trw_mcp.state._paths import resolve_installation_id
 
-    project_root = str(_cer.resolve_project_root())
-    return "inst-" + hashlib.sha256(project_root.encode()).hexdigest()[:12]
+    return resolve_installation_id()
 
 
 def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:

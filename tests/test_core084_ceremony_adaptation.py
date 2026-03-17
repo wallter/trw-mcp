@@ -479,6 +479,7 @@ class TestSessionStartLightMode:
 
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
+            patch("trw_mcp.models.config.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
