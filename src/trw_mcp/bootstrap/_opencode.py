@@ -26,9 +26,6 @@ _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 _TRW_HEADER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
-# Keys that must never be overwritten by TRW during a merge.
-_PRESERVE_KEYS = frozenset({"model", "small_model", "agent", "instructions"})
-
 _DEFAULT_PERMISSIONS: dict[str, str] = {
     "bash": "ask",
     "write": "ask",
@@ -121,7 +118,9 @@ def merge_opencode_json(
     - NEVER overwrite user's "model", "small_model", "agent", "instructions".
     - Preserve all other keys.
     """
-    result: OpencodeConfig = dict(existing)  # type: ignore[assignment]
+    # Start from existing config via unpacking — preserves all user keys
+    # (model, small_model, agent, instructions) without dynamic key access.
+    result: OpencodeConfig = {**existing}
 
     # Update "mcp" section: add/update "trw" key, preserve others
     mcp: dict[str, OpencodeServerEntry] = dict(result.get("mcp", {}))
@@ -131,12 +130,6 @@ def merge_opencode_json(
     # Add default permissions only when the key is absent
     if "permission" not in result:
         result["permission"] = dict(_DEFAULT_PERMISSIONS)
-
-    # Ensure preserved keys from the original are retained (guard against
-    # anything that might have modified them)
-    for key in _PRESERVE_KEYS:
-        if key in existing:
-            result[key] = existing[key]  # type: ignore[literal-required]
 
     return result
 
