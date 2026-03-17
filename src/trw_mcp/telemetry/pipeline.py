@@ -26,10 +26,10 @@ try:
         _fcntl.flock(fd, _fcntl.LOCK_UN)
 except ImportError:
 
-    def _lock_ex(fd: int) -> None:  # type: ignore[misc]
+    def _lock_ex(fd: int) -> None:
         pass
 
-    def _lock_un(fd: int) -> None:  # type: ignore[misc]
+    def _lock_un(fd: int) -> None:
         pass
 from datetime import datetime, timezone
 from pathlib import Path

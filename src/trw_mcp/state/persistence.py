@@ -31,16 +31,16 @@ try:
         _fcntl.flock(fd, _fcntl.LOCK_UN)
 except ImportError:
 
-    def _lock_sh(fd: int) -> None:  # type: ignore[misc]
+    def _lock_sh(fd: int) -> None:
         pass
 
-    def _lock_ex(fd: int) -> None:  # type: ignore[misc]
+    def _lock_ex(fd: int) -> None:
         pass
 
-    def _lock_ex_nb(fd: int) -> None:  # type: ignore[misc]
+    def _lock_ex_nb(fd: int) -> None:
         pass
 
-    def _lock_un(fd: int) -> None:  # type: ignore[misc]
+    def _lock_un(fd: int) -> None:
         pass
 from collections.abc import Generator
 from datetime import date, datetime, timezone
