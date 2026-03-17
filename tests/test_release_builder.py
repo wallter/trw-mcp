@@ -55,15 +55,14 @@ class TestSha256:
 
 
 def _fake_file(tmp_path: Path) -> Path:
-    """Create a fake __file__ path so parent^4 resolves to tmp_path.
+    """Create a fake __file__ path so parent^3 resolves to tmp_path.
 
-    _read_version does: Path(__file__).parent.parent.parent.parent
-    So we need: tmp_path / L1 / L2 / L3 / release_builder.py
-    parent chain: L3 -> L2 -> L1 -> tmp_path  (3 .parent calls from dir)
-    But the code does 4 .parent calls from the *file* path:
-      file.parent = L3, .parent = L2, .parent = L1, .parent = tmp_path
+    _read_version does: Path(__file__).parent.parent.parent
+    (file is at src/trw_mcp/release_builder.py, 3 parents up = package root)
+    So we need: tmp_path / L1 / L2 / release_builder.py
+    parent chain from file: L2 -> L1 -> tmp_path  (3 .parent calls)
     """
-    fake = tmp_path / "a" / "b" / "c" / "release_builder.py"
+    fake = tmp_path / "a" / "b" / "release_builder.py"
     fake.parent.mkdir(parents=True, exist_ok=True)
     fake.write_text("")
     return fake

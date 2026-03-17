@@ -55,7 +55,7 @@ def build_release_bundle(
 
 def _read_version() -> str:
     """Read version from pyproject.toml."""
-    pyproject = Path(__file__).parent.parent.parent.parent / "pyproject.toml"
+    pyproject = Path(__file__).parent.parent.parent / "pyproject.toml"
     if pyproject.exists():
         for line in pyproject.read_text(encoding="utf-8").splitlines():
             if line.startswith("version"):
