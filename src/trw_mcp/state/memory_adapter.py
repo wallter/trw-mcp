@@ -1,6 +1,6 @@
 """Adapter layer between trw-mcp learning tools and trw-memory SQLite backend.
 
-Provides singleton backend access, one-time YAML→SQLite migration, and
+Provides singleton backend access, one-time YAML-to-SQLite migration, and
 CRUD operations that preserve the exact return shapes of the original
 YAML-based learning tools.
 
@@ -8,421 +8,147 @@ When ``embeddings_enabled=True`` in config, the adapter:
 - Generates embeddings on store via :class:`LocalEmbeddingProvider`
 - Uses hybrid search (BM25 + dense + RRF fusion) on recall
 - Backfills embeddings for existing entries on first activation
+
+Implementation is split across focused sub-modules:
+- ``_memory_connection``: singleton management, embedder lifecycle, migration
+- ``_memory_queries``: query construction, keyword/hybrid search routing
+- ``_memory_transforms``: result transformation between internal/external formats
+
+This module is the public facade -- all external imports should come here.
 """
 
 from __future__ import annotations
 
 import contextlib
 import re
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
-if TYPE_CHECKING:
-    from trw_memory.embeddings.local import LocalEmbeddingProvider
-
-from trw_memory.migration.from_trw import migrate_entries_dir
-from trw_memory.models.memory import MemoryEntry, MemoryStatus
+from trw_memory.migration.from_trw import migrate_entries_dir as migrate_entries_dir
+from trw_memory.models.memory import MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
-from trw_mcp.models.config import get_config
+from trw_mcp.models.config import get_config as get_config
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
+
+# ---------------------------------------------------------------------------
+# Re-export connection management (singletons, embedder, migration)
+# ---------------------------------------------------------------------------
+from trw_mcp.state._memory_connection import (
+    _embed_and_store as _embed_and_store,
+)
+from trw_mcp.state._memory_connection import (
+    backfill_embeddings as backfill_embeddings,
+)
+from trw_mcp.state._memory_connection import (
+    check_embeddings_status as _check_embeddings_status_impl,
+)
+from trw_mcp.state._memory_connection import (
+    embed_text as embed_text,
+)
+from trw_mcp.state._memory_connection import (
+    embed_text_batch as embed_text_batch,
+)
+from trw_mcp.state._memory_connection import (
+    embedding_available as embedding_available,
+)
+from trw_mcp.state._memory_connection import (
+    ensure_migrated as ensure_migrated,
+)
+from trw_mcp.state._memory_connection import (
+    get_backend as get_backend,
+)
+from trw_mcp.state._memory_connection import (
+    get_embed_failure_count as get_embed_failure_count,
+)
+from trw_mcp.state._memory_connection import (
+    get_embedder as get_embedder,
+)
+from trw_mcp.state._memory_connection import (
+    reset_backend as reset_backend,
+)
+from trw_mcp.state._memory_connection import (
+    reset_embed_failure_count as _reset_embed_failure_count_impl,
+)
+from trw_mcp.state._memory_connection import (
+    reset_embedder as reset_embedder,
+)
+
+# ---------------------------------------------------------------------------
+# Re-export query routing (keyword search, hybrid search, ID lookup)
+# ---------------------------------------------------------------------------
+from trw_mcp.state._memory_queries import (
+    _apply_entry_filters as _apply_entry_filters,
+)
+from trw_mcp.state._memory_queries import (
+    _keyword_search as _keyword_search,
+)
+from trw_mcp.state._memory_queries import (
+    _lookup_id_tokens as _lookup_id_tokens,
+)
+from trw_mcp.state._memory_queries import (
+    _search_entries as _search_entries,
+)
+from trw_mcp.state._memory_queries import (
+    _search_intersect_keywords as _search_intersect_keywords,
+)
+
+# ---------------------------------------------------------------------------
+# Re-export result transformations
+# ---------------------------------------------------------------------------
+from trw_mcp.state._memory_transforms import (
+    _learning_to_memory_entry as _learning_to_memory_entry,
+)
+from trw_mcp.state._memory_transforms import (
+    _memory_to_learning_dict as _memory_to_learning_dict,
+)
 
 logger = structlog.get_logger()
 
-# Module-level singletons
-_backend: SQLiteBackend | None = None
-_backend_lock = threading.Lock()
-
-_embedder: LocalEmbeddingProvider | None = None
-_embedder_lock = threading.Lock()
-_embedder_checked: bool = False
-
-# FR07 (PRD-FIX-053): Embed failure counter — resets on process restart.
-_embed_failures: int = 0
-
-_SENTINEL_NAME = ".migrated"
+# Preserve module-level constants for backward compatibility with test patches
 _NAMESPACE = DEFAULT_NAMESPACE
 _MAX_ENTRIES = DEFAULT_LIST_LIMIT
-
-
-# ---------------------------------------------------------------------------
-# Backend lifecycle
-# ---------------------------------------------------------------------------
-
-
-def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
-    """Return the singleton SQLiteBackend, creating it on first call.
-
-    The database lives at ``trw_dir / memory / memory.db``.
-    Auto-calls :func:`ensure_migrated` on first access.
-
-    Args:
-        trw_dir: Path to the ``.trw`` directory.  Auto-resolved when *None*.
-
-    Returns:
-        Shared :class:`SQLiteBackend` instance.
-    """
-    global _backend
-    if _backend is not None:
-        return _backend
-
-    with _backend_lock:
-        if _backend is not None:
-            return _backend  # pragma: no cover — race guard
-
-        if trw_dir is None:
-            from trw_mcp.state._paths import resolve_trw_dir
-
-            trw_dir = resolve_trw_dir()
-
-        memory_dir = trw_dir / "memory"
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        db_path = memory_dir / "memory.db"
-
-        cfg = get_config()
-        backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
-        ensure_migrated(trw_dir, backend)
-        _backend = backend
-        return _backend
-
-
-def reset_backend() -> None:
-    """Close and discard the singleton backend (for tests)."""
-    global _backend
-    with _backend_lock:
-        if _backend is not None:
-            _backend.close()
-            _backend = None
-    reset_embedder()
-
-
-# ---------------------------------------------------------------------------
-# Embedder lifecycle
-# ---------------------------------------------------------------------------
-
-
-def get_embedder() -> LocalEmbeddingProvider | None:
-    """Return the singleton LocalEmbeddingProvider, or None if unavailable.
-
-    Only attempts initialization when ``embeddings_enabled=True`` in config.
-    The result is cached — repeated calls are cheap.
-    """
-    global _embedder, _embedder_checked
-    if _embedder_checked:
-        return _embedder
-
-    with _embedder_lock:
-        if _embedder_checked:
-            return _embedder  # pragma: no cover — race guard
-
-        cfg = get_config()
-        if not cfg.embeddings_enabled:
-            _embedder_checked = True
-            return None
-
-        try:
-            from trw_memory.embeddings.local import LocalEmbeddingProvider
-
-            provider = LocalEmbeddingProvider(
-                model_name=cfg.retrieval_embedding_model,
-                dim=cfg.retrieval_embedding_dim,
-            )
-            if provider.available():
-                _embedder = provider
-                logger.info(
-                    "embedder_initialized",
-                    model=cfg.retrieval_embedding_model,
-                    dim=cfg.retrieval_embedding_dim,
-                )
-            else:
-                logger.info(
-                    "embeddings_enabled_but_deps_missing",
-                    hint="pip install trw-memory[embeddings]",
-                )
-        except Exception:  # justified: import-guard, embedder init may fail if deps missing
-            # FR06: Log at warning so embedder failures are visible in logs.
-            # Do NOT set _embedder_checked — allows retry on next call or
-            # after reset_embedder() (e.g. session restart).
-            logger.warning("embedder_init_failed", exc_info=True)
-            return _embedder
-
-        _embedder_checked = True
-        return _embedder
-
-
-def reset_embedder() -> None:
-    """Reset the embedder singleton (for tests)."""
-    global _embedder, _embedder_checked
-    with _embedder_lock:
-        _embedder = None
-        _embedder_checked = False
-
-
-def embedding_available() -> bool:
-    """Return True if an embedding provider is available (PRD-CORE-080)."""
-    return get_embedder() is not None
-
-
-def embed_text(text: str) -> list[float] | None:
-    """Generate a single embedding vector for *text* (PRD-CORE-080).
-
-    Returns None if embeddings are unavailable or text is empty.
-    """
-    embedder = get_embedder()
-    if embedder is None or not text.strip():
-        return None
-    try:
-        result: list[float] | None = embedder.embed(text)
-        return result
-    except (OSError, ValueError, RuntimeError):
-        logger.debug("embed_text_failed", text_length=len(text))
-        return None
-
-
-def embed_text_batch(texts: list[str]) -> list[list[float] | None]:
-    """Generate embeddings for multiple texts (PRD-CORE-080).
-
-    Returns a list of embedding vectors (or None per text on failure).
-    """
-    if not texts:
-        return []
-    embedder = get_embedder()
-    if embedder is None:
-        return [None] * len(texts)
-    try:
-        return [embed_text(t) for t in texts]
-    except (OSError, ValueError, RuntimeError):
-        logger.debug("embed_text_batch_failed", text_count=len(texts))
-        return [None] * len(texts)
-
-
-def get_embed_failure_count() -> int:
-    """Return the number of embed failures since process start (FR07).
-
-    This counter increments each time ``_embed_and_store()`` finds no embedder
-    or encounters an error. It resets on process restart and is not persisted.
-    """
-    return _embed_failures
-
-
-def reset_embed_failure_count() -> None:
-    """Reset the embed failure counter to zero (for tests)."""
-    global _embed_failures
-    _embed_failures = 0
-
+_LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
 
 def check_embeddings_status() -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
 
-    Returns a dict with:
-    - ``enabled``: whether config has embeddings_enabled=True
-    - ``available``: whether deps are installed and model loads
-    - ``advisory``: human-readable message (empty when everything is fine)
-    - ``recent_failures``: count of embed failures since process start (FR07)
+    Delegates to :func:`_memory_connection.check_embeddings_status`, but
+    supports test patches that set ``memory_adapter._embed_failures`` directly.
     """
-    cfg = get_config()
-    if not cfg.embeddings_enabled:
-        return {
-            "enabled": False,
-            "available": False,
-            "advisory": "",
-            "recent_failures": _embed_failures,
-        }
+    import sys
 
-    embedder = get_embedder()
-    if embedder is not None:
-        return {
-            "enabled": True,
-            "available": True,
-            "advisory": "",
-            "recent_failures": _embed_failures,
-        }
-
-    return {
-        "enabled": True,
-        "available": False,
-        "advisory": (
-            "Embeddings enabled but sentence-transformers not installed. Run: pip install trw-memory[embeddings]"
-        ),
-        "recent_failures": _embed_failures,
-    }
+    result = _check_embeddings_status_impl()
+    # If a test set _embed_failures directly on this module, honour it.
+    mod = sys.modules[__name__]
+    if "_embed_failures" in mod.__dict__:
+        result["recent_failures"] = mod.__dict__["_embed_failures"]
+    return result
 
 
-def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
-    """Generate embedding for text and upsert into vector table. Fail-silent.
+def reset_embed_failure_count() -> None:
+    """Reset the embed failure counter to zero (for tests).
 
-    FR07 (PRD-FIX-053): Increments ``_embed_failures`` when embedder is
-    unavailable or the embed call fails, so ``get_embed_failure_count()``
-    can surface this to agents via ``check_embeddings_status()``.
+    Also clears the facade-level ``_embed_failures`` override so that
+    ``check_embeddings_status`` reads the authoritative counter.
     """
-    global _embed_failures
-    embedder = get_embedder()
-    if embedder is None:
-        _embed_failures += 1
-        return
-    try:
-        vector = embedder.embed(text)
-        if vector is not None:
-            backend.upsert_vector(entry_id, vector)
-    except (OSError, ValueError, RuntimeError):
-        # justified: embedding is optional enrichment — store succeeds without it.
-        _embed_failures += 1
-        logger.debug("embed_and_store_failed", entry_id=entry_id)
+    import sys
+
+    _reset_embed_failure_count_impl()
+    mod = sys.modules[__name__]
+    mod.__dict__.pop("_embed_failures", None)
 
 
-# ---------------------------------------------------------------------------
-# Migration
-# ---------------------------------------------------------------------------
+def __getattr__(name: str) -> object:
+    """Proxy ``_embed_failures`` reads to ``_memory_connection``."""
+    if name == "_embed_failures":
+        import trw_mcp.state._memory_connection as _mc
 
-
-def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
-    """One-time migration of YAML learning entries into SQLite.
-
-    Idempotent: writes a sentinel file on success; subsequent calls are no-ops.
-    Individual entry failures are logged and skipped — never aborts the batch.
-
-    Args:
-        trw_dir: Path to the ``.trw`` directory.
-        backend: Active :class:`SQLiteBackend` to store entries in.
-
-    Returns:
-        Dict with ``migrated`` and ``skipped`` counts.
-    """
-    sentinel = trw_dir / "memory" / _SENTINEL_NAME
-    if sentinel.exists():
-        return {"migrated": 0, "skipped": 0}
-
-    cfg = get_config()
-    entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-    if not entries_dir.exists():
-        # Fresh project — nothing to migrate
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text("migrated_at=" + datetime.now(timezone.utc).isoformat())
-        return {"migrated": 0, "skipped": 0}
-
-    migrated = 0
-    skipped = 0
-
-    try:
-        memory_entries = migrate_entries_dir(entries_dir)
-    except Exception:  # justified: boundary, migration from YAML entries may fail on corrupt files
-        logger.warning(
-            "memory_migration_read_failed",
-            exc_info=True,
-            entries_dir=str(entries_dir),
-        )
-        return {"migrated": 0, "skipped": 0}
-
-    for entry in memory_entries:
-        try:
-            # Ensure namespace is set
-            if not entry.namespace or entry.namespace == "":
-                entry = entry.model_copy(update={"namespace": _NAMESPACE})
-            backend.store(entry)
-            migrated += 1
-        except Exception:  # per-item error handling: one bad entry must not abort migration  # noqa: PERF203
-            skipped += 1
-            logger.warning(
-                "memory_migration_entry_skipped",
-                exc_info=True,
-                entry_id=entry.id,
-            )
-
-    # Only write sentinel on success
-    sentinel.parent.mkdir(parents=True, exist_ok=True)
-    sentinel.write_text(
-        f"migrated_at={datetime.now(timezone.utc).isoformat()}\nmigrated={migrated}\nskipped={skipped}\n"
-    )
-
-    logger.info(
-        "memory_migration_complete",
-        migrated=migrated,
-        skipped=skipped,
-    )
-    return {"migrated": migrated, "skipped": skipped}
-
-
-# ---------------------------------------------------------------------------
-# Field mapping helpers
-# ---------------------------------------------------------------------------
-
-
-def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> dict[str, object]:
-    """Convert a :class:`MemoryEntry` to the dict shape returned by trw_recall.
-
-    The returned dict matches the YAML-era learning entry format so callers
-    (FRAMEWORK.md, hooks, etc.) see no API change.
-
-    Args:
-        entry: Memory entry from SQLite.
-        compact: When True, return only essential fields.
-
-    Returns:
-        Dict with ``id``, ``summary``, ``tags``, ``impact``, ``status``, etc.
-    """
-    base: dict[str, object] = {
-        "id": entry.id,
-        "summary": entry.content,
-        "tags": entry.tags,
-        "impact": entry.importance,
-        "status": entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status),
-    }
-    if compact:
-        return base
-
-    base.update(
-        {
-            "detail": entry.detail,
-            "evidence": entry.evidence,
-            "source_type": entry.source,
-            "source_identity": entry.source_identity,
-            "created": entry.created_at.date().isoformat() if entry.created_at else "",
-            "updated": entry.updated_at.date().isoformat() if entry.updated_at else "",
-            "access_count": entry.access_count,
-            "last_accessed_at": (entry.last_accessed_at.date().isoformat() if entry.last_accessed_at else None),
-            "q_value": entry.q_value,
-            "q_observations": entry.q_observations,
-            "recurrence": entry.recurrence,
-            "outcome_history": entry.outcome_history,
-            "shard_id": entry.metadata.get("shard_id", None),
-        }
-    )
-    return base
-
-
-def _learning_to_memory_entry(
-    learning_id: str,
-    summary: str,
-    detail: str,
-    *,
-    tags: list[str] | None = None,
-    evidence: list[str] | None = None,
-    impact: float = 0.5,
-    shard_id: str | None = None,
-    source_type: str = "agent",
-    source_identity: str = "",
-) -> MemoryEntry:
-    """Build a :class:`MemoryEntry` from trw_learn parameters."""
-    metadata: dict[str, str] = {}
-    if shard_id:
-        metadata["shard_id"] = shard_id
-
-    return MemoryEntry(
-        id=learning_id,
-        content=summary,
-        detail=detail,
-        tags=tags or [],
-        evidence=evidence or [],
-        importance=impact,
-        source=source_type,
-        source_identity=source_identity,
-        namespace=_NAMESPACE,
-        metadata=metadata,
-    )
+        return _mc._embed_failures
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -483,242 +209,6 @@ def store_learning(
         "status": "recorded",
         "distribution_warning": "",
     }
-
-
-def _search_entries(
-    backend: SQLiteBackend,
-    query: str,
-    *,
-    top_k: int = 25,
-    tags: list[str] | None = None,
-    mem_status: MemoryStatus | None = None,
-    min_impact: float = 0.0,
-) -> list[MemoryEntry]:
-    """Search entries using hybrid (keyword + vector RRF) or keyword fallback.
-
-    When embedder is available, runs keyword search and sqlite-vec vector search
-    in parallel, then fuses via Reciprocal Rank Fusion. Otherwise falls back to
-    multi-token intersection keyword search.
-    """
-    # Always run keyword search
-    keyword_results = _keyword_search(
-        backend,
-        query,
-        top_k=top_k,
-        tags=tags,
-        mem_status=mem_status,
-        min_impact=min_impact,
-    )
-
-    # Try vector search when embedder is available
-    embedder = get_embedder()
-    if embedder is None:
-        return keyword_results
-
-    try:
-        query_vec = embedder.embed(query)
-        if query_vec is None:
-            return keyword_results
-
-        cfg = get_config()
-        vector_hits = backend.search_vectors(query_vec, top_k=cfg.hybrid_vector_candidates)
-        if not vector_hits:
-            return keyword_results
-
-        # RRF fusion: merge keyword and vector rankings
-        keyword_ranking = [(e.id, 1.0 / (i + 1)) for i, e in enumerate(keyword_results)]
-        vector_ranking = [(eid, score) for eid, score in vector_hits]
-
-        from trw_memory.retrieval.fusion import rrf_fuse
-
-        fused = rrf_fuse([keyword_ranking, vector_ranking], k=cfg.hybrid_rrf_k)
-
-        # Build id→entry map from keyword results + vector-matched entries
-        entry_map: dict[str, MemoryEntry] = {e.id: e for e in keyword_results}
-        # Fetch any vector-only hits not already in keyword results
-        for eid, _ in vector_hits:
-            if eid not in entry_map:
-                entry = backend.get(eid)
-                if entry is not None:
-                    # Apply same filters as keyword search
-                    if min_impact > 0.0 and entry.importance < min_impact:
-                        continue
-                    if mem_status is not None and entry.status != mem_status:
-                        continue
-                    if tags and not set(tags).issubset(set(entry.tags)):
-                        continue
-                    entry_map[eid] = entry
-
-        results: list[MemoryEntry] = []
-        for eid, _ in fused[:top_k]:
-            if eid in entry_map:
-                results.append(entry_map[eid])
-
-        logger.debug(
-            "hybrid_recall_complete",
-            keyword_hits=len(keyword_results),
-            vector_hits=len(vector_hits),
-            fused=len(results),
-        )
-        return results
-
-    except (OSError, ValueError, RuntimeError):
-        logger.debug("vector_search_failed_fallback_to_keyword", query=query[:80])
-        return keyword_results
-
-
-_LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
-
-
-def _apply_entry_filters(
-    entry: MemoryEntry,
-    tags: list[str] | None,
-    mem_status: MemoryStatus | None,
-    min_impact: float,
-) -> bool:
-    """Check if an entry passes all filter criteria.
-
-    Returns True if entry should be included, False otherwise.
-    """
-    if min_impact > 0.0 and entry.importance < min_impact:
-        return False
-    if mem_status is not None and entry.status != mem_status:
-        return False
-    return not (tags and not set(tags).issubset(set(entry.tags)))
-
-
-def _lookup_id_tokens(
-    backend: SQLiteBackend,
-    id_tokens: list[str],
-    tags: list[str] | None,
-    mem_status: MemoryStatus | None,
-    min_impact: float,
-) -> tuple[list[MemoryEntry], set[str]]:
-    """Direct lookup for learning ID tokens (OR semantics).
-
-    Returns (id_entries, seen_ids).
-    """
-    seen_ids: set[str] = set()
-    id_entries: list[MemoryEntry] = []
-    for lid in id_tokens:
-        entry = backend.get(lid)
-        if entry is not None and entry.id not in seen_ids and _apply_entry_filters(entry, tags, mem_status, min_impact):
-            id_entries.append(entry)
-            seen_ids.add(entry.id)
-    return id_entries, seen_ids
-
-
-def _search_intersect_keywords(
-    backend: SQLiteBackend,
-    kw_tokens: list[str],
-    top_k: int,
-    tags: list[str] | None,
-    mem_status: MemoryStatus | None,
-    min_impact: float,
-) -> list[MemoryEntry]:
-    """Search for entries matching ALL keyword tokens (intersection semantics)."""
-    token_id_sets: list[set[str]] = []
-    first_token_ordered: list[MemoryEntry] = []
-
-    for i, token in enumerate(kw_tokens):
-        token_results = backend.search(
-            token,
-            top_k=top_k,
-            tags=tags,
-            status=mem_status,
-            min_importance=min_impact,
-            namespace=_NAMESPACE,
-        )
-        token_ids: set[str] = {e.id for e in token_results}
-        token_id_sets.append(token_ids)
-        if i == 0:
-            first_token_ordered = list(token_results)
-
-    if not token_id_sets:
-        return []
-
-    common_ids = token_id_sets[0]
-    for s in token_id_sets[1:]:
-        common_ids = common_ids & s
-    return [e for e in first_token_ordered if e.id in common_ids]
-
-
-def _keyword_search(
-    backend: SQLiteBackend,
-    query: str,
-    *,
-    top_k: int = 25,
-    tags: list[str] | None = None,
-    mem_status: MemoryStatus | None = None,
-    min_impact: float = 0.0,
-) -> list[MemoryEntry]:
-    """Multi-token keyword search with learning-ID direct lookup.
-
-    Tokens matching the ``L-[0-9a-f]{8}`` pattern are resolved via direct
-    ``backend.get()`` (O(1) primary-key lookup).  Remaining keyword tokens
-    use intersection search (entry must match ALL keyword tokens).  The two
-    result sets are unioned (IDs first, then keyword matches) and deduped.
-    """
-    tokens = query.split()
-    if len(tokens) <= 1:
-        # Single token — check if it's a learning ID for direct lookup
-        if tokens and _LEARNING_ID_RE.match(tokens[0]):
-            entry = backend.get(tokens[0])
-            if entry is None:
-                return []
-            if _apply_entry_filters(entry, tags, mem_status, min_impact):
-                return [entry]
-            return []
-        return backend.search(
-            query,
-            top_k=top_k,
-            tags=tags,
-            status=mem_status,
-            min_importance=min_impact,
-            namespace=_NAMESPACE,
-        )
-
-    # Partition tokens into learning IDs and keyword terms
-    id_tokens: list[str] = []
-    kw_tokens: list[str] = []
-    for t in tokens:
-        if _LEARNING_ID_RE.match(t):
-            id_tokens.append(t)
-        else:
-            kw_tokens.append(t)
-
-    id_entries, seen_ids = _lookup_id_tokens(backend, id_tokens, tags, mem_status, min_impact)
-
-    # Keyword search for remaining tokens (AND/intersection semantics)
-    kw_entries: list[MemoryEntry] = []
-    if kw_tokens:
-        if len(kw_tokens) == 1:
-            kw_entries = backend.search(
-                kw_tokens[0],
-                top_k=top_k,
-                tags=tags,
-                status=mem_status,
-                min_importance=min_impact,
-                namespace=_NAMESPACE,
-            )
-        else:
-            kw_entries = _search_intersect_keywords(
-                backend,
-                kw_tokens,
-                top_k,
-                tags,
-                mem_status,
-                min_impact,
-            )
-
-    # Union: ID lookups first, then keyword results (deduped)
-    results: list[MemoryEntry] = list(id_entries)
-    for e in kw_entries:
-        if e.id not in seen_ids:
-            results.append(e)
-            seen_ids.add(e.id)
-
-    return results[:top_k]
 
 
 def recall_learnings(
@@ -807,7 +297,7 @@ def update_learning(
                 "status": "invalid",
             }
         fields["status"] = status
-        changes.append(f"status→{status}")
+        changes.append(f"status\u2192{status}")
 
     if detail is not None:
         fields["detail"] = detail
@@ -821,7 +311,7 @@ def update_learning(
         if not 0.0 <= impact <= 1.0:
             return {"error": f"Impact must be 0.0-1.0, got {impact}", "status": "invalid"}
         fields["importance"] = impact
-        changes.append(f"impact→{impact}")
+        changes.append(f"impact\u2192{impact}")
 
     if not changes:
         return {"learning_id": learning_id, "status": "no_changes"}
@@ -956,51 +446,3 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                 entry_id=lid,
             )
             continue
-
-
-def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
-    """Generate embeddings for all entries that don't have one yet.
-
-    Called on first activation of embeddings (session_start with
-    embeddings_enabled=True and deps available). Idempotent — skips
-    entries that already have a vector stored.
-
-    Returns counts: ``{"embedded": N, "skipped": N, "failed": N}``.
-    """
-    embedder = get_embedder()
-    if embedder is None:
-        return {"embedded": 0, "skipped": 0, "failed": 0}
-
-    backend = get_backend(trw_dir)
-    entries = backend.list_entries(namespace=_NAMESPACE, limit=_MAX_ENTRIES)
-
-    embedded = 0
-    skipped = 0
-    failed = 0
-
-    for entry in entries:
-        # Check if vector already exists by attempting a search
-        # with high top_k — cheaper than adding a get_vector method
-        try:
-            text = f"{entry.content} {entry.detail}"
-            if not text.strip():
-                skipped += 1
-                continue
-
-            vector = embedder.embed(text)
-            if vector is None:
-                failed += 1
-                continue
-
-            backend.upsert_vector(entry.id, vector)
-            embedded += 1
-        except (OSError, ValueError, RuntimeError):
-            failed += 1
-
-    logger.info(
-        "embeddings_backfill_complete",
-        embedded=embedded,
-        skipped=skipped,
-        failed=failed,
-    )
-    return {"embedded": embedded, "skipped": skipped, "failed": failed}
