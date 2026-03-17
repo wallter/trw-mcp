@@ -102,6 +102,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         start = time.monotonic()
         success = True
         error_msg: str | None = None
+        error_type_name: str | None = None
         result_val: object = None
 
         try:
@@ -110,6 +111,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         except Exception as exc:  # justified: re-raise, telemetry metering decorator
             success = False
             error_msg = str(exc)[:200]
+            error_type_name = type(exc).__name__
             raise
         finally:
             duration_ms = round((time.monotonic() - start) * 1000, 2)
@@ -119,6 +121,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                     duration_ms,
                     success,
                     error_msg,
+                    error_type_name,
                 )
             except Exception:  # justified: fail-open telemetry, never blocks tool execution
                 logger.debug("telemetry_write_failed", tool=func.__name__)
@@ -157,9 +160,12 @@ def _write_tool_event(
     duration_ms: float,
     success: bool,
     error: str | None,
+    error_type: str | None = None,
 ) -> None:
     """Write a tool_invocation event to events.jsonl or fallback."""
     import os
+
+    from trw_shared.telemetry import Status
 
     agent_id = os.environ.get("TRW_AGENT_ID", "default")
     agent_role = os.environ.get("TRW_AGENT_ROLE", "lead")
@@ -167,6 +173,7 @@ def _write_tool_event(
         "tool_name": tool_name,
         "duration_ms": duration_ms,
         "success": success,
+        "status": Status.SUCCESS if success else Status.ERROR,
         "agent_id": agent_id,
         "agent_role": agent_role,
     }
@@ -189,6 +196,8 @@ def _write_tool_event(
 
     if error is not None:
         event_data["error"] = error
+    if error_type is not None:
+        event_data["error_type"] = error_type
 
     # OTEL span emission (fail-open, gated by config.otel_enabled)
     emit_tool_span(

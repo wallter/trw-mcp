@@ -4,6 +4,21 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`status` column always NULL for tool invocations** — `_write_tool_event` now emits `status: "success"/"error"` (string) in addition to `success` (bool), so the backend's `telemetry_events.status` column is correctly populated instead of all values falling into the `payload` JSON.
+- **`error_type` never populated** — tool invocation events now include `error_type` with the exception class name (e.g., `"ValueError"`), enabling dashboard error-type breakdowns.
+
+### Added
+
+- **`trw-shared` telemetry contract** — new `shared/` monorepo package (`trw_shared.telemetry`) provides `EventType`, `Phase`, `Status` constants and `MAPPED_FIELDS` frozenset as the single source of truth for telemetry field names across trw-mcp and backend.
+- **Grafana dashboard rewrite** — rebuilt `trw-overview.json` from 5 panels to 25 panels across 7 sections: Overview KPIs, Event Volume & Latency (P50/P95/P99), Tool Analysis (top tools + error rates), Ceremony & Workflow (score trend + phase donut), LLM Usage & Build Quality, Learnings & Errors (table), Sessions & Coverage + LLM Cost. All queries use `$__timeFilter(created_at)` for proper time-range integration. Wired to all 6 DB tables: `telemetry_events`, `shared_learnings`, `organizations`, `users`, `api_keys`, `audit_events`.
+
+### Changed
+
+- **Telemetry models use shared constants** — `SessionStartEvent`, `ToolInvocationEvent`, `CeremonyComplianceEvent`, `SessionEndEvent` now reference `EventType.*` and `Status.*` from `trw_shared.telemetry` instead of inline string literals.
+- **`ToolEventDataDict`** — added `status` and `error_type` fields to the TypedDict for type-safe telemetry emission.
+
 ## [0.20.1] — 2026-03-16
 
 ### Fixed

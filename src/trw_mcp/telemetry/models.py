@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field
+from trw_shared.telemetry import EventType, Status
 
 
 def _utc_now() -> datetime:
@@ -35,7 +36,7 @@ class TelemetryEvent(BaseModel):
 class SessionStartEvent(TelemetryEvent):
     """Emitted when a TRW session starts (trw_session_start tool called)."""
 
-    event_type: str = "session_start"
+    event_type: str = EventType.SESSION_START
     run_id: str | None = None
     learnings_loaded: int = 0
 
@@ -43,17 +44,18 @@ class SessionStartEvent(TelemetryEvent):
 class ToolInvocationEvent(TelemetryEvent):
     """Emitted after each MCP tool call completes."""
 
-    event_type: str = "tool_invocation"
+    event_type: str = EventType.TOOL_INVOCATION
     tool_name: str
     duration_ms: int = 0
     success: bool = True
+    status: str = Status.SUCCESS
     phase: str = ""
 
 
 class CeremonyComplianceEvent(TelemetryEvent):
     """Emitted when ceremony compliance is evaluated for a run."""
 
-    event_type: str = "ceremony_compliance"
+    event_type: str = EventType.CEREMONY_COMPLIANCE
     run_id: str
     score: int = 0
     phases_completed: list[str] = Field(default_factory=list)
@@ -62,7 +64,7 @@ class CeremonyComplianceEvent(TelemetryEvent):
 class SessionEndEvent(TelemetryEvent):
     """Emitted when a TRW session ends (trw_deliver tool called)."""
 
-    event_type: str = "session_end"
+    event_type: str = EventType.SESSION_END
     total_duration_ms: int = 0
     tools_invoked: int = 0
     ceremony_score: int = 0

@@ -258,17 +258,19 @@ class ToolEventDataDict(TypedDict, total=False):
     """Shape of the ``event_data`` dict written by ``_write_tool_event`` in telemetry.py.
 
     Always-present keys: ``tool_name``, ``duration_ms``, ``success``,
-    ``agent_id``, ``agent_role``, ``phase``.
-    Optional: ``error`` (present only when the tool call raised an exception).
+    ``status``, ``agent_id``, ``agent_role``, ``phase``.
+    Optional: ``error``, ``error_type`` (present only when the tool call raised).
     """
 
     tool_name: str
     duration_ms: float
     success: bool
+    status: str
     agent_id: str
     agent_role: str
     phase: str
     error: str
+    error_type: str
 
 
 class TelemetryRecordDict(TypedDict):
