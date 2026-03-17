@@ -11,7 +11,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # PRD-CORE-001, PRD-CORE-004: Learning entry models with utility scoring
 
@@ -56,6 +56,35 @@ class LearningEntry(BaseModel):
     q_observations: int = Field(ge=0, default=0)
     outcome_history: list[str] = Field(default_factory=list)
     shard_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _preseed_q_value(cls, data: dict[str, object]) -> dict[str, object]:
+        """Pre-seed q_value from impact when creating a new entry.
+
+        When q_value is not explicitly provided and q_observations is 0
+        (a brand-new entry), compute an initial q_value that reflects the
+        assessed impact rather than using the flat 0.5 default.  This gives
+        high-impact learnings an immediate advantage in recall ranking.
+
+        Only applies to dict input (not already-validated model instances).
+        """
+        if not isinstance(data, dict):
+            return data
+        # Only pre-seed when q_value was not explicitly provided
+        if "q_value" in data:
+            return data
+        # Only pre-seed for new entries (no observations yet)
+        q_obs = data.get("q_observations", 0)
+        if isinstance(q_obs, int) and q_obs > 0:
+            return data
+        # Compute pre-seeded q_value from impact
+        impact = data.get("impact", 0.5)
+        if isinstance(impact, (int, float)):
+            from trw_mcp.scoring._correlation import compute_initial_q_value
+
+            data["q_value"] = round(compute_initial_q_value(float(impact)), 4)
+        return data
 
     # PRD-CORE-026: Source attribution for human vs agent learnings
     source_type: str = Field(

@@ -29,6 +29,36 @@ from trw_mcp.scoring._utils import (
 
 logger = structlog.get_logger()
 
+
+# --- Q-value pre-seeding from impact score ---
+
+
+def compute_initial_q_value(impact: float) -> float:
+    """Compute the initial Q-value for a new learning entry based on its impact.
+
+    When a learning entry has no observations (q_observations == 0), it should
+    start with a Q-value that reflects its assessed impact rather than the flat
+    default of 0.5.  This gives high-impact learnings an immediate advantage in
+    recall ranking while still requiring outcome observations to converge to
+    their true value.
+
+    Formula: ``impact * 0.5 + 0.5 * 0.5``
+
+    This blends the impact score (weight 0.5) with a neutral prior (0.5,
+    weight 0.5), producing:
+    - impact=0.95 -> q_value=0.725
+    - impact=0.50 -> q_value=0.500 (unchanged from prior default)
+    - impact=0.00 -> q_value=0.250
+
+    Args:
+        impact: The assessed impact score of the learning entry (0.0 to 1.0).
+
+    Returns:
+        Pre-seeded Q-value, always in [0.25, 0.75] for valid inputs.
+    """
+    return impact * 0.5 + 0.5 * 0.5
+
+
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
 
 # Reward mapping: EventType -> reward signal
@@ -553,6 +583,7 @@ __all__ = [
     "REWARD_MAP",
     "_find_session_start_ts",
     "_resolve_event_reward",
+    "compute_initial_q_value",
     "correlate_recalls",
     "process_outcome",
     "process_outcome_for_event",

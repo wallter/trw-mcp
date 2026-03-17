@@ -171,6 +171,7 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_fix055_traceability_lang.py",
         "test_core080_template_variants.py",
         "test_response_optimizer.py",
+        "test_scoring_q_preseed.py",
     }
 )
 

@@ -44,6 +44,9 @@ from trw_mcp.scoring._correlation import (
     REWARD_MAP as REWARD_MAP,
 )
 from trw_mcp.scoring._correlation import (
+    compute_initial_q_value as compute_initial_q_value,
+)
+from trw_mcp.scoring._correlation import (
     _find_session_start_ts as _find_session_start_ts,
 )
 from trw_mcp.scoring._correlation import (
@@ -151,6 +154,7 @@ __all__ = [
     "bayesian_calibrate",
     "classify_complexity",
     "compute_calibration_accuracy",
+    "compute_initial_q_value",
     "compute_impact_distribution",
     "compute_tier_ceremony_score",
     "compute_utility_score",
