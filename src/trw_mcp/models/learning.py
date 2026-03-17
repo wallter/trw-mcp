@@ -76,10 +76,14 @@ class LearningEntry(BaseModel):
             return data
         # Only pre-seed for new entries (no observations yet)
         q_obs_raw = data.get("q_observations", 0)
-        try:
-            q_obs = int(q_obs_raw)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            q_obs = 0
+        q_obs: int = 0
+        if isinstance(q_obs_raw, (int, float)):
+            q_obs = int(q_obs_raw)
+        elif isinstance(q_obs_raw, str):
+            try:
+                q_obs = int(q_obs_raw)
+            except ValueError:
+                q_obs = 0
         if q_obs > 0:
             return data
         # Compute pre-seeded q_value from impact
