@@ -12,6 +12,7 @@ from pathlib import Path
 from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
     NudgeContext,
+    ToolName,
     _assemble_nudge,
     _compute_urgency,
     _context_reactive_message,
@@ -1476,6 +1477,90 @@ class TestFR09ComponentAwareTruncation:
         assert "Build failed" in result
         assert then_step in result  # THEN step fits
         assert reversion not in result  # reversion dropped before THEN
+
+
+class TestC103BuildStatusLineAndReversionSuppression:
+    """C1-03: Test coverage for deferred import + reversion suppression path."""
+
+    def test_build_status_line_complete_steps(self) -> None:
+        """_build_status_line shows checkmarks for completed steps.
+
+        Exercises the deferred import of _step_complete from _nudge_rules
+        inside _build_status_line (_nudge_messages module).
+        """
+        from trw_mcp.state._nudge_messages import _build_status_line
+
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            files_modified_since_checkpoint=0,
+            build_check_result="passed",
+            review_called=True,
+            deliver_called=True,
+        )
+        line = _build_status_line(state)
+        # All steps should have checkmarks
+        assert line.count("\u2713") == 5
+        assert "\u2717" not in line
+
+    def test_build_status_line_incomplete_steps(self) -> None:
+        """_build_status_line shows crosses for incomplete steps with annotations."""
+        from trw_mcp.state._nudge_messages import _build_status_line
+
+        state = CeremonyState(
+            session_started=False,
+            checkpoint_count=0,
+            files_modified_since_checkpoint=5,
+            build_check_result="",
+            review_called=False,
+            deliver_called=False,
+            learnings_this_session=3,
+        )
+        line = _build_status_line(state)
+        # All steps should have crosses
+        assert line.count("\u2717") == 5
+        assert "\u2713" not in line
+        # Checkpoint annotation should show files modified
+        assert "5 files modified" in line
+        # Deliver annotation should show pending learnings
+        assert "3 learnings pending" in line
+
+    def test_compute_nudge_build_check_context_reversion_is_none(self) -> None:
+        """compute_nudge suppresses reversion field when tool_name is BUILD_CHECK.
+
+        The BUILD_CHECK reactive message already includes reversion guidance,
+        so the separate reversion prompt should not be appended.
+        """
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            phase="validate",
+            build_check_result="",
+        )
+        ctx = NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=True)
+        result = compute_nudge(state, context=ctx)
+        # The result should contain the reactive message about review
+        assert "review" in result.lower()
+        # The reversion prompt text should NOT appear as a separate line
+        # (build_check reactive messages already embed reversion guidance)
+        assert "If failures reveal a design flaw, revert to PLAN. If implementation bugs, fix in-phase." not in result
+
+    def test_compute_nudge_review_context_reversion_is_none(self) -> None:
+        """compute_nudge suppresses reversion field when tool_name is REVIEW.
+
+        The REVIEW reactive message already includes reversion guidance for P0s.
+        """
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            phase="review",
+            review_called=True,
+        )
+        ctx = NudgeContext(tool_name=ToolName.REVIEW, review_p0_count=0)
+        result = compute_nudge(state, context=ctx)
+        assert "deliver" in result.lower()
+        # Separate reversion prompt should not appear
+        assert "revert to PLAN" not in result
 
 
 class TestBackwardsCompatibility:

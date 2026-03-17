@@ -93,5 +93,5 @@ def _learning_to_memory_entry(
         source_identity=source_identity,
         namespace=_NAMESPACE,
         metadata=metadata,
-        q_value=round(compute_initial_q_value(impact), 4),
+        q_value=compute_initial_q_value(impact),
     )

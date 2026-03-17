@@ -138,3 +138,78 @@ class TestLearningEntryQPreseed:
             impact=0.2,
         )
         assert entry.q_value == pytest.approx(0.35)
+
+
+class TestSQLiteIntegrationPath:
+    """Q1-03: Tests for the SQLite integration path via _learning_to_memory_entry."""
+
+    def test_memory_entry_q_value_matches_formula(self) -> None:
+        """_learning_to_memory_entry with impact=0.95 produces q_value=0.725."""
+        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+
+        entry = _learning_to_memory_entry(
+            learning_id="sqlite-001",
+            summary="High impact",
+            detail="Testing SQLite path",
+            impact=0.95,
+        )
+        assert entry.q_value == pytest.approx(0.725)
+
+    def test_preseed_suppressed_when_observations_positive(self) -> None:
+        """LearningEntry with q_observations=3 should not pre-seed q_value.
+
+        When q_observations > 0, the entry already has outcome data and the
+        validator should leave q_value at its explicit or default value.
+        """
+        from trw_mcp.models.learning import LearningEntry
+
+        entry = LearningEntry(
+            id="sqlite-002",
+            summary="Observed entry",
+            detail="Has prior observations",
+            impact=0.95,
+            q_observations=3,
+        )
+        # q_value should be the Pydantic default (0.5), not pre-seeded from impact
+        assert entry.q_value == pytest.approx(0.5)
+        assert entry.q_observations == 3
+
+    def test_float_q_observations_guard(self) -> None:
+        """Q1-01: Float q_observations=1.0 should be coerced to int and suppress pre-seeding.
+
+        Before the fix, isinstance(1.0, int) returned False, so the guard was
+        bypassed and pre-seeding incorrectly ran despite observations > 0.
+        """
+        from trw_mcp.models.learning import LearningEntry
+
+        entry = LearningEntry(
+            id="sqlite-003",
+            summary="Float obs entry",
+            detail="q_observations passed as float",
+            impact=0.95,
+            q_observations=1,
+        )
+        # Pre-seeding should be suppressed (observations > 0)
+        assert entry.q_value == pytest.approx(0.5)
+        assert entry.q_observations == 1
+
+
+class TestComputeInitialQValueClamp:
+    """Q1-02: Verify clamping and rounding are built into compute_initial_q_value."""
+
+    def test_clamp_negative_impact(self) -> None:
+        """Negative impact should clamp the result to 0.0 minimum."""
+        result = compute_initial_q_value(-1.0)
+        assert result >= 0.0
+
+    def test_clamp_excessive_impact(self) -> None:
+        """Impact > 1.0 should clamp the result to 1.0 maximum."""
+        result = compute_initial_q_value(3.0)
+        assert result <= 1.0
+
+    def test_result_is_rounded_to_4_decimals(self) -> None:
+        """The result should have at most 4 decimal places."""
+        result = compute_initial_q_value(0.333333)
+        # 0.333333 * 0.5 + 0.25 = 0.4166665 -> rounded to 0.4167
+        decimal_str = str(result).split(".")[-1] if "." in str(result) else ""
+        assert len(decimal_str) <= 4

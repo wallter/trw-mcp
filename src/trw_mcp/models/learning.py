@@ -75,15 +75,19 @@ class LearningEntry(BaseModel):
         if "q_value" in data:
             return data
         # Only pre-seed for new entries (no observations yet)
-        q_obs = data.get("q_observations", 0)
-        if isinstance(q_obs, int) and q_obs > 0:
+        q_obs_raw = data.get("q_observations", 0)
+        try:
+            q_obs = int(q_obs_raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            q_obs = 0
+        if q_obs > 0:
             return data
         # Compute pre-seeded q_value from impact
         impact = data.get("impact", 0.5)
         if isinstance(impact, (int, float)):
             from trw_mcp.scoring._correlation import compute_initial_q_value
 
-            data["q_value"] = round(compute_initial_q_value(float(impact)), 4)
+            data["q_value"] = compute_initial_q_value(float(impact))
         return data
 
     # PRD-CORE-026: Source attribution for human vs agent learnings

@@ -42,7 +42,7 @@ def compute_initial_q_value(impact: float) -> float:
     recall ranking while still requiring outcome observations to converge to
     their true value.
 
-    Formula: ``impact * 0.5 + 0.5 * 0.5``
+    Formula: ``impact * 0.5 + 0.25``
 
     This blends the impact score (weight 0.5) with a neutral prior (0.5,
     weight 0.5), producing:
@@ -50,13 +50,15 @@ def compute_initial_q_value(impact: float) -> float:
     - impact=0.50 -> q_value=0.500 (unchanged from prior default)
     - impact=0.00 -> q_value=0.250
 
+    The result is clamped to [0.0, 1.0] and rounded to 4 decimal places.
+
     Args:
         impact: The assessed impact score of the learning entry (0.0 to 1.0).
 
     Returns:
-        Pre-seeded Q-value, always in [0.25, 0.75] for valid inputs.
+        Pre-seeded Q-value, clamped to [0.0, 1.0], rounded to 4 decimals.
     """
-    return impact * 0.5 + 0.5 * 0.5
+    return round(max(0.0, min(1.0, impact * 0.5 + 0.25)), 4)
 
 
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
