@@ -2,7 +2,11 @@
 
 All notable changes to the TRW MCP server package.
 
-## [Unreleased]
+## [0.21.0] — 2026-03-17
+
+### Added
+
+- **Response optimizer middleware** — new `ResponseOptimizerMiddleware` intercepts all MCP tool responses and compacts JSON for LLM context efficiency: rounds floats to 2 decimal places, strips null values and empty collections, re-serializes with compact separators (no whitespace). Reduces token consumption across all 24 tools with zero per-tool changes.
 
 ### Fixed
 

@@ -170,6 +170,7 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_prd_utils_edge.py",
         "test_fix055_traceability_lang.py",
         "test_core080_template_variants.py",
+        "test_response_optimizer.py",
     }
 )
 

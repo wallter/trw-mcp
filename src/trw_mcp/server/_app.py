@@ -70,6 +70,15 @@ def _build_middleware() -> list[object]:
     except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
         sys.stderr.write("WARNING: Progressive disclosure middleware init failed, skipping\n")
 
+    # Response optimizer: compact JSON (round floats, strip nulls/empties).
+    # Added last so it runs on the final response after all other middleware.
+    try:
+        from trw_mcp.middleware.response_optimizer import ResponseOptimizerMiddleware
+
+        middleware.append(ResponseOptimizerMiddleware())
+    except Exception:  # justified: fail-open, response optimizer is optional enhancement
+        sys.stderr.write("WARNING: ResponseOptimizerMiddleware init failed, skipping\n")
+
     return middleware
 
 
