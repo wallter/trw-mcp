@@ -15,7 +15,7 @@ import tempfile
 from collections.abc import Generator
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 import structlog
 from pydantic import BaseModel
@@ -455,4 +455,4 @@ def model_to_dict(model: BaseModel) -> dict[str, object]:
     Returns:
         Plain dictionary with JSON-compatible values.
     """
-    return json.loads(model.model_dump_json())  # type: ignore[no-any-return]
+    return cast(dict[str, object], json.loads(model.model_dump_json()))

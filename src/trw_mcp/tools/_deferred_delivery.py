@@ -25,7 +25,6 @@ import io
 import json
 import threading
 import time
-from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -48,29 +47,12 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.state.persistence import (
     FileStateReader,
 )
+from trw_mcp.tools._helpers import _run_step
 
 logger = structlog.get_logger()
 
 
-def _run_step(
-    name: str,
-    fn: Callable[[], Mapping[str, object] | None],
-    results: dict[str, object],
-    errors: list[str],
-) -> None:
-    """Execute a delivery step with fail-open error handling.
-
-    If ``fn`` returns a dict, it is stored in ``results[name]``.
-    If ``fn`` returns None, nothing is stored (used for conditional steps).
-    Exceptions are appended to ``errors`` and a failure dict is stored.
-    """
-    try:
-        step_result = fn()
-        if step_result is not None:
-            results[name] = dict(step_result)
-    except Exception as exc:  # justified: fail-open, individual delivery step must not block others
-        errors.append(f"{name}: {exc}")
-        results[name] = {"status": "failed", "error": str(exc)}
+# _run_step is imported from trw_mcp.tools._helpers (shared with ceremony.py)
 
 
 def _try_acquire_deferred_lock(trw_dir: Path) -> io.TextIOWrapper | None:
@@ -85,8 +67,10 @@ def _try_acquire_deferred_lock(trw_dir: Path) -> io.TextIOWrapper | None:
     fd = lock_path.open("w", encoding="utf-8")
     try:
         fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Write PID + timestamp so operators can inspect
-        fd.write(f"{{'pid': {__import__('os').getpid()}, 'ts': '{datetime.now(timezone.utc).isoformat()}'}}\n")
+        # Write PID + timestamp as valid JSON so operators can inspect
+        import os as _os
+
+        fd.write(json.dumps({"pid": _os.getpid(), "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
         fd.flush()
         return fd
     except Exception:  # justified: cleanup, lock acquisition failure releases fd and returns None

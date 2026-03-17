@@ -254,8 +254,9 @@ def test_apply_impact_decay_floor_respected(
     entries that start at or above the floor.
     """
     entry = _make_entry(impact, days_old, half_life_days)
-    result_entries = apply_impact_decay([entry], half_life_days=half_life_days)
-    new_impact = float(str(result_entries[0]["impact"]))
+    entries = [entry]
+    apply_impact_decay(entries, half_life_days=half_life_days)
+    new_impact = float(str(entries[0]["impact"]))
     assert new_impact >= _IMPACT_DECAY_FLOOR - 1e-9, (
         f"new_impact={new_impact} below floor={_IMPACT_DECAY_FLOOR} "
         f"for impact={impact}, days_old={days_old}, half_life={half_life_days}"
@@ -286,8 +287,9 @@ def test_apply_impact_decay_never_exceeds_original(
     max(0.1, decayed) <= original because decayed <= original.
     """
     entry = _make_entry(impact, days_old, half_life_days)
-    result_entries = apply_impact_decay([entry], half_life_days=half_life_days)
-    new_impact = float(str(result_entries[0]["impact"]))
+    entries = [entry]
+    apply_impact_decay(entries, half_life_days=half_life_days)
+    new_impact = float(str(entries[0]["impact"]))
     # Allow tiny floating-point rounding tolerance
     assert new_impact <= impact + 1e-9, (
         f"new_impact={new_impact} > original={impact} (days_old={days_old}, half_life={half_life_days})"
@@ -308,8 +310,9 @@ def test_apply_impact_decay_no_decay_when_fresh(
     days_old = max(0, half_life_days - 1)
     entry = _make_entry(impact, days_old, half_life_days)
     original_impact = float(str(entry["impact"]))
-    result_entries = apply_impact_decay([entry], half_life_days=half_life_days)
-    new_impact = float(str(result_entries[0]["impact"]))
+    entries = [entry]
+    apply_impact_decay(entries, half_life_days=half_life_days)
+    new_impact = float(str(entries[0]["impact"]))
     assert new_impact == pytest.approx(original_impact, abs=1e-9), (
         f"Fresh entry (days_old={days_old} < half_life={half_life_days}) "
         f"should not be decayed: {original_impact} -> {new_impact}"
@@ -325,9 +328,10 @@ def test_apply_impact_decay_empty_entry_list(
     impact: float,
     half_life_days: int,
 ) -> None:
-    """apply_impact_decay on empty list returns empty list without error."""
-    result = apply_impact_decay([], half_life_days=half_life_days)
-    assert result == []
+    """apply_impact_decay on empty list is a no-op."""
+    entries: list[dict[str, object]] = []
+    apply_impact_decay(entries, half_life_days=half_life_days)
+    assert entries == []
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -45,6 +44,7 @@ from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
 )
+from trw_mcp.tools._helpers import _run_step
 from trw_mcp.tools.telemetry import log_tool_call
 
 # ── Deferred delivery thread globals ───────────────────────────────────
@@ -107,7 +107,7 @@ __all__ = [  # noqa: RUF022 — grouped by origin, not alphabetical
     "_do_auto_progress", "_do_index_sync",
     "_launch_deferred", "_log_deferred_result",
     "_release_deferred_lock", "_resolve_installation_id",
-    "_run_deferred_steps",
+    "_run_deferred_steps", "_run_step",
     "_step_auto_progress", "_step_auto_prune",
     "_step_batch_send", "_step_ceremony_feedback",
     "_step_checkpoint", "_step_consolidation", "_step_outcome_correlation",
@@ -163,25 +163,8 @@ def _mark_run_complete(run_dir: Path) -> None:
         )
 
 
-def _run_step(
-    name: str,
-    fn: Callable[[], dict[str, object] | None],
-    results: dict[str, object],
-    errors: list[str],
-) -> None:
-    """Execute a delivery step with fail-open error handling.
 
-    If ``fn`` returns a dict, it is stored in ``results[name]``.
-    If ``fn`` returns None, nothing is stored (used for conditional steps).
-    Exceptions are appended to ``errors`` and a failure dict is stored.
-    """
-    try:
-        step_result = fn()
-        if step_result is not None:
-            results[name] = step_result
-    except Exception as exc:  # justified: fail-open, individual delivery step must not block others
-        errors.append(f"{name}: {exc}")
-        results[name] = {"status": "failed", "error": str(exc)}
+# _run_step is imported from trw_mcp.tools._helpers (shared with _deferred_delivery)
 
 
 # ── Synchronous delivery helpers (critical path) ──────────────────────

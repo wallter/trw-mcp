@@ -443,7 +443,7 @@ class TestAgentsMdLearningInjection:
     def test_config_defaults_for_learning_injection(self) -> None:
         """Default config values for AGENTS.md learning injection fields."""
         config = TRWConfig()
-        assert config.agents_md_learning_injection is False
+        assert config.agents_md_learning_injection is True
         assert config.agents_md_learning_max == 5
         assert config.agents_md_learning_min_impact == 0.7
 

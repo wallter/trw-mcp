@@ -534,8 +534,8 @@ class TestApplyImpactDecay:
                 "last_accessed_at": _utc(30).isoformat(),  # 30 days ago
             }
         ]
-        result = apply_impact_decay(entries, half_life_days=90)
-        assert result[0]["impact"] == 0.8  # Within 90-day half life
+        apply_impact_decay(entries, half_life_days=90)
+        assert entries[0]["impact"] == 0.8  # Within 90-day half life
 
     def test_impact_decay_stale_entry_decayed(self) -> None:
         """Entry not accessed for > half_life_days: impact decayed."""
@@ -546,8 +546,8 @@ class TestApplyImpactDecay:
                 "last_accessed_at": _utc(180).isoformat(),  # 180 days ago, half_life=90
             }
         ]
-        result = apply_impact_decay(entries, half_life_days=90)
-        decayed_impact = float(str(result[0]["impact"]))
+        apply_impact_decay(entries, half_life_days=90)
+        decayed_impact = float(str(entries[0]["impact"]))
         # Expected: 0.8 * exp(-0.693 * 90 / 90) = 0.8 * 0.5 = 0.4
         expected = 0.8 * math.exp(-0.693 * (180 - 90) / 90)
         assert decayed_impact == pytest.approx(expected, abs=0.02)
@@ -562,8 +562,8 @@ class TestApplyImpactDecay:
                 "created": _utc(3650).isoformat(),  # 10 years ago
             }
         ]
-        result = apply_impact_decay(entries, half_life_days=90)
-        decayed_impact = float(str(result[0]["impact"]))
+        apply_impact_decay(entries, half_life_days=90)
+        decayed_impact = float(str(entries[0]["impact"]))
         assert decayed_impact >= 0.1  # Floor enforced
 
     def test_impact_decay_uses_created_fallback(self) -> None:
@@ -575,8 +575,8 @@ class TestApplyImpactDecay:
                 "created": _utc(180).isoformat(),
             }
         ]
-        result = apply_impact_decay(entries, half_life_days=90)
-        decayed_impact = float(str(result[0]["impact"]))
+        apply_impact_decay(entries, half_life_days=90)
+        decayed_impact = float(str(entries[0]["impact"]))
         assert decayed_impact < 0.8
 
     def test_impact_decay_no_date_field_unchanged(self) -> None:
@@ -587,11 +587,11 @@ class TestApplyImpactDecay:
                 "impact": 0.8,
             }
         ]
-        result = apply_impact_decay(entries, half_life_days=90)
-        assert result[0]["impact"] == 0.8
+        apply_impact_decay(entries, half_life_days=90)
+        assert entries[0]["impact"] == 0.8
 
-    def test_impact_decay_returns_same_list(self) -> None:
-        """Returns the same list object (in-place modification)."""
+    def test_impact_decay_modifies_in_place(self) -> None:
+        """Verifies in-place modification (returns None)."""
         entries: list[dict[str, object]] = [
             {
                 "id": "L-x",
@@ -600,7 +600,10 @@ class TestApplyImpactDecay:
             }
         ]
         result = apply_impact_decay(entries, half_life_days=90)
-        assert result is entries
+        assert result is None
+        # Verify entries were modified in-place
+        decayed_impact = float(str(entries[0]["impact"]))
+        assert decayed_impact < 0.8
 
     def test_impact_decay_config_default_half_life(self) -> None:
         """When half_life_days=None, uses config default (90)."""
@@ -616,8 +619,8 @@ class TestApplyImpactDecay:
                 "last_accessed_at": _utc(90).isoformat(),
             }
         ]
-        result = apply_impact_decay(entries)  # uses default
-        assert float(str(result[0]["impact"])) == 0.8
+        apply_impact_decay(entries)  # uses default
+        assert float(str(entries[0]["impact"])) == 0.8
 
 
 # ---------------------------------------------------------------------------

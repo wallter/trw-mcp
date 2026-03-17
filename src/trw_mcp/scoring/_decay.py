@@ -290,8 +290,8 @@ def enforce_tier_distribution(
 def apply_impact_decay(
     entries: list[LearningEntryDict],
     half_life_days: int | None = None,
-) -> list[LearningEntryDict]:
-    """Apply exponential impact decay to stale learnings (PRD-CORE-034-FR03).
+) -> None:
+    """Apply exponential impact decay to stale learnings **in-place** (PRD-CORE-034-FR03).
 
     For each entry, reads ``last_accessed`` (or ``created``) date and computes
     days since that date.  If days_since exceeds ``half_life_days``, the impact
@@ -303,11 +303,8 @@ def apply_impact_decay(
     to be called during ``trw_deliver``.
 
     Args:
-        entries: List of learning entry dicts.  Modified in-place *and* returned.
+        entries: List of learning entry dicts.  Modified **in-place**.
         half_life_days: Days before decay starts.  Defaults to config value.
-
-    Returns:
-        The same list with ``impact`` fields updated where decay applied.
     """
     cfg: TRWConfig = get_config()
     effective_half_life = half_life_days if half_life_days is not None else cfg.impact_decay_half_life_days
@@ -345,8 +342,6 @@ def apply_impact_decay(
         # Clamp to [_IMPACT_DECAY_FLOOR, 1.0]
         new_impact = max(_IMPACT_DECAY_FLOOR, min(1.0, new_impact))
         entry["impact"] = round(new_impact, 4)
-
-    return entries
 
 
 __all__ = [

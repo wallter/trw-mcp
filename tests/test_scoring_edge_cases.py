@@ -287,19 +287,21 @@ class TestEntryUtilityEdgeCases:
 class TestApplyImpactDecayEdgeCases:
     """Edge cases for apply_impact_decay batch function."""
 
-    def test_empty_list_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_empty_list_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
-        result = apply_impact_decay([])
-        assert result == []
+        entries: list[dict[str, object]] = []
+        apply_impact_decay(entries)
+        assert entries == []
 
     def test_entry_without_dates_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Entry with no date fields is skipped."""
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         entry: dict[str, object] = {"impact": 0.8}
-        result = apply_impact_decay([entry])
-        assert result[0]["impact"] == 0.8
+        entries = [entry]
+        apply_impact_decay(entries)
+        assert entries[0]["impact"] == 0.8
 
     def test_fresh_entry_not_decayed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Entry accessed recently (within half-life) is not decayed."""
@@ -307,8 +309,9 @@ class TestApplyImpactDecayEdgeCases:
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         now_str = datetime.now(timezone.utc).isoformat()
         entry: dict[str, object] = {"impact": 0.9, "last_accessed_at": now_str}
-        result = apply_impact_decay([entry])
-        assert result[0]["impact"] == 0.9
+        entries = [entry]
+        apply_impact_decay(entries)
+        assert entries[0]["impact"] == 0.9
 
     def test_stale_entry_decayed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Entry well past half-life is decayed."""
@@ -316,8 +319,9 @@ class TestApplyImpactDecayEdgeCases:
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         old_date = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
         entry: dict[str, object] = {"impact": 0.9, "last_accessed_at": old_date}
-        result = apply_impact_decay([entry])
-        new_impact = float(str(result[0]["impact"]))
+        entries = [entry]
+        apply_impact_decay(entries)
+        new_impact = float(str(entries[0]["impact"]))
         assert new_impact < 0.9
         assert new_impact >= _IMPACT_DECAY_FLOOR
 
@@ -327,8 +331,9 @@ class TestApplyImpactDecayEdgeCases:
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         old_date = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
         entry: dict[str, object] = {"impact": 0.9, "last_accessed": old_date}
-        result = apply_impact_decay([entry])
-        new_impact = float(str(result[0]["impact"]))
+        entries = [entry]
+        apply_impact_decay(entries)
+        new_impact = float(str(entries[0]["impact"]))
         assert new_impact < 0.9
 
     def test_uses_created_field_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -337,8 +342,9 @@ class TestApplyImpactDecayEdgeCases:
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         old_date = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
         entry: dict[str, object] = {"impact": 0.9, "created": old_date}
-        result = apply_impact_decay([entry])
-        new_impact = float(str(result[0]["impact"]))
+        entries = [entry]
+        apply_impact_decay(entries)
+        new_impact = float(str(entries[0]["impact"]))
         assert new_impact < 0.9
 
     def test_invalid_date_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -346,8 +352,9 @@ class TestApplyImpactDecayEdgeCases:
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         entry: dict[str, object] = {"impact": 0.8, "created": "not-a-date"}
-        result = apply_impact_decay([entry])
-        assert result[0]["impact"] == 0.8
+        entries = [entry]
+        apply_impact_decay(entries)
+        assert entries[0]["impact"] == 0.8
 
     def test_none_string_date_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """'None' string dates are skipped."""
@@ -359,8 +366,9 @@ class TestApplyImpactDecayEdgeCases:
             "last_accessed": "None",
             "created": "None",
         }
-        result = apply_impact_decay([entry])
-        assert result[0]["impact"] == 0.8
+        entries = [entry]
+        apply_impact_decay(entries)
+        assert entries[0]["impact"] == 0.8
 
     def test_impact_never_below_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Even very old entries don't drop below the decay floor."""
@@ -368,8 +376,9 @@ class TestApplyImpactDecayEdgeCases:
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         very_old = (datetime.now(timezone.utc) - timedelta(days=5000)).isoformat()
         entry: dict[str, object] = {"impact": 0.9, "created": very_old}
-        result = apply_impact_decay([entry])
-        new_impact = float(str(result[0]["impact"]))
+        entries = [entry]
+        apply_impact_decay(entries)
+        new_impact = float(str(entries[0]["impact"]))
         assert new_impact >= _IMPACT_DECAY_FLOOR
 
     def test_custom_half_life_days(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -379,10 +388,12 @@ class TestApplyImpactDecayEdgeCases:
         # 60 days old entry with short half-life of 7 days should decay heavily
         old_date = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
         entry: dict[str, object] = {"impact": 0.9, "created": old_date}
-        result_short = apply_impact_decay([dict(entry)], half_life_days=7)
-        result_long = apply_impact_decay([dict(entry)], half_life_days=300)
-        short_impact = float(str(result_short[0]["impact"]))
-        long_impact = float(str(result_long[0]["impact"]))
+        entries_short = [dict(entry)]
+        entries_long = [dict(entry)]
+        apply_impact_decay(entries_short, half_life_days=7)
+        apply_impact_decay(entries_long, half_life_days=300)
+        short_impact = float(str(entries_short[0]["impact"]))
+        long_impact = float(str(entries_long[0]["impact"]))
         # Short half-life should produce more decay
         assert short_impact < long_impact
 
@@ -391,24 +402,24 @@ class TestApplyImpactDecayEdgeCases:
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         old = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
-        entries = [
+        entries: list[dict[str, object]] = [
             {"impact": 0.9, "created": old},
             {"impact": 0.7, "created": old},
             {"impact": 0.5, "created": old},
         ]
-        result = apply_impact_decay(entries)
-        assert len(result) == 3
-        for e in result:
+        apply_impact_decay(entries)
+        assert len(entries) == 3
+        for e in entries:
             assert float(str(e["impact"])) < 0.9
 
-    def test_modifies_in_place_and_returns(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """apply_impact_decay modifies entries in-place AND returns the same list."""
+    def test_modifies_in_place_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """apply_impact_decay modifies entries in-place and returns None."""
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         old = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
-        entries = [{"impact": 0.9, "created": old}]
+        entries: list[dict[str, object]] = [{"impact": 0.9, "created": old}]
         result = apply_impact_decay(entries)
-        assert result is entries  # Same object
+        assert result is None
         assert float(str(entries[0]["impact"])) < 0.9
 
 

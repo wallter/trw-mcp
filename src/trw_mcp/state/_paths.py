@@ -274,53 +274,24 @@ def resolve_run_path(run_path: str | None = None) -> Path:
 def detect_current_phase() -> str | None:
     """Detect the current phase from the active run.
 
-    Resolution order:
-    1. Pinned run directory (process-local, set by ``trw_init``)
-    2. Filesystem scan: ``{runs_root}/{task}/`` for the latest ``run.yaml``
-
-    Only returns a phase when the run's ``status`` is ``"active"``.
+    Delegates to :func:`find_active_run` for run-directory resolution, then
+    reads the phase from ``run.yaml``.  Only returns a phase when the run's
+    ``status`` is ``"active"``.
 
     Returns:
         Current phase string (e.g. ``"implement"``), or ``None`` if no active run.
     """
     try:
-        config = get_config()
+        active_run = find_active_run()
+        if active_run is None:
+            return None
+
         reader = FileStateReader()
-
-        # Use pinned run if available
-        pinned = get_pinned_run()
-        if pinned is not None:
-            run_yaml = pinned / "meta" / "run.yaml"
-            if run_yaml.exists():
-                data = reader.read_yaml(run_yaml)
-                if str(data.get("status", "")) != "active":
-                    return None
-                return str(data.get("phase", "")) or None
+        run_yaml = active_run / "meta" / "run.yaml"
+        if not run_yaml.exists():
             return None
 
-        runs_root = resolve_project_root() / config.runs_root
-        if not runs_root.exists():
-            return None
-
-        latest_name = ""
-        latest_yaml: Path | None = None
-        for run_dir, run_yaml in iter_run_dirs(runs_root):
-            # Status-aware: skip completed/failed runs (matches find_active_run)
-            try:
-                data = reader.read_yaml(run_yaml)
-                status = str(data.get("status", "active"))
-                if status in ("complete", "failed"):
-                    continue
-            except Exception:  # justified: fail-open, unreadable run.yaml treated as active
-                logger.debug("run_yaml_read_failed", path=str(run_yaml), exc_info=True)
-            if run_dir.name > latest_name:
-                latest_name = run_dir.name
-                latest_yaml = run_yaml
-
-        if latest_yaml is None:
-            return None
-
-        data = reader.read_yaml(latest_yaml)
+        data = reader.read_yaml(run_yaml)
         if str(data.get("status", "")) != "active":
             return None
         return str(data.get("phase", "")) or None
