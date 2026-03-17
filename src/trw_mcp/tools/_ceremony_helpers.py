@@ -317,7 +317,7 @@ def step_telemetry_startup(
             "run_id": str(run_dir.name) if run_dir else None,
         })
     except Exception:  # justified: fail-open, pipeline start must not block session start
-        logger.debug("pipeline_start_failed", exc_info=True)
+        logger.warning("pipeline_start_failed", exc_info=True)
 
 
 def step_increment_session_counter() -> None:
@@ -346,7 +346,7 @@ def step_sanitize_and_maintain(
         from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
         sanitize_ceremony_feedback(resolve_trw_dir())
     except Exception:  # justified: fail-open, sanitization must not block session start
-        logger.debug("ceremony_feedback_sanitize_failed", exc_info=True)
+        logger.warning("ceremony_feedback_sanitize_failed", exc_info=True)
 
     return run_auto_maintenance(resolve_trw_dir(), config, run_dir)
 
