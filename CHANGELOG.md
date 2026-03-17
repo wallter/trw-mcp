@@ -4,6 +4,13 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-03-16
+
+### Fixed
+
+- **Installer hang on extras detection** — `_detect_installed_extras()` now uses a 10-second timeout for import checks that previously could stall indefinitely on PEP 668 system Python without a venv.
+- **Installer hang on subprocess calls** — `run_with_progress()` now has a configurable watchdog timer (default 180s) that kills stalled subprocesses. Previously, a hanging `trw-mcp update-project` or CLAUDE.md sync would block the installer indefinitely.
+
 ## [0.20.0] — 2026-03-15
 
 ### Added
