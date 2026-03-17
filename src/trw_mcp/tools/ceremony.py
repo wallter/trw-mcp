@@ -274,7 +274,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
     @server.tool()
     @log_tool_call
-    def trw_session_start(query: str = "") -> SessionStartResultDict:  # noqa: C901 — session lifecycle with error recovery
+    def trw_session_start(query: str = "") -> SessionStartResultDict:
         """Load your prior learnings and any active run — gives you full context before writing code.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
@@ -290,13 +290,19 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 deduplicates. Empty string or "*" uses default wildcard behavior.
         """
         from trw_mcp.tools._ceremony_helpers import (
+            _phase_contextual_recall,
             perform_session_recalls,
-            run_auto_maintenance,
+            step_ceremony_nudge,
+            step_embed_health,
+            step_increment_session_counter,
+            step_log_session_event,
+            step_mark_session_started,
+            step_sanitize_and_maintain,
+            step_telemetry_startup,
         )
 
         config = get_config()
         reader = FileStateReader()
-        writer = FileStateWriter()
         results: SessionStartResultDict = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
@@ -309,7 +315,6 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             )
             results["learnings"] = learnings
             results["learnings_count"] = len(learnings)
-            # Unpack extra fields (query, query_matched, total_available) individually
             if "query" in extra:
                 results["query"] = str(extra["query"])
             if "query_matched" in extra:
@@ -336,73 +341,25 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # Step 3: Log session_start event (FR01, PRD-CORE-031)
         try:
-            event_data: dict[str, object] = {
-                "learnings_recalled": int(str(results.get("learnings_count", 0))),
-                "run_detected": run_dir is not None,
-                "query": query if is_focused else "*",
-            }
-            if run_dir is not None:
-                events_path = run_dir / "meta" / "events.jsonl"
-                if events_path.parent.exists():
-                    _events.log_event(events_path, "session_start", event_data)
-            else:
-                trw_dir_path = resolve_trw_dir()
-                context_path = trw_dir_path / config.context_dir
-                writer.ensure_dir(context_path)
-                fallback_path = context_path / "session-events.jsonl"
-                _events.log_event(fallback_path, "session_start", event_data)
+            step_log_session_event(run_dir, cast("dict[str, object]", results), query, is_focused)
         except Exception:  # justified: fail-open, event logging must not block session start
             logger.debug("session_event_write_failed", exc_info=True)
 
         # Step 3b: Queue SessionStartEvent for telemetry publishing
         try:
-            from trw_mcp.telemetry.client import TelemetryClient
-            from trw_mcp.telemetry.models import SessionStartEvent
-            inst_id = _resolve_installation_id()
-            tel_client = TelemetryClient.from_config()
-            tel_client.record_event(SessionStartEvent(
-                installation_id=inst_id,
-                framework_version=config.framework_version,
-                learnings_loaded=int(str(results.get("learnings_count", 0))),
-                run_id=str(run_dir.name) if run_dir else None,
-            ))
-            tel_client.flush()
-            # Start the unified telemetry pipeline (periodic background flush
-            # replaces the old fire-and-forget BatchSender thread).
-            try:
-                from trw_mcp.telemetry.pipeline import TelemetryPipeline
-                pipeline = TelemetryPipeline.get_instance()
-                pipeline.start()
-                pipeline.enqueue({
-                    "event_type": "session_start",
-                    "learnings_loaded": int(str(results.get("learnings_count", 0))),
-                    "run_id": str(run_dir.name) if run_dir else None,
-                })
-            except Exception:  # justified: fail-open, pipeline start must not block session start
-                logger.debug("pipeline_start_failed", exc_info=True)
+            step_telemetry_startup(cast("dict[str, object]", results), run_dir)
         except Exception:  # justified: fail-open, telemetry publish must not block session start
             logger.debug("session_telemetry_failed", exc_info=True)
 
         # Step 3c: Increment sessions_tracked counter (FIX-050-FR06)
         try:
-            from trw_mcp.state.analytics.counters import increment_session_start_counter
-            increment_session_start_counter(resolve_trw_dir())
+            step_increment_session_counter()
         except Exception:  # justified: fail-open, counter increment must not block session start
             logger.debug("session_counter_increment_failed", exc_info=True)
 
         # Steps 3d, 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings, sanitization)
         try:
-            # One-time sanitization of test-polluted ceremony feedback (FIX-050-FR07)
-            try:
-                from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
-                sanitize_ceremony_feedback(resolve_trw_dir())
-            except Exception:  # justified: fail-open, sanitization must not block session start
-                logger.debug("ceremony_feedback_sanitize_failed", exc_info=True)
-
-            maintenance = run_auto_maintenance(
-                resolve_trw_dir(), config, run_dir,
-            )
-            # Unpack AutoMaintenanceDict keys explicitly (all declared in SessionStartResultDict)
+            maintenance = step_sanitize_and_maintain(run_dir)
             for key in (
                 "update_advisory",
                 "auto_upgrade",
@@ -418,8 +375,6 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
         try:
             if config.auto_recall_enabled:
-                from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
-
                 trw_dir_ar = resolve_trw_dir()
                 run_status_obj: RunStatusDict | None = results.get("run")
                 phase_recalled = _phase_contextual_recall(
@@ -433,18 +388,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             logger.debug("session_auto_recall_failed", exc_info=True)
 
         # FR01 (PRD-FIX-053): Embed health advisory for agents.
-        # Always included — fail-open so advisory never blocks session start.
-        try:
-            from trw_mcp.state.memory_adapter import check_embeddings_status
-            embed_status = check_embeddings_status()
-            results["embed_health"] = dict(embed_status)
-        except Exception:  # justified: fail-open, embed health check must not block session start
-            results["embed_health"] = {
-                "enabled": False,
-                "available": False,
-                "advisory": "",
-                "recent_failures": 0,
-            }
+        results["embed_health"] = step_embed_health()
 
         results["errors"] = errors
         results["success"] = len(errors) == 0
@@ -464,22 +408,15 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # Mark session started in ceremony state tracker (PRD-CORE-074 FR04)
         try:
-            from trw_mcp.state.ceremony_nudge import mark_session_started
-            mark_session_started(resolve_trw_dir())
+            step_mark_session_started()
         except Exception:  # noqa: S110 — fail-open, ceremony state must not block session start
             pass
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        # FR07 (PRD-CORE-084): Skip detailed ceremony nudge for light mode.
-        if config.ceremony_mode != "light":
-            try:
-                from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-                from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-                available = int(str(results.get("learnings_count", 0)))
-                ctx = NudgeContext(tool_name=ToolName.SESSION_START)
-                append_ceremony_nudge(cast("dict[str, object]", results), resolve_trw_dir(), available_learnings=available, context=ctx)
-            except Exception:  # noqa: S110 — fail-open, nudge must not block session start
-                pass
+        try:
+            step_ceremony_nudge(cast("dict[str, object]", results), int(str(results.get("learnings_count", 0))))
+        except Exception:  # noqa: S110 — fail-open, nudge must not block session start
+            pass
 
         logger.info(
             "trw_session_start_complete",

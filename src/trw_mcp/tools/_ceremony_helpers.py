@@ -5,6 +5,13 @@ Modularizes the two longest tool functions into focused, testable helpers:
 - run_auto_maintenance: auto-upgrade, stale run close, embeddings backfill
 - check_delivery_gates: review/build gates, premature delivery guard
 - finalize_run: checkpoint + run status update (placeholder for future expansion)
+- step_log_session_event: log session_start event to events.jsonl
+- step_telemetry_startup: queue telemetry events and start pipeline
+- step_increment_session_counter: increment sessions_tracked counter
+- step_sanitize_and_maintain: sanitize ceremony feedback + run auto-maintenance
+- step_embed_health: check embeddings health status
+- step_mark_session_started: mark session started in ceremony state
+- step_ceremony_nudge: inject ceremony nudge into response
 """
 
 from __future__ import annotations
@@ -239,6 +246,159 @@ def _phase_contextual_recall(
         }
         for e in capped
     ]
+
+
+def step_log_session_event(
+    run_dir: Path | None,
+    results: dict[str, object],
+    query: str,
+    is_focused: bool,
+) -> None:
+    """Log session_start event to events.jsonl (FR01, PRD-CORE-031).
+
+    Writes to run-scoped events file if a run is active, otherwise falls
+    back to a session-events file under the context directory.
+    """
+    from trw_mcp.models.config import get_config
+
+    config = get_config()
+    writer = FileStateWriter()
+    events = FileEventLogger(writer)
+
+    event_data: dict[str, object] = {
+        "learnings_recalled": int(str(results.get("learnings_count", 0))),
+        "run_detected": run_dir is not None,
+        "query": query if is_focused else "*",
+    }
+    if run_dir is not None:
+        events_path = run_dir / "meta" / "events.jsonl"
+        if events_path.parent.exists():
+            events.log_event(events_path, "session_start", event_data)
+    else:
+        trw_dir_path = resolve_trw_dir()
+        context_path = trw_dir_path / config.context_dir
+        writer.ensure_dir(context_path)
+        fallback_path = context_path / "session-events.jsonl"
+        events.log_event(fallback_path, "session_start", event_data)
+
+
+def step_telemetry_startup(
+    results: dict[str, object],
+    run_dir: Path | None,
+) -> None:
+    """Queue SessionStartEvent for telemetry and start the telemetry pipeline.
+
+    Fail-open: exceptions are logged but never propagated.
+    """
+    from trw_mcp.models.config import get_config
+    from trw_mcp.telemetry.client import TelemetryClient
+    from trw_mcp.telemetry.models import SessionStartEvent
+    from trw_mcp.tools._deferred_delivery import _resolve_installation_id
+
+    config = get_config()
+    inst_id = _resolve_installation_id()
+    tel_client = TelemetryClient.from_config()
+    tel_client.record_event(SessionStartEvent(
+        installation_id=inst_id,
+        framework_version=config.framework_version,
+        learnings_loaded=int(str(results.get("learnings_count", 0))),
+        run_id=str(run_dir.name) if run_dir else None,
+    ))
+    tel_client.flush()
+    # Start the unified telemetry pipeline (periodic background flush
+    # replaces the old fire-and-forget BatchSender thread).
+    try:
+        from trw_mcp.telemetry.pipeline import TelemetryPipeline
+        pipeline = TelemetryPipeline.get_instance()
+        pipeline.start()
+        pipeline.enqueue({
+            "event_type": "session_start",
+            "learnings_loaded": int(str(results.get("learnings_count", 0))),
+            "run_id": str(run_dir.name) if run_dir else None,
+        })
+    except Exception:  # justified: fail-open, pipeline start must not block session start
+        logger.debug("pipeline_start_failed", exc_info=True)
+
+
+def step_increment_session_counter() -> None:
+    """Increment sessions_tracked counter (FIX-050-FR06)."""
+    from trw_mcp.state.analytics.counters import increment_session_start_counter
+    increment_session_start_counter(resolve_trw_dir())
+
+
+def step_sanitize_and_maintain(
+    run_dir: Path | None,
+) -> AutoMaintenanceDict:
+    """Sanitize ceremony feedback, then run auto-maintenance.
+
+    Wraps ``sanitize_ceremony_feedback`` + ``run_auto_maintenance`` in
+    a single fail-open step.
+
+    Returns:
+        AutoMaintenanceDict with keys for each maintenance operation.
+    """
+    from trw_mcp.models.config import get_config
+
+    config = get_config()
+
+    # One-time sanitization of test-polluted ceremony feedback (FIX-050-FR07)
+    try:
+        from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
+        sanitize_ceremony_feedback(resolve_trw_dir())
+    except Exception:  # justified: fail-open, sanitization must not block session start
+        logger.debug("ceremony_feedback_sanitize_failed", exc_info=True)
+
+    return run_auto_maintenance(resolve_trw_dir(), config, run_dir)
+
+
+def step_embed_health() -> dict[str, object]:
+    """Check embeddings health status for agents (FR01, PRD-FIX-053).
+
+    Returns:
+        Dict with enabled, available, advisory, recent_failures keys.
+        Falls back to a safe default dict if the check fails.
+    """
+    try:
+        from trw_mcp.state.memory_adapter import check_embeddings_status
+        embed_status = check_embeddings_status()
+        return dict(embed_status)
+    except Exception:  # justified: fail-open, embed health check must not block session start
+        return {
+            "enabled": False,
+            "available": False,
+            "advisory": "",
+            "recent_failures": 0,
+        }
+
+
+def step_mark_session_started() -> None:
+    """Mark session started in ceremony state tracker (PRD-CORE-074 FR04)."""
+    from trw_mcp.state.ceremony_nudge import mark_session_started
+    mark_session_started(resolve_trw_dir())
+
+
+def step_ceremony_nudge(
+    results: dict[str, object],
+    learnings_count: int,
+) -> None:
+    """Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02).
+
+    Skipped for light ceremony mode (FR07, PRD-CORE-084).
+    """
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+
+    config = get_config()
+    if config.ceremony_mode == "light":
+        return
+
+    ctx = NudgeContext(tool_name=ToolName.SESSION_START)
+    append_ceremony_nudge(
+        results,
+        resolve_trw_dir(),
+        available_learnings=learnings_count,
+        context=ctx,
+    )
 
 
 def _check_version_sentinel(
