@@ -33,6 +33,7 @@ from trw_mcp.state.claude_md import (
     render_closing_reminder,
     render_delegation_protocol,
     render_imperative_opener,
+    render_memory_harmonization,
     render_phase_descriptions,
     render_template,
 )
@@ -628,15 +629,14 @@ class TestCeremonyRendering:
         assert "trw_deliver()" in result
 
     def test_render_imperative_opener(self) -> None:
-        """Imperative opener defines orchestrator role and ceremony tools."""
+        """Imperative opener defines orchestrator role and names ceremony tools."""
         result = render_imperative_opener()
-        # Orchestrator role identity (Frame 1 of semantic repetition)
+        # Orchestrator role identity
         assert "orchestration" in result.lower()
         assert "delegate" in result.lower()
-        # Ceremony tools
-        assert "TRW tools help you build effectively" in result
+        # Ceremony tools mentioned (brief — ceremony_quick_ref has the full table)
         assert "trw_session_start()" in result
-        assert "trw_checkpoint" in result
+        assert "trw_checkpoint()" in result
         assert "trw_deliver()" in result
 
     def test_render_closing_reminder(self) -> None:
@@ -647,6 +647,24 @@ class TestCeremonyRendering:
         # PRD-CORE-062-FR01: trw_deliver removed from closing reminder (redundant with opener)
         assert "trw_deliver()" not in result
         assert "compounds" in result
+
+    def test_render_memory_harmonization(self) -> None:
+        """Memory routing section disambiguates trw_learn vs native auto-memory."""
+        result = render_memory_harmonization()
+        # Heading
+        assert "### Memory Routing" in result
+        # Default action (trw_learn as default, not native)
+        assert "trw_learn()" in result
+        assert "native auto-memory" in result.lower()
+        # Comparison table columns
+        assert "trw_recall(query)" in result
+        assert "Visibility" in result
+        assert "Lifecycle" in result
+        # Concrete routing examples
+        assert "native memory" in result.lower()
+        # Claude Code-specific — should NOT mention opencode
+        assert "opencode" not in result.lower()
+        assert "AGENTS.md" not in result
 
     def test_render_delegation_protocol(self) -> None:
         """Delegation protocol contains orchestrator role, decision tree, and value framing."""
@@ -700,8 +718,10 @@ class TestCeremonyRendering:
         # Quick ref card present with skill pointer
         assert "/trw-ceremony-guide" in content
         # Value-oriented opener at top of auto-generated section
-        assert "TRW tools help you build effectively" in content
+        assert "orchestration" in content.lower()
         assert "trw_session_start()" in content
+        # Memory routing section present
+        assert "Memory Routing" in content
         # Closing reminder bookends the section
         assert "Session Boundaries" in content
         # No unreplaced placeholders

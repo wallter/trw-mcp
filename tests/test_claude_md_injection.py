@@ -143,6 +143,7 @@ class TestBundledTemplateKeysMatchSyncContext:
         sync_keys = {
             "imperative_opener",
             "ceremony_quick_ref",
+            "memory_harmonization",
             "framework_reference",
             "closing_reminder",
             "behavioral_protocol",
@@ -329,6 +330,7 @@ class TestProjectLocalTemplateOverrideKeys:
         required_keys = {
             "imperative_opener",
             "ceremony_quick_ref",
+            "memory_harmonization",
             "closing_reminder",
             "behavioral_protocol",
             "delegation_section",

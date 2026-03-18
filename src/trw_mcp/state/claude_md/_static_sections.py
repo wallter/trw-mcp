@@ -21,29 +21,22 @@ _SESSION_BOUNDARY_TEXT = (
 def render_imperative_opener() -> str:
     """Render the value-oriented opener for the TRW auto-generated section.
 
-    Appears at the very top of the auto-generated block. Uses motivation
-    framing (what the tools give you) rather than threat framing (what
-    you lose). Research: Anthropic context engineering, Claude 4.6 best
-    practices recommend natural language over CRITICAL/ALWAYS/NEVER.
+    Appears at the very top of the auto-generated block. Establishes the
+    orchestration role and names the core tools (brief mention only \u2014
+    ceremony_quick_ref provides the full reference card). Uses value
+    framing per Anthropic context engineering best practices.
 
     Returns:
-        Markdown string with value-framed instructions.
+        Markdown string with role framing and tool overview.
     """
     return (
-        "Your primary role is **orchestration** — you produce better outcomes by assessing tasks, "
-        "delegating to focused agents (subagents or Agent Teams), verifying integration, and "
-        "preserving knowledge. Reserve direct implementation for trivial edits "
-        "(\u22643 lines, 1 file). For everything else, delegate.\n"
+        "Your primary role is **orchestration** \u2014 delegate to focused agents "
+        "for better outcomes than direct implementation. Reserve self-"
+        "implementation for trivial edits (\u22643 lines, 1 file).\n"
         "\n"
-        "TRW tools help you build effectively and preserve your work across sessions:\n"
-        "- **Start**: call `trw_session_start()` to load prior learnings"
-        " and recover any active run\n"
-        "- **Start**: read `.trw/frameworks/FRAMEWORK.md` \u2014 it defines the methodology"
-        " your tools implement\n"
-        "- **During**: call `trw_checkpoint(message)` after milestones"
-        " so you resume here if context compacts\n"
-        "- **Finish**: call `trw_deliver()` to persist your learnings"
-        " for future sessions\n"
+        "Start every session with `trw_session_start()`, save progress with "
+        "`trw_checkpoint()` after milestones, and close with `trw_deliver()` "
+        "to persist your work across sessions.\n"
         "\n"
     )
 
@@ -51,26 +44,25 @@ def render_imperative_opener() -> str:
 def render_ceremony_quick_ref() -> str:
     """Render compact ceremony quick-reference card for CLAUDE.md.
 
-    Lists only the 4 ceremony-critical tools with a pointer to the
-    full ceremony guide skill for on-demand loading.
+    Table format for scannability. Each tool gets when + what in one row.
+    No redundancy with the imperative opener (which names tools briefly
+    but doesn't explain them). Pointer to /trw-ceremony-guide for the
+    full lifecycle reference.
 
     Returns:
-        Markdown string with quick-reference card.
+        Markdown string with quick-reference table.
     """
     return (
         "## TRW Behavioral Protocol (Auto-Generated)\n"
         "\n"
-        "- `trw_session_start()` \u2014 loads your prior learnings and recovers any active run\n"
-        "- `trw_checkpoint(message)` \u2014 saves progress so you can resume after context compaction\n"
-        "- `trw_learn(summary, detail)` \u2014 records discoveries for all future sessions\n"
-        "- `trw_deliver()` \u2014 persists everything in one call when done\n"
+        "| Tool | When | What |\n"
+        "|------|------|------|\n"
+        "| `trw_session_start()` | First action | Load prior learnings + recover active run |\n"
+        "| `trw_learn(summary, detail)` | On discoveries | Persist knowledge for all future agents |\n"
+        "| `trw_checkpoint(message)` | After milestones | Save progress (survives context compaction) |\n"
+        "| `trw_deliver()` | Last action | Persist learnings + sync CLAUDE.md + close session |\n"
         "\n"
-        "For full tool guide: invoke `/trw-ceremony-guide`\n"
-        "\n"
-        "Sessions where you orchestrate (delegate, verify, learn) "
-        "rather than implement directly produce higher quality and "
-        "fewer rework cycles \u2014 your strategic oversight is more "
-        "valuable than your keystrokes.\n"
+        "Full tool lifecycle: `/trw-ceremony-guide`\n"
         "\n"
     )
 
@@ -256,31 +248,60 @@ def render_rationalization_watchlist() -> str:
 def render_framework_reference() -> str:
     """Render framework reference directive for CLAUDE.md.
 
-    Points agents to the methodology document and explains *why* reading it
-    matters. Kept compact (~6 lines) per PRD-CORE-061 progressive disclosure.
-
-    The framework (.trw/frameworks/FRAMEWORK.md) defines the methodology that
-    TRW tools implement. Without it, agents use tools correctly but miss the
-    process — phase gates, exit criteria, formations, quality rubrics — that
-    prevents rework. This section ensures agents know the framework exists and
-    understand why investing ~500 tokens to read it at session start pays for
-    itself in avoided rework.
+    Points agents to the methodology document. Compact per PRD-CORE-061
+    progressive disclosure \u2014 the framework itself explains why, this
+    section just says where and when to read it.
 
     Returns:
-        Markdown string with framework reference and reading schedule.
+        Markdown string with framework pointer and reading schedule.
     """
     return (
         "### Framework Reference\n"
         "\n"
-        "**Read `.trw/frameworks/FRAMEWORK.md` at session start** — it defines the methodology "
-        "your tools implement.\n"
+        "Read `.trw/frameworks/FRAMEWORK.md` at session start \u2014 it defines "
+        "phase gates, exit criteria, quality rubrics, and formation selection. "
+        "Re-read after context compaction.\n"
         "\n"
-        "The framework covers: 6-phase execution model with exit criteria per phase, formation "
-        "selection for parallel work, quality gates with rubric scoring, phase reversion rules, "
-        "adaptive planning, anti-skip safeguards, and Agent Teams protocol. "
-        "Re-read after context compaction and at phase transitions. "
-        "Without it, tools work but methodology is missing — you'll pass tool checks while "
-        "skipping the process that prevents rework.\n"
+    )
+
+
+def render_memory_harmonization() -> str:
+    """Render memory-system routing guidance for Claude Code CLAUDE.md.
+
+    Claude Code has native auto-memory (~/.claude/projects/.../memory/) that
+    overlaps with TRW's ``trw_learn()``/``trw_recall()`` system. This section
+    provides clear routing rules so the model uses each system for its
+    strengths instead of defaulting to native features for everything.
+
+    Uses table format for efficient side-by-side comparison, concrete routing
+    examples for pattern-matching, and default-bias framing (trw_learn as
+    the default action, native memory as the exception).
+
+    Claude Code-specific \u2014 NOT included in AGENTS.md. Other platforms
+    (opencode, Cursor, Aider) don't have native auto-memory to harmonize
+    with, and their ``trw_learn()`` value proposition is already covered in
+    ``render_agents_trw_section()``.
+
+    Returns:
+        Markdown string with memory routing guidance.
+    """
+    return (
+        "### Memory Routing\n"
+        "\n"
+        "Default to `trw_learn()` for knowledge. "
+        "Use native auto-memory only for personal preferences.\n"
+        "\n"
+        "| | `trw_learn()` | Native auto-memory |\n"
+        "|---|---|---|\n"
+        "| Search | `trw_recall(query)` \u2014 semantic + keyword | Filename scan only |\n"
+        "| Visibility | All agents, subagents, teammates | Primary session only |\n"
+        "| Lifecycle | Impact-scored, auto-promotes to CLAUDE.md | Static until manually edited |\n"
+        "| Scale | Hundreds of entries, auto-pruned by staleness | 200-line index cap |\n"
+        "\n"
+        "Gotcha or error pattern \u2192 `trw_learn()`. "
+        "User\u2019s preferred commit style \u2192 native memory. "
+        "Build trick that saves time \u2192 `trw_learn()`. "
+        "Communication preference \u2192 native memory.\n"
         "\n"
     )
 

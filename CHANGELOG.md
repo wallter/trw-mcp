@@ -2,6 +2,40 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.25.0] — 2026-03-18
+
+### Added
+
+- **Memory routing section** — new `render_memory_harmonization()` auto-injected into CLAUDE.md to disambiguate `trw_learn()` vs Claude Code's native auto-memory. Uses table comparison and concrete routing examples. Claude Code-specific — not included in AGENTS.md.
+- **Test for memory harmonization** — verifies routing guidance content, Claude Code specificity, and table structure.
+
+### Changed
+
+- **Optimized CLAUDE.md auto-section** — 41% token reduction (460 → 271 words) while adding memory routing content. Eliminated redundancy between imperative opener and ceremony quick-ref. Switched tool reference from bullet list to table format for scannability.
+- **`render_imperative_opener()`** — tightened to role-only framing with brief tool mentions (detailed table now in ceremony quick-ref).
+- **`render_ceremony_quick_ref()`** — restructured from bullet list to `| Tool | When | What |` table format.
+- **`render_framework_reference()`** — compressed from 5 lines to 2, removed threat framing.
+
+## [0.22.0] — 2026-03-18
+
+### Added
+
+- **ClientProfile system** — per-platform behavioral adaptation via frozen Pydantic models. Five built-in profiles (claude-code, opencode, cursor, codex, aider) with calibrated ceremony weights, scoring dimensions, write targets, and feature flags. See [`docs/CLIENT-PROFILES.md`](../docs/CLIENT-PROFILES.md).
+- **Profile-aware ceremony scoring** — `compute_ceremony_score()` accepts optional `CeremonyWeights`. Both production call sites now pass the active profile's weights.
+- **Profile-aware write targets** — `_determine_write_targets()` delegates to `ClientProfile.write_targets` for known clients.
+- **7 delivery gate structural fixes** (Sprint 77 postmortem): review scope block (R-01), complexity drift warning (R-02/R-05), PRD deferral detection (R-03), wiring test mandate (R-04), anti-pattern recall alerts (R-06), checkpoint blocker warning (R-07).
+- **DRY delivery gate helpers** — `_read_run_events()`, `_read_run_yaml()`, `_count_file_modified()` — events.jsonl read once per delivery.
+
+### Fixed
+
+- Facade-only ClientProfile wiring — weights and write targets now consumed by production code.
+- Phase case normalization — `mandatory_phases` stored lowercase to match `Phase` enum.
+- Parallel `_CEREMONY_WEIGHTS` dict replaced with `CeremonyWeights().as_dict()`.
+- `@cached_property` → `@property` on `TRWConfig.client_profile` (stale data risk).
+- Negative weights now rejected via `Field(ge=0)`.
+- Stale `.pyc` files and comments cleaned up.
+- `_resolve_installation_id` wrappers removed, direct imports inlined.
+
 ## [0.21.0] — 2026-03-17
 
 ### Added

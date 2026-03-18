@@ -39,6 +39,7 @@ from trw_mcp.state.claude_md._static_sections import (
     render_closing_reminder,
     render_delegation_protocol,
     render_imperative_opener,
+    render_memory_harmonization,
     render_phase_descriptions,
     render_rationalization_watchlist,
 )
@@ -92,6 +93,7 @@ __all__ = [
     "render_conventions",
     "render_delegation_protocol",
     "render_imperative_opener",
+    "render_memory_harmonization",
     "render_patterns",
     "render_phase_descriptions",
     "render_rationalization_watchlist",
