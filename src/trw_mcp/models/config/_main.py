@@ -13,6 +13,8 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Literal
 
+import structlog
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,6 +27,8 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
 )
+from trw_mcp.models.config._client_profile import ClientProfile
+from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
@@ -724,6 +728,38 @@ class TRWConfig(BaseSettings):
     def paths(self) -> PathsConfig:
         """Directory structure and path defaults sub-config."""
         return PathsConfig(**{name: getattr(self, name) for name in PathsConfig.model_fields if hasattr(self, name)})
+
+    @property
+    def effective_ceremony_mode(self) -> str:
+        """Profile-aware ceremony mode. Explicit config wins over profile default.
+
+        If the user explicitly set ``ceremony_mode`` to a non-default value, honor
+        it. Otherwise fall back to the resolved client profile's ``ceremony_mode``
+        so that ``target_platforms=["opencode"]`` activates light mode automatically.
+        """
+        # If user explicitly set ceremony_mode to non-default, honor it
+        if self.ceremony_mode != "full":
+            return self.ceremony_mode
+        # Otherwise fall back to the resolved client profile's ceremony_mode
+        return self.client_profile.ceremony_mode
+
+    @property
+    def client_profile(self) -> ClientProfile:
+        """Resolve the active client profile from target_platforms.
+
+        Uses first platform as primary (F08: first-wins-with-warning for multi-platform).
+        Uses @property (not @cached_property) because resolve_client_profile is a
+        cheap dict lookup, and caching on a non-frozen BaseSettings risks stale data.
+        """
+        primary = self.target_platforms[0] if self.target_platforms else "claude-code"
+        if len(self.target_platforms) > 1:
+            structlog.get_logger(__name__).warning(
+                "multi_platform_profile_resolution",
+                primary=primary,
+                all_platforms=self.target_platforms,
+                detail="Using first platform as primary profile; instruction sync writes to all targets",
+            )
+        return resolve_client_profile(primary)
 
     @property
     def effective_platform_urls(self) -> list[str]:

@@ -33,6 +33,7 @@ from trw_mcp.state.claude_md._static_sections import (
     render_closing_reminder,
     render_framework_reference,
     render_imperative_opener,
+    render_memory_harmonization,
 )
 from trw_mcp.state.claude_md._templates import (
     CLAUDEMD_LEARNING_CAP,
@@ -300,24 +301,29 @@ def _determine_write_targets(
 ) -> tuple[bool, bool]:
     """Determine whether to write CLAUDE.md and/or AGENTS.md based on client param.
 
+    For known clients, delegates to the ClientProfile.write_targets model
+    (single source of truth). The 'auto' and 'all' cases require runtime
+    logic beyond what a static profile can express.
+
     Returns (write_claude, write_agents).
     """
-    write_claude: bool = True
-    write_agents: bool = False
+    from trw_mcp.models.config._profiles import resolve_client_profile
 
     if client == "auto":
         from trw_mcp.bootstrap._utils import detect_ide
 
         ides = detect_ide(project_root)
-        write_claude = "claude-code" in ides or not ides
+        # cursor-only projects still benefit from CLAUDE.md content
+        write_claude = "claude-code" in ides or not ides or (ides == ["cursor"])
         write_agents = "opencode" in ides and config.agents_md_enabled and scope == "root"
-    elif client == "claude-code":
-        write_claude, write_agents = True, False
-    elif client == "opencode":
-        write_claude, write_agents = False, True
     elif client == "all":
         write_claude = True
         write_agents = config.agents_md_enabled and scope == "root"
+    else:
+        # Delegate to profile write_targets — single source of truth
+        profile = resolve_client_profile(client)
+        write_claude = profile.write_targets.claude_md
+        write_agents = profile.write_targets.agents_md
 
     return write_claude, write_agents
 
@@ -365,7 +371,7 @@ def _sync_agents_md_if_needed(
     )
 
     agents_target = project_root / "AGENTS.md"
-    if config.ceremony_mode == "light":
+    if config.effective_ceremony_mode == "light":
         agents_body = render_minimal_protocol()
     else:
         agents_body = render_agents_trw_section()
@@ -491,6 +497,7 @@ def execute_claude_md_sync(
     tpl_context: dict[str, str] = {
         "imperative_opener": render_imperative_opener(),
         "ceremony_quick_ref": render_ceremony_quick_ref(),
+        "memory_harmonization": render_memory_harmonization(),
         "framework_reference": render_framework_reference(),
         "closing_reminder": render_closing_reminder(),
         # Suppressed — moved to /trw-ceremony-guide skill

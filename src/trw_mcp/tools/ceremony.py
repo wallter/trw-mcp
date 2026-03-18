@@ -65,7 +65,6 @@ from trw_mcp.tools._deferred_delivery import (  # noqa: E402
     _launch_deferred,
     _log_deferred_result,
     _release_deferred_lock,
-    _resolve_installation_id,
     _run_deferred_steps,
     _step_auto_progress,
     _step_auto_prune,
@@ -106,7 +105,7 @@ __all__ = [  # noqa: RUF022 — grouped by origin, not alphabetical
     "_deferred_lock", "_deferred_thread",
     "_do_auto_progress", "_do_index_sync",
     "_launch_deferred", "_log_deferred_result",
-    "_release_deferred_lock", "_resolve_installation_id",
+    "_release_deferred_lock",
     "_run_deferred_steps", "_run_step",
     "_step_auto_progress", "_step_auto_prune",
     "_step_batch_send", "_step_ceremony_feedback",
@@ -394,7 +393,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         results["success"] = len(errors) == 0
 
         # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
-        if config.ceremony_mode == "light":
+        if config.effective_ceremony_mode == "light":
             results["framework_reminder"] = (
                 "Call trw_deliver() when done to persist your work."
             )
@@ -487,6 +486,12 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             results["build_gate_warning"] = gate_result["build_gate_warning"]
         if "warning" in gate_result:
             results["warning"] = gate_result["warning"]
+        if "review_scope_block" in gate_result:
+            results["review_scope_block"] = gate_result["review_scope_block"]
+        if "checkpoint_blocker_warning" in gate_result:
+            results["checkpoint_blocker_warning"] = gate_result["checkpoint_blocker_warning"]
+        if "complexity_drift_warning" in gate_result:
+            results["complexity_drift_warning"] = gate_result["complexity_drift_warning"]
 
         # Step 0c: Copy compliance artifacts (INFRA-027-FR05)
         from trw_mcp.tools._ceremony_helpers import copy_compliance_artifacts
@@ -499,6 +504,13 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # Block delivery if integration review has blocking verdict
         if gate_result.get("integration_review_block"):
             errors.append(str(gate_result["integration_review_block"]))
+            results["errors"] = errors
+            results["success"] = False
+            return results
+
+        # Block delivery if >5 files modified without review (R-01)
+        if gate_result.get("review_scope_block"):
+            errors.append(str(gate_result["review_scope_block"]))
             results["errors"] = errors
             results["success"] = False
             return results

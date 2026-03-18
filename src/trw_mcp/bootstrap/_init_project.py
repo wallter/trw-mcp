@@ -231,9 +231,17 @@ def init_project(
         result["skipped"].extend(oc_result.get("preserved", []))
         result["errors"].extend(oc_result.get("errors", []))
 
-        from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.claude_md._static_sections import (
+            render_agents_trw_section,
+            render_minimal_protocol,
+        )
 
-        agents_section = render_agents_trw_section()
+        _cfg = get_config()
+        if _cfg.effective_ceremony_mode == "light":
+            agents_section = render_minimal_protocol()
+        else:
+            agents_section = render_agents_trw_section()
         agents_result = generate_agents_md(target_dir, agents_section, force=force)
         result["created"].extend(agents_result.get("created", []))
         result["skipped"].extend(agents_result.get("preserved", []))
