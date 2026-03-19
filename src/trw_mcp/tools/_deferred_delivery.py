@@ -6,7 +6,6 @@ Extracted from ceremony.py to reduce file complexity.  Contains:
 - The ``_run_deferred_steps`` orchestrator that executes all deferred steps
 - ``_launch_deferred`` which starts the background daemon thread
 - All ``_step_*`` helpers that implement individual deferred steps
-- ``_resolve_installation_id`` wrapper delegating to ``state._paths``
 
 This module is internal (``_``-prefixed) — external code should import
 from ``trw_mcp.tools.ceremony`` which re-exports the public surface.
@@ -404,21 +403,10 @@ def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
     return {"status": "success", "recorded": recalled_count}
 
 
-def _resolve_installation_id() -> str:
-    """Resolve installation ID from config, generating a stable fallback.
-
-    Delegates to the canonical ``resolve_installation_id`` in
-    ``trw_mcp.state._paths`` — this wrapper preserves the underscore-prefixed
-    name for backward compatibility with existing callers and re-exports.
-    """
-    from trw_mcp.state._paths import resolve_installation_id
-
-    return resolve_installation_id()
-
-
 def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     """Step 7: Telemetry events (G3 + G4)."""
     import trw_mcp.tools.ceremony as _cer  # late import for test compat
+    from trw_mcp.state._paths import resolve_installation_id
     from trw_mcp.state.analytics.report import compute_ceremony_score
     from trw_mcp.telemetry.client import TelemetryClient
     from trw_mcp.telemetry.models import CeremonyComplianceEvent, SessionEndEvent
@@ -432,7 +420,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
         logger.debug("pipeline_drain_failed", exc_info=True)
 
     cfg = _cer.get_config()
-    inst_id = _resolve_installation_id()
+    inst_id = resolve_installation_id()
     tel_client = TelemetryClient.from_config()
 
     # Read events for tool count and ceremony score computation
@@ -448,7 +436,8 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     # FIX-051-FR05: Pass trw_dir so compute_ceremony_score can also read
     # session-events.jsonl (where trw_session_start events land before trw_init).
     trw_dir_for_score = _cer.resolve_trw_dir()
-    ceremony = compute_ceremony_score(events, trw_dir=trw_dir_for_score)
+    profile_weights = cfg.client_profile.ceremony_weights
+    ceremony = compute_ceremony_score(events, trw_dir=trw_dir_for_score, weights=profile_weights)
     ceremony_score = int(str(ceremony.get("score", 0)))
 
     tel_client.record_event(

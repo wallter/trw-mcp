@@ -54,17 +54,6 @@ class PipelineFlushResult(TypedDict):
     skipped_reason: str
 
 
-def _resolve_installation_id() -> str:
-    """Resolve installation ID — delegates to canonical ``state._paths``.
-
-    This wrapper preserves the module-local name for backward compatibility
-    with the ``enqueue`` call in ``TelemetryPipeline``.
-    """
-    from trw_mcp.state._paths import resolve_installation_id
-
-    return resolve_installation_id()
-
-
 class TelemetryPipeline:
     """Unified telemetry pipeline with periodic background flush.
 
@@ -157,7 +146,9 @@ class TelemetryPipeline:
         if "installation_id" in event:
             return
         try:
-            event["installation_id"] = _resolve_installation_id()
+            from trw_mcp.state._paths import resolve_installation_id
+
+            event["installation_id"] = resolve_installation_id()
         except Exception:  # justified: fail-open, enrichment failure non-fatal
             event["installation_id"] = "unknown"
 

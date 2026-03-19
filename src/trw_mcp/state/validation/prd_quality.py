@@ -83,6 +83,9 @@ from trw_mcp.state.validation._prd_validation import (
     _check_partially_implemented as _check_partially_implemented,
 )
 from trw_mcp.state.validation._prd_validation import (
+    _check_sprint_deferral as _check_sprint_deferral,
+)
+from trw_mcp.state.validation._prd_validation import (
     _check_status_drift as _check_status_drift,
 )
 from trw_mcp.state.validation._prd_validation import (
@@ -114,6 +117,8 @@ def validate_prd_quality_v2(
     config: TRWConfig | None = None,
     v1_result: dict[str, object] | None = None,
     risk_level: str | None = None,
+    *,
+    project_root: str | None = None,
 ) -> ValidationResultV2:
     """Validate a PRD with 3-dimension semantic scoring.
 
@@ -136,6 +141,9 @@ def validate_prd_quality_v2(
             V1 computation (GAP-FR-007 optimization).
         risk_level: Optional explicit risk level override. If None,
             derived from frontmatter priority field.
+        project_root: Optional project root path for sprint deferral detection
+            (R-03). When provided, sprint docs are scanned for deferral language
+            near the PRD ID.
 
     Returns:
         ValidationResultV2 with all dimension scores and metadata.
@@ -232,6 +240,13 @@ def validate_prd_quality_v2(
         status_drift_warnings.extend(_check_status_drift(frontmatter, content))
         status_drift_warnings.extend(_check_fr_annotations(content))
         status_drift_warnings.extend(_check_partially_implemented(frontmatter))
+        # R-03: Sprint doc deferral detection
+        if project_root is not None:
+            from pathlib import Path as _Path
+
+            status_drift_warnings.extend(
+                _check_sprint_deferral(frontmatter, project_root=_Path(project_root))
+            )
     except Exception:  # justified: fail-open, integrity checks must not block scoring
         logger.warning("status_integrity_check_failed", exc_info=True)
 

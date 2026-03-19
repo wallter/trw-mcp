@@ -69,14 +69,20 @@ def append_ceremony_nudge(
         The response dict with 'ceremony_status' key added (or unchanged on error).
     """
     try:
+        from trw_mcp.models.config import get_config
         from trw_mcp.state.ceremony_nudge import (
             _highest_priority_pending_step,
+            compute_nudge_minimal,
             increment_nudge_count,
         )
 
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
         state = read_ceremony_state(effective_dir)
-        nudge = compute_nudge(state, available_learnings=available_learnings, context=context)
+        config = get_config()
+        if config.effective_ceremony_mode == "light":
+            nudge = compute_nudge_minimal(state, available_learnings=available_learnings)
+        else:
+            nudge = compute_nudge(state, available_learnings=available_learnings, context=context)
         response["ceremony_status"] = nudge
         # Increment nudge count for the pending step (tracks progressive urgency)
         pending = _highest_priority_pending_step(state)

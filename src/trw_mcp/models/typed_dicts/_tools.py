@@ -235,10 +235,13 @@ class DeliverResultDict(TypedDict, total=False):
     # Gate warnings (merged from DeliveryGatesDict)
     review_warning: str
     review_advisory: str
+    review_scope_block: str
     integration_review_block: str
     integration_review_warning: str
     untracked_warning: str
     build_gate_warning: str
+    checkpoint_blocker_warning: str
+    complexity_drift_warning: str
     warning: str
     # Compliance artifacts (merged from ComplianceArtifactsDict)
     compliance_artifacts_copied: list[str]

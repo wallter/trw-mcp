@@ -260,7 +260,9 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Single V2 validation call — subsumes all V1 checks (PRD-FIX-011)
         config = get_config()
-        v2_result = validate_prd_quality_v2(content, config)
+        v2_result = validate_prd_quality_v2(
+            content, config, project_root=str(project_root)
+        )
 
         sections = _extract_sections(content)
 

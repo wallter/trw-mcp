@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
+
+from trw_mcp.models.config._client_profile import CeremonyWeights
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
@@ -36,14 +39,7 @@ def __getattr__(name: str) -> object:
 
 # --- Ceremony Scoring (FR05) ---
 
-_CEREMONY_WEIGHTS: dict[str, int] = {
-    "session_start": 25,
-    "deliver": 25,
-    "checkpoint": 15,
-    "learn": 10,
-    "build_check": 10,
-    "review": 15,
-}
+_CEREMONY_WEIGHTS: dict[str, int] = CeremonyWeights().as_dict()
 
 
 def _classify_event(
@@ -114,15 +110,21 @@ def _accumulate_event_counts(
 def compute_ceremony_score(
     events: list[dict[str, object]],
     trw_dir: Path | None = None,
+    weights: CeremonyWeights | None = None,
 ) -> CeremonyScoreResult:
     """Compute ceremony compliance score (0-100) from events.
 
-    Scoring model (additive):
-    - session_start event present: 30 points
-    - reflection_complete or claude_md_synced present: 30 points (deliver proxy)
-    - checkpoint event count >= 1: 20 points
-    - Any event with "learn" in type: 10 points
-    - build_check_complete present: 10 points
+    Weight semantics are binary: the weight is the full value awarded when
+    the corresponding ceremony step is present (boolean gate). A weight of 0
+    effectively disables scoring for that step.
+
+    Scoring model (additive, per-component weight when present):
+    - session_start event present: weights["session_start"] points
+    - reflection_complete or claude_md_synced present: weights["deliver"] points
+    - checkpoint event count >= 1: weights["checkpoint"] points
+    - Any event with "learn" in type: weights["learn"] points
+    - build_check_complete present: weights["build_check"] points
+    - review event present: weights["review"] points
 
     Args:
         events: List of event dicts from events.jsonl (run-level).
@@ -132,6 +134,8 @@ def compute_ceremony_score(
             ``trw_session_start`` fires before ``trw_init`` creates the run
             directory, so the session_start event is written to the fallback
             session-events.jsonl path (FIX-051-FR01/FR05).
+        weights: Optional CeremonyWeights override. When None, uses the
+            module-level ``_CEREMONY_WEIGHTS`` defaults (backward compatible).
 
     Returns:
         Dict with score, per-component booleans, and counts.
@@ -149,19 +153,21 @@ def compute_ceremony_score(
         _accumulate_event_counts(events)
     )
 
+    w = weights.as_dict() if weights is not None else _CEREMONY_WEIGHTS
+
     score = 0
     if has_session_start:
-        score += _CEREMONY_WEIGHTS["session_start"]
+        score += w["session_start"]
     if has_deliver:
-        score += _CEREMONY_WEIGHTS["deliver"]
+        score += w["deliver"]
     if checkpoint_count >= 1:
-        score += _CEREMONY_WEIGHTS["checkpoint"]
+        score += w["checkpoint"]
     if learn_count >= 1:
-        score += _CEREMONY_WEIGHTS["learn"]
+        score += w["learn"]
     if has_build_check:
-        score += _CEREMONY_WEIGHTS["build_check"]
+        score += w["build_check"]
     if has_review:
-        score += _CEREMONY_WEIGHTS["review"]
+        score += w["review"]
 
     result: CeremonyScoreResult = {
         "score": score,
@@ -289,7 +295,8 @@ def _analyze_single_run(run_dir: Path, trw_dir: Path | None = None) -> RunAnalys
     build_check_flag: bool
     build_passed: bool | None
     try:
-        ceremony = compute_ceremony_score(events, trw_dir=trw_dir)
+        profile_weights = get_config().client_profile.ceremony_weights
+        ceremony = compute_ceremony_score(events, trw_dir=trw_dir, weights=profile_weights)
         score = ceremony["score"]
         session_start_flag = ceremony["session_start"]
         deliver_flag = ceremony["deliver"]

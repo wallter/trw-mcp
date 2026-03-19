@@ -131,6 +131,9 @@ deliver_fn = extract_tool_fn(make_test_server("ceremony"), "trw_deliver")
 
 For existing helpers, `get_resources_sync` and `get_prompts_sync` are also available in conftest.
 
+### Wiring Tests Required for New Models
+If your sprint creates models with behavioral fields (weights, flags, config), you MUST write wiring tests proving each field is consumed by production code. See `.claude/rules/testing.md` "Wiring Verification Tests" section. Facade implementations (model exists but is never read) are a known recurring failure mode.
+
 ### structlog
 `event` is a reserved keyword in structlog. Never use `event=` as a kwarg in log calls — use an alternative name.
 

@@ -2,30 +2,37 @@
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 <!-- trw:start -->
 
-Your primary role is **orchestration** — you produce better outcomes by assessing tasks, delegating to focused agents (subagents or Agent Teams), verifying integration, and preserving knowledge. Reserve direct implementation for trivial edits (≤3 lines, 1 file). For everything else, delegate.
+Your primary role is **orchestration** — delegate to focused agents for better outcomes than direct implementation. Reserve self-implementation for trivial edits (≤3 lines, 1 file).
 
-TRW tools help you build effectively and preserve your work across sessions:
-- **Start**: call `trw_session_start()` to load prior learnings and recover any active run
-- **Start**: read `.trw/frameworks/FRAMEWORK.md` — it defines the methodology your tools implement
-- **During**: call `trw_checkpoint(message)` after milestones so you resume here if context compacts
-- **Finish**: call `trw_deliver()` to persist your learnings for future sessions
+Start every session with `trw_session_start()`, save progress with `trw_checkpoint()` after milestones, and close with `trw_deliver()` to persist your work across sessions.
 
 ## TRW Behavioral Protocol (Auto-Generated)
 
-- `trw_session_start()` — loads your prior learnings and recovers any active run
-- `trw_checkpoint(message)` — saves progress so you can resume after context compaction
-- `trw_learn(summary, detail)` — records discoveries for all future sessions
-- `trw_deliver()` — persists everything in one call when done
+| Tool | When | What |
+|------|------|------|
+| `trw_session_start()` | First action | Load prior learnings + recover active run |
+| `trw_learn(summary, detail)` | On discoveries | Persist knowledge for all future agents |
+| `trw_checkpoint(message)` | After milestones | Save progress (survives context compaction) |
+| `trw_deliver()` | Last action | Persist learnings + sync CLAUDE.md + close session |
 
-For full tool guide: invoke `/trw-ceremony-guide`
+Full tool lifecycle: `/trw-ceremony-guide`
 
-Sessions where you orchestrate (delegate, verify, learn) rather than implement directly produce higher quality and fewer rework cycles — your strategic oversight is more valuable than your keystrokes.
+### Memory Routing
+
+Default to `trw_learn()` for knowledge. Use native auto-memory only for personal preferences.
+
+| | `trw_learn()` | Native auto-memory |
+|---|---|---|
+| Search | `trw_recall(query)` — semantic + keyword | Filename scan only |
+| Visibility | All agents, subagents, teammates | Primary session only |
+| Lifecycle | Impact-scored, auto-promotes to CLAUDE.md | Static until manually edited |
+| Scale | Hundreds of entries, auto-pruned by staleness | 200-line index cap |
+
+Gotcha or error pattern → `trw_learn()`. User’s preferred commit style → native memory. Build trick that saves time → `trw_learn()`. Communication preference → native memory.
 
 ### Framework Reference
 
-**Read `.trw/frameworks/FRAMEWORK.md` at session start** — it defines the methodology your tools implement.
-
-The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and Agent Teams protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
+Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates, exit criteria, quality rubrics, and formation selection. Re-read after context compaction.
 
 ### Session Boundaries
 

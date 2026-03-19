@@ -27,11 +27,14 @@ class DeliveryGatesDict(TypedDict, total=False):
 
     review_warning: str
     review_advisory: str
+    review_scope_block: str
     integration_review_block: str
     integration_review_warning: str
     untracked_warning: str
     build_gate_warning: str
+    checkpoint_blocker_warning: str
     warning: str
+    complexity_drift_warning: str
 
 
 class ComplianceArtifactsDict(TypedDict, total=False):

@@ -8,6 +8,7 @@ _prd_scoring.py).
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -399,6 +400,92 @@ def _check_partially_implemented(
         f"PRD marked done but has partially implemented FRs: {fr_list}. "
         "Consider leaving status as 'implemented' until all FRs are complete."
     )
+
+    return warnings
+
+
+# ---------------------------------------------------------------------------
+# Sprint Deferral Detection (R-03)
+# ---------------------------------------------------------------------------
+
+# Deferral indicator phrases — matched case-insensitively on lines
+# that also contain the PRD ID.
+_DEFERRAL_PHRASES: tuple[str, ...] = (
+    "deferred",
+    "not in scope",
+    "phase 2",
+    "phase 3",
+    "explicitly not",
+    "out of scope",
+)
+
+
+def _check_sprint_deferral(
+    frontmatter: dict[str, object],
+    *,
+    project_root: Path | None = None,
+) -> list[str]:
+    """Warn when a 'done' PRD is referenced with deferral language in sprint docs.
+
+    R-03: Scans sprint doc directories for markdown files that mention both
+    the PRD ID and a deferral indicator phrase on the same line.  Only runs
+    when ``status`` is ``done``.
+
+    Fail-open: any I/O or parsing error returns an empty list.
+
+    Args:
+        frontmatter: Parsed YAML frontmatter dict.
+        project_root: Project root directory. When ``None``, the check is
+            skipped (cannot locate sprint docs).
+
+    Returns:
+        List of warning strings (empty when not applicable or on error).
+    """
+    warnings: list[str] = []
+
+    try:
+        fm_status = str(frontmatter.get("status", "")).lower()
+        if fm_status != "done":
+            return warnings
+
+        prd_id = str(frontmatter.get("id", "")).strip()
+        if not prd_id:
+            return warnings
+
+        if project_root is None:
+            return warnings
+
+        # Directories where sprint docs may live
+        sprint_dirs = [
+            project_root / "docs" / "requirements-aare-f" / "sprints",
+            project_root / "docs" / "requirements-aare-f" / "archive" / "sprints",
+        ]
+
+        prd_id_lower = prd_id.lower()
+
+        for sprint_dir in sprint_dirs:
+            if not sprint_dir.is_dir():
+                continue
+            for md_file in sprint_dir.glob("*.md"):
+                try:
+                    content = md_file.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+
+                for line in content.splitlines():
+                    line_lower = line.lower()
+                    if prd_id_lower not in line_lower:
+                        continue
+                    for phrase in _DEFERRAL_PHRASES:
+                        if phrase in line_lower:
+                            warnings.append(
+                                f"Sprint doc '{md_file.name}' contains deferral language "
+                                f"for {prd_id}: '{line.strip()}'. Verify all FRs are "
+                                f"implemented or update PRD status to 'partial'."
+                            )
+                            break  # one warning per line is sufficient
+    except Exception:  # justified: fail-open — sprint deferral scan must never raise
+        logger.warning("sprint_deferral_check_failed", exc_info=True)
 
     return warnings
 

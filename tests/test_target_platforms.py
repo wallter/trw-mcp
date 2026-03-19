@@ -17,6 +17,7 @@ import yaml
 from trw_mcp.bootstrap._init_project import init_project
 from trw_mcp.bootstrap._update_project import update_project
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state.claude_md._sync import _determine_write_targets
 from trw_mcp.tools.ceremony import _do_instruction_sync
 
 # ---------------------------------------------------------------------------
@@ -313,3 +314,95 @@ class TestDeliverTargetPlatforms:
             result = _do_instruction_sync(trw_dir)
 
         assert result["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# TestDetermineWriteTargets — direct unit tests for _determine_write_targets
+# ---------------------------------------------------------------------------
+
+
+class TestDetermineWriteTargets:
+    """Direct tests for _determine_write_targets covering cursor and auto-detect edge cases."""
+
+    def test_cursor_client_writes_nothing(self, tmp_path: Path) -> None:
+        """client='cursor' must NOT write CLAUDE.md or AGENTS.md (cursor rules handled by bootstrap)."""
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("cursor", cfg, tmp_path, "root")
+        assert write_claude is False
+        assert write_agents is False
+
+    def test_cursor_client_subdir_scope_writes_nothing(self, tmp_path: Path) -> None:
+        """client='cursor' with scope='subdir' also writes nothing."""
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("cursor", cfg, tmp_path, "subdir")
+        assert write_claude is False
+        assert write_agents is False
+
+    def test_auto_cursor_only_detected_writes_claude(self, tmp_path: Path) -> None:
+        """Auto-detect with only .cursor/ present should still write CLAUDE.md as fallback."""
+        (tmp_path / ".cursor").mkdir()
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("auto", cfg, tmp_path, "root")
+        assert write_claude is True
+        assert write_agents is False
+
+    def test_auto_no_ide_detected_writes_claude(self, tmp_path: Path) -> None:
+        """Auto-detect with no IDE dirs falls back to writing CLAUDE.md."""
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("auto", cfg, tmp_path, "root")
+        assert write_claude is True
+        assert write_agents is False
+
+    def test_auto_claude_and_cursor_detected_writes_claude(self, tmp_path: Path) -> None:
+        """Auto-detect with both .claude/ and .cursor/ writes CLAUDE.md (claude-code match)."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".cursor").mkdir()
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("auto", cfg, tmp_path, "root")
+        assert write_claude is True
+        assert write_agents is False
+
+    def test_claude_code_client_writes_claude_only(self, tmp_path: Path) -> None:
+        """client='claude-code' writes CLAUDE.md only."""
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("claude-code", cfg, tmp_path, "root")
+        assert write_claude is True
+        assert write_agents is False
+
+    def test_opencode_client_writes_agents_only(self, tmp_path: Path) -> None:
+        """client='opencode' writes AGENTS.md only."""
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("opencode", cfg, tmp_path, "root")
+        assert write_claude is False
+        assert write_agents is True
+
+    def test_all_client_writes_both(self, tmp_path: Path) -> None:
+        """client='all' writes both CLAUDE.md and AGENTS.md when enabled."""
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "agents_md_enabled", True)
+        write_claude, write_agents = _determine_write_targets("all", cfg, tmp_path, "root")
+        assert write_claude is True
+        assert write_agents is True
+
+    def test_unknown_client_falls_back_to_claude_code_write_targets(self, tmp_path: Path) -> None:
+        """Unknown client falls back to claude-code profile via resolve_client_profile."""
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("windsurf", cfg, tmp_path, "root")
+        assert write_claude is True
+        assert write_agents is False
+
+    def test_all_client_agents_md_disabled_writes_claude_only(self, tmp_path: Path) -> None:
+        """client='all' with agents_md_enabled=False only writes CLAUDE.md."""
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "agents_md_enabled", False)
+        write_claude, write_agents = _determine_write_targets("all", cfg, tmp_path, "root")
+        assert write_claude is True
+        assert write_agents is False
+
+    def test_all_client_subdir_scope_no_agents(self, tmp_path: Path) -> None:
+        """client='all' with scope='subdir' suppresses agents_md."""
+        cfg = TRWConfig()
+        object.__setattr__(cfg, "agents_md_enabled", True)
+        write_claude, write_agents = _determine_write_targets("all", cfg, tmp_path, "subdir")
+        assert write_claude is True
+        assert write_agents is False

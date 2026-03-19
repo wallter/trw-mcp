@@ -466,18 +466,19 @@ class TestSessionStartAutoClose:
         cfg = TRWConfig()
         object.__setattr__(cfg, "run_auto_close_enabled", False)
 
+        mock_close = MagicMock(return_value={"runs_closed": [], "count": 0, "errors": []})
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
+            patch("trw_mcp.models.config.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
             patch("trw_mcp.tools.ceremony._writer"),
             patch("trw_mcp.tools.ceremony._events"),
+            patch("trw_mcp.state.analytics.report.auto_close_stale_runs", mock_close),
         ):
-            mock_close = MagicMock(return_value={"runs_closed": [], "count": 0, "errors": []})
-            with patch("trw_mcp.state.analytics.report.auto_close_stale_runs", mock_close):
-                fn = self._get_session_start_fn()
-                result = fn()
+            fn = self._get_session_start_fn()
+            result = fn()
 
         # auto_close_stale_runs should not have been called
         mock_close.assert_not_called()
