@@ -580,17 +580,17 @@ class TestDeliverAutoPrune:
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.ceremony._step_consolidation", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_tier_sweep", return_value=noop),
-            patch("trw_mcp.tools.ceremony._do_index_sync", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_auto_progress", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_publish_learnings", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_outcome_correlation", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_recall_outcome", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_telemetry", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_batch_send", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_trust_increment", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_ceremony_feedback", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_outcome_correlation", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_recall_outcome", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_telemetry", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_batch_send", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_trust_increment", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_ceremony_feedback", return_value=noop),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
 
@@ -622,6 +622,7 @@ class TestDeliverAutoPrune:
 
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
+            patch("trw_mcp.models.config.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
@@ -637,8 +638,8 @@ class TestDeliverAutoPrune:
                 "trw_mcp.tools.ceremony._do_instruction_sync",
                 return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0},
             ),
-            patch("trw_mcp.tools.ceremony._do_index_sync", return_value={"status": "success"}),
-            patch("trw_mcp.tools.ceremony._do_auto_progress", return_value={"status": "skipped"}),
+            patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value={"status": "success"}),
+            patch("trw_mcp.tools._deferred_delivery._do_auto_progress", return_value={"status": "skipped"}),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
 
@@ -673,17 +674,17 @@ class TestDeliverAutoPrune:
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.ceremony._step_consolidation", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_tier_sweep", return_value=noop),
-            patch("trw_mcp.tools.ceremony._do_index_sync", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_auto_progress", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_publish_learnings", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_outcome_correlation", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_recall_outcome", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_telemetry", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_batch_send", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_trust_increment", return_value=noop),
-            patch("trw_mcp.tools.ceremony._step_ceremony_feedback", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_outcome_correlation", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_recall_outcome", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_telemetry", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_batch_send", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_trust_increment", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_ceremony_feedback", return_value=noop),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
 
@@ -718,6 +719,7 @@ class TestDeliverAutoPrune:
 
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
+            patch("trw_mcp.models.config.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
@@ -733,8 +735,8 @@ class TestDeliverAutoPrune:
                 "trw_mcp.tools.ceremony._do_instruction_sync",
                 return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0},
             ),
-            patch("trw_mcp.tools.ceremony._do_index_sync", return_value={"status": "success"}),
-            patch("trw_mcp.tools.ceremony._do_auto_progress", return_value={"status": "skipped"}),
+            patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value={"status": "success"}),
+            patch("trw_mcp.tools._deferred_delivery._do_auto_progress", return_value={"status": "skipped"}),
         ):
             import trw_mcp.state.analytics as analytics_mod_state
 

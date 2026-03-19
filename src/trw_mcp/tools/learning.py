@@ -36,17 +36,9 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     list_active_learnings,
-)
-from trw_mcp.state.memory_adapter import (
     recall_learnings as adapter_recall,
-)
-from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
-)
-from trw_mcp.state.memory_adapter import (
     update_access_tracking as adapter_update_access,
-)
-from trw_mcp.state.memory_adapter import (
     update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -64,7 +56,7 @@ from trw_mcp.tools._learning_helpers import (
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # PRD-FIX-052-FR05: Solution-indicator patterns for auto-'pattern' tag suggestion
 _SOLUTION_PATTERNS = _re.compile(
@@ -336,7 +328,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
             increment_learnings(trw_dir)
         except Exception:  # justified: fail-open, ceremony state update must not block learning  # noqa: S110
-            pass
+            logger.debug("learn_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
@@ -346,7 +338,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             ctx = NudgeContext(tool_name=ToolName.LEARN)
             append_ceremony_nudge(cast("dict[str, object]", result_dict), trw_dir, context=ctx)
         except Exception:  # justified: fail-open, nudge injection must not block learning  # noqa: S110
-            pass
+            logger.debug("learn_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return result_dict
 
@@ -499,16 +491,19 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             logger.debug("recall_tracking_failed", exc_info=True)
 
         # Augment local results with remote shared learnings (PRD-CORE-033)
+        # Skip remote fetch for wildcard queries — they only need local learnings,
+        # and remote calls add latency + tokens that contribute to API rate limits.
         # NOTE: broad except kept intentionally — remote fetch is external code
         # that can raise arbitrary exceptions (network, auth, serialization).
-        try:
-            from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
+        if not is_wildcard:
+            try:
+                from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
 
-            remote = fetch_shared_learnings(query)
-            if remote:
-                matching_learnings = list(matching_learnings) + [dict(r) for r in remote]
-        except Exception:
-            logger.debug("remote_recall_failed", exc_info=True)
+                remote = fetch_shared_learnings(query)
+                if remote:
+                    matching_learnings = list(matching_learnings) + [dict(r) for r in remote]
+            except Exception:
+                logger.debug("remote_recall_failed", exc_info=True)
 
         # Search patterns and rank all results by utility
         matching_patterns = search_patterns(
@@ -560,16 +555,18 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         }
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        # Skip nudge for compact wildcard queries — saves tokens in reflect/audit workflows
+        if not (is_wildcard and use_compact):
+            try:
+                from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+                from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
 
-            ctx = NudgeContext(tool_name=ToolName.RECALL)
-            append_ceremony_nudge(
-                cast("dict[str, object]", recall_result), trw_dir, available_learnings=total_available, context=ctx
-            )
-        except Exception:  # justified: fail-open, nudge injection must not block recall  # noqa: S110
-            pass
+                ctx = NudgeContext(tool_name=ToolName.RECALL)
+                append_ceremony_nudge(
+                    cast("dict[str, object]", recall_result), trw_dir, available_learnings=total_available, context=ctx
+                )
+            except Exception:  # justified: fail-open, nudge injection must not block recall  # noqa: S110
+                logger.debug("recall_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return recall_result
 

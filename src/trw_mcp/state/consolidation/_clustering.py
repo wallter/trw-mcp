@@ -2,16 +2,10 @@
 
 Entry loading (SQLite primary + YAML fallback), tag-overlap union-find
 clustering, and embedding-based complete-linkage clustering.
-
-NOTE: find_clusters looks up ``_tag_overlap_clusters`` from the parent
-package at call time so that
-``patch("trw_mcp.state.consolidation._tag_overlap_clusters")``
-works after the flat module was converted to a package.
 """
 
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -26,7 +20,7 @@ from trw_mcp.state.dedup import cosine_similarity
 if TYPE_CHECKING:
     from trw_mcp.state.persistence import FileStateReader
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -207,10 +201,8 @@ def find_clusters(
             return []
         # Tag-fallback: load ALL active entries (no max_entries cap)
         all_entries = _load_active_entries(entries_dir, reader, max_entries=10_000)
-        # Late-bind from package so patch("trw_mcp.state.consolidation._tag_overlap_clusters") works
-        _tag_cluster_fn = getattr(sys.modules["trw_mcp.state.consolidation"], "_tag_overlap_clusters")  # noqa: B009
         try:
-            clusters: list[list[LearningEntryDict]] = _tag_cluster_fn(
+            clusters: list[list[LearningEntryDict]] = _tag_overlap_clusters(
                 all_entries,
                 min_cluster_size=min_cluster_size,
                 min_shared_tags=2,

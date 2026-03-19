@@ -21,19 +21,21 @@ from unittest.mock import patch
 import pytest
 
 from trw_mcp.state._paths import find_active_run
-from trw_mcp.tools.ceremony import (
+from trw_mcp.tools._deferred_delivery import (
     _do_auto_progress,
-    _do_checkpoint,
     _do_index_sync,
-    _do_instruction_sync,
-    _do_reflect,
-    _get_run_status,
     _launch_deferred,
     _log_deferred_result,
     _release_deferred_lock,
     _run_deferred_steps,
     _try_acquire_deferred_lock,
 )
+from trw_mcp.tools.ceremony import (
+    _do_instruction_sync,
+    _do_reflect,
+    _get_run_status,
+)
+from trw_mcp.tools.checkpoint import _do_checkpoint
 
 # --- Fixtures ---
 
@@ -498,7 +500,7 @@ class TestDeliverPartialFailure:
                 return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
             ),
             patch(
-                "trw_mcp.tools.ceremony._do_index_sync",
+                "trw_mcp.tools._deferred_delivery._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
             patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
@@ -538,7 +540,7 @@ class TestDeliverPartialFailure:
             ),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch(
-                "trw_mcp.tools.ceremony._do_checkpoint",
+                "trw_mcp.tools.ceremony._step_checkpoint",
                 side_effect=Exception("checkpoint boom"),
             ),
             patch(
@@ -546,7 +548,7 @@ class TestDeliverPartialFailure:
                 return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
             ),
             patch(
-                "trw_mcp.tools.ceremony._do_index_sync",
+                "trw_mcp.tools._deferred_delivery._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
             patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
@@ -572,51 +574,51 @@ class TestDeliverPartialFailure:
 
         with (
             patch(
-                "trw_mcp.tools.ceremony._do_index_sync",
+                "trw_mcp.tools._deferred_delivery._do_index_sync",
                 side_effect=Exception("index_sync boom"),
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_auto_prune",
+                "trw_mcp.tools._deferred_delivery._step_auto_prune",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_consolidation",
+                "trw_mcp.tools._deferred_delivery._step_consolidation",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_tier_sweep",
+                "trw_mcp.tools._deferred_delivery._step_tier_sweep",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_auto_progress",
+                "trw_mcp.tools._deferred_delivery._step_auto_progress",
                 return_value={"status": "skipped", "reason": "no_run"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_publish_learnings",
+                "trw_mcp.tools._deferred_delivery._step_publish_learnings",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_outcome_correlation",
+                "trw_mcp.tools._deferred_delivery._step_outcome_correlation",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_recall_outcome",
+                "trw_mcp.tools._deferred_delivery._step_recall_outcome",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_telemetry",
+                "trw_mcp.tools._deferred_delivery._step_telemetry",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_batch_send",
+                "trw_mcp.tools._deferred_delivery._step_batch_send",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_trust_increment",
+                "trw_mcp.tools._deferred_delivery._step_trust_increment",
                 return_value={"status": "skipped"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._step_ceremony_feedback",
+                "trw_mcp.tools._deferred_delivery._step_ceremony_feedback",
                 return_value={"status": "skipped"},
             ),
         ):
@@ -650,7 +652,7 @@ class TestDeliverPartialFailure:
                 return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
             ),
             patch(
-                "trw_mcp.tools.ceremony._do_index_sync",
+                "trw_mcp.tools._deferred_delivery._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
         ):
@@ -675,17 +677,17 @@ class TestDeliverPartialFailure:
         # Stub all deferred steps to no-ops
         _noop = {"status": "skipped"}
         with (
-            patch("trw_mcp.tools.ceremony._step_auto_prune", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_consolidation", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_tier_sweep", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_auto_progress", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_publish_learnings", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_outcome_correlation", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_recall_outcome", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_telemetry", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_batch_send", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_trust_increment", return_value=_noop),
-            patch("trw_mcp.tools.ceremony._step_ceremony_feedback", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_auto_prune", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_outcome_correlation", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_recall_outcome", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_telemetry", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_batch_send", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_trust_increment", return_value=_noop),
+            patch("trw_mcp.tools._deferred_delivery._step_ceremony_feedback", return_value=_noop),
         ):
             _run_deferred_steps(trw_dir, None, {}, skip_index_sync=True)
 
@@ -848,18 +850,18 @@ def _stub_all_deferred_steps() -> dict[str, Any]:
     """
     noop: dict[str, object] = {"status": "skipped"}
     return {
-        "_step_auto_prune": patch("trw_mcp.tools.ceremony._step_auto_prune", return_value=noop),
-        "_step_consolidation": patch("trw_mcp.tools.ceremony._step_consolidation", return_value=noop),
-        "_step_tier_sweep": patch("trw_mcp.tools.ceremony._step_tier_sweep", return_value=noop),
-        "_do_index_sync": patch("trw_mcp.tools.ceremony._do_index_sync", return_value=noop),
-        "_step_auto_progress": patch("trw_mcp.tools.ceremony._step_auto_progress", return_value=noop),
-        "_step_publish_learnings": patch("trw_mcp.tools.ceremony._step_publish_learnings", return_value=noop),
-        "_step_outcome_correlation": patch("trw_mcp.tools.ceremony._step_outcome_correlation", return_value=noop),
-        "_step_recall_outcome": patch("trw_mcp.tools.ceremony._step_recall_outcome", return_value=noop),
-        "_step_telemetry": patch("trw_mcp.tools.ceremony._step_telemetry", return_value=noop),
-        "_step_batch_send": patch("trw_mcp.tools.ceremony._step_batch_send", return_value=noop),
-        "_step_trust_increment": patch("trw_mcp.tools.ceremony._step_trust_increment", return_value=noop),
-        "_step_ceremony_feedback": patch("trw_mcp.tools.ceremony._step_ceremony_feedback", return_value=noop),
+        "_step_auto_prune": patch("trw_mcp.tools._deferred_delivery._step_auto_prune", return_value=noop),
+        "_step_consolidation": patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=noop),
+        "_step_tier_sweep": patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
+        "_do_index_sync": patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
+        "_step_auto_progress": patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
+        "_step_publish_learnings": patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),
+        "_step_outcome_correlation": patch("trw_mcp.tools._deferred_delivery._step_outcome_correlation", return_value=noop),
+        "_step_recall_outcome": patch("trw_mcp.tools._deferred_delivery._step_recall_outcome", return_value=noop),
+        "_step_telemetry": patch("trw_mcp.tools._deferred_delivery._step_telemetry", return_value=noop),
+        "_step_batch_send": patch("trw_mcp.tools._deferred_delivery._step_batch_send", return_value=noop),
+        "_step_trust_increment": patch("trw_mcp.tools._deferred_delivery._step_trust_increment", return_value=noop),
+        "_step_ceremony_feedback": patch("trw_mcp.tools._deferred_delivery._step_ceremony_feedback", return_value=noop),
     }
 
 
@@ -1481,7 +1483,7 @@ class TestRunDeferredSteps:
         ]
         for name in step_names:
             monkeypatch.setattr(
-                f"trw_mcp.tools.ceremony.{name}",
+                f"trw_mcp.tools._deferred_delivery.{name}",
                 lambda *a, name=name, **kw: (_ for _ in ()).throw(Exception(f"{name} boom")),
             )
 
@@ -1523,7 +1525,7 @@ class TestLaunchDeferred:
         ]
         for name in step_names:
             monkeypatch.setattr(
-                f"trw_mcp.tools.ceremony.{name}",
+                f"trw_mcp.tools._deferred_delivery.{name}",
                 lambda *a, **kw: {"status": "mocked"},
             )
 

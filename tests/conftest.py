@@ -172,6 +172,12 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_core080_template_variants.py",
         "test_response_optimizer.py",
         "test_scoring_q_preseed.py",
+        # Pure model/config validation — no filesystem I/O
+        "test_client_profile.py",
+        "test_sprint44_models.py",
+        "test_api_import.py",
+        "test_fix044_module_config.py",
+        "test_fix056_status_integrity.py",
     }
 )
 

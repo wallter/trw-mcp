@@ -15,6 +15,9 @@ Note: ``_deferred_thread`` and ``_deferred_lock`` live in ``ceremony.py``
 ``monkeypatch.setattr(cer, "_deferred_thread", ...)`` continue to work.
 ``_launch_deferred`` accesses them via a late import of the ceremony
 module to avoid circular import issues at module-load time.
+
+Test patches for step functions (``_step_*``) should target this module
+directly: ``patch("trw_mcp.tools._deferred_delivery._step_foo")``.
 """
 
 from __future__ import annotations
@@ -71,7 +74,7 @@ from trw_mcp.state.persistence import (
 )
 from trw_mcp.tools._helpers import _run_step
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # _run_step is imported from trw_mcp.tools._helpers (shared with ceremony.py)
@@ -150,13 +153,9 @@ def _run_deferred_steps(
     Acquires a non-blocking file lock to prevent concurrent deferred batches.
     Each step is fail-open — failures are logged but don't block other steps.
 
-    Note: step functions are resolved from ``ceremony`` module at call time
-    so that test patches on ``trw_mcp.tools.ceremony._step_*`` are visible.
+    Test patches should target this module directly:
+    ``patch("trw_mcp.tools._deferred_delivery._step_foo")``.
     """
-    # Late import — tests patch step functions on the ceremony module, so we
-    # must resolve them from there rather than from our own module scope.
-    import trw_mcp.tools.ceremony as _cer
-
     lock_fd = _try_acquire_deferred_lock(trw_dir)
     if lock_fd is None:
         logger.info("deferred_deliver_skipped", reason="another_batch_running")
@@ -181,42 +180,42 @@ def _run_deferred_steps(
 
     try:
         # Step 2.5: Auto-prune excess learnings
-        _run_step("auto_prune", lambda: _cer._step_auto_prune(trw_dir), results, errors)
+        _run_step("auto_prune", lambda: _step_auto_prune(trw_dir), results, errors)
 
         # Step 2.6: Memory consolidation (PRD-CORE-044)
-        _run_step("consolidation", lambda: _cer._step_consolidation(trw_dir), results, errors)
+        _run_step("consolidation", lambda: _step_consolidation(trw_dir), results, errors)
 
         # Step 2.7: Tier lifecycle sweep (PRD-CORE-043)
-        _run_step("tier_sweep", lambda: _cer._step_tier_sweep(trw_dir), results, errors)
+        _run_step("tier_sweep", lambda: _step_tier_sweep(trw_dir), results, errors)
 
         # Step 4: INDEX.md / ROADMAP.md sync
         if not skip_index_sync:
-            _run_step("index_sync", lambda: _cer._do_index_sync(), results, errors)
+            _run_step("index_sync", lambda: _do_index_sync(), results, errors)
         else:
             results["index_sync"] = {"status": "skipped"}
 
         # Step 5: Auto-progress PRD statuses
-        _run_step("auto_progress", lambda: _cer._step_auto_progress(resolved_run), results, errors)
+        _run_step("auto_progress", lambda: _step_auto_progress(resolved_run), results, errors)
 
         # Step 6: Publish high-impact learnings
-        _run_step("publish_learnings", lambda: _cer._step_publish_learnings(), results, errors)
+        _run_step("publish_learnings", lambda: _step_publish_learnings(), results, errors)
 
         # Step 6.5: Outcome correlation
-        _run_step("outcome_correlation", lambda: _cer._step_outcome_correlation(), results, errors)
+        _run_step("outcome_correlation", lambda: _step_outcome_correlation(), results, errors)
 
         # Step 6.6: Recall outcome tracking
-        _run_step("recall_outcome", lambda: _cer._step_recall_outcome(resolved_run), results, errors)
+        _run_step("recall_outcome", lambda: _step_recall_outcome(resolved_run), results, errors)
 
         # Step 7: Telemetry events
-        _run_step("telemetry", lambda: _cer._step_telemetry(resolved_run), results, errors)
+        _run_step("telemetry", lambda: _step_telemetry(resolved_run), results, errors)
 
         # Step 8: Batch send telemetry
-        _run_step("batch_send", lambda: _cer._step_batch_send(), results, errors)
+        _run_step("batch_send", lambda: _step_batch_send(), results, errors)
 
         # Step 9: Trust increment
         _run_step(
             "trust_increment",
-            lambda: _cer._step_trust_increment(resolved_run),
+            lambda: _step_trust_increment(resolved_run),
             results,
             errors,
         )
@@ -224,7 +223,7 @@ def _run_deferred_steps(
         # Step 10: Ceremony feedback
         _run_step(
             "ceremony_feedback",
-            lambda: _cer._step_ceremony_feedback(resolved_run, critical_results),
+            lambda: _step_ceremony_feedback(resolved_run, critical_results),
             results,
             errors,
         )
@@ -285,25 +284,21 @@ def _launch_deferred(
 
 
 def _step_checkpoint(resolved_run: Path) -> dict[str, object]:
-    """Step 2: Delivery state snapshot.
+    """Step 2: Delivery state snapshot."""
+    from trw_mcp.tools.checkpoint import _do_checkpoint
 
-    Note: ``_do_checkpoint`` is resolved from ceremony module at call time
-    so that test patches on ``trw_mcp.tools.ceremony._do_checkpoint`` work.
-    """
-    import trw_mcp.tools.ceremony as _cer  # late import for test compat
-
-    _cer._do_checkpoint(resolved_run, "delivery")
+    _do_checkpoint(resolved_run, "delivery")
     return {"status": "success"}
 
 
 def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
     """Step 2.5: Auto-prune excess learnings."""
-    import trw_mcp.tools.ceremony as _cer  # late import for test compat
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.analytics import auto_prune_excess_entries
 
-    config = _cer.get_config()
+    config = get_config()
     if not config.learning_auto_prune_on_deliver:
         return None
-    from trw_mcp.state.analytics import auto_prune_excess_entries
 
     prune_result = auto_prune_excess_entries(
         trw_dir,
@@ -315,12 +310,12 @@ def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
 
 def _step_consolidation(trw_dir: Path) -> ConsolidationStepResult:
     """Step 2.6: Memory consolidation (PRD-CORE-044)."""
-    import trw_mcp.tools.ceremony as _cer  # late import for test compat
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.consolidation import consolidate_cycle
 
-    config = _cer.get_config()
+    config = get_config()
     if not config.memory_consolidation_enabled:
         return cast("ConsolidationStepResult", {"status": "skipped", "reason": "disabled"})
-    from trw_mcp.state.consolidation import consolidate_cycle
 
     return cast(
         "ConsolidationStepResult",
@@ -378,15 +373,14 @@ def _step_outcome_correlation() -> OutcomeCorrelationStepResult:
 
 def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
     """Step 6.6: Recall outcome tracking (G6)."""
+    from trw_mcp.state._paths import resolve_trw_dir
     from trw_mcp.state.recall_tracking import get_recall_stats, record_outcome
 
     recall_stats = get_recall_stats()
     unique_ids = recall_stats.get("unique_learnings", 0)
     recalled_count = 0
     if unique_ids and resolved_run is not None:
-        import trw_mcp.tools.ceremony as _cer  # late import for test compat
-
-        trw_dir_rt = _cer.resolve_trw_dir()
+        trw_dir_rt = resolve_trw_dir()
         tracking_path = trw_dir_rt / "logs" / "recall_tracking.jsonl"
         if tracking_path.exists():
             from trw_mcp.state.persistence import FileStateReader as _FSR
@@ -405,7 +399,7 @@ def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
 
 def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     """Step 7: Telemetry events (G3 + G4)."""
-    import trw_mcp.tools.ceremony as _cer  # late import for test compat
+    from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_installation_id
     from trw_mcp.state.analytics.report import compute_ceremony_score
     from trw_mcp.telemetry.client import TelemetryClient
@@ -419,7 +413,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     except Exception:  # justified: fail-open — pipeline drain must not block delivery
         logger.debug("pipeline_drain_failed", exc_info=True)
 
-    cfg = _cer.get_config()
+    cfg = get_config()
     inst_id = resolve_installation_id()
     tel_client = TelemetryClient.from_config()
 
@@ -435,7 +429,8 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
 
     # FIX-051-FR05: Pass trw_dir so compute_ceremony_score can also read
     # session-events.jsonl (where trw_session_start events land before trw_init).
-    trw_dir_for_score = _cer.resolve_trw_dir()
+    from trw_mcp.state._paths import resolve_trw_dir
+    trw_dir_for_score = resolve_trw_dir()
     profile_weights = cfg.client_profile.ceremony_weights
     ceremony = compute_ceremony_score(events, trw_dir=trw_dir_for_score, weights=profile_weights)
     ceremony_score = int(str(ceremony.get("score", 0)))
@@ -471,7 +466,8 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     )
 
     try:
-        trw_dir = _cer.resolve_trw_dir()
+        from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
+        trw_dir = _resolve_trw_dir()
         context_dir = trw_dir / cfg.context_dir
 
         # Read run state for task/phase info
@@ -562,7 +558,7 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
     try:
         import os
 
-        import trw_mcp.tools.ceremony as _cer  # late import for test compat
+        from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.trust import increment_session_count
 
         reader = FileStateReader()
@@ -573,7 +569,7 @@ def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | N
         if events_path and events_path.exists():
             run_events.extend(reader.read_jsonl(events_path))
 
-        trw_dir = _cer.resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
         all_events = _merge_session_events(run_events, trw_dir)
 
         # Check path (a): build_check passed
@@ -725,7 +721,7 @@ def _step_ceremony_feedback(
 ) -> CeremonyFeedbackStepResult | None:
     """Step 10: Ceremony feedback recording (CORE-069-FR02)."""
     try:
-        import trw_mcp.tools.ceremony as _cer  # late import for test compat
+        from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.ceremony_feedback import (
             _derive_agent_id,
             apply_auto_escalation,
@@ -735,7 +731,7 @@ def _step_ceremony_feedback(
             record_session_outcome,
         )
 
-        trw_dir = _cer.resolve_trw_dir()
+        trw_dir = resolve_trw_dir()
 
         # Extract run metadata
         run_state, task_name, task_description = _extract_run_metadata(resolved_run)
@@ -790,19 +786,15 @@ def _step_ceremony_feedback(
 
 
 def _do_index_sync() -> IndexSyncResult:
-    """Execute INDEX.md and ROADMAP.md sync from PRD frontmatter.
-
-    Note: ``resolve_project_root`` and ``get_config`` are resolved from
-    the ceremony module at call time so that test patches on
-    ``trw_mcp.tools.ceremony.resolve_project_root`` propagate correctly.
-    """
-    import trw_mcp.tools.ceremony as _cer  # late import for test compat
+    """Execute INDEX.md and ROADMAP.md sync from PRD frontmatter."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._paths import resolve_project_root
     from trw_mcp.state.index_sync import sync_index_md, sync_roadmap_md
     from trw_mcp.state.persistence import FileStateWriter
 
-    config = _cer.get_config()
+    config = get_config()
     writer = FileStateWriter()
-    project_root = _cer.resolve_project_root()
+    project_root = resolve_project_root()
     prds_dir = project_root / Path(config.prds_relative_path)
     aare_dir = prds_dir.parent
 
@@ -829,11 +821,12 @@ def _do_auto_progress(run_dir: Path | None) -> AutoProgressStepResult:
     if run_dir is None:
         return {"status": "skipped", "reason": "no_active_run"}
 
-    import trw_mcp.tools.ceremony as _cer  # late import for test compat
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._paths import resolve_project_root
     from trw_mcp.state.validation import auto_progress_prds
 
-    config = _cer.get_config()
-    project_root = _cer.resolve_project_root()
+    config = get_config()
+    project_root = resolve_project_root()
     prds_dir = project_root / Path(config.prds_relative_path)
     if not prds_dir.is_dir():
         return {"status": "skipped", "reason": "prds_dir_not_found"}

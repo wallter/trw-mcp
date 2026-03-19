@@ -36,41 +36,17 @@ from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 # ---------------------------------------------------------------------------
 from trw_mcp.state._memory_connection import (
     _embed_and_store as _embed_and_store,
-)
-from trw_mcp.state._memory_connection import (
     backfill_embeddings as backfill_embeddings,
-)
-from trw_mcp.state._memory_connection import (
     check_embeddings_status as _check_embeddings_status_impl,
-)
-from trw_mcp.state._memory_connection import (
     embed_text as embed_text,
-)
-from trw_mcp.state._memory_connection import (
     embed_text_batch as embed_text_batch,
-)
-from trw_mcp.state._memory_connection import (
     embedding_available as embedding_available,
-)
-from trw_mcp.state._memory_connection import (
     ensure_migrated as ensure_migrated,
-)
-from trw_mcp.state._memory_connection import (
     get_backend as get_backend,
-)
-from trw_mcp.state._memory_connection import (
     get_embed_failure_count as get_embed_failure_count,
-)
-from trw_mcp.state._memory_connection import (
     get_embedder as get_embedder,
-)
-from trw_mcp.state._memory_connection import (
     reset_backend as reset_backend,
-)
-from trw_mcp.state._memory_connection import (
     reset_embed_failure_count as _reset_embed_failure_count_impl,
-)
-from trw_mcp.state._memory_connection import (
     reset_embedder as reset_embedder,
 )
 
@@ -79,17 +55,9 @@ from trw_mcp.state._memory_connection import (
 # ---------------------------------------------------------------------------
 from trw_mcp.state._memory_queries import (
     _apply_entry_filters as _apply_entry_filters,
-)
-from trw_mcp.state._memory_queries import (
     _keyword_search as _keyword_search,
-)
-from trw_mcp.state._memory_queries import (
     _lookup_id_tokens as _lookup_id_tokens,
-)
-from trw_mcp.state._memory_queries import (
     _search_entries as _search_entries,
-)
-from trw_mcp.state._memory_queries import (
     _search_intersect_keywords as _search_intersect_keywords,
 )
 
@@ -98,17 +66,21 @@ from trw_mcp.state._memory_queries import (
 # ---------------------------------------------------------------------------
 from trw_mcp.state._memory_transforms import (
     _learning_to_memory_entry as _learning_to_memory_entry,
-)
-from trw_mcp.state._memory_transforms import (
     _memory_to_learning_dict as _memory_to_learning_dict,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Preserve module-level constants for backward compatibility with test patches
 _NAMESPACE = DEFAULT_NAMESPACE
 _MAX_ENTRIES = DEFAULT_LIST_LIMIT
 _LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
+
+# Facade-level override for the embed failure counter.  Tests may set this
+# attribute directly (``memory_adapter._embed_failures = N``) to inject a
+# known count; ``None`` means "read from _memory_connection" (normal path).
+_embed_failures: int | None = None
+
 
 def check_embeddings_status() -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
@@ -116,13 +88,10 @@ def check_embeddings_status() -> dict[str, object]:
     Delegates to :func:`_memory_connection.check_embeddings_status`, but
     supports test patches that set ``memory_adapter._embed_failures`` directly.
     """
-    import sys
-
     result = _check_embeddings_status_impl()
-    # If a test set _embed_failures directly on this module, honour it.
-    mod = sys.modules[__name__]
-    if "_embed_failures" in mod.__dict__:
-        result["recent_failures"] = mod.__dict__["_embed_failures"]
+    # If a test injected _embed_failures on this facade module, honour it.
+    if _embed_failures is not None:
+        result["recent_failures"] = _embed_failures
     return result
 
 
@@ -132,20 +101,18 @@ def reset_embed_failure_count() -> None:
     Also clears the facade-level ``_embed_failures`` override so that
     ``check_embeddings_status`` reads the authoritative counter.
     """
-    import sys
-
+    global _embed_failures
     _reset_embed_failure_count_impl()
-    mod = sys.modules[__name__]
-    mod.__dict__.pop("_embed_failures", None)
+    _embed_failures = None
 
 
-def __getattr__(name: str) -> object:
-    """Proxy ``_embed_failures`` reads to ``_memory_connection``."""
-    if name == "_embed_failures":
-        import trw_mcp.state._memory_connection as _mc
+def set_embed_failure_count_for_testing(n: int) -> None:
+    """Set the facade-level embed failure override (for tests only).
 
-        return _mc._embed_failures
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    Prefer calling this over direct attribute assignment when possible.
+    """
+    global _embed_failures
+    _embed_failures = n
 
 
 # ---------------------------------------------------------------------------

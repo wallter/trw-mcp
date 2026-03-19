@@ -1119,7 +1119,7 @@ class TestConsolidateCycle:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                         result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["consolidated_count"] >= 1
@@ -1152,7 +1152,7 @@ class TestConsolidateCycle:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=mock_llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=mock_llm):
                         result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["status"] == "completed"
@@ -1182,7 +1182,7 @@ class TestConsolidateCycle:
             with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
                 with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                     with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                        with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                        with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                             result = consolidate_cycle(trw_dir, config=cfg)
         finally:
             tiers_mod.TierManager = original_tm
@@ -1204,7 +1204,7 @@ class TestConsolidateCycle:
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
                     # Make LLMClient constructor raise (lines 582-583)
-                    with patch("trw_mcp.state.consolidation.LLMClient", side_effect=RuntimeError("no llm")):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", side_effect=RuntimeError("no llm")):
                         result = consolidate_cycle(trw_dir, config=cfg)
 
         # Should succeed with fallback summarization
@@ -1229,7 +1229,7 @@ class TestConsolidateCycle:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                         result = consolidate_cycle(trw_dir, config=cfg)
 
         # consolidate_cycle should not raise — errors collected or fallback used
@@ -1252,7 +1252,7 @@ class TestConsolidateCycle:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                         result = consolidate_cycle(trw_dir, config=cfg)
 
         assert "status" in result
@@ -1358,8 +1358,8 @@ def _patch_trw_deliver_deps(trw_dir: Path) -> Any:
             return_value={"status": "success", "learnings_promoted": 0, "total_lines": 0, "path": ""},
         )
     )
-    stack.enter_context(patch.object(ceremony_mod, "_do_index_sync", return_value={"status": "success"}))
-    stack.enter_context(patch.object(ceremony_mod, "_do_auto_progress", return_value={"status": "skipped"}))
+    stack.enter_context(patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value={"status": "success"}))
+    stack.enter_context(patch("trw_mcp.tools._deferred_delivery._do_auto_progress", return_value={"status": "skipped"}))
     stack.enter_context(patch("trw_mcp.telemetry.publisher.publish_learnings", return_value={"status": "skipped"}))
     stack.enter_context(patch("trw_mcp.scoring.process_outcome_for_event", return_value=[]))
     stack.enter_context(patch("trw_mcp.state.recall_tracking.get_recall_stats", return_value={}))
@@ -1674,7 +1674,7 @@ class TestConsolidationIntegration:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=mock_llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=mock_llm):
                         result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["status"] == "completed"
@@ -1728,7 +1728,7 @@ class TestConsolidationIntegration:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                         result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["status"] == "completed"
@@ -1801,7 +1801,7 @@ class TestIdempotency:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                         result1 = consolidate_cycle(trw_dir, config=cfg)
 
         assert int(str(result1.get("consolidated_count", 0))) >= 1
@@ -1811,7 +1811,7 @@ class TestIdempotency:
         with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("force yaml")):
             with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=[]) as mock_batch:
-                    with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+                    with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                         result2 = consolidate_cycle(trw_dir, config=cfg)
 
         # No new consolidations — all eligible entries were already archived
@@ -2494,7 +2494,7 @@ class TestSummarizeClusterLlmEdgeCases:
         mock_client.ask_sync.return_value = '{"summary": "s", "detail": "d"}'
 
         monkeypatch.setattr(
-            "trw_mcp.state.consolidation.LLMClient",
+            "trw_mcp.state.consolidation._summarize.LLMClient",
             lambda model: mock_client,
         )
 
@@ -2776,8 +2776,8 @@ class TestConsolidateCycleEdgeCases:
         llm.available = True
         llm.ask_sync.return_value = '{"summary": "s", "detail": "d"}'
 
-        with patch("trw_mcp.state.consolidation.find_clusters", return_value=[cluster1, cluster2]):
-            with patch("trw_mcp.state.consolidation.LLMClient", return_value=llm):
+        with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[cluster1, cluster2]):
+            with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                 result = consolidate_cycle(trw_dir, config=cfg)
 
         assert result["status"] == "completed"
@@ -2799,14 +2799,14 @@ class TestConsolidateCycleEdgeCases:
         cfg = TRWConfig(memory_consolidation_min_cluster=3)
 
         # _summarize_cluster_llm returns None -> triggers fallback -> fallback raises
-        with patch("trw_mcp.state.consolidation.find_clusters", return_value=[bad_cluster]):
-            with patch("trw_mcp.state.consolidation.LLMClient", side_effect=RuntimeError("no llm")):
+        with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[bad_cluster]):
+            with patch("trw_mcp.state.consolidation._cycle.LLMClient", side_effect=RuntimeError("no llm")):
                 with patch(
-                    "trw_mcp.state.consolidation._summarize_cluster_llm",
+                    "trw_mcp.state.consolidation._cycle._summarize_cluster_llm",
                     return_value=None,
                 ):
                     with patch(
-                        "trw_mcp.state.consolidation._summarize_cluster_fallback",
+                        "trw_mcp.state.consolidation._cycle._summarize_cluster_fallback",
                         side_effect=ValueError("boom"),
                     ):
                         result = consolidate_cycle(trw_dir, config=cfg)
@@ -2941,7 +2941,7 @@ class TestTagOverlapClusters:
             patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False),
             patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries),
             patch(
-                "trw_mcp.state.consolidation._tag_overlap_clusters",
+                "trw_mcp.state.consolidation._clustering._tag_overlap_clusters",
                 wraps=lambda entries, **kw: [],
             ) as mock_tag,
         ):
@@ -2994,7 +2994,7 @@ class TestTagOverlapClusters:
         with (
             patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True),
             patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs),
-            patch("trw_mcp.state.consolidation._tag_overlap_clusters") as mock_tag_fn,
+            patch("trw_mcp.state.consolidation._clustering._tag_overlap_clusters") as mock_tag_fn,
         ):
             find_clusters(entries_dir, reader, min_cluster_size=3, similarity_threshold=0.5)
 

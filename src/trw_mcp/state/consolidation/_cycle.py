@@ -2,39 +2,31 @@
 
 Orchestrates the full consolidation pipeline: cluster detection,
 summarization, entry creation, and archival. Includes dry-run mode.
-
-NOTE: Functions in this module look up cross-module dependencies
-(LLMClient, find_clusters, _summarize_*, _archive_*, get_config)
-via ``sys.modules["trw_mcp.state.consolidation"]`` at call time so
-that ``unittest.mock.patch("trw_mcp.state.consolidation.<name>")``
-continues to work after the flat module was converted to a package.
 """
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from uuid import uuid4
 
 import structlog
 
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.clients.llm import LLMClient
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import LearningEntryDict
+from trw_mcp.state.consolidation._archive import _archive_originals
+from trw_mcp.state.consolidation._clustering import find_clusters
+from trw_mcp.state.consolidation._summarize import (
+    _summarize_cluster_fallback,
+    _summarize_cluster_llm,
+)
 from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-if TYPE_CHECKING:
-    from trw_mcp.clients.llm import LLMClient
-
-logger = structlog.get_logger()
-
-
-def _pkg() -> object:
-    """Return the parent package module for late-binding lookups."""
-    return sys.modules["trw_mcp.state.consolidation"]
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -172,23 +164,13 @@ def consolidate_cycle(
         consolidated_count. In dry_run mode: {dry_run: true, clusters: [...],
         consolidated_count: 0}.
     """
-    # Late-bind cross-module names from the package so that
-    # patch("trw_mcp.state.consolidation.<name>") takes effect.
-    pkg = _pkg()
-    _find_clusters = getattr(pkg, "find_clusters")  # noqa: B009
-    _get_config = getattr(pkg, "get_config")  # noqa: B009
-    _LLMClient = getattr(pkg, "LLMClient")  # noqa: B009
-    _summarize_llm = getattr(pkg, "_summarize_cluster_llm")  # noqa: B009
-    _summarize_fallback = getattr(pkg, "_summarize_cluster_fallback")  # noqa: B009
-    _archive = getattr(pkg, "_archive_originals")  # noqa: B009
-
-    cfg = config or _get_config()
+    cfg = config or get_config()
     reader = FileStateReader()
     writer = FileStateWriter()
 
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
 
-    clusters = _find_clusters(
+    clusters = find_clusters(
         entries_dir,
         reader,
         similarity_threshold=cfg.memory_consolidation_similarity_threshold,
@@ -236,7 +218,7 @@ def consolidate_cycle(
     # Instantiate LLM client once for all clusters
     llm: LLMClient | None = None
     try:
-        candidate = _LLMClient(model="haiku")
+        candidate = LLMClient(model="haiku")
         if candidate.available:
             llm = candidate
     except Exception:  # justified: fail-open, consolidation errors must not block
@@ -251,12 +233,12 @@ def consolidate_cycle(
         cluster_ids = [str(e.get("id", "")) for e in cluster]
         try:
             # FR02: LLM summarization with FR05 fallback
-            llm_result = _summarize_llm(cluster, llm)
+            llm_result = _summarize_cluster_llm(cluster, llm)
             if llm_result is not None:
                 summary = llm_result["summary"]
                 detail = llm_result["detail"]
             else:
-                fallback = _summarize_fallback(cluster)
+                fallback = _summarize_cluster_fallback(cluster)
                 summary = fallback["summary"]
                 detail = fallback["detail"]
 
@@ -265,7 +247,7 @@ def consolidate_cycle(
             consolidated_id = str(new_entry["id"])
 
             # FR04: Archive originals
-            _archive(
+            _archive_originals(
                 cluster,
                 consolidated_id,
                 entries_dir,

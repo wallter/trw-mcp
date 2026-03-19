@@ -1,17 +1,11 @@
 """LLM summarization for memory consolidation — FR02, FR05.
 
 LLM-powered cluster summarization with retry logic and longest-entry fallback.
-
-NOTE: _summarize_cluster_llm looks up ``LLMClient`` from the parent package
-at call time so that ``patch("trw_mcp.state.consolidation.LLMClient")``
-works after the flat module was converted to a package.
 """
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import structlog
 from trw_memory.lifecycle.consolidation import (
@@ -19,12 +13,10 @@ from trw_memory.lifecycle.consolidation import (
     _redact_paths,
 )
 
+from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.typed_dicts import LearningEntryDict
 
-if TYPE_CHECKING:
-    from trw_mcp.clients.llm import LLMClient
-
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -53,9 +45,7 @@ def _summarize_cluster_llm(
     if llm is not None:
         client = llm
     else:
-        # Late-bind LLMClient from the package so patch targets work
-        _LLMClient = getattr(sys.modules["trw_mcp.state.consolidation"], "LLMClient")  # noqa: B009
-        client = _LLMClient(model="haiku")
+        client = LLMClient(model="haiku")
 
     # Build prompt (NFR06: redact filesystem paths before sending to LLM)
     entries_text = "\n".join(

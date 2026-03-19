@@ -8,9 +8,9 @@ Review tool: trw_mcp.tools.review (PRD-QUAL-022)
 Checkpoint tools: trw_mcp.tools.checkpoint (PRD-CORE-053)
 
 Deferred delivery infrastructure (background steps, file locking, step
-helpers) lives in ``trw_mcp.tools._deferred_delivery``.  This module
-re-exports those names so existing patches at
-``trw_mcp.tools.ceremony._step_*`` etc. continue to work.
+helpers) lives in ``trw_mcp.tools._deferred_delivery``.  Test patches
+for step functions should target that module directly:
+``patch("trw_mcp.tools._deferred_delivery._step_foo")``.
 """
 
 from __future__ import annotations
@@ -45,44 +45,28 @@ from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
 )
+from trw_mcp.tools._deferred_delivery import (
+    _launch_deferred,
+    _run_deferred_steps,
+    _step_checkpoint,
+)
 from trw_mcp.tools._helpers import _run_step
+from trw_mcp.tools.checkpoint import (
+    _do_checkpoint,
+    _maybe_auto_checkpoint,
+    _reset_tool_call_counter,
+)
 from trw_mcp.tools.telemetry import log_tool_call
 
+logger = structlog.get_logger(__name__)
+
 # ── Deferred delivery thread globals ───────────────────────────────────
-# These live here (not in _deferred_delivery) so existing test patches via
-# ``monkeypatch.setattr(cer, "_deferred_thread", ...)`` continue to work.
-# ``_deferred_delivery._launch_deferred`` accesses them via late import.
+# These live here (not in _deferred_delivery) so that
+# ``monkeypatch.setattr(cer, "_deferred_thread", ...)`` patches continue
+# to work.  ``_deferred_delivery._launch_deferred`` accesses them via
+# a late import of this module.
 _deferred_thread: threading.Thread | None = None
 _deferred_lock = threading.Lock()
-
-# ── Re-exports from _deferred_delivery ─────────────────────────────────
-# Tests and conftest patch these at ``trw_mcp.tools.ceremony.*``, so they
-# MUST be importable from this module.  The names below are re-assigned
-# as module-level attributes so ``patch("trw_mcp.tools.ceremony._step_foo")``
-# resolves correctly.
-from trw_mcp.tools._deferred_delivery import (  # noqa: E402
-    _do_auto_progress,
-    _do_index_sync,
-    _launch_deferred,
-    _log_deferred_result,
-    _release_deferred_lock,
-    _run_deferred_steps,
-    _step_auto_progress,
-    _step_auto_prune,
-    _step_batch_send,
-    _step_ceremony_feedback,
-    _step_checkpoint,
-    _step_consolidation,
-    _step_outcome_correlation,
-    _step_publish_learnings,
-    _step_recall_outcome,
-    _step_telemetry,
-    _step_tier_sweep,
-    _step_trust_increment,
-    _try_acquire_deferred_lock,
-)
-
-logger = structlog.get_logger()
 
 _events = FileEventLogger(FileStateWriter())
 
@@ -92,30 +76,6 @@ def __getattr__(name: str) -> object:
     from trw_mcp.state._helpers import _compat_getattr
 
     return _compat_getattr(name)
-
-# Re-export checkpoint helpers for backward compatibility with tests/hooks
-from trw_mcp.tools.checkpoint import (  # noqa: E402
-    _do_checkpoint,
-    _maybe_auto_checkpoint,
-    _reset_tool_call_counter,
-)
-
-# Suppress unused import warnings — these are re-exports
-__all__ = [  # noqa: RUF022 — grouped by origin, not alphabetical
-    "_do_checkpoint", "_maybe_auto_checkpoint", "_reset_tool_call_counter",
-    "_deferred_lock", "_deferred_thread",
-    "_do_auto_progress", "_do_index_sync",
-    "_launch_deferred", "_log_deferred_result",
-    "_release_deferred_lock",
-    "_run_deferred_steps", "_run_step",
-    "_step_auto_progress", "_step_auto_prune",
-    "_step_batch_send", "_step_ceremony_feedback",
-    "_step_checkpoint", "_step_consolidation", "_step_outcome_correlation",
-    "_step_publish_learnings", "_step_recall_outcome", "_step_telemetry",
-    "_step_tier_sweep", "_step_trust_increment",
-    "_try_acquire_deferred_lock",
-    "get_config", "resolve_project_root", "resolve_trw_dir",
-]
 
 
 def _get_run_status(run_dir: Path) -> RunStatusDict:
@@ -161,10 +121,6 @@ def _mark_run_complete(run_dir: Path) -> None:
             exc_info=True,
             run_dir=str(run_dir),
         )
-
-
-
-# _run_step is imported from trw_mcp.tools._helpers (shared with _deferred_delivery)
 
 
 # ── Synchronous delivery helpers (critical path) ──────────────────────
@@ -572,7 +528,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             from trw_mcp.state.ceremony_nudge import mark_deliver
             mark_deliver(trw_dir)
         except Exception:  # noqa: S110 — fail-open, ceremony state must not block delivery
-            pass
+            logger.debug("deliver_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
 
         # Inject ceremony nudge into response (PRD-CORE-084 FR02)
         try:
@@ -581,7 +537,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             ctx = NudgeContext(tool_name=ToolName.DELIVER)
             append_ceremony_nudge(cast("dict[str, object]", results), trw_dir, context=ctx)
         except Exception:  # noqa: S110 — fail-open, nudge must not block delivery
-            pass
+            logger.debug("deliver_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         logger.info(
             "trw_deliver_complete",

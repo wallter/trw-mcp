@@ -31,6 +31,7 @@ dependencies = [
     "ruamel.yaml>=0.18.0",
     "structlog>=24.0.0",
     "trw-memory>=0.1.0",
+    "trw-shared>=0.1.0",
 ]
 
 [project.optional-dependencies]
