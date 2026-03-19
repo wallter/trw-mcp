@@ -295,15 +295,24 @@ When all tasks are complete:
 
 4. **Send shutdown_request** to each teammate via `SendMessage`
 
-5. **After all teammates confirm shutdown**, clean up worktrees:
-   a. For each `.trees/` subdirectory: `rm -rf {worktree_dir}/{branch-name}/`
+5. **Merge worktree branches** — CRITICAL: changes are lost if you skip this step:
+   a. For each worktree branch (`git worktree list --porcelain` to enumerate):
+      - Check for uncommitted changes: `git -C {worktree_path} status --porcelain`
+      - If uncommitted changes exist: `git -C {worktree_path} add -A && git -C {worktree_path} commit -m "chore: preserve uncommitted teammate changes"`
+      - Merge into current branch: `git merge {branch-name} --no-edit`
+      - If merge conflicts: resolve manually, do NOT skip — these are teammate deliverables
+   b. Verify merge: `git log --oneline -5` to confirm all branch merges appear
+   c. Run build check after merge: `trw_build_check(scope="unit")` — if broken, fix before continuing
+
+6. **Clean up worktrees** (only after step 5 merge is verified):
+   a. For each `.trees/` subdirectory: `git worktree remove {worktree_dir}/{branch-name}`
    b. Run: `git worktree prune`
    c. Run: `git branch -d trw-*` (safe delete — refuses unmerged branches)
-   d. Log any unmerged branches as warnings
+   d. If `git branch -d` refuses any branch: STOP — that branch has unmerged work. Merge it first.
 
-6. **Call TeamDelete** to remove team infrastructure
+7. **Call TeamDelete** to remove team infrastructure
 
-7. **Run `/trw-deliver`** for full ceremony
+8. **Run `/trw-deliver`** for full ceremony
 
 ## Rationalization Watchlist
 
@@ -314,6 +323,7 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "The team structure is obvious, I'll skip user approval" | User approval prevents misaligned team structures that waste entire sprint budgets | Past sprints without approval had teammate assignments that required full re-spawning |
 | "Playbook generation is slow, I'll spawn teammates with inline prompts" | Inline prompts skip file ownership validation — the #1 Agent Teams failure mode | Two teammates editing the same file creates merge conflicts and unreviewed code |
 | "I know the file ownership, I don't need to validate zero overlap" | File ownership violations cause silent overwrites that are discovered only at REVIEW | One file conflict can cascade into 3-4 re-implementation tasks |
+| "The worktree is clean, I can just rm -rf it" | Worktree branches may have committed changes not yet merged to main — rm -rf destroys the working directory reference | Agent's entire sprint of work is permanently lost, requiring full re-implementation from output descriptions |
 
 ## Notes
 
