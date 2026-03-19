@@ -131,6 +131,12 @@ unfixable = ["F841"]
 "tests/test_scoring_properties.py" = ["DTZ001"]  # hypothesis st.datetimes() requires naive bounds when timezones= is provided
 "**/__init__.py" = ["F401"]
 "**/conftest.py" = ["PT"]
+# Structlog processors require Any for logger param (structlog convention)
+"src/trw_mcp/_logging.py" = ["ANN401"]
+# Build audit imports after logger init (deliberate pattern for module isolation)
+"src/trw_mcp/tools/build/_audit.py" = ["E402"]
+# Nudge messages imports after logger init (deliberate)
+"src/trw_mcp/state/_nudge_messages.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["trw_mcp"]

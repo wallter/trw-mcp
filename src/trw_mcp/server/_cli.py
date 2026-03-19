@@ -361,7 +361,7 @@ def main() -> None:
         debug=debug,
         verbosity=verbosity,
         log_level=args.log_level,
-        json_output=args.log_json if args.log_json else None,
+        json_output=args.log_json or None,
         log_dir=log_dir,
         package_name="trw-mcp",
     )

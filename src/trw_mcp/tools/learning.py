@@ -436,7 +436,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
     @server.tool()
     @log_tool_call
-    def trw_recall(
+    def trw_recall(  # noqa: C901 — recall orchestrates multiple retrieval strategies
         query: str,
         tags: list[str] | None = None,
         min_impact: float = 0.0,

@@ -248,7 +248,7 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
                 backend_url=backend_url,
             )
     except Exception as exc:  # justified: boundary, backend publish API call may fail
-        logger.error("release_publish_failed", op="push_release", error=str(exc), exc_info=True)
+        logger.exception("release_publish_failed", op="push_release", error=str(exc))
         sys.exit(1)
 
 
