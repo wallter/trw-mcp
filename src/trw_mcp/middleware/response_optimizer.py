@@ -29,9 +29,7 @@ def _is_empty(v: object) -> bool:
         return True
     if isinstance(v, dict) and len(v) == 0:
         return True
-    if isinstance(v, list) and len(v) == 0:
-        return True
-    return False
+    return bool(isinstance(v, list) and len(v) == 0)
 
 
 def _compact(data: object) -> object:

@@ -44,13 +44,13 @@ from trw_mcp.scoring._correlation import (
     REWARD_MAP as REWARD_MAP,
 )
 from trw_mcp.scoring._correlation import (
-    compute_initial_q_value as compute_initial_q_value,
-)
-from trw_mcp.scoring._correlation import (
     _find_session_start_ts as _find_session_start_ts,
 )
 from trw_mcp.scoring._correlation import (
     _resolve_event_reward as _resolve_event_reward,
+)
+from trw_mcp.scoring._correlation import (
+    compute_initial_q_value as compute_initial_q_value,
 )
 from trw_mcp.scoring._correlation import (
     correlate_recalls as correlate_recalls,
@@ -141,7 +141,11 @@ __all__ = [
     "EVENT_ALIASES",
     "REWARD_MAP",
     "_HIGH_RISK_SIGNALS",
+    "_IMPACT_DECAY_FLOOR",
+    "_LN2",
     "_TIER_EXPECTATIONS",
+    "_TIER_HIGH_CEILING",
+    "_TIER_MEDIUM_CEILING",
     "_TierExpectation",
     "_clamp01",
     "_days_since_access",
@@ -154,16 +158,19 @@ __all__ = [
     "bayesian_calibrate",
     "classify_complexity",
     "compute_calibration_accuracy",
-    "compute_initial_q_value",
     "compute_impact_distribution",
+    "compute_initial_q_value",
     "compute_tier_ceremony_score",
     "compute_utility_score",
     "correlate_recalls",
     "enforce_tier_distribution",
     "get_phase_requirements",
+    "logger",
     "process_outcome",
     "process_outcome_for_event",
     "rank_by_utility",
+    "safe_float",
+    "safe_int",
     "update_q_value",
     "utility_based_prune_candidates",
 ]

@@ -47,7 +47,7 @@ class TestComputeInitialQValue:
 
     def test_result_always_in_valid_range(self) -> None:
         """Output is always in [0.0, 1.0] for valid impact inputs."""
-        for impact_x100 in range(0, 101):
+        for impact_x100 in range(101):
             impact = impact_x100 / 100.0
             q = compute_initial_q_value(impact)
             assert 0.0 <= q <= 1.0, f"impact={impact} produced q={q}"
@@ -66,7 +66,7 @@ class TestComputeInitialQValue:
 
         At any impact level: result = impact * 0.5 + 0.5 * 0.5.
         """
-        for impact_x10 in range(0, 11):
+        for impact_x10 in range(11):
             impact = impact_x10 / 10.0
             expected = impact * 0.5 + 0.5 * 0.5
             assert compute_initial_q_value(impact) == pytest.approx(expected)

@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import pytest
-
 from pydantic import ValidationError
 
 from trw_mcp.models.config import TRWConfig, resolve_client_profile
@@ -28,7 +27,6 @@ from trw_mcp.models.config._client_profile import (
     WriteTargets,
 )
 from trw_mcp.state.analytics.report import compute_ceremony_score
-
 
 # ---------------------------------------------------------------------------
 # Test 1: All 5 profiles construct via resolve_client_profile
@@ -132,7 +130,7 @@ def test_scoring_dimension_weights_tolerance_boundary() -> None:
 @pytest.mark.unit
 def test_scoring_dimension_weights_over_limit_raises() -> None:
     """ScoringDimensionWeights with sum > 1.01 raises ValidationError."""
-    with pytest.raises(ValidationError, match="must sum to ~1.0"):
+    with pytest.raises(ValidationError, match=r"must sum to ~1\.0"):
         ScoringDimensionWeights(
             outcome=0.60,
             plan_quality=0.20,
@@ -149,7 +147,8 @@ def test_scoring_dimension_weights_over_limit_raises() -> None:
 @pytest.mark.unit
 def test_unknown_client_id_falls_back_to_claude_code() -> None:
     """resolve_client_profile('windsurf') falls back to claude-code."""
-    profile = resolve_client_profile("windsurf")
+    with pytest.warns(match=r"Unknown client_id"):
+        profile = resolve_client_profile("windsurf")
     assert profile.client_id == "claude-code"
 
 

@@ -24,7 +24,6 @@ from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state.dedup import cosine_similarity
 
 if TYPE_CHECKING:
-    from trw_mcp.exceptions import StateError
     from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger()
@@ -209,7 +208,7 @@ def find_clusters(
         # Tag-fallback: load ALL active entries (no max_entries cap)
         all_entries = _load_active_entries(entries_dir, reader, max_entries=10_000)
         # Late-bind from package so patch("trw_mcp.state.consolidation._tag_overlap_clusters") works
-        _tag_cluster_fn = getattr(sys.modules["trw_mcp.state.consolidation"], "_tag_overlap_clusters")
+        _tag_cluster_fn = sys.modules["trw_mcp.state.consolidation"]._tag_overlap_clusters
         try:
             clusters: list[list[LearningEntryDict]] = _tag_cluster_fn(
                 all_entries,

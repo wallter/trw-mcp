@@ -15,6 +15,7 @@ re-exports those names so existing patches at
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from datetime import datetime, timezone
@@ -273,7 +274,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
     @server.tool()
     @log_tool_call
-    def trw_session_start(query: str = "") -> SessionStartResultDict:
+    def trw_session_start(query: str = "") -> SessionStartResultDict:  # noqa: C901 — complex session start orchestration
         """Load your prior learnings and any active run — gives you full context before writing code.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
@@ -406,16 +407,12 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             )
 
         # Mark session started in ceremony state tracker (PRD-CORE-074 FR04)
-        try:
+        with contextlib.suppress(Exception):
             step_mark_session_started()
-        except Exception:  # noqa: S110 — fail-open, ceremony state must not block session start
-            pass
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        try:
+        with contextlib.suppress(Exception):
             step_ceremony_nudge(cast("dict[str, object]", results), int(str(results.get("learnings_count", 0))))
-        except Exception:  # noqa: S110 — fail-open, nudge must not block session start
-            pass
 
         logger.info(
             "trw_session_start_complete",
