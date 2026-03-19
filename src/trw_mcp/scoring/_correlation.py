@@ -369,7 +369,7 @@ def _sync_to_sqlite(
             q_observations=q_obs + 1,
             outcome_history=history,
         )
-    except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)  # noqa: S110
+    except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)
         logger.debug("q_value_sqlite_sync_skipped", exc_info=True)  # justified: fail-open, YAML is authoritative
 
 

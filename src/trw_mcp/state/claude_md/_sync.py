@@ -168,7 +168,7 @@ def _get_repo_root() -> Path | None:
         )
         if result.returncode == 0:
             return Path(result.stdout.strip())
-    except Exception:  # justified: fail-open, git root detection failure is non-fatal  # noqa: S110
+    except Exception:  # justified: fail-open, git root detection failure is non-fatal
         logger.debug("git_repo_root_detection_skipped", exc_info=True)  # justified: fail-open, non-fatal
     return None
 

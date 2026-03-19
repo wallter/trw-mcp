@@ -16,9 +16,9 @@ import logging
 import os
 import re
 import sys
+from collections.abc import MutableMapping
 from datetime import datetime, timezone
 from pathlib import Path
-from collections.abc import MutableMapping
 from typing import Any
 
 import structlog

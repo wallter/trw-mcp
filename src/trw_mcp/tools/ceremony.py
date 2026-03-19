@@ -34,7 +34,7 @@ from trw_mcp.models.typed_dicts import (
     RunStatusDict,
     SessionStartResultDict,
 )
-from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_project_root, resolve_trw_dir
+from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_trw_dir
 from trw_mcp.state.analytics import (
     find_success_patterns,
     update_analytics,
@@ -47,15 +47,9 @@ from trw_mcp.state.persistence import (
 )
 from trw_mcp.tools._deferred_delivery import (
     _launch_deferred,
-    _run_deferred_steps,
     _step_checkpoint,
 )
 from trw_mcp.tools._helpers import _run_step
-from trw_mcp.tools.checkpoint import (
-    _do_checkpoint,
-    _maybe_auto_checkpoint,
-    _reset_tool_call_counter,
-)
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
@@ -545,7 +539,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         try:
             from trw_mcp.state.ceremony_nudge import mark_deliver
             mark_deliver(trw_dir)
-        except Exception:  # noqa: S110 — fail-open, ceremony state must not block delivery
+        except Exception:
             logger.debug("deliver_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
 
         # Inject ceremony nudge into response (PRD-CORE-084 FR02)
@@ -554,7 +548,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
             ctx = NudgeContext(tool_name=ToolName.DELIVER)
             append_ceremony_nudge(cast("dict[str, object]", results), trw_dir, context=ctx)
-        except Exception:  # noqa: S110 — fail-open, nudge must not block delivery
+        except Exception:
             logger.debug("deliver_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         _deliver_run_id = str(resolved_run.name) if resolved_run else ""

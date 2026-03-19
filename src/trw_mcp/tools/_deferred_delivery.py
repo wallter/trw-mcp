@@ -178,7 +178,7 @@ def _run_deferred_steps(
     errors: list[str] = []
     t0 = time.monotonic()
 
-    def _timed_step(name: str, fn: "object") -> None:
+    def _timed_step(name: str, fn: object) -> None:
         """Run a deferred step with per-step timing and structured logging."""
         _t = time.monotonic()
         _pre_errors = len(errors)

@@ -76,7 +76,7 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
                 "previous_phase": current,
             }
         )
-    except Exception:  # justified: fail-open, pipeline may not be initialized  # noqa: S110
+    except Exception:  # justified: fail-open, pipeline may not be initialized
         logger.debug("phase_transition_telemetry_skipped", exc_info=True)  # justified: fail-open, pipeline may not be initialized
 
     return True

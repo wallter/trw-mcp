@@ -128,20 +128,20 @@ class TestAddComponent:
 
 @pytest.mark.unit
 class TestConfigureLogging:
-    def test_json_output_forced(self, tmp_path: "Any", monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_json_output_forced(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=True)
         log = structlog.get_logger("test")
         # Should not raise
         log.info("test_event", key="value")
 
-    def test_console_output_forced(self, tmp_path: "Any", monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_console_output_forced(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=False)
         log = structlog.get_logger("test")
         log.info("test_event", key="value")
 
-    def test_file_logging(self, tmp_path: "Any", monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_file_logging(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
         log_dir = tmp_path / "logs"
         configure_logging(log_dir=log_dir)
@@ -149,7 +149,7 @@ class TestConfigureLogging:
         # At least one .jsonl file created
         assert any(f.suffix == ".jsonl" for f in log_dir.iterdir())
 
-    def test_explicit_log_file(self, tmp_path: "Any", monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_explicit_log_file(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
         log_file = tmp_path / "test.log"
         configure_logging(log_file=log_file)

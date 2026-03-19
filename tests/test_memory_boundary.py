@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from trw_memory.exceptions import StorageError
-from trw_memory.models.memory import MemoryEntry, MemoryStatus
+from trw_memory.models.memory import MemoryEntry
+
 from trw_mcp.state.memory_adapter import (
     backfill_embeddings,
     get_backend,
@@ -27,7 +27,6 @@ from trw_mcp.state.memory_adapter import (
     store_learning,
     update_learning,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

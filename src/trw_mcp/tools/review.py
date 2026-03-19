@@ -356,7 +356,7 @@ def register_review_tools(server: FastMCP) -> None:
             mark_review(trw_dir, verdict=verdict, p0_count=p0_count)
             ctx = NudgeContext(tool_name=ToolName.REVIEW, review_verdict=verdict, review_p0_count=p0_count)
             append_ceremony_nudge(response, trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block review  # noqa: S110
+        except Exception:  # justified: fail-open, nudge injection must not block review
             logger.debug("review_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return response

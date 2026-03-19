@@ -65,7 +65,7 @@ def _enqueue_to_pipeline(event_data: dict[str, object]) -> None:
 
         pipeline = TelemetryPipeline.get_instance()
         pipeline.enqueue(dict(event_data))
-    except Exception:  # justified: fail-open, telemetry pipeline enqueue must never block tool execution  # noqa: S110
+    except Exception:  # justified: fail-open, telemetry pipeline enqueue must never block tool execution
         logger.debug("telemetry_pipeline_enqueue_skipped", exc_info=True)  # justified: fail-open
 
 

@@ -36,9 +36,17 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     list_active_learnings,
+)
+from trw_mcp.state.memory_adapter import (
     recall_learnings as adapter_recall,
+)
+from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
+)
+from trw_mcp.state.memory_adapter import (
     update_access_tracking as adapter_update_access,
+)
+from trw_mcp.state.memory_adapter import (
     update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -339,7 +347,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             from trw_mcp.state.ceremony_nudge import increment_learnings
 
             increment_learnings(trw_dir)
-        except Exception:  # justified: fail-open, ceremony state update must not block learning  # noqa: S110
+        except Exception:  # justified: fail-open, ceremony state update must not block learning
             logger.debug("learn_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
@@ -349,7 +357,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
             ctx = NudgeContext(tool_name=ToolName.LEARN)
             append_ceremony_nudge(cast("dict[str, object]", result_dict), trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block learning  # noqa: S110
+        except Exception:  # justified: fail-open, nudge injection must not block learning
             logger.debug("learn_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return result_dict
@@ -598,7 +606,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 append_ceremony_nudge(
                     cast("dict[str, object]", recall_result), trw_dir, available_learnings=total_available, context=ctx
                 )
-            except Exception:  # justified: fail-open, nudge injection must not block recall  # noqa: S110
+            except Exception:  # justified: fail-open, nudge injection must not block recall
                 logger.debug("recall_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return recall_result
