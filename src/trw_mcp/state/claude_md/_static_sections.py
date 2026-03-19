@@ -325,11 +325,13 @@ def render_minimal_protocol() -> str:
     Must be under 200 tokens. Contains only:
     - Call trw_session_start() first
     - Call trw_deliver() when done
+    - Run tests after each change
     """
     return (
         "TRW tools persist your work across sessions:\n"
         "- **Start**: call `trw_session_start()` to load prior learnings\n"
         "- **Finish**: call `trw_deliver()` to persist discoveries\n"
+        "- **Verify**: Run tests after each change \u2014 fix failures before moving on.\n"
         "\n" + _SESSION_BOUNDARY_TEXT
     )
 
