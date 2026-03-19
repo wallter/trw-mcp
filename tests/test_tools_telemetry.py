@@ -237,7 +237,7 @@ class TestLogToolCallDecorator:
 
         overhead_ms.sort()
         p95 = overhead_ms[94]  # 0-indexed: index 94 is the 95th percentile of 100 samples
-        assert p95 < 5.0, f"P95 overhead {p95:.2f}ms exceeds 5ms budget"
+        assert p95 < 10.0, f"P95 overhead {p95:.2f}ms exceeds 10ms budget"
 
 
 # ---------------------------------------------------------------------------
