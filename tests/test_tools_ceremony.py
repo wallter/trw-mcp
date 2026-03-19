@@ -276,8 +276,8 @@ class TestDoClaudeMdSync:
         assert "`trw_deliver()`" in content
         assert "`trw_checkpoint(message)`" in content
         assert "`trw_learn(summary, detail)`" in content
-        # Value-oriented opener present
-        assert "TRW tools help you build effectively" in content
+        # Orchestration opener present
+        assert "orchestration" in content
         # Progressive disclosure pointer present
         assert "/trw-ceremony-guide" in content
         # No unreplaced placeholders
