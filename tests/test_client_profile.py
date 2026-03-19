@@ -141,15 +141,16 @@ def test_scoring_dimension_weights_over_limit_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 6: Unknown client_id falls back to claude-code (caplog warning)
+# Test 6: Unknown client_id falls back to claude-code (structlog warning)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_unknown_client_id_falls_back_to_claude_code() -> None:
+def test_unknown_client_id_falls_back_to_claude_code(capsys: pytest.CaptureFixture[str]) -> None:
     """resolve_client_profile('windsurf') falls back to claude-code."""
-    with pytest.warns(match=r"Unknown client_id"):
-        profile = resolve_client_profile("windsurf")
+    profile = resolve_client_profile("windsurf")
     assert profile.client_id == "claude-code"
+    captured = capsys.readouterr()
+    assert "unknown_client_id_fallback" in captured.out
 
 
 # ---------------------------------------------------------------------------
