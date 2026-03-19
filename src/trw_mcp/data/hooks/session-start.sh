@@ -79,10 +79,10 @@ _emit_protocol() {
   if [ -f "$_protocol_file" ]; then
     grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
   else
-    echo "- Start: call trw_session_start() to load prior learnings and active run state"
-    echo "- During: call trw_checkpoint(message) after milestones"
-    echo "- Finish: call trw_deliver() to persist learnings for future sessions"
-    echo "- On errors or >2 retries: call trw_learn() to record the discovery"
+    echo "- Start: call trw_session_start() — loads prior learnings so you start from accumulated knowledge, not zero"
+    echo "- During: call trw_checkpoint(message) after milestones — your last checkpoint is your resume point if context compacts"
+    echo "- Finish: call trw_deliver() — without it, your session's discoveries are invisible to every future agent"
+    echo "- On errors or >2 retries: call trw_learn() — saves the gotcha so no future agent repeats your mistake"
   fi
 }
 
@@ -104,6 +104,7 @@ case "$_source" in
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
     echo ""
     echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK.md, completion artifacts."
+    echo "WHY: These are the tools where skipping costs more than running — lost learnings, shipped bugs, false completions."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;

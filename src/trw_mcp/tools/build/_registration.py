@@ -44,11 +44,10 @@ def register_build_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Verify your code passes tests and type checking — the gate between implementation and delivery.
 
-        Runs the project's test suite and type checker via subprocess, parses
-        results, and caches to .trw/context/build-status.yaml. Returns test
-        count, coverage percentage, failure details, and type-check status.
-        This is the VALIDATE phase gate — run it after implementation before
-        moving to review and delivery.
+        Bugs caught here cost 2x less to fix than bugs caught at delivery.
+        MUST run at VALIDATE phase and again before DELIVER — skipping this
+        is the #1 cause of shipped regressions. Returns test count, coverage
+        percentage, failure details, and type-check status.
 
         Args:
             scope: Check scope — 'full' (tests + type-check), 'pytest', 'mypy'.

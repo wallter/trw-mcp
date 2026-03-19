@@ -1,9 +1,9 @@
 ---
 name: trw-deliver
 description: >
-  Enhanced delivery with pre-flight build verification and team learning synthesis.
-  Runs build check, synthesizes teammate learnings if a team was active, then
-  trw_deliver, then reports summary. Use: /trw-deliver
+  Persist your session's work so future agents inherit your discoveries.
+  Runs build check (catches bugs before they ship), synthesizes teammate
+  learnings (resolves duplicates/conflicts), then trw_deliver. Use: /trw-deliver
 user-invocable: true
 model: claude-sonnet-4-6
 disable-model-invocation: true

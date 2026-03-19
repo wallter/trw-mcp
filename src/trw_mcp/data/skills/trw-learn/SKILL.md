@@ -1,9 +1,9 @@
 ---
 name: trw-learn
 description: >
-  Record, update, or retire learnings. With a summary: records a new learning.
-  With "resolve/obsolete L-id": changes status. Without arguments: reflects on
-  session memory. Use: /trw-learn ["summary" | resolve L-id | obsolete L-id]
+  Save a discovery so no future agent repeats your mistake. With a summary:
+  records a new learning. With "resolve/obsolete L-id": retires stale knowledge.
+  Without arguments: reflects on session memory. Use: /trw-learn ["summary" | resolve L-id | obsolete L-id]
 user-invocable: true
 model: claude-sonnet-4-6
 disable-model-invocation: true
