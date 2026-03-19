@@ -76,7 +76,7 @@ def _make_deliver_with_stubs(
         lambda *_a, **_kw: {"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
     )
     monkeypatch.setattr(
-        "trw_mcp.tools.ceremony._do_index_sync",
+        "trw_mcp.tools._deferred_delivery._do_index_sync",
         lambda *_a, **_kw: {"status": "success", "index": {}, "roadmap": {}},
     )
     monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_project_root", lambda: tmp_path)

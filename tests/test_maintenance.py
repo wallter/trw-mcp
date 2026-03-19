@@ -555,8 +555,8 @@ class TestDeliverAutoPrune:
                 "learnings_promoted": 0,
                 "total_lines": 0,
             },
-            "trw_mcp.tools.ceremony._do_index_sync": lambda: {"status": "success"},
-            "trw_mcp.tools.ceremony._do_auto_progress": lambda *a, **kw: {"status": "skipped"},
+            "trw_mcp.tools._deferred_delivery._do_index_sync": lambda: {"status": "success"},
+            "trw_mcp.tools._deferred_delivery._do_auto_progress": lambda *a, **kw: {"status": "skipped"},
         }
 
     def test_deliver_calls_auto_prune_when_enabled(self, tmp_path: Path) -> None:

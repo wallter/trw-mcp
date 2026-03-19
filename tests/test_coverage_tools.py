@@ -151,11 +151,11 @@ class TestCeremonyDeliverSubStepFailures:
                 side_effect=RuntimeError("sync failed"),
             ),
             patch(
-                "trw_mcp.tools.ceremony._do_index_sync",
+                "trw_mcp.tools._deferred_delivery._do_index_sync",
                 return_value={"status": "success"},
             ),
             patch(
-                "trw_mcp.tools.ceremony._do_auto_progress",
+                "trw_mcp.tools._deferred_delivery._do_auto_progress",
                 return_value={"status": "skipped"},
             ),
         ):
@@ -168,18 +168,18 @@ class TestCeremonyDeliverSubStepFailures:
 
     def test_deliver_auto_progress_failure_captured(self, tmp_path: Path) -> None:
         """auto_progress exception is captured by _run_step in deferred path."""
-        from trw_mcp.tools.ceremony import _run_step
+        from trw_mcp.tools._helpers import _run_step
 
         results: dict[str, object] = {}
         errors: list[str] = []
 
         with patch(
-            "trw_mcp.tools.ceremony._step_auto_progress",
+            "trw_mcp.tools._deferred_delivery._step_auto_progress",
             side_effect=RuntimeError("progress failed"),
         ):
             _run_step(
                 "auto_progress",
-                lambda: __import__("trw_mcp.tools.ceremony", fromlist=["_step_auto_progress"])._step_auto_progress(
+                lambda: __import__("trw_mcp.tools._deferred_delivery", fromlist=["_step_auto_progress"])._step_auto_progress(
                     None
                 ),
                 results,
@@ -193,19 +193,19 @@ class TestCeremonyDeliverSubStepFailures:
 
     def test_deliver_publish_learnings_failure_captured(self, tmp_path: Path) -> None:
         """publish_learnings exception is captured by _run_step in deferred path."""
-        from trw_mcp.tools.ceremony import _run_step
+        from trw_mcp.tools._helpers import _run_step
 
         results: dict[str, object] = {}
         errors: list[str] = []
 
         with patch(
-            "trw_mcp.tools.ceremony._step_publish_learnings",
+            "trw_mcp.tools._deferred_delivery._step_publish_learnings",
             side_effect=RuntimeError("publish failed"),
         ):
             _run_step(
                 "publish_learnings",
                 lambda: __import__(
-                    "trw_mcp.tools.ceremony", fromlist=["_step_publish_learnings"]
+                    "trw_mcp.tools._deferred_delivery", fromlist=["_step_publish_learnings"]
                 )._step_publish_learnings(),
                 results,
                 errors,

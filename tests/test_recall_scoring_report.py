@@ -793,12 +793,12 @@ class TestProcessOutcomeForEventException:
 
     def test_state_error_returns_empty_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """StateError from resolve_trw_dir returns [] without propagating (lines 999-1001)."""
-        import trw_mcp.scoring as scoring_mod
+        import trw_mcp.scoring._utils as scoring_utils
         from trw_mcp.exceptions import StateError
         from trw_mcp.scoring import process_outcome_for_event
 
         monkeypatch.setattr(
-            scoring_mod,
+            scoring_utils,
             "resolve_trw_dir",
             lambda: (_ for _ in ()).throw(StateError("no .trw", path="none")),
         )
@@ -808,11 +808,11 @@ class TestProcessOutcomeForEventException:
 
     def test_os_error_returns_empty_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """OSError from resolve_trw_dir returns [] without propagating (lines 999-1001)."""
-        import trw_mcp.scoring as scoring_mod
+        import trw_mcp.scoring._utils as scoring_utils
         from trw_mcp.scoring import process_outcome_for_event
 
         monkeypatch.setattr(
-            scoring_mod,
+            scoring_utils,
             "resolve_trw_dir",
             lambda: (_ for _ in ()).throw(OSError("permission denied")),
         )
@@ -822,7 +822,7 @@ class TestProcessOutcomeForEventException:
 
     def test_none_reward_returns_empty_without_resolve(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Events with no reward don't call resolve_trw_dir at all."""
-        import trw_mcp.scoring as scoring_mod
+        import trw_mcp.scoring._utils as scoring_utils
         from trw_mcp.scoring import process_outcome_for_event
 
         resolve_called = [False]
@@ -831,7 +831,7 @@ class TestProcessOutcomeForEventException:
             resolve_called[0] = True
             return Path("/fake")
 
-        monkeypatch.setattr(scoring_mod, "resolve_trw_dir", mock_resolve)
+        monkeypatch.setattr(scoring_utils, "resolve_trw_dir", mock_resolve)
 
         result = process_outcome_for_event("shard_started")
         assert result == []
@@ -839,14 +839,14 @@ class TestProcessOutcomeForEventException:
 
     def test_success_path_calls_process_outcome(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Happy path: resolve_trw_dir succeeds and process_outcome is called (lines 997-998)."""
-        import trw_mcp.scoring as scoring_mod
+        import trw_mcp.scoring._utils as scoring_utils
         from trw_mcp.scoring import process_outcome_for_event
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
 
         # Mock resolve_trw_dir to return our temp dir (no receipts = empty result)
-        monkeypatch.setattr(scoring_mod, "resolve_trw_dir", lambda: trw_dir)
+        monkeypatch.setattr(scoring_utils, "resolve_trw_dir", lambda: trw_dir)
 
         # tests_passed has a valid reward in REWARD_MAP, so it tries process_outcome
         result = process_outcome_for_event("tests_passed")
