@@ -178,58 +178,76 @@ def _run_deferred_steps(
     errors: list[str] = []
     t0 = time.monotonic()
 
+    def _timed_step(name: str, fn: "object") -> None:
+        """Run a deferred step with per-step timing and structured logging."""
+        _t = time.monotonic()
+        _pre_errors = len(errors)
+        _run_step(name, fn, results, errors)  # type: ignore[arg-type]
+        _duration_ms = round((time.monotonic() - _t) * 1000, 1)
+        _step_result = results.get(name)
+        if len(errors) > _pre_errors:
+            _last_err = errors[-1]
+            logger.error("deferred_step_failed", step=name, error=_last_err)
+        elif _step_result is None or (isinstance(_step_result, dict) and _step_result.get("status") == "skipped"):
+            logger.warning("deferred_step_skip", step=name, reason=str(_step_result))
+        else:
+            logger.info("deferred_step_ok", step=name, duration_ms=_duration_ms)
+
     try:
         # Step 2.5: Auto-prune excess learnings
-        _run_step("auto_prune", lambda: _step_auto_prune(trw_dir), results, errors)
+        _timed_step("auto_prune", lambda: _step_auto_prune(trw_dir))
 
         # Step 2.6: Memory consolidation (PRD-CORE-044)
-        _run_step("consolidation", lambda: _step_consolidation(trw_dir), results, errors)
+        _timed_step("consolidation", lambda: _step_consolidation(trw_dir))
 
         # Step 2.7: Tier lifecycle sweep (PRD-CORE-043)
-        _run_step("tier_sweep", lambda: _step_tier_sweep(trw_dir), results, errors)
+        _timed_step("tier_sweep", lambda: _step_tier_sweep(trw_dir))
 
         # Step 4: INDEX.md / ROADMAP.md sync
         if not skip_index_sync:
-            _run_step("index_sync", lambda: _do_index_sync(), results, errors)
+            _timed_step("index_sync", lambda: _do_index_sync())
         else:
             results["index_sync"] = {"status": "skipped"}
+            logger.warning("deferred_step_skip", step="index_sync", reason="skip_index_sync=True")
 
         # Step 5: Auto-progress PRD statuses
-        _run_step("auto_progress", lambda: _step_auto_progress(resolved_run), results, errors)
+        _timed_step("auto_progress", lambda: _step_auto_progress(resolved_run))
 
         # Step 6: Publish high-impact learnings
-        _run_step("publish_learnings", lambda: _step_publish_learnings(), results, errors)
+        _timed_step("publish_learnings", lambda: _step_publish_learnings())
 
         # Step 6.5: Outcome correlation
-        _run_step("outcome_correlation", lambda: _step_outcome_correlation(), results, errors)
+        _timed_step("outcome_correlation", lambda: _step_outcome_correlation())
 
         # Step 6.6: Recall outcome tracking
-        _run_step("recall_outcome", lambda: _step_recall_outcome(resolved_run), results, errors)
+        _timed_step("recall_outcome", lambda: _step_recall_outcome(resolved_run))
 
         # Step 7: Telemetry events
-        _run_step("telemetry", lambda: _step_telemetry(resolved_run), results, errors)
+        _timed_step("telemetry", lambda: _step_telemetry(resolved_run))
 
         # Step 8: Batch send telemetry
-        _run_step("batch_send", lambda: _step_batch_send(), results, errors)
+        _timed_step("batch_send", lambda: _step_batch_send())
 
         # Step 9: Trust increment
-        _run_step(
-            "trust_increment",
-            lambda: _step_trust_increment(resolved_run),
-            results,
-            errors,
-        )
+        _timed_step("trust_increment", lambda: _step_trust_increment(resolved_run))
 
         # Step 10: Ceremony feedback
-        _run_step(
-            "ceremony_feedback",
-            lambda: _step_ceremony_feedback(resolved_run, critical_results),
-            results,
-            errors,
-        )
+        _timed_step("ceremony_feedback", lambda: _step_ceremony_feedback(resolved_run, critical_results))
 
+        steps_ok = sum(
+            1 for k, v in results.items()
+            if k not in ("timestamp", "elapsed_seconds")
+            and isinstance(v, dict)
+            and v.get("status") not in ("skipped", "error", None)
+        )
+        steps_failed = len(errors)
         elapsed = time.monotonic() - t0
         results["elapsed_seconds"] = round(elapsed, 2)
+        logger.info(
+            "deferred_delivery_complete",
+            steps_ok=steps_ok,
+            steps_failed=steps_failed,
+        )
         logger.info(
             "deferred_deliver_complete",
             steps=len(results) - 2,  # minus timestamp and elapsed

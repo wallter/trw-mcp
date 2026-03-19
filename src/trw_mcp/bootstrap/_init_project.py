@@ -186,9 +186,16 @@ def init_project(
 
     result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
 
+    logger.info("project_init_started", project_root=str(target_dir), ide=ide)
+
     # Validate target is a git repo
     if not (target_dir / ".git").exists():
         result["errors"].append(f"{target_dir} is not a git repository (.git/ not found)")
+        logger.error(
+            "project_init_failed",
+            project_root=str(target_dir),
+            error="not a git repository",
+        )
         return result
 
     # 1. Create directory structure
@@ -276,10 +283,17 @@ def init_project(
     _write_installer_metadata(target_dir, "init-project", result, on_progress)
     _write_version_yaml(target_dir, result, on_progress)
 
+    if result["errors"]:
+        logger.warning(
+            "project_init_partial",
+            project_root=str(target_dir),
+            errors=result["errors"][:3],
+        )
     logger.info(
-        "bootstrap_complete",
-        target=str(target_dir),
-        created=len(result["created"]),
+        "project_init_ok",
+        project_root=str(target_dir),
+        dirs_created=len([p for p in result["created"] if p.endswith("/")]),
+        files_created=len(result["created"]),
         skipped=len(result["skipped"]),
         errors=len(result["errors"]),
     )

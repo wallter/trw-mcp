@@ -324,6 +324,18 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             logger.debug("init_ceremony_state_reset_skipped", exc_info=True)  # justified: fail-open
 
         logger.info(
+            "run_init_ok",
+            run_id=run_id,
+            task=task_name,
+            complexity_class=complexity_class_val.value if complexity_class_val else None,
+        )
+        logger.info(
+            "run_phase_transition",
+            run_id=run_id,
+            from_phase="none",
+            to_phase=initial_phase.value,
+        )
+        logger.info(
             "trw_init_complete",
             task=task_name,
             run_id=run_id,
@@ -438,6 +450,17 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             result["stale_count_error"] = True
             logger.warning("stale_count_scan_failed", exc_info=True)
 
+        logger.info(
+            "status_ok",
+            run_id=result["run_id"],
+            phase=result["phase"],
+            events=result["event_count"],
+        )
+        logger.debug(
+            "status_detail",
+            run_dir=str(resolved_path),
+            wave_status=result.get("wave_status"),
+        )
         logger.info("trw_status_read", run_id=result["run_id"])
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
@@ -513,6 +536,12 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         if wave_id:
             _update_wave_status(reader, writer, meta_path, wave_id, ts, message)
 
+        logger.info(
+            "checkpoint_ok",
+            run_id=str(state_data.get("run_id", "")),
+            message=message[:80],
+            wave_id=wave_id,
+        )
         logger.info("trw_checkpoint_created", message=message)
         result: dict[str, str] = {
             "timestamp": ts,

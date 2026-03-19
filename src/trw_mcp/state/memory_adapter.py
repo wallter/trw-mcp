@@ -166,7 +166,13 @@ def store_learning(
     embed_input = f"{summary} {detail}"
     _embed_and_store(backend, learning_id, embed_input)
 
-    logger.info("memory_store_learning", learning_id=learning_id)
+    logger.info(
+        "memory_store_ok",
+        learning_id=learning_id,
+        summary_len=len(summary),
+        tags=enriched_tags,
+        impact=impact,
+    )
     return {
         "learning_id": learning_id,
         "path": f"sqlite://{learning_id}",
@@ -227,6 +233,12 @@ def recall_learnings(
             continue
         results.append(_memory_to_learning_dict(entry, compact=compact))
 
+    logger.info(
+        "memory_search_ok",
+        query=query[:50],
+        result_count=len(results),
+        is_wildcard=is_wildcard,
+    )
     return results
 
 

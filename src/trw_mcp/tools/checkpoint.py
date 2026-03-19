@@ -79,10 +79,12 @@ def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
 
         count = _checkpoint_state.counter
         msg = f"auto-checkpoint after {count} tool calls"
+        logger.info("auto_checkpoint_triggered", tool_call_count=count, threshold=interval)
         _do_checkpoint(run_dir, msg)
         logger.debug("checkpoint_created", tool_calls=count, run_dir=str(run_dir))
         return {"auto_checkpoint": True, "tool_calls": count}
-    except Exception:  # justified: fail-open, auto-checkpoint must not disrupt tool flow
+    except Exception as _cp_exc:  # justified: fail-open, auto-checkpoint must not disrupt tool flow
+        logger.warning("checkpoint_failed", run_id="", error=str(_cp_exc))
         logger.debug("auto_checkpoint_failed", exc_info=True)
         return None
 
@@ -102,6 +104,13 @@ def _do_checkpoint(run_dir: Path, message: str) -> None:
     events_path = run_dir / "meta" / "events.jsonl"
     if events_path.parent.exists():
         events.log_event(events_path, "checkpoint", {"message": message})
+
+    logger.info(
+        "checkpoint_ok",
+        run_id=run_dir.name,
+        message=message[:80],
+    )
+    logger.debug("checkpoint_detail", run_dir=str(run_dir))
 
 
 def _read_pre_compact_state(run_dir: Path, project_root: Path) -> dict[str, object]:

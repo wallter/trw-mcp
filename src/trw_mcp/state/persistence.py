@@ -194,6 +194,7 @@ class FileStateReader:
                 path=str(path),
             )
         result: dict[str, object] = dict(data)
+        logger.debug("yaml_read_ok", path=str(path))
         return result
 
     def read_jsonl(self, path: Path) -> list[dict[str, object]]:
@@ -298,6 +299,7 @@ class FileStateWriter:
         except StateError:
             raise
         except (OSError, ValueError) as exc:
+            logger.error("yaml_write_failed", path=str(path), error=str(exc))
             raise StateError(
                 f"Failed to write YAML: {exc}",
                 path=str(path),
@@ -325,6 +327,7 @@ class FileStateWriter:
                     _lock_un(fh.fileno())
             logger.debug("jsonl_appended", path=str(path), event_type=record.get("event"))
         except (OSError, TypeError, ValueError) as exc:
+            logger.error("jsonl_append_failed", path=str(path), error=str(exc))
             raise StateError(
                 f"Failed to append JSONL: {exc}",
                 path=str(path),

@@ -443,6 +443,12 @@ def execute_claude_md_sync(
         stored_hash = _read_stored_hash(trw_dir)
         if stored_hash is not None and stored_hash == current_hash:
             logger.debug("claude_md_sync_cache_hit", hash=current_hash[:12])
+            logger.info(
+                "claude_md_sync_skip",
+                reason="no_changes",
+                learnings_count=len(high_impact),
+                patterns_count=len(patterns),
+            )
             # Determine target path for the response (consistent with full render)
             target = project_root / "CLAUDE.md"
             early_return_dict: dict[str, object] = {
@@ -570,14 +576,20 @@ def execute_claude_md_sync(
         review_md_result = {"status": "failed", "error": "generation failed"}
 
     logger.info(
-        "trw_claude_md_synced",
+        "claude_md_sync_ok",
         scope=scope,
-        target=str(target),
-        learnings_promoted=len(high_impact),
-        patterns_included=len(patterns),
+        path=str(target),
+        promoted_count=len(high_impact),
+        total_learnings=len(high_impact) + len(patterns),
         client=client,
         write_claude=write_claude,
         write_agents=write_agents,
+    )
+    logger.debug(
+        "claude_md_sync_detail",
+        high_impact_count=len(high_impact),
+        patterns_count=len(patterns),
+        total_lines=total_lines,
         agents_md_path=agents_md_path if agents_md_synced else None,
     )
     return {

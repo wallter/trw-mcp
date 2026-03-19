@@ -299,7 +299,12 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             )
             entry_path = save_learning_entry(trw_dir, entry)
             update_analytics(trw_dir, 1)
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError) as _save_exc:
+            logger.warning(
+                "learn_db_write_failed",
+                summary=summary[:50],
+                error=str(_save_exc),
+            )
             entry_path = entries_dir / f"{learning_id}.yaml"
 
         # Forced distribution enforcement (PRD-CORE-034)
@@ -312,6 +317,13 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             config,
         )
 
+        logger.info(
+            "learn_ok",
+            summary_len=len(summary),
+            tags=safe_tags,
+            impact=calibrated_impact,
+            id=learning_id,
+        )
         logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
         result_dict: LearnResultDict = {
             "learning_id": learning_id,
@@ -378,6 +390,14 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # Dual-write: also update YAML backup for rollback safety
         if result.get("status") == "updated":
+            _updated_field = (
+                "status" if status is not None
+                else "detail" if detail is not None
+                else "summary" if summary is not None
+                else "impact" if impact is not None
+                else "unknown"
+            )
+            logger.info("learn_update_ok", id=learning_id, field_updated=_updated_field)
             try:
                 from datetime import datetime, timezone
 
@@ -534,6 +554,19 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         if not (is_wildcard and use_compact):
             context_data = cast("RecallContextDict", collect_context(trw_dir, config.context_dir, reader))
 
+        _top_impact = float(str(ranked_learnings[0].get("impact", 0.0))) if ranked_learnings else 0.0
+        logger.info(
+            "recall_ok",
+            query=query[:50],
+            result_count=len(ranked_learnings),
+            top_impact=_top_impact,
+        )
+        logger.debug(
+            "recall_detail",
+            query=query[:80],
+            min_impact=min_impact,
+            tags=tags,
+        )
         logger.info(
             "trw_recall_searched",
             query=query,

@@ -241,11 +241,23 @@ def _merge_mcp_json(
                 result[key].append(str(mcp_path))
                 if on_progress:
                     on_progress("Updated", str(mcp_path))
+                logger.info(
+                    "mcp_config_skipped",
+                    reason="already_configured",
+                    tool="trw",
+                    config_path=str(mcp_path),
+                )
             else:
                 result[key].append(f"{mcp_path} (added trw entry)")
                 if on_progress:
                     on_progress("Created", str(mcp_path))
+                logger.info(
+                    "mcp_config_updated",
+                    tool="trw",
+                    config_path=str(mcp_path),
+                )
         except OSError as exc:
+            logger.warning("mcp_config_merge_failed", error=str(exc), path=str(mcp_path))
             result["errors"].append(f"Failed to write {mcp_path}: {exc}")
             if on_progress:
                 on_progress("Error", str(mcp_path))
@@ -262,7 +274,9 @@ def _merge_mcp_json(
             result["created"].append(str(mcp_path))
             if on_progress:
                 on_progress("Created", str(mcp_path))
+            logger.info("mcp_config_updated", tool="trw", config_path=str(mcp_path))
         except OSError as exc:
+            logger.warning("mcp_config_merge_failed", error=str(exc), path=str(mcp_path))
             result["errors"].append(f"Failed to write {mcp_path}: {exc}")
             if on_progress:
                 on_progress("Error", str(mcp_path))

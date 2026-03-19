@@ -86,6 +86,8 @@ def register_build_tools(server: FastMCP) -> None:
 
         # --- Standard scopes (pytest/mypy) ---
 
+        logger.info("build_check_started", scope=scope)
+
         status = run_build_check(
             project_root,
             scope=scope,
@@ -130,6 +132,12 @@ def register_build_tools(server: FastMCP) -> None:
             coverage_pct=status.coverage_pct,
             duration_secs=status.duration_secs,
         )
+        if not status.tests_passed or not status.mypy_clean:
+            logger.warning(
+                "build_check_failed",
+                exit_code=1,
+                failed_tests=status.failure_count,
+            )
 
         result: dict[str, object] = {
             "tests_passed": status.tests_passed,

@@ -290,6 +290,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 pin_active_run(run_dir)
                 results["run"] = _get_run_status(run_dir)
             else:
+                logger.info("session_start_no_active_run")
                 results["run"] = {"active_run": None, "status": "no_active_run"}
         except Exception as exc:  # justified: fail-open, run status check must not block session start
             errors.append(f"status: {exc}")
@@ -370,10 +371,21 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         with contextlib.suppress(Exception):
             step_ceremony_nudge(cast("dict[str, object]", results), int(str(results.get("learnings_count", 0))))
 
+        run_info: RunStatusDict | None = results.get("run")
+        _active_run_id = str(run_info.get("active_run", "")) if run_info else ""
+        _phase = str(run_info.get("phase", "")) if run_info else ""
+        _task = str(run_info.get("task_name", "")) if run_info else ""
+        _learnings_count = int(str(results.get("learnings_count", 0)))
         logger.info(
-            "trw_session_start_complete",
-            learnings=results.get("learnings_count", 0),
-            errors=len(errors),
+            "session_start_ok",
+            run_id=_active_run_id,
+            phase=_phase,
+            task=_task,
+            learnings_count=_learnings_count,
+        )
+        logger.debug(
+            "session_start_learnings_loaded",
+            count=_learnings_count,
         )
         return results
 
@@ -413,6 +425,12 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             resolved_run = find_active_run()
 
         results["run_path"] = str(resolved_run) if resolved_run else None
+
+        logger.info(
+            "deliver_started",
+            run_id=str(resolved_run.name) if resolved_run else "",
+            phase="DELIVER",
+        )
 
         # Auto-update phase to DELIVER
         from trw_mcp.models.run import Phase
@@ -539,6 +557,24 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         except Exception:  # noqa: S110 — fail-open, nudge must not block delivery
             logger.debug("deliver_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
+        _deliver_run_id = str(resolved_run.name) if resolved_run else ""
+        _events_jsonl = resolved_run / "meta" / "events.jsonl" if resolved_run else None
+        _events_logged = len(reader.read_jsonl(_events_jsonl)) if _events_jsonl and _events_jsonl.exists() else 0
+        if len(errors) == 0:
+            logger.info(
+                "deliver_ok",
+                run_id=_deliver_run_id,
+                task=str(results.get("run_path", "")),
+                events_logged=_events_logged,
+            )
+        else:
+            logger.warning(
+                "deliver_failed",
+                run_id=_deliver_run_id,
+                errors=errors,
+            )
+        if deferred_status == "skipped_already_running":
+            logger.warning("deliver_deferred", reason="background_thread_running")
         logger.info(
             "trw_deliver_complete",
             critical_steps=results.get("critical_steps_completed"),

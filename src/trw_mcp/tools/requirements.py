@@ -214,6 +214,11 @@ def register_requirements_tools(server: FastMCP) -> None:
             category=category,
             priority=priority,
         )
+        logger.debug(
+            "prd_create_detail",
+            title=title,
+            prd_scope=prd_id,
+        )
 
         return {
             "prd_id": prd_id,
@@ -273,6 +278,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         try_update_phase(find_active_run(), Phase.PLAN)
 
+        _prd_id_str = str(path.stem)
         logger.info(
             "trw_prd_validated",
             path=str(path),
@@ -281,6 +287,14 @@ def register_requirements_tools(server: FastMCP) -> None:
             quality_tier=v2_result.quality_tier,
             failures=len(v2_result.failures),
         )
+        _min_threshold = config.completeness_min
+        if v2_result.total_score < _min_threshold:
+            logger.warning(
+                "prd_validate_below_threshold",
+                prd_id=_prd_id_str,
+                score=v2_result.total_score,
+                threshold=_min_threshold,
+            )
 
         validate_result: ValidateResultDict = {
             # V1 fields (backward compatible, from V2 inline computation)

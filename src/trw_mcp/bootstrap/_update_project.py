@@ -218,6 +218,13 @@ def update_project(
     """
     result = _init_result_dict(dry_run)
 
+    logger.info(
+        "project_update_started",
+        project_root=str(target_dir),
+        dry_run=dry_run,
+        pip_install=pip_install,
+    )
+
     if not (target_dir / ".trw").exists():
         result["errors"].append(
             f"{target_dir} does not have TRW installed (.trw/ not found). Run `trw-mcp init-project` first."

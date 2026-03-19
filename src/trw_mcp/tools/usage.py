@@ -152,6 +152,14 @@ def register_usage_tools(server: FastMCP) -> None:
         total_cost_rounded = round(total_cost, 6)
 
         logger.info(
+            "usage_report_ok",
+            period=period,
+            tool_calls=total_calls,
+            sessions=len({str(r.get("session_id", r.get("caller", ""))) for r in records}),
+        )
+        _top_tools = sorted(by_caller.items(), key=lambda kv: kv[1]["calls"], reverse=True)[:5]
+        logger.debug("usage_detail", top_tools=[k for k, _ in _top_tools])
+        logger.info(
             "usage_report_generated",
             total_calls=total_calls,
             total_input_tokens=total_input_tokens,

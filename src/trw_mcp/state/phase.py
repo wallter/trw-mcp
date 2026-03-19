@@ -39,6 +39,13 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     new_order = PHASE_ORDER.get(new_phase.value, 0)
 
     if new_order <= current_order:
+        logger.warning(
+            "phase_transition_invalid",
+            run_path=str(run_path),
+            from_phase=current,
+            to_phase=new_phase.value,
+            reason="not_forward",
+        )
         return False  # Forward-only: don't revert
 
     data["phase"] = new_phase.value

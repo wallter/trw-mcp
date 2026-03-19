@@ -250,6 +250,11 @@ def perform_session_recalls(
     log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
 
     extra["total_available"] = len(learnings)
+    logger.debug(
+        "session_recalls_complete",
+        count=len(learnings),
+        is_focused=is_focused,
+    )
 
     # R-06: Anti-pattern alert — surface known wiring/facade/gap learnings
     # prominently when the query suggests model/system/adapter work.
@@ -579,6 +584,10 @@ def run_auto_maintenance(
     except Exception:  # justified: fail-open, embeddings check must not block session start
         logger.warning("maintenance_embeddings_check_failed", exc_info=True)
 
+    logger.debug(
+        "auto_maintenance_complete",
+        keys=list(maintenance.keys()),
+    )
     return maintenance
 
 

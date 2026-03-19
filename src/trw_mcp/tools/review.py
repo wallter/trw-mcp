@@ -314,6 +314,26 @@ def register_review_tools(server: FastMCP) -> None:
                 ),
             )
 
+        _review_verdict = str(response.get("verdict", ""))
+        _review_score = response.get("total_score", response.get("score", None))
+        _review_run_id = str(resolved_run.name) if resolved_run else ""
+        _review_phase = str(response.get("phase", effective_mode))
+        if _review_verdict == "block":
+            logger.warning("review_blocked", reason=_review_verdict, phase=_review_phase)
+        else:
+            logger.info(
+                "review_ok",
+                run_id=_review_run_id,
+                score=_review_score,
+                verdict=_review_verdict,
+                phase=_review_phase,
+            )
+        logger.debug(
+            "review_detail",
+            dimensions=list(response.get("dimensions", [])),
+            run_dir=str(resolved_run) if resolved_run else "",
+        )
+
         # Mark review in ceremony state and inject nudge (PRD-CORE-084 FR02)
         try:
             from trw_mcp.state._paths import resolve_trw_dir

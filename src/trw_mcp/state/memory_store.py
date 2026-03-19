@@ -107,6 +107,7 @@ class MemoryStore:
             (rowid, emb_bytes),
         )
         self._conn.commit()
+        logger.debug("memory_store_upsert_ok", entry_id=entry_id, dim=len(embedding))
 
     def search(
         self,
@@ -222,6 +223,13 @@ class MemoryStore:
             else:
                 skipped += 1
 
+        logger.info(
+            "memory_store_migrate_ok",
+            migrated=migrated,
+            skipped=skipped,
+            total=len(entries),
+            db_path=str(self._db_path),
+        )
         return {"migrated": migrated, "skipped": skipped, "total": len(entries)}
 
     def close(self) -> None:
