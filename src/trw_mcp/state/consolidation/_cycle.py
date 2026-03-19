@@ -175,12 +175,12 @@ def consolidate_cycle(
     # Late-bind cross-module names from the package so that
     # patch("trw_mcp.state.consolidation.<name>") takes effect.
     pkg = _pkg()
-    _find_clusters = pkg.find_clusters
-    _get_config = pkg.get_config
-    _LLMClient = pkg.LLMClient
-    _summarize_llm = pkg._summarize_cluster_llm
-    _summarize_fallback = pkg._summarize_cluster_fallback
-    _archive = pkg._archive_originals
+    _find_clusters = getattr(pkg, "find_clusters")  # noqa: B009
+    _get_config = getattr(pkg, "get_config")  # noqa: B009
+    _LLMClient = getattr(pkg, "LLMClient")  # noqa: B009
+    _summarize_llm = getattr(pkg, "_summarize_cluster_llm")  # noqa: B009
+    _summarize_fallback = getattr(pkg, "_summarize_cluster_fallback")  # noqa: B009
+    _archive = getattr(pkg, "_archive_originals")  # noqa: B009
 
     cfg = config or _get_config()
     reader = FileStateReader()

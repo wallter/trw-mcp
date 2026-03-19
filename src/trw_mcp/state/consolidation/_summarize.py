@@ -54,7 +54,7 @@ def _summarize_cluster_llm(
         client = llm
     else:
         # Late-bind LLMClient from the package so patch targets work
-        _LLMClient = sys.modules["trw_mcp.state.consolidation"].LLMClient
+        _LLMClient = getattr(sys.modules["trw_mcp.state.consolidation"], "LLMClient")  # noqa: B009
         client = _LLMClient(model="haiku")
 
     # Build prompt (NFR06: redact filesystem paths before sending to LLM)

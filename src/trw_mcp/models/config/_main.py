@@ -14,10 +14,10 @@ from functools import cached_property
 from typing import Literal
 
 import structlog
-
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._defaults import (
     DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
     DEFAULT_LEARNING_MAX_ENTRIES,
@@ -27,7 +27,6 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
 )
-from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.models.config._sub_models import (
     BuildConfig,

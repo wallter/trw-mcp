@@ -33,6 +33,14 @@ from trw_mcp.clients.llm import LLMClient as LLMClient
 #     "trw_mcp.state.consolidation.get_config" ---
 from trw_mcp.models.config import get_config as get_config
 
+# --- Archival: archive + rollback ---
+from ._archive import (
+    _archive_originals as _archive_originals,
+)
+from ._archive import (
+    _rollback_archive as _rollback_archive,
+)
+
 # --- Clustering: entry loading, tag overlap, embedding clusters ---
 from ._clustering import (
     _is_clusterable as _is_clusterable,
@@ -47,22 +55,6 @@ from ._clustering import (
     find_clusters as find_clusters,
 )
 
-# --- Summarization: LLM + fallback ---
-from ._summarize import (
-    _summarize_cluster_fallback as _summarize_cluster_fallback,
-)
-from ._summarize import (
-    _summarize_cluster_llm as _summarize_cluster_llm,
-)
-
-# --- Archival: archive + rollback ---
-from ._archive import (
-    _archive_originals as _archive_originals,
-)
-from ._archive import (
-    _rollback_archive as _rollback_archive,
-)
-
 # --- Cycle: entry creation, dry-run, main entry point ---
 from ._cycle import (
     _create_consolidated_entry as _create_consolidated_entry,
@@ -72,6 +64,14 @@ from ._cycle import (
 )
 from ._cycle import (
     consolidate_cycle as consolidate_cycle,
+)
+
+# --- Summarization: LLM + fallback ---
+from ._summarize import (
+    _summarize_cluster_fallback as _summarize_cluster_fallback,
+)
+from ._summarize import (
+    _summarize_cluster_llm as _summarize_cluster_llm,
 )
 
 __all__ = [

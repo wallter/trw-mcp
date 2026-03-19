@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 
 import structlog
-
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 

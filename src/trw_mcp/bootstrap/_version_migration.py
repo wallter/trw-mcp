@@ -13,7 +13,7 @@ from pathlib import Path
 
 import structlog
 
-from ._utils import ProgressCallback, _DATA_DIR, _result_action_key
+from ._utils import _result_action_key
 
 logger = structlog.get_logger()
 

@@ -23,24 +23,37 @@ This facade re-exports every public and private symbol so that all existing
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Re-exports from _nudge_state (dataclasses, persistence, mutation)
+# Re-exports from _nudge_messages (templates, formatting, assembly)
 # ---------------------------------------------------------------------------
-from trw_mcp.state._nudge_state import (
-    CeremonyState as CeremonyState,
-    NudgeContext as NudgeContext,
-    ToolName as ToolName,
-    increment_files_modified as increment_files_modified,
-    increment_learnings as increment_learnings,
-    increment_nudge_count as increment_nudge_count,
-    mark_build_check as mark_build_check,
-    mark_checkpoint as mark_checkpoint,
-    mark_deliver as mark_deliver,
-    mark_review as mark_review,
-    mark_session_started as mark_session_started,
-    read_ceremony_state as read_ceremony_state,
-    reset_ceremony_state as reset_ceremony_state,
-    reset_nudge_count as reset_nudge_count,
-    write_ceremony_state as write_ceremony_state,
+from trw_mcp.state._nudge_messages import (
+    _HEADER as _HEADER,
+)
+from trw_mcp.state._nudge_messages import (
+    _MINIMAL_HEADER as _MINIMAL_HEADER,
+)
+from trw_mcp.state._nudge_messages import (
+    _STEP_RATIONALE as _STEP_RATIONALE,
+)
+from trw_mcp.state._nudge_messages import (
+    _STEPS as _STEPS,
+)
+from trw_mcp.state._nudge_messages import (
+    _assemble_nudge as _assemble_nudge,
+)
+from trw_mcp.state._nudge_messages import (
+    _build_minimal_status_line as _build_minimal_status_line,
+)
+from trw_mcp.state._nudge_messages import (
+    _build_status_line as _build_status_line,
+)
+from trw_mcp.state._nudge_messages import (
+    _compute_urgency as _compute_urgency,
+)
+from trw_mcp.state._nudge_messages import (
+    _context_reactive_message as _context_reactive_message,
+)
+from trw_mcp.state._nudge_messages import (
+    _select_nudge_message as _select_nudge_message,
 )
 
 # ---------------------------------------------------------------------------
@@ -48,26 +61,67 @@ from trw_mcp.state._nudge_state import (
 # ---------------------------------------------------------------------------
 from trw_mcp.state._nudge_rules import (
     _highest_priority_pending_step as _highest_priority_pending_step,
+)
+from trw_mcp.state._nudge_rules import (
     _next_two_steps as _next_two_steps,
+)
+from trw_mcp.state._nudge_rules import (
     _reversion_prompt as _reversion_prompt,
+)
+from trw_mcp.state._nudge_rules import (
     _step_complete as _step_complete,
+)
+from trw_mcp.state._nudge_rules import (
     is_local_model as is_local_model,
 )
 
 # ---------------------------------------------------------------------------
-# Re-exports from _nudge_messages (templates, formatting, assembly)
+# Re-exports from _nudge_state (dataclasses, persistence, mutation)
 # ---------------------------------------------------------------------------
-from trw_mcp.state._nudge_messages import (
-    _HEADER as _HEADER,
-    _MINIMAL_HEADER as _MINIMAL_HEADER,
-    _STEP_RATIONALE as _STEP_RATIONALE,
-    _STEPS as _STEPS,
-    _assemble_nudge as _assemble_nudge,
-    _build_minimal_status_line as _build_minimal_status_line,
-    _build_status_line as _build_status_line,
-    _compute_urgency as _compute_urgency,
-    _context_reactive_message as _context_reactive_message,
-    _select_nudge_message as _select_nudge_message,
+from trw_mcp.state._nudge_state import (
+    CeremonyState as CeremonyState,
+)
+from trw_mcp.state._nudge_state import (
+    NudgeContext as NudgeContext,
+)
+from trw_mcp.state._nudge_state import (
+    ToolName as ToolName,
+)
+from trw_mcp.state._nudge_state import (
+    increment_files_modified as increment_files_modified,
+)
+from trw_mcp.state._nudge_state import (
+    increment_learnings as increment_learnings,
+)
+from trw_mcp.state._nudge_state import (
+    increment_nudge_count as increment_nudge_count,
+)
+from trw_mcp.state._nudge_state import (
+    mark_build_check as mark_build_check,
+)
+from trw_mcp.state._nudge_state import (
+    mark_checkpoint as mark_checkpoint,
+)
+from trw_mcp.state._nudge_state import (
+    mark_deliver as mark_deliver,
+)
+from trw_mcp.state._nudge_state import (
+    mark_review as mark_review,
+)
+from trw_mcp.state._nudge_state import (
+    mark_session_started as mark_session_started,
+)
+from trw_mcp.state._nudge_state import (
+    read_ceremony_state as read_ceremony_state,
+)
+from trw_mcp.state._nudge_state import (
+    reset_ceremony_state as reset_ceremony_state,
+)
+from trw_mcp.state._nudge_state import (
+    reset_nudge_count as reset_nudge_count,
+)
+from trw_mcp.state._nudge_state import (
+    write_ceremony_state as write_ceremony_state,
 )
 
 # ---------------------------------------------------------------------------

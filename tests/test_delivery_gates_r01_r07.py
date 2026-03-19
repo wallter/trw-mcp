@@ -20,7 +20,6 @@ from trw_mcp.tools._ceremony_helpers import (
     check_delivery_gates,
 )
 
-
 # --- Fixtures ---
 
 

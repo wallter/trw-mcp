@@ -19,10 +19,8 @@ from trw_mcp.models.requirements import (
     ImprovementSuggestion,
     PRDQualityGates,
     QualityTier,
-    SmellFinding,
     ValidationFailure,
     ValidationResult,
-    ValidationResultV2,
 )
 
 if TYPE_CHECKING:

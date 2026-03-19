@@ -23,13 +23,10 @@ import contextlib
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Union
 
 import structlog
-
 from trw_memory.migration.from_trw import migrate_entries_dir as migrate_entries_dir
 from trw_memory.models.memory import MemoryStatus
-from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
@@ -285,7 +282,7 @@ def update_learning(
     if existing is None:
         return {"error": f"Learning {learning_id} not found", "status": "not_found"}
 
-    fields: dict[str, Union[str, float, list[str]]] = {}
+    fields: dict[str, str | float | list[str]] = {}
     changes: list[str] = []
 
     if status is not None:

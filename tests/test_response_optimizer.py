@@ -19,7 +19,6 @@ from trw_mcp.middleware.response_optimizer import (
     _is_empty,
 )
 
-
 # --- Unit tests for _is_empty ---
 
 

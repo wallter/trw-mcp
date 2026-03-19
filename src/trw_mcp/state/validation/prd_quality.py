@@ -22,7 +22,6 @@ from trw_mcp.models.requirements import (
     SmellFinding,
     ValidationResultV2,
 )
-from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
 
 # ---------------------------------------------------------------------------
 # Re-exports from _prd_scoring (metric computation)
@@ -103,6 +102,7 @@ from trw_mcp.state.validation._prd_validation import (
 from trw_mcp.state.validation._prd_validation import (
     validate_prd_quality as validate_prd_quality,
 )
+from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
 
 logger = structlog.get_logger()
 

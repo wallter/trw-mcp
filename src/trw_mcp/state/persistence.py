@@ -485,4 +485,4 @@ def model_to_dict(model: BaseModel) -> dict[str, object]:
     Returns:
         Plain dictionary with JSON-compatible values.
     """
-    return cast(dict[str, object], json.loads(model.model_dump_json()))
+    return cast("dict[str, object]", json.loads(model.model_dump_json()))

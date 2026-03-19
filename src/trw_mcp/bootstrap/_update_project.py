@@ -15,18 +15,6 @@ from pathlib import Path
 
 import structlog
 
-from ._utils import (
-    _DATA_DIR,
-    ProgressCallback,
-    _check_package_version,
-    _ensure_dir,
-    _pip_install_package,
-    _verify_installation,
-    _write_installer_metadata,
-    _write_version_yaml,
-    resolve_ide_targets,
-)
-
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules — REQUIRED for backward compatibility.
 #
@@ -34,7 +22,6 @@ from ._utils import (
 # directly.  These re-exports ensure those patch paths continue to resolve
 # to the canonical implementation in the sub-module.
 # ---------------------------------------------------------------------------
-
 # --- from _template_updater ---
 from ._template_updater import _ALWAYS_UPDATE as _ALWAYS_UPDATE
 from ._template_updater import _NEVER_OVERWRITE as _NEVER_OVERWRITE
@@ -70,6 +57,17 @@ from ._template_updater import (
 )
 from ._template_updater import _update_or_report as _update_or_report
 from ._template_updater import _update_skills as _update_skills
+from ._utils import (
+    _DATA_DIR,
+    ProgressCallback,
+    _check_package_version,
+    _ensure_dir,
+    _pip_install_package,
+    _verify_installation,
+    _write_installer_metadata,
+    _write_version_yaml,
+    resolve_ide_targets,
+)
 
 # --- from _version_migration ---
 from ._version_migration import _CONTEXT_ALLOWLIST as _CONTEXT_ALLOWLIST

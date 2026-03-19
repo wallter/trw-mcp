@@ -24,7 +24,6 @@ import structlog
 if TYPE_CHECKING:
     from trw_memory.embeddings.local import LocalEmbeddingProvider
 
-from trw_memory.models.memory import MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE

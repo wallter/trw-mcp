@@ -8,14 +8,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import structlog
 
-from trw_mcp.models.config._client_profile import CeremonyWeights
-
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
+from trw_mcp.models.config._client_profile import CeremonyWeights
 from trw_mcp.models.typed_dicts import (
     AggregateMetrics,
     AnalyticsReport,

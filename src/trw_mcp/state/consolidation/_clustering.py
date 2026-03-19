@@ -208,7 +208,7 @@ def find_clusters(
         # Tag-fallback: load ALL active entries (no max_entries cap)
         all_entries = _load_active_entries(entries_dir, reader, max_entries=10_000)
         # Late-bind from package so patch("trw_mcp.state.consolidation._tag_overlap_clusters") works
-        _tag_cluster_fn = sys.modules["trw_mcp.state.consolidation"]._tag_overlap_clusters
+        _tag_cluster_fn = getattr(sys.modules["trw_mcp.state.consolidation"], "_tag_overlap_clusters")  # noqa: B009
         try:
             clusters: list[list[LearningEntryDict]] = _tag_cluster_fn(
                 all_entries,

@@ -16,7 +16,6 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

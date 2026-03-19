@@ -15,7 +15,6 @@ import pytest
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
-from trw_mcp.state import memory_adapter
 from trw_mcp.state.memory_adapter import (
     _embed_and_store,
     _keyword_search,
