@@ -44,7 +44,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 if TYPE_CHECKING:
     from trw_mcp.clients.llm import LLMClient
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # FR04 (PRD-FIX-053): Hash file name within .trw/context/
 _HASH_FILE_NAME = "claude_md_hash.txt"
@@ -169,7 +169,7 @@ def _get_repo_root() -> Path | None:
         if result.returncode == 0:
             return Path(result.stdout.strip())
     except Exception:  # justified: fail-open, git root detection failure is non-fatal  # noqa: S110
-        pass
+        logger.debug("git_repo_root_detection_skipped", exc_info=True)  # justified: fail-open, non-fatal
     return None
 
 

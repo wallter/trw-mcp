@@ -22,7 +22,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.tools.build import _find_executable, _run_subprocess, _strip_ansi
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def _get_changed_files(

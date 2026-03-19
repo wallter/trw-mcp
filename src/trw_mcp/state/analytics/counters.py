@@ -16,7 +16,7 @@ import trw_mcp.state.analytics.core as _ac
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

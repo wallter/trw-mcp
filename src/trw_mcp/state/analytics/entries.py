@@ -25,7 +25,7 @@ from trw_mcp.state.persistence import (
 )
 from trw_mcp.tools._learning_helpers import is_noise_summary
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

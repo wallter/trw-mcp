@@ -25,7 +25,7 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def __getattr__(name: str) -> object:

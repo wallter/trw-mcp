@@ -25,7 +25,7 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import DedupHandleResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -136,7 +136,7 @@ def check_soft_cap(
                 )
                 return round(adjusted, 4), warning
     except (OSError, RuntimeError, ValueError, TypeError):
-        pass  # Fail-open: distribution check must not block learning recording
+        logger.debug("distribution_check_skipped", exc_info=True)  # justified: fail-open, must not block learning recording
 
     return impact, None
 
@@ -299,6 +299,6 @@ def enforce_distribution(
                 f"IDs: {[d[0] for d in demotions]}"
             )
     except (OSError, RuntimeError, ValueError, TypeError):
-        pass  # Fail-open: distribution enforcement must not block learning recording
+        logger.debug("distribution_enforcement_skipped", exc_info=True)  # justified: fail-open, must not block learning recording
 
     return distribution_warning, demoted_ids

@@ -18,7 +18,7 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.report import assemble_report
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def register_report_tools(server: FastMCP) -> None:

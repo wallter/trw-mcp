@@ -40,7 +40,7 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 @contextmanager

@@ -20,7 +20,7 @@ from trw_mcp.models.run import (
     WaveEntry,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Integration checklist fields checked per shard (PRD-QUAL-011)
 _INTEGRATION_CHECKLIST: dict[str, str] = {

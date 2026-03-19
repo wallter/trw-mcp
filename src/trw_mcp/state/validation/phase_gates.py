@@ -61,7 +61,7 @@ from trw_mcp.state.validation.phase_gates_prd import (
     _check_prd_enforcement as _check_prd_enforcement,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Phase input criteria -- prerequisites to enter a phase (PRD-CORE-017-FR04).
 PHASE_INPUT_CRITERIA: dict[str, list[str]] = {

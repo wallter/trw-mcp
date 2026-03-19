@@ -24,7 +24,7 @@ from trw_mcp.state._helpers import safe_float
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 HIGH_IMPACT_THRESHOLD = 0.7
 

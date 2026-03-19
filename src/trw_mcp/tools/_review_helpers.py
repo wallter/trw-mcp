@@ -30,7 +30,7 @@ from trw_mcp.models.typed_dicts import (
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def validate_manual_findings(

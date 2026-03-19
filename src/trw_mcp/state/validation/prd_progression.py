@@ -28,7 +28,7 @@ from trw_mcp.state.prd_utils import (
     update_frontmatter,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # PRD-CORE-025: Phase-to-Status Mapping (FR01)
 PHASE_STATUS_MAPPING: dict[str, PRDStatus] = {

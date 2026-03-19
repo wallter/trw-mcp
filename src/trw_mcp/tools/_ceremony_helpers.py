@@ -42,7 +42,7 @@ from trw_mcp.state.persistence import (
 )
 from trw_mcp.state.receipts import log_recall_receipt
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ── FR01: Ceremony nudge injection ──────────────────────────────────────

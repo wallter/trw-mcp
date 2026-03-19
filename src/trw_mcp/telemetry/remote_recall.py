@@ -17,7 +17,7 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import RemoteSharedLearningDict
 from trw_mcp.state.memory_adapter import embed_text as embed
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 REMOTE_RECALL_TIMEOUT = 3  # seconds
 

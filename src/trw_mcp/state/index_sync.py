@@ -20,7 +20,7 @@ from trw_mcp.models.typed_dicts import RoadmapSyncResult, SyncIndexMdResult
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.prd_utils import parse_frontmatter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Markers for auto-generated catalogue sections
 INDEX_CATALOGUE_START = "<!-- trw:index-catalogue:start -->"

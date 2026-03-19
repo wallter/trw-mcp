@@ -42,7 +42,7 @@ from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.telemetry.anonymizer import redact_paths, strip_pii
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 class PipelineFlushResult(TypedDict):
@@ -161,7 +161,7 @@ class TelemetryPipeline:
 
             event["framework_version"] = get_config().framework_version
         except Exception:  # justified: fail-open, config resolution non-fatal  # noqa: S110
-            pass
+            logger.debug("telemetry_framework_version_enrich_skipped", exc_info=True)  # justified: fail-open
 
     def _enrich_event_type(self, event: dict[str, object]) -> None:
         """Set event_type if missing."""
@@ -183,7 +183,7 @@ class TelemetryPipeline:
                     data = FileStateReader().read_yaml(run_yaml)
                     event["phase"] = str(data.get("phase", "unknown"))
         except Exception:  # justified: fail-open, phase enrichment non-critical  # noqa: S110
-            pass
+            logger.debug("telemetry_phase_enrich_skipped", exc_info=True)  # justified: fail-open
 
     def _enrich_timestamp(self, event: dict[str, object]) -> None:
         """Add timestamp if missing."""
@@ -218,7 +218,7 @@ class TelemetryPipeline:
                     self._overflow_count += 1
 
         except Exception:  # justified: fail-open, telemetry must never block  # noqa: S110
-            pass
+            logger.debug("telemetry_enqueue_skipped", exc_info=True)  # justified: fail-open
 
     # ------------------------------------------------------------------
     # Timer lifecycle

@@ -25,7 +25,7 @@ from ._utils import (
     resolve_ide_targets,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def _create_directory_structure(

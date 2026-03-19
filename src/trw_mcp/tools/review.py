@@ -22,7 +22,7 @@ from trw_mcp.state._paths import find_active_run
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Reviewer roles for multi-agent review (QUAL-027)
 REVIEWER_ROLES: tuple[str, ...] = (
@@ -337,6 +337,6 @@ def register_review_tools(server: FastMCP) -> None:
             ctx = NudgeContext(tool_name=ToolName.REVIEW, review_verdict=verdict, review_p0_count=p0_count)
             append_ceremony_nudge(response, trw_dir, context=ctx)
         except Exception:  # justified: fail-open, nudge injection must not block review  # noqa: S110
-            pass
+            logger.debug("review_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return response

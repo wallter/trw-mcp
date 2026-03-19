@@ -18,7 +18,7 @@ from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.knowledge_topology import execute_knowledge_sync
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def register_knowledge_tools(server: FastMCP) -> None:

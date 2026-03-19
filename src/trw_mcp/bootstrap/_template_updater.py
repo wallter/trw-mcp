@@ -30,7 +30,7 @@ from ._utils import (
     resolve_ide_targets,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Files that are always overwritten during update (framework-managed).
 _ALWAYS_UPDATE: list[tuple[str, str]] = [

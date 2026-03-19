@@ -18,7 +18,7 @@ from trw_mcp.models.config import get_config
 from trw_mcp.state._helpers import iter_yaml_entry_files, safe_float, safe_int
 from trw_mcp.state.persistence import FileStateReader
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Explicit re-export aliases for mypy --strict (X as X pattern not possible
 # when renaming, so we use module-level assignment + __all__ listing).

@@ -11,7 +11,7 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state.persistence import FileStateReader
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def collect_promotable_learnings(
@@ -64,7 +64,7 @@ def collect_promotable_learnings(
                     created_dt = _dt.fromisoformat(created_at_raw)
                     score = apply_time_decay(score, created_dt)
                 except (ValueError, ImportError):
-                    pass  # Malformed date — use raw score
+                    logger.debug("time_decay_apply_skipped", exc_info=True)  # justified: fail-open, malformed date — use raw score
 
             if score >= config.learning_promotion_impact:
                 high_impact.append(data)

@@ -28,7 +28,7 @@ from trw_mcp.tools.build._core import (
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def register_build_tools(server: FastMCP) -> None:
@@ -154,7 +154,7 @@ def register_build_tools(server: FastMCP) -> None:
             _build_passed = bool(result.get("tests_passed", False))
             mark_build_check(trw_dir, passed=_build_passed)
         except Exception:  # justified: fail-open, ceremony state update must not block build check  # noqa: S110
-            pass
+            logger.debug("build_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
 
         # Inject ceremony nudge into response (PRD-CORE-084 FR02)
         try:
@@ -165,7 +165,7 @@ def register_build_tools(server: FastMCP) -> None:
             ctx = NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=build_passed)
             append_ceremony_nudge(result, trw_dir, context=ctx)
         except Exception:  # justified: fail-open, nudge injection must not block build check  # noqa: S110
-            pass
+            logger.debug("build_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         # Dep audit on full scope (if enabled)
         if scope == "full" and config.dep_audit_enabled:

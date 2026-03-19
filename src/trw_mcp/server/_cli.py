@@ -11,8 +11,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._logging import configure_logging
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.server._app import configure_logging
 from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
 from trw_mcp.server._transport import resolve_and_run_transport
 
@@ -52,9 +52,9 @@ def _check_mcp_json_portability(cwd: Path | None = None) -> None:
 
     cmd = str(trw_entry.get("command", ""))
     if cmd.startswith("/") and not Path(cmd).exists():
-        log = structlog.get_logger()
+        log = structlog.get_logger(__name__)
         log.warning(
-            "Stale absolute path in .mcp.json",
+            "stale_mcp_json_path",
             command=cmd,
             fix="run 'trw-mcp update-project .' to fix",
         )
@@ -77,6 +77,31 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--debug",
         action="store_true",
         help="Enable debug logging to .trw/logs/ and stderr",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase logging verbosity (-v=DEBUG, -vv=DEBUG+file). Stacks with --debug.",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress all output except warnings and errors",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=None,
+        help="Explicit log level (overrides -v/--debug/env vars)",
+    )
+    parser.add_argument(
+        "--log-json",
+        action="store_true",
+        default=None,
+        help="Force JSON log output (default: auto-detect from TTY)",
     )
     parser.add_argument(
         "--transport",
@@ -321,10 +346,28 @@ def main() -> None:
     config = TRWConfig()
     debug = args.debug or config.debug
 
-    configure_logging(debug=debug, config=config)
+    # Resolve verbosity: --quiet overrides, --debug adds to -v count
+    verbosity = args.verbose
+    if args.quiet:
+        verbosity = -1
+    elif debug and verbosity == 0:
+        verbosity = 1
+
+    log_dir: Path | None = None
+    if debug or verbosity >= 2:
+        log_dir = Path.cwd() / config.trw_dir / config.logs_dir
+
+    configure_logging(
+        debug=debug,
+        verbosity=verbosity,
+        log_level=args.log_level,
+        json_output=args.log_json if args.log_json else None,
+        log_dir=log_dir,
+        package_name="trw-mcp",
+    )
 
     # PRD-FIX-037: Warn if .mcp.json has a stale absolute path
     _check_mcp_json_portability()
 
-    log = structlog.get_logger()
+    log = structlog.get_logger(__name__)
     resolve_and_run_transport(args, config, debug=debug, log=log)

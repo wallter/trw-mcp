@@ -34,9 +34,11 @@ class TestModuleImports:
         assert trw_mcp.server is not None
 
     def test_import_app(self) -> None:
-        from trw_mcp.server._app import configure_logging, mcp
+        from trw_mcp._logging import configure_logging
+        from trw_mcp.server._app import configure_logging_compat, mcp
 
         assert configure_logging is not None
+        assert configure_logging_compat is not None
         assert mcp is not None
 
     def test_import_cli(self) -> None:
@@ -245,20 +247,59 @@ class TestLoggingConfig:
     """Verify logging can be configured without errors."""
 
     def test_configure_logging_normal(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.server._app import configure_logging
+        from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
-        configure_logging(debug=False, config=TRWConfig())
+        configure_logging(debug=False)
 
     def test_configure_logging_debug(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.server._app import configure_logging
+        from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
-        configure_logging(debug=True, config=TRWConfig())
+        configure_logging(debug=True, log_dir=tmp_path / ".trw" / "logs")
         log_dir = tmp_path / ".trw" / "logs"
         assert log_dir.is_dir(), "Debug logging should create .trw/logs/"
+
+    def test_configure_logging_verbosity(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp._logging import configure_logging
+
+        monkeypatch.chdir(tmp_path)
+        # verbosity=1 → DEBUG level
+        configure_logging(verbosity=1)
+
+    def test_configure_logging_quiet(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp._logging import configure_logging
+
+        monkeypatch.chdir(tmp_path)
+        # verbosity=-1 → WARNING level (quiet mode)
+        configure_logging(verbosity=-1)
+
+    def test_configure_logging_env_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp._logging import configure_logging
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TRW_LOG_LEVEL", "ERROR")
+        configure_logging()
+
+    def test_configure_logging_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp._logging import configure_logging
+
+        monkeypatch.chdir(tmp_path)
+        configure_logging(json_output=True)
+
+    def test_configure_logging_console_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp._logging import configure_logging
+
+        monkeypatch.chdir(tmp_path)
+        configure_logging(json_output=False)
+
+    def test_configure_logging_compat(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Legacy configure_logging_compat wrapper still works."""
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.server._app import configure_logging_compat
+
+        monkeypatch.chdir(tmp_path)
+        configure_logging_compat(debug=False, config=TRWConfig())
 
 
 # ── Middleware ────────────────────────────────────────────────────────

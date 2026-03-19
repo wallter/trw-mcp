@@ -24,7 +24,7 @@ from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 from trw_mcp.state.memory_adapter import count_entries, get_backend
 from trw_mcp.state.persistence import FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 class _ClusterDict(TypedDict):
@@ -386,7 +386,7 @@ def _write_knowledge_files(
                     existing = topic_path.read_text(encoding="utf-8")
                     rendered = preserve_manual_markers(existing, rendered)
                 except OSError:
-                    pass  # Best-effort: continue with fresh render
+                    logger.debug("knowledge_topic_read_skipped", exc_info=True)  # justified: fail-open, continue with fresh render
 
             writer.write_text(topic_path, rendered)
             topics_generated += 1

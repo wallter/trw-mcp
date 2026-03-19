@@ -28,7 +28,7 @@ from trw_mcp.state._paths import find_active_run, resolve_trw_dir
 from trw_mcp.state.otel_wrapper import emit_tool_span
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 P = ParamSpec("P")
@@ -66,7 +66,7 @@ def _enqueue_to_pipeline(event_data: dict[str, object]) -> None:
         pipeline = TelemetryPipeline.get_instance()
         pipeline.enqueue(dict(event_data))
     except Exception:  # justified: fail-open, telemetry pipeline enqueue must never block tool execution  # noqa: S110
-        pass
+        logger.debug("telemetry_pipeline_enqueue_skipped", exc_info=True)  # justified: fail-open
 
 
 def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:

@@ -13,104 +13,37 @@ allowed-tools: Read, Bash, mcp__trw__trw_recall, mcp__trw__trw_learn, mcp__trw__
 
 # Learn Skill
 
-Manage TRW's learning memory. Three modes:
+Three modes: **Record** (`/trw-learn "summary"`), **Retire** (`/trw-learn resolve L-id`), **Reflect** (`/trw-learn` no args).
 
-- **Record**: `/trw-learn "summary"` — record a new high-value learning
-- **Retire**: `/trw-learn resolve L-id` or `/trw-learn obsolete L-id` — mark a learning as fixed or outdated
-- **Reflect**: `/trw-learn` (no args) — review session for discoveries, refine or retire stale entries
+## Quality Gate
 
-## Quality Gate — Record Only If
+Record only if it: prevents a repeated mistake, documents a non-obvious gotcha, changes how work is done, or captures critical architecture knowledge. Skip routine observations and obvious facts.
 
-Before recording, verify the learning meets at least one of these criteria:
+## Record (quoted summary)
 
-- **Prevents a repeated mistake**: An error or bug that would waste time if encountered again
-- **Documents a non-obvious gotcha**: Something that looks like it should work but doesn't
-- **Changes how work is done**: A pattern or workflow materially better than the default
-- **Captures critical architecture knowledge**: Design decisions or dependencies not obvious from code
+1. Call `trw_recall` with keywords from the summary to check for duplicates.
+   - Duplicate with no new info → skip. Refinement → `trw_learn_update` the existing entry.
+2. Verify quality gate. If borderline, ask the user.
+3. Expand summary into detail (what happened, why it matters, what to do differently). Infer 2-3 tags. Set `source_type="human"`, impact=0.8.
+4. Call `trw_learn(summary, detail, tags, impact, source_type="human")`.
+5. Report: learning ID, summary, impact, tags.
 
-Do NOT record: routine observations, obvious documented facts, temporary notes, per-task status updates.
+## Retire (resolve/obsolete L-id)
 
-Adding no new learnings is perfectly fine — an empty reflection means existing memory is already good.
+1. Parse learning ID and optional reason. `resolve` = fixed, `obsolete` = outdated.
+2. Call `trw_recall` to verify the learning exists.
+3. Call `trw_learn_update(learning_id, status="resolved"|"obsolete")`. Append reason to detail if provided.
+4. Report: ID, old status, new status, reason.
 
-## Workflow — Record (arguments start with a quoted summary)
+If user describes the learning instead of providing an ID, search via `trw_recall`, confirm match, then update.
 
-1. **Parse arguments**: Extract the learning summary from `$ARGUMENTS`. Look for optional flags:
-   - `--tags tag1,tag2` — categorization tags (default: inferred from summary)
-   - `--impact 0.N` — impact score 0.0-1.0 (default: 0.8 for user-initiated)
-   - `--detail "..."` — extended context (default: generated from summary)
+## Reflect (no arguments)
 
-2. **Check existing memory**: Call `trw_recall` with keywords from the summary.
-   - If a similar learning exists and this new one refines it, call `trw_learn_update(learning_id, detail=..., summary=...)` to improve the existing entry instead of creating a duplicate.
-   - If a near-duplicate exists with no new information, tell the user and skip.
-   - If no match, proceed to record.
-
-3. **Evaluate quality**: Check if the learning meets the quality gate. If borderline, ask the user.
-
-4. **Enrich context** if not provided:
-   - If no `--detail`, expand the summary with: what happened, why it matters, what to do differently
-   - If no `--tags`, extract 2-3 relevant keywords
-   - Set `source_type` to `"human"`, default impact to 0.8
-
-5. **Record**: Call `trw_learn(summary, detail, tags, impact, source_type="human")`
-
-6. **Confirm**: Report the learning ID, summary, impact score, and tags.
-
-## Workflow — Retire (arguments start with "resolve" or "obsolete")
-
-When `$ARGUMENTS` starts with `resolve` or `obsolete`:
-
-1. **Parse**: Extract the learning ID (e.g., `L-abc12345`) and optional reason from the arguments.
-   - `resolve` = the issue was fixed, the gotcha no longer applies
-   - `obsolete` = the learning is outdated, superseded, or no longer relevant
-
-2. **Verify**: Call `trw_recall` to find the learning and confirm it exists and is currently active.
-
-3. **Update**: Call `trw_learn_update(learning_id, status="resolved")` or `trw_learn_update(learning_id, status="obsolete")`.
-   - If a reason was provided, also update the detail to append the reason.
-
-4. **Confirm**: Report the change — learning ID, old status, new status, and reason.
-
-If the user doesn't provide a specific ID but describes the learning (e.g., `/trw-learn resolve "the stop hook race condition"`), use `trw_recall` to search for matching entries, confirm the match with the user, then update.
-
-## Workflow — Reflect (no arguments)
-
-When `$ARGUMENTS` is empty, reflect on the current session:
-
-1. **Recall existing memory**: Call `trw_recall('*', min_impact=0.5)` to load current learnings.
-
-2. **Review session context**: Think about what happened this session:
-   - What errors or unexpected behaviors were encountered?
-   - What patterns or approaches worked well?
-   - What gotchas were discovered? Were any existing gotchas resolved?
-
-3. **Compare against existing learnings**: For each potential discovery:
-   - Does it already exist? Could the existing entry be refined with `trw_learn_update`?
-   - Is any existing learning now stale, resolved, or obsolete?
-   - Is it genuinely high-value (meets the quality gate)?
-
-4. **Take action** — any combination of:
-   - **Record new** if genuine discoveries were found
-   - **Refine existing** with `trw_learn_update(id, detail=..., summary=...)` if an entry could be improved
-   - **Retire stale** with `trw_learn_update(id, status="resolved")` if an issue has been fixed
-   - **Report no action** if memory is current — "Memory is up to date."
-
-5. **Summarize**: Report what was done — new recorded, existing refined, stale retired, or no changes.
-
-## Examples
-
-```
-/trw-learn "Pydantic v2 use_enum_values changes comparison semantics"
-/trw-learn "TaskCompleted hook must be soft gate" --impact 0.9
-/trw-learn resolve L-abc12345 "Fixed in commit df6ec89"
-/trw-learn obsolete L-def67890 "Superseded by new update mechanism"
-/trw-learn resolve "the stop hook race condition"
-/learn
-```
-
-## Notes
-
-- Learnings with impact >= 0.7 are promoted to CLAUDE.md during `trw_claude_md_sync`
-- Resolved/obsolete learnings are excluded from CLAUDE.md promotion and recall results
-- The learning memory is shared across all sessions — every entry costs attention
-- Prefer retiring stale learnings over letting them accumulate noise
-- Use `/trw-memory-audit` to review health and find candidates for retirement
+1. Call `trw_recall('*', min_impact=0.5, max_results=10, compact=true)`.
+2. Review session: errors encountered, patterns that worked, gotchas discovered.
+3. Compare against existing learnings. Take action:
+   - **Record new** genuine discoveries
+   - **Refine existing** via `trw_learn_update(id, detail=..., summary=...)`
+   - **Retire stale** via `trw_learn_update(id, status="resolved")`
+   - **No action** if memory is current
+4. Summarize what was done.

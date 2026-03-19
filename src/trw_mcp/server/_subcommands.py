@@ -12,6 +12,10 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 def _run_init_project(args: argparse.Namespace) -> None:
     """Handle the ``init-project`` subcommand."""
@@ -20,7 +24,7 @@ def _run_init_project(args: argparse.Namespace) -> None:
     target = Path(args.target_dir).resolve()
 
     def _progress(action: str, path: str) -> None:
-        print(f"  {action}: {path}", flush=True)
+        logger.info("init_progress", op="init_project", action=action, path=path)
 
     result = init_project(
         target,
@@ -33,15 +37,10 @@ def _run_init_project(args: argparse.Namespace) -> None:
     )
 
     for e in result["errors"]:
-        print(f"  ERROR: {e}")
+        logger.error("init_project_error", op="init_project", error=str(e))
 
     if not result["errors"]:
-        print(f"\nTRW framework initialized in {target}")
-        print("Next steps:")
-        print("  1. Edit CLAUDE.md with your project details")
-        print("  2. Run `trw-mcp` to start the MCP server")
-        print("  3. In Claude Code, run /mcp to connect")
-        print("  4. Call trw_session_start() to begin")
+        logger.info("init_project_complete", op="init_project", target=str(target))
 
     sys.exit(1 if result["errors"] else 0)
 
@@ -54,7 +53,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
     dry_run: bool = getattr(args, "dry_run", False)
 
     def _progress(action: str, path: str) -> None:
-        print(f"  {action}: {path}", flush=True)
+        logger.info("update_progress", op="update_project", action=action, path=path)
 
     result = update_project(
         target,
@@ -65,14 +64,19 @@ def _run_update_project(args: argparse.Namespace) -> None:
     )
 
     for w in result.get("warnings", []):
-        print(f"  WARNING: {w}")
+        logger.warning("update_project_warning", op="update_project", detail=str(w))
     for e in result["errors"]:
-        print(f"  ERROR: {e}")
+        logger.error("update_project_error", op="update_project", error=str(e))
 
     total = len(result["updated"]) + len(result["created"])
     if not result["errors"]:
-        verb = "would update" if dry_run else "updated"
-        print(f"\nTRW framework {verb} in {target} ({total} files)")
+        logger.info(
+            "update_project_complete",
+            op="update_project",
+            target=str(target),
+            total_files=total,
+            dry_run=dry_run,
+        )
 
     sys.exit(1 if result["errors"] else 0)
 
@@ -85,7 +89,7 @@ def _run_audit(args: argparse.Namespace) -> None:
     result = run_audit(target, fix=args.fix)
 
     if result.get("status") == "failed":
-        print(f"  ERROR: {result.get('error', 'unknown')}")
+        logger.error("audit_failed", op="audit", error=str(result.get("error", "unknown")))
         sys.exit(1)
 
     if args.format == "json":
@@ -97,9 +101,9 @@ def _run_audit(args: argparse.Namespace) -> None:
         out_path = Path(args.output).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(output, encoding="utf-8")
-        print(f"  Audit report written to: {out_path}")
+        logger.info("audit_report_written", op="audit", path=str(out_path))
     else:
-        print(output)
+        logger.info("audit_report_output", op="audit", output=output)
 
     sys.exit(0)
 
@@ -118,7 +122,7 @@ def _run_export(args: argparse.Namespace) -> None:
     )
 
     if result.get("status") == "failed":
-        print(f"  ERROR: {result.get('error', 'unknown')}")
+        logger.error("export_failed", op="export", error=str(result.get("error", "unknown")))
         sys.exit(1)
 
     # CSV output for learnings
@@ -131,9 +135,9 @@ def _run_export(args: argparse.Namespace) -> None:
         out_path = Path(args.output).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(output, encoding="utf-8")
-        print(f"  Export written to: {out_path}")
+        logger.info("export_written", op="export", path=str(out_path))
     else:
-        print(output)
+        logger.info("export_output", op="export", output=output)
 
     sys.exit(0)
 
@@ -158,14 +162,23 @@ def _run_import_learnings(args: argparse.Namespace) -> None:
     )
 
     if result.get("status") == "failed":
-        print(f"  ERROR: {result.get('error', 'unknown')}")
+        logger.error(
+            "import_learnings_failed",
+            op="import_learnings",
+            error=str(result.get("error", "unknown")),
+        )
         sys.exit(1)
 
-    prefix = "[DRY RUN] " if args.dry_run else ""
-    print(f"  {prefix}Source: {result.get('source_project', 'unknown')} ({result.get('total_source', 0)} entries)")
-    print(f"  {prefix}Imported: {result.get('imported', 0)}")
-    print(f"  {prefix}Skipped (duplicate): {result.get('skipped_duplicate', 0)}")
-    print(f"  {prefix}Skipped (filter): {result.get('skipped_filter', 0)}")
+    logger.info(
+        "import_learnings_complete",
+        op="import_learnings",
+        dry_run=args.dry_run,
+        source_project=str(result.get("source_project", "unknown")),
+        total_source=result.get("total_source", 0),
+        imported=result.get("imported", 0),
+        skipped_duplicate=result.get("skipped_duplicate", 0),
+        skipped_filter=result.get("skipped_filter", 0),
+    )
 
     sys.exit(0)
 
@@ -179,17 +192,21 @@ def _run_build_release(args: argparse.Namespace) -> None:
 
     result = build_release_bundle(version=version, output_dir=output_dir)
 
-    print(f"  Bundle: {result['path']}")
-    print(f"  Version: {result['version']}")
-    print(f"  SHA-256: {result['checksum']}")
-    print(f"  Size: {result['size_bytes']} bytes")
+    logger.info(
+        "build_release_complete",
+        op="build_release",
+        bundle_path=str(result["path"]),
+        version=str(result["version"]),
+        checksum=str(result["checksum"]),
+        size_bytes=result["size_bytes"],
+    )
 
     push = getattr(args, "push", False)
     if push:
         backend_url = getattr(args, "backend_url", None)
         api_key = getattr(args, "api_key", None)
         if not backend_url or not api_key:
-            print("  ERROR: --push requires --backend-url and --api-key")
+            logger.error("push_missing_args", op="build_release", detail="--push requires --backend-url and --api-key")
             sys.exit(1)
         _push_release(result, backend_url, api_key)
 
@@ -224,9 +241,14 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — see Request comment above
             data = _json.loads(resp.read().decode("utf-8"))
-            print(f"  Published: v{data.get('version', '?')} to {backend_url}")
+            logger.info(
+                "release_published",
+                op="push_release",
+                version=data.get("version", "?"),
+                backend_url=backend_url,
+            )
     except Exception as exc:  # justified: boundary, backend publish API call may fail
-        print(f"  ERROR publishing: {exc}")
+        logger.error("release_publish_failed", op="push_release", error=str(exc), exc_info=True)
         sys.exit(1)
 
 

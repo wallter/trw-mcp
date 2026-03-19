@@ -23,7 +23,7 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.state._helpers import safe_str
 from trw_mcp.state.persistence import FileStateReader
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def _linear_slope(values: list[float]) -> float | None:

@@ -26,7 +26,7 @@ from trw_mcp.models.requirements import (
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Compiled regex patterns

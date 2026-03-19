@@ -16,7 +16,7 @@ import structlog
 
 from trw_mcp.models.config import get_config
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Cache duration: check at most once per 24h
 _VERSION_CACHE_HOURS = 24

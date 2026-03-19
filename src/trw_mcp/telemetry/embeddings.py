@@ -17,7 +17,7 @@ from __future__ import annotations
 import structlog
 from trw_memory.embeddings.local import LocalEmbeddingProvider
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Public constant — external code references this directly.
 _EMBEDDING_DIM = 384

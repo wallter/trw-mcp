@@ -12,7 +12,7 @@ from pathlib import Path
 
 import structlog
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # RC-004: Sprint exit criteria parser
 _EXIT_CRITERIA_RE = re.compile(r"^##\s*Exit\s+Criteria", re.IGNORECASE | re.MULTILINE)

@@ -17,7 +17,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def register_ceremony_feedback_tools(server: FastMCP) -> None:

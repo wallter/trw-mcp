@@ -11,6 +11,10 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import (
     ApiFuzzResult,
@@ -58,7 +62,7 @@ def _parse_vuln_severity(vuln: dict[str, object]) -> tuple[str, int]:
                 else:
                     vuln_rank = 1
             except (ValueError, TypeError):
-                pass
+                logger.debug("cvss_score_parse_skipped", exc_info=True)  # justified: fail-open, default vuln_rank used
 
     return severity, vuln_rank
 

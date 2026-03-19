@@ -49,7 +49,7 @@ from trw_mcp.state.validation import (
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def __getattr__(name: str) -> object:

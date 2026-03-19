@@ -20,7 +20,7 @@ from pathlib import Path
 
 import structlog
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Type for streaming progress callback.
 # Called as: callback(action, path) where action is one of:

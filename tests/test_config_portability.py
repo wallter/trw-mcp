@@ -194,7 +194,7 @@ class TestCheckMcpJsonPortability:
             _check_mcp_json_portability(tmp_path)
             mock_logger.warning.assert_called_once()
             call_kwargs = mock_logger.warning.call_args
-            assert "Stale absolute path" in str(call_kwargs)
+            assert "stale_mcp_json_path" in str(call_kwargs)
 
     def test_silent_on_portable_command(self, tmp_path: Path) -> None:
         """No warning when command is a portable bare name."""

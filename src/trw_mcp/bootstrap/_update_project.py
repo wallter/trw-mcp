@@ -93,7 +93,7 @@ from ._version_migration import (
 from ._version_migration import _remove_stale_set as _remove_stale_set
 from ._version_migration import _write_manifest as _write_manifest
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

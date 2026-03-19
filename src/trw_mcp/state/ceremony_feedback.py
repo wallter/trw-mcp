@@ -18,7 +18,7 @@ from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import CeremonyFeedbackEntry, EscalationResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def _derive_agent_id(run_id: str | None = None) -> str:

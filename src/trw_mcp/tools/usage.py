@@ -25,7 +25,7 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 _progressive_middleware: ProgressiveDisclosureMiddleware | None = None
 

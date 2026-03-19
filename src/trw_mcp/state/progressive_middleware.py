@@ -17,7 +17,7 @@ import structlog
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import Tool, ToolResult
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 _EMPTY_SCHEMA: dict[str, object] = {
     "type": "object",

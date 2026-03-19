@@ -15,7 +15,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import PRDStatus, ValidationFailure
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # PRD status ordering for phase gate comparisons (PRD-FIX-008: includes done/merged)
 _STATUS_ORDER: dict[str, int] = {

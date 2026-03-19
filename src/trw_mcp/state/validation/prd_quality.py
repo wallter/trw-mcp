@@ -104,7 +104,7 @@ from trw_mcp.state.validation._prd_validation import (
 )
 from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

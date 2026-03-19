@@ -20,7 +20,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 if TYPE_CHECKING:
     from trw_mcp.state.tiers import TierManager
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

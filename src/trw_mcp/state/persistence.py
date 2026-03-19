@@ -55,7 +55,7 @@ from trw_mcp.exceptions import StateError
 
 # PRD-CORE-001: Base MCP tool suite — atomic file state persistence
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # PRD-FIX-053-FR06: Contextvars flag to suppress FileEventLogger.log_event()
 # during internal persistence operations. Set True inside write_yaml/append_jsonl

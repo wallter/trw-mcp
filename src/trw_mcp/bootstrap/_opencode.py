@@ -20,7 +20,7 @@ from trw_mcp.models.typed_dicts._opencode import (
     OpencodeTemplateDict,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"

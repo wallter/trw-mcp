@@ -23,7 +23,7 @@ from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.memory_adapter import embedding_available
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Re-export so existing importers (tiers.py, consolidation.py) keep working.
 __all__ = ["DedupResult", "batch_dedup", "check_duplicate", "cosine_similarity", "is_migration_needed", "merge_entries"]
@@ -249,7 +249,7 @@ def merge_entries(
                 finally:
                     store.close()
     except (ImportError, OSError, ValueError):
-        pass  # Best-effort re-indexing
+        logger.debug("dedup_reindex_skipped", exc_info=True)  # justified: fail-open, best-effort re-indexing
 
     return existing_path
 

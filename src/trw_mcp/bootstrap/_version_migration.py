@@ -15,7 +15,7 @@ import structlog
 
 from ._utils import _result_action_key
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Files in .trw/context/ that are always preserved during cleanup.
 _CONTEXT_ALLOWLIST: frozenset[str] = frozenset(

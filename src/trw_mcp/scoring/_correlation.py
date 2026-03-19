@@ -27,7 +27,7 @@ from trw_mcp.scoring._utils import (
     update_q_value,
 )
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # --- Q-value pre-seeding from impact score ---
@@ -370,7 +370,7 @@ def _sync_to_sqlite(
             outcome_history=history,
         )
     except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)  # noqa: S110
-        pass
+        logger.debug("q_value_sqlite_sync_skipped", exc_info=True)  # justified: fail-open, YAML is authoritative
 
 
 def process_outcome(

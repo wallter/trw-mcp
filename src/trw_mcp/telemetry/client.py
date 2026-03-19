@@ -17,7 +17,7 @@ from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter, json_serializer
 from trw_mcp.telemetry.models import TelemetryEvent
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 class TelemetryClient:

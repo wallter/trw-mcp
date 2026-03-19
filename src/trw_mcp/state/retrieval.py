@@ -16,7 +16,7 @@ try:
 except ImportError:
     _BM25_AVAILABLE = False
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def bm25_search(

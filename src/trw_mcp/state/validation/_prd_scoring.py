@@ -22,7 +22,7 @@ from trw_mcp.state.validation.template_variants import get_required_sections
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Compiled regex patterns

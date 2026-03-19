@@ -10,7 +10,7 @@ import structlog
 
 from trw_mcp.models.config._main import TRWConfig
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # --- Singleton factory ---------------------------------------------------
 

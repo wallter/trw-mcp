@@ -25,7 +25,7 @@ from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import strip_pii
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 _HASH_FILE = ".publish_hashes.json"
 

@@ -28,7 +28,7 @@ from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level singletons

@@ -47,7 +47,7 @@ from trw_mcp.state.persistence import (
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 _events = FileEventLogger(FileStateWriter())
 
@@ -151,7 +151,7 @@ def _inject_ceremony_nudge(result: dict[str, str], _trw_dir: Path | None) -> Non
         ctx = NudgeContext(tool_name=ToolName.CHECKPOINT)
         append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
     except Exception:  # justified: fail-open, nudge injection must not block checkpoint  # noqa: S110
-        pass
+        logger.debug("checkpoint_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
 
 def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
@@ -321,7 +321,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
             reset_ceremony_state(trw_dir)
         except Exception:  # justified: fail-open, ceremony state reset must not block run init  # noqa: S110
-            pass
+            logger.debug("init_ceremony_state_reset_skipped", exc_info=True)  # justified: fail-open
 
         logger.info(
             "trw_init_complete",
@@ -349,7 +349,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             ctx = NudgeContext(tool_name=ToolName.INIT)
             append_ceremony_nudge(cast("dict[str, object]", result), trw_dir, context=ctx)
         except Exception:  # justified: fail-open, nudge injection must not block init  # noqa: S110
-            pass
+            logger.debug("init_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return result
 
@@ -452,7 +452,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
                 "TrwStatusDict", append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
             )
         except Exception:  # justified: fail-open, nudge injection must not block status  # noqa: S110
-            pass
+            logger.debug("status_nudge_injection_skipped", exc_info=True)  # justified: fail-open
 
         return result
 
@@ -537,7 +537,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
                 _mark_cp(_trw_dir)
             except Exception:  # justified: fail-open, ceremony state update must not block checkpoint  # noqa: S110
-                pass
+                logger.debug("checkpoint_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
 
         # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         _inject_ceremony_nudge(result, _trw_dir)

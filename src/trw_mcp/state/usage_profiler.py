@@ -13,7 +13,7 @@ from pathlib import Path
 
 import structlog
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 DEFAULT_HOT_SET: list[str] = ["trw_session_start", "trw_checkpoint", "trw_deliver"]
 

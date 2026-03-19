@@ -17,7 +17,7 @@ import structlog
 
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

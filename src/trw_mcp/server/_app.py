@@ -8,14 +8,12 @@ PRD-CORE-001: Base MCP tool suite.
 
 from __future__ import annotations
 
-import logging
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
-import structlog
 from fastmcp import FastMCP
 
+from trw_mcp._logging import configure_logging
 from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
 
@@ -82,72 +80,20 @@ def _build_middleware() -> list[object]:
     return middleware
 
 
-def configure_logging(*, debug: bool, config: TRWConfig) -> None:
-    """Configure structlog processors and stdlib logging.
+def configure_logging_compat(*, debug: bool, config: TRWConfig) -> None:
+    """Legacy-compatible wrapper for configure_logging.
 
-    Args:
-        debug: When True, enables file logging to .trw/logs/ and
-            dev-friendly console output on stderr at DEBUG level.
-        config: TRW configuration for path resolution.
+    Translates the old (debug, config) signature to the new unified interface.
+    Kept for backward compatibility with tests and internal callers.
     """
-    log_level = logging.DEBUG if debug else logging.INFO
-
-    base_processors: list[structlog.types.Processor] = [
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.StackInfoRenderer(),
-    ]
-
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
-
+    log_dir: Path | None = None
     if debug:
-        logs_dir = Path.cwd() / config.trw_dir / config.logs_dir
-        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_dir = Path.cwd() / config.trw_dir / config.logs_dir
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        log_file = logs_dir / f"trw-mcp-{today}.jsonl"
-
-        handlers.append(logging.FileHandler(str(log_file), encoding="utf-8"))
-        base_processors.append(structlog.processors.format_exc_info)
-
-        # Suppress FastMCP / Redis / HTTP noise (~1.25M lines/day, 145 MB vs ~800 TRW events)
-        for logger_name in (
-            "fastmcp",
-            "redis",
-            "redis.asyncio",
-            "redis.connection",
-            "httpcore",
-            "httpx",
-            "asyncio",
-            "urllib3",
-        ):
-            logging.getLogger(logger_name).setLevel(logging.WARNING)
-
-        # Filter non-JSON lines from file handler (catches raw Redis >>> protocol output)
-        class _JsonOnlyFilter(logging.Filter):
-            def filter(self, record: logging.LogRecord) -> bool:
-                msg = str(record.getMessage())
-                return msg.startswith(("{", "["))
-
-        for handler in handlers:
-            if isinstance(handler, logging.FileHandler):
-                handler.addFilter(_JsonOnlyFilter())
-
-    logging.basicConfig(
-        format="%(message)s",
-        level=log_level,
-        handlers=handlers,
-        force=True,
-    )
-
-    structlog.configure(
-        processors=[
-            *base_processors,
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(log_level),
-        logger_factory=structlog.stdlib.LoggerFactory(),
+    configure_logging(
+        debug=debug,
+        log_dir=log_dir,
+        package_name="trw-mcp",
     )
 
 

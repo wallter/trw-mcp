@@ -18,7 +18,7 @@ from pathlib import Path
 
 import structlog
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Domain tag mapping: path component -> domain tags.
 # Stems are matched case-insensitively against each path component.

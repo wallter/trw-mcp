@@ -212,7 +212,7 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     from mcp.server.stdio import stdio_server
     from pydantic import AnyUrl
 
-    log = structlog.get_logger()
+    log = structlog.get_logger(__name__)
 
     # Retry loop for initial connection (server may still be starting)
     last_error: Exception | None = None

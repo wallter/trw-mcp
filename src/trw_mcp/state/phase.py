@@ -16,7 +16,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import PHASE_ORDER, Phase
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
@@ -70,7 +70,7 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
             }
         )
     except Exception:  # justified: fail-open, pipeline may not be initialized  # noqa: S110
-        pass
+        logger.debug("phase_transition_telemetry_skipped", exc_info=True)  # justified: fail-open, pipeline may not be initialized
 
     return True
 

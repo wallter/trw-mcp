@@ -16,7 +16,7 @@ from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import HumanReviewResult, TrustLevelResult, TrustSessionIncrementResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # --- FR01: Trust Registry ---

@@ -23,7 +23,7 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import ValidationFailure
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def _best_effort_check(
@@ -131,7 +131,7 @@ def _check_build_status(
                     )
                 )
         except (ValueError, TypeError, OSError):
-            pass  # Can't parse timestamp — treat as fresh
+            logger.debug("build_timestamp_parse_skipped", exc_info=True)  # justified: fail-open, treat as fresh
 
     # Determine severity: IMPLEMENT always warning; VALIDATE/DELIVER per config
     is_strict_gate = phase_name != "implement" and not is_stale and config.build_gate_enforcement == "strict"

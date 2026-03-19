@@ -20,7 +20,7 @@ from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.state.analytics.entries import apply_status_update, resync_learning_index
 from trw_mcp.state.persistence import FileStateReader
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

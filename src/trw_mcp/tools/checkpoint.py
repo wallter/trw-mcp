@@ -21,7 +21,7 @@ from trw_mcp.state._paths import find_active_run, resolve_project_root
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools.telemetry import log_tool_call
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # --- Auto-checkpoint state (PRD-CORE-053, Item 3 of PRD-FIX-030) ---
