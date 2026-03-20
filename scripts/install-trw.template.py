@@ -32,6 +32,7 @@ from pathlib import Path
 TRW_VERSION = "{{VERSION}}"
 WHEEL_FILENAME = "{{WHEEL_FILENAME}}"
 MEMORY_WHEEL_FILENAME = "{{MEMORY_WHEEL_FILENAME}}"
+SHARED_WHEEL_FILENAME = "{{SHARED_WHEEL_FILENAME}}"
 MIN_PYTHON_VERSION = (3, 10)
 DOCS_BASE = "https://trwframework.com/docs"
 
@@ -401,18 +402,21 @@ def _extract_wheel_data(marker: str) -> bytes:
     return base64.b64decode("".join(b64_chunks))
 
 
-def extract_wheels(tmpdir: Path) -> tuple[Path, Path]:
-    """Extract both embedded wheels into *tmpdir*.
+def extract_wheels(tmpdir: Path) -> tuple[Path, Path, Path]:
+    """Extract all embedded wheels into *tmpdir*.
 
-    Returns (memory_wheel_path, mcp_wheel_path).
+    Returns (shared_wheel_path, memory_wheel_path, mcp_wheel_path).
     """
+    shared_path = tmpdir / SHARED_WHEEL_FILENAME
+    shared_path.write_bytes(_extract_wheel_data("__SHARED_WHEEL_DATA__"))
+
     memory_path = tmpdir / MEMORY_WHEEL_FILENAME
     memory_path.write_bytes(_extract_wheel_data("__MEMORY_WHEEL_DATA__"))
 
     mcp_path = tmpdir / WHEEL_FILENAME
     mcp_path.write_bytes(_extract_wheel_data("__WHEEL_DATA__"))
 
-    return memory_path, mcp_path
+    return shared_path, memory_path, mcp_path
 
 
 # ── pip install with fallback ────────────────────────────────────────
@@ -988,21 +992,21 @@ def find_trw_cmd(python: str) -> list[str]:
 
 # ── Installation phases ──────────────────────────────────────────────
 
-def phase_extract_wheels(ui: UI, step: int, total: int, tmpdir: Path) -> tuple[Path, Path]:
+def phase_extract_wheels(ui: UI, step: int, total: int, tmpdir: Path) -> tuple[Path, Path, Path]:
     """Phase 2: Extract embedded wheel files."""
     ui.step_header(step, total, "Extracting embedded packages")
     ui.start_spinner("Extracting wheels...")
     try:
-        memory_whl, mcp_whl = extract_wheels(tmpdir)
-        ok = memory_whl.stat().st_size > 0 and mcp_whl.stat().st_size > 0
+        shared_whl, memory_whl, mcp_whl = extract_wheels(tmpdir)
+        ok = shared_whl.stat().st_size > 0 and memory_whl.stat().st_size > 0 and mcp_whl.stat().st_size > 0
     except Exception as exc:
         ui.stop_spinner(False, "", f"Failed to extract wheels: {exc}")
         sys.exit(1)
-    ui.stop_spinner(ok, "Extracted trw-memory and trw-mcp wheels")
+    ui.stop_spinner(ok, "Extracted trw-shared, trw-memory and trw-mcp wheels")
     if not ok:
         ui.step_fail("Extracted wheels are empty")
         sys.exit(1)
-    return memory_whl, mcp_whl
+    return shared_whl, memory_whl, mcp_whl
 
 
 def phase_prompt_features(
@@ -1069,11 +1073,21 @@ def phase_install_packages(
     step: int,
     total: int,
     python: str,
+    shared_whl: Path,
     memory_whl: Path,
     mcp_whl: Path,
 ) -> None:
-    """Phase 3: Install base packages."""
+    """Phase 3: Install base packages (order: shared -> memory -> mcp)."""
     ui.step_header(step, total, "Installing packages")
+
+    ui.start_spinner("Installing trw-shared...")
+    if not pip_install(python, str(shared_whl), "trw-shared", ui):
+        ui.stop_spinner(False, "", "pip install failed for trw-shared")
+        ui.error("Try installing in a virtual environment:")
+        ui.error("  python3 -m venv .venv && source .venv/bin/activate")
+        ui.error("  python3 install-trw.py")
+        sys.exit(1)
+    ui.stop_spinner(True, "Installed trw-shared")
 
     ui.start_spinner("Installing trw-memory...")
     if not pip_install(python, str(memory_whl), "trw-memory", ui):
@@ -1436,11 +1450,11 @@ def main() -> None:
 
         # Step 1: Extract wheels
         step += 1
-        memory_whl, mcp_whl = phase_extract_wheels(ui, step, total, tmpdir)
+        shared_whl, memory_whl, mcp_whl = phase_extract_wheels(ui, step, total, tmpdir)
 
         # Step 2: Install base packages
         step += 1
-        phase_install_packages(ui, step, total, python, memory_whl, mcp_whl)
+        phase_install_packages(ui, step, total, python, shared_whl, memory_whl, mcp_whl)
 
         # Step 3 (conditional): Install extras
         features: list[str] = []
@@ -1501,6 +1515,8 @@ if __name__ == "__main__":
     main()
 
 # ── Embedded wheel data (do not edit below this line) ────────────────
+# __SHARED_WHEEL_DATA__
+# {{SHARED_WHEEL_BASE64}}
 # __MEMORY_WHEEL_DATA__
 # {{MEMORY_WHEEL_BASE64}}
 # __WHEEL_DATA__
