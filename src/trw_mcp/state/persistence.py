@@ -194,7 +194,6 @@ class FileStateReader:
                 path=str(path),
             )
         result: dict[str, object] = dict(data)
-        logger.debug("yaml_read_ok", path=str(path))
         return result
 
     def read_jsonl(self, path: Path) -> list[dict[str, object]]:

@@ -344,8 +344,13 @@ class TestTrwRecall:
         result = tools["trw_recall"].fn(query="pooling connections")
         assert result["total_matches"] >= 1
 
-        # Query with a word that doesn't appear at all
+        # Query with one matching and one missing word — union semantics
+        # still matches on "database" even though "redis" matches nothing
         result = tools["trw_recall"].fn(query="database redis")
+        assert result["total_matches"] >= 1
+
+        # Query where NO words appear at all
+        result = tools["trw_recall"].fn(query="kubernetes helm")
         assert result["total_matches"] == 0
 
 
