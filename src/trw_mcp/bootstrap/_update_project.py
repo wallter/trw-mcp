@@ -38,6 +38,60 @@ from ._template_updater import (
 )
 from ._template_updater import _report_preserved_files as _report_preserved_files
 from ._template_updater import _run_claude_md_sync as _run_claude_md_sync
+
+_logger = structlog.get_logger(__name__)
+
+
+def _run_auto_maintenance(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    timeout: int = 120,
+) -> None:
+    """Run auto-maintenance (embeddings backfill, stale run close) after update.
+
+    All operations are local (no API key required).  Fail-open — errors are
+    logged as warnings but never break the update.
+    """
+    import concurrent.futures
+    import os
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir(target_dir)
+
+        from trw_mcp.models.config import _reset_config, get_config
+        from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
+
+        _reset_config()
+        config = get_config()
+        trw_dir = target_dir / ".trw"
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(run_auto_maintenance, trw_dir, config)
+            maintenance = future.result(timeout=timeout)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+        backfill = maintenance.get("embeddings_backfill", {})
+        embedded = backfill.get("embedded", 0) if isinstance(backfill, dict) else 0
+        if embedded > 0:
+            result["updated"].append(f"Embeddings backfilled: {embedded} entries")
+        result["updated"].append("Auto-maintenance complete")
+    except concurrent.futures.TimeoutError:
+        result["warnings"].append(
+            f"Auto-maintenance timed out ({timeout}s) \u2014 will complete on next trw_session_start()"
+        )
+    except Exception as exc:
+        _logger.warning("auto_maintenance_failed", error=str(exc), target_dir=str(target_dir))
+        result["warnings"].append(f"Auto-maintenance skipped: {exc}")
+    finally:
+        os.chdir(original_cwd)
+        try:
+            from trw_mcp.models.config import _reset_config
+            _reset_config()
+        except Exception:
+            pass
 from ._template_updater import _update_agents as _update_agents
 from ._template_updater import (
     _update_always_overwrite_files as _update_always_overwrite_files,
@@ -172,6 +226,10 @@ def _run_post_update_phases(
     if on_progress:
         on_progress("Phase", "Syncing CLAUDE.md...")
     _run_claude_md_sync(target_dir, result)
+
+    if on_progress:
+        on_progress("Phase", "Running auto-maintenance...")
+    _run_auto_maintenance(target_dir, result)
 
     if on_progress:
         on_progress("Phase", "Updating IDE configs...")

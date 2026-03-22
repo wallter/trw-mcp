@@ -445,6 +445,14 @@ def _run_claude_md_sync(
         reader = FileStateReader()
         writer = FileStateWriter()
 
+        # Skip LLM-dependent sync when no Anthropic API key is available
+        # (installer runs outside Claude Code sessions — no auth)
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            result["warnings"].append(
+                "CLAUDE.md LLM sync skipped (no ANTHROPIC_API_KEY) \u2014 will complete on next trw_session_start()"
+            )
+            return
+
         def _do_sync() -> dict[str, object]:
             # Suppress stdout/stderr so structlog noise and SDK auth errors
             # don't leak into the installer's subprocess pipe.
