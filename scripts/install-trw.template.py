@@ -1139,6 +1139,14 @@ def phase_install_extras(
         else:
             ui.step_warn("AI extras failed \u2014 base TRW still works fine")
 
+        ui.start_spinner("Installing sentence-transformers (embeddings)...")
+        ok = pip_install(python, "sentence-transformers>=2.0.0", "sentence-transformers", ui)
+        ui.stop_spinner(ok, "Embeddings enabled", "Embeddings install failed (non-fatal)")
+        if ok:
+            features.append("embeddings")
+        else:
+            ui.step_warn("sentence-transformers failed \u2014 recall uses keyword-only search")
+
     if install_sqlitevec:
         ui.start_spinner("Installing sqlite-vec...")
         ok = pip_install(python, "sqlite-vec", "sqlite-vec", ui)

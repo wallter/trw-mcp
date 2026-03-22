@@ -73,11 +73,15 @@ def _search_intersect_keywords(
     mem_status: MemoryStatus | None,
     min_impact: float,
 ) -> list[MemoryEntry]:
-    """Search for entries matching ALL keyword tokens (intersection semantics)."""
-    token_id_sets: list[set[str]] = []
-    first_token_ordered: list[MemoryEntry] = []
+    """Search for entries matching keyword tokens (union with match-count ranking).
 
-    for i, token in enumerate(kw_tokens):
+    Entries matching more tokens rank higher.  Falls back gracefully when some
+    tokens match nothing (unlike strict AND which returns empty on any miss).
+    """
+    entry_map: dict[str, MemoryEntry] = {}
+    match_counts: dict[str, int] = {}
+
+    for token in kw_tokens:
         token_results = backend.search(
             token,
             top_k=top_k,
@@ -86,18 +90,18 @@ def _search_intersect_keywords(
             min_importance=min_impact,
             namespace=_NAMESPACE,
         )
-        token_ids: set[str] = {e.id for e in token_results}
-        token_id_sets.append(token_ids)
-        if i == 0:
-            first_token_ordered = list(token_results)
+        for e in token_results:
+            if e.id not in entry_map:
+                entry_map[e.id] = e
+                match_counts[e.id] = 0
+            match_counts[e.id] += 1
 
-    if not token_id_sets:
+    if not entry_map:
         return []
 
-    common_ids = token_id_sets[0]
-    for s in token_id_sets[1:]:
-        common_ids = common_ids & s
-    return [e for e in first_token_ordered if e.id in common_ids]
+    # Sort by match count descending (most tokens matched first)
+    ranked_ids = sorted(match_counts, key=lambda eid: match_counts[eid], reverse=True)
+    return [entry_map[eid] for eid in ranked_ids[:top_k]]
 
 
 def _keyword_search(
