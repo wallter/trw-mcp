@@ -46,6 +46,7 @@ def _run_auto_maintenance(
     target_dir: Path,
     result: dict[str, list[str]],
     timeout: int = 120,
+    on_progress: "ProgressCallback" = None,
 ) -> None:
     """Run auto-maintenance (embeddings backfill, stale run close) after update.
 
@@ -60,27 +61,37 @@ def _run_auto_maintenance(
         os.chdir(target_dir)
 
         from trw_mcp.models.config import _reset_config, get_config
-        from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
+        from trw_mcp.state._memory_connection import (
+            backfill_embeddings,
+            check_embeddings_status,
+        )
 
         _reset_config()
         config = get_config()
         trw_dir = target_dir / ".trw"
 
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        try:
-            future = pool.submit(run_auto_maintenance, trw_dir, config)
-            maintenance = future.result(timeout=timeout)
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+        # Check embeddings status and backfill if available
+        emb_status = check_embeddings_status()
+        if emb_status.get("enabled") and emb_status.get("available"):
+            if on_progress:
+                on_progress("Phase", "Backfilling embeddings (this may take 30-60s on first run)...")
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                future = pool.submit(backfill_embeddings, trw_dir)
+                backfill = future.result(timeout=timeout)
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+            embedded = backfill.get("embedded", 0)
+            if embedded > 0:
+                result["updated"].append(f"Embeddings backfilled: {embedded} entries")
+        elif emb_status.get("enabled") and not emb_status.get("available"):
+            hint = emb_status.get("advisory", "pip install sentence-transformers")
+            result["warnings"].append(f"Embeddings enabled but unavailable \u2014 {hint}")
 
-        backfill = maintenance.get("embeddings_backfill", {})
-        embedded = backfill.get("embedded", 0) if isinstance(backfill, dict) else 0
-        if embedded > 0:
-            result["updated"].append(f"Embeddings backfilled: {embedded} entries")
         result["updated"].append("Auto-maintenance complete")
     except concurrent.futures.TimeoutError:
         result["warnings"].append(
-            f"Auto-maintenance timed out ({timeout}s) \u2014 will complete on next trw_session_start()"
+            f"Embeddings backfill timed out ({timeout}s) \u2014 will complete on next trw_session_start()"
         )
     except Exception as exc:
         _logger.warning("auto_maintenance_failed", error=str(exc), target_dir=str(target_dir))
@@ -229,7 +240,7 @@ def _run_post_update_phases(
 
     if on_progress:
         on_progress("Phase", "Running auto-maintenance...")
-    _run_auto_maintenance(target_dir, result)
+    _run_auto_maintenance(target_dir, result, on_progress=on_progress)
 
     if on_progress:
         on_progress("Phase", "Updating IDE configs...")
