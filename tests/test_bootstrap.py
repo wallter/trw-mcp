@@ -1211,6 +1211,10 @@ class TestRunClaudeMdSync:
         """Auth failures from LLMClient are captured as warnings, not errors."""
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
 
+        # Provide a fake API key so the early-return guard is bypassed and
+        # _run_claude_md_sync proceeds to call LLMClient().
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-auth-error")
+
         # Patch at the source module since _run_claude_md_sync imports locally
         monkeypatch.setattr(
             "trw_mcp.state.llm_helpers.LLMClient",
@@ -1228,6 +1232,8 @@ class TestRunClaudeMdSync:
 
         _run_claude_md_sync(fake_git_repo, result)
 
+        # The TypeError from LLMClient is caught by the except-Exception handler
+        # and recorded as a warning (format: "CLAUDE.md sync skipped: <exc>").
         assert any("CLAUDE.md sync skipped" in w for w in result["warnings"])
         assert result["errors"] == []
 
@@ -1283,6 +1289,10 @@ class TestRunClaudeMdSync:
 
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
 
+        # Provide a fake API key so the early-return guard is bypassed and
+        # _run_claude_md_sync proceeds to call LLMClient().
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-timeout")
+
         def _slow_llm_client() -> None:
             time.sleep(10)  # Will exceed the 1-second timeout below
 
@@ -1325,6 +1335,10 @@ class TestClaudeMdSyncTimeoutFix:
 
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
 
+        # Provide a fake API key so the early-return guard is bypassed and
+        # _run_claude_md_sync proceeds to call LLMClient().
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-timeout-fix")
+
         def _hanging_llm(*_args: object, **_kwargs: object) -> None:
             time_mod.sleep(300)  # Simulate LLMClient network hang
 
@@ -1362,6 +1376,10 @@ class TestClaudeMdSyncTimeoutFix:
         from unittest.mock import MagicMock
 
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        # Provide a fake API key so the early-return guard is bypassed and
+        # _run_claude_md_sync proceeds to call LLMClient().
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-success")
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md.execute_claude_md_sync",
