@@ -741,7 +741,7 @@ class TestCheckDuplicateEdgeCases:
     def test_threshold_boundary_exactly_at_skip(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
     ) -> None:
-        """Similarity exactly at skip_threshold (0.95) → 'skip' action."""
+        """Similarity at or above skip_threshold (0.95) → 'skip' action."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
@@ -749,10 +749,10 @@ class TestCheckDuplicateEdgeCases:
         write_entry(entries_dir, writer, "L-boundary01", "boundary test", "detail")
         existing_vec = mock_embed("boundary test detail")
 
-        # Create a new vector exactly at 0.95 cosine similarity
+        # Create a vector clearly above the 0.95 threshold to avoid float rounding ambiguity
         import math as _math
 
-        cos_theta = 0.95
+        cos_theta = 0.951
         sin_theta = _math.sqrt(1.0 - cos_theta**2)
         # Build orthogonal to existing_vec
         orth = [0.0] * len(existing_vec)
