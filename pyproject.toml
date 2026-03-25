@@ -31,7 +31,6 @@ dependencies = [
     "ruamel.yaml>=0.18.0",
     "structlog>=24.0.0",
     "trw-memory>=0.1.0",
-    "trw-shared>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -63,9 +62,9 @@ ai = [
 [project.urls]
 Homepage = "https://trwframework.com"
 Documentation = "https://trwframework.com/docs"
-Repository = "https://github.com/trw-framework/trw-mcp"
-Issues = "https://github.com/trw-framework/trw-mcp/issues"
-Changelog = "https://github.com/trw-framework/trw-mcp/blob/main/CHANGELOG.md"
+Repository = "https://github.com/wallter/trw-mcp"
+Issues = "https://github.com/wallter/trw-mcp/issues"
+Changelog = "https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 trw-mcp = "trw_mcp.server:main"

@@ -165,7 +165,7 @@ def _write_tool_event(
     """Write a tool_invocation event to events.jsonl or fallback."""
     import os
 
-    from trw_shared.telemetry import Status
+    from trw_mcp.telemetry.constants import Status
 
     agent_id = os.environ.get("TRW_AGENT_ID", "default")
     agent_role = os.environ.get("TRW_AGENT_ROLE", "lead")

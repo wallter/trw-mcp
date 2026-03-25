@@ -1,24 +1,28 @@
 # trw-mcp
 
-Engineering memory MCP server for Claude Code -- patterns, gotchas, and project knowledge that persist across sessions.
+Engineering memory MCP server for AI coding agents -- patterns, gotchas, and project knowledge that persist across sessions.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
-[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1-orange.svg)](LICENSE)
 
-## Getting Started
-
-See [Developer Quickstart](../docs/TRW_README.md) for installation and first-run instructions.
+> Every AI coding tool resets to zero. TRW is the one that doesn't.
 
 ## What It Does
 
-TRW-MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives Claude Code persistent engineering memory. It records what you learn during development sessions -- patterns, gotchas, architecture decisions -- and recalls relevant knowledge at the start of every new session. Over time, your AI assistant accumulates project-specific expertise instead of starting from scratch.
+TRW-MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents persistent engineering memory. It records what you learn during development sessions -- patterns, gotchas, architecture decisions -- and recalls relevant knowledge at the start of every new session. Over time, your AI assistant accumulates project-specific expertise instead of starting from scratch.
 
 The server also manages structured run tracking (phases, checkpoints, events), build verification (pytest + mypy), requirements engineering (AARE-F PRDs), and CLAUDE.md auto-generation from high-impact learnings.
+
+**Built by agents using TRW**: 225 PRDs, 64+ sprints, 8,000+ tests, 91% coverage (trw-memory). The dogfooding is the proof.
 
 ## Quick Start
 
 ```bash
-# Install from source
+# Install from PyPI
+pip install trw-mcp
+
+# Or install from source
+git clone https://github.com/wallter/trw-mcp.git
 cd trw-mcp
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
@@ -27,7 +31,7 @@ pip install -e ".[dev]"
 trw-mcp init-project /path/to/your/repo
 
 # Or add the MCP server to Claude Code manually
-claude mcp add trw -- /path/to/trw-mcp/.venv/bin/trw-mcp --debug
+claude mcp add trw -- trw-mcp --debug
 ```
 
 ### Deploy to a Project
@@ -48,27 +52,42 @@ This creates:
 - `.claude/skills/` -- workflow automation skills
 - `.claude/agents/` -- specialized sub-agents
 
-## Available Tools (11)
+## MCP Tools (24)
 
-| Category | Tool | Purpose |
-|----------|------|---------|
-| **Ceremony** | `trw_session_start` | Load high-impact learnings + check run status |
-| | `trw_deliver` | Batched delivery: reflect, checkpoint, CLAUDE.md sync, index sync |
-| **Learning** | `trw_recall` | Search accumulated knowledge by keyword or tag |
-| | `trw_learn` | Record a discovery, gotcha, or pattern |
-| | `trw_learn_update` | Update or retire existing learnings |
-| | `trw_claude_md_sync` | Promote high-impact learnings to CLAUDE.md |
-| **Orchestration** | `trw_init` | Bootstrap run directory with `run.yaml` and `events.jsonl` |
-| | `trw_status` | Return current run state -- phase, progress, last checkpoint |
-| | `trw_checkpoint` | Create atomic state snapshot for interrupt-safe recovery |
-| **Requirements** | `trw_prd_create` | Generate an AARE-F compliant PRD from requirements text |
-| | `trw_prd_validate` | Validate PRD against quality gates (100-point scale) |
-| **Build** | `trw_build_check` | Run pytest + mypy, cache results for phase gate verification |
-| **Review** | `trw_review` | Structured code review findings with pass/warn/block verdict |
-| **Checkpoint** | `trw_pre_compact_checkpoint` | Safety checkpoint before context compaction |
-| **Reporting** | `trw_run_report` | Single-run metrics (events, checkpoints, build status) |
-| | `trw_analytics_report` | Cross-run ceremony scores, build pass rates, trends |
-| | `trw_usage_report` | LLM token usage and cost estimates by model |
+| Category | Tools | Purpose |
+|----------|-------|---------|
+| **Session** | `session_start`, `init`, `status`, `checkpoint`, `pre_compact_checkpoint`, `progressive_expand` | Run lifecycle and progress tracking |
+| **Learning** | `learn`, `learn_update`, `recall`, `knowledge_sync`, `claude_md_sync` | Knowledge capture and retrieval |
+| **Quality** | `build_check`, `review`, `trust_level`, `quality_dashboard`, `deliver` | Verification and delivery |
+| **Requirements** | `prd_create`, `prd_validate` | Structured requirements engineering |
+| **Ceremony** | `ceremony_status`, `ceremony_approve`, `ceremony_revert` | Workflow compliance |
+| **Reporting** | `run_report`, `analytics_report`, `usage_report` | Metrics and cost tracking |
+
+## Skills (24)
+
+Slash-command workflows -- zero tokens until triggered:
+
+**Sprint & Delivery**: `/trw-sprint-init` . `/trw-deliver` . `/trw-commit`
+
+**Requirements**: `/trw-prd-new` . `/trw-prd-ready` . `/trw-prd-groom` . `/trw-prd-review` . `/trw-exec-plan`
+
+**Quality**: `/trw-audit` . `/trw-review-pr` . `/trw-simplify` . `/trw-dry-check` . `/trw-security-check` . `/trw-test-strategy`
+
+**Framework**: `/trw-framework-check` . `/trw-project-health` . `/trw-memory-audit` . `/trw-memory-optimize`
+
+## Agents (18)
+
+Specialized sub-agents for Agent Teams:
+
+| Role | Agent | Purpose |
+|------|-------|---------|
+| **Core Team** | trw-lead, trw-implementer, trw-tester, trw-researcher, trw-reviewer, trw-adversarial-auditor | Orchestration, TDD, testing, research, review, spec-vs-code audit |
+| **Requirements** | trw-prd-groomer, trw-requirement-writer, trw-requirement-reviewer | PRD lifecycle specialists |
+| **Quality** | trw-traceability-checker, trw-code-simplifier | Traceability and code health |
+
+## The 6-Phase Model
+
+TRW implements a structured execution lifecycle: **RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER** with phase gates, build checks, adversarial audits, and delivery ceremony. See [FRAMEWORK.md](FRAMEWORK.md) for the full specification.
 
 ## Configuration
 
@@ -77,15 +96,11 @@ Settings via environment variables (prefix `TRW_`) or `.trw/config.yaml`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TRW_DEBUG` | `false` | Enable debug logging to `.trw/logs/` |
-| `TRW_TELEMETRY` | `false` | Detailed per-tool telemetry |
 | `TRW_TELEMETRY_ENABLED` | `true` | Tool invocation events (kill switch) |
-| `TRW_SOURCE_PACKAGE_NAME` | `trw_mcp` | Python package name for `--cov=` |
-| `TRW_SOURCE_PACKAGE_PATH` | `trw-mcp/src` | Source directory for mypy/pytest |
-| `TRW_TESTS_RELATIVE_PATH` | `trw-mcp/tests` | Test directory for pytest |
+| `TRW_SOURCE_PACKAGE_NAME` | auto | Python package name for `--cov=` |
 | `TRW_LLM_ENABLED` | `true` | Allow LLM calls via anthropic SDK |
 | `TRW_LEARNING_PROMOTION_IMPACT` | `0.7` | Min impact for CLAUDE.md promotion |
-
-See `src/trw_mcp/models/config.py` for the full configuration reference.
+| `TRW_OBSERVATION_MASKING` | `true` | Reduce verbosity in long sessions |
 
 ## Development
 
@@ -93,43 +108,30 @@ See `src/trw_mcp/models/config.py` for the full configuration reference.
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run tests (2600+ tests, >=80% coverage required)
-.venv/bin/python -m pytest tests/ -v --cov=trw_mcp --cov-report=term-missing
+# Run tests
+pytest tests/ -v --cov=trw_mcp --cov-report=term-missing
 
 # Type checking (strict mode)
-.venv/bin/python -m mypy --strict src/trw_mcp/
+mypy --strict src/trw_mcp/
 
 # Targeted testing during development
-.venv/bin/python -m pytest tests/test_tools_learning.py -k "test_recall" -v
-
-# Fast unit tests only
-.venv/bin/python -m pytest tests/ -m unit
+pytest tests/test_tools_learning.py -k "test_recall" -v
 ```
-
-### Optional Dependencies
-
-| Extra | Packages | Purpose |
-|-------|----------|---------|
-| `[dev]` | pytest, mypy, coverage, etc. | Testing and type checking |
-| `[ai]` | anthropic | LLM-augmented features |
-| `[otel]` | OpenTelemetry | Distributed tracing (future) |
-
-LLM features require `pip install -e ".[ai]"`. Without it, LLM-augmented tools gracefully degrade to non-LLM fallbacks.
 
 ## Architecture
 
 ```
 src/trw_mcp/
-  server.py              # FastMCP entry point, CLI, tool registration
-  bootstrap.py           # init-project: deploy TRW to target repos
-  scoring.py             # Utility scoring (Q-learning + Ebbinghaus decay)
-  models/                # Pydantic v2 models (config, run, learning, etc.)
-  tools/                 # MCP tool implementations (10 modules)
-  state/                 # State management (28 modules)
-  middleware/            # FastMCP middleware (ceremony enforcement)
-  data/                  # Bundled hooks, skills, agents for init-project
+  server/             # FastMCP entry point, middleware chain
+  bootstrap.py        # init-project: deploy TRW to target repos
+  models/             # Pydantic v2 models (config, run, learning, etc.)
+  tools/              # MCP tool implementations
+  state/              # State management (persistence, validation, analytics)
+  middleware/          # FastMCP middleware (ceremony, observation masking, response optimizer)
+  telemetry/          # Telemetry pipeline (models, sender, anonymizer)
+  data/               # Bundled hooks, skills, agents for init-project
 ```
 
 ## License
 
-[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) -- see [LICENSE](../LICENSE).
+[Business Source License 1.1](LICENSE) -- source-available, free for non-competing use. Converts to Apache 2.0 on 2030-03-21.
