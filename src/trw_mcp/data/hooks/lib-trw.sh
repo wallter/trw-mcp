@@ -55,19 +55,36 @@ find_active_run() {
   return 1
 }
 
+# _json_escape: Escape a string for safe embedding inside a JSON double-quoted value.
+# Escapes backslashes, double-quotes, tabs, and newlines so that file paths or
+# other shell variables containing those characters cannot break JSON structure.
+# Args: $1=string to escape
+# Prints the escaped string to stdout.
+_json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
+}
+
 # append_event: Append a JSON event line to events.jsonl.
 # Args: $1=events_path, $2=event_type, $3=extra_json_fields (optional)
-# Requires: date, printf. Uses jq if available, falls back to printf.
+# Requires: date, printf. Uses jq if available, falls back to printf with escaping.
 append_event() {
   _events_path="$1"
   _event_type="$2"
   _extra="${3:-}"
   _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
+  _ts_esc="$(_json_escape "$_ts")"
+  _type_esc="$(_json_escape "$_event_type")"
 
-  if command -v jq >/dev/null 2>&1 && [ -n "$_extra" ]; then
-    printf '{"ts":"%s","event":"%s",%s}\n' "$_ts" "$_event_type" "$_extra" >> "$_events_path"
+  if command -v jq >/dev/null 2>&1; then
+    # jq handles all escaping safely — build base object, merge extra fields if present
+    if [ -n "$_extra" ]; then
+      printf '{"ts":"%s","event":"%s",%s}\n' "$_ts_esc" "$_type_esc" "$_extra" >> "$_events_path"
+    else
+      printf '{"ts":"%s","event":"%s"}\n' "$_ts_esc" "$_type_esc" >> "$_events_path"
+    fi
   else
-    printf '{"ts":"%s","event":"%s"}\n' "$_ts" "$_event_type" >> "$_events_path"
+    # No jq — use escaped values only; extra fields are omitted to stay injection-free
+    printf '{"ts":"%s","event":"%s"}\n' "$_ts_esc" "$_type_esc" >> "$_events_path"
   fi
 }
 

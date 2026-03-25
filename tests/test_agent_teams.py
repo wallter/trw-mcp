@@ -269,12 +269,21 @@ class TestHookScripts:
 
 
 class TestSettingsJson:
-    """Tests for .claude/settings.json hook registrations."""
+    """Tests for .claude/settings.json hook registrations.
+
+    These tests validate the monorepo's settings.json. When running in the
+    standalone public repo (no .claude/settings.json at repo root), tests
+    are skipped — the equivalent validation happens in test_bootstrap.py
+    via init-project.
+    """
 
     @pytest.fixture()
     def settings_path(self) -> Path:
         """Return path to .claude/settings.json."""
-        return Path(__file__).parent.parent.parent / ".claude" / "settings.json"
+        path = Path(__file__).parent.parent.parent / ".claude" / "settings.json"
+        if not path.exists():
+            pytest.skip("settings.json not present (standalone repo — tested via init-project)")
+        return path
 
     def test_settings_exists(self, settings_path: Path) -> None:
         """settings.json exists."""

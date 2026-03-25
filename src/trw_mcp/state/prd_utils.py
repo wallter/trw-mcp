@@ -60,7 +60,8 @@ def parse_frontmatter(content: str) -> dict[str, object]:
     if not match:
         return {}
 
-    yaml = YAML()
+    # Use safe loader to prevent RCE via !!python/object tags in user-supplied PRD files.
+    yaml = YAML(typ="safe")
     try:
         data = yaml.load(match.group(1))
         if isinstance(data, dict):
@@ -152,12 +153,12 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
     if not match:
         raise StateError(f"No YAML frontmatter found in: {path}", path=str(path))
 
-    yaml = YAML()
-    yaml.preserve_quotes = True
-
+    # SECURITY: Use safe loader even for update — never parse untrusted YAML with
+    # the round-trip loader. Round-trip is only used for the final dump (write-only).
+    yaml_safe = YAML(typ="safe")
     fm_text = match.group(1)
     try:
-        data = yaml.load(fm_text)
+        data = yaml_safe.load(fm_text)
     except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
         raise StateError(f"Failed to update frontmatter: {exc}", path=str(path)) from exc
 
@@ -174,9 +175,11 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         # Apply updates (support nested dicts via recursive merge)
         _deep_merge(target, updates)
 
-        # Serialize updated frontmatter
+        # Serialize updated frontmatter (round-trip for write formatting only)
+        yaml_writer = YAML()
+        yaml_writer.default_flow_style = False
         stream = StringIO()
-        yaml.dump(data, stream)
+        yaml_writer.dump(data, stream)
         new_fm = stream.getvalue()
 
         # Reconstruct file: new frontmatter + original body

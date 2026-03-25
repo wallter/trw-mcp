@@ -82,8 +82,26 @@ INTERNAL_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
-def _new_yaml() -> YAML:
-    """Create a thread-safe YAML instance.
+def _safe_yaml() -> YAML:
+    """Safe YAML loader for reading untrusted content.
+
+    Uses ruamel.yaml's safe loader (typ="safe") which rejects !!python/object
+    and other constructor tags that would enable RCE. Use for all read paths
+    where the YAML source may be user-editable (e.g. config.yaml, run.yaml).
+
+    ruamel.yaml's YAML class maintains internal state that is NOT thread-safe.
+    Creating a fresh instance per operation prevents concurrent read corruption
+    (PRD-CORE-014 FR03).
+    """
+    return YAML(typ="safe")
+
+
+def _roundtrip_yaml() -> YAML:
+    """Round-trip YAML for write operations that preserve formatting.
+
+    Uses the default round-trip loader/dumper so that comments and key ordering
+    are preserved when serializing framework-generated data. Only use this for
+    write paths — never for parsing user-supplied YAML content.
 
     ruamel.yaml's YAML class maintains internal emitter state that is
     NOT thread-safe.  Creating a fresh instance per operation prevents
@@ -93,6 +111,14 @@ def _new_yaml() -> YAML:
     yml.default_flow_style = False
     yml.preserve_quotes = True
     return yml
+
+
+def _new_yaml() -> YAML:
+    """Deprecated alias kept for any call sites not yet migrated.
+
+    New code should use _safe_yaml() for reads and _roundtrip_yaml() for writes.
+    """
+    return _roundtrip_yaml()
 
 
 class StateReader(Protocol):
@@ -178,7 +204,7 @@ class FileStateReader:
             with path.open("r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
-                    data = _new_yaml().load(fh)
+                    data = _safe_yaml().load(fh)
                 finally:
                     _lock_un(fh.fileno())
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
@@ -284,7 +310,7 @@ class FileStateWriter:
                 with tmp_path.open("w", encoding="utf-8") as fh:
                     _lock_ex(fh.fileno())
                     try:
-                        _new_yaml().dump(data, fh)
+                        _roundtrip_yaml().dump(data, fh)
                     finally:
                         _lock_un(fh.fileno())
                 tmp_path.rename(path)

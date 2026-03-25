@@ -32,8 +32,8 @@ def _load_messages() -> dict[str, object]:
     # pulling ruamel.yaml into every consumer that just needs a string.
     from ruamel.yaml import YAML
 
-    yaml = YAML()
-    yaml.preserve_quotes = True
+    # Use safe loader — bundled file, but defense-in-depth against tampered packages.
+    yaml = YAML(typ="safe")
     path = _DATA_DIR / "messages.yaml"
     with open(path, encoding="utf-8") as f:
         data = yaml.load(f)
