@@ -68,6 +68,18 @@ def _build_middleware() -> list[object]:
     except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
         sys.stderr.write("WARNING: Progressive disclosure middleware init failed, skipping\n")
 
+    # Observation masking: reduce verbosity in long sessions.
+    try:
+        from trw_mcp.models.config import get_config as _get_config
+
+        _cfg = _get_config()
+        if _cfg.observation_masking:
+            from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
+
+            middleware.append(ContextBudgetMiddleware())
+    except Exception:  # justified: fail-open, observation masking is optional enhancement
+        sys.stderr.write("WARNING: ContextBudgetMiddleware init failed, skipping\n")
+
     # Response optimizer: compact JSON (round floats, strip nulls/empties).
     # Added last so it runs on the final response after all other middleware.
     try:
