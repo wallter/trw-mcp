@@ -366,7 +366,7 @@ def _sync_to_sqlite(
         backend.update(
             lid,
             q_value=round(q_new, 4),
-            q_observations=q_obs + 1,
+            q_observations=q_obs,  # already incremented by _update_entry_q_values
             outcome_history=history,
         )
     except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)
@@ -419,7 +419,15 @@ def process_outcome(
         data = _update_entry_history(data, reward, event_label, cfg.learning_outcome_history_cap)
 
         if entry_path is not None:
-            writer.write_yaml(entry_path, data)
+            try:
+                writer.write_yaml(entry_path, data)
+            except (OSError, Exception):
+                logger.warning(
+                    "q_value_yaml_write_failed",
+                    learning_id=lid,
+                    exc_info=True,
+                )
+                continue  # Do not claim this ID was updated
 
         q_obs = safe_int(data, "q_observations", 0)
         history = data.get("outcome_history", [])

@@ -72,15 +72,16 @@ def _compute_sync_hash(
     Returns:
         64-character hex SHA-256 digest.
     """
-    from importlib.metadata import version
+    from importlib.metadata import PackageNotFoundError, version
 
     h = hashlib.sha256()
 
     # Package version — invalidates cache on any trw-mcp upgrade
     try:
         pkg_version = version("trw-mcp")
-    except Exception:
+    except PackageNotFoundError:
         pkg_version = "unknown"
+        logger.warning("claude_md_hash_version_unknown")
     h.update(pkg_version.encode("utf-8"))
     h.update(b"\x00")
 
@@ -215,7 +216,7 @@ def recall_learnings(
             status=status,
             max_results=max_results,
         )
-    except (ImportError, OSError, ValueError):
+    except (ImportError, OSError, ValueError, StateError):
         return []
 
 

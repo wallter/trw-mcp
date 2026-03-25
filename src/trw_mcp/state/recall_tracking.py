@@ -41,7 +41,7 @@ def record_recall(learning_id: str, query: str) -> bool:
         writer.append_jsonl(tracking_path, entry)
         return True
     except (OSError, StateError):
-        logger.debug("recall_record_failed", learning_id=learning_id)
+        logger.debug("recall_record_failed", learning_id=learning_id, exc_info=True)
         return False
 
 
@@ -66,7 +66,7 @@ def record_outcome(learning_id: str, outcome: str) -> bool:
         writer.append_jsonl(tracking_path, entry)
         return True
     except Exception:  # justified: fail-open, outcome tracking must not block recall flow
-        logger.debug("outcome_record_failed", learning_id=learning_id)
+        logger.debug("outcome_record_failed", learning_id=learning_id, exc_info=True)
         return False
 
 
@@ -119,6 +119,7 @@ def get_recall_stats(entries_dir: Path | None = None) -> RecallStats:
             neutral_outcomes=neutral,
         )
     except Exception:  # justified: fail-open, stats computation failure returns zeroed defaults
+        logger.warning("recall_stats_failed", exc_info=True)
         return RecallStats(
             total_recalls=0,
             unique_learnings=0,

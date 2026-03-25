@@ -273,18 +273,27 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             return cast("LearnResultDict", dedup_result)
 
         # Store via SQLite adapter (primary path) — after dedup to avoid orphans
-        adapter_store(
-            trw_dir,
-            learning_id=learning_id,
-            summary=summary,
-            detail=detail,
-            tags=safe_tags,
-            evidence=safe_evidence,
-            impact=calibrated_impact,
-            shard_id=shard_id,
-            source_type=source_type,
-            source_identity=source_identity,
-        )
+        try:
+            adapter_store(
+                trw_dir,
+                learning_id=learning_id,
+                summary=summary,
+                detail=detail,
+                tags=safe_tags,
+                evidence=safe_evidence,
+                impact=calibrated_impact,
+                shard_id=shard_id,
+                source_type=source_type,
+                source_identity=source_identity,
+            )
+        except Exception:
+            logger.warning(
+                "learning_store_failed",
+                learning_id=learning_id,
+                summary=summary[:50],
+                exc_info=True,
+            )
+            # Fall through to YAML dual-write so the learning is not lost
 
         # PRD-FIX-052-FR04: Auto-obsolete superseded entries on compendium creation
         _learn_handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
@@ -332,7 +341,6 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             impact=calibrated_impact,
             id=learning_id,
         )
-        logger.info("trw_learn_recorded", learning_id=learning_id, summary=summary, impact=impact)
         result_dict: LearnResultDict = {
             "learning_id": learning_id,
             "path": str(entry_path),
