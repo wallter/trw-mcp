@@ -29,18 +29,12 @@ from trw_mcp.state.claude_md._promotion import (
     collect_promotable_learnings,
 )
 from trw_mcp.state.claude_md._static_sections import (
-    render_agent_teams_protocol,
     render_behavioral_protocol,
-    render_ceremony_flows,
     render_ceremony_quick_ref,
-    render_ceremony_table,
     render_closing_reminder,
-    render_delegation_protocol,
     render_framework_reference,
     render_imperative_opener,
     render_memory_harmonization,
-    render_phase_descriptions,
-    render_rationalization_watchlist,
 )
 from trw_mcp.state.claude_md._templates import (
     CLAUDEMD_LEARNING_CAP,
