@@ -188,7 +188,6 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
 
     config = get_config()
     reader = FileStateReader()
-    writer = FileStateWriter()
     # Use a no-op LLM client — deliver path doesn't need LLM summarisation.
     llm = LLMClient()
 
@@ -207,7 +206,6 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
         target_dir=None,
         config=config,
         reader=reader,
-        writer=writer,
         llm=llm,
         client=client,
     )

@@ -179,7 +179,7 @@ class TestFullSyncNoEmptySectionHeaders:
 
     def test_no_empty_autogen_headers(self, tmp_path: Path) -> None:
         from trw_mcp.models.config import TRWConfig
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        from trw_mcp.state.persistence import FileStateReader
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -193,7 +193,6 @@ class TestFullSyncNoEmptySectionHeaders:
 
         config = TRWConfig(trw_dir=str(trw_dir))
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = MagicMock()
         llm.available = False
 
@@ -213,7 +212,6 @@ class TestFullSyncNoEmptySectionHeaders:
                 target_dir=None,
                 config=config,
                 reader=reader,
-                writer=writer,
                 llm=llm,
             )
 
@@ -235,7 +233,7 @@ class TestFullSyncNoUnreplacedMarkers:
 
     def test_no_template_markers_in_output(self, tmp_path: Path) -> None:
         from trw_mcp.models.config import TRWConfig
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        from trw_mcp.state.persistence import FileStateReader
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -249,7 +247,6 @@ class TestFullSyncNoUnreplacedMarkers:
 
         config = TRWConfig(trw_dir=str(trw_dir))
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = MagicMock()
         llm.available = False
 
@@ -269,7 +266,6 @@ class TestFullSyncNoUnreplacedMarkers:
                 target_dir=None,
                 config=config,
                 reader=reader,
-                writer=writer,
                 llm=llm,
             )
 

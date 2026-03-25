@@ -437,13 +437,12 @@ def _run_claude_md_sync(
         from trw_mcp.models.config import _reset_config, get_config
         from trw_mcp.state.claude_md import execute_claude_md_sync
         from trw_mcp.state.llm_helpers import LLMClient
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        from trw_mcp.state.persistence import FileStateReader
 
         # Reset config so it picks up the target project's .trw/config.yaml
         _reset_config()
         config = get_config()
         reader = FileStateReader()
-        writer = FileStateWriter()
 
         # Skip LLM-dependent sync when no Anthropic API key is available
         # (installer runs outside Claude Code sessions — no auth)
@@ -466,7 +465,6 @@ def _run_claude_md_sync(
                     target_dir=None,
                     config=config,
                     reader=reader,
-                    writer=writer,
                     llm=llm,
                 )
             finally:

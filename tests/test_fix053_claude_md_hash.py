@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 def _make_sync_args(tmp_path: Path) -> dict:
     """Build minimal args for execute_claude_md_sync using tmp_path as root."""
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+    from trw_mcp.state.persistence import FileStateReader
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir(parents=True, exist_ok=True)
@@ -24,7 +24,6 @@ def _make_sync_args(tmp_path: Path) -> dict:
 
     config = TRWConfig(trw_dir=str(trw_dir))
     reader = FileStateReader()
-    writer = FileStateWriter()
     llm = MagicMock()
     llm.available = False
 
@@ -33,7 +32,6 @@ def _make_sync_args(tmp_path: Path) -> dict:
         "target_dir": None,
         "config": config,
         "reader": reader,
-        "writer": writer,
         "llm": llm,
     }
 

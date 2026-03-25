@@ -56,7 +56,7 @@ def _run_agents_md_sync(
 ) -> dict[str, object]:
     """Run execute_claude_md_sync with mocked infra targeting AGENTS.md."""
     from trw_mcp.state.claude_md._sync import execute_claude_md_sync
-    from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+    from trw_mcp.state.persistence import FileStateReader
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +73,6 @@ def _run_agents_md_sync(
         agents_md_learning_min_impact=agents_md_learning_min_impact,
     )
     reader = FileStateReader()
-    writer = FileStateWriter()
     llm = MagicMock()
     llm.available = False
 
@@ -94,7 +93,6 @@ def _run_agents_md_sync(
             target_dir=None,
             config=config,
             reader=reader,
-            writer=writer,
             llm=llm,
             client="opencode",
         )
@@ -392,7 +390,7 @@ class TestAgentsMdLearningInjection:
     def test_injection_fail_open(self, tmp_path: Path) -> None:
         """If learning query fails, AGENTS.md renders without learnings (fail-open)."""
         from trw_mcp.state.claude_md._sync import execute_claude_md_sync
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        from trw_mcp.state.persistence import FileStateReader
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
@@ -406,7 +404,6 @@ class TestAgentsMdLearningInjection:
             agents_md_learning_injection=True,
         )
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = MagicMock()
         llm.available = False
 
@@ -428,7 +425,6 @@ class TestAgentsMdLearningInjection:
                 target_dir=None,
                 config=config,
                 reader=reader,
-                writer=writer,
                 llm=llm,
                 client="opencode",
             )

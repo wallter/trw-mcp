@@ -358,6 +358,13 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     except AttributeError:
         pass  # Not yet imported
 
+    # Patch state/recall_tracking — resolve_trw_dir is a module-level import
+    # so record_recall writes to the wrong directory without this patch.
+    try:
+        monkeypatch.setattr("trw_mcp.state.recall_tracking.resolve_trw_dir", _fake_trw_dir)
+    except AttributeError:
+        pass  # Not yet imported
+
     # Patch tools/telemetry — resolve_trw_dir and find_active_run are
     # module-level imports that suffer the same stale-closure problem.
     try:

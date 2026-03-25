@@ -834,7 +834,7 @@ class TestProgressiveDisclosure:
         assert len(matches) == 0, f"Found orphan headers: {matches}"
 
     def test_max_auto_lines_gate_raises_error(
-        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+        self, tmp_path: Path, reader: FileStateReader
     ) -> None:
         """PRD-CORE-061-FR04: StateError raised when auto-gen exceeds limit."""
         from trw_mcp.clients.llm import LLMClient
@@ -844,7 +844,7 @@ class TestProgressiveDisclosure:
         config = TRWConfig(max_auto_lines=5)  # Very low limit
         llm = LLMClient()
         with pytest.raises(StateError, match="exceeds max_auto_lines=5"):
-            execute_claude_md_sync("root", None, config, reader, writer, llm)
+            execute_claude_md_sync("root", None, config, reader, llm)
 
     def test_max_auto_lines_gate_passes_at_limit(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR04: exactly max_auto_lines succeeds."""
@@ -1677,18 +1677,19 @@ class TestOutcomeCorrelation:
         """Only learnings in recent receipts have Q-values updated."""
         tools = _get_tools()
         r1 = tools["trw_learn"].fn(
-            summary="Selective update alpha bravo",
+            summary="Kangaroo marsupial pouch habitat",
             detail="Should be updated",
             impact=0.5,
         )
         r2 = tools["trw_learn"].fn(
-            summary="Selective update charlie delta",
+            summary="Submarine deep ocean vessel pressure",
             detail="Should NOT be updated",
             impact=0.5,
         )
 
-        # Only recall the first entry
-        tools["trw_recall"].fn(query="selective update alpha bravo")
+        # Only recall the first entry — query must be specific enough
+        # to avoid matching the second entry via shared tokens
+        tools["trw_recall"].fn(query="kangaroo marsupial pouch")
 
         trw_dir = tmp_path / _CFG.trw_dir
         updated = process_outcome(trw_dir, reward=0.8, event_label="tests_passed")

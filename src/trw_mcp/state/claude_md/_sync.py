@@ -51,7 +51,7 @@ from trw_mcp.state.claude_md._templates import (
     render_conventions,
     render_patterns,
 )
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader
 
 if TYPE_CHECKING:
     from trw_mcp.clients.llm import LLMClient
@@ -421,7 +421,6 @@ def execute_claude_md_sync(
     target_dir: str | None,
     config: TRWConfig,
     reader: FileStateReader,
-    writer: FileStateWriter,
     llm: LLMClient,
     client: str = "auto",
 ) -> dict[str, object]:
@@ -439,7 +438,6 @@ def execute_claude_md_sync(
         target_dir: Target directory for sub-CLAUDE.md generation.
         config: TRW configuration.
         reader: File state reader.
-        writer: File state writer.
         llm: LLM client instance.
         client: Target client(s) to write instructions for.
             "auto" (default) -- detect via IDE config dirs;
@@ -491,7 +489,7 @@ def execute_claude_md_sync(
             }
             # PRD-CORE-084: AGENTS.md must still sync on cache hit because
             # learning injection content may differ from the CLAUDE.md hash.
-            _write_claude, write_agents = _determine_write_targets(
+            _, write_agents = _determine_write_targets(
                 client, config, project_root, scope,
             )
             synced, path = _sync_agents_md_if_needed(

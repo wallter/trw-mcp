@@ -638,8 +638,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         """
         config = get_config()
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = _create_llm_client()
         return cast(
-            "ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, writer, llm, client)
+            "ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, llm, client)
         )

@@ -376,7 +376,7 @@ class TestReviewMdIntegration:
     def _make_sync_args(self, tmp_path: Path) -> dict[str, object]:
         """Build minimal args for execute_claude_md_sync."""
         from trw_mcp.models.config import TRWConfig
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        from trw_mcp.state.persistence import FileStateReader
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
@@ -387,7 +387,6 @@ class TestReviewMdIntegration:
 
         config = TRWConfig(trw_dir=str(trw_dir))
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = MagicMock()
         llm.available = False
 
@@ -396,7 +395,6 @@ class TestReviewMdIntegration:
             "target_dir": None,
             "config": config,
             "reader": reader,
-            "writer": writer,
             "llm": llm,
         }
 

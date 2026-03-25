@@ -1413,7 +1413,6 @@ class TestExecuteClaudeMdSyncAgentsMd:
 
         config = TRWConfig(agents_md_enabled=True)
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = MagicMock()
         llm.available = False
 
@@ -1422,7 +1421,6 @@ class TestExecuteClaudeMdSyncAgentsMd:
             target_dir=None,
             config=config,
             reader=reader,
-            writer=writer,
             llm=llm,
         )
 
@@ -1447,7 +1445,6 @@ class TestExecuteClaudeMdSyncAgentsMd:
 
         config = TRWConfig(agents_md_enabled=True)
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = MagicMock()
         llm.available = False
 
@@ -1456,7 +1453,6 @@ class TestExecuteClaudeMdSyncAgentsMd:
             target_dir=str(sub_dir),
             config=config,
             reader=reader,
-            writer=writer,
             llm=llm,
         )
 
@@ -1476,7 +1472,6 @@ class TestExecuteClaudeMdSyncAgentsMd:
 
         config = TRWConfig(agents_md_enabled=False)
         reader = FileStateReader()
-        writer = FileStateWriter()
         llm = MagicMock()
         llm.available = False
 
@@ -1485,7 +1480,6 @@ class TestExecuteClaudeMdSyncAgentsMd:
             target_dir=None,
             config=config,
             reader=reader,
-            writer=writer,
             llm=llm,
         )
 
