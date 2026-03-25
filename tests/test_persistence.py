@@ -124,7 +124,7 @@ class TestReadYamlStateErrorReRaise:
         mock_yaml = MagicMock()
         mock_yaml.load.side_effect = original_error
 
-        with patch("trw_mcp.state.persistence._new_yaml", return_value=mock_yaml):
+        with patch("trw_mcp.state.persistence._safe_yaml", return_value=mock_yaml):
             with pytest.raises(StateError, match="inner error"):
                 reader.read_yaml(yaml_file)
 
@@ -136,7 +136,7 @@ class TestReadYamlStateErrorReRaise:
         mock_yaml = MagicMock()
         mock_yaml.load.side_effect = RuntimeError("encoding error")
 
-        with patch("trw_mcp.state.persistence._new_yaml", return_value=mock_yaml):
+        with patch("trw_mcp.state.persistence._safe_yaml", return_value=mock_yaml):
             with pytest.raises(StateError, match="Failed to read YAML"):
                 reader.read_yaml(yaml_file)
 
@@ -279,7 +279,7 @@ class TestWriteYamlCleanup:
         mock_yaml = MagicMock()
         mock_yaml.dump.side_effect = OSError("disk full")
 
-        with patch("trw_mcp.state.persistence._new_yaml", return_value=mock_yaml):
+        with patch("trw_mcp.state.persistence._roundtrip_yaml", return_value=mock_yaml):
             with pytest.raises(StateError, match="Failed to write YAML"):
                 writer.write_yaml(yaml_file, {"key": "value"})
 
@@ -307,7 +307,7 @@ class TestWriteYamlCleanup:
         mock_yaml = MagicMock()
         mock_yaml.dump.side_effect = original_err
 
-        with patch("trw_mcp.state.persistence._new_yaml", return_value=mock_yaml):
+        with patch("trw_mcp.state.persistence._roundtrip_yaml", return_value=mock_yaml):
             with pytest.raises(StateError, match="inner yaml error"):
                 writer.write_yaml(yaml_file, {"key": "value"})
 
@@ -318,7 +318,7 @@ class TestWriteYamlCleanup:
         mock_yaml = MagicMock()
         mock_yaml.dump.side_effect = ValueError("bad data")
 
-        with patch("trw_mcp.state.persistence._new_yaml", return_value=mock_yaml):
+        with patch("trw_mcp.state.persistence._roundtrip_yaml", return_value=mock_yaml):
             with pytest.raises(StateError, match="Failed to write YAML"):
                 writer.write_yaml(yaml_file, {"key": "value"})
 
