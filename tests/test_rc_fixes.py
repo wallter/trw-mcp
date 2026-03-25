@@ -87,7 +87,7 @@ class TestDeliverBuildGate:
         with (
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=project),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
         ):
             (tmp_path / ".trw" / "learnings" / "entries").mkdir(parents=True)
             (tmp_path / ".trw" / "reflections").mkdir(parents=True)
@@ -130,7 +130,7 @@ class TestDeliverBuildGate:
         with (
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=project),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
         ):
             (tmp_path / ".trw" / "learnings" / "entries").mkdir(parents=True)
             (tmp_path / ".trw" / "reflections").mkdir(parents=True)

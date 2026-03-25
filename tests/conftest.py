@@ -332,7 +332,7 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     # Patch late-import consumers in tools/ (critical for _step_ceremony_feedback)
     monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", _fake_trw_dir)
     try:
-        monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_project_root", _fake_project_root)
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", _fake_project_root)
     except AttributeError:
         pass  # ceremony doesn't import resolve_project_root
 

@@ -229,7 +229,7 @@ class TestDeliverTargetPlatforms:
 
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
             patch(
@@ -303,7 +303,7 @@ class TestDeliverTargetPlatforms:
 
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
             patch(
