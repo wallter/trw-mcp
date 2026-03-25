@@ -12,6 +12,9 @@ from unittest.mock import patch
 if TYPE_CHECKING:
     from trw_mcp.state.memory_store import MemoryStore
 
+# sqlite-vec is an optional [vectors] extra — skip entire module when absent
+_sqlite_vec = pytest.importorskip("sqlite_vec", reason="sqlite-vec not installed (optional [vectors] extra)")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -30,7 +33,6 @@ def _make_store(tmp_path: Path, dim: int = 4) -> MemoryStore:
 
 class TestAvailability:
     def test_available_when_sqlite_vec_installed(self) -> None:
-        pytest.importorskip("sqlite_vec", reason="sqlite-vec not installed (optional [vectors] extra)")
         from trw_mcp.state.memory_store import MemoryStore
 
         assert MemoryStore.available() is True
