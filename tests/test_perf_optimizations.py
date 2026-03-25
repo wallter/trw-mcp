@@ -199,11 +199,12 @@ class TestSingleQueryKeywordSearch:
         assert "L-tg1" in ids
 
     def test_multi_token_no_match_returns_empty(self, trw_dir: Path) -> None:
-        """Multi-token query with no common entries returns empty."""
+        """Multi-token query where no token matches returns empty."""
         backend = get_backend(trw_dir)
         backend.store(MemoryEntry(id="L-nm1", content="alpha only", detail="nothing else"))
 
-        results = _keyword_search(backend, "alpha zebra")
+        # Both tokens must be absent for zero results (FTS5 uses OR matching)
+        results = _keyword_search(backend, "zebra unicorn")
         assert len(results) == 0
 
     def test_single_db_call_for_multi_token(self, trw_dir: Path) -> None:
