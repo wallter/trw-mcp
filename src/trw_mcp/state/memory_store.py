@@ -20,7 +20,7 @@ import structlog
 from trw_mcp.state._helpers import iter_yaml_entry_files
 
 try:
-    import sqlite_vec  # type: ignore[import-untyped]
+    import sqlite_vec
 
     _SQLITE_VEC_AVAILABLE = True
 except ImportError:
