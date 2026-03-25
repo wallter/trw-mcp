@@ -8,6 +8,26 @@ from unittest.mock import patch
 
 import pytest
 
+# ── Shared path resolution ──────────────────────────────────────────────
+# Package data lives in src/trw_mcp/data/ (canonical source).
+# The monorepo also copies these to .claude/ at root. Tests prefer
+# package data so they work in both monorepo and standalone contexts.
+
+_TESTS_DIR = Path(__file__).parent
+_PKG_DATA = _TESTS_DIR.parent / "src" / "trw_mcp" / "data"
+_MONOREPO_CLAUDE = _TESTS_DIR.parent.parent / ".claude"
+
+
+def _resolve_data_path(pkg_subdir: str, monorepo_subdir: str) -> Path:
+    """Resolve a data path, preferring package data over monorepo location."""
+    pkg = _PKG_DATA / pkg_subdir
+    if pkg.exists():
+        return pkg
+    mono = _MONOREPO_CLAUDE / monorepo_subdir
+    if mono.exists():
+        return mono
+    pytest.skip(f"{pkg_subdir} not found in package data or monorepo")
+
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
@@ -204,11 +224,8 @@ class TestHookScripts:
 
     @pytest.fixture()
     def hooks_dir(self) -> Path:
-        """Return path to the bundled hooks in the trw_mcp package data."""
-        pkg_hooks = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks"
-        monorepo_hooks = Path(__file__).parent.parent.parent / ".claude" / "hooks"
-        # Prefer package data (works in both standalone and monorepo); fall back to monorepo path
-        return pkg_hooks if pkg_hooks.exists() else monorepo_hooks
+        """Return path to bundled hook scripts."""
+        return _resolve_data_path("hooks", "hooks")
 
     @pytest.mark.parametrize(
         "script_name",
@@ -279,8 +296,8 @@ class TestSettingsJson:
 
     @pytest.fixture()
     def settings_path(self) -> Path:
-        """Return path to .claude/settings.json."""
-        path = Path(__file__).parent.parent.parent / ".claude" / "settings.json"
+        """Return path to settings.json (monorepo only — skips in standalone)."""
+        path = _MONOREPO_CLAUDE / "settings.json"
         if not path.exists():
             pytest.skip("settings.json not present (standalone repo — tested via init-project)")
         return path
@@ -345,8 +362,8 @@ class TestAgentDefinitions:
 
     @pytest.fixture()
     def agents_dir(self) -> Path:
-        """Return path to .claude/agents/ directory."""
-        return Path(__file__).parent.parent.parent / ".claude" / "agents"
+        """Return path to bundled agent definitions."""
+        return _resolve_data_path("agents", "agents")
 
     @pytest.mark.parametrize(
         "agent_name",
