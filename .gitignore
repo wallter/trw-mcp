@@ -25,3 +25,16 @@ coverage.xml
 
 # TRW runtime state (generated per-project, not committed)
 .trw/
+
+# Agent working memory (internal, not for public consumption)
+.claude/agent-memory/
+
+# Scratch / agent worktree directories
+scratch/
+
+# pip-compile lockfile (dev-machine specific, too broad for public repo)
+requirements.lock
+
+# Internal review and agent-instructions files (auto-generated)
+REVIEW.md
+AGENTS.md

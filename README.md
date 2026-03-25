@@ -7,6 +7,13 @@ Engineering memory MCP server for AI coding agents -- patterns, gotchas, and pro
 
 > Every AI coding tool resets to zero. TRW is the one that doesn't.
 
+## Part of TRW Framework
+
+trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
+
+- **trw-mcp** (this repo): MCP server with 24 tools, 24 skills, 18 agents
+- **trw-memory**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
+
 ## What It Does
 
 TRW-MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents persistent engineering memory. It records what you learn during development sessions -- patterns, gotchas, architecture decisions -- and recalls relevant knowledge at the start of every new session. Over time, your AI assistant accumulates project-specific expertise instead of starting from scratch.
