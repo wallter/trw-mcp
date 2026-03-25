@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+
+import pytest
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -28,9 +30,9 @@ def _make_store(tmp_path: Path, dim: int = 4) -> MemoryStore:
 
 class TestAvailability:
     def test_available_when_sqlite_vec_installed(self) -> None:
+        pytest.importorskip("sqlite_vec", reason="sqlite-vec not installed (optional [vectors] extra)")
         from trw_mcp.state.memory_store import MemoryStore
 
-        # sqlite_vec was installed so this should be True
         assert MemoryStore.available() is True
 
     def test_unavailable_when_sqlite_vec_missing(self) -> None:
