@@ -21,13 +21,20 @@ _SESSION_BOUNDARY_TEXT = (
 def render_imperative_opener() -> str:
     """Render the value-oriented opener for the TRW auto-generated section.
 
-    Appears at the very top of the auto-generated block. Establishes the
-    orchestration role and names the core tools (brief mention only \u2014
-    ceremony_quick_ref provides the full reference card). Uses value
-    framing per Anthropic context engineering best practices.
+    This is the highest-signal text in CLAUDE.md \u2014 it loads on every message.
+    Designed to make ``trw_session_start()`` the obvious first action by
+    framing it as the gateway to accumulated team knowledge. The session-start
+    hook then delivers the full operational briefing (phases, delegation,
+    watchlist) so CLAUDE.md stays compact.
+
+    Prompt engineering: Uses concrete benefit framing (what you gain) rather
+    than threat framing (what you lose). Specific numbers ground the claims.
+    The "call this first" pattern leverages primacy bias in instruction
+    following \u2014 the first concrete action in instructions gets highest
+    compliance.
 
     Returns:
-        Markdown string with role framing and tool overview.
+        Markdown string with role framing and session_start trigger.
     """
     return (
         "Your primary role is **orchestration** \u2014 delegate to focused agents "
@@ -35,10 +42,17 @@ def render_imperative_opener() -> str:
         "3x fewer P0 defects because they get deeper context per task. Reserve "
         "self-implementation for trivial edits (\u22643 lines, 1 file).\n"
         "\n"
-        "Start every session with `trw_session_start()` to build on prior "
-        "knowledge, save progress with `trw_checkpoint()` after milestones so "
-        "context compaction never erases your work, and close with `trw_deliver()` "
-        "so your discoveries persist for future agents.\n"
+        "**Your first action in every session must be `trw_session_start()`.**\n"
+        "\n"
+        "This single call loads everything you need: prior learnings from "
+        "hundreds of past sessions, any active run state you can resume, "
+        "and the full operational protocol (delegation guidance, phase gates, "
+        "quality rubrics). Without it, you start from zero \u2014 with it, you "
+        "start from the team\u2019s accumulated experience.\n"
+        "\n"
+        "After `trw_session_start()`, save progress with `trw_checkpoint()` "
+        "after milestones, and close with `trw_deliver()` so your discoveries "
+        "persist for future agents.\n"
         "\n"
     )
 

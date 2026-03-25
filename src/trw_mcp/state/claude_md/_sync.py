@@ -518,19 +518,25 @@ def execute_claude_md_sync(
 
     template = load_claude_md_template(trw_dir)
 
+    # CLAUDE.md is the "always-on" prompt (loads every message). Keep it compact
+    # and focused on triggering trw_session_start(). The session-start hook
+    # delivers the full operational briefing (delegation, phases, watchlist,
+    # Agent Teams) as a one-time injection per session event.
     tpl_context: dict[str, str] = {
+        # Always in CLAUDE.md — role identity + session_start trigger
         "imperative_opener": render_imperative_opener(),
         "ceremony_quick_ref": render_ceremony_quick_ref(),
         "memory_harmonization": render_memory_harmonization(),
         "framework_reference": render_framework_reference(),
-        "delegation_section": render_delegation_protocol(),
-        "agent_teams_section": render_agent_teams_protocol(),
-        "behavioral_protocol": render_behavioral_protocol(),
-        "rationalization_watchlist": render_rationalization_watchlist(),
-        "ceremony_phases": render_phase_descriptions(),
-        "ceremony_table": render_ceremony_table(),
-        "ceremony_flows": render_ceremony_flows(),
         "closing_reminder": render_closing_reminder(),
+        # Delivered by session-start hook (one-time per session event)
+        "delegation_section": "",
+        "agent_teams_section": "",
+        "behavioral_protocol": render_behavioral_protocol(),
+        "rationalization_watchlist": "",
+        "ceremony_phases": "",
+        "ceremony_table": "",
+        "ceremony_flows": "",
     }
 
     # Content sections: LLM summary replaces manual rendering when available

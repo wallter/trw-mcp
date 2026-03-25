@@ -700,7 +700,7 @@ class TestCeremonyRendering:
         assert "{{closing_reminder}}" in template
 
     def test_sync_includes_ceremony_sections(self, tmp_path: Path) -> None:
-        """Full sync produces CLAUDE.md with progressive disclosure (PRD-CORE-061)."""
+        """CLAUDE.md has compact protocol; ceremony details in hook only."""
         tools = _get_tools()
 
         tools["trw_learn"].fn(
@@ -714,15 +714,17 @@ class TestCeremonyRendering:
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        # Ceremony sections now rendered in full (previously suppressed by PRD-CORE-061)
-        assert "### Execution Phases" in content
-        assert "### Tool Lifecycle" in content
-        assert "## TRW Delegation & Orchestration" in content
+        # Ceremony details moved to session-start hook — NOT in CLAUDE.md
+        assert "### Execution Phases" not in content
+        assert "### Tool Lifecycle" not in content
+        assert "## TRW Delegation & Orchestration" not in content
+        assert "## Rationalization Watchlist" not in content
         # Quick ref card present with skill pointer
         assert "/trw-ceremony-guide" in content
-        # Value-oriented opener at top of auto-generated section
+        # Strong session_start trigger in opener
         assert "orchestration" in content.lower()
         assert "trw_session_start()" in content
+        assert "first action" in content.lower()
         # Memory routing section present
         assert "Memory Routing" in content
         # Closing reminder bookends the section
@@ -786,8 +788,8 @@ class TestProgressiveDisclosure:
         content = claude_md.read_text(encoding="utf-8")
         assert "/trw-ceremony-guide" in content
 
-    def test_auto_gen_includes_tool_lifecycle_table(self, tmp_path: Path) -> None:
-        """Rendered output contains the full tool lifecycle table."""
+    def test_auto_gen_no_tool_lifecycle_table(self, tmp_path: Path) -> None:
+        """Tool lifecycle table is in session-start hook, not CLAUDE.md."""
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Table test",
@@ -797,10 +799,10 @@ class TestProgressiveDisclosure:
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "| Phase | Tool |" in content
+        assert "| Phase | Tool |" not in content
 
-    def test_auto_gen_includes_rationalization_watchlist(self, tmp_path: Path) -> None:
-        """Rendered output contains the rationalization watchlist section."""
+    def test_auto_gen_no_rationalization_watchlist(self, tmp_path: Path) -> None:
+        """Rationalization watchlist is in session-start hook, not CLAUDE.md."""
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Watchlist test",
@@ -810,7 +812,7 @@ class TestProgressiveDisclosure:
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Rationalization Watchlist" in content
+        assert "Rationalization Watchlist" not in content
 
     def test_auto_gen_no_orphan_headers(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR01: no orphan ## TRW ... (Auto-Generated) headers."""
