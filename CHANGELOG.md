@@ -50,6 +50,30 @@ All notable changes to the TRW MCP server package.
 
 ---
 
+## [0.27.0] — 2026-03-19
+
+### Changed
+
+- **Framework version bump to v24.4_TRW** — coordinated version bump across all 5 monorepo packages.
+- **Structured logging overhaul** — `structlog` wired across all tool and state modules with consistent field naming.
+- **150 cross-package integration tests** — new test suites covering tool → state → persistence boundaries.
+- **Agent Teams worktree merge fix** — worktree branches now merge before cleanup, preventing work loss.
+
+---
+
+## [0.26.0] — 2026-03-19
+
+### Changed
+
+- **Structured logging overhaul** — extracted dedicated `_logging.py` module from `server/_app.py` with CLI flags (`-v/--verbose`, `-q/--quiet`, `--log-level`, `--log-json`). All 82 source files migrated from bare `structlog.get_logger()` to `structlog.get_logger(__name__)` for proper component attribution. ~30 `print()` statements converted to structured logger calls.
+- **Silent error visibility** — added `exc_info=True` debug logging to 27 bare `except: pass` blocks (PRD-FIX-043 compliance). Log event names normalized to `snake_case` throughout.
+
+### Added
+
+- **26 unit tests for `_logging.py`** — covers verbosity levels, env var resolution, secret redaction, and component extraction.
+
+---
+
 ## [0.25.0] — 2026-03-18
 
 ### Added
