@@ -564,7 +564,7 @@ class TestDeliverAutoPrune:
 
         Auto-prune is a deferred step — test it via _run_deferred_steps directly.
         """
-        from trw_mcp.tools.ceremony import _run_deferred_steps
+        from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_auto_prune_on_deliver", True)
@@ -660,7 +660,7 @@ class TestDeliverAutoPrune:
 
         Auto-prune is a deferred step — test via _run_deferred_steps directly.
         """
-        from trw_mcp.tools.ceremony import _run_deferred_steps
+        from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_auto_prune_on_deliver", True)
