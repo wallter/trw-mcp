@@ -7,6 +7,8 @@ Grafana dashboard SQL queries reference these same string values.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 
 class EventType:
     """Event type strings emitted by trw-mcp and stored in telemetry_events.event_type."""
@@ -16,7 +18,7 @@ class EventType:
     SESSION_END = "session_end"
     CEREMONY_COMPLIANCE = "ceremony_compliance"
 
-    ALL: list[str] = [TOOL_INVOCATION, SESSION_START, SESSION_END, CEREMONY_COMPLIANCE]
+    ALL: ClassVar[list[str]] = [TOOL_INVOCATION, SESSION_START, SESSION_END, CEREMONY_COMPLIANCE]
 
 
 class Phase:
@@ -33,7 +35,7 @@ class Phase:
     DELIVER = "deliver"
     UNKNOWN = "unknown"
 
-    ALL: list[str] = [RESEARCH, PLAN, IMPLEMENT, VALIDATE, REVIEW, DELIVER]
+    ALL: ClassVar[list[str]] = [RESEARCH, PLAN, IMPLEMENT, VALIDATE, REVIEW, DELIVER]
 
 
 class Status:

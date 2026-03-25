@@ -46,7 +46,7 @@ def _run_auto_maintenance(
     target_dir: Path,
     result: dict[str, list[str]],
     timeout: int = 120,
-    on_progress: "ProgressCallback" = None,
+    on_progress: ProgressCallback = None,
 ) -> None:
     """Run auto-maintenance (embeddings backfill, stale run close) after update.
 

@@ -136,6 +136,8 @@ unfixable = ["F841"]
 "src/trw_mcp/tools/build/_audit.py" = ["E402"]
 # Nudge messages imports after logger init (deliberate)
 "src/trw_mcp/state/_nudge_messages.py" = ["E402"]
+# Bootstrap update uses conditional imports after function-level setup
+"src/trw_mcp/bootstrap/_update_project.py" = ["E402", "S110", "F841"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["trw_mcp"]
