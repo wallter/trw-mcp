@@ -50,6 +50,17 @@ All notable changes to the TRW MCP server package.
 
 ---
 
+## [0.27.0] — 2026-03-19
+
+### Changed
+
+- **Framework version bump to v24.4_TRW** — coordinated version bump across all 5 monorepo packages.
+- **Structured logging overhaul** — `structlog` wired across all tool and state modules with consistent field naming.
+- **150 cross-package integration tests** — new test suites covering tool → state → persistence boundaries.
+- **Agent Teams worktree merge fix** — worktree branches now merge before cleanup, preventing work loss.
+
+---
+
 ## [0.25.0] — 2026-03-18
 
 ### Added
