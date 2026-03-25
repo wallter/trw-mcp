@@ -34,9 +34,10 @@ except ImportError:
         pass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import ClassVar, TypedDict
+from typing import ClassVar
 
 import structlog
+from typing_extensions import TypedDict
 
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter

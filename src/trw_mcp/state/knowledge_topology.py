@@ -14,10 +14,11 @@ import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
 
 import structlog
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
+from typing_extensions import TypedDict
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE

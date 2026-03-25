@@ -11,9 +11,9 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import TypedDict
 
 import structlog
+from typing_extensions import TypedDict
 
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 

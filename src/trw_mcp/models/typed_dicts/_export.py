@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 from trw_mcp.models.typed_dicts._analytics import AggregateMetrics, RunAnalysisResult
 from trw_mcp.models.typed_dicts._learning import LearningEntryDict

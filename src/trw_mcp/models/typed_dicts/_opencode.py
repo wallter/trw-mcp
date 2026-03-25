@@ -6,7 +6,7 @@ These cover the JSON shapes produced and consumed by
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 
 class OpencodeServerEntry(TypedDict, total=False):

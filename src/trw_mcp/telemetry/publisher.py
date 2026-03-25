@@ -14,9 +14,9 @@ import json
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import TypedDict
 
 import structlog
+from typing_extensions import TypedDict
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import PublishResult
