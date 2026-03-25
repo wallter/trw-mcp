@@ -4,11 +4,51 @@ All notable changes to the TRW MCP server package.
 
 ## [0.30.0] — 2026-03-25
 
+### Added
+
+- **Observation masking middleware** (`telemetry/context_budget.py`, `telemetry/_compression.py`) — new `ContextBudgetMiddleware` implements 3-tier progressive verbosity (full/compact/minimal) that reduces tool response tokens as sessions grow longer. Tier transitions driven by per-session turn count; redundancy detection via SHA-256 hashing suppresses repeated identical responses. Registered in `_build_middleware()` between `ProgressiveDisclosureMiddleware` and `ResponseOptimizerMiddleware`. Config fields: `observation_masking` (bool), `compact_after_turns` (default 20), `minimal_after_turns` (default 40). 28 tests covering tiers, compression, redundancy, config, and fail-open behavior. Motivated by JetBrains Research (Dec 2025): 52% cost reduction with only 2.6% quality degradation.
+- **Open-source publication prep** — `pyproject.toml` license set to `BUSL-1.1`, `README.md` rewritten for public audience, competitive research documents removed from the published artifact, secrets baseline scrubbed.
+
 ### Fixed
 
 - **Restored full CLAUDE.md behavioral protocol** — all ceremony sections (delegation, phases, tool lifecycle, rationalization watchlist, Agent Teams protocol, example flows, promoted learnings) are rendered again. These were incorrectly suppressed with empty strings during a prior refactor intended only for light-mode platforms (opencode, local models).
 - **CLAUDE.md cache invalidation on upgrade** — `_compute_sync_hash()` now includes the package version, so any `trw-mcp` version bump automatically forces a re-render across all projects. Previously, upgrading with unchanged learnings would serve stale cached content.
 - **`max_auto_lines` default** — bumped from 80 to 300 to accommodate the full rendered section (~168 lines).
+- **Dead `_writer` parameter removed** — `_step_telemetry` and related ceremony helpers had an unused `FileStateWriter` parameter that was never consumed; removed across 4 call sites. Fixes 13 test isolation failures caused by stale writer references.
+
+---
+
+## [0.29.1] — 2026-03-22
+
+### Fixed
+
+- **Installer hang without API key** — `_run_claude_md_sync` now skips the LLM CLAUDE.md sync step when `ANTHROPIC_API_KEY` is not set, preventing the installer from hanging for up to 180 seconds when run outside a Claude Code session.
+- **Embeddings never backfilled during install** — `update-project` now runs an auto-maintenance step (embeddings backfill + stale run closure) locally after install, without requiring an API key. First installs with `--ai` now backfill embeddings immediately.
+- **Auto-maintenance progress output** — `on_progress` callback passed through to `_run_auto_maintenance` so the installer spinner updates during the embeddings backfill phase. Warning emitted when embeddings are enabled but `sentence-transformers` is unavailable.
+
+---
+
+## [0.29.0] — 2026-03-22
+
+### Fixed
+
+- **Recall union search** — `trw_recall` now performs a union of keyword and vector results before ranking, fixing cases where keyword-only or vector-only matches were silently dropped.
+- **Learning publish schema** — `source_learning_id` field correctly serialized in the batch publish payload; fixes backend upsert matching for learning entries published from projects with non-UUID local IDs.
+- **Installer embeddings UX** — improved progress messaging during first-time embedding generation ("Backfilling embeddings (this may take 30–60s on first run)...").
+
+---
+
+## [0.28.0] — 2026-03-20
+
+### Fixed
+
+- **Installer `trw-shared` wheel missing** — `trw-mcp` declares `trw-shared>=0.1.0` as a dependency but the installer only bundled `trw-memory` and `trw-mcp` wheels. `pip install` failed with "No matching distribution found for trw-shared" on every fresh install. Installer now bundles all three wheels in dependency order: `trw-shared` → `trw-memory` → `trw-mcp`.
+
+### Changed
+
+- **`trw-shared` telemetry constants inlined** — after the `trw-shared` wheel bundling fix, `EventType`, `Phase`, `Status` constants and `MAPPED_FIELDS` frozenset from `trw_shared.telemetry` are now the authoritative source used by `trw-mcp` telemetry models (`SessionStartEvent`, `ToolInvocationEvent`, `CeremonyComplianceEvent`, `SessionEndEvent`). Inline string literals replaced throughout `telemetry/` subpackage.
+
+---
 
 ## [0.25.0] — 2026-03-18
 
