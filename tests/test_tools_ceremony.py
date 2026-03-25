@@ -244,9 +244,8 @@ class TestDoClaudeMdSync:
     def test_creates_or_updates_claude_md(self, trw_project: Path) -> None:
         trw_dir = trw_project / ".trw"
         with (
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=trw_project),
-            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=trw_project),
+            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
         ):
             result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"
@@ -255,15 +254,13 @@ class TestDoClaudeMdSync:
     def test_deliver_includes_ceremony_sections(self, trw_project: Path) -> None:
         """trw_deliver path produces CLAUDE.md via canonical execute_claude_md_sync.
 
-        PRD-CORE-061: Progressive disclosure suppresses full ceremony sections
-        from CLAUDE.md — they are now delivered via /trw-ceremony-guide skill.
-        The quick-reference card replaces the full ceremony content.
+        Full ceremony sections are now rendered in CLAUDE.md (previously
+        suppressed by PRD-CORE-061 progressive disclosure).
         """
         trw_dir = trw_project / ".trw"
         with (
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=trw_project),
-            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=trw_project),
+            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
         ):
             result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"
@@ -302,7 +299,7 @@ class TestDoIndexSync:
             "---\nprd:\n  id: PRD-CORE-001\n  title: Test\n  status: done\n  priority: P0\n  category: CORE\n---\n",
             encoding="utf-8",
         )
-        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             result = _do_index_sync()
         assert result["status"] == "success"
         assert (prds_dir.parent / "INDEX.md").exists()
@@ -327,7 +324,7 @@ class TestDoAutoProgress:
             "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
             encoding="utf-8",
         )
-        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             result = _do_auto_progress(run_dir)
         assert result["status"] == "skipped"
         assert result["reason"] == "prds_dir_not_found"
@@ -350,7 +347,7 @@ class TestDoAutoProgress:
             encoding="utf-8",
         )
         (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
-        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             result = _do_auto_progress(run_dir)
         assert result["status"] == "success"
         assert result["applied"] >= 1
@@ -372,7 +369,7 @@ class TestDoAutoProgress:
             encoding="utf-8",
         )
         (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
-        with patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path):
+        with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             result = _do_auto_progress(run_dir)
         assert result["status"] == "success"
         assert result["applied"] == 0
@@ -503,7 +500,7 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools._deferred_delivery._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
         ):
             result = tools["trw_deliver"].fn()
 
@@ -551,7 +548,7 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools._deferred_delivery._do_index_sync",
                 return_value={"status": "success", "index": {}, "roadmap": {}},
             ),
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
         ):
             result = tools["trw_deliver"].fn()
 

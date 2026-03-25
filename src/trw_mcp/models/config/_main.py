@@ -216,7 +216,7 @@ class TRWConfig(BaseSettings):
 
     claude_md_max_lines: int = 500
     sub_claude_md_max_lines: int = 50
-    max_auto_lines: int = 80
+    max_auto_lines: int = 300
     agents_md_enabled: bool = True
     agent_teams_enabled: bool = True
     target_platforms: list[str] = Field(
@@ -675,6 +675,13 @@ class TRWConfig(BaseSettings):
     # Automated semantic review patterns
 
     semantic_checks_enabled: bool = True
+
+    # -- 59. Observation masking (Phase 1 depth) --
+    # Reduce tool response verbosity in long sessions to conserve context budget
+
+    observation_masking: bool = True
+    compact_after_turns: int = 10
+    minimal_after_turns: int = 30
 
     # -- Domain Sub-Config Properties (PRD-CORE-071-FR01) --
     # Type-narrowed access: ``config.build.build_check_enabled``

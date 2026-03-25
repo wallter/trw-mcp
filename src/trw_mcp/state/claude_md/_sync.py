@@ -29,15 +29,27 @@ from trw_mcp.state.claude_md._promotion import (
     collect_promotable_learnings,
 )
 from trw_mcp.state.claude_md._static_sections import (
+    render_agent_teams_protocol,
+    render_behavioral_protocol,
+    render_ceremony_flows,
     render_ceremony_quick_ref,
+    render_ceremony_table,
     render_closing_reminder,
+    render_delegation_protocol,
     render_framework_reference,
     render_imperative_opener,
     render_memory_harmonization,
+    render_phase_descriptions,
+    render_rationalization_watchlist,
 )
 from trw_mcp.state.claude_md._templates import (
     CLAUDEMD_LEARNING_CAP,
     CLAUDEMD_PATTERN_CAP,
+    render_adherence,
+    render_architecture,
+    render_categorized_learnings,
+    render_conventions,
+    render_patterns,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -60,10 +72,23 @@ def _compute_sync_hash(
     summaries and pattern filenames. Exclude timestamps and rendered output
     to avoid false cache invalidations.
 
+    Includes the package version so that any trw-mcp upgrade automatically
+    invalidates the cache and forces a re-render with the new rendering logic.
+
     Returns:
         64-character hex SHA-256 digest.
     """
+    from importlib.metadata import version
+
     h = hashlib.sha256()
+
+    # Package version — invalidates cache on any trw-mcp upgrade
+    try:
+        pkg_version = version("trw-mcp")
+    except Exception:
+        pkg_version = "unknown"
+    h.update(pkg_version.encode("utf-8"))
+    h.update(b"\x00")
 
     # Sorted learning summaries (deterministic order)
     learning_summaries = sorted(str(entry.get("summary", "")) for entry in high_impact)
@@ -434,7 +459,7 @@ def execute_claude_md_sync(
 
     high_impact = collect_promotable_learnings(trw_dir, config, reader)
     patterns = collect_patterns(trw_dir, config, reader)
-    _arch_data, _conv_data = collect_context_data(trw_dir, config, reader)
+    arch_data, conv_data = collect_context_data(trw_dir, config, reader)
 
     # FR04 (PRD-FIX-053): Content-hash change detection.
     # Only applies to root scope — sub-CLAUDE.md generation always renders.
@@ -495,32 +520,38 @@ def execute_claude_md_sync(
 
     template = load_claude_md_template(trw_dir)
 
-    # PRD-CORE-061: Progressive disclosure — suppress ceremony/behavioral/learnings
-    # sections from CLAUDE.md. These are now delivered via:
-    # - /trw-ceremony-guide skill (on-demand)
-    # - session-start.sh hook (behavioral protocol, one-time)
-    # - trw_session_start() recall (learnings)
     tpl_context: dict[str, str] = {
         "imperative_opener": render_imperative_opener(),
         "ceremony_quick_ref": render_ceremony_quick_ref(),
         "memory_harmonization": render_memory_harmonization(),
         "framework_reference": render_framework_reference(),
+        "delegation_section": render_delegation_protocol(),
+        "agent_teams_section": render_agent_teams_protocol(),
+        "behavioral_protocol": render_behavioral_protocol(),
+        "rationalization_watchlist": render_rationalization_watchlist(),
+        "ceremony_phases": render_phase_descriptions(),
+        "ceremony_table": render_ceremony_table(),
+        "ceremony_flows": render_ceremony_flows(),
         "closing_reminder": render_closing_reminder(),
-        # Suppressed — moved to /trw-ceremony-guide skill
-        "behavioral_protocol": "",
-        "delegation_section": "",
-        "agent_teams_section": "",
-        "rationalization_watchlist": "",
-        "ceremony_phases": "",
-        "ceremony_table": "",
-        "ceremony_flows": "",
-        # Suppressed — learnings delivered via trw_session_start() recall
-        "architecture_section": "",
-        "conventions_section": "",
-        "categorized_learnings": "",
-        "patterns_section": "",
-        "adherence_section": "",
     }
+
+    # Content sections: LLM summary replaces manual rendering when available
+    if llm_summary is not None:
+        tpl_context.update({
+            "architecture_section": "",
+            "conventions_section": "",
+            "categorized_learnings": llm_summary + "\n",
+            "patterns_section": "",
+            "adherence_section": "",
+        })
+    else:
+        tpl_context.update({
+            "architecture_section": render_architecture(arch_data),
+            "conventions_section": render_conventions(conv_data),
+            "categorized_learnings": render_categorized_learnings(high_impact),
+            "patterns_section": render_patterns(patterns),
+            "adherence_section": render_adherence(high_impact),
+        })
 
     trw_section = render_template(template, tpl_context)
 

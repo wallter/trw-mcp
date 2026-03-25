@@ -482,7 +482,6 @@ class TestSessionStartLightMode:
             patch("trw_mcp.models.config.get_config", return_value=cfg),
             patch("trw_mcp.tools._ceremony_helpers.get_config", create=True, return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.ceremony.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),

@@ -379,8 +379,8 @@ class TestTrwClaudeMdSync:
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         assert "trw:end" in content
-        # PRD-CORE-061: learnings suppressed from CLAUDE.md, delivered via trw_session_start
-        assert "Critical pattern" not in content
+        # Learnings now rendered in CLAUDE.md (categorized by tag)
+        assert "Critical pattern" in content
 
     def test_preserves_existing_content(self, tmp_path: Path) -> None:
         # Create existing CLAUDE.md
@@ -417,8 +417,8 @@ class TestTrwClaudeMdSync:
 
         content = claude_md.read_text(encoding="utf-8")
         assert "Old content" not in content
-        # PRD-CORE-061: learnings suppressed from CLAUDE.md
-        assert "Replacement learning" not in content
+        # Learnings now rendered in CLAUDE.md (categorized by tag)
+        assert "Replacement learning" in content
         assert "Other section" in content  # Preserved
 
     def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path) -> None:
@@ -553,10 +553,10 @@ class TestClaudeMdTemplate:
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         assert "trw:end" in content
-        # PRD-CORE-061: learnings suppressed from CLAUDE.md
-        assert "Template sync test learning" not in content
-        assert "### Gotchas" not in content
-        # Quick ref card present instead
+        # Learnings now rendered in CLAUDE.md (categorized by tag)
+        assert "Template sync test learning" in content
+        assert "### Gotchas" in content
+        # Quick ref card present
         assert "/trw-ceremony-guide" in content
 
     def test_custom_template_with_extra_sections(self, tmp_path: Path) -> None:
@@ -595,8 +595,8 @@ class TestClaudeMdTemplate:
         content = claude_md.read_text(encoding="utf-8")
         assert "Project-Specific Notes" in content
         assert "React 19" in content
-        # PRD-CORE-061: learnings suppressed, quick ref present
-        assert "Custom template learning" not in content
+        # Learnings now rendered; quick ref present
+        assert "Custom template learning" in content
         assert "/trw-ceremony-guide" in content
 
 
@@ -714,12 +714,10 @@ class TestCeremonyRendering:
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        # PRD-CORE-061: ceremony sections suppressed, moved to /trw-ceremony-guide
-        assert "## TRW Ceremony Tools (Auto-Generated)" not in content
-        assert "### Execution Phases" not in content
-        assert "### Tool Lifecycle" not in content
-        assert "### Example Flows" not in content
-        assert "## TRW Delegation & Orchestration" not in content
+        # Ceremony sections now rendered in full (previously suppressed by PRD-CORE-061)
+        assert "### Execution Phases" in content
+        assert "### Tool Lifecycle" in content
+        assert "## TRW Delegation & Orchestration" in content
         # Quick ref card present with skill pointer
         assert "/trw-ceremony-guide" in content
         # Value-oriented opener at top of auto-generated section
@@ -742,7 +740,7 @@ class TestProgressiveDisclosure:
     """Tests for PRD-CORE-061 progressive disclosure and PRD-CORE-062 context optimization."""
 
     def test_auto_gen_line_count_within_limit(self, tmp_path: Path) -> None:
-        """PRD-CORE-061-FR02: rendered auto-gen block <=80 lines."""
+        """Rendered auto-gen block <=300 lines (expanded from 80 for full ceremony rendering)."""
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Line count test",
@@ -757,10 +755,10 @@ class TestProgressiveDisclosure:
         end = content.index("<!-- trw:end -->") + len("<!-- trw:end -->")
         auto_gen = content[start:end]
         line_count = auto_gen.count("\n")
-        assert line_count <= 80, f"Auto-gen section is {line_count} lines, exceeds 80"
+        assert line_count <= 300, f"Auto-gen section is {line_count} lines, exceeds 300"
 
-    def test_auto_gen_no_learnings(self, tmp_path: Path) -> None:
-        """PRD-CORE-061-FR05: no learning summaries in rendered output."""
+    def test_auto_gen_includes_learnings(self, tmp_path: Path) -> None:
+        """High-impact learnings are rendered in CLAUDE.md (categorized by tag)."""
         tools = _get_tools()
         for i in range(5):
             tools["trw_learn"].fn(
@@ -771,8 +769,9 @@ class TestProgressiveDisclosure:
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        for i in range(5):
-            assert f"High impact learning {i}" not in content
+        # At least some high-impact learnings should be promoted and rendered
+        found = sum(1 for i in range(5) if f"High impact learning {i}" in content)
+        assert found >= 3, f"Expected at least 3 learnings in CLAUDE.md, found {found}"
 
     def test_auto_gen_contains_skill_reference(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR02: rendered output contains /trw-ceremony-guide."""
@@ -787,8 +786,8 @@ class TestProgressiveDisclosure:
         content = claude_md.read_text(encoding="utf-8")
         assert "/trw-ceremony-guide" in content
 
-    def test_auto_gen_no_tool_lifecycle_table(self, tmp_path: Path) -> None:
-        """PRD-CORE-061-FR02: rendered output does NOT contain tool table."""
+    def test_auto_gen_includes_tool_lifecycle_table(self, tmp_path: Path) -> None:
+        """Rendered output contains the full tool lifecycle table."""
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Table test",
@@ -798,10 +797,10 @@ class TestProgressiveDisclosure:
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "| Phase | Tool |" not in content
+        assert "| Phase | Tool |" in content
 
-    def test_auto_gen_no_rationalization_watchlist(self, tmp_path: Path) -> None:
-        """PRD-CORE-061-FR02: rendered output does NOT contain rationalization."""
+    def test_auto_gen_includes_rationalization_watchlist(self, tmp_path: Path) -> None:
+        """Rendered output contains the rationalization watchlist section."""
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Watchlist test",
@@ -811,8 +810,7 @@ class TestProgressiveDisclosure:
         tools["trw_claude_md_sync"].fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Rationalization Watchlist" not in content
-        assert "rationalization" not in content.lower()
+        assert "Rationalization Watchlist" in content
 
     def test_auto_gen_no_orphan_headers(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR01: no orphan ## TRW ... (Auto-Generated) headers."""
@@ -861,9 +859,9 @@ class TestProgressiveDisclosure:
         assert result["status"] == "synced"
 
     def test_max_auto_lines_config_default(self) -> None:
-        """PRD-CORE-061-FR04: TRWConfig().max_auto_lines == 80."""
+        """TRWConfig().max_auto_lines == 300 (expanded for full ceremony rendering)."""
         config = TRWConfig()
-        assert config.max_auto_lines == 80
+        assert config.max_auto_lines == 300
 
     def test_max_auto_lines_config_override(self) -> None:
         """PRD-CORE-061-FR04: TRWConfig(max_auto_lines=100) works."""
@@ -938,7 +936,7 @@ class TestProgressiveDisclosure:
             assert "flexible_tools:" not in content
 
     def test_mark_promoted_still_fires(self, tmp_path: Path) -> None:
-        """PRD-CORE-061-FR05: learnings collected for analytics but not rendered."""
+        """Learnings collected for analytics and rendered in CLAUDE.md."""
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Promotion analytics test",
@@ -947,10 +945,10 @@ class TestProgressiveDisclosure:
         )
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         assert sync_result["learnings_promoted"] >= 1
-        # But not in the rendered output
+        # Learnings now rendered in CLAUDE.md
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Promotion analytics test" not in content
+        assert "Promotion analytics test" in content
 
 
 class TestTrwClaudeMdSyncLLM:
@@ -971,10 +969,10 @@ class TestTrwClaudeMdSyncLLM:
         assert result["llm_used"] is False
         assert result["learnings_promoted"] >= 1
 
-        # PRD-CORE-061: learnings suppressed from CLAUDE.md
+        # Learnings now rendered in CLAUDE.md
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Sync no LLM test learning" not in content
+        assert "Sync no LLM test learning" in content
         # Quick ref card present
         assert "/trw-ceremony-guide" in content
 
@@ -1720,12 +1718,11 @@ class TestClaudeMdSyncQValuePromotion:
         backend.update(learning_id, q_value=0.9, q_observations=5)
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        # PRD-CORE-061-FR05: learnings still collected for analytics
+        # Learnings collected for analytics and rendered in CLAUDE.md
         assert sync_result["learnings_promoted"] >= 1
-        # PRD-CORE-061: learnings suppressed from rendered output
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Mature q promotion test" not in content
+        assert "Mature q promotion test" in content
 
     def test_immature_entry_uses_impact(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """Entry with q_observations < threshold uses impact for promotion."""
@@ -1876,11 +1873,11 @@ class TestBehavioralProtocol:
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        # PRD-CORE-061: behavioral protocol header from quick ref card
+        # Behavioral protocol header from quick ref card
         assert "TRW Behavioral Protocol" in content
-        # PRD-CORE-061: full directives suppressed from CLAUDE.md (moved to session-start hook)
-        assert "Execute trw_recall at session start" not in content
-        assert "Execute trw_reflect after tasks" not in content
+        # Behavioral directives now rendered in CLAUDE.md
+        assert "Execute trw_recall at session start" in content
+        assert "Execute trw_reflect after tasks" in content
 
 
 # ---------------------------------------------------------------------------

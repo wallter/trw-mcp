@@ -2,6 +2,14 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.30.0] — 2026-03-25
+
+### Fixed
+
+- **Restored full CLAUDE.md behavioral protocol** — all ceremony sections (delegation, phases, tool lifecycle, rationalization watchlist, Agent Teams protocol, example flows, promoted learnings) are rendered again. These were incorrectly suppressed with empty strings during a prior refactor intended only for light-mode platforms (opencode, local models).
+- **CLAUDE.md cache invalidation on upgrade** — `_compute_sync_hash()` now includes the package version, so any `trw-mcp` version bump automatically forces a re-render across all projects. Previously, upgrading with unchanged learnings would serve stale cached content.
+- **`max_auto_lines` default** — bumped from 80 to 300 to accommodate the full rendered section (~168 lines).
+
 ## [0.25.0] — 2026-03-18
 
 ### Added
