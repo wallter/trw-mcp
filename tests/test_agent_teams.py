@@ -204,8 +204,11 @@ class TestHookScripts:
 
     @pytest.fixture()
     def hooks_dir(self) -> Path:
-        """Return path to the .claude/hooks directory."""
-        return Path(__file__).parent.parent.parent / ".claude" / "hooks"
+        """Return path to the bundled hooks in the trw_mcp package data."""
+        pkg_hooks = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks"
+        monorepo_hooks = Path(__file__).parent.parent.parent / ".claude" / "hooks"
+        # Prefer package data (works in both standalone and monorepo); fall back to monorepo path
+        return pkg_hooks if pkg_hooks.exists() else monorepo_hooks
 
     @pytest.mark.parametrize(
         "script_name",
