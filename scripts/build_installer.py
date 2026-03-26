@@ -2,11 +2,11 @@
 """Build self-contained installer from template + wheels.
 
 Usage:
-    python scripts/build_installer.py [--wheel WHEEL] [--memory-wheel WHEEL] [--format py|sh]
+    python scripts/build_installer.py [--wheel WHEEL] [--memory-wheel WHEEL] [--format py]
 
-Reads the template (Python or bash), finds the latest trw-mcp and
-trw-memory wheels in ``dist/``, base64-encodes them, substitutes
-placeholders, and writes the installer to ``dist/``.
+Reads the template, finds the latest trw-mcp and trw-memory wheels in
+``dist/``, base64-encodes them, substitutes placeholders, and writes the
+installer to ``dist/``.
 
 Build wheels first:
     python -m build --wheel              # trw-mcp
@@ -61,7 +61,6 @@ def _format_b64_for_python(b64: str, line_width: int = 76) -> str:
 def build_installer(
     wheel_path: Path | None = None,
     memory_wheel_path: Path | None = None,
-    shared_wheel_path: Path | None = None,
     fmt: str = DEFAULT_FORMAT,
 ) -> Path:
     """Build the self-contained installer script.
@@ -69,8 +68,7 @@ def build_installer(
     Args:
         wheel_path: Path to trw-mcp wheel. Auto-finds latest if None.
         memory_wheel_path: Path to trw-memory wheel. Auto-finds latest if None.
-        shared_wheel_path: Path to trw-shared wheel. Auto-finds latest if None.
-        fmt: Output format — "py" (Python) or "sh" (bash).
+        fmt: Output format — "py" (Python).
 
     Returns:
         Path to the generated installer.
@@ -102,34 +100,21 @@ def build_installer(
 
     print(f"Wheel (trw-memory): {memory_wheel_path}")
 
-    if shared_wheel_path is None:
-        shared_wheel_path = find_latest_wheel(DIST_DIR, "trw_shared-*.whl", "trw-shared")
-    elif not shared_wheel_path.exists():
-        print(f"ERROR: Shared wheel not found: {shared_wheel_path}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Wheel (trw-shared): {shared_wheel_path}")
-
     # Base64-encode wheels
     wheel_b64 = base64.b64encode(wheel_path.read_bytes()).decode("ascii")
     memory_b64 = base64.b64encode(memory_wheel_path.read_bytes()).decode("ascii")
-    shared_b64 = base64.b64encode(shared_wheel_path.read_bytes()).decode("ascii")
 
     wheel_mb = len(wheel_path.read_bytes()) / (1024 * 1024)
     mem_mb = len(memory_wheel_path.read_bytes()) / (1024 * 1024)
-    shared_kb = len(shared_wheel_path.read_bytes()) / 1024
     print(f"Size (trw-mcp):     {wheel_mb:.1f} MB")
     print(f"Size (trw-memory):  {mem_mb:.1f} MB")
-    print(f"Size (trw-shared):  {shared_kb:.1f} KB")
 
     # Substitute placeholders
     output = template.replace("{{VERSION}}", version)
     output = output.replace("{{WHEEL_FILENAME}}", wheel_path.name)
     output = output.replace("{{MEMORY_WHEEL_FILENAME}}", memory_wheel_path.name)
-    output = output.replace("{{SHARED_WHEEL_FILENAME}}", shared_wheel_path.name)
 
     # Python template: wheel data is in comment-prefixed lines
-    output = output.replace("# {{SHARED_WHEEL_BASE64}}", _format_b64_for_python(shared_b64))
     output = output.replace("# {{MEMORY_WHEEL_BASE64}}", _format_b64_for_python(memory_b64))
     output = output.replace("# {{WHEEL_BASE64}}", _format_b64_for_python(wheel_b64))
 
@@ -147,7 +132,7 @@ def build_installer(
 
     # Validate round-trip: verify embedded wheels can be extracted
     if fmt == "py":
-        _validate_py_installer(output_path, wheel_path, memory_wheel_path, shared_wheel_path)
+        _validate_py_installer(output_path, wheel_path, memory_wheel_path)
 
     return output_path
 
@@ -156,13 +141,11 @@ def _validate_py_installer(
     installer_path: Path,
     expected_mcp_wheel: Path,
     expected_memory_wheel: Path,
-    expected_shared_wheel: Path,
 ) -> None:
     """Verify the built Python installer can extract valid wheels."""
     text = installer_path.read_text(encoding="utf-8", errors="replace")
 
     for marker, expected_wheel, label in [
-        ("__SHARED_WHEEL_DATA__", expected_shared_wheel, "trw-shared"),
         ("__MEMORY_WHEEL_DATA__", expected_memory_wheel, "trw-memory"),
         ("__WHEEL_DATA__", expected_mcp_wheel, "trw-mcp"),
     ]:
@@ -219,16 +202,12 @@ def main() -> None:
         help="Path to trw-memory .whl file (default: latest in dist/)",
     )
     parser.add_argument(
-        "--shared-wheel", type=Path, default=None,
-        help="Path to trw-shared .whl file (default: latest in dist/)",
-    )
-    parser.add_argument(
         "--format", choices=["py"], default=DEFAULT_FORMAT,
         help="Output format (default: py)",
     )
     args = parser.parse_args()
 
-    output = build_installer(args.wheel, args.memory_wheel, args.shared_wheel, args.format)
+    output = build_installer(args.wheel, args.memory_wheel, args.format)
     print(f"\nDone! Distribute: {output}")
 
 
