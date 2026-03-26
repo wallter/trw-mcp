@@ -287,11 +287,11 @@ def generate_review_md(
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(content)
             os.rename(tmp_path, str(target_path))
-        except Exception:
+        except Exception:  # justified: cleanup — remove temp file on write failure, re-raise
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
             raise
-    except Exception:
+    except Exception:  # justified: fail-open — REVIEW.md write failure falls back to status dict
         logger.warning("review_md_write_failed", exc_info=True)
         return {
             "path": str(target_path),
@@ -367,7 +367,7 @@ def _inject_learnings_to_agents(
                 bullet_lines.append(f"- {summary}")
         if bullet_lines:
             return "\n## Key Learnings\n\n" + "\n".join(bullet_lines) + "\n"
-    except Exception:
+    except Exception:  # justified: fail-open — learning injection is optional AGENTS.md enrichment
         logger.warning("agents_md_learning_injection_failed", exc_info=True)
     return ""
 
@@ -496,7 +496,7 @@ def execute_claude_md_sync(
             try:
                 review_result = generate_review_md(trw_dir, repo_root=project_root)
                 early_return_dict["review_md"] = review_result
-            except Exception:
+            except Exception:  # justified: fail-open — REVIEW.md generation must not block cache-hit return
                 logger.warning("review_md_generation_failed_cache_hit", exc_info=True)
                 early_return_dict["review_md"] = {"status": "failed"}
             return early_return_dict
@@ -601,7 +601,7 @@ def execute_claude_md_sync(
     review_md_result: dict[str, object]
     try:
         review_md_result = generate_review_md(trw_dir, repo_root=project_root)
-    except Exception:
+    except Exception:  # justified: fail-open — REVIEW.md failure must not block CLAUDE.md sync
         logger.warning("review_md_generation_failed", exc_info=True)
         review_md_result = {"status": "failed", "error": "generation failed"}
 
