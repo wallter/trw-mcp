@@ -20,9 +20,11 @@ from trw_mcp.cli.auth import (
     _format_countdown,
     _post_json,
     _save_api_key,
+    _save_config_field,
     device_auth_login,
     device_auth_logout,
     device_auth_status,
+    run_auth_login,
     select_organization,
 )
 
@@ -438,3 +440,74 @@ class TestSaveApiKey:
         _save_api_key(cfg, "trw_dk_brand_new")
         content = cfg.read_text(encoding="utf-8")
         assert 'platform_api_key: "trw_dk_brand_new"' in content
+
+
+# ── Tests: _save_config_field (P1-2 fix) ──────────────────────────
+
+
+class TestSaveConfigField:
+    def test_creates_field_in_new_file(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "config.yaml"
+        _save_config_field(cfg, "platform_org_name", "acme-corp")
+        content = cfg.read_text(encoding="utf-8")
+        assert 'platform_org_name: "acme-corp"' in content
+
+    def test_updates_existing_field(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('platform_org_name: "old-org"\n', encoding="utf-8")
+        _save_config_field(cfg, "platform_org_name", "new-org")
+        content = cfg.read_text(encoding="utf-8")
+        assert 'platform_org_name: "new-org"' in content
+        assert "old-org" not in content
+
+    def test_appends_when_field_absent(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('installation_id: "test"\n', encoding="utf-8")
+        _save_config_field(cfg, "platform_user_email", "user@example.com")
+        content = cfg.read_text(encoding="utf-8")
+        assert 'platform_user_email: "user@example.com"' in content
+        assert 'installation_id: "test"' in content
+
+
+# ── Tests: run_auth_login org/email persistence (P1-2 fix) ────────
+
+
+class TestRunAuthLoginPersistence:
+    def test_saves_org_name_and_email(self, tmp_path: Path) -> None:
+        """Verify run_auth_login persists org_name and user_email to config."""
+        cfg = tmp_path / ".trw" / "config.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('platform_api_key: ""\n', encoding="utf-8")
+
+        mock_result: dict[str, object] = {
+            "api_key": "trw_dk_test123",
+            "org_name": "acme-corp",
+            "user_email": "dev@acme.com",
+            "org_id": 42,
+            "organizations": [{"id": 42, "name": "acme-corp", "slug": "acme-corp"}],
+        }
+
+        with patch("trw_mcp.cli.auth.device_auth_login", return_value=mock_result), \
+             patch("trw_mcp.cli.auth.select_organization", return_value=mock_result["organizations"][0]):
+            exit_code = run_auth_login("https://api.example.com", cfg)
+
+        assert exit_code == 0
+        content = cfg.read_text(encoding="utf-8")
+        assert 'platform_api_key: "trw_dk_test123"' in content
+        assert 'platform_org_name: "acme-corp"' in content
+        assert 'platform_user_email: "dev@acme.com"' in content
+
+    def test_status_reads_org_and_email(self, tmp_path: Path) -> None:
+        """Verify device_auth_status returns saved org_name and user_email."""
+        cfg = tmp_path / ".trw" / "config.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(
+            'platform_api_key: "trw_dk_test123"\n'
+            'platform_org_name: "acme-corp"\n'
+            'platform_user_email: "dev@acme.com"\n',
+            encoding="utf-8",
+        )
+        status = device_auth_status(cfg, "https://api.example.com")
+        assert status["authenticated"] is True
+        assert status["org_name"] == "acme-corp"
+        assert status["user_email"] == "dev@acme.com"
