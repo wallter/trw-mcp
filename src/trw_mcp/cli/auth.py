@@ -138,21 +138,32 @@ def device_auth_login(api_url: str, interactive: bool = True) -> dict[str, objec
             print(f"\n  {RED}Error:{NC} Invalid device code response", file=sys.stderr)
         return None
 
-    # Step 2: Try browser, show fallback URL with code embedded
+    # Step 2: Display URL immediately, then try to open browser in background
     if interactive:
-        browser_opened = False
-        with contextlib.suppress(Exception):
-            browser_opened = webbrowser.open(verification_uri_complete)
-
         print()
-        if browser_opened:
-            print(f"  {GREEN}\u2713{NC} Browser opened — approve the request to continue")
-            print(f"  {DIM}Verify this code matches: {BOLD}{user_code}{NC}")
+        print(f"  {BOLD}Open this URL to authenticate:{NC}")
+        print()
+        print(f"    {GREEN}{verification_uri_complete}{NC}")
+        print()
+
+        # Open browser in a daemon thread to avoid blocking on Linux.
+        # webbrowser.open() can hang for seconds (or indefinitely) when
+        # the BROWSER env var is set or xdg-open waits for the process.
+        # See: https://github.com/python/cpython/issues/39357
+        #      https://github.com/ipython/ipython/pull/936
+        def _open_browser() -> None:
+            with contextlib.suppress(Exception):
+                webbrowser.open(verification_uri_complete)
+
+        browser_thread = threading.Thread(target=_open_browser, daemon=True)
+        browser_thread.start()
+
+        # Give the browser a moment to open, then report status
+        browser_thread.join(timeout=2.0)
+        if not browser_thread.is_alive():
+            print(f"  {DIM}(Browser opened — verify the code matches){NC}")
         else:
-            print(f"  {BOLD}Open this URL to authenticate:{NC}")
-            print()
-            print(f"    {GREEN}{verification_uri_complete}{NC}")
-            print()
+            print(f"  {DIM}(Opening browser...){NC}")
 
     # Step 3: Poll for token
     deadline = time.monotonic() + expires_in
