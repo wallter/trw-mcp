@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
 from fastmcp import FastMCP
+
+logger = structlog.get_logger(__name__)
 
 
 def register_template_resources(server: FastMCP) -> None:

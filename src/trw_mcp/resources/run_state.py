@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import structlog
 from fastmcp import FastMCP
+
+logger = structlog.get_logger(__name__)
 
 from trw_mcp.state._paths import resolve_project_root
 
