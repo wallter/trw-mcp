@@ -1062,6 +1062,10 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
+
+        # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed, 
+        # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
+        # or if the skill/agent/change is for an internal monorepo skill
         assert len(skills) == 24
         assert len(agents) == 18
         assert len(hooks) > 0
