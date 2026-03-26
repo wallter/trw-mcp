@@ -394,27 +394,42 @@ def device_auth_logout(config_path: Path) -> bool:
 def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
     """Check authentication status from config file.
 
-    Returns ``{"authenticated": True, "key_prefix": "trw_dk_..."}`` if
-    a platform API key is configured, otherwise ``{"authenticated": False}``.
+    Returns ``{"authenticated": True, "key_prefix": "trw_dk_...", "org_name": ..., "user_email": ...}``
+    if a platform API key is configured, otherwise ``{"authenticated": False}``.
     """
     lines = _read_config_lines(config_path)
     if lines is None:
         return {"authenticated": False}
 
-    for line in lines:
-        m = _YAML_KEY_RE.match(line.rstrip("\n"))
-        if m:
-            value = m.group(3).strip().strip('"').strip("'")
-            if value and value != '""':
-                prefix = value[:10] + "..." if len(value) > 10 else value
-                return {
-                    "authenticated": True,
-                    "key_prefix": prefix,
-                    "config_path": str(config_path),
-                    "api_url": api_url,
-                }
+    key_prefix = ""
+    org_name = ""
+    user_email = ""
 
-    return {"authenticated": False}
+    for line in lines:
+        stripped = line.rstrip("\n").lstrip()
+        if stripped.startswith("platform_api_key:"):
+            value = stripped.partition(":")[2].strip().strip('"').strip("'")
+            if value and value != '""':
+                key_prefix = value[:10] + "..." if len(value) > 10 else value
+        elif stripped.startswith("platform_org_name:"):
+            org_name = stripped.partition(":")[2].strip().strip('"').strip("'")
+        elif stripped.startswith("platform_user_email:"):
+            user_email = stripped.partition(":")[2].strip().strip('"').strip("'")
+
+    if not key_prefix:
+        return {"authenticated": False}
+
+    result: dict[str, object] = {
+        "authenticated": True,
+        "key_prefix": key_prefix,
+        "config_path": str(config_path),
+        "api_url": api_url,
+    }
+    if org_name:
+        result["org_name"] = org_name
+    if user_email:
+        result["user_email"] = user_email
+    return result
 
 
 # ── CLI entry points (called from server subcommand dispatch) ─────────
@@ -433,11 +448,18 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
         if selected:
             print(f"  {DIM}Organization ID: {selected.get('id', 'unknown')}{NC}")
 
-    # Save API key to config
+    # Save API key + metadata to config
     api_key = result.get("api_key", "")
     if api_key and isinstance(api_key, str):
         config_path.parent.mkdir(parents=True, exist_ok=True)
         _save_api_key(config_path, api_key)
+        # Also save org_name and user_email for `auth status`
+        org_name = str(result.get("org_name", ""))
+        user_email = str(result.get("user_email", ""))
+        if org_name:
+            _save_config_field(config_path, "platform_org_name", org_name)
+        if user_email:
+            _save_config_field(config_path, "platform_user_email", user_email)
         print(f"\n  {GREEN}\u2713{NC} API key saved to {config_path}")
     else:
         print(f"\n  {YELLOW}No API key in response{NC}")
@@ -461,12 +483,43 @@ def run_auth_status(config_path: Path, api_url: str) -> int:
     status = device_auth_status(config_path, api_url)
     if status.get("authenticated"):
         print(f"  {GREEN}\u2713{NC} Authenticated")
-        print(f"    Key: {status.get('key_prefix', '?')}")
+        print(f"    Key:   {status.get('key_prefix', '?')}")
+        org = status.get("org_name")
+        email = status.get("user_email")
+        if org:
+            print(f"    Org:   {org}")
+        if email:
+            print(f"    Email: {email}")
         print(f"    Config: {config_path}")
     else:
         print(f"  {YELLOW}Not authenticated{NC}")
         print(f"    Run: trw-mcp auth login")
     return 0
+
+
+def _save_config_field(config_path: Path, key: str, value: str) -> None:
+    """Write or update a single field in config YAML."""
+    field_re = re.compile(rf"^(\s*)({re.escape(key)})\s*:\s*(.*)$")
+    lines = _read_config_lines(config_path)
+    if lines is None:
+        config_path.write_text(f'{key}: "{value}"\n', encoding="utf-8")
+        return
+
+    new_lines: list[str] = []
+    replaced = False
+    for line in lines:
+        m = field_re.match(line.rstrip("\n"))
+        if m:
+            indent = m.group(1)
+            new_lines.append(f'{indent}{key}: "{value}"\n')
+            replaced = True
+        else:
+            new_lines.append(line if line.endswith("\n") else line + "\n")
+
+    if not replaced:
+        new_lines.append(f'{key}: "{value}"\n')
+
+    config_path.write_text("".join(new_lines), encoding="utf-8")
 
 
 def _save_api_key(config_path: Path, api_key: str) -> None:
