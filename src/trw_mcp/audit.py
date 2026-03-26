@@ -13,6 +13,10 @@ import json
 import os
 from collections import Counter
 from datetime import datetime, timezone
+
+import structlog
+
+logger = structlog.get_logger(__name__)
 from pathlib import Path
 from typing import cast
 
