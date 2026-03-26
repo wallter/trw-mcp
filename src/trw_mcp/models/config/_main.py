@@ -11,7 +11,7 @@ PRD-CORE-071 Phase 1: Domain sub-configs provide type-narrowed access
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Literal
+from typing import Literal, TypeVar
 
 import structlog
 from pydantic import Field, SecretStr
@@ -38,6 +38,8 @@ from trw_mcp.models.config._sub_models import (
     TelemetryConfig,
     TrustConfig,
 )
+
+_SubT = TypeVar("_SubT")
 
 
 class TRWConfig(BaseSettings):
@@ -693,53 +695,49 @@ class TRWConfig(BaseSettings):
     # Type-narrowed access: ``config.build.build_check_enabled``
     # Flat access preserved: ``config.build_check_enabled``
 
+    def _sub_config(self, cls: type[_SubT]) -> _SubT:
+        """Project flat TRWConfig fields onto a domain sub-config type."""
+        return cls(**{name: getattr(self, name) for name in cls.model_fields if hasattr(self, name)})
+
     @cached_property
     def build(self) -> BuildConfig:
         """Build verification and mutation testing sub-config."""
-        return BuildConfig(**{name: getattr(self, name) for name in BuildConfig.model_fields if hasattr(self, name)})
+        return self._sub_config(BuildConfig)
 
     @cached_property
     def memory(self) -> MemoryConfig:
         """Learning storage and retrieval sub-config."""
-        return MemoryConfig(**{name: getattr(self, name) for name in MemoryConfig.model_fields if hasattr(self, name)})
+        return self._sub_config(MemoryConfig)
 
     @cached_property
     def telemetry_settings(self) -> TelemetryConfig:
         """Telemetry and OTEL sub-config (avoids ``telemetry`` field conflict)."""
-        return TelemetryConfig(
-            **{name: getattr(self, name) for name in TelemetryConfig.model_fields if hasattr(self, name)}
-        )
+        return self._sub_config(TelemetryConfig)
 
     @cached_property
     def orchestration(self) -> OrchestrationConfig:
         """Wave/shard orchestration sub-config."""
-        return OrchestrationConfig(
-            **{name: getattr(self, name) for name in OrchestrationConfig.model_fields if hasattr(self, name)}
-        )
+        return self._sub_config(OrchestrationConfig)
 
     @cached_property
     def scoring(self) -> ScoringConfig:
         """Scoring weights and decay parameters sub-config."""
-        return ScoringConfig(
-            **{name: getattr(self, name) for name in ScoringConfig.model_fields if hasattr(self, name)}
-        )
+        return self._sub_config(ScoringConfig)
 
     @cached_property
     def trust(self) -> TrustConfig:
         """Progressive trust model sub-config."""
-        return TrustConfig(**{name: getattr(self, name) for name in TrustConfig.model_fields if hasattr(self, name)})
+        return self._sub_config(TrustConfig)
 
     @cached_property
     def ceremony_feedback(self) -> CeremonyFeedbackConfig:
         """Self-improving ceremony feedback sub-config."""
-        return CeremonyFeedbackConfig(
-            **{name: getattr(self, name) for name in CeremonyFeedbackConfig.model_fields if hasattr(self, name)}
-        )
+        return self._sub_config(CeremonyFeedbackConfig)
 
     @cached_property
     def paths(self) -> PathsConfig:
         """Directory structure and path defaults sub-config."""
-        return PathsConfig(**{name: getattr(self, name) for name in PathsConfig.model_fields if hasattr(self, name)})
+        return self._sub_config(PathsConfig)
 
     @property
     def effective_ceremony_mode(self) -> str:
