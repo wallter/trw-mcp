@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+
+import structlog
+
+logger = structlog.get_logger(__name__)
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
