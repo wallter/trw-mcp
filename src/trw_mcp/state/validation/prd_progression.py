@@ -212,7 +212,7 @@ def _sync_indices_if_progressed(
         aare_dir = prds_dir.parent
         sync_index_md(aare_dir / "INDEX.md", prds_dir, writer=writer)
         sync_roadmap_md(aare_dir / "ROADMAP.md", prds_dir, writer=writer)
-    except Exception:
+    except Exception:  # justified: fail-open — index sync is best-effort after PRD status update
         logger.debug("index_sync_failed", exc_info=True)
 
 
