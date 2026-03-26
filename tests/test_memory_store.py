@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import sys
-
-import pytest
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+import pytest
 
 if TYPE_CHECKING:
     from trw_mcp.state.memory_store import MemoryStore
