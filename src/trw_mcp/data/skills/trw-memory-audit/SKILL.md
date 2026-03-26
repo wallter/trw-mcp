@@ -71,6 +71,14 @@ When reporting, include:
 
 A project with 12 distinct domains and 448 entries should target ~50-70, not 30.
 
+## Observability Check
+
+As part of the audit, verify logging and observability health:
+- Confirm storage operations emit structured log events with `component`, `op`, and `outcome` fields
+- Check that error paths include sufficient context for diagnosis (error type, operation, affected resource)
+- Verify no sensitive data (API keys, tokens, credentials) appears in learning summaries or details
+- Flag learning entries that reference file paths no longer present in the codebase
+
 ## Assertion Health Analysis (PRD-CORE-086)
 
 When auditing memory health, include an assertion analysis section:

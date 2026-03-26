@@ -28,7 +28,7 @@ Perform a structured code review using the FRAMEWORK.md quality rubric. Scores e
    - Read any PRD files referenced in commit messages or changed files
    - Call `trw_recall` with keywords from the change to find relevant learnings
 
-3. **Run build verification**: Call `trw_build_check(scope="full")` to confirm tests pass and mypy is clean.
+3. **Run build verification**: Call `trw_build_check(scope="full")` to confirm tests pass and type checking is clean.
 
 4. **Review each rubric dimension**:
 
@@ -42,7 +42,7 @@ Perform a structured code review using the FRAMEWORK.md quality rubric. Scores e
    - Are new/changed functions covered by tests?
    - Do tests verify behavior, not implementation details?
    - Are edge cases and error paths tested?
-   - Do tests use project fixtures from conftest.py?
+   - Do tests use shared project fixtures (e.g., conftest.py, test helpers)?
    - **Spec-based test review**: For each FR in the linked PRD:
      - Does at least one test assert the acceptance criterion (Given/When/Then)?
      - Does the test check response bodies, not just status codes or `is not None`?

@@ -141,8 +141,8 @@ fr_verdicts:
     title: "{FR title}"
     acceptance_criterion: "{exact text from PRD}"
     verdict: PASS|PARTIAL|FAIL|MISSING
-    implementation_file: "path/to/file.py:line"
-    test_file: "path/to/test.py:test_name"
+    implementation_file: "path/to/file:line"
+    test_file: "path/to/test_file:test_name"
     findings:
       - severity: P0|P1|P2
         issue: "Description of the gap"
