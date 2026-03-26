@@ -257,13 +257,11 @@ class TestSkills:
         "trw-learn",
         "trw-memory-audit",
         "trw-memory-optimize",
-        "trw-monorepo-sync",
         "trw-prd-groom",
         "trw-prd-new",
         "trw-prd-ready",
         "trw-prd-review",
         "trw-project-health",
-        "trw-release",
         "trw-review-pr",
         "trw-security-check",
         "trw-simplify",
@@ -1064,7 +1062,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
-        assert len(skills) == 26
+        assert len(skills) == 24
         assert len(agents) == 18
         assert len(hooks) > 0
 
