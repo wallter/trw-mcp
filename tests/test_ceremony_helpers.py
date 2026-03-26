@@ -128,7 +128,7 @@ class TestPerformSessionRecalls:
                 return_value=mock_entries,
             ),
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             learnings, auto_recalled, extra = perform_session_recalls(
                 trw_dir,
@@ -168,7 +168,7 @@ class TestPerformSessionRecalls:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=mock_recall),
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             learnings, _, extra = perform_session_recalls(
                 trw_dir,
@@ -195,7 +195,7 @@ class TestPerformSessionRecalls:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=mock_entries),
             patch("trw_mcp.state.memory_adapter.update_access_tracking", mock_update),
-            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             perform_session_recalls(trw_dir, "", config, reader)
 

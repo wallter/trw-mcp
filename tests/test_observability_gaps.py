@@ -268,7 +268,7 @@ class TestDistinctEventNames:
         mock_reader.exists.return_value = False
         mock_reader.read_jsonl.return_value = []
 
-        with patch("trw_mcp.tools._ceremony_helpers.logger") as mock_logger:
+        with patch("trw_mcp.tools._delivery_helpers.logger") as mock_logger:
             check_delivery_gates(run_dir, mock_reader)
 
         warning_calls = mock_logger.warning.call_args_list
@@ -282,26 +282,36 @@ class TestDistinctEventNames:
     def test_all_event_names_unique_across_helpers(self) -> None:
         """Verify no two except blocks share the same event name.
 
-        We read the source and check that all logged event names are unique.
+        We read the source of all ceremony helper modules and check that
+        all logged event names are unique.
         """
         import ast
 
-        source_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools" / "_ceremony_helpers.py"
-        source = source_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tools_dir = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools"
+        helper_files = [
+            tools_dir / "_ceremony_helpers.py",
+            tools_dir / "_session_recall_helpers.py",
+            tools_dir / "_delivery_helpers.py",
+        ]
 
         # Find all string arguments to logger.warning() and logger.debug() calls
         event_names: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Attribute):
-                    if (
-                        isinstance(node.func.value, ast.Name)
-                        and node.func.value.id == "logger"
-                        and node.func.attr in ("warning", "debug", "info", "error")
-                    ):
-                        if node.args and isinstance(node.args[0], ast.Constant):
-                            event_names.append(str(node.args[0].value))
+        for source_path in helper_files:
+            if not source_path.exists():
+                continue
+            source = source_path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Attribute):
+                        if (
+                            isinstance(node.func.value, ast.Name)
+                            and node.func.value.id == "logger"
+                            and node.func.attr in ("warning", "debug", "info", "error")
+                        ):
+                            if node.args and isinstance(node.args[0], ast.Constant):
+                                event_names.append(str(node.args[0].value))
 
         # Check for duplicates among maintenance-related event names
         maintenance_events = [n for n in event_names if "maintenance" in n or "failed" in n]
@@ -312,28 +322,37 @@ class TestDistinctEventNames:
     def test_all_failure_blocks_use_warning_level(self) -> None:
         """Verify all failure except blocks use logger.warning, not debug.
 
-        We read the source and check that no 'maintenance_*_failed' events
-        use logger.debug.
+        We read the source of all ceremony helper modules and check that
+        no 'maintenance_*_failed' events use logger.debug.
         """
         import ast
 
-        source_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools" / "_ceremony_helpers.py"
-        source = source_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tools_dir = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools"
+        helper_files = [
+            tools_dir / "_ceremony_helpers.py",
+            tools_dir / "_session_recall_helpers.py",
+            tools_dir / "_delivery_helpers.py",
+        ]
 
         debug_failures: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Attribute):
-                    if (
-                        isinstance(node.func.value, ast.Name)
-                        and node.func.value.id == "logger"
-                        and node.func.attr == "debug"
-                    ):
-                        if node.args and isinstance(node.args[0], ast.Constant):
-                            val = str(node.args[0].value)
-                            if "failed" in val and val != "untracked_file_check_failed":
-                                debug_failures.append(val)
+        for source_path in helper_files:
+            if not source_path.exists():
+                continue
+            source = source_path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Attribute):
+                        if (
+                            isinstance(node.func.value, ast.Name)
+                            and node.func.value.id == "logger"
+                            and node.func.attr == "debug"
+                        ):
+                            if node.args and isinstance(node.args[0], ast.Constant):
+                                val = str(node.args[0].value)
+                                if "failed" in val and val != "untracked_file_check_failed":
+                                    debug_failures.append(val)
 
         assert debug_failures == [], (
             f"These failure events use logger.debug instead of logger.warning: {debug_failures}"

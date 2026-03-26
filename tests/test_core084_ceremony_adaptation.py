@@ -185,7 +185,7 @@ class TestRecallCappingLightMode:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=mock_recall),
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             learnings, _auto, _extra = perform_session_recalls(
                 trw_dir,
@@ -229,7 +229,7 @@ class TestRecallCappingLightMode:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=mock_recall),
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             learnings, _auto, _extra = perform_session_recalls(
                 trw_dir,
@@ -288,7 +288,7 @@ class TestRecallCappingLightMode:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=mock_recall),
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             learnings, _auto, _extra = perform_session_recalls(
                 trw_dir,
@@ -481,7 +481,7 @@ class TestSessionStartLightMode:
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.tools._ceremony_helpers.log_recall_receipt"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             result: dict[str, object] = tools["trw_session_start"].fn(query="")
         return result
