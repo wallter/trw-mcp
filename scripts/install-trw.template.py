@@ -1388,23 +1388,23 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
     if not device_code or not user_code:
         return None
 
-    # Step 2: Display and open browser
+    # Step 2: Try browser, show fallback URL with code embedded
     if interactive:
+        browser_opened = False
         try:
-            _wb.open(verification_uri_complete)
+            browser_opened = _wb.open(verification_uri_complete)
         except Exception:
             pass
 
-        m, s = divmod(expires_in, 60)
         print()
-        print(f"  {BOLD}To authenticate, open this URL:{NC}")
-        print()
-        print(f"    {GREEN}{verification_uri}{NC}")
-        print()
-        print(f"  {BOLD}Then enter this code:{NC}")
-        print()
-        print(f"    {GREEN}{BOLD}{user_code}{NC}")
-        print()
+        if browser_opened:
+            print(f"  {GREEN}\u2713{NC} Browser opened \u2014 approve the request to continue")
+            print(f"  {DIM}Verify this code matches: {BOLD}{user_code}{NC}")
+        else:
+            print(f"  {BOLD}Open this URL to authenticate:{NC}")
+            print()
+            print(f"    {GREEN}{verification_uri_complete}{NC}")
+            print()
 
     # Step 3: Poll for token
     deadline = _time.monotonic() + expires_in

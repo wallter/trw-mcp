@@ -137,9 +137,8 @@ def device_auth_login(api_url: str, interactive: bool = True) -> dict[str, objec
             print(f"\n  {RED}Error:{NC} Invalid device code response", file=sys.stderr)
         return None
 
-    # Step 2: Display verification info
+    # Step 2: Try browser, show fallback URL with code embedded
     if interactive:
-        # Try to open browser
         browser_opened = False
         try:
             browser_opened = webbrowser.open(verification_uri_complete)
@@ -147,18 +146,14 @@ def device_auth_login(api_url: str, interactive: bool = True) -> dict[str, objec
             pass
 
         print()
-        print(f"  {BOLD}To authenticate, open this URL:{NC}")
-        print()
-        print(f"    {GREEN}{verification_uri}{NC}")
-        print()
-        print(f"  {BOLD}Then enter this code:{NC}")
-        print()
-        print(f"    {GREEN}{BOLD}{user_code}{NC}")
-        print()
         if browser_opened:
-            print(f"  {DIM}(Browser opened automatically){NC}")
+            print(f"  {GREEN}\u2713{NC} Browser opened — approve the request to continue")
+            print(f"  {DIM}Verify this code matches: {BOLD}{user_code}{NC}")
         else:
-            print(f"  {YELLOW}(Could not open browser automatically){NC}")
+            print(f"  {BOLD}Open this URL to authenticate:{NC}")
+            print()
+            print(f"    {GREEN}{verification_uri_complete}{NC}")
+            print()
 
     # Step 3: Poll for token
     deadline = time.monotonic() + expires_in
