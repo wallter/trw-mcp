@@ -12,7 +12,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.models.config import get_config
+
+logger = structlog.get_logger(__name__)
 
 # Strip ANSI escape codes from subprocess output (PRD-CORE-023 RISK-009)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
