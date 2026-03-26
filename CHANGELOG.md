@@ -2,6 +2,17 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.31.0] — 2026-03-25
+
+### Added
+
+- **Device auth CLI client** (`cli/auth.py`) — RFC 8628 device authorization flow using only Python stdlib (`urllib.request`, `webbrowser`). Includes `device_auth_login()` with browser auto-open, polling with spinner/countdown, `slow_down`/`expired_token`/`access_denied` handling, exponential backoff on network errors, and `select_organization()` for multi-org users. (PRD-CORE-087)
+- **`trw-mcp auth` commands** — `login` (device flow), `logout` (remove API key), `status` (show org/email/key prefix). Wired into CLI dispatch via `_subcommands.py` and `_cli.py`.
+- **Installer device auth integration** — `_prompt_api_key()` in `install-trw.template.py` now tries device auth first, falls back to manual key paste. Accepts `trw_dk_` key prefix. New `--skip-auth` flag to skip platform connection entirely.
+- **Bootstrap script** (`scripts/install.sh`) — lightweight bash script for `curl -fsSL https://trwframework.com/install.sh | bash`. Checks Python 3.10+, `pip install trw-mcp` with fallbacks, `init-project`, optional device auth. Supports `--api-key`, `--skip-auth`, and `TRW_API_KEY` env var for CI/CD.
+- **Config persistence** — `run_auth_login` saves `platform_org_name` and `platform_user_email` alongside `platform_api_key` in `.trw/config.yaml`. `auth status` displays all three.
+- **52 new tests** — 38 CLI tests (`test_cli_auth.py`) + 14 subcommand tests (`test_cli_auth_subcommand.py`) covering polling, org selector, config operations, and command dispatch.
+
 ## [0.30.0] — 2026-03-25
 
 ### Added
