@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import contextlib
 import json
-import math
 import re
 from collections import OrderedDict
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
@@ -21,85 +20,24 @@ from trw_memory.lifecycle.tiers import TierSweepResult as TierSweepResult
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.models.typed_dicts import TierDistribution
-from trw_mcp.scoring import _days_since_access
-from trw_mcp.state._helpers import iter_yaml_entry_files
-from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
+# Re-export compute_importance_score so that existing test patches at
+# ``trw_mcp.state.tiers.compute_importance_score`` continue to resolve.
+from trw_mcp.state._tier_scoring import (  # noqa: E402
+    compute_importance_score as compute_importance_score,
+)
+
+# Import sweep functions — assigned to TierManager at the bottom of this module.
+from trw_mcp.state._tier_sweep import (  # noqa: E402
+    _sweep_cold_to_purge as _sweep_cold_to_purge_impl,
+    _sweep_hot_to_warm as _sweep_hot_to_warm_impl,
+    _sweep_warm_to_cold as _sweep_warm_to_cold_impl,
+    sweep as _sweep_impl,
+)
+
 logger = structlog.get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Importance scoring (FR05)
-# NOTE: parallel implementation exists in trw_memory.lifecycle.tiers —
-# field names differ (impact vs importance, TRWConfig vs MemoryConfig).
-# ---------------------------------------------------------------------------
-
-
-def compute_importance_score(
-    entry: dict[str, object],
-    query_tokens: list[str],
-    query_embedding: list[float] | None = None,
-    entry_embedding: list[float] | None = None,
-    *,
-    config: TRWConfig | None = None,
-) -> float:
-    """Compute a composite importance score for a learning entry.
-
-    Formula: score = w1*relevance + w2*recency + w3*importance
-
-    Weights are normalized if they don't sum to 1.0.
-
-    Args:
-        entry: Learning entry as a dict (from YAML).
-        query_tokens: Tokenized query for token-overlap fallback.
-        query_embedding: Optional dense query vector for cosine similarity.
-        entry_embedding: Optional dense entry vector for cosine similarity.
-        config: TRWConfig for weights and decay settings. Uses get_config() if None.
-
-    Returns:
-        Composite importance score in [0.0, 1.0].
-    """
-    cfg = config or get_config()
-
-    w1 = cfg.memory_score_w1
-    w2 = cfg.memory_score_w2
-    w3 = cfg.memory_score_w3
-
-    # Normalize weights
-    total_w = w1 + w2 + w3
-    if total_w > 0 and abs(total_w - 1.0) > 1e-9:
-        w1 /= total_w
-        w2 /= total_w
-        w3 /= total_w
-
-    # Relevance: cosine similarity when both embeddings present, else token overlap
-    if query_embedding is not None and entry_embedding is not None:
-        relevance = max(0.0, cosine_similarity(query_embedding, entry_embedding))
-    else:
-        # Token overlap ratio fallback
-        entry_text = str(entry.get("summary", "")).lower() + " " + str(entry.get("detail", "")).lower()
-        entry_tokens = set(entry_text.split())
-        query_set = {t.lower() for t in query_tokens}
-        if query_set:
-            relevance = len(query_set & entry_tokens) / len(query_set)
-        else:
-            relevance = 0.0
-
-    # Recency: exponential decay based on days since access
-    today = datetime.now(tz=timezone.utc).date()
-    days = _days_since_access(entry, today)
-    half_life = cfg.learning_decay_half_life_days
-    decay_rate = math.log(2) / half_life if half_life > 0 else 0.0
-    recency = math.exp(-decay_rate * days)
-
-    # Importance: the entry's Bayesian-calibrated impact field
-    importance = float(str(entry.get("impact", 0.5)))
-    importance = max(0.0, min(1.0, importance))
-
-    score = w1 * relevance + w2 * recency + w3 * importance
-    return max(0.0, min(1.0, score))
 
 
 # ---------------------------------------------------------------------------
@@ -629,269 +567,10 @@ class TierManager:
         return distribution
 
     # -----------------------------------------------------------------------
-    # Sweep — FR04 / FR06
+    # Sweep — FR04 / FR06  (implementations in _tier_sweep.py)
     # -----------------------------------------------------------------------
 
-    def _sweep_hot_to_warm(
-        self,
-        cfg: TRWConfig,
-        today: date,
-    ) -> tuple[int, int]:
-        """Phase 1: evict stale hot-tier entries into warm tier.
-
-        Identifies entries whose last_accessed_at exceeds
-        ``memory_hot_ttl_days``, moves them to the warm tier,
-        and flushes last_accessed_at to disk.
-
-        Args:
-            cfg: Resolved TRWConfig for threshold values.
-            today: Reference date for staleness checks.
-
-        Returns:
-            Tuple of (demoted, errors) counts.
-        """
-        demoted = 0
-        errors = 0
-
-        stale_hot_ids: list[str] = []
-        for entry_id, entry in list(self._hot.items()):
-            days = _days_since_access(entry.model_dump(), today)
-            if days > cfg.memory_hot_ttl_days:
-                stale_hot_ids.append(entry_id)
-
-        for entry_id in stale_hot_ids:
-            try:
-                evicted = self._hot.pop(entry_id)
-                self.warm_add(entry_id, evicted.model_dump(), None)
-                self._flush_last_accessed(entry_id)
-                demoted += 1
-                logger.debug("sweep_hot_to_warm", entry_id=entry_id)
-            except Exception:  # per-item error handling: one failed eviction must not abort the sweep  # noqa: PERF203
-                logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
-                errors += 1
-
-        return demoted, errors
-
-    def _sweep_warm_to_cold(
-        self,
-        cfg: TRWConfig,
-        today: date,
-        entries_dir: Path,
-    ) -> tuple[int, int]:
-        """Phase 2: demote idle low-importance warm entries to cold archive.
-
-        PRD-FIX-033-FR05: Uses SQLite via ``list_active_learnings`` when
-        available, falling back to YAML glob on error.
-        Uses ``compute_importance_score`` (Stanford Generative Agents formula)
-        instead of raw impact for more nuanced tier transition decisions.
-
-        Args:
-            cfg: Resolved TRWConfig for threshold values.
-            today: Reference date for staleness checks.
-            entries_dir: Path to the warm-tier YAML entries directory.
-
-        Returns:
-            Tuple of (demoted, errors) counts.
-        """
-        demoted = 0
-        errors = 0
-
-        _used_sqlite = False
-        try:
-            from trw_mcp.state.memory_adapter import (
-                find_yaml_path_for_entry,
-                list_active_learnings,
-            )
-
-            active_entries = list_active_learnings(self._trw_dir)
-            for data in active_entries:
-                entry_id = str(data.get("id", ""))
-                if not entry_id:
-                    continue
-                try:
-                    days = _days_since_access(data, today)
-                    importance = compute_importance_score(data, [], config=cfg)
-                    if days > cfg.memory_cold_threshold_days and importance < 0.22:
-                        # Resolve YAML path for cold_archive
-                        yaml_file = find_yaml_path_for_entry(self._trw_dir, entry_id)
-                        if yaml_file is None:
-                            logger.warning(
-                                "sweep_warm_to_cold_no_yaml",
-                                entry_id=entry_id,
-                            )
-                            continue
-                        self.cold_archive(entry_id, yaml_file)
-                        demoted += 1
-                        logger.debug(
-                            "sweep_warm_to_cold",
-                            entry_id=entry_id,
-                            days=days,
-                            importance_score=importance,
-                        )
-                except Exception:
-                    logger.warning(
-                        "sweep_warm_to_cold_failed",
-                        entry_id=entry_id,
-                        exc_info=True,
-                    )
-                    errors += 1
-            _used_sqlite = True
-        except (ImportError, OSError, RuntimeError, ValueError, TypeError):
-            logger.warning(
-                "sqlite_read_fallback",
-                step="sweep_warm_to_cold",
-                reason="list_active_learnings failed",
-            )
-
-        if not _used_sqlite and entries_dir.exists():
-            # YAML fallback path (original implementation)
-            for yaml_file in iter_yaml_entry_files(entries_dir):
-                try:
-                    yaml_data = self._reader.read_yaml(yaml_file)
-                    entry_id = str(yaml_data.get("id", ""))
-                    if not entry_id:
-                        continue
-                    # Skip non-active entries
-                    if str(yaml_data.get("status", "active")) != "active":
-                        continue
-                    days = _days_since_access(yaml_data, today)
-                    importance = compute_importance_score(yaml_data, [], config=cfg)
-                    if days > cfg.memory_cold_threshold_days and importance < 0.22:
-                        self.cold_archive(entry_id, yaml_file)
-                        demoted += 1
-                        logger.debug(
-                            "sweep_warm_to_cold",
-                            entry_id=entry_id,
-                            days=days,
-                            importance_score=importance,
-                        )
-                except Exception:
-                    logger.warning(
-                        "sweep_warm_to_cold_failed",
-                        path=str(yaml_file),
-                        exc_info=True,
-                    )
-                    errors += 1
-
-        return demoted, errors
-
-    def _sweep_cold_to_purge(
-        self,
-        cfg: TRWConfig,
-        today: date,
-        purge_audit_path: Path,
-    ) -> tuple[int, int]:
-        """Phase 3: purge expired cold-tier entries past retention.
-
-        Scans the cold archive for entries idle longer than
-        ``memory_retention_days`` with importance below 0.1. Writes
-        an audit record to ``purge_audit_path`` before deletion.
-
-        Uses ``compute_importance_score`` for purge decisions.
-
-        Args:
-            cfg: Resolved TRWConfig for threshold values.
-            today: Reference date for staleness checks.
-            purge_audit_path: JSONL file for purge audit records.
-
-        Returns:
-            Tuple of (purged, errors) counts.
-        """
-        purged = 0
-        errors = 0
-
-        cold_base = self._cold_dir()
-        if cold_base.exists():
-            for yaml_file in sorted(cold_base.rglob("*.yaml")):
-                try:
-                    data = self._reader.read_yaml(yaml_file)
-                    entry_id = str(data.get("id", ""))
-                    days = _days_since_access(data, today)
-                    importance = compute_importance_score(data, [], config=cfg)
-                    if days > cfg.memory_retention_days and importance < 0.1:
-                        # Append to purge audit log before deleting
-                        audit_record: dict[str, object] = {
-                            "entry_id": entry_id,
-                            "purged_at": datetime.now(timezone.utc).isoformat(),
-                            "days_idle": days,
-                            "importance_score": importance,
-                            "impact": float(str(data.get("impact", 0.5))),
-                            "summary": str(data.get("summary", "")),
-                        }
-                        purge_audit_path.parent.mkdir(parents=True, exist_ok=True)
-                        with purge_audit_path.open("a", encoding="utf-8") as fh:
-                            fh.write(json.dumps(audit_record) + "\n")
-                        yaml_file.unlink(missing_ok=True)
-                        purged += 1
-                        logger.debug(
-                            "sweep_cold_purge",
-                            entry_id=entry_id,
-                            days=days,
-                            importance_score=importance,
-                        )
-                except Exception:  # per-item error handling: skip unreadable cold files, continue purge sweep  # noqa: PERF203
-                    logger.warning(
-                        "sweep_cold_purge_failed",
-                        path=str(yaml_file),
-                        exc_info=True,
-                    )
-                    errors += 1
-
-        return purged, errors
-
-    def sweep(self) -> TierSweepResult:
-        """Execute lifecycle sweep across all tiers.
-
-        Performs four transition checks in order:
-        1. Hot → Warm: entries whose last_accessed_at exceeds memory_hot_ttl_days.
-        2. Warm → Cold: entries idle > memory_cold_threshold_days with impact < 0.5.
-        3. Cold → Purge: entries idle > memory_retention_days with impact < 0.3.
-        4. Cold → Warm is handled on-demand by cold_promote().
-
-        All thresholds are read from get_config() at call time (FR06).
-        Per-entry failures are logged and counted in ``errors``; the sweep
-        continues with remaining entries.
-
-        Returns:
-            TierSweepResult with counts of promoted, demoted, purged, and errors.
-        """
-        cfg = get_config()
-        today = datetime.now(tz=timezone.utc).date()
-
-        entries_dir = self._trw_dir / cfg.learnings_dir / cfg.entries_dir
-        purge_audit_path = self._trw_dir / "memory" / "purge_audit.jsonl"
-
-        # Phase 1: Hot → Warm
-        hot_demoted, hot_errors = self._sweep_hot_to_warm(cfg, today)
-
-        # Phase 2: Warm → Cold
-        warm_demoted, warm_errors = self._sweep_warm_to_cold(
-            cfg,
-            today,
-            entries_dir,
-        )
-
-        # Phase 3: Cold → Purge
-        purged, purge_errors = self._sweep_cold_to_purge(
-            cfg,
-            today,
-            purge_audit_path,
-        )
-
-        demoted = hot_demoted + warm_demoted
-        errors = hot_errors + warm_errors + purge_errors
-        promoted = 0
-
-        logger.info(
-            "tier_sweep_complete",
-            promoted=promoted,
-            demoted=demoted,
-            purged=purged,
-            errors=errors,
-        )
-        return TierSweepResult(
-            promoted=promoted,
-            demoted=demoted,
-            purged=purged,
-            errors=errors,
-        )
+    _sweep_hot_to_warm = _sweep_hot_to_warm_impl
+    _sweep_warm_to_cold = _sweep_warm_to_cold_impl
+    _sweep_cold_to_purge = _sweep_cold_to_purge_impl
+    sweep = _sweep_impl
