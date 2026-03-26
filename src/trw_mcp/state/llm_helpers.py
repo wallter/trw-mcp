@@ -10,7 +10,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.clients.llm import LLMClient
+
+logger = structlog.get_logger(__name__)
 
 __all__ = ["LLMClient"]
 
