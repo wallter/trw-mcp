@@ -10,12 +10,13 @@ All notable changes to the TRW MCP server package.
   - `trw_learn()` accepts optional `assertions` parameter (list of grep/glob assertion dicts)
   - `trw_learn_update()` can add, modify, or remove assertions on existing learnings
   - `trw_recall()` runs lazy verification on recalled entries with assertions; failing assertions get a configurable utility score penalty (default -0.15)
+  - `trw_session_start()` includes assertion health summary (`passing`, `failing`, `stale` counts)
   - `rank_by_utility()` applies `assertion_penalties` dict for score adjustments
   - `TRWConfig`: new `assertion_failure_penalty` (0.15) and `assertion_stale_threshold_days` (30) fields
-  - Full threading: `LearningParams` → `store_learning()` → `_learning_to_memory_entry()` → `_memory_to_learning_dict()`
-- **PRD assertion support** — PRD template includes optional `Assertions:` subsection per FR
-- **Skill prompt updates** — 6 skills updated with assertion guidance: `/trw-prd-groom`, `/trw-audit`, `/trw-memory-audit`, `/trw-memory-optimize`, `/trw-exec-plan`
-- **17 new tests** across 3 test files
+  - `LearningParams`, `store_learning()`, `_learning_to_memory_entry()`, `_memory_to_learning_dict()` all thread assertions end-to-end
+- **PRD assertion support** — PRD template includes optional `Assertions:` subsection per FR; `trw_prd_validate` awards bonus traceability points for assertion coverage
+- **Skill prompt updates** — 6 skills updated with assertion guidance: `/trw-prd-groom` (suggestion), `/trw-audit` (evidence), `/trw-memory-audit` (health reporting), `/trw-memory-optimize` (verification wave with subagent investigation), `/trw-exec-plan` (task verification steps)
+- **17 new tests** across 3 test files covering learn/update/recall assertion threading, penalty scoring, and lifecycle.
 
 ---
 

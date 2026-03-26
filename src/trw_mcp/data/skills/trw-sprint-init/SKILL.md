@@ -19,12 +19,37 @@ Initialize a new sprint by selecting PRDs, creating a sprint planning document, 
 
 Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate the PRD directory. The INDEX.md and sprints directories are siblings of the prds directory under the same parent.
 
+## Sprint Number Auto-Detection
+
+Automatically determine the next sprint number — never ask the user for it:
+
+1. List all sprint docs: `ls sprints/active/sprint-*.md sprints/completed/sprint-*.md archive/sprints/sprint-*.md 2>/dev/null`
+2. Extract sprint numbers from filenames using regex: `sprint-(\d+)`
+3. Take the maximum number found and add 1 → that's the new sprint number
+4. If the user provides a sprint number in `$ARGUMENTS` (e.g., `/trw-sprint-init "Sprint 76: Feature X"`), use that instead
+
+This eliminates the manual step of scanning directories to find the next number.
+
 ## Pre-flight: Prior Sprint Verification
 
 Before creating a new sprint, check that the prior sprint (N-1) has been properly archived:
 1. Look for `sprint-{N-1}*.md` in `sprints/completed/` or `archive/sprints/`
 2. If the prior sprint doc is still in `sprints/active/` or `sprints/planned/`, **warn** the user: "Sprint N-1 has not been completed yet. Run `/trw-sprint-finish` first, or acknowledge this gap."
 3. This is a **warning**, not a blocker -- the user can proceed if they acknowledge.
+
+## Parallel Sprint Detection
+
+When another sprint is active, automatically assess file overlap:
+
+1. Read the active sprint doc(s) from `sprints/active/`
+2. Extract the PRD IDs from each active sprint's "PRD Assignments" table
+3. Read the Key Files table from each active sprint's PRDs
+4. Compare against the candidate PRDs' Key Files
+5. Report overlap:
+   - **0-5% overlap**: "Safe to run in parallel — independent file ownership"
+   - **5-20% overlap**: "Caution — partial overlap in: {files}. Consider sequential execution."
+   - **>20% overlap**: "High conflict risk — these sprints modify the same modules. Recommend completing Sprint N before starting."
+6. This is advisory — the user decides whether to proceed.
 
 ## Workflow
 
