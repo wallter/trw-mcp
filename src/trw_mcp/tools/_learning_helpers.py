@@ -45,6 +45,7 @@ class LearningParams:
     source_type: str
     source_identity: str
     shard_id: str | None = None
+    assertions: list[dict[str, str]] | None = None
 
 
 # Auto-generated noise prefixes that should never be persisted as learnings.

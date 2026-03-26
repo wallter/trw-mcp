@@ -21,6 +21,7 @@ def rank_by_utility(
     matches: list[dict[str, object]],
     query_tokens: list[str],
     lambda_weight: float,
+    assertion_penalties: dict[str, float] | None = None,
 ) -> list[dict[str, object]]:
     """Re-rank matched learnings by combined relevance + utility score.
 
@@ -30,6 +31,8 @@ def rank_by_utility(
         matches: List of matched learning entry dicts.
         query_tokens: Lowercased query tokens for relevance scoring.
         lambda_weight: Blend factor. 0.0 = pure relevance, 1.0 = pure utility.
+        assertion_penalties: Optional mapping of entry ID to penalty amount
+            for failing assertions (PRD-CORE-086 FR06).
 
     Returns:
         Sorted list (highest combined score first).
@@ -60,6 +63,12 @@ def rank_by_utility(
         utility = _entry_utility(entry, today)
 
         combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
+
+        # Apply assertion failure penalty (PRD-CORE-086 FR06)
+        if assertion_penalties:
+            entry_id = str(entry.get("id", ""))
+            if entry_id in assertion_penalties:
+                combined = max(0.0, combined - assertion_penalties[entry_id])
 
         scored.append((combined, entry))
 

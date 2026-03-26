@@ -9,7 +9,7 @@ External code should import from ``memory_adapter`` (the public facade).
 
 from __future__ import annotations
 
-from trw_memory.models.memory import MemoryEntry, MemoryStatus
+from trw_memory.models.memory import Assertion, MemoryEntry, MemoryStatus
 
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
@@ -56,6 +56,9 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
             "shard_id": entry.metadata.get("shard_id", None),
         }
     )
+    # Include assertions when present (PRD-CORE-086)
+    if entry.assertions:
+        base["assertions"] = [a.model_dump() for a in entry.assertions]
     return base
 
 
@@ -70,6 +73,7 @@ def _learning_to_memory_entry(
     shard_id: str | None = None,
     source_type: str = "agent",
     source_identity: str = "",
+    assertions: list[dict[str, str]] | None = None,
 ) -> MemoryEntry:
     """Build a :class:`MemoryEntry` from trw_learn parameters.
 
@@ -81,6 +85,12 @@ def _learning_to_memory_entry(
     metadata: dict[str, str] = {}
     if shard_id:
         metadata["shard_id"] = shard_id
+
+    # Validate and attach assertions (PRD-CORE-086)
+    assertion_objects: list[Assertion] = []
+    if assertions:
+        for a in assertions:
+            assertion_objects.append(Assertion.model_validate(a))
 
     return MemoryEntry(
         id=learning_id,
@@ -94,4 +104,5 @@ def _learning_to_memory_entry(
         namespace=_NAMESPACE,
         metadata=metadata,
         q_value=compute_initial_q_value(impact),
+        assertions=assertion_objects,
     )

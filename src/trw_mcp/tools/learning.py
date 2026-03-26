@@ -35,6 +35,9 @@ from trw_mcp.state.analytics import (
 )
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
+    get_backend,
+)
+from trw_mcp.state.memory_adapter import (
     list_active_learnings,
 )
 from trw_mcp.state.memory_adapter import (
@@ -181,6 +184,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         source_type: str = "agent",
         source_identity: str = "",
         consolidated_from: list[str] | None = None,
+        assertions: list[dict[str, str]] | None = None,
     ) -> LearnResultDict:
         """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
@@ -198,6 +202,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             source_type: Learning provenance — "human" or "agent".
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
             consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
+            assertions: Machine-verifiable assertions (PRD-CORE-086). Each dict has type, pattern, target.
         """
         # Input validation (PRD-QUAL-042-FR06): impact bounds
         impact = max(0.0, min(1.0, impact))
@@ -263,6 +268,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 shard_id=shard_id,
                 source_type=source_type,
                 source_identity=source_identity,
+                assertions=assertions,
             ),
             entries_dir,
             reader,
@@ -285,6 +291,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 shard_id=shard_id,
                 source_type=source_type,
                 source_identity=source_identity,
+                assertions=assertions,
             )
         except Exception:
             logger.warning(
@@ -378,6 +385,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         detail: str | None = None,
         impact: float | None = None,
         summary: str | None = None,
+        assertions: list[dict[str, str]] | None = None,
     ) -> dict[str, str]:
         """Keep your knowledge base accurate — mark resolved issues, retire obsolete gotchas, or refine details.
 
@@ -391,10 +399,26 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             detail: Updated detail text (replaces existing detail).
             impact: Updated impact score (0.0-1.0).
             summary: Updated summary text (replaces existing summary).
+            assertions: Replace assertions on this entry (PRD-CORE-086 FR12). Empty list removes all.
         """
         config = get_config()
         writer = FileStateWriter()
         trw_dir = resolve_trw_dir()
+
+        # Validate and store assertions via backend (PRD-CORE-086 FR12)
+        if assertions is not None:
+            from trw_memory.models.memory import Assertion
+
+            validated: list[Assertion] = [Assertion.model_validate(a) for a in assertions]
+            try:
+                backend = get_backend(trw_dir)
+                existing = backend.get(learning_id)
+                if existing is not None:
+                    existing.assertions = validated
+                    backend.update(learning_id, assertions=[a.model_dump() for a in validated])
+            except Exception:
+                logger.debug("assertion_update_failed", learning_id=learning_id, exc_info=True)
+
         result = adapter_update(
             trw_dir,
             learning_id=learning_id,
@@ -559,6 +583,70 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # Apply result cap
         if max_results > 0:
             ranked_learnings = ranked_learnings[:max_results]
+
+        # --- Assertion verification (PRD-CORE-086 FR06) ---
+        # Only verify entries in the final result set (post max_results cap)
+        if not use_compact:
+            assertion_penalties: dict[str, float] = {}
+            project_root_path: Path | None = None
+            try:
+                from trw_mcp.state._paths import resolve_project_root
+
+                project_root_path = resolve_project_root()
+            except Exception:
+                pass
+
+            if project_root_path:
+                try:
+                    from trw_memory.lifecycle.verification import verify_assertions
+                    from trw_memory.models.memory import Assertion
+
+                    for learning in ranked_learnings:
+                        raw_assertions = learning.get("assertions")
+                        if not raw_assertions or not isinstance(raw_assertions, list):
+                            continue
+                        try:
+                            assertions_list = [
+                                Assertion.model_validate(a)
+                                for a in raw_assertions
+                                if isinstance(a, dict)
+                            ]
+                            results = verify_assertions(assertions_list, project_root_path)
+
+                            passing = sum(1 for r in results if r.passed is True)
+                            failing = sum(1 for r in results if r.passed is False)
+                            stale = sum(1 for r in results if r.passed is None)
+
+                            learning["assertion_status"] = {
+                                "passing": passing,
+                                "failing": failing,
+                                "stale": stale,
+                                "details": [r.model_dump() for r in results],
+                            }
+
+                            if failing > 0:
+                                entry_id = str(learning.get("id", ""))
+                                penalty = config.assertion_failure_penalty * (
+                                    failing / len(results)
+                                )
+                                assertion_penalties[entry_id] = penalty
+
+                        except Exception:
+                            logger.debug(
+                                "assertion_verification_error",
+                                entry_id=str(learning.get("id", "")),
+                            )
+
+                    # Re-rank with assertion penalties if any were computed
+                    if assertion_penalties:
+                        ranked_learnings = rank_by_utility(
+                            ranked_learnings,
+                            query_tokens,
+                            config.recall_utility_lambda,
+                            assertion_penalties=assertion_penalties,
+                        )
+                except (ImportError, OSError):
+                    logger.debug("assertion_verification_unavailable", exc_info=True)
 
         # Strip to compact fields when requested
         if use_compact:

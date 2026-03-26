@@ -676,6 +676,12 @@ class TRWConfig(BaseSettings):
 
     semantic_checks_enabled: bool = True
 
+    # -- 60. Assertion verification (PRD-CORE-086) --
+    # Executable assertions on memory entries — verify knowledge is still true
+
+    assertion_failure_penalty: float = Field(default=0.15, ge=0.0, le=1.0, description="Utility score penalty for failing assertions")
+    assertion_stale_threshold_days: int = Field(default=30, ge=1, description="Days of consistent failure before auto-stale")
+
     # -- 59. Observation masking (Phase 1 depth) --
     # Reduce tool response verbosity in long sessions to conserve context budget
 
