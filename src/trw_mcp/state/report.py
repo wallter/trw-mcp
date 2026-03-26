@@ -194,7 +194,7 @@ def _parse_date(ts: str | None) -> str | None:
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ts).strftime("%Y-%m-%d")
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%Y-%m-%d")
     except (ValueError, TypeError):
         return None
 
@@ -294,3 +294,4 @@ def assemble_report(
         build=build,
         reversion_rate=round(reversion_rate, 4),
     )
+# NOTE: report.py already has inline Z→+00:00 fix; see _ts_diff_seconds above

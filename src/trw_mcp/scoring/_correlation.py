@@ -152,7 +152,7 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
                     ts_str = str(record.get("ts", ""))
                     if ts_str:
                         try:
-                            return _ensure_utc(datetime.fromisoformat(ts_str))
+                            return _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
                         except ValueError:
                             continue
             # Only check the most recent run directory
@@ -229,7 +229,7 @@ def correlate_recalls(
                 continue
         else:
             try:
-                receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str))
+                receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
             except ValueError:
                 continue
 

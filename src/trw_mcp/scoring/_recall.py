@@ -100,7 +100,7 @@ def utility_based_prune_candidates(
 
         created_str = str(data.get("created", ""))
         try:
-            created = date.fromisoformat(created_str)
+            created = date.fromisoformat(created_str.replace("Z", "+00:00"))
         except ValueError:
             continue
 

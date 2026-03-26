@@ -222,7 +222,7 @@ def scan_all_runs(
     # Apply since filter (validate ISO date format)
     if since:
         try:
-            datetime.fromisoformat(since)
+            datetime.fromisoformat(since.replace("Z", "+00:00"))
         except ValueError:
             logger.debug("analytics_since_invalid_format", since=since)
             parse_errors.append(f"since filter '{since}' is not a valid ISO date")
@@ -452,7 +452,7 @@ def _get_last_activity_timestamp(run_dir: Path) -> datetime | None:
         ts_str = str(record.get("ts", ""))
         if ts_str:
             try:
-                ts = datetime.fromisoformat(ts_str)
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 if latest is None or ts > latest:
@@ -526,7 +526,7 @@ def _is_run_stale(
     run_id = str(run_data.get("run_id", run_dir.name))
     started_at = _parse_run_id_timestamp(run_id)
     try:
-        run_dt = datetime.fromisoformat(started_at)
+        run_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
     except ValueError:
         return False
 

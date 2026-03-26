@@ -123,7 +123,7 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
         elapsed = ""
         if state.last_checkpoint_ts:
             try:
-                last = datetime.fromisoformat(state.last_checkpoint_ts)
+                last = datetime.fromisoformat(state.last_checkpoint_ts.replace("Z", "+00:00"))
                 now = datetime.now(timezone.utc)
                 mins = int((now - last).total_seconds() / 60)
                 if mins > 0:

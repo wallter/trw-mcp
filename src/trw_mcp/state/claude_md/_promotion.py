@@ -61,7 +61,7 @@ def collect_promotable_learnings(
 
                     from trw_mcp.scoring import apply_time_decay
 
-                    created_dt = _dt.fromisoformat(created_at_raw)
+                    created_dt = _dt.fromisoformat(created_at_raw.replace("Z", "+00:00"))
                     score = apply_time_decay(score, created_dt)
                 except (ValueError, ImportError):
                     logger.debug("time_decay_apply_skipped", exc_info=True)  # justified: fail-open, malformed date — use raw score

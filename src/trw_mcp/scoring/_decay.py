@@ -50,7 +50,7 @@ def _days_since_access(
         if not raw or raw == "None":
             continue
         try:
-            return (today - date.fromisoformat(raw)).days
+            return (today - date.fromisoformat(raw.replace("Z", "+00:00"))).days
         except ValueError:
             continue
 
@@ -219,7 +219,7 @@ def enforce_tier_distribution(
         if not date_str:
             return score
         try:
-            created_dt = datetime.fromisoformat(date_str)
+            created_dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
             # query-time only -- does not write to disk (PRD-FIX-027-FR06)
             return apply_time_decay(score, created_dt)
         except ValueError:
@@ -325,7 +325,7 @@ def apply_impact_decay(
             continue
 
         try:
-            ref_dt = _ensure_utc(datetime.fromisoformat(ref_date_str))
+            ref_dt = _ensure_utc(datetime.fromisoformat(ref_date_str.replace("Z", "+00:00")))
         except ValueError:
             continue
 
