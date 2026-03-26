@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+import structlog
+
 from trw_mcp.models.build import BuildStatus
+
+logger = structlog.get_logger(__name__)
 from trw_mcp.models.typed_dicts import MypyResultDict, PytestResultDict
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.tools.build._runners import _run_mypy, _run_pytest
