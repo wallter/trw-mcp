@@ -56,6 +56,9 @@ _NOISY_LOGGERS: tuple[str, ...] = (
     "urllib3",
     "uvicorn.access",
     "watchfiles",
+    "sentence_transformers",
+    "huggingface_hub",
+    "torch",
 )
 
 
