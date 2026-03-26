@@ -2,6 +2,15 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.31.1] — 2026-03-26
+
+### Fixed
+
+- **Device auth UX** — CLI now shows the complete URL with code embedded (`/device?code=XXXX-XXXX`) instead of displaying the URL and code separately. When the browser opens successfully, shows a single confirmation line. When it can't, shows one copyable URL.
+- **`tools/build` missing from wheel** — `.gitignore` had unanchored `build/` which excluded `src/trw_mcp/tools/build/` from the published package. Anchored to `/build/` so only the root build directory is ignored.
+- **`install.sh` served from platform** — added to `platform/public/` so `curl -fsSL https://trwframework.com/install.sh | bash` works via Amplify without a separate CDN setup.
+- **trw-shared removed from build chain** — `Makefile`, `build_installer.py`, and installer template no longer reference the inlined trw-shared package.
+
 ## [0.31.0] — 2026-03-25
 
 ### Added
