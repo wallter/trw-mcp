@@ -591,7 +591,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 from trw_mcp.state._paths import resolve_project_root
 
                 project_root_path = resolve_project_root()
-            except Exception:
+            except Exception:  # noqa: S110 — best-effort path resolution
                 pass
 
             if project_root_path:

@@ -89,8 +89,7 @@ def _learning_to_memory_entry(
     # Validate and attach assertions (PRD-CORE-086)
     assertion_objects: list[Assertion] = []
     if assertions:
-        for a in assertions:
-            assertion_objects.append(Assertion.model_validate(a))
+        assertion_objects.extend(Assertion.model_validate(a) for a in assertions)
 
     return MemoryEntry(
         id=learning_id,

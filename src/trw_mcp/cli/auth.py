@@ -8,6 +8,7 @@ Matches the installer UI patterns from ``install-trw.template.py``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -140,10 +141,8 @@ def device_auth_login(api_url: str, interactive: bool = True) -> dict[str, objec
     # Step 2: Try browser, show fallback URL with code embedded
     if interactive:
         browser_opened = False
-        try:
+        with contextlib.suppress(Exception):
             browser_opened = webbrowser.open(verification_uri_complete)
-        except Exception:
-            pass
 
         print()
         if browser_opened:
@@ -241,25 +240,24 @@ def _poll_for_token(
 
             if error_code == "authorization_pending":
                 continue
-            elif error_code == "slow_down":
+            if error_code == "slow_down":
                 poll_interval += 5
                 continue
-            elif error_code == "expired_token":
+            if error_code == "expired_token":
                 if interactive:
                     print(f"\n  {RED}Error:{NC} Authorization expired. Please try again.")
                 return None
-            elif error_code == "access_denied":
+            if error_code == "access_denied":
                 if interactive:
                     print(f"\n  {RED}Error:{NC} Authorization denied.")
                 return None
-            else:
-                # Unknown HTTP error
-                if interactive:
-                    print(
-                        f"\n  {RED}Error:{NC} Unexpected response "
-                        f"(HTTP {exc.code}): {error_code or 'unknown'}",
-                    )
-                return None
+            # Unknown HTTP error
+            if interactive:
+                print(
+                    f"\n  {RED}Error:{NC} Unexpected response "
+                    f"(HTTP {exc.code}): {error_code or 'unknown'}",
+                )
+            return None
 
         except (URLError, OSError):
             # Network error: exponential backoff
@@ -318,7 +316,7 @@ def select_organization(
         return orgs[0]
 
     try:
-        sys.stdout.write(f"  Choice [1]: ")
+        sys.stdout.write("  Choice [1]: ")
         sys.stdout.flush()
         raw = tty.readline().strip()
     finally:
@@ -468,9 +466,8 @@ def run_auth_logout(config_path: Path) -> int:
     if removed:
         print(f"  {GREEN}\u2713{NC} API key removed from {config_path}")
         return 0
-    else:
-        print(f"  {YELLOW}No API key found in {config_path}{NC}")
-        return 0
+    print(f"  {YELLOW}No API key found in {config_path}{NC}")
+    return 0
 
 
 def run_auth_status(config_path: Path, api_url: str) -> int:
@@ -488,7 +485,7 @@ def run_auth_status(config_path: Path, api_url: str) -> int:
         print(f"    Config: {config_path}")
     else:
         print(f"  {YELLOW}Not authenticated{NC}")
-        print(f"    Run: trw-mcp auth login")
+        print("    Run: trw-mcp auth login")
     return 0
 
 
