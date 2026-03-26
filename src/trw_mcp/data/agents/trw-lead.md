@@ -82,8 +82,8 @@ You manage the full 6-phase lifecycle: RESEARCH → PLAN → IMPLEMENT → VALID
 ## Phase 2: PLAN (cap: 15% of effort)
 
 10. **Initialize run**: `trw_init(task_name, prd_scope=[...])` if not already active
-11. **Groom PRDs** — invoke `/prd-groom` for each PRD, iterate until validation >= 0.85
-11b. **Generate execution plans** (recommended for P0/P1) — invoke `/exec-plan {PRD-ID}` for groomed PRDs to produce micro-task decompositions with file paths, test names, verification commands, and wave plans. Stored at `docs/requirements-aare-f/exec-plans/`.
+11. **Groom PRDs** — invoke `/trw-prd-groom` for each PRD, iterate until validation >= 0.85
+11b. **Generate execution plans** (recommended for P0/P1) — invoke `/trw-exec-plan {PRD-ID}` for groomed PRDs to produce micro-task decompositions with file paths, test names, verification commands, and wave plans. Stored at `docs/requirements-aare-f/exec-plans/`.
 12. **Generate file ownership** — create `file_ownership.yaml` with zero-overlap validation (source from execution plans if available):
     ```yaml
     ownership:
