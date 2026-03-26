@@ -2,6 +2,14 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.32.1] — 2026-03-26
+
+### Fixed
+
+- **Non-blocking browser open** — `webbrowser.open()` now runs in a daemon thread to avoid blocking the main thread on Linux. URL displays immediately; browser opens in the background. Same pattern used by Jupyter/IPython.
+- **PostgreSQL timezone fix** — `/auth/device/token` polling returned 500 because `DateTime(timezone=True)` columns return tz-aware datetimes on PostgreSQL but the comparison used naive datetimes. Added `_make_tz_aware()` helper for cross-DB compatibility.
+- **Auto-approve after login redirect** — `/device` page appends `&auto=1` to the login callback URL. On return from login, the approval submits automatically — no more clicking Approve twice.
+
 ## [0.32.0] — 2026-03-26
 
 ### Added
