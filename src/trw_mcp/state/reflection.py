@@ -10,7 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
+import structlog
+
 from trw_mcp.clients.llm import LLMClient
+
+logger = structlog.get_logger(__name__)
 from trw_mcp.models.config import get_config
 from trw_mcp.models.learning import Reflection
 from trw_mcp.state._paths import resolve_trw_dir
