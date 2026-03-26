@@ -284,6 +284,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Report what would be imported without writing",
     )
 
+    # auth
+    auth_parser = subparsers.add_parser(
+        "auth",
+        help="Manage platform authentication",
+    )
+    auth_sub = auth_parser.add_subparsers(dest="auth_command")
+    auth_sub.add_parser("login", help="Authenticate via device authorization flow")
+    auth_sub.add_parser("logout", help="Remove stored API key")
+    auth_sub.add_parser("status", help="Show current authentication status")
+
     # build-release
     build_parser = subparsers.add_parser(
         "build-release",

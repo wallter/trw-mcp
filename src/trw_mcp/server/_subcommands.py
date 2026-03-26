@@ -259,6 +259,31 @@ def _get_framework_version() -> str:
     return read_framework_version()
 
 
+def _run_auth(args: argparse.Namespace) -> None:
+    """Handle the ``auth`` subcommand (login/logout/status)."""
+    from trw_mcp.cli.auth import run_auth_login, run_auth_logout, run_auth_status
+
+    config_path = Path.cwd() / ".trw" / "config.yaml"
+    api_url = "https://api.trwframework.com"
+
+    auth_cmd = getattr(args, "auth_command", None)
+    if auth_cmd == "login":
+        sys.exit(run_auth_login(api_url, config_path))
+    elif auth_cmd == "logout":
+        sys.exit(run_auth_logout(config_path))
+    elif auth_cmd == "status":
+        sys.exit(run_auth_status(config_path, api_url))
+    else:
+        # No auth subcommand: show help
+        print("Usage: trw-mcp auth {login|logout|status}")
+        print()
+        print("Commands:")
+        print("  login   Authenticate via device authorization flow")
+        print("  logout  Remove stored API key")
+        print("  status  Show current authentication status")
+        sys.exit(0)
+
+
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "init-project": _run_init_project,
     "update-project": _run_update_project,
@@ -266,4 +291,5 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "export": _run_export,
     "import-learnings": _run_import_learnings,
     "build-release": _run_build_release,
+    "auth": _run_auth,
 }
