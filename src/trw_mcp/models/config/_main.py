@@ -697,7 +697,8 @@ class TRWConfig(BaseSettings):
 
     def _sub_config(self, cls: type[_SubT]) -> _SubT:
         """Project flat TRWConfig fields onto a domain sub-config type."""
-        return cls(**{name: getattr(self, name) for name in cls.model_fields if hasattr(self, name)})
+        fields: dict[str, object] = getattr(cls, "model_fields", {})
+        return cls(**{name: getattr(self, name) for name in fields if hasattr(self, name)})
 
     @cached_property
     def build(self) -> BuildConfig:
