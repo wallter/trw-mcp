@@ -9,7 +9,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.models.config import get_config
+
+logger = structlog.get_logger(__name__)
 from trw_mcp.models.typed_dicts import MypyResultDict, PytestResultDict
 from trw_mcp.tools.build._subprocess import (
     _extract_failures,
