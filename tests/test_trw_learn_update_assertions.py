@@ -6,12 +6,9 @@ Verifies that assertions can be added, replaced, or removed via trw_learn_update
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
-
-from trw_mcp.models.config import TRWConfig
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +35,7 @@ class TestUpdateAddsAssertions:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When assertions are provided, they are validated and stored."""
-        from trw_memory.models.memory import MemoryEntry, MemoryStatus
+        from trw_memory.models.memory import MemoryEntry
 
         mock_backend = MagicMock()
         mock_entry = MemoryEntry(

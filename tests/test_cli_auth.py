@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -28,7 +27,6 @@ from trw_mcp.cli.auth import (
     select_organization,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
@@ -42,7 +40,7 @@ class _DeviceAuthHandler(BaseHTTPRequestHandler):
     poll_count: int = 0
     max_pending: int = 1  # how many "authorization_pending" before success
 
-    def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler convention
+    def do_POST(self) -> None:
         content_len = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(content_len)) if content_len else {}
 
@@ -96,7 +94,7 @@ class _DeviceAuthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 — override
+    def log_message(self, format: str, *args: Any) -> None:
         pass  # Suppress HTTP server logs during tests
 
 
@@ -230,8 +228,8 @@ class TestDeviceAuthLogin:
             if "/device/token" in url:
                 call_count += 1
                 if call_count == 1:
-                    from urllib.error import HTTPError
                     import io
+                    from urllib.error import HTTPError
 
                     body = json.dumps({"error": "slow_down"}).encode()
                     raise HTTPError(url, 400, "Bad Request", {}, io.BytesIO(body))

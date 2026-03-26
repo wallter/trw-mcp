@@ -36,8 +36,6 @@ from trw_mcp.state.analytics import (
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     get_backend,
-)
-from trw_mcp.state.memory_adapter import (
     list_active_learnings,
 )
 from trw_mcp.state.memory_adapter import (

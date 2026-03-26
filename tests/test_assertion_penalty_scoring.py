@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 from trw_mcp.scoring._recall import rank_by_utility
 
 

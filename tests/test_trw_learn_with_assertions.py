@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._learning_helpers import LearningParams
 
 
