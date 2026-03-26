@@ -10,7 +10,11 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.models.config import get_config
+
+logger = structlog.get_logger(__name__)
 from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
