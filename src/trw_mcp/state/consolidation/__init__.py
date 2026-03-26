@@ -22,12 +22,6 @@ from trw_memory.lifecycle.consolidation import (
     _redact_paths as _redact_paths,
 )
 
-# --- Re-export _parse_consolidation_response from local _summarize ---
-# (moved from trw_memory after dead code removal there)
-from trw_mcp.state.consolidation._summarize import (
-    _parse_consolidation_response as _parse_consolidation_response,
-)
-
 # --- Re-export LLMClient so patch targets like
 #     "trw_mcp.state.consolidation.LLMClient" continue to resolve ---
 from trw_mcp.clients.llm import LLMClient as LLMClient
@@ -35,6 +29,12 @@ from trw_mcp.clients.llm import LLMClient as LLMClient
 # --- Re-export get_config for patch target
 #     "trw_mcp.state.consolidation.get_config" ---
 from trw_mcp.models.config import get_config as get_config
+
+# --- Re-export _parse_consolidation_response from local _summarize ---
+# (moved from trw_memory after dead code removal there)
+from trw_mcp.state.consolidation._summarize import (
+    _parse_consolidation_response as _parse_consolidation_response,
+)
 
 # --- Archival: archive + rollback ---
 from ._archive import (

@@ -12,7 +12,6 @@ connection, so parallel sessions are tracked independently.
 from __future__ import annotations
 
 import structlog
-
 from fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,

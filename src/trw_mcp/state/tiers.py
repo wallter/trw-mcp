@@ -20,22 +20,28 @@ from trw_memory.lifecycle.tiers import TierSweepResult as TierSweepResult
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.models.typed_dicts import TierDistribution
-from trw_mcp.state.memory_adapter import list_active_learnings
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # Re-export compute_importance_score so that existing test patches at
 # ``trw_mcp.state.tiers.compute_importance_score`` continue to resolve.
-from trw_mcp.state._tier_scoring import (  # noqa: E402
+from trw_mcp.state._tier_scoring import (
     compute_importance_score as compute_importance_score,
 )
 
 # Import sweep functions — assigned to TierManager at the bottom of this module.
-from trw_mcp.state._tier_sweep import (  # noqa: E402
+from trw_mcp.state._tier_sweep import (
     _sweep_cold_to_purge as _sweep_cold_to_purge_impl,
+)
+from trw_mcp.state._tier_sweep import (
     _sweep_hot_to_warm as _sweep_hot_to_warm_impl,
+)
+from trw_mcp.state._tier_sweep import (
     _sweep_warm_to_cold as _sweep_warm_to_cold_impl,
+)
+from trw_mcp.state._tier_sweep import (
     sweep as _sweep_impl,
 )
+from trw_mcp.state.memory_adapter import list_active_learnings
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
