@@ -19,10 +19,13 @@ from __future__ import annotations
 
 # --- Re-export from trw_memory (used directly by tests via this module) ---
 from trw_memory.lifecycle.consolidation import (
-    _parse_consolidation_response as _parse_consolidation_response,
-)
-from trw_memory.lifecycle.consolidation import (
     _redact_paths as _redact_paths,
+)
+
+# --- Re-export _parse_consolidation_response from local _summarize ---
+# (moved from trw_memory after dead code removal there)
+from trw_mcp.state.consolidation._summarize import (
+    _parse_consolidation_response as _parse_consolidation_response,
 )
 
 # --- Re-export LLMClient so patch targets like
@@ -85,7 +88,6 @@ __all__ = [
     "_redact_paths",
     "_rollback_archive",
     "_summarize_cluster_fallback",
-    "_summarize_cluster_llm",
     "_tag_overlap_clusters",
     "consolidate_cycle",
     "find_clusters",

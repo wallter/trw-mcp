@@ -5,11 +5,11 @@ LLM-powered cluster summarization with retry logic and longest-entry fallback.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
 import structlog
 from trw_memory.lifecycle.consolidation import (
-    _parse_consolidation_response,
     _redact_paths,
 )
 
@@ -17,6 +17,24 @@ from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.typed_dicts import LearningEntryDict
 
 logger = structlog.get_logger(__name__)
+
+
+def _parse_consolidation_response(response: str) -> dict[str, str] | None:
+    """Extract {"summary": ..., "detail": ...} from an LLM response string."""
+    for line in response.strip().split("\n"):
+        line_s = line.strip()
+        if not line_s.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line_s)
+            if "summary" in parsed and "detail" in parsed:
+                return {
+                    "summary": str(parsed["summary"]),
+                    "detail": str(parsed["detail"]),
+                }
+        except ValueError:
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------------
