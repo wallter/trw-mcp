@@ -109,7 +109,7 @@ def _check_build_status(
     ts_str = data.get("timestamp", "")
     if ts_str:
         try:
-            cached_dt = datetime.fromisoformat(str(ts_str.replace("Z", "+00:00")))
+            cached_dt = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
             age_secs = (
                 time.time()
                 - cached_dt.replace(
