@@ -193,7 +193,7 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
         {applied: bool, version: str, details: str}
     Fail-open: returns applied=False on any error.
     """
-    import fcntl
+    from trw_mcp.state.persistence import _lock_ex_nb, _lock_un
 
     cfg = get_config()
     target_dir = Path.cwd()
@@ -204,7 +204,7 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "w") as lock_fd:
             try:
-                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_ex_nb(lock_fd.fileno())
             except OSError:
                 return {
                     "applied": False,
@@ -266,7 +266,7 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
                     "details": f"Updated {total} files",
                 }
             finally:
-                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                _lock_un(lock_fd.fileno())
                 with contextlib.suppress(OSError):
                     lock_path.unlink(missing_ok=True)
 
