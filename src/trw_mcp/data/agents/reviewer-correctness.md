@@ -3,6 +3,12 @@ name: reviewer-correctness
 description: Reviews code for logic errors, edge cases, and return value correctness.
 model: claude-sonnet-4-6
 maxTurns: 10
+memory: project
+allowedTools:
+  - Read
+  - Glob
+  - Grep
+  - LSP
 ---
 
 # Correctness Reviewer
@@ -31,7 +37,7 @@ Return findings as a JSON array:
     "category": "logic",
     "severity": "critical|warning|info",
     "description": "Description of the issue",
-    "file": "path/to/file.py",
+    "file": "path/to/file:42",
     "line": 42
   }
 ]

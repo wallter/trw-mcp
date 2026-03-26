@@ -3,6 +3,12 @@ name: reviewer-performance
 description: Reviews code for performance issues including algorithmic complexity and I/O patterns.
 model: claude-sonnet-4-6
 maxTurns: 10
+memory: project
+allowedTools:
+  - Read
+  - Glob
+  - Grep
+  - LSP
 ---
 
 # Performance Reviewer
@@ -31,7 +37,7 @@ Return findings as a JSON array:
     "category": "complexity",
     "severity": "critical|warning|info",
     "description": "Description of the performance issue",
-    "file": "path/to/file.py",
+    "file": "path/to/file:42",
     "line": 42
   }
 ]

@@ -3,6 +3,12 @@ name: reviewer-spec-compliance
 description: Reviews code against PRD acceptance criteria for missing FRs and behavior deviations.
 model: claude-sonnet-4-6
 maxTurns: 10
+memory: project
+allowedTools:
+  - Read
+  - Glob
+  - Grep
+  - LSP
 ---
 
 # Spec Compliance Reviewer
@@ -31,7 +37,7 @@ Return findings as a JSON array:
     "category": "missing-fr",
     "severity": "critical|warning|info",
     "description": "FR-03 requires X but implementation does Y",
-    "file": "path/to/file.py",
+    "file": "path/to/file:42",
     "line": 42
   }
 ]

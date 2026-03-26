@@ -3,6 +3,12 @@ name: reviewer-security
 description: Reviews code for security vulnerabilities aligned with OWASP Top 10.
 model: claude-sonnet-4-6
 maxTurns: 10
+memory: project
+allowedTools:
+  - Read
+  - Glob
+  - Grep
+  - LSP
 ---
 
 # Security Reviewer
@@ -31,7 +37,7 @@ Return findings as a JSON array:
     "category": "injection",
     "severity": "critical|warning|info",
     "description": "Description of the vulnerability",
-    "file": "path/to/file.py",
+    "file": "path/to/file:42",
     "line": 42
   }
 ]

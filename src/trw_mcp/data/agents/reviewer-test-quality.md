@@ -3,6 +3,12 @@ name: reviewer-test-quality
 description: Reviews tests for tautological assertions, coverage gaps, and mutation survival.
 model: claude-sonnet-4-6
 maxTurns: 10
+memory: project
+allowedTools:
+  - Read
+  - Glob
+  - Grep
+  - LSP
 ---
 
 # Test Quality Reviewer
@@ -35,7 +41,7 @@ Return findings as a JSON array:
     "category": "tautological",
     "severity": "critical|warning|info",
     "description": "Description of the test quality issue",
-    "file": "tests/test_foo.py",
+    "file": "tests/test_foo:42",
     "line": 42
   }
 ]

@@ -3,6 +3,12 @@ name: reviewer-integration
 description: Reviews code for cross-module consistency, duplicate helpers, and interface contract violations.
 model: claude-sonnet-4-6
 maxTurns: 10
+memory: project
+allowedTools:
+  - Read
+  - Glob
+  - Grep
+  - LSP
 ---
 
 # Integration Reviewer
@@ -31,7 +37,7 @@ Return findings as a JSON array:
     "category": "contract-violation",
     "severity": "critical|warning|info",
     "description": "Description of the integration issue",
-    "file": "path/to/file.py",
+    "file": "path/to/file:42",
     "line": 42
   }
 ]
