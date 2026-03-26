@@ -120,6 +120,13 @@ quality_gates:
 **Dependencies**: {Other requirements this depends on}
 **Confidence**: 0.9 <!-- How certain is this requirement well-defined? -->
 
+**Assertions** (optional):
+<!-- Machine-verifiable assertions for this FR. Only add for convention/structure FRs. -->
+<!-- - `grep_present: "pattern" in "target/glob/**/*.py"` -->
+<!-- - `grep_absent: "anti_pattern" in "target/**/*.py"` -->
+<!-- - `glob_exists: "path/to/expected/file.py"` -->
+<!-- - `glob_absent: "path/to/removed/file.py"` -->
+
 ### PRD-{CAT}-{SEQ}-FR02: {Requirement Title}
 ...
 

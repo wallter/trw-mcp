@@ -71,6 +71,19 @@ When reporting, include:
 
 A project with 12 distinct domains and 448 entries should target ~50-70, not 30.
 
+## Assertion Health Analysis (PRD-CORE-086)
+
+When auditing memory health, include an assertion analysis section:
+
+1. Query `trw_session_start` for the `assertion_health` field (if present)
+2. Report: total learnings with assertions, passing count, failing count, stale count
+3. For failing assertions: list the learning ID, summary, and which assertions fail
+4. Recommend actions:
+   - Failing >30 days: suggest retirement via `trw_learn_update(status="obsolete")`
+   - Failing recently: investigate: is the code wrong or the learning outdated?
+   - Learnings referencing specific files but lacking assertions: candidates for assertion addition
+5. Include an "Assertion Coverage" metric: % of learnings that have at least one assertion
+
 ## Notes
 
 - This skill is read-only — use `/trw-memory-optimize` to act on recommendations

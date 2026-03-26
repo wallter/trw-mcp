@@ -207,6 +207,16 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "This NFR isn't relevant to this type of endpoint" | NFR checklist is cross-cutting — skipping items is how gaps accumulate across sprints | Pagination, auth, error handling skipped on "simple" endpoints |
 | "I'll mark this PARTIAL instead of FAIL to avoid blocking" | Accuracy matters more than velocity — downgraded findings ship to production | Accurate findings get fixed; downgraded findings become tech debt |
 
+## Assertion Verification (PRD-CORE-086)
+
+When auditing FRs that include `Assertions:` blocks, use them as objective evidence:
+
+1. Read the assertion definitions from the FR
+2. Mentally evaluate (or run `verify_assertions()` if available) whether the patterns would match
+3. Use assertion results to ground your verdict — "grep_present for X in Y: PASSING" is stronger evidence than "I saw X in the code"
+4. If assertions are present and FAILING, this is strong evidence of incomplete implementation
+5. Report assertion pass/fail status in your FR-by-FR analysis
+
 ## Constraints
 
 - NEVER modify code files — this skill is read-only (except writing the audit report)

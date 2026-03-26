@@ -71,6 +71,22 @@ The optimal learning count scales with project complexity — do NOT use a fixed
 - ALWAYS run `trw_claude_md_sync` after changes to keep CLAUDE.md current
 - NEVER collapse all entries in a domain into a single compendium — maintain sub-topic granularity
 
+## Assertion Verification Wave (PRD-CORE-086)
+
+After standard pruning and consolidation, run an assertion verification wave:
+
+1. **Collect**: Identify all learnings with non-empty assertions via `trw_recall(query="*", max_results=0)` and filter for entries with `assertion_status`
+2. **Verify**: For each entry with failing assertions, spawn a subagent to investigate:
+   - Read the referenced files in the codebase
+   - Determine root cause: Is the learning outdated? Is the assertion pattern wrong? Is the code violating the convention?
+   - Recommend one of:
+     - `UPDATE_LEARNING`: Learning text needs revision (provide new text)
+     - `UPDATE_ASSERTION`: Assertion pattern is wrong (provide corrected pattern)
+     - `RETIRE_LEARNING`: Knowledge is obsolete (provide reason)
+     - `CODE_VIOLATION`: Code is wrong, learning is right (flag for human review)
+3. **Apply**: For each recommendation, use `trw_learn_update()` to apply changes (with user confirmation for retirements)
+4. **Report**: Summary table of verification results — passing, fixed, retired, flagged
+
 ## Notes
 
 - Run after major milestones (strip-downs, sprint completions) when many entries may be stale

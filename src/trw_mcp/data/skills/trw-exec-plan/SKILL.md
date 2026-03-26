@@ -263,6 +263,13 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "Function-level decomposition is overkill" | File-level planning misses secondary read paths — Sprint 34's #1 lesson | Cross-cutting changes need function-level inventory or review discovers gaps |
 | "I'll estimate the wave timing later" | Without timing estimates, waves exceed the agent half-life threshold | Agents degrade after ~35 min — oversized waves produce lower quality work |
 
+## Assertion Verification in Tasks (PRD-CORE-086)
+
+When generating execution plan tasks for FRs that include assertions, add assertion verification steps:
+
+- Include `Assert: grep_present "pattern" in "target"` lines in task verification commands
+- These serve as machine-checkable acceptance criteria the implementer can run after making changes
+
 ## Constraints
 
 - NEVER fabricate file paths — use Grep/Glob to verify files exist

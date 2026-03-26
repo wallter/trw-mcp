@@ -63,6 +63,24 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "I can fabricate this requirement to fill the gap" | Fabricated requirements create false confidence and wrong implementations | Agents implement the fabricated requirement faithfully — wrong code that passes all tests |
 | "The traceability matrix can be filled in later" | Traceability is how the lead validates FR coverage during REVIEW | Missing traceability means the lead can't verify implementation — delays delivery by a full review cycle |
 
+## Assertion Suggestions (PRD-CORE-086)
+
+For FRs that reference code patterns, conventions, or structural requirements, suggest executable assertions:
+
+- **Convention FRs** ("All routers must use X"): Suggest `grep_present` for the required pattern and `grep_absent` for the anti-pattern
+- **Structure FRs** ("Test file must exist for each module"): Suggest `glob_exists` for the expected files
+- **Migration FRs** ("Old pattern X removed"): Suggest `grep_absent` for the deprecated pattern
+- **Do NOT suggest assertions for**: Behavioral FRs, performance FRs, UX requirements, or anything that can't be verified with grep/glob
+
+Format assertions as:
+```
+**Assertions**:
+- `grep_present: "APIRouter(prefix=" in "backend/app/routers/**/*.py"`
+- `grep_absent: "APIRouter()" in "backend/app/routers/**/*.py"`
+```
+
+Only suggest assertions for ~30% of FRs — most requirements are not grep/glob-verifiable.
+
 ## Constraints
 
 - NEVER fabricate requirements not grounded in Background or codebase evidence
