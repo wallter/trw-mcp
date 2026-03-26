@@ -24,7 +24,7 @@ Run a complete delivery ceremony with pre-flight build verification and post-tea
 
 3. **Team learning synthesis** (run before delivery):
 
-   a. **Check for active team**: Run `ls ~/.claude/teams/` via Bash. If the directory is empty or does not exist, skip to step 4.
+   a. **Check for active team**: Call `TaskList` to check for tasks with team-assigned owners. If no tasks exist or all are owned by the current agent, skip to step 4. (Do not rely on filesystem paths like `~/.claude/teams/` which are CLI-specific.)
 
    b. **If a team was active**, synthesize learnings:
       - Call `trw_recall("*", max_results=200)` to retrieve all current learnings.
