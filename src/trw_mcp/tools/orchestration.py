@@ -536,7 +536,6 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             message=message[:80],
             wave_id=wave_id,
         )
-        logger.info("trw_checkpoint_created", message=message)
         result: dict[str, str] = {
             "timestamp": ts,
             "status": "checkpoint_created",
