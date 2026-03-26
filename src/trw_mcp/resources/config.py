@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from io import StringIO
 
+import structlog
 from fastmcp import FastMCP
+
+logger = structlog.get_logger(__name__)
 from ruamel.yaml import YAML
 
 from trw_mcp.exceptions import StateError
