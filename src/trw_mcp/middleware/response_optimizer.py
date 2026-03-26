@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 
+import structlog
+
 from fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,
@@ -45,6 +47,9 @@ def _compact(data: object) -> object:
     if isinstance(data, float):
         return round(data, 2)
     return data
+
+
+logger = structlog.get_logger(__name__)
 
 
 class ResponseOptimizerMiddleware(Middleware):

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+import structlog
+
 from fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,
@@ -24,6 +26,8 @@ from fastmcp.tools.tool import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 
 from trw_mcp.middleware._compression import compress_text_block, hash_content
+
+logger = structlog.get_logger(__name__)
 
 # ── Module-level session state ──────────────────────────────────────────
 # session_id -> tool call count
@@ -90,6 +94,7 @@ class ContextBudgetMiddleware(Middleware):
             return self._apply_masking(result, session_id, tool_name, turn)
         except Exception:
             # Fail open: return original result on any error
+            logger.debug("context_budget_masking_failed", op="observation_masking", tool=tool_name, turn=turn, exc_info=True)
             return result
 
     def _apply_masking(
@@ -118,6 +123,7 @@ class ContextBudgetMiddleware(Middleware):
         prev = session_hashes.get(tool_name)
 
         if prev is not None and prev[0] == content_hash:
+            logger.debug("context_budget_redundancy_detected", op="observation_masking", tool=tool_name, turn=turn, prev_turn=prev[1])
             result.content = [
                 TextContent(
                     type="text",

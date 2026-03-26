@@ -11,6 +11,8 @@ connection, so parallel sessions are tracked independently.
 
 from __future__ import annotations
 
+import structlog
+
 from fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,
@@ -56,6 +58,8 @@ def _load_ceremony_warning() -> str:
 
 CEREMONY_WARNING = _load_ceremony_warning()
 
+logger = structlog.get_logger(__name__)
+
 
 def mark_session_active(session_id: str) -> None:
     """Mark a session as having completed ceremony."""
@@ -100,6 +104,7 @@ class CeremonyMiddleware(Middleware):
         # Ceremony tool called — mark session as active
         if tool_name in CEREMONY_TOOLS:
             mark_session_active(session_id)
+            logger.debug("ceremony_activated", op="ceremony", session_id=session_id, tool=tool_name)
             return await call_next(context)
 
         # Execute the tool
@@ -109,5 +114,6 @@ class CeremonyMiddleware(Middleware):
         if not is_session_active(session_id):
             warning_block = TextContent(type="text", text=CEREMONY_WARNING)
             result.content.insert(0, warning_block)
+            logger.debug("ceremony_warning_injected", op="ceremony", session_id=session_id, tool=tool_name)
 
         return result
