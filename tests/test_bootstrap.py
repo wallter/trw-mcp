@@ -1064,7 +1064,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(skills, list)
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
-        assert len(skills) == 24
+        assert len(skills) == 26
         assert len(agents) == 18
         assert len(hooks) > 0
 
