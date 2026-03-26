@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Literal
 
 import structlog
-
 from fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,

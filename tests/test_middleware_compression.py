@@ -13,7 +13,6 @@ from __future__ import annotations
 from mcp.types import TextContent
 
 from trw_mcp.middleware._compression import (
-    STRIP_KEYS,
     compress_json,
     compress_text_block,
     hash_content,
