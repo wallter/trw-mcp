@@ -2,6 +2,23 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.32.0] — 2026-03-26
+
+### Added
+
+- **Executable assertions integration** (PRD-CORE-086) — machine-verifiable assertions flow through the full learning lifecycle. No new MCP tools — integrated entirely into existing workflows.
+  - `trw_learn()` accepts optional `assertions` parameter (list of grep/glob assertion dicts)
+  - `trw_learn_update()` can add, modify, or remove assertions on existing learnings
+  - `trw_recall()` runs lazy verification on recalled entries with assertions; failing assertions get a configurable utility score penalty (default -0.15)
+  - `rank_by_utility()` applies `assertion_penalties` dict for score adjustments
+  - `TRWConfig`: new `assertion_failure_penalty` (0.15) and `assertion_stale_threshold_days` (30) fields
+  - Full threading: `LearningParams` → `store_learning()` → `_learning_to_memory_entry()` → `_memory_to_learning_dict()`
+- **PRD assertion support** — PRD template includes optional `Assertions:` subsection per FR
+- **Skill prompt updates** — 6 skills updated with assertion guidance: `/trw-prd-groom`, `/trw-audit`, `/trw-memory-audit`, `/trw-memory-optimize`, `/trw-exec-plan`
+- **17 new tests** across 3 test files
+
+---
+
 ## [0.31.1] — 2026-03-26
 
 ### Fixed
