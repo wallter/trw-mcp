@@ -344,8 +344,8 @@ def sanitize_project_name(name: str) -> str:
 
 
 def validate_api_key(key: str) -> bool:
-    """Check *key* matches trw_ prefix, alphanumeric+underscore, max 128."""
-    return len(key) <= 128 and bool(re.match(r"^trw_[a-zA-Z0-9_]+$", key))
+    """Check *key* matches ``trw_`` or ``trw_dk_`` prefix, alphanumeric+underscore, max 128."""
+    return len(key) <= 128 and bool(re.match(r"^trw_(dk_)?[a-zA-Z0-9_]+$", key))
 
 
 # ── Python discovery ─────────────────────────────────────────────────
@@ -1229,6 +1229,7 @@ def phase_configure(
     *,
     install_ai: bool = False,
     install_vec: bool = False,
+    skip_auth: bool = False,
 ) -> str:
     """Configure project identity, API key, and telemetry. Returns platform_status."""
     ui.step_header(step, total, "Configure your project")
@@ -1256,6 +1257,8 @@ def phase_configure(
             ui.step_ok("API key: configured (from prior install)")
             api_key = str(prior_config["api_key"])
             telemetry_enabled = True
+        elif skip_auth:
+            ui.step_ok("Auth skipped (--skip-auth)")
         else:
             draw_divider("Platform Connection")
             print()
@@ -1326,12 +1329,30 @@ def _prompt_project_name(ui: UI, default: str) -> str:
 
 
 def _prompt_api_key(ui: UI) -> str:
-    """Interactive API key prompt with validation and retries."""
+    """Interactive API key prompt -- tries device auth first, falls back to manual paste.
+
+    Device authorization (RFC 8628) opens a browser for passwordless login.
+    If device auth is unavailable or user declines, falls back to manual key entry.
+    """
+    # Try device auth flow first
+    try:
+        result = _device_auth_login(DOCS_BASE.replace("/docs", ""), interactive=True)
+        if result and isinstance(result.get("api_key"), str) and result["api_key"]:
+            key = str(result["api_key"])
+            if validate_api_key(key):
+                ui.step_ok("Authenticated via device flow")
+                return key
+    except Exception:  # device auth is best-effort, fall back to manual
+        pass
+
+    # Fallback: manual key entry
+    print()
+    ui.hint("Or paste an API key manually:")
     max_attempts = 3
     for attempt in range(max_attempts):
         raw = prompt_input("Platform API key (Enter to skip):").strip()
         if not raw:
-            ui.step_ok("No API key — offline mode")
+            ui.step_ok("No API key -- offline mode")
             return ""
         if validate_api_key(raw):
             ui.step_ok("API key accepted")
@@ -1340,8 +1361,105 @@ def _prompt_api_key(ui: UI) -> str:
         if remaining > 0:
             ui.step_warn("Invalid format (must start with trw_, alphanumeric only). Try again:")
         else:
-            ui.step_warn("Invalid format — skipping API key")
+            ui.step_warn("Invalid format -- skipping API key")
     return ""
+
+
+def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
+    """Perform RFC 8628 device authorization -- stdlib only.
+
+    Inline implementation that avoids importing trw_mcp.cli.auth (which may
+    not be installed when running the standalone installer script).
+    """
+    import json as _json
+    import time as _time
+    import urllib.error
+    import urllib.request
+    import webbrowser as _wb
+
+    api_url = api_url.rstrip("/")
+
+    # Step 1: Request device code
+    try:
+        body = _json.dumps({"client_id": "trw-cli"}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{api_url}/v1/auth/device/code",
+            data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            code_resp = _json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError):
+        return None
+
+    device_code = code_resp.get("device_code", "")
+    user_code = code_resp.get("user_code", "")
+    verification_uri = code_resp.get("verification_uri", "")
+    verification_uri_complete = code_resp.get("verification_uri_complete", verification_uri)
+    interval = int(str(code_resp.get("interval", 5)))
+    expires_in = int(str(code_resp.get("expires_in", 900)))
+
+    if not device_code or not user_code:
+        return None
+
+    # Step 2: Display and open browser
+    if interactive:
+        try:
+            _wb.open(verification_uri_complete)
+        except Exception:
+            pass
+
+        m, s = divmod(expires_in, 60)
+        print()
+        print(f"  {BOLD}To authenticate, open this URL:{NC}")
+        print()
+        print(f"    {GREEN}{verification_uri}{NC}")
+        print()
+        print(f"  {BOLD}Then enter this code:{NC}")
+        print()
+        print(f"    {GREEN}{BOLD}{user_code}{NC}")
+        print()
+
+    # Step 3: Poll for token
+    deadline = _time.monotonic() + expires_in
+    poll_interval = interval
+
+    while _time.monotonic() < deadline:
+        _time.sleep(poll_interval)
+        try:
+            body = _json.dumps({
+                "client_id": "trw-cli",
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{api_url}/v1/auth/device/token",
+                data=body, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            err_code = ""
+            try:
+                err_body = _json.loads(exc.read().decode("utf-8"))
+                err_code = err_body.get("error", "")
+            except Exception:
+                pass
+            if err_code == "authorization_pending":
+                continue
+            elif err_code == "slow_down":
+                poll_interval += 5
+                continue
+            elif err_code in ("expired_token", "access_denied"):
+                return None
+            else:
+                return None
+        except (urllib.error.URLError, OSError):
+            poll_interval = min(poll_interval * 2, 30)
+            continue
+
+    return None
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -1374,6 +1492,7 @@ def main() -> None:
     parser.add_argument("--api-key", default="", help="Platform API key")
     parser.add_argument("--telemetry", dest="telemetry", action="store_true", default=None, help="Enable telemetry")
     parser.add_argument("--no-telemetry", dest="telemetry", action="store_false", help="Disable telemetry")
+    parser.add_argument("--skip-auth", action="store_true", help="Skip device auth flow during install")
     parser.add_argument(
         "--ide",
         choices=["claude-code", "opencode", "all"],
@@ -1490,6 +1609,7 @@ def main() -> None:
                 prior_config=prior_config,
                 install_ai=install_ai,
                 install_vec=install_vec,
+                skip_auth=getattr(args, "skip_auth", False),
             )
 
         # Post-install: restart MCP servers and health-check backends
