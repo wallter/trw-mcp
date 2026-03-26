@@ -107,8 +107,8 @@ def _ts_diff_seconds(start: str, end: str) -> float | None:
     Returns None if either timestamp cannot be parsed.
     """
     try:
-        t_start = datetime.fromisoformat(start)
-        t_end = datetime.fromisoformat(end)
+        t_start = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        t_end = datetime.fromisoformat(end.replace("Z", "+00:00"))
         return (t_end - t_start).total_seconds()
     except (ValueError, TypeError):
         return None
