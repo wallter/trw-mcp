@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/analytics_dedup.py
-# hypothesis_version: 6.151.9
-
-[0.0, 0.15, 0.2, 0.25, 0.8, 1.0, 2.0, 3.0, 10.0, 100, '*.yaml', '_dummy.yaml', 'access_count', 'access_ratio', 'accessed_entries', 'actions_taken', 'active', 'active_count', 'active_entries', 'auto_prune', 'components', 'dedup_candidates', 'diagnostics', 'diversity', 'get_backend failed', 'id', 'new_learnings', 'newer_id', 'obsolete', 'older_id', 'productivity', 'q_activated_entries', 'q_activation_rate', 'q_observations', 'reflection_count', 'reflection_frequency', 'resolved', 'score', 'similarity', 'source_type', 'source_types', 'sqlite_read_fallback', 'status', 'suggested_status', 'summary', 'tags', 'threshold', 'total_entries', 'unique_tags', 'utility_candidates']

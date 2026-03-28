@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/models/__init__.py
-# hypothesis_version: 6.151.9
-
-['BuildSummary', 'ComplexityFactor', 'ContextArchitecture', 'ContextConventions', 'DurationInfo', 'Event', 'EventSummary', 'EventType', 'LearningEntry', 'LearningIndex', 'LearningStatus', 'LearningSummary', 'OutputContract', 'PHASE_ORDER', 'PRDConfidence', 'PRDDates', 'PRDEvidence', 'PRDFrontmatter', 'PRDMetrics', 'PRDQualityGates', 'PRDTraceability', 'Pattern', 'PatternIndex', 'Phase', 'PhaseEntry', 'PhaseTimeCaps', 'Reflection', 'Requirement', 'ReversionTrigger', 'ReviewFinding', 'RiskLevel', 'RunReport', 'RunState', 'Script', 'ScriptIndex', 'ShardCard', 'TRWConfig', 'TraceabilityResult', 'ValidationFailure', 'ValidationResult', 'WaveEntry', 'WaveManifest']

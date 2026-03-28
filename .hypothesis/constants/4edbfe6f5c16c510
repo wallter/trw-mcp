@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/tools/learning.py
-# hypothesis_version: 6.151.9
-
-[0.0, 0.5, '*', 'agent', 'clusters.json', 'compact', 'context', 'detail', 'distribution_warning', 'id', 'impact', 'learning_id', 'learnings', 'max_results', 'obsolete', 'path', 'patterns', 'query', 'recorded', 'remote_recall_failed', 'resolved', 'resolved_at', 'root', 'soft_cap_warning', 'status', 'summary', 'topic_filter_ignored', 'total_available', 'total_matches', 'trw_learn_recorded', 'trw_recall_searched', 'updated', 'utf-8']

@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/resources/config.py
-# hypothesis_version: 6.151.9
-
-[0.7, '\n## Analytics\n', '*.yaml', 'VERSION.yaml', 'analytics.yaml', 'config.yaml', 'description', 'detail', 'index.yaml', 'name', 'summary']

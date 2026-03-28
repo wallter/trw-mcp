@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/clients/llm.py
-# hypothesis_version: 6.151.9
-
-[120, 1000, 1024, '_usage_log_path', 'ask', 'caller', 'claude-opus-4-6', 'claude-sonnet-4-6', 'content', 'haiku', 'input_tokens', 'latency_ms', 'llm_call_failed', 'llm_usage_log_failed', 'max_tokens', 'messages', 'model', 'opus', 'output_tokens', 'role', 'sonnet', 'success', 'system', 'text', 'ts', 'usage', 'user']

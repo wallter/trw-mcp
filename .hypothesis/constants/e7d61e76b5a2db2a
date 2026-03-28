@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/client.py
-# hypothesis_version: 6.151.9
-
-[0.0, 0.5, 1.0, 5.0, ':', '_', 'agent', 'auto', 'content', 'created_at', 'deleted', 'detail', 'entries', 'importance', 'local', 'mcp', 'memory_forget', 'memory_id', 'memory_recall', 'memory_search', 'memory_store', 'namespace', 'recalled_memories', 'register_tool', 'rest', 'score', 'sqlite', 'status', 'stored', 'tags', 'timestamp', 'tool', 'updated_at']

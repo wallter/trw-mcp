@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/tiers.py
-# hypothesis_version: 6.151.9
-
-[0.0, 1e-09, 0.1, 0.22, 0.5, 1.0, '*.yaml', '-', '.jsonl', '[^a-zA-Z0-9_\\-]', 'a', 'active', 'cold', 'cold_archive', 'cold_archive_failed', 'cold_promote', 'cold_promote_failed', 'days_idle', 'detail', 'entry_id', 'hot_tier_evict', 'id', 'impact', 'importance_score', 'index.yaml', 'last_accessed_at', 'memory', 'purge_audit.jsonl', 'purged_at', 'score', 'source', 'sqlite_read_fallback', 'status', 'summary', 'sweep_cold_purge', 'sweep_hot_to_warm', 'sweep_warm_to_cold', 'tags', 'tier_sweep_complete', 'utf-8', 'warm.db', 'warm_tier', 'warm_tier_add', 'warm_tier_remove']

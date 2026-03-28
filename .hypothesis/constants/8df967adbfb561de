@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/lifecycle/scoring.py
-# hypothesis_version: 6.151.9
-
-[0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.69, 0.7, 0.75, 0.89, 0.9, 1.0, 1.5, 2.0, 14.0, 365, 'None', 'access_count', 'active', 'age_days', 'agent', 'content', 'created_at', 'critical', 'detail', 'high', 'human', 'id', 'importance', 'medium', 'null', 'obsolete', 'positive_outcomes', 'q_observations', 'q_value', 'reason', 'recurrence', 'resolved', 'source', 'status', 'suggested_status', 'tags', 'tier_demotion', 'total_recalls', 'utility']

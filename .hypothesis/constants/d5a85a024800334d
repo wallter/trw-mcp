@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/phase_gates_build.py
-# hypothesis_version: 6.151.9
-
-[0.0, 1800, 'build-status.yaml', 'build_cache_exists', 'build_cache_readable', 'build_coverage', 'build_mypy', 'build_staleness', 'build_status', 'build_tests', 'context', 'coverage_min', 'coverage_pct', 'deliver', 'error', 'failures', 'full', 'implement', 'info', 'missing_tests', 'module_reachability', 'mypy', 'mypy_clean', 'off', 'orphans', 'pytest', 'quick', 'scope', 'src', 'strict', 'test_coverage', 'tests_passed', 'timestamp', 'tool_registration', 'trw-mcp', 'trw_mcp', 'unregistered', 'validate', 'warning']

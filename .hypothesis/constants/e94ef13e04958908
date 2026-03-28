@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/analytics_core.py
-# hypothesis_version: 6.151.9
-
-['*.yaml', '[\\s_\\-/:]+', 'api', 'approved', 'architecture', 'auth', 'billing', 'bootstrap', 'budget', 'bug', 'cache', 'changelog', 'complete', 'config', 'configuration', 'cost', 'coverage', 'crash', 'database', 'debug', 'debugging', 'delivered', 'deploy', 'deployment', 'design', 'docs', 'documentation', 'done', 'endpoint', 'env', 'environment', 'error', 'event', 'exception', 'fail', 'finish', 'fix', 'fixture', 'id', 'index.yaml', 'install', 'jwt', 'latency', 'limit', 'mcp', 'merged', 'migration', 'mock', 'package', 'pass', 'pattern', 'performance', 'prd', 'price', 'pricing', 'pytest', 'query', 'rate', 'rate-limiting', 'ratelimit', 'rbac', 'readme', 'refactor', 'resolved', 'rest', 'route', 'security', 'settings', 'sql', 'sqlite', 'success', 'test', 'testing', 'tests', 'throttle', 'timeout', 'token', 'trace']

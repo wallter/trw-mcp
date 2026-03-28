@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/telemetry/models.py
-# hypothesis_version: 6.151.9
-
-['ceremony_compliance', 'session_end', 'session_start', 'tool_invocation']
