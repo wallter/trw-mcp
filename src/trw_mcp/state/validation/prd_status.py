@@ -4,14 +4,14 @@ Implements FR03 of PRD-FIX-056: defines allowed status transitions for the
 simplified caller-facing state machine and provides a validate_status_transition()
 helper.
 
-The canonical transition table is VALID_TRANSITIONS in prd_utils.py (uses the
-PRDStatus enum). This module derives ALLOWED_TRANSITIONS from that source so
-there is exactly one state machine definition.
+The canonical transition table is VALID_TRANSITIONS in models/requirements.py
+(next to PRDStatus enum). This module derives ALLOWED_TRANSITIONS from that
+source so there is exactly one state machine definition.
 """
 
 from __future__ import annotations
 
-from trw_mcp.state.prd_utils import VALID_TRANSITIONS
+from trw_mcp.models.requirements import VALID_TRANSITIONS
 
 # Derive ALLOWED_TRANSITIONS from the canonical prd_utils.py VALID_TRANSITIONS.
 # Converts enum keys/values to lowercase strings for caller convenience.

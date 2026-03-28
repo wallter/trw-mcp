@@ -10,8 +10,7 @@ decisions (step names, booleans, tuples). They never read or write the filesyste
 
 from __future__ import annotations
 
-from trw_mcp.state._nudge_messages import _STEPS
-from trw_mcp.state._nudge_state import CeremonyState, NudgeContext
+from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, _STEPS
 
 # Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
 _PHASE_APPLICABLE_STEPS: dict[str, tuple[str, ...]] = {

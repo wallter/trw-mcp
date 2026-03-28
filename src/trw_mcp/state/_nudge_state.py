@@ -22,6 +22,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Shared constants (used by both _nudge_messages and _nudge_rules)
+# ---------------------------------------------------------------------------
+
+# Step names in display order (FR01 PRD-CORE-084: includes review)
+_STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review", "deliver")
+
+# ---------------------------------------------------------------------------
 # State dataclass
 # ---------------------------------------------------------------------------
 

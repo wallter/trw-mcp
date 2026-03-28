@@ -21,7 +21,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.requirements import PRDStatus
+from trw_mcp.models.requirements import PRDStatus, VALID_TRANSITIONS
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -214,18 +214,9 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         raise StateError(f"Failed to update frontmatter: {exc}", path=str(path)) from exc
 
 
-# PRD status state machine (PRD-CORE-009-FR01, PRD-FIX-008)
-# Identity transitions (same → same) are always valid and handled in is_valid_transition.
-# Terminal states: done, merged, deprecated — no outgoing transitions.
-VALID_TRANSITIONS: dict[PRDStatus, set[PRDStatus]] = {
-    PRDStatus.DRAFT: {PRDStatus.REVIEW, PRDStatus.MERGED},
-    PRDStatus.REVIEW: {PRDStatus.APPROVED, PRDStatus.DRAFT, PRDStatus.MERGED},
-    PRDStatus.APPROVED: {PRDStatus.IMPLEMENTED, PRDStatus.DEPRECATED, PRDStatus.MERGED},
-    PRDStatus.IMPLEMENTED: {PRDStatus.DONE, PRDStatus.DEPRECATED},
-    PRDStatus.DONE: set(),
-    PRDStatus.MERGED: set(),
-    PRDStatus.DEPRECATED: set(),
-}
+
+# VALID_TRANSITIONS moved to models/requirements.py (next to PRDStatus enum)
+# Re-imported above for backward compatibility.
 
 
 def is_valid_transition(current: PRDStatus, target: PRDStatus) -> bool:
