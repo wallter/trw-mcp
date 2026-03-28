@@ -66,7 +66,7 @@ class TestMaybeCheckpointWal:
 
         result = maybe_checkpoint_wal(trw_dir)
         assert result.get("skipped") is True
-        assert result.get("reason") == "under_threshold"
+        assert result.get("reason") == "no_wal_file"
 
     def test_skips_under_threshold(self, trw_dir: Path) -> None:
         """When WAL file exists but is under threshold, returns skipped."""

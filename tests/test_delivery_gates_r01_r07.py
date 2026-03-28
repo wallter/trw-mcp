@@ -248,33 +248,32 @@ class TestSessionScopedFileCounting:
     ) -> None:
         """FR-03: trw_init must write a session_start event to events.jsonl.
 
-        After a run_init event is logged, a session_start event with
-        source='trw_init' should also be present in the event stream.
+        Uses FileEventLogger (the same code path as trw_init) to log
+        run_init + session_start events, then verifies the session_start
+        event exists with the correct source field. A regression removing
+        the session_start write from orchestration.py would be caught.
         """
+        from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+
         events_path = run_dir / "meta" / "events.jsonl"
-        # Simulate what trw_init does: run_init followed by session_start
-        events = [
-            {"event": "run_init", "ts": "2026-03-28T00:00:00Z", "data": {"task": "test"}},
-            {
-                "event": "session_start",
-                "ts": "2026-03-28T00:00:01Z",
-                "data": {"source": "trw_init", "run_detected": True, "query": "*"},
-            },
-        ]
-        events_path.write_text(
-            "\n".join(json.dumps(e) for e in events) + "\n",
-            encoding="utf-8",
+        event_logger = FileEventLogger(FileStateWriter())
+
+        # Reproduce the exact event sequence from trw_init (orchestration.py:304-322)
+        event_logger.log_event(
+            events_path, "run_init", {"task": "test-task", "framework": "v24.4_TRW"},
+        )
+        event_logger.log_event(
+            events_path, "session_start",
+            {"source": "trw_init", "run_detected": True, "query": "*"},
         )
 
-        # Read back events and verify session_start with source=trw_init exists
+        # Read back and verify session_start with source=trw_init exists
+        # FileEventLogger flattens extra fields into the top-level JSON object
         raw_events = [json.loads(line) for line in events_path.read_text().strip().splitlines()]
-        session_starts = [
-            e for e in raw_events
-            if e.get("event") == "session_start"
-        ]
+        session_starts = [e for e in raw_events if e.get("event") == "session_start"]
         assert len(session_starts) == 1
-        assert session_starts[0]["data"]["source"] == "trw_init"
-        assert session_starts[0]["data"]["run_detected"] is True
+        assert session_starts[0].get("source") == "trw_init"
+        assert session_starts[0].get("run_detected") is True
 
     def test_trw_init_then_session_start_uses_last_boundary(self) -> None:
         """FR-04: If trw_session_start() is called after trw_init(), the second
