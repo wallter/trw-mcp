@@ -48,6 +48,9 @@ from ._init_project import (
     _install_skills as _install_skills,
 )
 from ._init_project import (
+    _validate_skill as _validate_skill,
+)
+from ._init_project import (
     _write_initial_config as _write_initial_config,
 )
 from ._init_project import (
@@ -307,6 +310,7 @@ __all__ = [
     "_update_opencode_artifacts",
     "_update_or_report",
     "_update_skills",
+    "_validate_skill",
     "_verify_installation",
     "_write_fresh_mcp",
     "_write_if_missing",

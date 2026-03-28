@@ -259,6 +259,66 @@ def _get_framework_version() -> str:
     return read_framework_version()
 
 
+def _run_uninstall(args: argparse.Namespace) -> None:
+    """Handle the ``uninstall`` subcommand -- remove TRW files from a project."""
+    import shutil
+
+    target = Path(getattr(args, "target_dir", ".")).resolve()
+    dry_run: bool = getattr(args, "dry_run", False)
+    yes: bool = getattr(args, "yes", False)
+
+    # Files and directories created by init-project
+    paths_to_remove: list[Path] = [
+        target / ".trw",
+        target / ".mcp.json",
+        target / ".claude" / "skills",
+        target / ".claude" / "agents",
+        target / ".claude" / "hooks",
+    ]
+
+    # Find what exists
+    existing = [p for p in paths_to_remove if p.exists()]
+
+    if not existing:
+        print("  No TRW files found in this project.")
+        return
+
+    print(f"\n  TRW files found in {target}:\n")
+    for p in existing:
+        kind = "dir " if p.is_dir() else "file"
+        size = ""
+        if p.is_dir():
+            count = sum(1 for _ in p.rglob("*") if _.is_file())
+            size = f" ({count} files)"
+        print(f"    {kind}  {p.relative_to(target)}{size}")
+
+    if dry_run:
+        print("\n  --dry-run: no files removed.")
+        return
+
+    if not yes:
+        print()
+        confirm = input("  Remove these files? [y/N] ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print("  Aborted.")
+            return
+
+    # Remove
+    removed = 0
+    for p in existing:
+        try:
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+            removed += 1
+            print(f"  Removed: {p.relative_to(target)}")
+        except OSError as exc:
+            print(f"  Error removing {p.relative_to(target)}: {exc}")
+
+    print(f"\n  Done. Removed {removed} item(s).")
+
+
 def _run_auth(args: argparse.Namespace) -> None:
     """Handle the ``auth`` subcommand (login/logout/status)."""
     from trw_mcp.cli.auth import run_auth_login, run_auth_logout, run_auth_status
@@ -284,6 +344,33 @@ def _run_auth(args: argparse.Namespace) -> None:
         sys.exit(0)
 
 
+def _run_config_reference(args: argparse.Namespace) -> None:
+    """Handle the ``config-reference`` subcommand -- print config env vars."""
+    from trw_mcp.models.config._main_fields import _TRWConfigFields
+
+    print("# TRW Configuration Reference\n")
+    print("All values can be set via environment variables with `TRW_` prefix.\n")
+    print("| Environment Variable | Type | Default | Description |")
+    print("|---------------------|------|---------|-------------|")
+
+    for name, field_info in _TRWConfigFields.model_fields.items():
+        env_var = f"TRW_{name.upper()}"
+        annotation = field_info.annotation
+        field_type = (
+            str(annotation)
+            .replace("typing.", "")
+            .replace("<class '", "")
+            .replace("'>", "")
+        )
+        default = field_info.default if field_info.default is not None else ""
+        # Truncate long defaults
+        default_str = str(default)
+        if len(default_str) > 40:
+            default_str = default_str[:37] + "..."
+        desc = field_info.description or ""
+        print(f"| `{env_var}` | {field_type} | `{default_str}` | {desc} |")
+
+
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "init-project": _run_init_project,
     "update-project": _run_update_project,
@@ -292,4 +379,6 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "import-learnings": _run_import_learnings,
     "build-release": _run_build_release,
     "auth": _run_auth,
+    "uninstall": _run_uninstall,
+    "config-reference": _run_config_reference,
 }

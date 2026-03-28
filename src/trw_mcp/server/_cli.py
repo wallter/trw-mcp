@@ -306,6 +306,35 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     auth_sub.add_parser("logout", help="Remove stored API key")
     auth_sub.add_parser("status", help="Show current authentication status")
 
+    # uninstall
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Remove TRW files from a project",
+    )
+    uninstall_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Project directory (default: current directory)",
+    )
+    uninstall_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List files without removing them",
+    )
+    uninstall_parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip confirmation prompt",
+    )
+
+    # config-reference
+    subparsers.add_parser(
+        "config-reference",
+        help="Print configuration reference (all TRW_ env vars)",
+    )
+
     # build-release
     build_parser = subparsers.add_parser(
         "build-release",
