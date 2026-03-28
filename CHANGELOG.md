@@ -2,6 +2,12 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.32.2] — 2026-03-28
+
+### Fixed
+
+- **Submodule-safe hook path resolution** — Hook commands used `git rev-parse --git-common-dir` which resolves to `.git/modules/<name>` inside submodules, breaking all hooks with ENOENT. Switched to `--show-toplevel` which works correctly for regular repos, worktrees, and submodules.
+
 ## [0.32.1] — 2026-03-26
 
 ### Fixed
