@@ -7,6 +7,7 @@ or an active run path MUST use these functions instead of inline logic.
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -28,18 +29,21 @@ def __getattr__(name: str) -> object:
 
 
 # --- Session identity (PRD-FIX-042 FR03) ---
+_session_lock = threading.Lock()
 _session_id: str = uuid.uuid4().hex
 
 
 def get_session_id() -> str:
     """Return the current process session ID."""
-    return _session_id
+    with _session_lock:
+        return _session_id
 
 
 def _reset_session_id(new_id: str | None = None) -> None:
     """Reset the session ID (for testing). Generates a new one if *new_id* is None."""
     global _session_id
-    _session_id = new_id if new_id is not None else uuid.uuid4().hex
+    with _session_lock:
+        _session_id = new_id if new_id is not None else uuid.uuid4().hex
 
 
 # --- Per-session run pinning (PRD-FIX-042 FR06) ---
@@ -61,20 +65,23 @@ def pin_active_run(run_dir: Path, *, session_id: str | None = None) -> None:
         run_dir: Absolute path to the run directory to pin.
         session_id: Session to pin for. Defaults to the current process session.
     """
-    sid = session_id if session_id is not None else get_session_id()
-    _pinned_runs[sid] = run_dir.resolve()
+    with _session_lock:
+        sid = session_id if session_id is not None else _session_id
+        _pinned_runs[sid] = run_dir.resolve()
 
 
 def unpin_active_run(*, session_id: str | None = None) -> None:
     """Remove the run pin for a session, reverting to filesystem scan."""
-    sid = session_id if session_id is not None else get_session_id()
-    _pinned_runs.pop(sid, None)
+    with _session_lock:
+        sid = session_id if session_id is not None else _session_id
+        _pinned_runs.pop(sid, None)
 
 
 def get_pinned_run(*, session_id: str | None = None) -> Path | None:
     """Return the currently pinned run directory for a session, or None."""
-    sid = session_id if session_id is not None else get_session_id()
-    return _pinned_runs.get(sid)
+    with _session_lock:
+        sid = session_id if session_id is not None else _session_id
+        return _pinned_runs.get(sid)
 
 
 def resolve_memory_store_path() -> Path:
@@ -182,8 +189,9 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
     Returns:
         Path to run directory, or None if no active run found.
     """
-    sid = session_id if session_id is not None else get_session_id()
-    pinned = _pinned_runs.get(sid)
+    with _session_lock:
+        sid = session_id if session_id is not None else _session_id
+        pinned = _pinned_runs.get(sid)
     if pinned is not None:
         return pinned
 
@@ -198,11 +206,11 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
         latest_name = ""
         latest_dir: Path | None = None
         for run_dir, run_yaml in iter_run_dirs(runs_root):
-            # Status-aware: skip completed/failed runs (PRD-FIX-042 FR02)
+            # Status-aware: skip non-active runs (PRD-FIX-042 FR02)
             try:
                 data = reader.read_yaml(run_yaml)
                 status = str(data.get("status", "active"))
-                if status in ("complete", "failed"):
+                if status in ("complete", "failed", "abandoned", "delivered"):
                     continue
             except Exception:  # justified: fail-open, unreadable run.yaml treated as active for backward compat
                 logger.debug("run_yaml_read_failed", path=str(run_yaml), exc_info=True)

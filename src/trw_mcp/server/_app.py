@@ -98,6 +98,27 @@ def _build_middleware() -> list[object]:
     return middleware
 
 
+def create_app(
+    *,
+    instructions: str | None = None,
+    middleware: list[object] | None = None,
+) -> FastMCP:
+    """Create a new FastMCP application instance.
+
+    Args:
+        instructions: Override server instructions. Uses centralized messages by default.
+        middleware: Override middleware list. Uses default chain by default.
+
+    Returns:
+        Configured FastMCP instance.
+    """
+    return FastMCP(
+        "trw",
+        instructions=instructions or _load_server_instructions(),
+        middleware=middleware if middleware is not None else _build_middleware(),  # type: ignore[arg-type]
+    )
+
+
 def configure_logging_compat(*, debug: bool, config: TRWConfig) -> None:
     """Legacy-compatible wrapper for configure_logging.
 
@@ -115,11 +136,6 @@ def configure_logging_compat(*, debug: bool, config: TRWConfig) -> None:
     )
 
 
-# ── Module-level singleton ──────────────────────────────────────────────
-_middleware_list = _build_middleware()
-
-mcp = FastMCP(
-    "trw",
-    instructions=_load_server_instructions(),
-    middleware=_middleware_list,  # type: ignore[arg-type]
-)
+# ── Module-level singleton (backward compat) ─────────────────────────
+mcp = create_app()
+_middleware_list: list[object] = list(mcp.middleware)  # backward compat for _tools.py

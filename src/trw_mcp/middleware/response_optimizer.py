@@ -12,6 +12,8 @@ Fails open: if JSON parsing fails, the original content is preserved.
 
 from __future__ import annotations
 
+__all__ = ["ResponseOptimizerMiddleware"]
+
 import json
 
 import structlog

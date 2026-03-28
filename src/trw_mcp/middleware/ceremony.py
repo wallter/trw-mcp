@@ -11,6 +11,8 @@ connection, so parallel sessions are tracked independently.
 
 from __future__ import annotations
 
+__all__ = ["CeremonyMiddleware"]
+
 import structlog
 from fastmcp.server.middleware.middleware import (
     CallNext,
