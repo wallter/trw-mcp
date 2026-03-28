@@ -68,6 +68,35 @@ def _count_file_modified(events: list[dict[str, object]]) -> int:
     return sum(1 for ev in events if str(ev.get("event", "")) == "file_modified")
 
 
+def _events_since_last_session_start(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return only events after the last ``session_start`` event.
+
+    When a new session starts, it logs a ``session_start`` event to the run's
+    events.jsonl. Events before that boundary belong to a previous session and
+    should not count against the current session's delivery gates.
+
+    If no ``session_start`` event is found, returns all events (backward compat).
+    """
+    last_session_idx = -1
+    for i, ev in enumerate(events):
+        if str(ev.get("event", "")) == "session_start":
+            last_session_idx = i
+
+    if last_session_idx < 0:
+        return events
+    return events[last_session_idx:]
+
+
+def _count_file_modified_current_session(events: list[dict[str, object]]) -> int:
+    """Count ``file_modified`` events in the current session only.
+
+    Uses ``session_start`` as the session boundary marker. Events from
+    previous sessions (before the last ``session_start``) are excluded.
+    """
+    session_events = _events_since_last_session_start(events)
+    return _count_file_modified(session_events)
+
+
 def _read_run_yaml(run_path: Path, reader: FileStateReader) -> dict[str, object]:
     """Read run.yaml, returning empty dict on any error."""
     run_yaml_path = run_path / "meta" / "run.yaml"
@@ -112,7 +141,7 @@ def _check_complexity_drift(
             return None
         planned_files = int(str(signals.get("files_affected", 0)))
 
-        actual_files = _count_file_modified(events)
+        actual_files = _count_file_modified_current_session(events)
 
         if actual_files > REVIEW_SCOPE_FILE_THRESHOLD and actual_files > COMPLEXITY_DRIFT_MULTIPLIER * planned_files:
             logger.info(
@@ -242,6 +271,11 @@ def _check_review_file_count_gate(
 ) -> str | None:
     """Block delivery when >REVIEW_SCOPE_FILE_THRESHOLD file_modified events and no review (R-01).
 
+    Uses session-scoped counting: only ``file_modified`` events after the last
+    ``session_start`` boundary are counted. This prevents stale events from
+    previous sessions (which may have accumulated many file modifications)
+    from blocking delivery in a new session that only changed a few files.
+
     Uses pre-read ``events`` list (shared with other gate checks).
 
     Fail-open: if anything goes wrong, returns None.
@@ -251,7 +285,7 @@ def _check_review_file_count_gate(
         if review_path.exists():
             return None
 
-        file_modified_count = _count_file_modified(events)
+        file_modified_count = _count_file_modified_current_session(events)
 
         if file_modified_count > REVIEW_SCOPE_FILE_THRESHOLD:
             return (

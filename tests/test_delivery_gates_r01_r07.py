@@ -19,6 +19,10 @@ from trw_mcp.tools._ceremony_helpers import (
     _read_run_events,
     check_delivery_gates,
 )
+from trw_mcp.tools._delivery_helpers import (
+    _count_file_modified_current_session,
+    _events_since_last_session_start,
+)
 
 # --- Fixtures ---
 
@@ -161,6 +165,174 @@ class TestReviewScopeBlock:
         bad_events: list[dict[str, object]] = [{"broken": True}] * 10
         result = _check_review_file_count_gate(run_dir, bad_events)
         assert result is None
+
+
+# --- Session-scoped file_modified counting ---
+
+
+@pytest.mark.integration
+class TestSessionScopedFileCounting:
+    """Events from previous sessions should not block delivery in the current session."""
+
+    def test_session_start_resets_file_count(self) -> None:
+        """file_modified events before session_start should not be counted."""
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "2026-03-18T00:00:00Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:01Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:02Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:03Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:04Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:05Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:06Z"},
+            # Session boundary — new session starts here
+            {"event": "session_start", "ts": "2026-03-18T01:00:00Z"},
+            {"event": "file_modified", "ts": "2026-03-18T01:00:01Z"},
+        ]
+        # Total file_modified = 8, but only 1 in current session
+        assert _count_file_modified_current_session(events) == 1
+
+    def test_no_session_start_counts_all(self) -> None:
+        """Without session_start, all file_modified events count (backward compat)."""
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "2026-03-18T00:00:00Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:01Z"},
+            {"event": "file_modified", "ts": "2026-03-18T00:00:02Z"},
+        ]
+        assert _count_file_modified_current_session(events) == 3
+
+    def test_events_since_last_session_start_boundary(self) -> None:
+        """Should return events from and including the last session_start."""
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "T0"},
+            {"event": "session_start", "ts": "T1"},
+            {"event": "file_modified", "ts": "T2"},
+            {"event": "session_start", "ts": "T3"},
+            {"event": "file_modified", "ts": "T4"},
+        ]
+        result = _events_since_last_session_start(events)
+        assert len(result) == 2  # session_start at T3 + file_modified at T4
+        assert result[0]["ts"] == "T3"
+        assert result[1]["ts"] == "T4"
+
+    def test_stale_run_70_files_current_session_1_file(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """The exact scenario: stale run with 70 modified files, current session 1 file.
+
+        This is the recurring issue that motivated this fix. A previous session
+        accumulated 70 file_modified events but never delivered. The current
+        session starts, edits 1 file, and should NOT be blocked by the stale count.
+        """
+        events_path = run_dir / "meta" / "events.jsonl"
+        events: list[dict[str, object]] = []
+        # Previous session: 70 file_modified events
+        for i in range(70):
+            events.append({"event": "file_modified", "ts": f"2026-03-17T{i:02d}:00:00Z"})
+        # New session boundary
+        events.append({"event": "session_start", "ts": "2026-03-18T00:00:00Z"})
+        # Current session: 1 file_modified
+        events.append({"event": "file_modified", "ts": "2026-03-18T00:01:00Z"})
+
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        # Should NOT block — current session only has 1 file_modified
+        result = _check_review_file_count_gate(run_dir, _read_run_events(run_dir, reader))
+        assert result is None
+
+    def test_trw_init_writes_session_start_event(
+        self,
+        run_dir: Path,
+    ) -> None:
+        """FR-03: trw_init must write a session_start event to events.jsonl.
+
+        After a run_init event is logged, a session_start event with
+        source='trw_init' should also be present in the event stream.
+        """
+        events_path = run_dir / "meta" / "events.jsonl"
+        # Simulate what trw_init does: run_init followed by session_start
+        events = [
+            {"event": "run_init", "ts": "2026-03-28T00:00:00Z", "data": {"task": "test"}},
+            {
+                "event": "session_start",
+                "ts": "2026-03-28T00:00:01Z",
+                "data": {"source": "trw_init", "run_detected": True, "query": "*"},
+            },
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        # Read back events and verify session_start with source=trw_init exists
+        raw_events = [json.loads(line) for line in events_path.read_text().strip().splitlines()]
+        session_starts = [
+            e for e in raw_events
+            if e.get("event") == "session_start"
+        ]
+        assert len(session_starts) == 1
+        assert session_starts[0]["data"]["source"] == "trw_init"
+        assert session_starts[0]["data"]["run_detected"] is True
+
+    def test_trw_init_then_session_start_uses_last_boundary(self) -> None:
+        """FR-04: If trw_session_start() is called after trw_init(), the second
+        session_start supersedes the first.
+
+        Scenario:
+        - 5 file_modified events (from previous session)
+        - session_start from trw_init
+        - 2 file_modified events
+        - session_start from trw_session_start (supersedes trw_init boundary)
+        - 1 file_modified event
+
+        _count_file_modified_current_session should return 1 (only after the
+        LAST session_start).
+        """
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "T0"},
+            {"event": "file_modified", "ts": "T1"},
+            {"event": "file_modified", "ts": "T2"},
+            {"event": "file_modified", "ts": "T3"},
+            {"event": "file_modified", "ts": "T4"},
+            # session_start from trw_init
+            {"event": "session_start", "ts": "T5", "data": {"source": "trw_init"}},
+            {"event": "file_modified", "ts": "T6"},
+            {"event": "file_modified", "ts": "T7"},
+            # session_start from trw_session_start — supersedes the trw_init one
+            {"event": "session_start", "ts": "T8", "data": {"source": "trw_session_start"}},
+            {"event": "file_modified", "ts": "T9"},
+        ]
+        assert _count_file_modified_current_session(events) == 1
+
+    def test_stale_run_blocks_when_current_session_also_exceeds(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """If the current session also exceeds the threshold, it should still block."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        events: list[dict[str, object]] = []
+        # Previous session
+        for i in range(30):
+            events.append({"event": "file_modified", "ts": f"2026-03-17T{i:02d}:00:00Z"})
+        # New session boundary
+        events.append({"event": "session_start", "ts": "2026-03-18T00:00:00Z"})
+        # Current session: 8 file_modified (exceeds threshold of 5)
+        for i in range(8):
+            events.append({"event": "file_modified", "ts": f"2026-03-18T00:{i:02d}:01Z"})
+
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        result = _check_review_file_count_gate(run_dir, _read_run_events(run_dir, reader))
+        assert result is not None
+        assert "8 files modified" in result
 
 
 # --- R-07: Checkpoint blocker warning ---
