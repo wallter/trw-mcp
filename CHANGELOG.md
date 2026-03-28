@@ -2,6 +2,35 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.34.0] — 2026-03-28
+
+### Added — Code Quality Sprint (PRD-QUAL-047, PRD-QUAL-048, PRD-CORE-089, PRD-QUAL-049)
+
+- **`create_app()` factory function** — `server/_app.py` now provides `create_app(instructions=..., middleware=...)` for testing and embedding. Module-level `mcp` singleton preserved for backward compatibility.
+- **`py.typed` PEP 561 marker** — enables downstream type checking for library consumers.
+- **`--version` CLI flag** — `trw-mcp -V` prints package version.
+- **`--api-url` auth CLI override** — `trw-mcp auth login --api-url <url>` for testing alternate endpoints.
+- **`suggestion` field on TRWError** — exception hierarchy supports remediation hints.
+- **Troubleshooting section in README** — 4 common issues documented.
+- **`state/README.md` ownership map** — navigation guide for the 71-module state directory.
+- **`__all__` declarations** on exceptions, middleware, and persistence modules.
+
+### Changed
+
+- **Circular imports reduced 8 → 3** — extracted `_deferred_state.py` (ceremony↔deferred cycle), moved `_STEPS` to `_nudge_state.py` (nudge cycle), moved `VALID_TRANSITIONS` to `models/requirements.py` (prd_utils↔prd_status cycle).
+- **Thread-safe session identity** — `_session_id` and `_pinned_runs` in `state/_paths.py` now protected by `threading.Lock`.
+- **`_app.py` middleware init** — single `get_config()` call (was doubled), `sys.stderr.write` replaced with `structlog.warning`.
+- **`_deferred_delivery.py` re-exports** — consolidated from 44 lines to 15 (grouped imports).
+- **`trw-memory` pinned** to `>=0.3.0,<1.0.0` (was `>=0.1.0`).
+- **ruff lint zero errors** — 39 errors resolved via per-file-ignores and auto-fix.
+- **Deprecated ANN101/ANN102** rules removed from ruff config.
+
+### Fixed
+
+- **Python version check in installer** — `install-trw.py` now validates Python ≥3.10 at startup.
+- **CHANGELOG version gaps** — 0.26.0 and 0.27.0 documented as internal (not published to PyPI).
+- **Silent JSON parse in auth** — `cli/auth.py` error body parse failure now documented with justification comment.
+
 ## [0.33.0] — 2026-03-28
 
 ### Added — Session Resilience Hardening (PRD-QUAL-050)
