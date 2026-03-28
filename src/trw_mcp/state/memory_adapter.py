@@ -487,6 +487,7 @@ def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
         config = get_config()
         threshold_bytes = config.wal_checkpoint_threshold_mb * 1024 * 1024
 
+        # memory.db is the primary SQLite store (distinct from vectors.db)
         db_path = trw_dir / "memory" / "memory.db"
         wal_path = db_path.with_suffix(".db-wal")
 
