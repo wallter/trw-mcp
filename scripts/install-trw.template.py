@@ -1243,6 +1243,10 @@ def phase_configure(
             ui.step_ok("API key: configured (from prior install)")
             api_key = str(prior_config["api_key"])
             telemetry_enabled = True
+        elif skip_auth and opt_api_key and validate_api_key(opt_api_key):
+            api_key = opt_api_key
+            telemetry_enabled = True
+            ui.step_ok("API key: accepted (from bootstrap)")
         elif skip_auth:
             ui.step_ok("Auth skipped (--skip-auth)")
         else:
