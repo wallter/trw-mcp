@@ -82,18 +82,22 @@ class FakeToolResult:
 class TestSessionState:
     """Tests for module-level session state management."""
 
+    @pytest.mark.unit
     def test_new_session_is_not_active(self) -> None:
         assert not is_session_active("new-session")
 
+    @pytest.mark.unit
     def test_mark_session_active(self) -> None:
         mark_session_active("sess-1")
         assert is_session_active("sess-1")
 
+    @pytest.mark.unit
     def test_different_sessions_independent(self) -> None:
         mark_session_active("sess-1")
         assert is_session_active("sess-1")
         assert not is_session_active("sess-2")
 
+    @pytest.mark.unit
     def test_reset_clears_all(self) -> None:
         mark_session_active("sess-1")
         mark_session_active("sess-2")
@@ -101,10 +105,27 @@ class TestSessionState:
         assert not is_session_active("sess-1")
         assert not is_session_active("sess-2")
 
+    @pytest.mark.unit
     def test_mark_idempotent(self) -> None:
         mark_session_active("sess-1")
         mark_session_active("sess-1")
         assert is_session_active("sess-1")
+
+    @pytest.mark.unit
+    def test_reset_then_mark_works(self) -> None:
+        """After reset, marking a new session should work normally."""
+        mark_session_active("sess-before")
+        reset_state()
+        mark_session_active("sess-after")
+        assert is_session_active("sess-after")
+        assert not is_session_active("sess-before")
+
+    @pytest.mark.unit
+    def test_reset_idempotent(self) -> None:
+        """Calling reset_state twice should not raise."""
+        reset_state()
+        reset_state()
+        assert not is_session_active("any-session")
 
 
 # --- Tests for exempt tools constant ---
@@ -113,17 +134,37 @@ class TestSessionState:
 class TestCeremonyTools:
     """Tests for the CEREMONY_TOOLS constant."""
 
+    @pytest.mark.unit
     def test_contains_session_start(self) -> None:
         assert "trw_session_start" in CEREMONY_TOOLS
 
+    @pytest.mark.unit
     def test_contains_init(self) -> None:
         assert "trw_init" in CEREMONY_TOOLS
 
+    @pytest.mark.unit
     def test_contains_recall(self) -> None:
         assert "trw_recall" in CEREMONY_TOOLS
 
+    @pytest.mark.unit
     def test_is_frozenset(self) -> None:
         assert isinstance(CEREMONY_TOOLS, frozenset)
+
+    @pytest.mark.unit
+    def test_nonempty(self) -> None:
+        assert len(CEREMONY_TOOLS) > 0
+
+    @pytest.mark.unit
+    def test_non_ceremony_tools_excluded(self) -> None:
+        """Delivery and checkpoint tools are NOT ceremony initializers."""
+        assert "trw_deliver" not in CEREMONY_TOOLS
+        assert "trw_checkpoint" not in CEREMONY_TOOLS
+
+    @pytest.mark.unit
+    def test_immutable(self) -> None:
+        """frozenset is immutable — add() must raise."""
+        with pytest.raises((AttributeError, TypeError)):
+            CEREMONY_TOOLS.add("trw_fake_tool")  # type: ignore[attr-defined]
 
 
 # --- Tests for CeremonyMiddleware ---
@@ -318,19 +359,57 @@ class TestCeremonyMiddleware:
         await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
         assert is_session_active("sess-recall")
 
+    @pytest.mark.asyncio
+    async def test_heartbeat_exception_inside_safe_does_not_block_tool(
+        self,
+        middleware: CeremonyMiddleware,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If touch_heartbeat raises, _touch_heartbeat_safe catches it and the
+        tool result is still returned (fail-open — lines 90-91 of ceremony.py)."""
+        # Patch at the source so the except block in _touch_heartbeat_safe fires
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.touch_heartbeat",
+            lambda: (_ for _ in ()).throw(RuntimeError("disk full")),
+        )
+
+        result = FakeToolResult(content=[TextContent(type="text", text="result")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        req_ctx = FakeRequestContext(session_id="sess-hb")
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=FakeContext(request_context=req_ctx),
+        )
+        # Fail-open: exception inside _touch_heartbeat_safe must not propagate
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        # Result still delivered despite heartbeat failure
+        texts = [b.text for b in out.content if hasattr(b, "text")]
+        assert "result" in texts
+
 
 class TestCeremonyWarningText:
     """Tests for the warning text content — value-oriented framing."""
 
+    @pytest.mark.unit
+    def test_warning_is_nonempty_string(self) -> None:
+        assert isinstance(CEREMONY_WARNING, str)
+        assert len(CEREMONY_WARNING.strip()) > 0
+
+    @pytest.mark.unit
     def test_warning_mentions_session_start(self) -> None:
         assert "trw_session_start()" in CEREMONY_WARNING
 
+    @pytest.mark.unit
     def test_warning_uses_value_framing(self) -> None:
         """Warning explains what the agent gains, not what it loses."""
         lower = CEREMONY_WARNING.lower()
         assert "learnings" in lower
         assert "run state" in lower
 
+    @pytest.mark.unit
     def test_warning_avoids_threat_framing(self) -> None:
         """No CRITICAL/MUST/WILL threat language."""
         assert "CRITICAL" not in CEREMONY_WARNING

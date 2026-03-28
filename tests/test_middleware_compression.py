@@ -2,13 +2,15 @@
 
 Covers:
 - truncate: at/above/below limit
-- strip_deep: at max_depth, nested dicts/lists
+- strip_deep: at max_depth, nested dicts/lists, list items at depth, scalar passthrough at depth
 - compress_json: compact vs minimal tier, key stripping
-- compress_text_block: JSON vs non-JSON, tier boundaries
+- compress_text_block: JSON vs non-JSON, tier boundaries, invalid JSON fallback
 - hash_content: mixed content types
 """
 
 from __future__ import annotations
+
+import json
 
 from mcp.types import TextContent
 
@@ -62,6 +64,28 @@ class TestStripDeep:
         assert strip_deep([1, 2], max_depth=0) == "[nested]"
         assert strip_deep("scalar", max_depth=0) == "scalar"
 
+    def test_list_items_recursively_stripped(self) -> None:
+        """List items at depth < max_depth are recursively processed."""
+        # A list at depth 0 with nested dicts — items should be traversed
+        data = [{"a": {"b": "deep"}}]
+        result = strip_deep(data, max_depth=2)
+        # depth 0: list traversed, depth 1: dict traversed, depth 2: "b" replaced
+        assert result == [{"a": "[nested]"}]
+
+    def test_list_with_scalars_at_depth_preserved(self) -> None:
+        """Scalar items in a list at max_depth are not replaced with [nested]."""
+        data = {"items": [1, 2, 3]}
+        # At depth=1, items is a list — traversed. At depth=2, each int is a scalar.
+        result = strip_deep(data, max_depth=2)
+        assert result == {"items": [1, 2, 3]}
+
+    def test_deeply_nested_list_replaced(self) -> None:
+        """A list at exactly max_depth is replaced with [nested]."""
+        data = {"a": {"b": [1, 2, 3]}}
+        # depth 0: dict, depth 1: dict, depth 2: list — list replaced
+        result = strip_deep(data, max_depth=2)
+        assert result["a"]["b"] == "[nested]"  # type: ignore[index]
+
 
 class TestCompressJson:
     def test_strip_keys_removed_at_compact(self) -> None:
@@ -84,7 +108,7 @@ class TestCompressJson:
     def test_minimal_strips_deep_nesting(self) -> None:
         data = {"a": {"b": {"c": {"d": "deep"}}}}
         result = compress_json(data, "minimal")
-        assert result["a"]["b"] == "[nested]"
+        assert result["a"]["b"] == "[nested]"  # type: ignore[index]
 
 
 class TestCompressTextBlock:
@@ -93,7 +117,6 @@ class TestCompressTextBlock:
         assert compress_text_block(text, "full") == text
 
     def test_compact_json_strips_keys(self) -> None:
-        import json
         data = {"summary": "ok", "metadata": {"foo": "bar"}}
         text = json.dumps(data)
         result = compress_text_block(text, "compact")
@@ -111,6 +134,25 @@ class TestCompressTextBlock:
         result = compress_text_block(long_text, "compact")
         assert len(result) < 1000
         assert "truncated" in result
+
+    def test_invalid_json_starting_with_brace_falls_through(self) -> None:
+        """Invalid JSON starting with '{' falls through to text truncation."""
+        bad_json = "{not: valid: json}" + "x" * 1000
+        result = compress_text_block(bad_json, "compact")
+        # Should truncate as plain text (not crash)
+        assert len(result) < len(bad_json)
+        assert "truncated" in result
+
+    def test_invalid_json_array_starting_falls_through(self) -> None:
+        """Invalid JSON starting with '[' falls through to text truncation."""
+        bad_json = "[not, valid" + "x" * 1000
+        result = compress_text_block(bad_json, "minimal")
+        assert len(result) < len(bad_json)
+        assert "truncated" in result
+
+    def test_empty_text_unchanged(self) -> None:
+        assert compress_text_block("", "compact") == ""
+        assert compress_text_block("", "minimal") == ""
 
 
 class TestHashContent:
