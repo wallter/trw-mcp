@@ -222,7 +222,9 @@ def reset_embed_failure_count() -> None:
 def _resolve_memory_db_path() -> Path:
     """Resolve the memory.db path from the .trw directory.
 
-    Internal helper for WAL health reporting — avoids circular imports.
+    Returns the primary SQLite store path (``memory.db``, distinct from
+    ``vectors.db`` used for embeddings). Internal helper for WAL health
+    reporting — avoids circular imports.
     """
     from trw_mcp.state._paths import resolve_trw_dir
 

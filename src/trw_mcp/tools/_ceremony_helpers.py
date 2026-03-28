@@ -66,6 +66,12 @@ from trw_mcp.tools._delivery_helpers import (
     _count_file_modified as _count_file_modified,
 )
 from trw_mcp.tools._delivery_helpers import (
+    _count_file_modified_current_session as _count_file_modified_current_session,
+)
+from trw_mcp.tools._delivery_helpers import (
+    _events_since_last_session_start as _events_since_last_session_start,
+)
+from trw_mcp.tools._delivery_helpers import (
     _read_complexity_class as _read_complexity_class,
 )
 from trw_mcp.tools._delivery_helpers import (
