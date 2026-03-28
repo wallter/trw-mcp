@@ -17,7 +17,9 @@ All notable changes to the TRW MCP server package.
 
 ### Changed
 
-- **Circular imports reduced 8 → 3** — extracted `_deferred_state.py` (ceremony↔deferred cycle), moved `_STEPS` to `_nudge_state.py` (nudge cycle), moved `VALID_TRANSITIONS` to `models/requirements.py` (prd_utils↔prd_status cycle).
+- **TRWConfig decomposed** — 790-line god-class split into `_main_fields.py` (468 lines, all field declarations) + `_main.py` (138 lines, properties and methods). Both under the 500-line review threshold. (PRD-CORE-090)
+- **Circular imports eliminated: 8 → 1** — extracted `_deferred_state.py` (ceremony↔deferred), moved `_STEPS` to `_nudge_state.py` (nudge cycle), moved `VALID_TRANSITIONS` to `models/requirements.py` (prd_utils↔prd_status), refactored review↔helpers, added TYPE_CHECKING guard for tiers↔sweep. Only benign `models` self-ref remains.
+- **Middleware test coverage added** — 4 new/expanded test files for ceremony, context_budget, response_optimizer, and compression middleware.
 - **Thread-safe session identity** — `_session_id` and `_pinned_runs` in `state/_paths.py` now protected by `threading.Lock`.
 - **`_app.py` middleware init** — single `get_config()` call (was doubled), `sys.stderr.write` replaced with `structlog.warning`.
 - **`_deferred_delivery.py` re-exports** — consolidated from 44 lines to 15 (grouped imports).
