@@ -4,9 +4,14 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
-# get_repo_root: Resolve the working-tree root (worktree-safe, submodule-safe).
+# get_repo_root: Resolve the project root.
+# Prefers $CLAUDE_PROJECT_DIR (set by Claude Code), falls back to git.
 get_repo_root() {
-  git rev-parse --show-toplevel 2>/dev/null
+  if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+    printf '%s' "$CLAUDE_PROJECT_DIR"
+  else
+    git rev-parse --show-toplevel 2>/dev/null
+  fi
 }
 
 # get_task_root: Read task_root from .trw/config.yaml or default to "docs".
