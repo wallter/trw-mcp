@@ -301,45 +301,45 @@ class TestHandleCrossModelMode:
 
     def test_disabled_config_sets_cross_model_skipped_true(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value="some diff"):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["cross_model_skipped"] is True
 
     def test_disabled_config_returns_pass_verdict(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value="some diff"):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["verdict"] == "pass"
 
     def test_empty_diff_sets_cross_model_skipped_true(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=True)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["cross_model_skipped"] is True
 
     def test_enabled_with_diff_but_stub_returns_empty_skipped(self, run_dir: Path) -> None:
         """When enabled and diff exists but _invoke returns [], skipped=True."""
         config = _make_config(cross_model_enabled=True)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value="diff content"):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         # _invoke_cross_model_review is a stub returning [] -> skipped
         assert result["cross_model_skipped"] is True
 
     def test_mode_field_is_cross_model(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["mode"] == "cross_model"
 
     def test_provider_field_in_result(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False, cross_model_provider="test-provider")
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["cross_model_provider"] == "test-provider"
 
     def test_persists_review_yaml_with_mode_field(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         review_path = run_dir / "meta" / "review.yaml"
         assert review_path.exists()
@@ -349,7 +349,7 @@ class TestHandleCrossModelMode:
 
     def test_no_run_returns_empty_review_yaml(self) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_cross_model_mode(config, None, "review-none", "2026-03-01T00:00:00Z")
         assert result["review_yaml"] == ""
         assert result["run_path"] is None
@@ -362,9 +362,9 @@ class TestHandleCrossModelMode:
             {"category": "style", "severity": "medium", "description": "Medium severity"},
         ]
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value="diff content"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"),
             patch(
-                "trw_mcp.tools.review._invoke_cross_model_review",
+                "trw_mcp.tools._review_helpers._invoke_cross_model_review",
                 return_value=stub_findings,
             ),
         ):
@@ -384,9 +384,9 @@ class TestHandleCrossModelMode:
             {"category": "correctness", "severity": "warning", "description": "Issue"},
         ]
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value="diff content"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"),
             patch(
-                "trw_mcp.tools.review._invoke_cross_model_review",
+                "trw_mcp.tools._review_helpers._invoke_cross_model_review",
                 return_value=stub_findings,
             ),
         ):
@@ -398,13 +398,13 @@ class TestHandleCrossModelMode:
 
     def test_review_id_in_result(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_cross_model_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z")
         assert result["review_id"] == "review-id-check"
 
     def test_total_findings_zero_when_skipped(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["total_findings"] == 0
 
@@ -435,7 +435,7 @@ class TestHandleAutoMode:
                 "description": "Low confidence",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 1
         assert result["total_findings_count"] == 2
@@ -459,7 +459,7 @@ class TestHandleAutoMode:
                 "description": "Below threshold",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 1
 
@@ -482,7 +482,7 @@ class TestHandleAutoMode:
                 "description": "High confidence warning",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["verdict"] == "warn"
 
@@ -497,7 +497,7 @@ class TestHandleAutoMode:
                 "description": "Low confidence critical",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 0
         assert result["verdict"] == "pass"
@@ -521,7 +521,7 @@ class TestHandleAutoMode:
             },
             {"reviewer_role": "style", "confidence": 60, "category": "style", "severity": "info", "description": "C"},
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 3
         assert result["total_findings_count"] == 3
@@ -539,9 +539,9 @@ class TestHandleAutoMode:
             },
         ]
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value="some diff"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"),
             patch(
-                "trw_mcp.tools.review._run_multi_reviewer_analysis",
+                "trw_mcp.tools._review_helpers._run_multi_reviewer_analysis",
             ) as mock_analysis,
         ):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
@@ -561,9 +561,9 @@ class TestHandleAutoMode:
             "findings": [],
         }
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
             patch(
-                "trw_mcp.tools.review._run_multi_reviewer_analysis",
+                "trw_mcp.tools._review_helpers._run_multi_reviewer_analysis",
                 return_value=fake_analysis,
             ) as mock_analysis,
         ):
@@ -588,7 +588,7 @@ class TestHandleAutoMode:
                 "description": "Filtered",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         review_path = run_dir / "meta" / "review.yaml"
         assert review_path.exists()
@@ -609,7 +609,7 @@ class TestHandleAutoMode:
             },
             {"reviewer_role": "style", "confidence": 30, "category": "style", "severity": "info", "description": "Low"},
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         review_all_path = run_dir / "meta" / "review-all.yaml"
         assert review_all_path.exists()
@@ -638,7 +638,7 @@ class TestHandleAutoMode:
                 "description": "Normal finding",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         integration_path = run_dir / "meta" / "integration-review.yaml"
         assert integration_path.exists()
@@ -657,14 +657,14 @@ class TestHandleAutoMode:
                 "description": "No integration findings",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         integration_path = run_dir / "meta" / "integration-review.yaml"
         assert not integration_path.exists()
 
     def test_no_run_returns_empty_review_yaml(self) -> None:
         config = _make_config(confidence_threshold=0)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, None, "review-none", "2026-03-01T00:00:00Z", None)
         assert result["review_yaml"] == ""
         assert result["run_path"] is None
@@ -681,35 +681,35 @@ class TestHandleAutoMode:
                 "description": "Finding",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             handle_auto_mode(config, None, "review-none", "2026-03-01T00:00:00Z", reviewer_findings)
         # No run path → meta/ never created under tmp_path
         assert not (tmp_path / "meta" / "review-all.yaml").exists()
 
     def test_confidence_threshold_in_result(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=75)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", None)
         assert result["confidence_threshold"] == 75
 
     def test_mode_field_is_auto(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=0)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", None)
         assert result["mode"] == "auto"
 
     def test_review_id_in_result(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=0)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z", None)
         assert result["review_id"] == "review-id-check"
 
     def test_reviewer_roles_run_in_result_from_precollected(self, run_dir: Path) -> None:
         """reviewer_roles_run comes from REVIEWER_ROLES when using pre-collected findings."""
-        from trw_mcp.tools.review import REVIEWER_ROLES
+        from trw_mcp.tools._review_helpers import REVIEWER_ROLES
 
         config = _make_config(confidence_threshold=0)
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", [])
         assert result["reviewer_roles_run"] == list(REVIEWER_ROLES)
 
@@ -727,7 +727,7 @@ class TestHandleAutoMode:
                 "description": "Valid",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)  # type: ignore[arg-type]
         assert result["surfaced_findings_count"] == 1
 
@@ -742,7 +742,7 @@ class TestHandleAutoMode:
                 "description": "No confidence field",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 0
 
@@ -757,7 +757,7 @@ class TestHandleAutoMode:
                 "description": "Finding",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             handle_auto_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z", reviewer_findings)
         data = FileStateReader().read_yaml(run_dir / "meta" / "review-all.yaml")
         assert data["review_id"] == "review-id-check"
@@ -773,7 +773,7 @@ class TestHandleAutoMode:
                 "description": "Integration",
             },
         ]
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             handle_auto_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z", reviewer_findings)
         data = FileStateReader().read_yaml(run_dir / "meta" / "integration-review.yaml")
         assert data["review_id"] == "review-id-check"
