@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 import structlog
 from trw_memory.lifecycle.tiers import TierSweepResult
@@ -25,14 +25,16 @@ from trw_mcp.scoring import _days_since_access
 from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state._tier_scoring import compute_importance_score
 
-if TYPE_CHECKING:
-    from trw_mcp.state.tiers import TierManager
-
 logger = structlog.get_logger(__name__)
+
+# Type alias for TierManager — using Any to avoid circular import with tiers.py.
+# These functions are assigned as methods on TierManager by tiers.py, so runtime
+# type safety is guaranteed by the class definition itself.
+_TierManagerSelf = Any
 
 
 def _sweep_hot_to_warm(
-    self: TierManager,
+    self: _TierManagerSelf,
     cfg: TRWConfig,
     today: date,
 ) -> tuple[int, int]:
@@ -73,7 +75,7 @@ def _sweep_hot_to_warm(
 
 
 def _sweep_warm_to_cold(
-    self: TierManager,
+    self: _TierManagerSelf,
     cfg: TRWConfig,
     today: date,
     entries_dir: Path,
@@ -177,7 +179,7 @@ def _sweep_warm_to_cold(
 
 
 def _sweep_cold_to_purge(
-    self: TierManager,
+    self: _TierManagerSelf,
     cfg: TRWConfig,
     today: date,
     purge_audit_path: Path,
@@ -241,7 +243,7 @@ def _sweep_cold_to_purge(
     return purged, errors
 
 
-def sweep(self: TierManager) -> TierSweepResult:
+def sweep(self: _TierManagerSelf) -> TierSweepResult:
     """Execute lifecycle sweep across all tiers.
 
     Performs four transition checks in order:

@@ -9,7 +9,6 @@ Extracted from ceremony.py for single-responsibility.
 from __future__ import annotations
 
 import secrets
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -17,183 +16,31 @@ from typing import cast
 import structlog
 from fastmcp import FastMCP
 
-from trw_mcp.models.typed_dicts import MultiReviewerAnalysisResult, ReviewFindingDict
 from trw_mcp.state._paths import find_active_run
-from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+from trw_mcp.tools._review_helpers import (
+    REVIEWER_ROLES as REVIEWER_ROLES,
+)
+from trw_mcp.tools._review_helpers import (
+    _compute_verdict as _compute_verdict,
+)
+from trw_mcp.tools._review_helpers import (
+    _get_git_diff as _get_git_diff,
+)
+from trw_mcp.tools._review_helpers import (
+    _invoke_cross_model_review as _invoke_cross_model_review,
+)
+from trw_mcp.tools._review_helpers import (
+    _normalize_severity as _normalize_severity,
+)
+from trw_mcp.tools._review_helpers import (
+    _persist_review_artifact as _persist_review_artifact,
+)
+from trw_mcp.tools._review_helpers import (
+    _run_multi_reviewer_analysis as _run_multi_reviewer_analysis,
+)
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
-
-# Reviewer roles for multi-agent review (QUAL-027)
-REVIEWER_ROLES: tuple[str, ...] = (
-    "correctness",
-    "security",
-    "test-quality",
-    "performance",
-    "style",
-    "spec-compliance",
-)
-
-
-def _get_git_diff() -> str:
-    """Get git diff of HEAD, returning empty string on any error."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", "HEAD"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        logger.debug("review_git_diff", length=len(result.stdout))
-        return result.stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ""
-
-
-def _normalize_severity(severity: str) -> str:
-    """Map external severity labels to internal severity levels."""
-    severity_lower = severity.lower().strip()
-    if severity_lower in ("error", "critical", "high"):
-        return "critical"
-    if severity_lower in ("warning", "medium"):
-        return "warning"
-    return "info"
-
-
-def _invoke_cross_model_review(
-    diff: str,
-    config: object,
-) -> list[dict[str, str]]:
-    """Invoke cross-model review via external provider.
-
-    This function is the integration point for cross-model review.
-    It attempts to call an external code-review service. Since the
-    MCP server cannot synchronously call another MCP server, this
-    returns an empty list with a preparation note.
-
-    Args:
-        diff: The git diff text to review.
-        config: TRWConfig instance with cross_model_* fields.
-
-    Returns:
-        List of normalized finding dicts (empty until provider is configured).
-    """
-    if not diff:
-        return []
-
-    # Integration point: when code-review-mcp or another provider
-    # is configured, this function will route the diff to it.
-    # For now, return empty — the cross_model_skipped flag in the
-    # caller communicates that no external review was performed.
-    return []
-
-
-def _run_multi_reviewer_analysis(
-    diff: str,
-    config: object,
-) -> MultiReviewerAnalysisResult:
-    """Run structured multi-perspective code review analysis.
-
-    When called without pre-collected reviewer_findings, performs
-    basic structural analysis only. The actual multi-agent spawning
-    is handled client-side by the /trw-review-pr skill.
-
-    Args:
-        diff: The git diff text to analyze.
-        config: TRWConfig instance with review_* fields.
-
-    Returns:
-        Dict with reviewer_roles_run, findings, and errors.
-    """
-    result: MultiReviewerAnalysisResult = {
-        "reviewer_roles_run": list(REVIEWER_ROLES),
-        "reviewer_errors": [],
-        "findings": [],
-    }
-
-    if not diff:
-        return result
-
-    # Basic structural analysis: detect obvious patterns in the diff.
-    # Full multi-agent analysis is handled client-side via subagents.
-    findings: list[ReviewFindingDict] = []
-
-    # Check for common issues detectable via diff text analysis
-    lines = diff.split("\n")
-    for i, line in enumerate(lines):
-        # Detect TODO/FIXME/HACK comments in added lines
-        if line.startswith("+") and not line.startswith("+++"):
-            stripped = line[1:].strip()
-            for marker in ("TODO", "FIXME", "HACK", "XXX"):
-                if marker in stripped.upper():
-                    findings.append(
-                        {
-                            "reviewer_role": "style",
-                            "confidence": 60,
-                            "category": "placeholder",
-                            "severity": "info",
-                            "description": f"Placeholder comment detected: {stripped[:80]}",
-                            "line": i + 1,
-                        }
-                    )
-                    break
-
-    result["findings"] = cast("list[dict[str, object]]", findings)
-    return result
-
-
-def _compute_verdict(findings: list[dict[str, str]]) -> str:
-    """Compute review verdict from worst severity across findings."""
-    critical_count = sum(1 for f in findings if f.get("severity") == "critical")
-    warning_count = sum(1 for f in findings if f.get("severity") == "warning")
-    logger.debug(
-        "review_findings_count",
-        count=len(findings),
-        critical=critical_count,
-        warnings=warning_count,
-    )
-
-    if critical_count > 0:
-        return "block"
-    if warning_count > 0:
-        return "warn"
-    return "pass"
-
-
-def _persist_review_artifact(
-    resolved_run: Path | None,
-    review_data: dict[str, object],
-    event_fields: dict[str, object],
-) -> str:
-    """Write review.yaml and log review_complete event.
-
-    Specific to manual/cross_model/auto review modes — writes to
-    ``meta/review.yaml`` and logs event type ``review_complete``.
-    Do NOT use for reconciliation (which writes ``reconciliation.yaml``
-    with event type ``spec_reconciliation``).
-
-    Args:
-        resolved_run: Run directory path, or None if no run active.
-        review_data: Full review data dict to write to review.yaml.
-        event_fields: Fields to include in the review_complete event.
-
-    Returns:
-        Path string to review.yaml, or empty string if no run.
-    """
-    if resolved_run is None:
-        return ""
-
-    writer = FileStateWriter()
-    events = FileEventLogger(writer)
-
-    review_path = resolved_run / "meta" / "review.yaml"
-    writer.write_yaml(review_path, review_data)
-
-    events_path = resolved_run / "meta" / "events.jsonl"
-    if events_path.parent.exists():
-        events.log_event(events_path, "review_complete", event_fields)
-
-    return str(review_path)
 
 
 def register_review_tools(server: FastMCP) -> None:

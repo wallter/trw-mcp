@@ -54,9 +54,9 @@ class TestConfidenceThresholdFiltering:
             },
         ]
 
-    @patch("trw_mcp.tools.review._get_git_diff", return_value="diff content")
-    @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review_artifact")
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content")
+    @patch("trw_mcp.tools._review_helpers._run_multi_reviewer_analysis")
+    @patch("trw_mcp.tools._review_helpers._persist_review_artifact")
     def test_confidence_threshold_filters_low_findings(
         self,
         mock_persist: MagicMock,
@@ -84,9 +84,9 @@ class TestConfidenceThresholdFiltering:
         assert result["surfaced_findings_count"] == 2
         assert result["total_findings_count"] == 4
 
-    @patch("trw_mcp.tools.review._get_git_diff", return_value="diff content")
-    @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review_artifact")
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content")
+    @patch("trw_mcp.tools._review_helpers._run_multi_reviewer_analysis")
+    @patch("trw_mcp.tools._review_helpers._persist_review_artifact")
     def test_confidence_threshold_zero_passes_all(
         self,
         mock_persist: MagicMock,
@@ -113,9 +113,9 @@ class TestConfidenceThresholdFiltering:
         # All 4 findings pass threshold of 0
         assert result["surfaced_findings_count"] == 4
 
-    @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
-    @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review_artifact")
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff")
+    @patch("trw_mcp.tools._review_helpers._run_multi_reviewer_analysis")
+    @patch("trw_mcp.tools._review_helpers._persist_review_artifact")
     def test_review_all_yaml_written_with_all_findings(
         self,
         mock_persist: MagicMock,
@@ -151,9 +151,9 @@ class TestConfidenceThresholdFiltering:
 class TestIntegrationReviewVerdictComputation:
     """Tests for integration-review.yaml verdict computation."""
 
-    @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
-    @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review_artifact")
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff")
+    @patch("trw_mcp.tools._review_helpers._run_multi_reviewer_analysis")
+    @patch("trw_mcp.tools._review_helpers._persist_review_artifact")
     def test_integration_review_block_when_critical(
         self,
         mock_persist: MagicMock,
@@ -190,9 +190,9 @@ class TestIntegrationReviewVerdictComputation:
         int_review = reader.read_yaml(run_path / "meta" / "integration-review.yaml")
         assert int_review["verdict"] == "block"
 
-    @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
-    @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review_artifact")
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff")
+    @patch("trw_mcp.tools._review_helpers._run_multi_reviewer_analysis")
+    @patch("trw_mcp.tools._review_helpers._persist_review_artifact")
     def test_integration_review_warn_when_no_critical(
         self,
         mock_persist: MagicMock,
@@ -229,9 +229,9 @@ class TestIntegrationReviewVerdictComputation:
         int_review = reader.read_yaml(run_path / "meta" / "integration-review.yaml")
         assert int_review["verdict"] == "warn"
 
-    @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
-    @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review_artifact")
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff")
+    @patch("trw_mcp.tools._review_helpers._run_multi_reviewer_analysis")
+    @patch("trw_mcp.tools._review_helpers._persist_review_artifact")
     def test_no_integration_review_when_no_integration_findings(
         self,
         mock_persist: MagicMock,
@@ -266,9 +266,9 @@ class TestIntegrationReviewVerdictComputation:
         # No integration-review.yaml should be written
         assert not (run_path / "meta" / "integration-review.yaml").exists()
 
-    @patch("trw_mcp.tools.review._get_git_diff", return_value="diff")
-    @patch("trw_mcp.tools.review._run_multi_reviewer_analysis")
-    @patch("trw_mcp.tools.review._persist_review_artifact")
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff")
+    @patch("trw_mcp.tools._review_helpers._run_multi_reviewer_analysis")
+    @patch("trw_mcp.tools._review_helpers._persist_review_artifact")
     def test_soc2_fields_in_review_yaml(
         self,
         mock_persist: MagicMock,

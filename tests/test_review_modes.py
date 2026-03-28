@@ -25,7 +25,7 @@ import pytest
 from tests._ceremony_helpers import make_ceremony_server
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileStateReader
-from trw_mcp.tools.review import (
+from trw_mcp.tools._review_helpers import (
     REVIEWER_ROLES,
     _compute_verdict,
     _get_git_diff,
@@ -325,7 +325,7 @@ class TestModeDetection:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -343,7 +343,7 @@ class TestModeDetection:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="auto")
 
@@ -361,7 +361,7 @@ class TestModeDetection:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(
                 reviewer_findings=[
@@ -415,7 +415,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value="some diff"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -433,7 +433,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -451,7 +451,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -478,7 +478,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -496,7 +496,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -514,7 +514,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -532,7 +532,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -558,7 +558,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=None),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -603,7 +603,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -639,7 +639,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -676,7 +676,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -712,7 +712,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -752,7 +752,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -791,7 +791,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -823,7 +823,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -842,7 +842,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="auto")
 
@@ -862,7 +862,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="auto")
 
@@ -889,7 +889,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="auto")
 
@@ -931,7 +931,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -960,7 +960,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -979,7 +979,7 @@ class TestAutoMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=None),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(mode="auto")
 
@@ -1061,7 +1061,7 @@ class TestIntegration:
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(cross_model_review_enabled=False))
 
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = tools["trw_review"].fn(
                 mode="cross_model",
                 run_path=str(run_dir),
@@ -1081,7 +1081,7 @@ class TestIntegration:
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(review_confidence_threshold=0))
 
-        with patch("trw_mcp.tools.review._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = tools["trw_review"].fn(
                 mode="auto",
                 run_path=str(run_dir),
@@ -1131,7 +1131,7 @@ class TestIntegration:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -1159,7 +1159,7 @@ class TestIntegration:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
@@ -1188,9 +1188,9 @@ class TestIntegration:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools.review._get_git_diff", return_value="diff content"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"),
             patch(
-                "trw_mcp.tools.review._invoke_cross_model_review",
+                "trw_mcp.tools._review_helpers._invoke_cross_model_review",
                 return_value=stub_findings,
             ),
         ):
@@ -1215,7 +1215,7 @@ class TestIntegration:
 class TestGetGitDiff:
     """_get_git_diff returns diff text or empty string on any error."""
 
-    @patch("trw_mcp.tools.review.subprocess.run")
+    @patch("trw_mcp.tools._review_helpers.subprocess.run")
     def test_returns_stdout_on_success(self, mock_run: Any) -> None:
         """Returns subprocess stdout when git diff succeeds."""
         mock_run.return_value = subprocess.CompletedProcess(
@@ -1229,7 +1229,7 @@ class TestGetGitDiff:
         assert "+new line" in result
 
     @patch(
-        "trw_mcp.tools.review.subprocess.run",
+        "trw_mcp.tools._review_helpers.subprocess.run",
         side_effect=FileNotFoundError("git: command not found"),
     )
     def test_returns_empty_string_on_file_not_found(self, mock_run: Any) -> None:
@@ -1238,7 +1238,7 @@ class TestGetGitDiff:
         assert result == ""
 
     @patch(
-        "trw_mcp.tools.review.subprocess.run",
+        "trw_mcp.tools._review_helpers.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30),
     )
     def test_returns_empty_string_on_timeout(self, mock_run: Any) -> None:
@@ -1247,7 +1247,7 @@ class TestGetGitDiff:
         assert result == ""
 
     @patch(
-        "trw_mcp.tools.review.subprocess.run",
+        "trw_mcp.tools._review_helpers.subprocess.run",
         side_effect=OSError("permission denied"),
     )
     def test_returns_empty_string_on_oserror(self, mock_run: Any) -> None:
@@ -1255,14 +1255,14 @@ class TestGetGitDiff:
         result = _get_git_diff()
         assert result == ""
 
-    @patch("trw_mcp.tools.review.subprocess.run")
+    @patch("trw_mcp.tools._review_helpers.subprocess.run")
     def test_returns_empty_string_on_empty_diff(self, mock_run: Any) -> None:
         """Empty stdout (no changes staged) → empty string."""
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         result = _get_git_diff()
         assert result == ""
 
-    @patch("trw_mcp.tools.review.subprocess.run")
+    @patch("trw_mcp.tools._review_helpers.subprocess.run")
     def test_returns_stdout_regardless_of_returncode(self, mock_run: Any) -> None:
         """Returns stdout even when returncode != 0 (git exits non-zero in some cases)."""
         mock_run.return_value = subprocess.CompletedProcess(

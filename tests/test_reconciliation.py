@@ -375,7 +375,7 @@ class TestHandleReconcileMode:
         config = _make_config()
         with (
             patch("trw_mcp.state.prd_utils.discover_governing_prds", return_value=[]),
-            patch("trw_mcp.tools.review._get_git_diff", return_value="some diff"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"),
             patch(
                 "trw_mcp.state._paths.resolve_project_root",
                 return_value=run_dir.parent,
@@ -397,7 +397,7 @@ class TestHandleReconcileMode:
         (prds_dir / "PRD-TEST-001.md").write_text(SAMPLE_PRD, encoding="utf-8")
 
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value=SAMPLE_DIFF_WITHOUT_MATCHES),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=SAMPLE_DIFF_WITHOUT_MATCHES),
             patch(
                 "trw_mcp.state._paths.resolve_project_root",
                 return_value=project_root,
@@ -425,7 +425,7 @@ class TestHandleReconcileMode:
         (prds_dir / "PRD-TEST-001.md").write_text(SAMPLE_PRD, encoding="utf-8")
 
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
             patch(
                 "trw_mcp.state._paths.resolve_project_root",
                 return_value=project_root,
@@ -451,7 +451,7 @@ class TestHandleReconcileMode:
         (prds_dir / "PRD-TEST-001.md").write_text(SAMPLE_PRD, encoding="utf-8")
 
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
             patch(
                 "trw_mcp.state._paths.resolve_project_root",
                 return_value=project_root,
@@ -483,7 +483,7 @@ class TestHandleReconcileMode:
         (prds_dir / "PRD-TEST-001.md").write_text(SAMPLE_PRD, encoding="utf-8")
 
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
             patch(
                 "trw_mcp.state._paths.resolve_project_root",
                 return_value=project_root,
@@ -508,7 +508,7 @@ class TestHandleReconcileMode:
     def test_no_run_dir_returns_clean(self) -> None:
         """resolved_run=None -> graceful clean verdict without persistence."""
         config = _make_config()
-        with patch("trw_mcp.tools.review._get_git_diff", return_value="diff"):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff"):
             result = handle_reconcile_mode(
                 config,
                 None,
@@ -529,7 +529,7 @@ class TestHandleReconcileMode:
         # No PRD-TEST-001.md created — file does not exist
 
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value="some diff"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"),
             patch(
                 "trw_mcp.state._paths.resolve_project_root",
                 return_value=project_root,
@@ -556,7 +556,7 @@ class TestHandleReconcileMode:
         (prds_dir / "PRD-TEST-001.md").write_text(SAMPLE_PRD, encoding="utf-8")
 
         with (
-            patch("trw_mcp.tools.review._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=SAMPLE_DIFF_WITH_MATCHES),
             patch(
                 "trw_mcp.state._paths.resolve_project_root",
                 return_value=project_root,
