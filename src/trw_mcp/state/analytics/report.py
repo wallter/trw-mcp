@@ -429,36 +429,49 @@ def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
 
 
 def _get_last_activity_timestamp(run_dir: Path) -> datetime | None:
-    """Get the most recent checkpoint timestamp from a run directory.
+    """Get the most recent activity timestamp from a run directory.
 
-    Returns None if no checkpoints exist.
+    Checks both checkpoint timestamps and the heartbeat file mtime,
+    returning whichever is more recent.  Runs without a heartbeat file
+    fall back to checkpoint-only for backward compatibility.
+
+    PRD-QUAL-050-FR02: heartbeat-aware staleness detection.
+
+    Returns None if neither checkpoints nor heartbeat exist.
     """
     reader = FileStateReader()
-
-    cp_path = run_dir / "meta" / "checkpoints.jsonl"
-    if not cp_path.exists():
-        return None
-
-    try:
-        records = reader.read_jsonl(cp_path)
-    except (OSError, StateError):
-        return None
-
-    if not records:
-        return None
-
     latest: datetime | None = None
-    for record in records:
-        ts_str = str(record.get("ts", ""))
-        if ts_str:
-            try:
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                if latest is None or ts > latest:
-                    latest = ts
-            except ValueError:
-                continue
+
+    # --- Checkpoint timestamps ---
+    cp_path = run_dir / "meta" / "checkpoints.jsonl"
+    if cp_path.exists():
+        try:
+            records = reader.read_jsonl(cp_path)
+            for record in records:
+                ts_str = str(record.get("ts", ""))
+                if ts_str:
+                    try:
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        if latest is None or ts > latest:
+                            latest = ts
+                    except ValueError:
+                        continue
+        except (OSError, StateError):
+            pass  # justified: fail-open, unreadable checkpoints should not block staleness check
+
+    # --- Heartbeat file mtime (PRD-QUAL-050-FR02) ---
+    heartbeat_path = run_dir / "meta" / "heartbeat"
+    try:
+        if heartbeat_path.exists():
+            hb_mtime = heartbeat_path.stat().st_mtime
+            hb_dt = datetime.fromtimestamp(hb_mtime, tz=timezone.utc)
+            if latest is None or hb_dt > latest:
+                latest = hb_dt
+    except OSError:
+        pass  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
+
     return latest
 
 
