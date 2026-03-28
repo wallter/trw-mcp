@@ -270,7 +270,6 @@ class TestRedundancyDetection:
     @pytest.mark.asyncio
     async def test_identical_response_detected(self, middleware: ContextBudgetMiddleware) -> None:
         """Same tool, same output on second call returns placeholder."""
-        result = FakeToolResult(content=[TextContent(type="text", text="same output")])
 
         async def call_next(_ctx: Any) -> Any:
             return FakeToolResult(content=[TextContent(type="text", text="same output")])
@@ -445,6 +444,72 @@ class TestIntegration:
         out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
         assert out.content[0].text == "ok"
         assert get_turn_count("anything") == 0
+
+    @pytest.mark.asyncio
+    async def test_compression_applied_when_text_changes(
+        self, middleware: ContextBudgetMiddleware
+    ) -> None:
+        """When compression actually changes the text, the block is replaced."""
+        # A JSON payload with a metadata key — compact tier will strip it
+        payload = json.dumps({
+            "summary": "done",
+            "metadata": {"internal": True},
+        })
+        result = FakeToolResult(content=[TextContent(type="text", text=payload)])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        # Set turn count to compact tier (>10)
+        from trw_mcp.middleware.context_budget import _turn_counts
+
+        session_id = "sess-compress"
+        _turn_counts[session_id] = 11  # one below so next call makes it 12
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=FakeContext(
+                request_context=FakeRequestContext(session_id=session_id),
+            ),
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        # After compression, metadata key should be stripped
+        parsed = json.loads(out.content[0].text)
+        assert "metadata" not in parsed
+        assert parsed["summary"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_config_exception_uses_fallback_thresholds(
+        self, middleware: ContextBudgetMiddleware, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When get_config() raises, fallback thresholds (compact=10, minimal=30) are used."""
+        monkeypatch.setattr(
+            "trw_mcp.models.config.get_config",
+            lambda: (_ for _ in ()).throw(RuntimeError("config unavailable")),
+        )
+
+        # Turn 11 with default fallback compact_after=10 → compact tier
+        payload = json.dumps({"summary": "ok", "metadata": {"foo": "bar"}})
+
+        async def call_next(_ctx: Any) -> Any:
+            return FakeToolResult(content=[TextContent(type="text", text=payload)])
+
+        from trw_mcp.middleware.context_budget import _turn_counts
+
+        session_id = "sess-fallback"
+        _turn_counts[session_id] = 11  # pre-set so next call makes it 12
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=FakeContext(
+                request_context=FakeRequestContext(session_id=session_id),
+            ),
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        # With fallback thresholds at turn 12 → compact tier — metadata stripped
+        parsed = json.loads(out.content[0].text)
+        assert "metadata" not in parsed
 
 
 # --- Config tests ---
