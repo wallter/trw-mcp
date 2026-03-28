@@ -533,8 +533,8 @@ def _is_run_stale(
 ) -> bool:
     """Check if a run is stale (exceeds hour-level TTL).
 
-    Considers checkpoint timestamps: the most recent checkpoint resets the
-    staleness clock.
+    Considers both checkpoint timestamps and the heartbeat file mtime
+    (PRD-QUAL-050-FR02): whichever is more recent resets the staleness clock.
     """
     run_id = str(run_data.get("run_id", run_dir.name))
     started_at = _parse_run_id_timestamp(run_id)

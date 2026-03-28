@@ -253,7 +253,7 @@ def _append_wal_health(result: dict[str, object]) -> None:
                     f"(threshold: {cfg.wal_checkpoint_threshold_mb}MB)"
                 )
     except Exception:  # justified: fail-open, WAL health is advisory only
-        pass
+        logger.debug("wal_health_check_failed", exc_info=True)
 
 
 def check_embeddings_status() -> dict[str, object]:

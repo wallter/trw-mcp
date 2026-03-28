@@ -492,7 +492,7 @@ def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
         wal_path = db_path.with_suffix(".db-wal")
 
         if not wal_path.exists():
-            return {"skipped": True, "reason": "under_threshold"}
+            return {"skipped": True, "reason": "no_wal_file"}
 
         wal_size = wal_path.stat().st_size
         if wal_size < threshold_bytes:
