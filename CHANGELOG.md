@@ -2,6 +2,24 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.33.0] — 2026-03-28
+
+### Added — Session Resilience Hardening (PRD-QUAL-050)
+
+- **Tool invocation heartbeat** (FR-01/FR-02) — Touches `meta/heartbeat` file on every MCP tool invocation so long-running sessions without checkpoints are not incorrectly abandoned. `_is_run_stale()` now considers heartbeat mtime alongside checkpoint timestamps, using whichever is more recent. Runs without heartbeat files fall back to checkpoint-only detection (backward compatible).
+- **Session boundary in trw_init** (FR-03/FR-04) — `trw_init()` now appends a `session_start` event to events.jsonl, ensuring delivery gates always have a session boundary marker. If `trw_session_start()` is called afterward, its `session_start` event naturally supersedes.
+- **Proactive WAL checkpoint management** (FR-05/FR-06) — During `trw_session_start()` auto-maintenance, if the SQLite WAL file exceeds a configurable threshold (default 10 MB), runs `PRAGMA wal_checkpoint(TRUNCATE)`. WAL file size is included in embeddings health reporting when above threshold. New config: `wal_checkpoint_threshold_mb`.
+
+### Fixed
+
+- **Stale run blocking delivery** — Fixed 4 interacting bugs where `trw_deliver()` was blocked by file_modified events from previous sessions:
+  - Shell hook `find_active_run()` now checks `run.yaml` status, skipping abandoned/complete/delivered runs
+  - Python `find_active_run()` now skips `"abandoned"` and `"delivered"` statuses (was only skipping `"complete"` and `"failed"`)
+  - `trw_deliver()` now calls `_mark_run_complete()` after successful delivery (was defined but never called)
+  - Delivery gate uses session-scoped counting: `_events_since_last_session_start()` isolates current session's file_modified events from previous sessions'
+  - Shell hook scans both `runs_root` (`.trw/runs/`) and `task_root` (`docs/`) for active runs
+  - Added `has_recent_deliver()` to shell hooks for parallel instance detection
+
 ## [0.32.3] — 2026-03-28
 
 ### Fixed
