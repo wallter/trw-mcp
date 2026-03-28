@@ -1526,18 +1526,18 @@ class TestLaunchDeferred:
                 lambda *a, **kw: {"status": "mocked"},
             )
 
-        import trw_mcp.tools.ceremony as cer
+        import trw_mcp.tools._deferred_state as _ds
 
         # Reset global thread state
-        monkeypatch.setattr(cer, "_deferred_thread", None)
+        monkeypatch.setattr(_ds, "_deferred_thread", None)
 
         status = _launch_deferred(trw_dir, None, {})
         assert status == "launched"
 
         # Wait for thread to complete
-        with cer._deferred_lock:
-            if cer._deferred_thread is not None:
-                cer._deferred_thread.join(timeout=10)
+        with _ds._deferred_lock:
+            if _ds._deferred_thread is not None:
+                _ds._deferred_thread.join(timeout=10)
 
     def test_skips_when_thread_alive(
         self,
@@ -1547,7 +1547,7 @@ class TestLaunchDeferred:
         """Second launch returns 'skipped_already_running' while first is active."""
         import threading
 
-        import trw_mcp.tools.ceremony as cer
+        import trw_mcp.tools._deferred_state as _ds
 
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
@@ -1560,7 +1560,7 @@ class TestLaunchDeferred:
 
         fake_thread = threading.Thread(target=slow_worker, daemon=True)
         fake_thread.start()
-        monkeypatch.setattr(cer, "_deferred_thread", fake_thread)
+        monkeypatch.setattr(_ds, "_deferred_thread", fake_thread)
 
         try:
             status = _launch_deferred(trw_dir, None, {})

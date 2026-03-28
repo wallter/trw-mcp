@@ -241,15 +241,15 @@ def _join_and_reset_deferred() -> None:
     backend while a deferred thread is mid-query.
     """
     try:
-        import trw_mcp.tools.ceremony as cer
+        import trw_mcp.tools._deferred_state as _ds
 
-        with cer._deferred_lock:
-            t = cer._deferred_thread
+        with _ds._deferred_lock:
+            t = _ds._deferred_thread
         if t is not None and t.is_alive():
             t.join(timeout=15)
         # Clear the reference so the next test starts fresh
-        with cer._deferred_lock:
-            cer._deferred_thread = None
+        with _ds._deferred_lock:
+            _ds._deferred_thread = None
     except Exception:
         pass
 

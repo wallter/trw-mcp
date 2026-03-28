@@ -2,6 +2,10 @@
 
 Extracted from orchestration.py to stay under the 600-line module size gate.
 Parent facade: ``trw_mcp.tools.orchestration``
+
+Imports ``get_config`` directly from ``trw_mcp.models.config`` (not via
+orchestration.py) to avoid a circular import -- orchestration.py re-exports
+symbols from this module.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from typing import cast
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     DeployFrameworksVersionDataDict,
     StatusReversionLatestDict,
@@ -142,9 +147,7 @@ def _compute_reversion_metrics(
         by_trigger[trigger] = by_trigger.get(trigger, 0) + 1
 
     # Classification with configurable thresholds
-    import trw_mcp.tools.orchestration as _orch
-
-    config = _orch.get_config()
+    config = get_config()
     if rate >= config.reversion_rate_concerning:
         classification = "concerning"
     elif rate >= config.reversion_rate_elevated:
@@ -224,9 +227,7 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     Returns:
         Dictionary with deployment status and version info.
     """
-    import trw_mcp.tools.orchestration as _orch
-
-    config = _orch.get_config()
+    config = get_config()
     reader = FileStateReader()
     writer = FileStateWriter()
     frameworks_dir = trw_dir / config.frameworks_dir
@@ -300,9 +301,7 @@ def _deploy_templates(trw_dir: Path) -> None:
     Args:
         trw_dir: Path to the .trw directory.
     """
-    import trw_mcp.tools.orchestration as _orch
-
-    config = _orch.get_config()
+    config = get_config()
     writer = FileStateWriter()
     templates_dir = trw_dir / config.templates_dir
     writer.ensure_dir(templates_dir)
@@ -329,9 +328,7 @@ def _check_framework_version_staleness(run_framework: str) -> str | None:
         return None
 
     try:
-        import trw_mcp.tools.orchestration as _orch
-
-        config = _orch.get_config()
+        config = get_config()
         reader = FileStateReader()
         trw_dir = resolve_project_root() / config.trw_dir
         version_path = trw_dir / config.frameworks_dir / "VERSION.yaml"

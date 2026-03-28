@@ -16,7 +16,6 @@ for step functions should target that module directly:
 from __future__ import annotations
 
 import contextlib
-import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,14 +52,6 @@ from trw_mcp.tools._helpers import _run_step
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
-
-# ── Deferred delivery thread globals ───────────────────────────────────
-# These live here (not in _deferred_delivery) so that
-# ``monkeypatch.setattr(cer, "_deferred_thread", ...)`` patches continue
-# to work.  ``_deferred_delivery._launch_deferred`` accesses them via
-# a late import of this module.
-_deferred_thread: threading.Thread | None = None
-_deferred_lock = threading.Lock()
 
 _events = FileEventLogger(FileStateWriter())
 
