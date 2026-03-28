@@ -326,3 +326,30 @@ def detect_current_phase() -> str | None:
         return str(data.get("phase", "")) or None
     except (OSError, ValueError, TypeError):
         return None
+
+
+def touch_heartbeat() -> None:
+    """Touch the heartbeat file in the active run directory.
+
+    Called on every MCP tool invocation to signal session liveness.
+    Uses ``get_pinned_run()`` for fast-path resolution, falling back to
+    ``find_active_run()`` only when no pin exists.
+
+    The heartbeat file is ``{run_dir}/meta/heartbeat`` -- only the mtime
+    matters (no content is written).  Completely fail-open: any exception
+    is logged as a warning and silently swallowed so tool execution is
+    never blocked.
+
+    PRD-QUAL-050-FR01.
+    """
+    try:
+        run_dir = get_pinned_run()
+        if run_dir is None:
+            run_dir = find_active_run()
+        if run_dir is None:
+            return
+
+        heartbeat_path = run_dir / "meta" / "heartbeat"
+        heartbeat_path.touch(exist_ok=True)
+    except Exception:  # justified: fail-open -- heartbeat must never block tool execution
+        logger.warning("heartbeat_touch_failed", exc_info=True)

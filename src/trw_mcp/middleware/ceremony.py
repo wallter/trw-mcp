@@ -77,6 +77,20 @@ def reset_state() -> None:
     _session_state.clear()
 
 
+def _touch_heartbeat_safe() -> None:
+    """Touch the heartbeat file for the active run (PRD-QUAL-050-FR01).
+
+    Deferred import avoids circular dependency between middleware and state.
+    Completely fail-open — never blocks tool execution.
+    """
+    try:
+        from trw_mcp.state._paths import touch_heartbeat
+
+        touch_heartbeat()
+    except Exception:  # justified: fail-open -- heartbeat must never block tool execution
+        logger.warning("heartbeat_middleware_failed", exc_info=True)
+
+
 class CeremonyMiddleware(Middleware):
     """FastMCP middleware that enforces session ceremony.
 
@@ -106,10 +120,15 @@ class CeremonyMiddleware(Middleware):
         if tool_name in CEREMONY_TOOLS:
             mark_session_active(session_id)
             logger.debug("ceremony_activated", op="ceremony", session_id=session_id, tool=tool_name)
-            return await call_next(context)
+            ceremony_result = await call_next(context)
+            _touch_heartbeat_safe()
+            return ceremony_result
 
         # Execute the tool
         result: ToolResult = await call_next(context)
+
+        # Post-tool heartbeat: signal session liveness (PRD-QUAL-050-FR01)
+        _touch_heartbeat_safe()
 
         # If session is NOT active, prepend warning
         if not is_session_active(session_id):
