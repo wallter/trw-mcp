@@ -8,14 +8,16 @@ PRD-CORE-001: Base MCP tool suite.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+import structlog
 from fastmcp import FastMCP
 
 from trw_mcp._logging import configure_logging
 from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
+
+logger = structlog.get_logger(__name__)
 
 _DEFAULT_INSTRUCTIONS = (
     "TRW gives you engineering memory that persists across sessions "
@@ -49,14 +51,21 @@ def _build_middleware() -> list[object]:
     try:
         middleware: list[object] = [CeremonyMiddleware()]
     except Exception:  # justified: fail-open, middleware init failure must not crash server startup
-        sys.stderr.write("WARNING: CeremonyMiddleware init failed, using empty middleware\n")
+        logger.warning("middleware_init_failed", component="CeremonyMiddleware")
         return []
 
+    # Load config once for all optional middleware
     try:
         from trw_mcp.models.config import get_config
 
         config = get_config()
-        if config.progressive_disclosure:
+    except Exception:  # justified: fail-open, config load failure must not crash server startup
+        logger.warning("middleware_config_load_failed", component="get_config")
+        return middleware
+
+    # Progressive disclosure
+    if config.progressive_disclosure:
+        try:
             from trw_mcp.state._paths import resolve_trw_dir
             from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
             from trw_mcp.state.usage_profiler import TOOL_GROUPS, compute_hot_set
@@ -65,20 +74,17 @@ def _build_middleware() -> list[object]:
             hot_set = set(compute_hot_set(trw_dir))
             pd_mw = ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
             middleware.append(pd_mw)
-    except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
-        sys.stderr.write("WARNING: Progressive disclosure middleware init failed, skipping\n")
+        except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
+            logger.warning("middleware_init_failed", component="ProgressiveDisclosureMiddleware")
 
     # Observation masking: reduce verbosity in long sessions.
-    try:
-        from trw_mcp.models.config import get_config as _get_config
-
-        _cfg = _get_config()
-        if _cfg.observation_masking:
+    if config.observation_masking:
+        try:
             from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
 
             middleware.append(ContextBudgetMiddleware())
-    except Exception:  # justified: fail-open, observation masking is optional enhancement
-        sys.stderr.write("WARNING: ContextBudgetMiddleware init failed, skipping\n")
+        except Exception:  # justified: fail-open, observation masking is optional enhancement
+            logger.warning("middleware_init_failed", component="ContextBudgetMiddleware")
 
     # Response optimizer: compact JSON (round floats, strip nulls/empties).
     # Added last so it runs on the final response after all other middleware.
@@ -87,7 +93,7 @@ def _build_middleware() -> list[object]:
 
         middleware.append(ResponseOptimizerMiddleware())
     except Exception:  # justified: fail-open, response optimizer is optional enhancement
-        sys.stderr.write("WARNING: ResponseOptimizerMiddleware init failed, skipping\n")
+        logger.warning("middleware_init_failed", component="ResponseOptimizerMiddleware")
 
     return middleware
 

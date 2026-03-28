@@ -110,6 +110,8 @@ All notable changes to the TRW MCP server package.
 
 ## [0.27.0] — 2026-03-19
 
+*Not published to PyPI — internal development version.*
+
 ### Changed
 
 - **Framework version bump to v24.4_TRW** — coordinated version bump across all 5 monorepo packages.
@@ -120,6 +122,8 @@ All notable changes to the TRW MCP server package.
 ---
 
 ## [0.26.0] — 2026-03-19
+
+*Not published to PyPI — internal development version.*
 
 ### Changed
 

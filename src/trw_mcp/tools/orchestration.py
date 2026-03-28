@@ -570,7 +570,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 # --- Private helpers (extracted to _orchestration_helpers.py) ---
 # Re-exported here for backward compatibility with existing callers/tests.
 
-from trw_mcp.tools._orchestration_helpers import (  # noqa: E402
+from trw_mcp.tools._orchestration_helpers import (
     _check_framework_version_staleness as _check_framework_version_staleness,
 )
 from trw_mcp.tools._orchestration_helpers import (

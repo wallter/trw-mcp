@@ -11,6 +11,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp import __version__
 from trw_mcp._logging import configure_logging
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
@@ -72,6 +73,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trw-mcp",
         description="TRW Framework MCP Server",
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--debug",
