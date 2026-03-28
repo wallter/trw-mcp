@@ -2,6 +2,15 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.34.1] — 2026-03-28
+
+### Added — Final DevEx Polish (PRD-QUAL-052)
+
+- **`trw-mcp config-reference`** — CLI subcommand that auto-generates markdown config reference from Pydantic field metadata. Never goes stale.
+- **`trw-mcp uninstall`** — CLI subcommand to remove TRW files from a project. Supports `--dry-run` and `--yes` flags.
+- **SKILL.md validation** — `_install_skills()` now validates required frontmatter fields (name, description) and skips malformed skills with a warning.
+- **3 new test files** — `test_skill_validation.py`, `test_config_reference.py`, `test_uninstall.py`.
+
 ## [0.34.0] — 2026-03-28
 
 ### Added — Code Quality Sprint (PRD-QUAL-047, PRD-QUAL-048, PRD-CORE-089, PRD-QUAL-049)
