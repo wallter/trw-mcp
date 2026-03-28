@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -457,3 +458,71 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                 entry_id=lid,
             )
             continue
+
+
+# ---------------------------------------------------------------------------
+# WAL checkpoint management (PRD-QUAL-050-FR05)
+# ---------------------------------------------------------------------------
+
+
+def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
+    """Checkpoint the SQLite WAL file if it exceeds a configurable size threshold.
+
+    PRD-QUAL-050-FR05: During ``trw_session_start()`` auto-maintenance, if the
+    WAL file exceeds ``wal_checkpoint_threshold_mb`` (default 10 MB), runs
+    ``PRAGMA wal_checkpoint(TRUNCATE)`` to reclaim space.
+
+    Fail-open: checkpoint failure is logged but never propagated. Returns a
+    result dict describing what happened.
+
+    Args:
+        trw_dir: Path to the ``.trw`` directory.
+
+    Returns:
+        Dict with either ``{"skipped": True, "reason": ...}`` when under
+        threshold, ``{"checkpointed": True, ...}`` on success, or
+        ``{"error": True, "reason": ...}`` on failure.
+    """
+    try:
+        config = get_config()
+        threshold_bytes = config.wal_checkpoint_threshold_mb * 1024 * 1024
+
+        db_path = trw_dir / "memory" / "memory.db"
+        wal_path = db_path.with_suffix(".db-wal")
+
+        if not wal_path.exists():
+            return {"skipped": True, "reason": "under_threshold"}
+
+        wal_size = wal_path.stat().st_size
+        if wal_size < threshold_bytes:
+            return {"skipped": True, "reason": "under_threshold"}
+
+        wal_size_mb = round(wal_size / (1024 * 1024), 1)
+        logger.info(
+            "wal_checkpoint_starting",
+            wal_size_mb=wal_size_mb,
+            threshold_mb=config.wal_checkpoint_threshold_mb,
+        )
+
+        # Use a fresh connection for the checkpoint pragma to avoid
+        # interfering with the singleton backend's connection.
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            pages_checkpointed = row[1] if row else 0
+        finally:
+            conn.close()
+
+        logger.info(
+            "wal_checkpoint_complete",
+            wal_size_before_mb=wal_size_mb,
+            pages_checkpointed=pages_checkpointed,
+        )
+        return {
+            "checkpointed": True,
+            "wal_size_before_mb": wal_size_mb,
+            "pages_checkpointed": pages_checkpointed,
+        }
+    except Exception:  # justified: fail-open, WAL checkpoint must not block session start
+        logger.warning("wal_checkpoint_failed", exc_info=True)
+        return {"error": True, "reason": "checkpoint_failed"}

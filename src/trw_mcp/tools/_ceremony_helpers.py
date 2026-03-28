@@ -371,6 +371,16 @@ def run_auto_maintenance(
     except Exception:  # justified: fail-open, embeddings check must not block session start
         logger.warning("maintenance_embeddings_check_failed", exc_info=True)
 
+    # WAL checkpoint (PRD-QUAL-050-FR05)
+    try:
+        from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+
+        wal_result = maybe_checkpoint_wal(trw_dir)
+        if wal_result.get("checkpointed"):
+            maintenance["wal_checkpoint"] = wal_result
+    except Exception:  # justified: fail-open, WAL checkpoint must not block session start
+        logger.warning("maintenance_wal_checkpoint_failed", exc_info=True)
+
     logger.debug(
         "auto_maintenance_complete",
         keys=list(maintenance.keys()),

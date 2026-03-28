@@ -219,6 +219,41 @@ def reset_embed_failure_count() -> None:
     _embed_failures = 0
 
 
+def _resolve_memory_db_path() -> Path:
+    """Resolve the memory.db path from the .trw directory.
+
+    Internal helper for WAL health reporting — avoids circular imports.
+    """
+    from trw_mcp.state._paths import resolve_trw_dir
+
+    return resolve_trw_dir() / "memory" / "memory.db"
+
+
+def _append_wal_health(result: dict[str, object]) -> None:
+    """Append WAL file size advisory to an embeddings status result dict.
+
+    PRD-QUAL-050-FR06: When the WAL file exceeds the configured threshold,
+    adds ``wal_size_mb`` and ``wal_advisory`` keys to the result dict.
+    Fail-open: exceptions are silently caught.
+    """
+    try:
+        from trw_mcp.models.config import get_config as _get_config
+
+        cfg = _get_config()
+        db_path = _resolve_memory_db_path()
+        wal_path = db_path.with_suffix(".db-wal")
+        if wal_path.exists():
+            wal_size_mb = wal_path.stat().st_size / (1024 * 1024)
+            if wal_size_mb > cfg.wal_checkpoint_threshold_mb:
+                result["wal_size_mb"] = round(wal_size_mb, 1)
+                result["wal_advisory"] = (
+                    f"WAL file is {wal_size_mb:.1f}MB "
+                    f"(threshold: {cfg.wal_checkpoint_threshold_mb}MB)"
+                )
+    except Exception:  # justified: fail-open, WAL health is advisory only
+        pass
+
+
 def check_embeddings_status() -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
 
@@ -227,28 +262,34 @@ def check_embeddings_status() -> dict[str, object]:
     - ``available``: whether deps are installed and model loads
     - ``advisory``: human-readable message (empty when everything is fine)
     - ``recent_failures``: count of embed failures since process start (FR07)
+    - ``wal_size_mb``: (optional) WAL file size when above threshold (FR06)
+    - ``wal_advisory``: (optional) human-readable WAL size warning (FR06)
     """
     from trw_mcp.models.config import get_config
 
     cfg = get_config()
     if not cfg.embeddings_enabled:
-        return {
+        result: dict[str, object] = {
             "enabled": False,
             "available": False,
             "advisory": "",
             "recent_failures": _embed_failures,
         }
+        _append_wal_health(result)
+        return result
 
     embedder = get_embedder()
     if embedder is not None:
-        return {
+        result = {
             "enabled": True,
             "available": True,
             "advisory": "",
             "recent_failures": _embed_failures,
         }
+        _append_wal_health(result)
+        return result
 
-    return {
+    result = {
         "enabled": True,
         "available": False,
         "advisory": (
@@ -256,6 +297,8 @@ def check_embeddings_status() -> dict[str, object]:
         ),
         "recent_failures": _embed_failures,
     }
+    _append_wal_health(result)
+    return result
 
 
 def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
