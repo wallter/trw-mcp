@@ -17,6 +17,7 @@ class AutoMaintenanceDict(TypedDict, total=False):
     stale_runs_closed: dict[str, object]
     embeddings_advisory: str
     embeddings_backfill: dict[str, int]
+    wal_checkpoint: dict[str, object]  # PRD-QUAL-050-FR05
 
 
 class DeliveryGatesDict(TypedDict, total=False):

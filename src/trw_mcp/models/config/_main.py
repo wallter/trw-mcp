@@ -161,6 +161,7 @@ class TRWConfig(BaseSettings):
     hybrid_rrf_k: int = 60
     hybrid_reranking_enabled: bool = False  # Future: cross-encoder reranking
     retrieval_fallback_enabled: bool = True  # Fall back to keyword search when hybrid unavailable
+    wal_checkpoint_threshold_mb: int = 10  # PRD-QUAL-050-FR05: WAL checkpoint if -wal file exceeds this (MB)
 
     # -- 5. Semantic dedup (CORE-042) --
 
