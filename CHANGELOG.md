@@ -2,6 +2,12 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.32.3] — 2026-03-28
+
+### Fixed
+
+- **Use `$CLAUDE_PROJECT_DIR` for hook paths** — Replaced `git rev-parse` with Claude Code's built-in `$CLAUDE_PROJECT_DIR` env var for hook path resolution. No git dependency, submodule-safe, worktree-safe. `lib-trw.sh` `get_repo_root()` falls back to git for non-Claude contexts.
+
 ## [0.32.2] — 2026-03-28
 
 ### Fixed
