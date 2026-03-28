@@ -300,11 +300,26 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         # Prevents telemetry hijack when parallel instances share filesystem.
         pin_active_run(run_root)
 
+        events_jsonl_path = run_root / "meta" / "events.jsonl"
         _events.log_event(
-            run_root / "meta" / "events.jsonl",
+            events_jsonl_path,
             "run_init",
             {"task": task_name, "framework": config.framework_version},
         )
+
+        # PRD-QUAL-050-FR03: Write session_start boundary so delivery gates
+        # always have a session marker, even when trw_session_start is not
+        # called separately.  If trw_session_start IS called later, its
+        # session_start event supersedes this one (FR04 — the helper
+        # _events_since_last_session_start uses the LAST session_start).
+        try:
+            _events.log_event(
+                events_jsonl_path,
+                "session_start",
+                {"source": "trw_init", "run_detected": True, "query": "*"},
+            )
+        except Exception:  # justified: fail-open, session boundary must not block run init
+            logger.debug("init_session_start_event_skipped", exc_info=True)
 
         # Framework version captured in run.yaml `framework` field.
         # Full snapshot removed — saves ~20 KB per run, reconstruct from git if needed.
