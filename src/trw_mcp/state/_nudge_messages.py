@@ -15,7 +15,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
+from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName, _STEPS
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -23,9 +23,6 @@ from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
 
 _HEADER = "--- TRW Session ---"
 _MINIMAL_HEADER = "--- TRW ---"
-
-# Step names in display order (FR01 PRD-CORE-084: includes review)
-_STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review", "deliver")
 
 # Step rationale for next-two-steps projection (FR04, PRD-CORE-084)
 _STEP_RATIONALE: dict[str, str] = {
