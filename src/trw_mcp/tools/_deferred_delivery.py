@@ -16,11 +16,8 @@ continue to work without modification.
 This module is internal (``_``-prefixed) — external code should import
 from ``trw_mcp.tools.ceremony`` which re-exports the public surface.
 
-Note: ``_deferred_thread`` and ``_deferred_lock`` live in ``ceremony.py``
-(the canonical location) so that existing test patches via
-``monkeypatch.setattr(cer, "_deferred_thread", ...)`` continue to work.
-``_launch_deferred`` accesses them via a late import of the ceremony
-module to avoid circular import issues at module-load time.
+``_deferred_thread`` and ``_deferred_lock`` live in ``_deferred_state.py``
+(extracted to break the ceremony <-> _deferred_delivery circular import).
 """
 
 from __future__ import annotations
@@ -57,6 +54,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
+
+import trw_mcp.tools._deferred_state as _ds
 
 # Re-export step functions from sub-modules so test patches on
 # "trw_mcp.tools._deferred_delivery._step_foo" continue to work.
@@ -241,23 +240,21 @@ def _launch_deferred(
     - "launched": new background thread started
     - "skipped_already_running": a previous deferred batch is still active
 
-    Note: ``_deferred_thread`` and ``_deferred_lock`` are read from/written
-    to the ``ceremony`` module (late import) so that test patches via
-    ``monkeypatch.setattr(cer, "_deferred_thread", ...)`` work correctly.
+    Thread handle and lock live in ``_deferred_state`` (extracted to
+    break the ceremony <-> _deferred_delivery circular import).
+    Test patches should target ``trw_mcp.tools._deferred_state``.
     """
-    import trw_mcp.tools.ceremony as _cer  # late import to avoid circular
-
-    with _cer._deferred_lock:
-        if _cer._deferred_thread is not None and _cer._deferred_thread.is_alive():
+    with _ds._deferred_lock:
+        if _ds._deferred_thread is not None and _ds._deferred_thread.is_alive():
             logger.info("deferred_launch_skipped", reason="thread_still_alive")
             return "skipped_already_running"
 
-        _cer._deferred_thread = threading.Thread(
+        _ds._deferred_thread = threading.Thread(
             target=_run_deferred_steps,
             args=(trw_dir, resolved_run, critical_results),
             kwargs={"skip_index_sync": skip_index_sync},
             name="trw-deliver-deferred",
             daemon=True,
         )
-        _cer._deferred_thread.start()
+        _ds._deferred_thread.start()
         return "launched"

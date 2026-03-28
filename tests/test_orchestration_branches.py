@@ -243,6 +243,7 @@ class TestTrwStatusVersionWarning:
         # Now patch the config so the deployed VERSION.yaml shows a newer version
         new_config = TRWConfig(framework_version="v99.0_TRW")
         monkeypatch.setattr("trw_mcp.tools.orchestration.get_config", lambda: new_config)
+        monkeypatch.setattr("trw_mcp.tools._orchestration_helpers.get_config", lambda: new_config)
 
         # Re-deploy frameworks at the patched version
         orch_mod._deploy_frameworks(tmp_path / ".trw")
