@@ -264,7 +264,7 @@ def _run_auth(args: argparse.Namespace) -> None:
     from trw_mcp.cli.auth import run_auth_login, run_auth_logout, run_auth_status
 
     config_path = Path.cwd() / ".trw" / "config.yaml"
-    api_url = "https://api.trwframework.com"
+    api_url = getattr(args, "api_url", None) or "https://api.trwframework.com"
 
     auth_cmd = getattr(args, "auth_command", None)
     if auth_cmd == "login":

@@ -297,7 +297,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Manage platform authentication",
     )
     auth_sub = auth_parser.add_subparsers(dest="auth_command")
-    auth_sub.add_parser("login", help="Authenticate via device authorization flow")
+    login_parser = auth_sub.add_parser("login", help="Authenticate via device authorization flow")
+    login_parser.add_argument(
+        "--api-url",
+        default=None,
+        help="Override API URL (default: from config or https://api.trwframework.com)",
+    )
     auth_sub.add_parser("logout", help="Remove stored API key")
     auth_sub.add_parser("status", help="Show current authentication status")
 

@@ -9,6 +9,9 @@ from __future__ import annotations
 # PRD-CORE-001: Base MCP tool suite — error hierarchy
 
 
+__all__ = ["TRWError", "StateError", "ValidationError", "ReflectionError", "ConfigError"]
+
+
 class TRWError(Exception):
     """Base exception for all TRW MCP server errors.
 

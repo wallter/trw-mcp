@@ -13,6 +13,8 @@ Fails open: if any compression logic raises, the original content is preserved.
 
 from __future__ import annotations
 
+__all__ = ["ContextBudgetMiddleware"]
+
 from typing import Literal
 
 import structlog

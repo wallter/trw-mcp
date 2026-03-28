@@ -247,7 +247,7 @@ def _poll_for_token(
                 err_body = json.loads(exc.read().decode("utf-8"))
                 error_code = str(err_body.get("error", ""))
             except (json.JSONDecodeError, OSError):
-                pass
+                pass  # Error body unparsable — error_code stays "" and falls through to unknown handler
 
             if error_code == "authorization_pending":
                 continue
