@@ -38,3 +38,6 @@ requirements.lock
 # Internal review and agent-instructions files (auto-generated)
 REVIEW.md
 AGENTS.md
+
+# Internal PRD docs (monorepo-only, not for public repo)
+docs/requirements-aare-f/

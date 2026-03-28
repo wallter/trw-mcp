@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/bootstrap/_utils.py
-# hypothesis_version: 6.151.9
-
-[120, '*.md', '*.sh', '--debug', '-e', '-m', '.claude', '.mcp.json', '.mcp.json not found', '.sh', '.trw', '/', 'CLAUDE.md', 'agents', 'agents_count', 'args', 'command', 'created', 'data', 'debug: false', 'errors', 'framework_version', 'hooks', 'hooks_count', 'install', 'installed_by', 'installer-meta.yaml', 'last_updated', 'mcpServers', 'package_version', 'pip', 'preserved', 'pyproject.toml', 'skills', 'skills_count', 'skipped', 'task_root: docs', 'trw', 'trw-mcp', 'trw_mcp.bootstrap', 'updated', 'utf-8', 'warnings']

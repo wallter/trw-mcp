@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/state/progressive_middleware.py
-# hypothesis_version: 6.151.9
-
-['...', '^(.*?\\.)\\s', '_compact', 'description', 'meta', 'object', 'parameters', 'properties', 'required', 'type']

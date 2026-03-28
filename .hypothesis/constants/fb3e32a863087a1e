@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/tools/review.py
-# hypothesis_version: 6.151.9
-
-['+', '+++', 'FIXME', 'HACK', 'HEAD', 'TODO', 'XXX', 'auto', 'block', 'category', 'confidence', 'correctness', 'critical', 'cross_model', 'description', 'diff', 'error', 'events.jsonl', 'findings', 'git', 'high', 'info', 'line', 'manual', 'medium', 'meta', 'pass', 'performance', 'placeholder', 'review-', 'review.yaml', 'review_complete', 'review_git_diff', 'reviewer_errors', 'reviewer_role', 'reviewer_roles_run', 'security', 'severity', 'spec-compliance', 'style', 'test-quality', 'warn', 'warning']

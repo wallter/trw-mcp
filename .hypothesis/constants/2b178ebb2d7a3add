@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/lifecycle/__init__.py
-# hypothesis_version: 6.151.9
-
-['DedupResult', 'TierManager', 'TierSweepResult', 'apply_time_decay', 'batch_dedup', 'bayesian_calibrate', 'check_duplicate', 'consolidate_cycle', 'entry_utility', 'find_clusters', 'merge_entries', 'rank_by_utility', 'update_q_value']

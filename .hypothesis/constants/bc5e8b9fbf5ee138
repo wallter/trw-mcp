@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-memory/src/trw_memory/storage/sqlite_backend.py
-# hypothesis_version: 6.151.9
-
-[0.0, 30.0, 100, 384, ' AND ', '%', ', ', '1', '?', 'INTEGER DEFAULT 0', 'TEXT', "TEXT DEFAULT '[]'", "TEXT DEFAULT '{}'", '\\', '\\%', '\\\\', '\\_', '_', 'access_count', 'consolidated_from', 'consolidated_into', 'content', 'created_at', 'cross_validated', 'detail', 'evidence', 'id', 'importance', 'importance >= ?', 'last_accessed_at', 'memory_deleted', 'memory_stored', 'merged_from', 'metadata', 'namespace', 'namespace = ?', 'namespace_deleted', 'not_installed', 'outcome_history', 'pending_delete', 'q_observations', 'q_value', 'recurrence', 'remote_id', 'source', 'source_identity', 'sqlite_vec_loaded', 'status', 'status = ?', 'tags', 'updated_at', 'vector_clock', 'vector_search_error', 'vector_upserted']

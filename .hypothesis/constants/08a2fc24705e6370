@@ -1,4 +1,0 @@
-# file: /mnt/c/Users/Tyler/Desktop/trw_framework/trw-mcp/src/trw_mcp/tools/usage.py
-# hypothesis_version: 6.151.9
-
-[0.0, 0.8, 3.0, 4.0, 15.0, 75.0, 1000000, 'all', 'already_expanded', 'by_caller', 'by_model', 'caller', 'calls', 'claude-opus-4-6', 'claude-sonnet-4-6', 'cost_estimate_usd', 'expanded_tools', 'group', 'input', 'input_tokens', 'log_path', 'message', 'model', 'output', 'output_tokens', 'period', 'progressive_expand', 'total_calls', 'total_input_tokens', 'total_output_tokens', 'unknown', 'usage_report_empty']
