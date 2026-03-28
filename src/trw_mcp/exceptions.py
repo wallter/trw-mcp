@@ -14,11 +14,19 @@ class TRWError(Exception):
 
     Args:
         message: Human-readable error description.
+        suggestion: Optional remediation hint for tool error handlers.
         context: Structured key-value context for logging.
     """
 
-    def __init__(self, message: str, **context: str | int | float | bool | None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        suggestion: str = "",
+        **context: str | int | float | bool | None,
+    ) -> None:
         super().__init__(message)
+        self.suggestion = suggestion
         self.context: dict[str, str | int | float | bool | None] = context
 
 

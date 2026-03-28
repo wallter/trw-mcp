@@ -30,7 +30,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "ruamel.yaml>=0.18.0",
     "structlog>=24.0.0",
-    "trw-memory>=0.1.0",
+    "trw-memory>=0.3.0,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -122,8 +122,6 @@ ignore = [
     "TC003",    # stdlib imports used at runtime — not type-checking-only
     "B008",     # function calls in defaults — FastMCP/Pydantic patterns use this idiomatically
     "ISC001",   # conflicts with formatter
-    "ANN101",   # deprecated: self type annotation
-    "ANN102",   # deprecated: cls type annotation
 ]
 fixable = ["F401", "B007", "B013", "B014", "UP", "I", "PIE790", "TC", "RUF100"]
 unfixable = ["F841"]
@@ -133,12 +131,20 @@ unfixable = ["F841"]
 "tests/test_scoring_properties.py" = ["DTZ001"]  # hypothesis st.datetimes() requires naive bounds when timezones= is provided
 "**/__init__.py" = ["F401"]
 "**/conftest.py" = ["PT"]
-# Structlog processors require Any for logger param (structlog convention)
-"src/trw_mcp/_logging.py" = ["ANN401"]
-# Build audit imports after logger init (deliberate pattern for module isolation)
-"src/trw_mcp/tools/build/_audit.py" = ["E402"]
-# Nudge messages imports after logger init (deliberate)
+# Structlog logger-before-imports pattern and Any for logger param (structlog convention)
+"src/trw_mcp/_logging.py" = ["ANN401", "S110"]
+"src/trw_mcp/audit.py" = ["E402"]
+"src/trw_mcp/resources/config.py" = ["E402"]
+"src/trw_mcp/resources/run_state.py" = ["E402"]
+"src/trw_mcp/state/dry_check.py" = ["E402"]
+"src/trw_mcp/state/receipts.py" = ["E402"]
+"src/trw_mcp/state/reflection.py" = ["E402"]
 "src/trw_mcp/state/_nudge_messages.py" = ["E402"]
+"src/trw_mcp/tools/build/_audit.py" = ["E402"]
+"src/trw_mcp/tools/build/_core.py" = ["E402"]
+"src/trw_mcp/tools/build/_runners.py" = ["E402"]
+"src/trw_mcp/tools/orchestration.py" = ["E402"]
+"src/trw_mcp/tools/requirements.py" = ["SIM105"]
 # Bootstrap update uses conditional imports after function-level setup
 "src/trw_mcp/bootstrap/_update_project.py" = ["E402", "S110", "F841"]
 

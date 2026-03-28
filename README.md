@@ -145,6 +145,20 @@ src/trw_mcp/
   data/               # Bundled hooks, skills, agents for init-project
 ```
 
+## Troubleshooting
+
+**MCP connection error: "[Errno 2] No such file or directory"**
+The MCP server process crashed. In Claude Code, type `/mcp` to reconnect. For other clients, restart your CLI tool.
+
+**`trw_session_start()` returns "No learnings found"**
+This is normal on first use — learnings accumulate as you work. Call `trw_learn()` to save discoveries, then `trw_deliver()` to persist them.
+
+**stale `.trw/` state after upgrading**
+Run `trw-mcp update-project .` to migrate your project state to the latest schema. If issues persist, backup and re-initialize with `trw-mcp init-project . --force`.
+
+**Embeddings not working despite `embeddings_enabled=true`**
+Embeddings require the `[vectors]` extra: `pip install 'trw-mcp[vectors]'`. Without it, vector search silently degrades to keyword-only.
+
 ## License
 
 [Business Source License 1.1](https://trwframework.com/license) — source-available, free for non-competing use. Converts to Apache 2.0 on 2030-03-21. See the [full license terms](https://trwframework.com/license).
