@@ -4,11 +4,9 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
-# get_repo_root: Resolve the main repository root (worktree-safe).
-# In a worktree, git rev-parse --show-toplevel returns the worktree root,
-# but --git-common-dir always points to the main repo's .git directory.
+# get_repo_root: Resolve the working-tree root (worktree-safe, submodule-safe).
 get_repo_root() {
-  dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" 2>/dev/null
+  git rev-parse --show-toplevel 2>/dev/null
 }
 
 # get_task_root: Read task_root from .trw/config.yaml or default to "docs".
