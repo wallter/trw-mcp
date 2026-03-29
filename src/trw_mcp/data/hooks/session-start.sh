@@ -51,14 +51,15 @@ _emit_tier_guidance() {
 
   case "$_tier" in
     MINIMAL)
-      echo "CEREMONY — Tier: MINIMAL | Trivial 1-file fix only"
-      echo "  Mandatory phases: IMPLEMENT, VALIDATE, DELIVER"
-      echo "  Skip: RESEARCH, PLAN, REVIEW"
+      echo "CEREMONY — Tier: MINIMAL | trw_recall only | No trw_init required"
+      echo "  Mandatory phases: IMPLEMENT, DELIVER"
+      echo "  Skip: RESEARCH, PLAN, VALIDATE, REVIEW"
       ;;
     STANDARD)
       echo "CEREMONY — Tier: STANDARD"
-      echo "  Mandatory phases: Plan, Implement, Validate, Review, Deliver"
-      echo "  1 checkpoint minimum, review required before delivery"
+      echo "  Mandatory phases: Plan, Implement, Validate, Deliver"
+      echo "  1 checkpoint minimum"
+      echo "  Review: optional (+10 bonus)"
       ;;
     COMPREHENSIVE)
       echo "CEREMONY — Tier: COMPREHENSIVE"
@@ -79,48 +80,31 @@ _emit_protocol() {
   if [ -f "$_protocol_file" ]; then
     grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
   else
-    echo "- Start: call trw_session_start() — loads prior learnings so you start from accumulated knowledge, not zero"
-    echo "- During: call trw_checkpoint(message) after milestones — your last checkpoint is your resume point if context compacts"
-    echo "- Finish: call trw_deliver() — without it, your session's discoveries are invisible to every future agent"
-    echo "- On errors or >2 retries: call trw_learn() — saves the gotcha so no future agent repeats your mistake"
+    echo "- Start: call trw_session_start() to load prior learnings and active run state"
+    echo "- During: call trw_checkpoint(message) after milestones"
+    echo "- Finish: call trw_deliver() to persist learnings for future sessions"
+    echo "- On errors or >2 retries: call trw_learn() to record the discovery"
   fi
 }
 
 case "$_source" in
   startup)
-    # FR01: Fresh startup — full operational briefing
+    # FR01: Fresh startup — explain what's available and why
     _emit_protocol
     echo ""
     _emit_tier_guidance
     echo ""
     echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
-    echo "WHY: It defines the 6-phase execution model, exit criteria, formations, quality gates, and phase reversion"
-    echo "  rules that structure your work. Your tools implement this methodology — without reading it, you will pass"
-    echo "  tool checks while missing the process that prevents rework."
+    echo "WHY: It defines the 6-phase execution model (RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER),"
+    echo "  exit criteria for each phase, formation selection for parallel work, quality gates with rubric scoring,"
+    echo "  phase reversion rules, and the rationalization watchlist. Your tools implement this methodology —"
+    echo "  without reading it, you will pass tool checks while missing the process that prevents rework."
+    echo "  The framework is ~500 lines. Read it once at session start; re-read relevant sections at phase transitions."
     echo ""
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
     echo ""
-    echo "## Delegation Decision Tree"
-    echo "  Task arrives → Assess scope"
-    echo "  ├── Trivial? (≤3 lines, 1 file) → Self-implement"
-    echo "  ├── Research/read-only?          → Subagent (Explore/Plan type)"
-    echo "  ├── Single-scope? (≤3 files)     → Subagent (general-purpose)"
-    echo "  ├── Multi-scope? (4+ files)"
-    echo "  │   ├── Independent tracks?      → Batched subagents"
-    echo "  │   └── Interdependent?          → Agent Team"
-    echo "  └── Sprint-scale? (4+ PRDs)      → Agent Team + playbooks"
-    echo ""
-    echo "## Rationalization Watchlist"
-    echo "If you catch yourself thinking any of these, stop and follow the process:"
-    echo "  'This is too simple for ceremony' → Simple tasks compound into gaps when 10 agents skip in parallel"
-    echo "  'I'll checkpoint/deliver after I finish' → Context compaction erases uncheckpointed work permanently"
-    echo "  'I already know the codebase' → Prior learnings contain gotchas for exactly this area"
-    echo "  'I can implement directly' → Subagent implementation has 3x fewer P0 defects"
-    echo "  'The build check can wait' → Late build failures cascade into multi-file rework"
-    echo ""
     echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK.md, completion artifacts."
-    echo "WHY: These are the tools where skipping costs more than running — lost learnings, shipped bugs, false completions."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;
@@ -177,24 +161,6 @@ case "$_source" in
     echo ""
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
-    echo ""
-    echo "## Delegation Decision Tree"
-    echo "  Task arrives → Assess scope"
-    echo "  ├── Trivial? (≤3 lines, 1 file) → Self-implement"
-    echo "  ├── Research/read-only?          → Subagent (Explore/Plan type)"
-    echo "  ├── Single-scope? (≤3 files)     → Subagent (general-purpose)"
-    echo "  ├── Multi-scope? (4+ files)"
-    echo "  │   ├── Independent tracks?      → Batched subagents"
-    echo "  │   └── Interdependent?          → Agent Team"
-    echo "  └── Sprint-scale? (4+ PRDs)      → Agent Team + playbooks"
-    echo ""
-    echo "## Rationalization Watchlist"
-    echo "If you catch yourself thinking any of these, stop and follow the process:"
-    echo "  'This is too simple for ceremony' → Simple tasks compound into gaps when 10 agents skip in parallel"
-    echo "  'I'll checkpoint/deliver after I finish' → Context compaction erases uncheckpointed work permanently"
-    echo "  'I already know the codebase' → Prior learnings contain gotchas for exactly this area"
-    echo "  'I can implement directly' → Subagent implementation has 3x fewer P0 defects"
-    echo "  'The build check can wait' → Late build failures cascade into multi-file rework"
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;

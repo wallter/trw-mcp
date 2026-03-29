@@ -30,12 +30,16 @@ _event_count=$(wc -l < "$_events_path" 2>/dev/null | tr -d ' ') || _event_count=
 [ "$_event_count" -gt 0 ] 2>/dev/null || exit 0
 
 # Check for ceremony completion — if present, clear block count and allow
-# Check both run events and fallback session-events (no-run deliver case)
+# Check: (1) newest run events, (2) fallback session-events, (3) any recent run
+# Step 3 handles parallel instances where this session's run isn't the newest
 _session_events="$_context_dir/session-events.jsonl"
 _deliver_found=false
 if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete" || has_event "$_events_path" "trw_deliver_complete"; then
   _deliver_found=true
 elif [ -f "$_session_events" ] && has_event "$_session_events" "trw_deliver_complete"; then
+  _deliver_found=true
+elif has_recent_deliver 240; then
+  # Another parallel instance delivered recently — don't block this one
   _deliver_found=true
 fi
 if [ "$_deliver_found" = true ]; then
