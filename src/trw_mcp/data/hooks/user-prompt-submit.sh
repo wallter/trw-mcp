@@ -30,7 +30,7 @@ case "$_phase" in
     echo "TRW [IMPLEMENT]: Before completing, re-read FRs for coverage gaps. Call trw_checkpoint after milestones — uncheckpointed work is lost on compaction."
     ;;
   validate)
-    echo "TRW [VALIDATE]: trw_build_check(scope='full') is required — it runs tests AND type-check. Bugs caught here cost 2x less to fix than bugs caught at delivery."
+    echo "TRW [VALIDATE]: trw_build_check(scope='full') is required — pytest alone doesn't satisfy the gate."
     ;;
   deliver)
     echo "TRW [DELIVER]: trw_deliver() persists learnings, syncs CLAUDE.md, and closes the run — without it, your session's work is invisible to future agents."
