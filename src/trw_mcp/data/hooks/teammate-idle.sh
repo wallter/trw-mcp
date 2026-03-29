@@ -44,7 +44,9 @@ fi
 
 # FR02: Hard gate — check for uncompleted assigned tasks
 if [ -n "$_teammate_name" ] && [ -n "$_team_name" ]; then
-  _task_dir="$HOME/.claude/tasks/$_team_name"
+  # Sanitize team name for filesystem path (prevent traversal)
+  _safe_team=$(printf '%s' "$_team_name" | tr -c 'a-zA-Z0-9_-' '_' | head -c 64)
+  _task_dir="$HOME/.claude/tasks/$_safe_team"
   if [ -d "$_task_dir" ]; then
     _incomplete_tasks=""
     for _task_file in "$_task_dir"/*.json "$_task_dir"/*.yaml; do
