@@ -6,6 +6,9 @@
 # Appends a file_modified event to the active run's events.jsonl.
 #
 # Exit code 0 always (fail-open, async hook).
+#
+# Performance: ~75ms avg latency (benchmarked 2026-03-29, 5 runs).
+# Primary cost: find_active_run() scanning .trw/runs/ for run.yaml files.
 # Dependencies: POSIX shell. jq optional (used for file_path extraction).
 
 set -e
