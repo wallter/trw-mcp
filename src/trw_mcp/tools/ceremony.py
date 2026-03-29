@@ -227,6 +227,8 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 summaries/details). When provided, performs two recalls — one focused
                 on your query domain and one baseline high-impact — then merges and
                 deduplicates. Empty string or "*" uses default wildcard behavior.
+
+        See Also: trw_init, trw_recall
         """
         from trw_mcp.tools._ceremony_helpers import (
             _phase_contextual_recall,
@@ -391,6 +393,8 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             run_path: Path to run directory (auto-detected if None).
             skip_reflect: Skip reflection step (e.g., if already reflected).
             skip_index_sync: Skip INDEX/ROADMAP sync step.
+
+        See Also: trw_checkpoint, trw_claude_md_sync
         """
         config = get_config()
         reader = FileStateReader()
@@ -528,8 +532,8 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         try:
             from trw_mcp.state.ceremony_nudge import mark_deliver
             mark_deliver(trw_dir)
-        except Exception:
-            logger.debug("deliver_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
+        except Exception:  # justified: fail-open, ceremony state tracking must not block delivery
+            logger.debug("deliver_ceremony_state_update_skipped", exc_info=True)
 
         # Inject ceremony nudge into response (PRD-CORE-084 FR02)
         try:
@@ -537,8 +541,8 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
             ctx = NudgeContext(tool_name=ToolName.DELIVER)
             append_ceremony_nudge(cast("dict[str, object]", results), trw_dir, context=ctx)
-        except Exception:
-            logger.debug("deliver_nudge_injection_skipped", exc_info=True)  # justified: fail-open
+        except Exception:  # justified: fail-open, nudge injection is advisory and must not block delivery
+            logger.debug("deliver_nudge_injection_skipped", exc_info=True)
 
         _deliver_run_id = str(resolved_run.name) if resolved_run else ""
         _events_jsonl = resolved_run / "meta" / "events.jsonl" if resolved_run else None

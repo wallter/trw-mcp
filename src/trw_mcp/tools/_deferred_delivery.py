@@ -27,29 +27,7 @@ import json
 import threading
 import time
 
-# Portability shim: fcntl is Unix-only. On Windows, advisory locking
-# is a no-op (see persistence.py for rationale).
-try:
-    import fcntl as _fcntl
-
-    def _lock_ex_nb(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
-
-    def _lock_ex(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_EX)
-
-    def _lock_un(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_UN)
-except ImportError:
-
-    def _lock_ex_nb(fd: int) -> None:
-        pass
-
-    def _lock_ex(fd: int) -> None:
-        pass
-
-    def _lock_un(fd: int) -> None:
-        pass
+from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -168,7 +146,7 @@ def _run_deferred_steps(
         """Run a deferred step with per-step timing and structured logging."""
         _t = time.monotonic()
         _pre_errors = len(errors)
-        _run_step(name, fn, results, errors)  # type: ignore[arg-type]
+        _run_step(name, fn, results, errors)  # type: ignore[arg-type]  # justified: fn is Callable at runtime; object annotation avoids Callable import in closure scope
         _duration_ms = round((time.monotonic() - _t) * 1000, 1)
         _step_result = results.get(name)
         if len(errors) > _pre_errors:

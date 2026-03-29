@@ -20,7 +20,7 @@ logger = structlog.get_logger(__name__)
 from pathlib import Path
 from typing import cast
 
-from trw_mcp.models.config import TRWConfig, _reset_config
+from trw_mcp.models.config import TRWConfig, reload_config
 from trw_mcp.models.typed_dicts import (
     AuditCeremonyComplianceResult,
     AuditDuplicatePairDict,
@@ -213,14 +213,14 @@ def _audit_ceremony_compliance(
     old_root = os.environ.get("TRW_PROJECT_ROOT")
     try:
         os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-        _reset_config()
+        reload_config()
         result = scan_all_runs()
     finally:
         if old_root is not None:
             os.environ["TRW_PROJECT_ROOT"] = old_root
         else:
             os.environ.pop("TRW_PROJECT_ROOT", None)
-        _reset_config()
+        reload_config()
 
     aggregate = result.get("aggregate", {})
     if not isinstance(aggregate, dict):
@@ -241,14 +241,14 @@ def _audit_reflection_quality(trw_dir: Path) -> AuditReflectionQualityResult:
     old_root = os.environ.get("TRW_PROJECT_ROOT")
     try:
         os.environ["TRW_PROJECT_ROOT"] = str(trw_dir.parent)
-        _reset_config()
+        reload_config()
         result = compute_reflection_quality(trw_dir)
     finally:
         if old_root is not None:
             os.environ["TRW_PROJECT_ROOT"] = old_root
         else:
             os.environ.pop("TRW_PROJECT_ROOT", None)
-        _reset_config()
+        reload_config()
     return cast("AuditReflectionQualityResult", result)
 
 
@@ -374,7 +374,7 @@ def run_audit(
         old_root = os.environ.get("TRW_PROJECT_ROOT")
         try:
             os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-            _reset_config()
+            reload_config()
             prune_result = auto_prune_excess_entries(trw_dir)
             fix_actions["prune"] = prune_result
 
@@ -386,7 +386,7 @@ def run_audit(
                 os.environ["TRW_PROJECT_ROOT"] = old_root
             else:
                 os.environ.pop("TRW_PROJECT_ROOT", None)
-            _reset_config()
+            reload_config()
 
         result["fix_actions"] = fix_actions
 

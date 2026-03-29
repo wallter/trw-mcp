@@ -33,74 +33,44 @@ from trw_mcp.models.config import get_config as get_config
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 
 # ---------------------------------------------------------------------------
-# Re-export connection management (singletons, embedder, migration)
+# Re-export: connection management (singletons, embedder, migration)
 # ---------------------------------------------------------------------------
 from trw_mcp.state._memory_connection import (
     _embed_and_store as _embed_and_store,
-)
-from trw_mcp.state._memory_connection import (
     backfill_embeddings as backfill_embeddings,
-)
-from trw_mcp.state._memory_connection import (
     check_embeddings_status as _check_embeddings_status_impl,
-)
-from trw_mcp.state._memory_connection import (
-    embed_text as embed_text,
-)
-from trw_mcp.state._memory_connection import (
-    embed_text_batch as embed_text_batch,
-)
-from trw_mcp.state._memory_connection import (
-    embedding_available as embedding_available,
-)
-from trw_mcp.state._memory_connection import (
     ensure_migrated as ensure_migrated,
-)
-from trw_mcp.state._memory_connection import (
     get_backend as get_backend,
-)
-from trw_mcp.state._memory_connection import (
     get_embed_failure_count as get_embed_failure_count,
-)
-from trw_mcp.state._memory_connection import (
-    get_embedder as get_embedder,
-)
-from trw_mcp.state._memory_connection import (
     reset_backend as reset_backend,
-)
-from trw_mcp.state._memory_connection import (
     reset_embed_failure_count as _reset_embed_failure_count_impl,
 )
+
+# --- Embedding operations ---
 from trw_mcp.state._memory_connection import (
+    embed_text as embed_text,
+    embed_text_batch as embed_text_batch,
+    embedding_available as embedding_available,
+    get_embedder as get_embedder,
     reset_embedder as reset_embedder,
 )
 
 # ---------------------------------------------------------------------------
-# Re-export query routing (keyword search, hybrid search, ID lookup)
+# Re-export: query routing (keyword search, hybrid search, ID lookup)
 # ---------------------------------------------------------------------------
 from trw_mcp.state._memory_queries import (
     _apply_entry_filters as _apply_entry_filters,
-)
-from trw_mcp.state._memory_queries import (
     _keyword_search as _keyword_search,
-)
-from trw_mcp.state._memory_queries import (
     _lookup_id_tokens as _lookup_id_tokens,
-)
-from trw_mcp.state._memory_queries import (
     _search_entries as _search_entries,
-)
-from trw_mcp.state._memory_queries import (
     _search_intersect_keywords as _search_intersect_keywords,
 )
 
 # ---------------------------------------------------------------------------
-# Re-export result transformations
+# Re-export: result transformations
 # ---------------------------------------------------------------------------
 from trw_mcp.state._memory_transforms import (
     _learning_to_memory_entry as _learning_to_memory_entry,
-)
-from trw_mcp.state._memory_transforms import (
     _memory_to_learning_dict as _memory_to_learning_dict,
 )
 

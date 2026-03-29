@@ -143,10 +143,9 @@ It should be scalable and flexible and easy to use.
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    import trw_mcp.tools.requirements as req_mod
+    from trw_mcp.tools._prd_template_helpers import reset_template_cache
 
-    monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
-    monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
+    reset_template_cache()
     (tmp_path / ".trw").mkdir()
     return tmp_path
 

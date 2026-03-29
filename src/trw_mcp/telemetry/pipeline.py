@@ -14,24 +14,7 @@ import time
 import urllib.error
 import urllib.request
 
-# Portability shim: fcntl is Unix-only. On Windows, advisory locking
-# is a no-op (see persistence.py for rationale).
-# Only _lock_ex/_lock_un needed here — this module does not use shared or non-blocking locks.
-try:
-    import fcntl as _fcntl
-
-    def _lock_ex(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_EX)
-
-    def _lock_un(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_UN)
-except ImportError:
-
-    def _lock_ex(fd: int) -> None:
-        pass
-
-    def _lock_un(fd: int) -> None:
-        pass
+from trw_mcp._locking import _lock_ex, _lock_un
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar

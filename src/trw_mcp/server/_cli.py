@@ -7,6 +7,7 @@ the argument parser builder, and the ``_check_mcp_json_portability`` helper.
 from __future__ import annotations
 
 import argparse
+import difflib
 from pathlib import Path
 
 import structlog
@@ -366,6 +367,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _suggest_command(unknown: str, parser: argparse.ArgumentParser) -> str | None:
+    """Return the closest known subcommand to *unknown*, or None if no good match.
+
+    Uses ``difflib.get_close_matches`` with cutoff=0.6 to find typo corrections.
+    """
+    known: list[str] = []
+    for action in parser._subparsers._actions:  # type: ignore[union-attr]
+        if isinstance(action, argparse._SubParsersAction):
+            known.extend(action.choices.keys())
+    matches = difflib.get_close_matches(unknown, known, n=1, cutoff=0.5)
+    return matches[0] if matches else None
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command.
 
@@ -388,10 +402,20 @@ def main() -> None:
     args = parser.parse_args()
 
     # Dispatch subcommands
-    handler = SUBCOMMAND_HANDLERS.get(str(args.command or ""))
+    cmd = str(args.command or "")
+    handler = SUBCOMMAND_HANDLERS.get(cmd)
     if handler is not None:
         handler(args)
         return
+
+    # If unrecognized subcommand (not empty, not "serve"), suggest closest match
+    if cmd and cmd != "serve":
+        suggestion = _suggest_command(cmd, parser)
+        if suggestion:
+            print(f"Unknown command '{cmd}'. Did you mean '{suggestion}'?")
+        else:
+            print(f"Unknown command '{cmd}'. Run 'trw-mcp --help' for available commands.")
+        _sys.exit(1)
 
     # Default: run MCP server (no subcommand or "serve")
     config = TRWConfig()

@@ -207,7 +207,7 @@ def find_clusters(
                 min_cluster_size=min_cluster_size,
                 min_shared_tags=2,
             )
-        except Exception:
+        except Exception:  # justified: boundary, tag-overlap clustering may fail on malformed entry data
             logger.warning("tag_overlap_clustering_failed", exc_info=True)
             return []
         logger.debug(

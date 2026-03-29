@@ -130,7 +130,7 @@ def _sweep_warm_to_cold(
                         days=days,
                         importance_score=importance,
                     )
-            except Exception:
+            except Exception:  # justified: scan-resilience, one failed demotion must not abort the sweep
                 logger.warning(
                     "sweep_warm_to_cold_failed",
                     entry_id=entry_id,
@@ -167,7 +167,7 @@ def _sweep_warm_to_cold(
                         days=days,
                         importance_score=importance,
                     )
-            except Exception:
+            except Exception:  # justified: scan-resilience, one corrupt YAML must not abort the fallback sweep
                 logger.warning(
                     "sweep_warm_to_cold_failed",
                     path=str(yaml_file),

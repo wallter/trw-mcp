@@ -28,22 +28,25 @@ ruff check src/                                               # Lint
 - All YAML reads use `YAML(typ="safe")` — round-trip loader only for writes
 - Shell hooks use `_json_escape()` for all interpolated values
 - `sqlite-vec` is optional (`[vectors]` extra) — degrades gracefully when absent
-
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 <!-- trw:start -->
 
-Your primary role is **orchestration** — delegate to focused agents for better outcomes than direct implementation. Reserve self-implementation for trivial edits (≤3 lines, 1 file).
+Your primary role is **orchestration** — delegate to focused agents for better outcomes than direct implementation. Focused subagents produce 3x fewer P0 defects because they get deeper context per task. Reserve self-implementation for trivial edits (≤3 lines, 1 file).
 
-Start every session with `trw_session_start()`, save progress with `trw_checkpoint()` after milestones, and close with `trw_deliver()` to persist your work across sessions.
+**Your first action in every session must be `trw_session_start()`.**
+
+This single call loads everything you need: prior learnings from hundreds of past sessions, any active run state you can resume, and the full operational protocol (delegation guidance, phase gates, quality rubrics). Without it, you start from zero — with it, you start from the team’s accumulated experience.
+
+After `trw_session_start()`, save progress with `trw_checkpoint()` after milestones, and close with `trw_deliver()` so your discoveries persist for future agents.
 
 ## TRW Behavioral Protocol (Auto-Generated)
 
-| Tool | When | What |
-|------|------|------|
-| `trw_session_start()` | First action | Load prior learnings + recover active run |
-| `trw_learn(summary, detail)` | On discoveries | Persist knowledge for all future agents |
-| `trw_checkpoint(message)` | After milestones | Save progress (survives context compaction) |
-| `trw_deliver()` | Last action | Persist learnings + sync CLAUDE.md + close session |
+| Tool | When | Why |
+|------|------|-----|
+| `trw_session_start()` | First action | Loads prior learnings so you don't repeat solved problems or rediscover known gotchas |
+| `trw_learn(summary, detail)` | On discoveries | Saves your finding so no future agent repeats your mistake |
+| `trw_checkpoint(message)` | After milestones | If context compacts, you resume here instead of re-implementing from scratch |
+| `trw_deliver()` | Last action | Persists your session's discoveries for future agents — without it, your learnings die with your context window |
 
 Full tool lifecycle: `/trw-ceremony-guide`
 

@@ -41,6 +41,7 @@ def _run_init_project(args: argparse.Namespace) -> None:
 
     if not result["errors"]:
         logger.info("init_project_complete", op="init_project", target=str(target))
+        print(f"\nTRW initialized in {target}. Next: run your AI coding tool in this directory.")
 
     sys.exit(1 if result["errors"] else 0)
 

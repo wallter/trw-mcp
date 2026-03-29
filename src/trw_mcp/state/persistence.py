@@ -21,36 +21,7 @@ import json
 import os
 import tempfile
 
-# Portability shim: fcntl is Unix-only. On Windows (ImportError),
-# advisory file locking is a no-op since Windows uses mandatory locking
-# at the OS level and fcntl-style advisory locks are not available.
-try:
-    import fcntl as _fcntl
-
-    def _lock_sh(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_SH)
-
-    def _lock_ex(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_EX)
-
-    def _lock_ex_nb(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
-
-    def _lock_un(fd: int) -> None:
-        _fcntl.flock(fd, _fcntl.LOCK_UN)
-except ImportError:
-
-    def _lock_sh(fd: int) -> None:
-        pass
-
-    def _lock_ex(fd: int) -> None:
-        pass
-
-    def _lock_ex_nb(fd: int) -> None:
-        pass
-
-    def _lock_un(fd: int) -> None:
-        pass
+from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_sh, _lock_un
 from collections.abc import Generator
 from datetime import date, datetime, timezone
 from pathlib import Path

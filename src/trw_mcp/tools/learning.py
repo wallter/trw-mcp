@@ -4,12 +4,15 @@ These 3 self-learning tools manage the .trw/ self-learning layer that makes
 Claude Code progressively more effective in a specific repository over time.
 The ``anthropic`` SDK (optional [ai] dependency) provides LLM-augmented
 behavior for several tools (better summaries, relevance classification).
+
+Heavy business logic is delegated to ``_learn_impl.execute_learn`` and
+``_recall_impl.execute_recall``; this module retains the FastMCP registration
+closures, backward-compat shim, and module-level imports that test suites
+patch at ``trw_mcp.tools.learning.*``.
 """
 
 from __future__ import annotations
 
-import contextlib
-import json
 import re as _re
 from pathlib import Path
 from typing import cast
@@ -18,12 +21,10 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.clients.llm import LLMClient
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     ClaudeMdSyncResultDict,
     LearnResultDict,
-    RecallContextDict,
     RecallResultDict,
 )
 from trw_mcp.scoring import rank_by_utility
@@ -37,17 +38,9 @@ from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     get_backend,
     list_active_learnings,
-)
-from trw_mcp.state.memory_adapter import (
     recall_learnings as adapter_recall,
-)
-from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
-)
-from trw_mcp.state.memory_adapter import (
     update_access_tracking as adapter_update_access,
-)
-from trw_mcp.state.memory_adapter import (
     update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -76,18 +69,7 @@ _SOLUTION_PATTERNS = _re.compile(
 
 
 def _is_solution_summary(summary: str) -> bool:
-    """Return True if the summary matches solution-indicator patterns (FR05).
-
-    Heuristic keyword detection: checks for patterns like 'use X instead of Y',
-    'prefer X', 'always X', 'best practice', 'recommended approach', 'the fix is',
-    or 'pattern:'.
-
-    Args:
-        summary: The learning summary text to analyze.
-
-    Returns:
-        True if summary appears to describe a solution/best practice.
-    """
+    """Return True if the summary matches solution-indicator patterns (FR05)."""
     return bool(_SOLUTION_PATTERNS.search(summary))
 
 
@@ -108,66 +90,7 @@ def _create_llm_client() -> LLMClient:
     return LLMClient(model=config.llm_default_model, usage_log_path=llm_usage_path)
 
 
-def _learn_handle_consolidation(
-    learning_id: str,
-    consolidated_from: list[str] | None,
-    entries_dir: Path,
-    reader: FileStateReader,
-    writer: FileStateWriter,
-    trw_dir: Path,
-) -> None:
-    """Handle auto-obsolete of superseded entries (PRD-FIX-052-FR04)."""
-    if not consolidated_from:
-        return
-
-    from datetime import datetime, timezone
-
-    from trw_mcp.state.analytics import find_entry_by_id
-
-    for ref_id in consolidated_from:
-        try:
-            update_result = adapter_update(
-                trw_dir,
-                learning_id=ref_id,
-                status="obsolete",
-            )
-            if update_result.get("status") == "updated":
-                try:
-                    found = find_entry_by_id(entries_dir, ref_id)
-                    if found is not None:
-                        entry_path_ref, data_ref = found
-                        data_ref["status"] = "obsolete"
-                        _today = datetime.now(tz=timezone.utc).date().isoformat()
-                        data_ref["resolved_at"] = _today
-                        data_ref["updated"] = _today
-                        writer.write_yaml(entry_path_ref, data_ref)
-                except (OSError, ValueError, TypeError):
-                    logger.debug(
-                        "auto_obsolete_yaml_backup_failed",
-                        ref_id=ref_id,
-                        exc_info=True,
-                    )
-                logger.info(
-                    "auto_obsolete_marked",
-                    ref_id=ref_id,
-                    compendium_id=learning_id,
-                )
-            else:
-                logger.warning(
-                    "auto_obsolete_not_found",
-                    ref_id=ref_id,
-                    compendium_id=learning_id,
-                )
-        except Exception:  # per-item error handling: skip failing obsolete-mark, continue with next ref  # noqa: PERF203
-            logger.warning(
-                "auto_obsolete_failed",
-                ref_id=ref_id,
-                compendium_id=learning_id,
-                exc_info=True,
-            )
-
-
-def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool registration with 4 nested tool defs
+def register_learning_tools(server: FastMCP) -> None:
     """Register self-learning tools on the MCP server."""
 
     @server.tool()
@@ -201,179 +124,34 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
             consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
             assertions: Machine-verifiable assertions (PRD-CORE-086). Each dict has type, pattern, target.
+
+        See Also: trw_recall, trw_learn_update
         """
-        # Input validation (PRD-QUAL-042-FR06): impact bounds
-        impact = max(0.0, min(1.0, impact))
+        from trw_mcp.tools._learn_impl import execute_learn
 
-        # PRD-QUAL-032-FR09: Reject auto-generated noise entries early
-        if is_noise_summary(summary):
-            return {
-                "status": "rejected",
-                "reason": "noise_filter",
-                "message": f"Summary matches noise pattern — not persisted: {summary[:60]}",
-            }
-
-        config = get_config()
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        trw_dir = resolve_trw_dir()
-        entries_dir = trw_dir / config.learnings_dir / config.entries_dir
-        writer.ensure_dir(entries_dir)
-
-        # One-time batch dedup migration (PRD-CORE-042 FR05)
-        if config.dedup_enabled:
-            try:
-                from trw_mcp.state.dedup import batch_dedup, is_migration_needed
-
-                if is_migration_needed(trw_dir):
-                    batch_dedup(trw_dir, reader, writer, config=config)
-            except (ImportError, OSError, ValueError, TypeError):
-                logger.debug("learning_migration_failed", exc_info=True)
-
-        # PRD-FIX-052-FR05: Pattern tag auto-suggestion for solution summaries
-        safe_tags = list(tags or [])
-        if _is_solution_summary(summary) and "pattern" not in safe_tags:
-            safe_tags.append("pattern")
-            logger.debug("pattern_tag_auto_added", summary=summary[:60])
-
-        # Bayesian calibration of impact score (PRD-CORE-034)
-        calibrated_impact = calibrate_impact(impact, config)
-
-        # Fetch active learnings once — reused by soft-cap and distribution
-        all_active: list[dict[str, object]] = []
-        # Fail-open: listing failure must not block learning recording
-        with contextlib.suppress(OSError, StateError, ValueError, TypeError):
-            all_active = list_active_learnings(trw_dir)
-        calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
-            calibrated_impact,
-            all_active,
-            config,
+        # Resolve from this module's namespace so test patches work
+        return execute_learn(
+            summary=summary,
+            detail=detail,
+            trw_dir=resolve_trw_dir(),
+            config=get_config(),
+            tags=tags,
+            evidence=evidence,
+            impact=impact,
+            shard_id=shard_id,
+            source_type=source_type,
+            source_identity=source_identity,
+            consolidated_from=consolidated_from,
+            assertions=assertions,
+            is_solution_fn=_is_solution_summary,
+            # Dependency injection: pass module-level refs for testability
+            _adapter_store=adapter_store,
+            _generate_learning_id=generate_learning_id,
+            _save_learning_entry=save_learning_entry,
+            _update_analytics=update_analytics,
+            _list_active_learnings=list_active_learnings,
+            _check_and_handle_dedup=check_and_handle_dedup,
         )
-
-        learning_id = generate_learning_id()
-
-        # Semantic dedup check (PRD-CORE-042) — must run BEFORE storing
-        # safe_tags already set above (with optional pattern tag auto-suggestion)
-        safe_evidence = evidence or []
-        dedup_result = check_and_handle_dedup(
-            LearningParams(
-                summary=summary,
-                detail=detail,
-                learning_id=learning_id,
-                tags=safe_tags,
-                evidence=safe_evidence,
-                impact=calibrated_impact,
-                shard_id=shard_id,
-                source_type=source_type,
-                source_identity=source_identity,
-                assertions=assertions,
-            ),
-            entries_dir,
-            reader,
-            writer,
-            config,
-        )
-        if dedup_result is not None:
-            return cast("LearnResultDict", dedup_result)
-
-        # Store via SQLite adapter (primary path) — after dedup to avoid orphans
-        try:
-            adapter_store(
-                trw_dir,
-                learning_id=learning_id,
-                summary=summary,
-                detail=detail,
-                tags=safe_tags,
-                evidence=safe_evidence,
-                impact=calibrated_impact,
-                shard_id=shard_id,
-                source_type=source_type,
-                source_identity=source_identity,
-                assertions=assertions,
-            )
-        except Exception:
-            logger.warning(
-                "learning_store_failed",
-                learning_id=learning_id,
-                summary=summary[:50],
-                exc_info=True,
-            )
-            # Fall through to YAML dual-write so the learning is not lost
-
-        # PRD-FIX-052-FR04: Auto-obsolete superseded entries on compendium creation
-        _learn_handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
-
-        # Save YAML backup via analytics (dual-write for rollback safety)
-        try:
-            from trw_mcp.models.learning import LearningEntry
-
-            entry = LearningEntry(
-                id=learning_id,
-                summary=summary,
-                detail=detail,
-                tags=safe_tags,
-                evidence=safe_evidence,
-                impact=calibrated_impact,
-                shard_id=shard_id,
-                source_type=source_type,
-                source_identity=source_identity,
-                consolidated_from=consolidated_from or [],
-            )
-            entry_path = save_learning_entry(trw_dir, entry)
-            update_analytics(trw_dir, 1)
-        except (OSError, ValueError, TypeError) as _save_exc:
-            logger.warning(
-                "learn_db_write_failed",
-                summary=summary[:50],
-                error=str(_save_exc),
-            )
-            entry_path = entries_dir / f"{learning_id}.yaml"
-
-        # Forced distribution enforcement (PRD-CORE-034)
-        distribution_warning, _demoted_ids = enforce_distribution(
-            impact,
-            calibrated_impact,
-            learning_id,
-            all_active,
-            trw_dir,
-            config,
-        )
-
-        logger.info(
-            "learn_ok",
-            summary_len=len(summary),
-            tags=safe_tags,
-            impact=calibrated_impact,
-            id=learning_id,
-        )
-        result_dict: LearnResultDict = {
-            "learning_id": learning_id,
-            "path": str(entry_path),
-            "status": "recorded",
-            "distribution_warning": distribution_warning,
-        }
-        if distribution_soft_cap_warning:
-            result_dict["distribution_warning"] = distribution_soft_cap_warning
-
-        # Increment learnings count in ceremony state tracker (PRD-CORE-074 FR04)
-        try:
-            from trw_mcp.state.ceremony_nudge import increment_learnings
-
-            increment_learnings(trw_dir)
-        except Exception:  # justified: fail-open, ceremony state update must not block learning
-            logger.debug("learn_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
-
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-            ctx = NudgeContext(tool_name=ToolName.LEARN)
-            append_ceremony_nudge(cast("dict[str, object]", result_dict), trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block learning
-            logger.debug("learn_nudge_injection_skipped", exc_info=True)  # justified: fail-open
-
-        return result_dict
 
     @server.tool()
     @log_tool_call
@@ -414,7 +192,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 if existing is not None:
                     existing.assertions = validated
                     backend.update(learning_id, assertions=[a.model_dump() for a in validated])
-            except Exception:
+            except Exception:  # justified: fail-open, assertion persistence must not block learn_update
                 logger.debug("assertion_update_failed", learning_id=learning_id, exc_info=True)
 
         result = adapter_update(
@@ -466,7 +244,7 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
     @server.tool()
     @log_tool_call
-    def trw_recall(  # noqa: C901 — recall orchestrates multiple retrieval strategies
+    def trw_recall(
         query: str,
         tags: list[str] | None = None,
         min_impact: float = 0.0,
@@ -494,216 +272,30 @@ def register_learning_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 When None (default), auto-enables for wildcard queries.
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
+
+        See Also: trw_learn, trw_knowledge_sync
         """
-        # Input validation (PRD-QUAL-042-FR06): impact bounds
-        min_impact = max(0.0, min(1.0, min_impact))
+        from trw_mcp.tools._recall_impl import execute_recall
 
-        config = get_config()
-        reader = FileStateReader()
-        trw_dir = resolve_trw_dir()
-        if max_results is None:
-            max_results = config.recall_max_results
-        is_wildcard = query.strip() in ("*", "")
-        query_tokens = [] if is_wildcard else query.lower().split()
-        use_compact = compact if compact is not None else is_wildcard
-
-        # Search entries via SQLite adapter (returns list of dicts directly)
-        matching_learnings = adapter_recall(
-            trw_dir,
+        # Resolve from this module's namespace so test patches work
+        return execute_recall(
             query=query,
+            trw_dir=resolve_trw_dir(),
+            config=get_config(),
             tags=tags,
             min_impact=min_impact,
             status=status,
-            max_results=0,
-            compact=False,  # get all, we rank locally
+            shard_id=shard_id,
+            max_results=max_results,
+            compact=compact,
+            topic=topic,
+            # Dependency injection: pass module-level refs for testability
+            _adapter_recall=adapter_recall,
+            _adapter_update_access=adapter_update_access,
+            _search_patterns=search_patterns,
+            _rank_by_utility=rank_by_utility,
+            _collect_context=collect_context,
         )
-
-        # Topic-scoped pre-filter (PRD-CORE-021-FR07)
-        topic_filter_ignored = False
-        if topic is not None:
-            clusters_path = trw_dir / config.knowledge_output_dir / "clusters.json"
-            try:
-                if clusters_path.exists():
-                    clusters_data = json.loads(clusters_path.read_text(encoding="utf-8"))
-                    if topic in clusters_data:
-                        allowed_ids = set(clusters_data[topic])
-                        matching_learnings = [e for e in matching_learnings if str(e.get("id", "")) in allowed_ids]
-                    else:
-                        topic_filter_ignored = True
-                else:
-                    topic_filter_ignored = True
-            except (json.JSONDecodeError, OSError):
-                topic_filter_ignored = True
-
-        # Update access tracking for recalled IDs
-        matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
-        adapter_update_access(trw_dir, matched_ids)
-
-        # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
-        try:
-            from trw_mcp.state.recall_tracking import record_recall as _record_recall
-
-            for lid in matched_ids:
-                _record_recall(lid, query)
-        except (ImportError, OSError, RuntimeError, ValueError, TypeError):
-            logger.debug("recall_tracking_failed", exc_info=True)
-
-        # Augment local results with remote shared learnings (PRD-CORE-033)
-        # Skip remote fetch for wildcard queries — they only need local learnings,
-        # and remote calls add latency + tokens that contribute to API rate limits.
-        # NOTE: broad except kept intentionally — remote fetch is external code
-        # that can raise arbitrary exceptions (network, auth, serialization).
-        if not is_wildcard:
-            try:
-                from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
-
-                remote = fetch_shared_learnings(query)
-                if remote:
-                    matching_learnings = list(matching_learnings) + [dict(r) for r in remote]
-            except Exception:
-                logger.debug("remote_recall_failed", exc_info=True)
-
-        # Search patterns and rank all results by utility
-        matching_patterns = search_patterns(
-            trw_dir / config.patterns_dir,
-            query_tokens,
-            reader,
-        )
-        ranked_learnings: list[dict[str, object]] = rank_by_utility(
-            matching_learnings,
-            query_tokens,
-            config.recall_utility_lambda,
-        )
-
-        # Capture pre-cap counts for the total_available response field
-        total_available = len(ranked_learnings) + len(matching_patterns)
-
-        # Apply result cap
-        if max_results > 0:
-            ranked_learnings = ranked_learnings[:max_results]
-
-        # --- Assertion verification (PRD-CORE-086 FR06) ---
-        # Only verify entries in the final result set (post max_results cap)
-        if not use_compact:
-            assertion_penalties: dict[str, float] = {}
-            project_root_path: Path | None = None
-            try:
-                from trw_mcp.state._paths import resolve_project_root
-
-                project_root_path = resolve_project_root()
-            except Exception:  # noqa: S110 — best-effort path resolution
-                pass
-
-            if project_root_path:
-                try:
-                    from trw_memory.lifecycle.verification import verify_assertions
-                    from trw_memory.models.memory import Assertion
-
-                    for learning in ranked_learnings:
-                        raw_assertions = learning.get("assertions")
-                        if not raw_assertions or not isinstance(raw_assertions, list):
-                            continue
-                        try:
-                            assertions_list = [
-                                Assertion.model_validate(a)
-                                for a in raw_assertions
-                                if isinstance(a, dict)
-                            ]
-                            results = verify_assertions(assertions_list, project_root_path)
-
-                            passing = sum(1 for r in results if r.passed is True)
-                            failing = sum(1 for r in results if r.passed is False)
-                            stale = sum(1 for r in results if r.passed is None)
-
-                            learning["assertion_status"] = {
-                                "passing": passing,
-                                "failing": failing,
-                                "stale": stale,
-                                "details": [r.model_dump() for r in results],
-                            }
-
-                            if failing > 0:
-                                entry_id = str(learning.get("id", ""))
-                                penalty = config.assertion_failure_penalty * (
-                                    failing / len(results)
-                                )
-                                assertion_penalties[entry_id] = penalty
-
-                        except Exception:
-                            logger.debug(
-                                "assertion_verification_error",
-                                entry_id=str(learning.get("id", "")),
-                            )
-
-                    # Re-rank with assertion penalties if any were computed
-                    if assertion_penalties:
-                        ranked_learnings = rank_by_utility(
-                            ranked_learnings,
-                            query_tokens,
-                            config.recall_utility_lambda,
-                            assertion_penalties=assertion_penalties,
-                        )
-                except (ImportError, OSError):
-                    logger.debug("assertion_verification_unavailable", exc_info=True)
-
-        # Strip to compact fields when requested
-        if use_compact:
-            allowed = config.recall_compact_fields
-            ranked_learnings = [{k: v for k, v in entry.items() if k in allowed} for entry in ranked_learnings]
-
-        # Skip context collection for compact wildcard queries (saves I/O)
-        context_data: RecallContextDict = {}
-        if not (is_wildcard and use_compact):
-            context_data = cast("RecallContextDict", collect_context(trw_dir, config.context_dir, reader))
-
-        _top_impact = float(str(ranked_learnings[0].get("impact", 0.0))) if ranked_learnings else 0.0
-        logger.info(
-            "recall_ok",
-            query=query[:50],
-            result_count=len(ranked_learnings),
-            top_impact=_top_impact,
-        )
-        logger.debug(
-            "recall_detail",
-            query=query[:80],
-            min_impact=min_impact,
-            tags=tags,
-        )
-        logger.info(
-            "trw_recall_searched",
-            query=query,
-            learnings_found=len(ranked_learnings),
-            patterns_found=len(matching_patterns),
-            compact=use_compact,
-        )
-
-        recall_result: RecallResultDict = {
-            "query": query,
-            "learnings": ranked_learnings,
-            "patterns": matching_patterns,
-            "context": context_data,
-            "total_matches": len(ranked_learnings) + len(matching_patterns),
-            "total_available": total_available,
-            "compact": use_compact,
-            "max_results": max_results,
-            "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
-        }
-
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        # Skip nudge for compact wildcard queries — saves tokens in reflect/audit workflows
-        if not (is_wildcard and use_compact):
-            try:
-                from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-                from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-                ctx = NudgeContext(tool_name=ToolName.RECALL)
-                append_ceremony_nudge(
-                    cast("dict[str, object]", recall_result), trw_dir, available_learnings=total_available, context=ctx
-                )
-            except Exception:  # justified: fail-open, nudge injection must not block recall
-                logger.debug("recall_nudge_injection_skipped", exc_info=True)  # justified: fail-open
-
-        return recall_result
 
     @server.tool()
     @log_tool_call

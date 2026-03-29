@@ -11,7 +11,11 @@ from trw_mcp.models.config._client_profile import (
     ScoringDimensionWeights,
     WriteTargets,
 )
-from trw_mcp.models.config._loader import _reset_config, get_config
+from trw_mcp.models.config._loader import (
+    _reset_config,
+    get_config,
+    reload_config,
+)
 from trw_mcp.models.config._main import TRWConfig
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.models.config._sub_models import (
@@ -44,5 +48,6 @@ __all__ = [
     "WriteTargets",
     "_reset_config",
     "get_config",
+    "reload_config",
     "resolve_client_profile",
 ]

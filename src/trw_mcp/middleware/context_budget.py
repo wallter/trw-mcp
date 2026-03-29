@@ -93,8 +93,7 @@ class ContextBudgetMiddleware(Middleware):
 
         try:
             return self._apply_masking(result, session_id, tool_name, turn)
-        except Exception:
-            # Fail open: return original result on any error
+        except Exception:  # justified: fail-open, observation masking must never block tool results
             logger.debug("context_budget_masking_failed", op="observation_masking", tool=tool_name, turn=turn, exc_info=True)
             return result
 
@@ -114,7 +113,8 @@ class ContextBudgetMiddleware(Middleware):
                 return result
             compact_after = config.compact_after_turns
             minimal_after = config.minimal_after_turns
-        except Exception:
+        except Exception:  # justified: fail-open, config load failure uses safe defaults rather than blocking
+            logger.debug("context_budget_config_load_failed", exc_info=True)
             compact_after = 10
             minimal_after = 30
 

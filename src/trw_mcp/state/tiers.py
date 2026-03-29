@@ -164,7 +164,7 @@ class TierManager:
             data = self._reader.read_yaml(target)
             data["last_accessed_at"] = datetime.now(tz=timezone.utc).date().isoformat()
             self._writer.write_yaml(target, data)
-        except Exception:
+        except Exception:  # justified: fail-open, hot-tier flush is best-effort and must not block access tracking
             logger.warning(
                 "hot_tier_flush_failed",
                 entry_id=entry_id,
@@ -424,7 +424,7 @@ class TierManager:
         for yaml_file in cold_base.rglob("*.yaml"):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:
+            except Exception:  # justified: scan-resilience, one corrupt YAML must not abort cold-tier lookup
                 logger.warning("cold_tier_file_unreadable", path=str(yaml_file), exc_info=True)
                 continue
             if str(data.get("id", "")) != entry_id:
@@ -471,7 +471,7 @@ class TierManager:
         for yaml_file in sorted(cold_base.rglob("*.yaml")):
             try:
                 data = self._reader.read_yaml(yaml_file)
-            except Exception:
+            except Exception:  # justified: scan-resilience, one corrupt YAML must not abort cold-tier search
                 logger.warning("cold_tier_file_unreadable", path=str(yaml_file), exc_info=True)
                 continue
 
@@ -536,7 +536,7 @@ class TierManager:
 
         try:
             active_entries = list_active_learnings(trw_dir)
-        except Exception:
+        except Exception:  # justified: boundary, listing active entries may fail on corrupt backend state
             logger.warning("assign_impact_tiers_list_failed", exc_info=True)
             return distribution
 
@@ -560,7 +560,7 @@ class TierManager:
                 file_data["impact_tier"] = tier
                 self._writer.write_yaml(yaml_path, file_data)
                 cast("dict[str, int]", distribution)[tier] += 1
-            except Exception:
+            except Exception:  # justified: scan-resilience, one failed tier write must not abort the full assignment sweep
                 logger.warning(
                     "assign_impact_tiers_write_failed",
                     entry_id=entry_id,

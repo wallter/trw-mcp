@@ -9,7 +9,6 @@ re-exported here for backward-compatible test imports.
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -59,6 +58,12 @@ from trw_mcp.tools._prd_template_helpers import (
     _apply_prefill as _apply_prefill,
 )
 from trw_mcp.tools._prd_template_helpers import (
+    _CACHED_TEMPLATE_BODY as _CACHED_TEMPLATE_BODY,
+)
+from trw_mcp.tools._prd_template_helpers import (
+    _CACHED_TEMPLATE_VERSION as _CACHED_TEMPLATE_VERSION,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _extract_prefill as _extract_prefill,
 )
 from trw_mcp.tools._prd_template_helpers import (
@@ -74,6 +79,9 @@ from trw_mcp.tools._prd_template_helpers import (
     _render_prd as _render_prd,
 )
 from trw_mcp.tools._prd_template_helpers import (
+    reset_template_cache as reset_template_cache,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _strip_deprecated_fields as _strip_deprecated_fields,
 )
 from trw_mcp.tools._prd_template_helpers import (
@@ -82,67 +90,6 @@ from trw_mcp.tools._prd_template_helpers import (
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
-
-# Names proxied to _prd_template_helpers for setattr (test cache resets).
-_HELPERS_CACHE_NAMES = frozenset({
-    "_CACHED_TEMPLATE_BODY",
-    "_CACHED_TEMPLATE_VERSION",
-})
-
-_this_module = sys.modules[__name__]
-
-
-class _ModuleProxy:
-    """Module wrapper that proxies cache variable reads/writes to the helpers module.
-
-    Tests do ``monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)`` to
-    reset the template cache between tests.  Because the cache variables live in
-    ``_prd_template_helpers``, a plain ``setattr`` on *this* module would create a
-    shadow attribute instead of actually resetting the real cache.
-
-    This proxy intercepts both ``__getattr__`` and ``__setattr__`` for the two
-    cache variable names and redirects them to ``_prd_template_helpers``.
-    """
-
-    def __init__(self, mod: object) -> None:
-        object.__setattr__(self, "_mod", mod)
-
-    def __getattr__(self, name: str) -> object:
-        mod = object.__getattribute__(self, "_mod")
-        try:
-            return getattr(mod, name)
-        except AttributeError:
-            pass
-        # Proxy reads of cache variables to helpers module
-        if name in _HELPERS_CACHE_NAMES:
-            return getattr(_helpers, name)
-        # FIX-044 backward compat shim
-        from trw_mcp.state._helpers import _compat_getattr
-
-        return _compat_getattr(name)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        if name in _HELPERS_CACHE_NAMES:
-            setattr(_helpers, name, value)
-            return
-        mod = object.__getattribute__(self, "_mod")
-        setattr(mod, name, value)
-
-    def __delattr__(self, name: str) -> None:
-        if name in _HELPERS_CACHE_NAMES:
-            # Restore to None rather than deleting (cache variables always exist)
-            setattr(_helpers, name, None)
-            return
-        mod = object.__getattribute__(self, "_mod")
-        try:
-            delattr(mod, name)
-        except AttributeError:
-            pass  # unittest.mock.patch cleanup -- attribute was never set locally
-
-    def __dir__(self) -> list[str]:
-        mod = object.__getattribute__(self, "_mod")
-        return dir(mod)
-
 
 # Priority -> base confidence score mapping
 _PRIORITY_CONFIDENCE: dict[str, float] = {
@@ -183,6 +130,8 @@ def register_requirements_tools(server: FastMCP) -> None:
             title: PRD title. Auto-generated from input if not provided.
             sequence: Sequence number for PRD ID. Auto-increments from existing PRDs when default (1).
             risk_level: Optional risk level (critical, high, medium, low). Scales validation strictness.
+
+        See Also: trw_prd_validate
         """
         config = get_config()
         writer = FileStateWriter()
@@ -468,11 +417,6 @@ def _auto_sync_index() -> bool:
 
         logger.debug("auto_index_sync_complete")
         return True
-    except Exception as exc:
-        logger.warning("auto_index_sync_failed", error=str(exc))
+    except Exception as exc:  # justified: fail-open, index sync is best-effort and must not block PRD tools
+        logger.warning("auto_index_sync_failed", error=str(exc), exc_info=True)
         return False
-
-
-# Install module proxy so setattr on this module propagates cache resets
-# to _prd_template_helpers (required for test fixture compatibility).
-sys.modules[__name__] = _ModuleProxy(sys.modules[__name__])  # type: ignore[assignment]
