@@ -42,18 +42,20 @@ criteria and ensure code quality through high coverage.
 4. **Per task**:
    a. Read the implementation code and PRD requirements
    b. Write tests organized by category (happy path, edge cases, error handling)
-   c. Use the test framework's parametrize/data-driven test features for data-driven tests
-   d. Run tests to verify they pass using the project's test framework (e.g., `.venv/bin/python -m pytest tests/ -v`)
-   e. Check coverage using the project's coverage tool (e.g., `.venv/bin/python -m pytest tests/ --cov=trw_mcp --cov-report=term-missing`)
+   c. Use pytest parametrize for data-driven tests
+   d. Run tests to verify they pass: .venv/bin/python -m pytest tests/ -v
+   e. Check coverage: .venv/bin/python -m pytest tests/ --cov=trw_mcp --cov-report=term-missing
    f. **FR-by-FR Test Coverage Audit** — before writing the artifact:
       1. List EVERY FR from the PRD(s) you're testing
       2. For each FR, verify you have at least one positive test and one negative/edge test
       3. If any FR is missing test coverage, write the missing tests NOW
       4. Common gaps: integration wiring tests (FR calls the right function), config field tests, graceful degradation tests
+      5. **Ownership conditional coverage**: If code has conditional cleanup based on resource ownership (close, dispose, disconnect), write tests for BOTH branches — the owned path (verifies cleanup runs) AND the non-owned path (verifies it's skipped). Cleanup tests that only test the no-op path are a known gap.
+      6. **Parameter vs configuration tests**: If a function accepts a parameter that mirrors a configured/instance value (e.g., `namespace`), test: (a) omitting the argument uses the configured value, (b) providing an explicit value overrides it, (c) the sentinel default correctly falls through to the configured value
    g. **5-Step Verification Ritual** (per FR, FRESH evidence required):
       1. **IDENTIFY**: What test verifies this FR? (e.g., `test_fr01_happy`)
-      2. **RUN**: Execute the test NOW using the project's test framework (e.g., `pytest tests/test_foo.py::test_fr01_happy -v`) — fresh, not from memory
-      3. **READ**: Read the FULL test output (not just PASSED/FAILED)
+      2. **RUN**: Execute `pytest tests/test_foo.py::test_fr01_happy -v` NOW (fresh, not from memory)
+      3. **READ**: Read the FULL pytest output (not just PASSED/FAILED)
       4. **VERIFY**: Does the test actually assert the FR requirement? (not just that the function runs)
       5. **RECORD**: Write evidence with timestamp into the completion artifact
    h. **Write completion artifact** to `scratch/tm-{your-name}/completions/{task-id}.yaml`. Every FR MUST have test coverage with timestamped evidence:
@@ -72,7 +74,7 @@ criteria and ensure code quality through high coverage.
           test_names: [test_fr02_basic, test_fr02_negative]
           evidence: "verified 2026-02-26T21:01:00Z — pytest: 2/2 PASSED, negative test confirms error handling"
       files_changed: [tests/test_foo.py, tests/test_bar.py]
-      tests_run: "<test framework command> tests/ -v — 48 passed, 0 failed"
+      tests_run: "pytest tests/ -v — 48 passed, 0 failed"
       coverage_pct: 91
       self_review:
         - "All FRs have test coverage verified against PRD text"
@@ -87,8 +89,8 @@ criteria and ensure code quality through high coverage.
 <constraints>
 - Coverage target: >=90% for new/changed code, >=80% global
 - All tests MUST be deterministic — no flaky tests
-- Use fixtures from test fixtures/configuration (e.g., conftest.py for pytest projects): tmp_project, config, sample_run_dir, reader, writer
-- For async test frameworks: verify async tests run automatically (e.g., asyncio_mode = "auto" in pytest)
+- Use fixtures from conftest.py: tmp_project, config, sample_run_dir, reader, writer
+- asyncio_mode = "auto" — async tests run automatically
 - structlog: event is a reserved keyword — use alternative kwarg names
 - NEVER skip or xfail tests without documented reason
 - Shard by category: happy path, edge cases, error handling, concurrency

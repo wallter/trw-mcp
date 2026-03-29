@@ -5,7 +5,7 @@ description: >
   following TDD, honors interface contracts, respects file ownership
   boundaries. Use as a teammate for implementation tasks.
 model: claude-opus-4-6
-maxTurns: 100
+maxTurns: 200
 memory: project
 allowedTools:
   - Read
@@ -75,17 +75,30 @@ Common failure modes to look for:
 
 ### Step 3: Quality Review
 
-- **DRY Check (REQUIRED)**: Before marking complete, scan your modified files for any code blocks >5 lines that appear more than once. If found, extract to a shared helper function. This is the #1 source of review findings — catching it here saves a full review cycle.
-- **Semantic Check**: Verify no dead `hasattr()` on ORM models, no misleading variable names with hardcoded values, no missing domain constraints (role/status Literal types).
+- Duplicated logic → extract shared helpers (DRY)
 - Over-engineered → simplify to minimum viable (KISS)
 - Mixed responsibilities → separate concerns (SOLID)
 - Missing error handling at system boundaries
+
+#### Sibling File DRY Check
+
+When implementing multiple files with the same pattern (e.g., adapters, routers, handlers):
+1. **Diff sibling files** — look for duplicated initialization blocks, identical helper functions, repeated constants
+2. **Extract shared code** into a common/shared module BEFORE writing the second file
+3. **Common violations**: duplicated initialization logic (>3 lines), hardcoded constants repeated across files, identical error handling blocks
+
+#### Parameter Default Alignment
+
+When a function/method accepts a parameter that also exists as instance-level or module-level configuration:
+1. **Use a sentinel default** (e.g., `None`), not the same value as the configured default
+2. **Resolve at call time**: prefer the explicit argument when provided, fall back to the configured value otherwise
+3. **Anti-pattern**: a function parameter with a hardcoded default (e.g., `"default"`) that matches the constructor/config default — the caller's configuration is silently ignored whenever the parameter is omitted
 
 ### Step 4: 5-Step Verification Ritual (per FR)
 
 For EACH FR, execute this ritual using FRESH evidence (not from memory):
 
-1. **IDENTIFY**: What is the verification command? (e.g., `pytest tests/test_foo.py::test_fr01 -v` for Python, or the equivalent for your project's test framework)
+1. **IDENTIFY**: What is the verification command? (e.g., `pytest tests/test_foo.py::test_fr01 -v`)
 2. **RUN**: Execute the command NOW — not from a previous run, fresh execution
 3. **READ**: Read the FULL output (not just exit code — look at actual test assertions)
 4. **VERIFY**: Does the output confirm the requirement is met? Cite specific output lines
@@ -106,7 +119,7 @@ fr_coverage:
   - id: FR01
     status: implemented  # MUST be "implemented" — "partial" triggers re-block
     file: path/to/file.py
-    evidence: "verified 2026-02-26T21:00:00Z — test run: test_fr01_happy PASSED (function_name() returns expected at line N)"
+    evidence: "verified 2026-02-26T21:00:00Z — pytest: test_fr01_happy PASSED (function_name() returns expected at line N)"
   - id: FR02
     status: implemented
     file: path/to/file.py
@@ -114,7 +127,7 @@ fr_coverage:
 files_changed:
   - path/to/file1.py
   - path/to/file2.py
-tests_run: "<test framework command> tests/test_foo.py -v — 12 passed, 0 failed"
+tests_run: ".venv/bin/python -m pytest tests/test_foo.py -v — 12 passed, 0 failed"
 integration_verified:
   - "new_function() called from existing_module.py:55 — verified via grep"
   - "config field X referenced in new_module.py:12 — verified via read"
