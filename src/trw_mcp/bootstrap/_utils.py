@@ -1,31 +1,39 @@
-"""Shared bootstrap utilities — file operations, config generators, MCP config.
+"""Shared bootstrap utilities — config generators, IDE detection, verification.
 
-These helpers have NO bootstrap-specific workflow logic; they are pure
-utility functions used by both ``_init_project`` and ``_update_project``.
+File operations live in ``_file_ops.py``; MCP JSON helpers live in
+``_mcp_json.py``.  All public names are re-exported here so existing
+import paths (``from trw_mcp.bootstrap._utils import X``) are preserved.
 """
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
 import json
 import os
 import shutil
-import stat
-import subprocess
 import sys
-from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
 
-logger = structlog.get_logger(__name__)
+# ---------------------------------------------------------------------------
+# Re-exports from extracted sub-modules — REQUIRED for backward compatibility.
+#
+# Tests and external consumers import ``from trw_mcp.bootstrap._utils import X``
+# directly.  These re-exports ensure those import paths still resolve.
+# ---------------------------------------------------------------------------
+from ._file_ops import ProgressCallback as ProgressCallback
+from ._file_ops import _copy_file as _copy_file
+from ._file_ops import _ensure_dir as _ensure_dir
+from ._file_ops import _files_identical as _files_identical
+from ._file_ops import _result_action_key as _result_action_key
+from ._file_ops import _write_if_missing as _write_if_missing
+from ._mcp_json import _generate_mcp_json as _generate_mcp_json
+from ._mcp_json import _merge_mcp_json as _merge_mcp_json
+from ._mcp_json import _pip_install_package as _pip_install_package
 
-# Type for streaming progress callback.
-# Called as: callback(action, path) where action is one of:
-# "Created", "Updated", "Skipped", "Preserved", "Error"
-ProgressCallback = Callable[[str, str], None] | None
+logger = structlog.get_logger(__name__)
 
 # Resolve to ``src/trw_mcp/data/``.
 # When this file lived at ``src/trw_mcp/bootstrap.py``, the path was
@@ -35,89 +43,22 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 
 
 # ---------------------------------------------------------------------------
-# File-level helpers
+# MCP server entry (kept here because tests patch trw_mcp.bootstrap._utils.shutil)
 # ---------------------------------------------------------------------------
 
 
-def _ensure_dir(
-    path: Path,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Create directory if it doesn't exist."""
-    if not path.exists():
-        path.mkdir(parents=True, exist_ok=True)
-        result["created"].append(str(path) + "/")
-        if on_progress:
-            on_progress("Created", str(path) + "/")
-    # Already existing dirs are silently fine -- not worth reporting as "skipped".
+def _trw_mcp_server_entry() -> dict[str, object]:
+    """Build the ``trw`` MCP server entry for .mcp.json.
 
-
-def _result_action_key(result: dict[str, list[str]]) -> str:
-    """Return the appropriate result key: ``'updated'`` for update flows, ``'created'`` for init."""
-    return "updated" if "updated" in result else "created"
-
-
-def _copy_file(
-    src: Path,
-    dest: Path,
-    force: bool,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Copy *src* to *dest* with idempotency."""
-    if dest.exists() and not force:
-        result["skipped"].append(str(dest))
-        if on_progress:
-            on_progress("Skipped", str(dest))
-        return
-    try:
-        shutil.copy2(src, dest)
-        # Ensure shell scripts are executable (pip install may strip permissions)
-        if dest.suffix == ".sh":
-            executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-            os.chmod(dest, os.stat(dest).st_mode | executable)
-        result["created"].append(str(dest))
-        if on_progress:
-            on_progress("Created", str(dest))
-    except OSError as exc:
-        result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
-        if on_progress:
-            on_progress("Error", str(dest))
-
-
-def _write_if_missing(
-    dest: Path,
-    content: str,
-    force: bool,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Write *content* to *dest* if it doesn't exist (or *force* is True)."""
-    if dest.exists() and not force:
-        result["skipped"].append(str(dest))
-        if on_progress:
-            on_progress("Skipped", str(dest))
-        return
-    try:
-        dest.write_text(content, encoding="utf-8")
-        result["created"].append(str(dest))
-        if on_progress:
-            on_progress("Created", str(dest))
-    except OSError as exc:
-        result["errors"].append(f"Failed to write {dest}: {exc}")
-        if on_progress:
-            on_progress("Error", str(dest))
-
-
-def _files_identical(a: Path, b: Path) -> bool:
-    """Compare two files by SHA-256 hash for dry-run diffing."""
-    try:
-        ha = hashlib.sha256(a.read_bytes()).hexdigest()
-        hb = hashlib.sha256(b.read_bytes()).hexdigest()
-        return ha == hb
-    except OSError:
-        return False
+    Uses the absolute path to the Python interpreter that installed
+    trw-mcp so the correct venv is always used (PRD-FIX-037).
+    Falls back to ``python3`` if ``trw-mcp`` console script isn't on PATH.
+    """
+    if shutil.which("trw-mcp"):
+        return {"command": "trw-mcp", "args": ["--debug"]}
+    # Use the absolute path to the current interpreter -- ensures
+    # the correct venv is used even when PATH varies.
+    return {"command": sys.executable, "args": ["-m", "trw_mcp.server", "--debug"]}
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +104,7 @@ def _default_config(
     if test_path:
         lines.append(f"tests_relative_path: {test_path}")
 
-    # Target platforms — controls which instruction files are written
+    # Target platforms -- controls which instruction files are written
     # (CLAUDE.md, AGENTS.md, .cursorrules, etc.) during deliver/sync.
     # Supported: claude-code, opencode, cursor, codex, aider
     lines.append("")
@@ -182,114 +123,6 @@ def _default_config(
         ]
     )
     return "\n".join(lines) + "\n"
-
-
-# ---------------------------------------------------------------------------
-# MCP server config helpers
-# ---------------------------------------------------------------------------
-
-
-def _trw_mcp_server_entry() -> dict[str, object]:
-    """Build the ``trw`` MCP server entry for .mcp.json.
-
-    Uses the absolute path to the Python interpreter that installed
-    trw-mcp so the correct venv is always used (PRD-FIX-037).
-    Falls back to ``python3`` if ``trw-mcp`` console script isn't on PATH.
-    """
-    if shutil.which("trw-mcp"):
-        return {"command": "trw-mcp", "args": ["--debug"]}
-    # Use the absolute path to the current interpreter — ensures
-    # the correct venv is used even when PATH varies.
-    return {"command": sys.executable, "args": ["-m", "trw_mcp.server", "--debug"]}
-
-
-def _merge_mcp_json(
-    target_dir: Path,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Ensure ``.mcp.json`` has the ``trw`` server entry.
-
-    Reads existing .mcp.json, merges the ``trw`` key into ``mcpServers``
-    while preserving all other user-configured servers, and writes back.
-    Creates the file from scratch if it doesn't exist.
-
-    Always generates stdio format entries (PRD-CORE-070-FR04). HTTP
-    transport is handled internally by the server's auto-start + proxy.
-    """
-    mcp_path = target_dir / ".mcp.json"
-    trw_entry = _trw_mcp_server_entry()
-
-    if mcp_path.exists():
-        try:
-            data = json.loads(mcp_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
-        servers = data.get("mcpServers", {})
-        if not isinstance(servers, dict):
-            servers = {}
-        existed = "trw" in servers
-        servers["trw"] = trw_entry
-        data["mcpServers"] = servers
-        try:
-            mcp_path.write_text(
-                json.dumps(data, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            key = _result_action_key(result)
-            if existed:
-                result[key].append(str(mcp_path))
-                if on_progress:
-                    on_progress("Updated", str(mcp_path))
-                logger.info(
-                    "mcp_config_skipped",
-                    reason="already_configured",
-                    tool="trw",
-                    config_path=str(mcp_path),
-                )
-            else:
-                result[key].append(f"{mcp_path} (added trw entry)")
-                if on_progress:
-                    on_progress("Created", str(mcp_path))
-                logger.info(
-                    "mcp_config_updated",
-                    tool="trw",
-                    config_path=str(mcp_path),
-                )
-        except OSError as exc:
-            logger.warning("mcp_config_merge_failed", error=str(exc), path=str(mcp_path))
-            result["errors"].append(f"Failed to write {mcp_path}: {exc}")
-            if on_progress:
-                on_progress("Error", str(mcp_path))
-    else:
-        content = (
-            json.dumps(
-                {"mcpServers": {"trw": trw_entry}},
-                indent=2,
-            )
-            + "\n"
-        )
-        try:
-            mcp_path.write_text(content, encoding="utf-8")
-            result["created"].append(str(mcp_path))
-            if on_progress:
-                on_progress("Created", str(mcp_path))
-            logger.info("mcp_config_updated", tool="trw", config_path=str(mcp_path))
-        except OSError as exc:
-            logger.warning("mcp_config_merge_failed", error=str(exc), path=str(mcp_path))
-            result["errors"].append(f"Failed to write {mcp_path}: {exc}")
-            if on_progress:
-                on_progress("Error", str(mcp_path))
-
-
-def _generate_mcp_json() -> str:
-    """Generate ``.mcp.json`` pointing to installed trw-mcp.
-
-    Legacy helper kept for backward compatibility. New code uses
-    ``_merge_mcp_json()`` which does smart merging.
-    """
-    entry = _trw_mcp_server_entry()
-    return json.dumps({"mcpServers": {"trw": entry}}, indent=2) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -462,46 +295,10 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
         result["preserved"].append(f"trw-mcp package v{installed_version} (up to date)")
 
 
-def _pip_install_package(
-    target_dir: Path,
-    result: dict[str, list[str]],
-) -> None:
-    """Reinstall trw-mcp package from the source tree.
-
-    Uses the trw-mcp directory that contains the bundled data, ensuring
-    the installed package matches the source version.
-    """
-    # Look up _DATA_DIR through the package module so that
-    # patch("trw_mcp.bootstrap._DATA_DIR", ...) in tests works.
-    _data_dir = sys.modules["trw_mcp.bootstrap"]._DATA_DIR
-
-    # The package source is the parent of the data directory
-    # _data_dir = .../trw-mcp/src/trw_mcp/data -> .parent x3 = trw-mcp/
-    package_dir = _data_dir.parent.parent.parent
-    if not (package_dir / "pyproject.toml").exists():
-        result["errors"].append(
-            "Cannot find trw-mcp pyproject.toml for pip install. Manually run: pip install -e /path/to/trw-mcp[dev]"
-        )
-        return
-
-    try:
-        proc = subprocess.run(  # noqa: S603 — shell=False (default); cmd uses sys.executable (fully-qualified) and a static package_dir path
-            [sys.executable, "-m", "pip", "install", "-e", f"{package_dir}[dev]"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        if proc.returncode == 0:
-            result["updated"].append("pip install trw-mcp (reinstalled)")
-        else:
-            result["errors"].append(f"pip install failed (exit {proc.returncode}): {proc.stderr[:200]}")
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        result["errors"].append(f"pip install failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
-# IDE Detection and Adaptive Bootstrap (FR08 — PRD-CORE-074)
+# IDE Detection and Adaptive Bootstrap (FR08 -- PRD-CORE-074)
 # ---------------------------------------------------------------------------
 
 

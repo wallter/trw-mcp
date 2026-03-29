@@ -193,7 +193,7 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
         {applied: bool, version: str, details: str}
     Fail-open: returns applied=False on any error.
     """
-    from trw_mcp.state.persistence import _lock_ex_nb, _lock_un
+    from trw_mcp._locking import _lock_ex_nb, _lock_un
 
     cfg = get_config()
     target_dir = Path.cwd()

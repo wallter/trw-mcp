@@ -162,9 +162,9 @@ from trw_mcp.state.analytics.entries import (
 )
 
 # ---------------------------------------------------------------------------
-# Module B — entries (persistence, index, status, extraction)
+# Module A — core: noise detection (PRD-FIX-061-FR01)
 # ---------------------------------------------------------------------------
-from trw_mcp.tools._learning_helpers import is_noise_summary as is_noise_summary
+from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
 
 # ---------------------------------------------------------------------------
 # __all__ — public API (FR04: private names removed from __all__)
@@ -187,6 +187,7 @@ __all__ = [
     "has_existing_success_learning",
     "infer_topic_tags",
     "is_error_event",
+    "is_noise_summary",
     "is_success_event",
     "mark_promoted",
     "resync_learning_index",

@@ -27,6 +27,7 @@ _safe_int = safe_int
 
 __all__ = [
     "_ERROR_KEYWORDS",
+    "_NOISE_PREFIXES",
     "_SLUG_MAX_LEN",
     "_SUCCESS_KEYWORDS",
     "_TOPIC_KEYWORD_MAP",
@@ -40,6 +41,7 @@ __all__ = [
     "generate_learning_id",
     "infer_topic_tags",
     "is_error_event",
+    "is_noise_summary",
     "is_success_event",
 ]
 
@@ -137,6 +139,30 @@ _TOPIC_KEYWORD_MAP: dict[str, str] = {
 }
 
 _TOPIC_TAG_MAX = 3
+
+# Auto-generated noise prefixes that should never be persisted as learnings.
+# These are produced by ceremony/telemetry tools and add no institutional value.
+# Canonical location — tools/_learning_helpers.py re-exports for backward compat.
+_NOISE_PREFIXES = ("Repeated operation:", "Success:")
+
+
+def is_noise_summary(summary: str) -> bool:
+    """Return True if summary matches a known auto-generated noise pattern.
+
+    PRD-QUAL-032-FR09: Reject entries whose summary starts with known
+    noise prefixes before they are persisted.
+
+    PRD-FIX-061-FR01: Canonical location moved from tools/_learning_helpers.py
+    to state/analytics/core.py to resolve tools/ -> state/ layer violation.
+
+    Args:
+        summary: The learning entry summary text to check.
+
+    Returns:
+        True if the summary starts with a known noise prefix.
+    """
+    lower = summary.lower()
+    return any(lower.startswith(prefix.lower()) for prefix in _NOISE_PREFIXES)
 
 
 # ---------------------------------------------------------------------------

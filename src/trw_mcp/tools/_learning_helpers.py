@@ -48,19 +48,10 @@ class LearningParams:
     assertions: list[dict[str, str]] | None = None
 
 
-# Auto-generated noise prefixes that should never be persisted as learnings.
-# These are produced by ceremony/telemetry tools and add no institutional value.
-_NOISE_PREFIXES = ("Repeated operation:", "Success:")
-
-
-def is_noise_summary(summary: str) -> bool:
-    """Return True if summary matches a known auto-generated noise pattern.
-
-    PRD-QUAL-032-FR09: Reject entries whose summary starts with known
-    noise prefixes before they are persisted.
-    """
-    lower = summary.lower()
-    return any(lower.startswith(prefix.lower()) for prefix in _NOISE_PREFIXES)
+# PRD-FIX-061-FR01: Canonical definition moved to state/analytics/core.py.
+# Re-exported here for backward compatibility with existing consumers.
+from trw_mcp.state.analytics.core import _NOISE_PREFIXES as _NOISE_PREFIXES
+from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
 
 
 def calibrate_impact(impact: float, config: TRWConfig) -> float:

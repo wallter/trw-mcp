@@ -8,6 +8,7 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Iterator
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -18,7 +19,6 @@ from trw_mcp.scoring._utils import (
     _LN2,
     _TIER_HIGH_CEILING,
     _TIER_MEDIUM_CEILING,
-    FileStateReader,
     TRWConfig,
     _ensure_utc,
     apply_time_decay,
@@ -27,6 +27,7 @@ from trw_mcp.scoring._utils import (
     safe_float,
     safe_int,
 )
+from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state._helpers import iter_yaml_entry_files
 
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
@@ -102,40 +103,26 @@ def _entry_utility(
 # --- Impact distribution analysis (PRD-CORE-034) ---
 
 
-def compute_impact_distribution(
-    entries_dir: Path,
+def _compute_distribution_from_entries(
+    entries: Iterable[dict[str, object]],
 ) -> ImpactDistributionResult:
-    """Compute the current impact score distribution across active learnings.
+    """Compute impact distribution from pre-loaded entry dicts.
+
+    PRD-FIX-061-FR04: Pure scoring function that operates on an iterable
+    of entry dicts instead of performing file I/O.  Only active entries
+    (status == "active" or missing) are counted.
+
+    Args:
+        entries: Iterable of learning entry dicts with at least
+            ``status`` and ``impact`` keys.
 
     Returns:
-        Dict with tier counts and percentages:
-        {
-            "total_active": int,
-            "critical": {"count": int, "pct": float},  # 0.9-1.0
-            "high": {"count": int, "pct": float},       # 0.7-0.89
-            "medium": {"count": int, "pct": float},     # 0.4-0.69
-            "low": {"count": int, "pct": float},        # 0.0-0.39
-        }
+        Typed dict with tier counts and percentages.
     """
-    _zero: ImpactTierInfo = {"count": 0, "pct": 0.0}
-    if not entries_dir.exists():
-        return ImpactDistributionResult(
-            total_active=0,
-            critical=_zero,
-            high=_zero,
-            medium=_zero,
-            low=_zero,
-        )
-
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     total = 0
 
-    reader = FileStateReader()
-    for yaml_file in iter_yaml_entry_files(entries_dir):
-        try:
-            data = reader.read_yaml(yaml_file)
-        except Exception:  # justified: fail-open, skip unreadable YAML entries  # noqa: S112
-            continue
+    for data in entries:
         if str(data.get("status", "active")) != "active":
             continue
         score = safe_float(data, "impact", 0.5)
@@ -159,6 +146,61 @@ def compute_impact_distribution(
         medium=ImpactTierInfo(count=counts["medium"], pct=_pct(counts["medium"])),
         low=ImpactTierInfo(count=counts["low"], pct=_pct(counts["low"])),
     )
+
+
+def _load_entries_from_dir(entries_dir: Path) -> Iterator[dict[str, object]]:
+    """Load entry dicts from a YAML entries directory.
+
+    Yields parsed dicts for each readable YAML entry file.
+    Silently skips files that fail to parse.
+
+    Args:
+        entries_dir: Directory containing YAML entry files.
+
+    Yields:
+        Parsed entry dicts.
+    """
+    reader = FileStateReader()
+    for yaml_file in iter_yaml_entry_files(entries_dir):
+        try:
+            yield reader.read_yaml(yaml_file)
+        except Exception:  # justified: fail-open, skip unreadable YAML entries  # noqa: S112
+            continue
+
+
+def compute_impact_distribution(
+    entries_dir: Path,
+) -> ImpactDistributionResult:
+    """Compute the current impact score distribution across active learnings.
+
+    PRD-FIX-061-FR04: File I/O is now at the boundary — the actual scoring
+    logic is in ``_compute_distribution_from_entries()``.  This function
+    provides backward-compatible Path-based entry point.
+
+    Args:
+        entries_dir: Path to the entries directory containing YAML files.
+
+    Returns:
+        Dict with tier counts and percentages:
+        {
+            "total_active": int,
+            "critical": {"count": int, "pct": float},  # 0.9-1.0
+            "high": {"count": int, "pct": float},       # 0.7-0.89
+            "medium": {"count": int, "pct": float},     # 0.4-0.69
+            "low": {"count": int, "pct": float},        # 0.0-0.39
+        }
+    """
+    _zero: ImpactTierInfo = {"count": 0, "pct": 0.0}
+    if not entries_dir.exists():
+        return ImpactDistributionResult(
+            total_active=0,
+            critical=_zero,
+            high=_zero,
+            medium=_zero,
+            low=_zero,
+        )
+
+    return _compute_distribution_from_entries(_load_entries_from_dir(entries_dir))
 
 
 # --- Forced distribution enforcement (PRD-CORE-034) ---
@@ -345,8 +387,10 @@ def apply_impact_decay(
 
 
 __all__ = [
+    "_compute_distribution_from_entries",
     "_days_since_access",
     "_entry_utility",
+    "_load_entries_from_dir",
     "apply_impact_decay",
     "compute_impact_distribution",
     "enforce_tier_distribution",

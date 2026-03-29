@@ -16,10 +16,9 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
 
     # Reset template cache so each test starts fresh
-    import trw_mcp.tools.requirements as req_mod
+    from trw_mcp.tools._prd_template_helpers import reset_template_cache
 
-    monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
-    monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
+    reset_template_cache()
 
     # Create .trw/ so prd_create knows it's a TRW project
     (tmp_path / ".trw").mkdir()
@@ -283,12 +282,12 @@ class TestTemplateLoading:
         assert "id: PRD-{CATEGORY}-{SEQUENCE}" not in body
 
     def test_caching_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import trw_mcp.tools.requirements as req_mod
+        import trw_mcp.tools._prd_template_helpers as helpers
         from trw_mcp.tools.requirements import _load_template_body
 
         # First call populates cache
         body1 = _load_template_body()
-        assert req_mod._CACHED_TEMPLATE_BODY is not None
+        assert helpers._CACHED_TEMPLATE_BODY is not None
 
         # Second call returns same object (cached)
         body2 = _load_template_body()
@@ -325,62 +324,54 @@ class TestTemplateLoading:
         assert "Phase 3: Release" in body
 
     def test_fallback_on_missing_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import trw_mcp.tools.requirements as req_mod
+        import trw_mcp.tools._prd_template_helpers as helpers
+        from trw_mcp.tools._prd_template_helpers import reset_template_cache
 
         # Reset cache
-        monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
-        monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
-
-        # Patch Path to make template "not found"
-        original_parent = Path(req_mod.__file__).parent.parent / "data" / "prd_template.md"
-
-        def fake_exists(self: Path) -> bool:
-            if str(self) == str(original_parent):
-                return False
-            return (
-                Path.exists.__wrapped__(self) if hasattr(Path.exists, "__wrapped__") else type(self).exists.fget(self)
-            )  # type: ignore[attr-defined]
+        reset_template_cache()
 
         # Use monkeypatch to make the template path non-existent
         import unittest.mock
 
         with unittest.mock.patch.object(Path, "exists", return_value=False):
             # Reset again inside the mock
-            req_mod._CACHED_TEMPLATE_BODY = None
-            req_mod._CACHED_TEMPLATE_VERSION = None
-            body = req_mod._load_template_body()
+            reset_template_cache()
+            from trw_mcp.tools.requirements import _load_template_body
+
+            body = _load_template_body()
 
         assert isinstance(body, str)
         # Fallback should still have the 12 sections
         assert "Problem Statement" in body
-        assert req_mod._CACHED_TEMPLATE_VERSION is None
+        assert helpers._CACHED_TEMPLATE_VERSION is None
 
 
 class TestTemplateVersionExtraction:
     """Tests for template version extraction."""
 
     def test_version_extracted_correctly(self) -> None:
-        import trw_mcp.tools.requirements as req_mod
+        import trw_mcp.tools._prd_template_helpers as helpers
         from trw_mcp.tools.requirements import _load_template_body
 
         _load_template_body()
-        assert req_mod._CACHED_TEMPLATE_VERSION == "2.2"
+        assert helpers._CACHED_TEMPLATE_VERSION == "2.2"
 
     def test_version_none_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import trw_mcp.tools.requirements as req_mod
+        import trw_mcp.tools._prd_template_helpers as helpers
+        from trw_mcp.tools._prd_template_helpers import reset_template_cache
 
         # Set fallback body (no version footer)
-        monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_BODY", None)
-        monkeypatch.setattr(req_mod, "_CACHED_TEMPLATE_VERSION", None)
+        reset_template_cache()
 
         import unittest.mock
 
         with unittest.mock.patch.object(Path, "exists", return_value=False):
-            req_mod._CACHED_TEMPLATE_BODY = None
-            req_mod._CACHED_TEMPLATE_VERSION = None
-            req_mod._load_template_body()
+            reset_template_cache()
+            from trw_mcp.tools.requirements import _load_template_body
 
-        assert req_mod._CACHED_TEMPLATE_VERSION is None
+            _load_template_body()
+
+        assert helpers._CACHED_TEMPLATE_VERSION is None
 
 
 class TestTemplateSubstitution:

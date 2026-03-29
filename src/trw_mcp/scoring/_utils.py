@@ -52,8 +52,6 @@ __all__ = [
     "_LN2",
     "_TIER_HIGH_CEILING",
     "_TIER_MEDIUM_CEILING",
-    "FileStateReader",
-    "FileStateWriter",
     "TRWConfig",
     "_clamp01",
     "_ensure_utc",
@@ -67,3 +65,8 @@ __all__ = [
     "safe_int",
     "update_q_value",
 ]
+# NOTE: FileStateReader, FileStateWriter, and resolve_trw_dir are still
+# importable from this module (used by sibling scoring sub-modules), but
+# are deliberately excluded from __all__ because they are state-layer I/O
+# primitives that should not be part of the scoring public API.
+# PRD-FIX-061-FR03.

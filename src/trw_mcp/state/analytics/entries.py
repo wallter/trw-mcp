@@ -23,7 +23,7 @@ from trw_mcp.state.persistence import (
     lock_for_rmw,
     model_to_dict,
 )
-from trw_mcp.tools._learning_helpers import is_noise_summary
+from trw_mcp.state.analytics.core import is_noise_summary
 
 logger = structlog.get_logger(__name__)
 

@@ -30,6 +30,18 @@ logger = structlog.get_logger(__name__)
 _CACHED_TEMPLATE_BODY: str | None = None
 _CACHED_TEMPLATE_VERSION: str | None = None
 
+
+def reset_template_cache() -> None:
+    """Reset the cached PRD template body and version.
+
+    Call this to force a fresh load from ``data/prd_template.md`` on the
+    next ``_load_template_body()`` invocation.  Useful in tests and when
+    switching between projects with different template files.
+    """
+    global _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION
+    _CACHED_TEMPLATE_BODY = None
+    _CACHED_TEMPLATE_VERSION = None
+
 _TEMPLATE_VERSION_RE = re.compile(r"\*Template version:\s*([\d.]+)")
 _FILE_REF_RE = re.compile(r"[\w/]+\.\w+")
 _GOAL_KW_RE = re.compile(r"\b(goal|objective|achieve|deliver)\b", re.IGNORECASE)

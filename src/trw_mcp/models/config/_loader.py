@@ -1,4 +1,4 @@
-"""Config singleton factory -- get_config, _reset_config, _build_config.
+"""Config singleton factory -- get_config, reload_config, _build_config.
 
 Separated from _main.py to avoid circular imports: state modules
 import get_config(), while _build_config() imports state modules.
@@ -22,7 +22,7 @@ def get_config() -> TRWConfig:
 
     First call creates the instance with config.yaml overrides merged.
     Subsequent calls return the same object.
-    Use ``_reset_config()`` in tests to clear cached state.
+    Use ``reload_config()`` to clear cached state.
     """
     global _singleton
     if _singleton is None:
@@ -73,8 +73,12 @@ def _build_config() -> TRWConfig:
     return TRWConfig()
 
 
-def _reset_config(config: TRWConfig | None = None) -> None:
-    """Reset the config singleton (test helper only).
+def reload_config(config: TRWConfig | None = None) -> None:
+    """Reset the config singleton for project-switching or testing.
+
+    Clears the cached TRWConfig so the next ``get_config()`` call rebuilds
+    it from ``.trw/config.yaml`` and environment variables.  Pass an explicit
+    *config* to inject a pre-built instance (useful in tests).
 
     Args:
         config: Optional replacement config. If *None*, the next
@@ -82,3 +86,7 @@ def _reset_config(config: TRWConfig | None = None) -> None:
     """
     global _singleton
     _singleton = config
+
+
+# Backward-compatible alias (deprecated, use reload_config instead).
+_reset_config = reload_config

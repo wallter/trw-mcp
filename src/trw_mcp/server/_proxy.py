@@ -146,7 +146,7 @@ def ensure_http_server(
     Returns the server URL on success, None on failure (caller should
     fall back to standalone stdio).
     """
-    import fcntl
+    from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
 
     host = config.mcp_host
     port = config.mcp_port
@@ -169,10 +169,10 @@ def ensure_http_server(
     with open(lock_path, "w") as lock_fd:
         try:
             # Non-blocking lock attempt
-            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_ex_nb(lock_fd.fileno())
         except OSError:
             # Another process holds the lock -- wait, then re-check port
-            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            _lock_ex(lock_fd.fileno())
             if _is_port_open(host, port):
                 return url
 
@@ -190,7 +190,7 @@ def ensure_http_server(
             log.warning("mcp_server_start_failed", exc_info=True)
             return None
         finally:
-            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+            _lock_un(lock_fd.fileno())
 
 
 async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:

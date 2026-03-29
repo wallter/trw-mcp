@@ -1372,15 +1372,15 @@ class TestRequirementsTemplateNoFrontmatter:
 
     def test_load_template_body_no_frontmatter_uses_raw_body(self) -> None:
         """Line 327: When template has no YAML frontmatter, raw text is used as body."""
-        from trw_mcp.tools import requirements as req_mod
+        import trw_mcp.tools._prd_template_helpers as helpers
+        from trw_mcp.tools._prd_template_helpers import reset_template_cache
         from trw_mcp.tools.requirements import _FRONTMATTER_RE
 
         # Reset cached state
-        original_body = req_mod._CACHED_TEMPLATE_BODY
-        original_version = req_mod._CACHED_TEMPLATE_VERSION
+        original_body = helpers._CACHED_TEMPLATE_BODY
+        original_version = helpers._CACHED_TEMPLATE_VERSION
         try:
-            req_mod._CACHED_TEMPLATE_BODY = None
-            req_mod._CACHED_TEMPLATE_VERSION = None
+            reset_template_cache()
 
             # Template content WITHOUT a frontmatter block (no leading ---)
             no_frontmatter_content = "# PRD Template\n\n## 1. Problem Statement\n\nContent here.\n"
@@ -1389,8 +1389,8 @@ class TestRequirementsTemplateNoFrontmatter:
             assert _FRONTMATTER_RE.match(no_frontmatter_content) is None
 
             with patch(
-                "trw_mcp.tools.requirements._load_template_body",
-                wraps=req_mod._load_template_body,
+                "trw_mcp.tools._prd_template_helpers._load_template_body",
+                wraps=helpers._load_template_body,
             ):
                 # Patch Path.read_text selectively for template_path
                 original_rt = Path.read_text
@@ -1406,7 +1406,7 @@ class TestRequirementsTemplateNoFrontmatter:
                         Path, "exists", lambda self: True if self.name == "prd_template.md" else Path.exists(self)
                     ),
                 ):
-                    req_mod._CACHED_TEMPLATE_BODY = None
+                    reset_template_cache()
                     from trw_mcp.tools.requirements import _load_template_body
 
                     body = _load_template_body()
@@ -1415,8 +1415,8 @@ class TestRequirementsTemplateNoFrontmatter:
             assert "Problem Statement" in body
             assert body == no_frontmatter_content
         finally:
-            req_mod._CACHED_TEMPLATE_BODY = original_body
-            req_mod._CACHED_TEMPLATE_VERSION = original_version
+            helpers._CACHED_TEMPLATE_BODY = original_body
+            helpers._CACHED_TEMPLATE_VERSION = original_version
 
 
 # ---------------------------------------------------------------------------

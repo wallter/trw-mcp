@@ -42,58 +42,90 @@ def _load_server_instructions() -> str:
         return _DEFAULT_INSTRUCTIONS
 
 
-def _build_middleware() -> list[object]:
-    """Build the middleware list, conditionally including progressive disclosure.
-
-    Catches all exceptions to prevent module-level import from crashing
-    the server before logging is configured.
-    """
+def _try_init_ceremony() -> CeremonyMiddleware | None:
+    """Try to initialize CeremonyMiddleware. Returns None on failure (fail-open)."""
     try:
-        middleware: list[object] = [CeremonyMiddleware()]
+        return CeremonyMiddleware()
     except Exception:  # justified: fail-open, middleware init failure must not crash server startup
         logger.warning("middleware_init_failed", component="CeremonyMiddleware")
-        return []
+        return None
 
-    # Load config once for all optional middleware
+
+def _try_load_config() -> TRWConfig | None:
+    """Try to load TRWConfig. Returns None on failure (fail-open)."""
     try:
         from trw_mcp.models.config import get_config
 
-        config = get_config()
+        return get_config()
     except Exception:  # justified: fail-open, config load failure must not crash server startup
         logger.warning("middleware_config_load_failed", component="get_config")
-        return middleware
+        return None
 
-    # Progressive disclosure
-    if config.progressive_disclosure:
-        try:
-            from trw_mcp.state._paths import resolve_trw_dir
-            from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
-            from trw_mcp.state.usage_profiler import TOOL_GROUPS, compute_hot_set
 
-            trw_dir = resolve_trw_dir()
-            hot_set = set(compute_hot_set(trw_dir))
-            pd_mw = ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
-            middleware.append(pd_mw)
-        except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
-            logger.warning("middleware_init_failed", component="ProgressiveDisclosureMiddleware")
+def _try_init_progressive(config: TRWConfig) -> object | None:
+    """Try to initialize ProgressiveDisclosureMiddleware. Returns None on failure."""
+    if not config.progressive_disclosure:
+        return None
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
+        from trw_mcp.state.usage_profiler import TOOL_GROUPS, compute_hot_set
 
-    # Observation masking: reduce verbosity in long sessions.
-    if config.observation_masking:
-        try:
-            from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
+        trw_dir = resolve_trw_dir()
+        hot_set = set(compute_hot_set(trw_dir))
+        return ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
+    except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
+        logger.warning("middleware_init_failed", component="ProgressiveDisclosureMiddleware")
+        return None
 
-            middleware.append(ContextBudgetMiddleware())
-        except Exception:  # justified: fail-open, observation masking is optional enhancement
-            logger.warning("middleware_init_failed", component="ContextBudgetMiddleware")
 
-    # Response optimizer: compact JSON (round floats, strip nulls/empties).
-    # Added last so it runs on the final response after all other middleware.
+def _try_init_observation_masking(config: TRWConfig) -> object | None:
+    """Try to initialize ContextBudgetMiddleware. Returns None on failure."""
+    if not config.observation_masking:
+        return None
+    try:
+        from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
+
+        return ContextBudgetMiddleware()
+    except Exception:  # justified: fail-open, observation masking is optional enhancement
+        logger.warning("middleware_init_failed", component="ContextBudgetMiddleware")
+        return None
+
+
+def _try_init_response_optimizer() -> object | None:
+    """Try to initialize ResponseOptimizerMiddleware. Returns None on failure."""
     try:
         from trw_mcp.middleware.response_optimizer import ResponseOptimizerMiddleware
 
-        middleware.append(ResponseOptimizerMiddleware())
+        return ResponseOptimizerMiddleware()
     except Exception:  # justified: fail-open, response optimizer is optional enhancement
         logger.warning("middleware_init_failed", component="ResponseOptimizerMiddleware")
+        return None
+
+
+def _build_middleware() -> list[object]:
+    """Build the middleware list, conditionally including progressive disclosure.
+
+    Each middleware component is initialized by a dedicated helper that
+    returns None on failure (fail-open). This keeps the orchestration
+    logic readable while isolating error handling per component.
+    """
+    ceremony = _try_init_ceremony()
+    if ceremony is None:
+        return []
+    middleware: list[object] = [ceremony]
+
+    config = _try_load_config()
+    if config is None:
+        return middleware
+
+    for mw in (
+        _try_init_progressive(config),
+        _try_init_observation_masking(config),
+        _try_init_response_optimizer(),
+    ):
+        if mw is not None:
+            middleware.append(mw)
 
     return middleware
 

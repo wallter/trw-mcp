@@ -21,7 +21,7 @@ from typing import cast
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig, _reset_config
+from trw_mcp.models.config import TRWConfig, reload_config
 from trw_mcp.models.typed_dicts import (
     ExportAnalyticsSection,
     ExportMetadata,
@@ -49,14 +49,14 @@ def temp_project_root(target_dir: Path) -> Generator[None, None, None]:
     old_root = os.environ.get("TRW_PROJECT_ROOT")
     try:
         os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-        _reset_config()
+        reload_config()
         yield
     finally:
         if old_root is not None:
             os.environ["TRW_PROJECT_ROOT"] = old_root
         else:
             os.environ.pop("TRW_PROJECT_ROOT", None)
-        _reset_config()
+        reload_config()
 
 
 def _collect_learnings(

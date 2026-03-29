@@ -63,6 +63,20 @@ This creates:
 - `.claude/skills/` — workflow automation skills
 - `.claude/agents/` — specialized sub-agents
 
+### Configuration
+
+Settings via environment variables (prefix `TRW_`) or `.trw/config.yaml`. Full reference at [trwframework.com/docs/configuration](https://trwframework.com/docs/configuration).
+
+```yaml
+# .trw/config.yaml — top settings (all optional, shown with defaults)
+embeddings_enabled: false          # Enable vector search (requires [vectors] extra)
+learning_max_entries: 5000         # Max learnings before auto-pruning
+build_check_enabled: true          # Run pytest+mypy on trw_build_check
+observation_masking: true          # Reduce verbosity in long sessions
+progressive_disclosure: false      # Show tools progressively
+ceremony_mode: "full"              # "full", "light", or "off"
+```
+
 ## MCP Tools (24)
 
 24 tools covering the full AI coding assistant memory lifecycle. See [tool reference docs](https://trwframework.com/docs) for detailed parameter documentation.
@@ -158,6 +172,17 @@ Run `trw-mcp update-project .` to migrate your project state to the latest schem
 
 **Embeddings not working despite `embeddings_enabled=true`**
 Embeddings require the `[vectors]` extra: `pip install 'trw-mcp[vectors]'`. Without it, vector search silently degrades to keyword-only.
+
+### Debugging
+
+Enable debug logging:
+
+```bash
+trw-mcp --debug serve              # Debug mode with file logging
+TRW_LOG_LEVEL=DEBUG trw-mcp serve  # Via environment variable
+```
+
+Logs are written to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl`.
 
 ## License
 

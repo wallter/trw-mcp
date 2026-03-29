@@ -2,6 +2,59 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.35.0] — 2026-03-29
+
+### Changed — Architecture & Code Quality Sprint (PRD-FIX-061 through PRD-FIX-066)
+
+**Layer violation resolution (P0, PRD-FIX-061)**:
+- `is_noise_summary()` moved from `tools/_learning_helpers.py` to `state/analytics/core.py` — eliminates `state/ → tools/` inverted dependency
+- `_merge_session_events()` moved from `tools/_deferred_delivery.py` to `state/_session_events.py`
+- `scoring/_utils.py` no longer re-exports `FileStateReader`/`FileStateWriter` in `__all__`
+- Backward-compatible re-exports preserve all existing import paths
+
+**Module decomposition — 6 oversized files split into 13 focused modules (PRD-FIX-064)**:
+- `tools/learning.py` 738→326 lines (extracted `_learn_impl.py`, `_recall_impl.py`)
+- `tools/_review_helpers.py` 684→207 lines (extracted `_review_auto.py`, `_review_manual.py`, `_review_multi.py`)
+- `bootstrap/_template_updater.py` 677→415 lines (extracted `_ide_targets.py`)
+- `bootstrap/_utils.py` 676→473 lines (extracted `_file_ops.py`, `_mcp_json.py`)
+- `state/ceremony_feedback.py` 686→378 lines (extracted `_ceremony_sanitize.py`, `_ceremony_escalation.py`)
+- `state/analytics/report.py` 692→466 lines (extracted `_stale_runs.py`)
+
+**Exception policy enforcement (PRD-FIX-062)**:
+- All 19 `except Exception` blocks now carry `# justified: <category>` comments per package policy
+- `_locking.py` extracted — DRY portable `fcntl` shim replaces duplicated code in `persistence.py` and `telemetry/pipeline.py`
+- `server/_proxy.py` guarded against Windows `fcntl` import crash
+
+**API surface cleanup (PRD-FIX-063)**:
+- `_reset_config` renamed to `reload_config()` with backward-compat alias — docstring updated to reflect production use
+- `_ModuleProxy` test infrastructure removed from `tools/requirements.py`
+- `DeprecationWarning` added to `_compat_getattr()` shim (9 modules) with v1.0 removal target
+- Ruff test ignores narrowed from `"S"` (all Bandit) to `"S101"` (assert only)
+
+**Code quality polish (PRD-FIX-066)**:
+- `api/__init__.py` — new thin public API module exporting 22 key types for external integrators
+- `_build_middleware()` refactored into 4 named helpers (`_try_init_ceremony`, `_try_init_progressive`, etc.)
+- `memory_adapter.py` re-exports consolidated from 35 individual imports to 4 grouped blocks
+- `state/claude_md/_sync.py` decomposed — REVIEW.md and AGENTS.md generation extracted to `_review_md.py` and `_agents_md.py`
+- `state/memory/__init__.py` re-exports grouped by subsystem with section comments
+
+### Added
+
+- **`CONTRIBUTING.md`** — contributor guide with prerequisites, dev setup, testing, architecture overview, commit format (PRD-FIX-065)
+- **Configuration section in README** — annotated example `.trw/config.yaml` with top settings and defaults
+- **Debugging section in README** — `--debug` flag, log location, `TRW_LOG_LEVEL` env var
+- **"See Also" cross-links** in 5 core tool docstrings (`trw_learn`, `trw_recall`, `trw_session_start`, `trw_deliver`, `trw_prd_create`)
+- **CLI typo correction** — `trw-mcp init-proyect` now suggests "Did you mean: init-project?"
+- **`init-project` success message** — prints next-step guidance after bootstrapping
+- 4 sensitive key patterns added to structlog redaction: `client_secret`, `refresh_token`, `jwt`, `id_token`
+- New test files: `test_api_surface.py`, `test_app_middleware_helpers.py`, `test_devex_fix065.py`
+
+### Fixed
+
+- `server/_tools.py` docstring: "19 tools" corrected to "24 tools"
+- `auto_upgrade.py` imports locking from canonical `_locking.py` instead of `persistence.py` private attrs
+- `_review_multi.py` and `_review_helpers._invoke_cross_model_review` now use `TRWConfig` type (was `object`)
+
 ## [0.34.1] — 2026-03-28
 
 ### Added — Final DevEx Polish (PRD-QUAL-052)

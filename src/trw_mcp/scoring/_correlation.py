@@ -8,6 +8,7 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,8 +18,6 @@ import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring._utils import (
-    FileStateReader,
-    FileStateWriter,
     TRWConfig,
     _ensure_utc,
     get_config,
@@ -26,6 +25,11 @@ from trw_mcp.scoring._utils import (
     safe_int,
     update_q_value,
 )
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+# Type alias for the entry lookup callable used by process_outcome.
+# Given (learning_id, trw_dir, entries_dir) returns (yaml_path_or_None, data_or_None).
+EntryLookupFn = Callable[[str, Path, Path], tuple[Path | None, dict[str, object] | None]]
 
 logger = structlog.get_logger(__name__)
 
@@ -270,14 +274,26 @@ def _deduplicate_recalls(
     return best_discount
 
 
-def _lookup_learning_entry(
+def _default_lookup_entry(
     lid: str,
     trw_dir: Path,
     entries_dir: Path,
 ) -> tuple[Path | None, dict[str, object] | None]:
-    """Find learning entry via SQLite fallback to YAML.
+    """Default entry lookup: SQLite primary, YAML fallback.
 
-    Returns (entry_path, entry_data).
+    PRD-FIX-061-FR05: This is the default backend selector, extracted so
+    that ``process_outcome`` can accept an alternative lookup callable
+    for testing or alternative storage backends.  Backend selection
+    (state-layer I/O) happens here at the call boundary, not inside the
+    pure scoring logic.
+
+    Args:
+        lid: Learning entry ID to look up.
+        trw_dir: Path to .trw directory (for SQLite backend).
+        entries_dir: Path to YAML entries directory (fallback).
+
+    Returns:
+        Tuple of (yaml_path_or_None, entry_data_or_None).
     """
     from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
     from trw_mcp.state.memory_adapter import find_entry_by_id as sqlite_find_entry_by_id
@@ -299,6 +315,10 @@ def _lookup_learning_entry(
                 entry_path, data = yaml_found
 
     return entry_path, data
+
+
+# Backward-compat alias (tests may patch this name directly)
+_lookup_learning_entry = _default_lookup_entry
 
 
 def _update_entry_q_values(
@@ -377,12 +397,18 @@ def process_outcome(
     trw_dir: Path,
     reward: float,
     event_label: str,
+    *,
+    lookup_fn: EntryLookupFn | None = None,
 ) -> list[str]:
     """Update Q-values for learnings correlated with a recent outcome.
 
     PRD-FIX-053-FR03: Uses SQLite (O(1)) lookup via memory_adapter.find_entry_by_id()
     instead of scanning all YAML files. Falls back to analytics.find_entry_by_id()
     (YAML glob scan) when SQLite returns None for pre-migration entries.
+
+    PRD-FIX-061-FR05: Backend selection is now at the call boundary via
+    ``lookup_fn``.  Defaults to ``_default_lookup_entry`` which uses
+    SQLite-primary, YAML-fallback.
 
     Time-windowed correlation: only receipts from the last N minutes
     (configured via learning_outcome_correlation_window_minutes) are
@@ -392,6 +418,9 @@ def process_outcome(
         trw_dir: Path to .trw directory.
         reward: Base reward signal (positive = helpful, negative = unhelpful).
         event_label: Label for outcome_history (e.g., 'tests_passed').
+        lookup_fn: Optional callable for entry lookup. Signature:
+            ``(lid, trw_dir, entries_dir) -> (path_or_None, data_or_None)``.
+            Defaults to ``_default_lookup_entry`` (SQLite + YAML fallback).
 
     Returns:
         List of learning IDs whose Q-values were updated.
@@ -405,13 +434,14 @@ def process_outcome(
     if not correlated:
         return []
 
+    effective_lookup = lookup_fn if lookup_fn is not None else _default_lookup_entry
     best_discount = _deduplicate_recalls(correlated)
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
     updated_ids: list[str] = []
     writer = FileStateWriter()
 
     for lid, discount in best_discount.items():
-        entry_path, data = _lookup_learning_entry(lid, trw_dir, entries_dir)
+        entry_path, data = effective_lookup(lid, trw_dir, entries_dir)
         if data is None:
             continue
 

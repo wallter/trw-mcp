@@ -9,6 +9,7 @@ avoid circular dependencies. It only depends on models/ and persistence.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -164,14 +165,32 @@ def _compat_getattr(name: str) -> object:
         AttributeError: If *name* is not one of the three known singletons.
     """
     if name == "_config":
+        warnings.warn(
+            "Module-level '_config' is deprecated. "
+            "Import from the canonical module instead. Will be removed in v1.0.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         from trw_mcp.models.config import get_config
 
         return get_config()
     if name == "_reader":
+        warnings.warn(
+            "Module-level '_reader' is deprecated. "
+            "Import from the canonical module instead. Will be removed in v1.0.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         from trw_mcp.state.persistence import FileStateReader
 
         return FileStateReader()
     if name == "_writer":
+        warnings.warn(
+            "Module-level '_writer' is deprecated. "
+            "Import from the canonical module instead. Will be removed in v1.0.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         from trw_mcp.state.persistence import FileStateWriter
 
         return FileStateWriter()
