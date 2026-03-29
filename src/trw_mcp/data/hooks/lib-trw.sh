@@ -30,26 +30,49 @@ get_task_root() {
 # Returns 0 if found, 1 if not.
 find_active_run() {
   _task_root="${1:-$(get_task_root)}"
-  _project_root="$(get_repo_root)" || return 1
+  _project_root="$(get_repo_root 2>/dev/null)" || return 1
   _latest=""
   _latest_name=""
 
-  # Scan for run.yaml files, pick the latest by run directory name.
+  # Helper: scan a directory tree for run.yaml files, updating _latest/_latest_name.
   # Run dirs are named like 20260211T061443Z-58062ed4 (UTC timestamp + hash),
   # so lexicographic sort on the basename finds the newest.
   # NOTE: We must NOT compare full paths — task directory names pollute the sort.
-  for _task_dir in "$_project_root/$_task_root"/*/; do
-    [ -d "$_task_dir/runs" ] || continue
-    for _run_dir in "$_task_dir/runs"/*/; do
-      [ -f "$_run_dir/meta/run.yaml" ] || continue
-      _run_name="${_run_dir%/}"        # strip trailing slash
-      _run_name="${_run_name##*/}"     # basename
-      if [ -z "$_latest" ] || expr "$_run_name" '>' "$_latest_name" >/dev/null; then
-        _latest="$_run_dir"
-        _latest_name="$_run_name"
+  _scan_runs() {
+    for _task_dir in "$1"/*/; do
+      [ -d "$_task_dir" ] || continue
+      # Pattern 1: {root}/{task}/runs/{run_id}/meta/run.yaml (legacy docs/ layout)
+      if [ -d "$_task_dir/runs" ]; then
+        for _run_dir in "$_task_dir/runs"/*/; do
+          [ -f "$_run_dir/meta/run.yaml" ] || continue
+          _run_name="${_run_dir%/}"
+          _run_name="${_run_name##*/}"
+          if [ -z "$_latest" ] || expr "$_run_name" '>' "$_latest_name" >/dev/null; then
+            _latest="$_run_dir"
+            _latest_name="$_run_name"
+          fi
+        done
       fi
+      # Pattern 2: {root}/{task}/{run_id}/meta/run.yaml (MCP .trw/runs/ layout)
+      for _run_dir in "$_task_dir"/*/; do
+        [ -f "$_run_dir/meta/run.yaml" ] || continue
+        _run_name="${_run_dir%/}"
+        _run_name="${_run_name##*/}"
+        if [ -z "$_latest" ] || expr "$_run_name" '>' "$_latest_name" >/dev/null; then
+          _latest="$_run_dir"
+          _latest_name="$_run_name"
+        fi
+      done
     done
-  done
+  }
+
+  # Scan the configured task_root (e.g. docs/)
+  _scan_runs "$_project_root/$_task_root"
+
+  # Also scan .trw/runs/ — MCP trw_init creates runs here, not under task_root
+  if [ -d "$_project_root/.trw/runs" ]; then
+    _scan_runs "$_project_root/.trw/runs"
+  fi
 
   if [ -n "$_latest" ]; then
     printf '%s' "$_latest"
@@ -58,36 +81,19 @@ find_active_run() {
   return 1
 }
 
-# _json_escape: Escape a string for safe embedding inside a JSON double-quoted value.
-# Escapes backslashes, double-quotes, tabs, and newlines so that file paths or
-# other shell variables containing those characters cannot break JSON structure.
-# Args: $1=string to escape
-# Prints the escaped string to stdout.
-_json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
-}
-
 # append_event: Append a JSON event line to events.jsonl.
 # Args: $1=events_path, $2=event_type, $3=extra_json_fields (optional)
-# Requires: date, printf. Uses jq if available, falls back to printf with escaping.
+# Requires: date, printf. Uses jq if available, falls back to printf.
 append_event() {
   _events_path="$1"
   _event_type="$2"
   _extra="${3:-}"
   _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
-  _ts_esc="$(_json_escape "$_ts")"
-  _type_esc="$(_json_escape "$_event_type")"
 
-  if command -v jq >/dev/null 2>&1; then
-    # jq handles all escaping safely — build base object, merge extra fields if present
-    if [ -n "$_extra" ]; then
-      printf '{"ts":"%s","event":"%s",%s}\n' "$_ts_esc" "$_type_esc" "$_extra" >> "$_events_path"
-    else
-      printf '{"ts":"%s","event":"%s"}\n' "$_ts_esc" "$_type_esc" >> "$_events_path"
-    fi
+  if command -v jq >/dev/null 2>&1 && [ -n "$_extra" ]; then
+    printf '{"ts":"%s","event":"%s",%s}\n' "$_ts" "$_event_type" "$_extra" >> "$_events_path"
   else
-    # No jq — use escaped values only; extra fields are omitted to stay injection-free
-    printf '{"ts":"%s","event":"%s"}\n' "$_ts_esc" "$_type_esc" >> "$_events_path"
+    printf '{"ts":"%s","event":"%s"}\n' "$_ts" "$_event_type" >> "$_events_path"
   fi
 }
 
@@ -99,6 +105,56 @@ has_event() {
   _type="$2"
   [ -f "$_path" ] || return 1
   grep -q "\"event\":[[:space:]]*\"$_type\"" "$_path" 2>/dev/null
+}
+
+# has_recent_deliver: Check if ANY run modified in the last N minutes has deliver_complete.
+# Handles parallel Claude Code instances where each session owns a different run.
+# Args: $1=max_age_minutes (default 240 = 4 hours)
+# Returns 0 if found, 1 if not.
+has_recent_deliver() {
+  _hrd_max_age="${1:-240}"
+  _hrd_task_root="$(get_task_root)"
+  _hrd_root="$(get_repo_root 2>/dev/null)" || return 1
+
+  # Helper: scan a directory for recent deliver events
+  _hrd_scan() {
+    for _hrd_task_dir in "$1"/*/; do
+      [ -d "$_hrd_task_dir" ] || continue
+      # Pattern 1: {root}/{task}/runs/{run_id}/ (legacy docs/ layout)
+      if [ -d "$_hrd_task_dir/runs" ]; then
+        for _hrd_run_dir in "$_hrd_task_dir/runs"/*/; do
+          _hrd_events="${_hrd_run_dir}meta/events.jsonl"
+          [ -f "$_hrd_events" ] || continue
+          if find "$_hrd_events" -mmin "-$_hrd_max_age" 2>/dev/null | grep -q .; then
+            if has_event "$_hrd_events" "trw_deliver_complete"; then
+              return 0
+            fi
+          fi
+        done
+      fi
+      # Pattern 2: {root}/{task}/{run_id}/ (MCP .trw/runs/ layout)
+      for _hrd_run_dir in "$_hrd_task_dir"/*/; do
+        _hrd_events="${_hrd_run_dir}meta/events.jsonl"
+        [ -f "$_hrd_events" ] || continue
+        if find "$_hrd_events" -mmin "-$_hrd_max_age" 2>/dev/null | grep -q .; then
+          if has_event "$_hrd_events" "trw_deliver_complete"; then
+            return 0
+          fi
+        fi
+      done
+    done
+    return 1
+  }
+
+  # Scan configured task_root
+  _hrd_scan "$_hrd_root/$_hrd_task_root" && return 0
+
+  # Also scan .trw/runs/
+  if [ -d "$_hrd_root/.trw/runs" ]; then
+    _hrd_scan "$_hrd_root/.trw/runs" && return 0
+  fi
+
+  return 1
 }
 
 # infer_phase: Determine current execution phase from events.jsonl patterns.
@@ -147,7 +203,7 @@ log_hook_execution() {
   _le_end=$(date +%s 2>/dev/null) || _le_end=0
   _le_duration=$((_le_end - ${_hook_start_epoch:-0})) 2>/dev/null || _le_duration=0
 
-  _le_root="$(get_repo_root)" || return 0
+  _le_root="$(get_repo_root 2>/dev/null)" || return 0
   _le_log="$_le_root/.trw/context/hook-executions.log"
   _le_dir="$(dirname "$_le_log")"
   [ -d "$_le_dir" ] || mkdir -p "$_le_dir" 2>/dev/null || return 0
@@ -214,7 +270,7 @@ check_ceremony_status() {
 # Prints the configured variant (default: "baseline").
 # CORE-074-FR09: A/B test infrastructure for ceremony enforcement.
 trw_enforcement_variant() {
-  _tev_config_file="$(git rev-parse --show-toplevel 2>/dev/null)/.trw/config.yaml"
+  _tev_config_file="$(get_repo_root 2>/dev/null)/.trw/config.yaml"
   if [ -f "$_tev_config_file" ]; then
     _tev_val=$(grep 'enforcement_variant:' "$_tev_config_file" | head -1 \
       | sed 's/^enforcement_variant:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '[:space:]')
