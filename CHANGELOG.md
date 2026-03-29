@@ -2,6 +2,30 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.35.1] — 2026-03-29
+
+### Fixed — Framework Excellence Sprint (Sprint 77)
+
+**P0 Security fixes**:
+- `security-patterns.sh`: Unclosed string literal on SEC-003 silently disabled 7 of 9 OWASP security pattern checks (SEC-003 through SEC-009). Only eval/exec and os.system detection was functional.
+- `smoke-test.sh`: Eliminated `eval`-based command injection via `$BACKEND_URL` environment variable by replacing string evaluation with direct command execution.
+
+**Dev/bundled sync (18 agents, 11 skills, 6 hooks)**:
+- Synced all shared files between `.claude/` (dev) and `data/` (bundled) — user installations were receiving stale agent instructions, missing hook functions, and incomplete skill definitions.
+- `lib-trw.sh`: Bundled version was missing `has_recent_deliver()` and dual-pattern run scanning for `.trw/runs/`, causing silent hook degradation in user projects.
+- Added `scripts/check-bundle-sync.sh` — CI-integrated check that prevents dev/bundled divergence. Integrated into `make check` pipeline.
+
+**Installer and script hardening (12 fixes)**:
+- `install.sh`: Fixed broken `--api-key KEY` argument parsing (`shift` inside `for` loop is a no-op), added pip error diagnostics.
+- `deploy.sh`: Fixed POSIX `TMPDIR` env var collision, replaced bare `pip` with `python3 -m pip`, moved Lambda ZIP to scoped temp directory.
+- `aws-login.sh`: Replaced dead WSL2 code with cross-platform browser detection, corrected `aws login` to `aws sso login`.
+- `verify-installer.sh`: Fixed command injection in `sg docker` re-exec, replaced obfuscated `chr()` Python code.
+- `publish-release.sh`: Added macOS `shasum -a 256` fallback for `sha256sum`.
+- `pre-commit.sh`: Fixed glob patterns that missed nested Python files, added `.venv` existence check.
+- `setup-hooks.sh`: Added git repo validation and idempotency.
+- `teammate-idle.sh`: Added path traversal sanitization on team name.
+- `check-comment-replacement.sh`: Added `jq` availability guard, fixed shebang to `#!/bin/sh`.
+
 ## [0.35.0] — 2026-03-29
 
 ### Changed — Architecture & Code Quality Sprint (PRD-FIX-061 through PRD-FIX-066)
