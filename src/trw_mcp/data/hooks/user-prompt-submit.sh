@@ -2,6 +2,9 @@
 # PRD-INFRA-024-FR02: Phase-aware UserPromptSubmit hook.
 # Emits calibrated context per execution phase. Fail-open: never blocks prompts.
 # Output target: <150 tokens (~600 chars) per phase. "done" phase: 0 tokens.
+#
+# Performance: ~71ms avg latency (benchmarked 2026-03-29, 3 runs).
+# Fires before every user prompt. Primary cost: infer_phase() scanning events.jsonl.
 set -e
 trap 'exit 0' EXIT
 
