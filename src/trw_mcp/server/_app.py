@@ -119,13 +119,15 @@ def _build_middleware() -> list[object]:
     if config is None:
         return middleware
 
-    for mw in (
-        _try_init_progressive(config),
-        _try_init_observation_masking(config),
-        _try_init_response_optimizer(),
-    ):
-        if mw is not None:
-            middleware.append(mw)
+    middleware.extend(
+        mw
+        for mw in (
+            _try_init_progressive(config),
+            _try_init_observation_masking(config),
+            _try_init_response_optimizer(),
+        )
+        if mw is not None
+    )
 
     return middleware
 

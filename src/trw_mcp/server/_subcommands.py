@@ -43,7 +43,7 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
     warnings = result.get("warnings", [])
 
     codex_touched = any(
-        path.startswith(".codex/") or path.startswith(".agents/skills/") or path == "AGENTS.md"
+        path.startswith((".codex/", ".agents/skills/")) or path == "AGENTS.md"
         for path in [*result["updated"], *result["created"]]
     )
 
@@ -388,7 +388,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
                 p.unlink()
             removed += 1
             print(f"  Removed: {p.relative_to(target)}")
-        except OSError as exc:
+        except OSError as exc:  # noqa: PERF203
             print(f"  Error removing {p.relative_to(target)}: {exc}")
 
     print(f"\n  Done. Removed {removed} item(s).")
