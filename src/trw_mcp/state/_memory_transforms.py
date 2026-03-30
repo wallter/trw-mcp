@@ -9,14 +9,14 @@ External code should import from ``memory_adapter`` (the public facade).
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 try:
     from trw_memory.models.memory import Assertion, MemoryEntry, MemoryStatus
 except ImportError:  # pragma: no cover - compatibility with older trw-memory exports
     from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
-    Assertion = cast("Any", None)
+    Assertion = cast("type[Any]", None)  # type: ignore[misc]
 
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
@@ -108,7 +108,7 @@ def _learning_to_memory_entry(
         tags=tags or [],
         evidence=evidence or [],
         importance=impact,
-        source=source_type,
+        source=cast("Literal['human', 'agent', 'tool', 'consolidated']", source_type),
         source_identity=source_identity,
         namespace=_NAMESPACE,
         metadata=metadata,
