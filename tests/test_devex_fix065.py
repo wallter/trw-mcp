@@ -204,7 +204,7 @@ class TestInitProjectSuccessMessage:
 
         target = Path("/tmp/test-init-msg")
 
-        mock_result: dict[str, object] = {"errors": [], "created": [], "updated": []}
+        mock_result: dict[str, object] = {"errors": [], "created": [], "updated": [], "preserved": []}
 
         # init_project is imported locally inside _run_init_project, so patch at source
         with patch("trw_mcp.bootstrap.init_project", return_value=mock_result):
@@ -221,5 +221,5 @@ class TestInitProjectSuccessMessage:
             assert exc_info.value.code == 0
 
         captured = capsys.readouterr()
-        assert "TRW initialized" in captured.out
+        assert "TRW initialization complete" in captured.out
         assert str(target) in captured.out
