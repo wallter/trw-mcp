@@ -2030,9 +2030,9 @@ class TestCodexBootstrap:
         assert config["features"]["codex_hooks"] is True
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
-        assert config["mcp_servers"]["trw"]["tools"]["trw_session_start"]["approval_mode"] == "approve"
-        assert config["mcp_servers"]["trw"]["tools"]["trw_build_check"]["approval_mode"] == "approve"
-        assert config["mcp_servers"]["trw"]["tools"]["trw_checkpoint"]["approval_mode"] == "approve"
+        assert "trw_session_start" in config["mcp_servers"]["trw"]["enabled_tools"]
+        assert "trw_build_check" in config["mcp_servers"]["trw"]["enabled_tools"]
+        assert "trw_checkpoint" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert all(not entry["path"].endswith("/SKILL.md") for entry in config["skills"]["config"])
         assert any(entry["path"] == ".agents/skills/trw-deliver" for entry in config["skills"]["config"])
 
@@ -2122,7 +2122,7 @@ class TestCodexBootstrap:
         assert "custom" in merged["mcp_servers"]
         assert merged["mcp_servers"]["custom"]["enabled"] is False
         assert merged["mcp_servers"]["trw"]["enabled"] is True
-        assert merged["mcp_servers"]["trw"]["tools"]["trw_session_start"]["approval_mode"] == "approve"
+        assert "trw_session_start" in merged["mcp_servers"]["trw"]["enabled_tools"]
 
     def test_codex_config_smart_merge_existing_file(self, tmp_path: Path) -> None:
         codex_dir = tmp_path / ".codex"
@@ -2139,11 +2139,12 @@ legacy_toggle = false
 command = "custom-server"
 enabled = false
 
-[mcp_servers.trw.tools.trw_old_tool]
-approval_mode = "prompt"
+[mcp_servers.trw]
+enabled_tools = ["legacy_helper"]
+disabled_tools = ["trw_old_tool"]
 
 [mcp_servers.trw.tools.custom_helper]
-approval_mode = "prompt"
+enabled = true
 
 [skills]
 config = [
@@ -2162,9 +2163,10 @@ config = [
         assert config["features"]["codex_hooks"] is True
         assert config["mcp_servers"]["custom"]["enabled"] is False
         assert config["mcp_servers"]["trw"]["enabled"] is True
-        assert config["mcp_servers"]["trw"]["tools"]["trw_session_start"]["approval_mode"] == "approve"
-        assert "trw_old_tool" not in config["mcp_servers"]["trw"]["tools"]
-        assert config["mcp_servers"]["trw"]["tools"]["custom_helper"]["approval_mode"] == "prompt"
+        assert "trw_session_start" in config["mcp_servers"]["trw"]["enabled_tools"]
+        assert "legacy_helper" in config["mcp_servers"]["trw"]["enabled_tools"]
+        assert "custom_helper" in config["mcp_servers"]["trw"]["enabled_tools"]
+        assert "trw_old_tool" in config["mcp_servers"]["trw"]["disabled_tools"]
         assert "README.md" in config["project_doc_fallback_filenames"]
         assert "CLAUDE.md" in config["project_doc_fallback_filenames"]
         skill_paths = [entry["path"] for entry in config["skills"]["config"]]
@@ -2183,9 +2185,9 @@ config = [
         assert fallback_files.count("AGENTS.md") == 1
         assert fallback_files.count("CLAUDE.md") == 1
 
-        trw_tools = config["mcp_servers"]["trw"]["tools"]
-        assert trw_tools["trw_session_start"]["approval_mode"] == "approve"
-        assert list(trw_tools).count("trw_session_start") == 1
+        trw_tools = config["mcp_servers"]["trw"]["enabled_tools"]
+        assert "trw_session_start" in trw_tools
+        assert trw_tools.count("trw_session_start") == 1
 
         skill_paths = [entry["path"] for entry in config["skills"]["config"]]
         assert len(skill_paths) == len(set(skill_paths))

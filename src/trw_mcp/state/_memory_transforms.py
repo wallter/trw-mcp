@@ -9,7 +9,14 @@ External code should import from ``memory_adapter`` (the public facade).
 
 from __future__ import annotations
 
-from trw_memory.models.memory import Assertion, MemoryEntry, MemoryStatus
+from typing import Any, cast
+
+try:
+    from trw_memory.models.memory import Assertion, MemoryEntry, MemoryStatus
+except ImportError:  # pragma: no cover - compatibility with older trw-memory exports
+    from trw_memory.models.memory import MemoryEntry, MemoryStatus
+
+    Assertion = cast("Any", None)
 
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
@@ -87,9 +94,12 @@ def _learning_to_memory_entry(
         metadata["shard_id"] = shard_id
 
     # Validate and attach assertions (PRD-CORE-086)
-    assertion_objects: list[Assertion] = []
+    assertion_objects: list[Any] = []
     if assertions:
-        assertion_objects.extend(Assertion.model_validate(a) for a in assertions)
+        if Assertion is not None:
+            assertion_objects.extend(Assertion.model_validate(a) for a in assertions)
+        else:
+            assertion_objects.extend(assertions)
 
     return MemoryEntry(
         id=learning_id,

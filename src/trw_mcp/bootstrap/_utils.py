@@ -12,11 +12,15 @@ import json
 import os
 import shutil
 import sys
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - Python <3.11 fallback
+    import tomli as tomllib
 
 # ---------------------------------------------------------------------------
 # Re-exports from extracted sub-modules — REQUIRED for backward compatibility.
