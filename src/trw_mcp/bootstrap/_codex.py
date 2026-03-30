@@ -49,6 +49,18 @@ _TRW_TOOL_PREFIX = "trw_"
 _AsyncResultT = TypeVar("_AsyncResultT")
 
 
+def _codex_data_dir() -> Path:
+    """Return the bundled Codex-specific data root."""
+    from ._utils import _DATA_DIR
+
+    return _DATA_DIR / "codex"
+
+
+def _codex_skills_source_dir() -> Path:
+    """Return the bundled Codex-specific skills root."""
+    return _codex_data_dir() / "skills"
+
+
 class _NamedTool(Protocol):
     """Protocol for FastMCP tool metadata returned by list_tools()."""
 
@@ -176,14 +188,17 @@ def _parse_codex_toml(content: str) -> CodexConfigDict:
 
 def _skill_paths() -> list[str]:
     """Return repo-local skill paths for Codex config."""
-    from ._utils import _DATA_DIR
+    skills_dir = _codex_skills_source_dir()
+    return [f".agents/skills/{skill_dir.name}" for skill_dir in sorted(skills_dir.iterdir()) if skill_dir.is_dir()]
 
-    skills_dir = _DATA_DIR / "skills"
-    return [
-        f".agents/skills/{skill_dir.name}/SKILL.md"
-        for skill_dir in sorted(skills_dir.iterdir())
-        if skill_dir.is_dir()
-    ]
+
+def _normalize_skill_path(path: str) -> str:
+    """Normalize Codex skill paths to the containing skill directory."""
+    normalized = path.replace("\\", "/")
+    suffix = "/SKILL.md"
+    if normalized.endswith(suffix):
+        return normalized[: -len(suffix)]
+    return normalized
 
 
 def _normalize_skill_config(existing: object) -> list[CodexSkillConfigEntry]:
@@ -198,7 +213,7 @@ def _normalize_skill_config(existing: object) -> list[CodexSkillConfigEntry]:
             path = entry.get("path")
             enabled = entry.get("enabled")
             if isinstance(path, str):
-                item["path"] = path
+                item["path"] = _normalize_skill_path(path)
             if isinstance(enabled, bool):
                 item["enabled"] = enabled
             if item:
@@ -568,30 +583,6 @@ def generate_codex_agents(
     return result
 
 
-def _adapt_skill_content(content: str) -> str:
-    """Rewrite the most Claude-specific bundled skill assumptions for Codex."""
-    adapted = content
-    replacements = (
-        ("trw_claude_md_sync", "trw_deliver"),
-        ("CLAUDE.md", "AGENTS.md"),
-        ("Claude Code", "Codex"),
-        ("Agent Teams", "subagents"),
-        ("slash commands", "skill invocations"),
-    )
-    for source, target in replacements:
-        adapted = adapted.replace(source, target)
-
-    frontmatter_end = adapted.find("\n---\n", 4)
-    if frontmatter_end != -1:
-        note = (
-            "\n> Codex adaptation: `AGENTS.md` is the primary instruction file. "
-            "If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.\n"
-        )
-        adapted = adapted[: frontmatter_end + 5] + note + adapted[frontmatter_end + 5 :]
-
-    return adapted
-
-
 def install_codex_skills(
     target_dir: Path,
     *,
@@ -599,10 +590,8 @@ def install_codex_skills(
 ) -> BootstrapFileResult:
     """Install TRW bundled skills into `.agents/skills/` for Codex."""
     from ._init_project import _validate_skill
-    from ._utils import _DATA_DIR
-
     result = _new_result()
-    skills_source = _DATA_DIR / "skills"
+    skills_source = _codex_skills_source_dir()
     dest_root = target_dir / _CODEX_SKILLS_DIR
     dest_root.mkdir(parents=True, exist_ok=True)
 
@@ -622,11 +611,7 @@ def install_codex_skills(
             dest = dest_skill / skill_file.name
             try:
                 update_existing = dest.exists() and not force
-                if skill_file.name == "SKILL.md":
-                    content = _adapt_skill_content(skill_file.read_text(encoding="utf-8"))
-                    dest.write_text(content, encoding="utf-8")
-                else:
-                    shutil.copy2(skill_file, dest)
+                shutil.copy2(skill_file, dest)
                 rel_path = f"{_CODEX_SKILLS_DIR}/{skill_dir.name}/{skill_file.name}"
                 if update_existing:
                     result["updated"].append(rel_path)
