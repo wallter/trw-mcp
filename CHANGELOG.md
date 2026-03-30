@@ -2,6 +2,22 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.36.0] — 2026-03-30
+
+### Added — Codex Provider Support
+
+- **Codex bootstrap** — full `init-project` and `update-project` support for OpenAI Codex CLI. Generates `.codex/` config directory with `config.toml` (MCP server wiring), `instructions.md` (learning-injected instructions), and `.agents/skills/` (bundled skill tree). New `_codex.py` bootstrap module (638 lines) with Codex-specific typed dicts.
+- **CLI subcommands** — `trw-mcp init-project --codex` and `trw-mcp update-project --codex` for explicit Codex targeting. Auto-detected when `.codex/` directory exists.
+- **Codex client profile** — light-ceremony profile with 32K context budget, IMPLEMENT+DELIVER phases only, and Codex-specific write targets (`instructions.md`, `config.toml`).
+- **AGENTS.md Codex content** — `render_agents_trw_section()` produces Codex-compatible content free of Claude Code-specific language.
+
+### Fixed
+
+- **Codex skill path normalization** — Skill entries in `.codex/config.toml` now point to the containing directory (`.agents/skills/trw-deliver`) instead of the SKILL.md file. Existing configs with `/SKILL.md` suffixes are normalized on update.
+- **Codex bootstrap stability** — monorepo environment detection fixed to prevent `FileNotFoundError` when data directories resolve outside the installed package.
+
+---
+
 ## [0.35.2] — 2026-03-29
 
 ### Fixed
