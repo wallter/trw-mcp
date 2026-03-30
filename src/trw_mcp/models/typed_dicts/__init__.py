@@ -28,6 +28,7 @@ _trust         — TrustLevelResult, HumanReviewResult, TrustSessionIncrementRes
 _export        — ExportSummary, ExportMetadata, SyncIndexMdResult, etc.
 _dedup         — DedupHandleResult
 _bootstrap     — BootstrapFileResult (IDE config generation return shapes)
+_codex         — CodexConfigDict, CodexHooksConfig, CodexMcpServerEntry
 _opencode      — OpencodeServerEntry, OpencodeConfig, OpencodeTemplateDict
 _telemetry     — RemoteSharedLearningDict
 """
@@ -69,6 +70,20 @@ from trw_mcp.models.typed_dicts._audit import (
 # _bootstrap
 from trw_mcp.models.typed_dicts._bootstrap import (
     BootstrapFileResult,
+)
+
+# _codex
+from trw_mcp.models.typed_dicts._codex import (
+    CodexConfigDict,
+    CodexFeaturesConfig,
+    CodexHookCommand,
+    CodexHookMatcherEntry,
+    CodexHooksConfig,
+    CodexMcpServerEntry,
+    CodexMcpToolConfigEntry,
+    CodexSkillConfigEntry,
+    CodexSkillsConfig,
+    CodexToolApprovalMode,
 )
 
 # _build
@@ -267,6 +282,14 @@ __all__ = [
     "BatchDedupResult",
     "BatchSendResult",
     "BootstrapFileResult",
+    "CodexConfigDict",
+    "CodexFeaturesConfig",
+    "CodexHookCommand",
+    "CodexHookMatcherEntry",
+    "CodexHooksConfig",
+    "CodexMcpServerEntry",
+    "CodexSkillConfigEntry",
+    "CodexSkillsConfig",
     "CeremonyApproveResult",
     "CeremonyClassStatusDict",
     "CeremonyFeedbackEntry",

@@ -238,6 +238,79 @@ class TestArgParser:
             args = _build_arg_parser().parse_args([cmd])
             assert args.command == cmd
 
+    def test_init_project_accepts_codex_ide(self) -> None:
+        from trw_mcp.server._cli import _build_arg_parser
+
+        args = _build_arg_parser().parse_args(["init-project", ".", "--ide", "codex"])
+        assert args.command == "init-project"
+        assert args.ide == "codex"
+
+    def test_update_project_accepts_codex_ide(self) -> None:
+        from trw_mcp.server._cli import _build_arg_parser
+
+        args = _build_arg_parser().parse_args(["update-project", ".", "--ide", "codex"])
+        assert args.command == "update-project"
+        assert args.ide == "codex"
+
+
+@pytest.mark.unit
+class TestCliSubcommandOutput:
+    def test_update_project_plain_output_is_compact(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from trw_mcp.server._subcommands import _run_update_project
+
+        result = {
+            "updated": [".codex/config.toml", ".codex/hooks.json", "AGENTS.md"],
+            "created": [],
+            "preserved": [".mcp.json"],
+            "errors": [],
+            "warnings": ["Example warning"],
+            "cleaned": [],
+        }
+
+        args = type(
+            "Args",
+            (),
+            {
+                "target_dir": ".",
+                "pip_install": False,
+                "dry_run": False,
+                "ide": "codex",
+                "log_json": False,
+                "debug": False,
+                "verbose": 0,
+                "quiet": False,
+            },
+        )()
+
+        with (
+            patch("trw_mcp.bootstrap.update_project", return_value=result),
+            pytest.raises(SystemExit) as exc,
+        ):
+            _run_update_project(args)
+
+        assert exc.value.code == 0
+        captured = capsys.readouterr()
+        assert "TRW update complete" in captured.out
+        assert "Codex: managed config, hooks, agents, skills, and AGENTS.md synced" in captured.out
+        assert "Use -v for per-file changes or --log-json for structured output." in captured.out
+        assert "update_progress" not in captured.out
+
+    def test_main_configures_logging_before_subcommand_dispatch(self) -> None:
+        from trw_mcp.server._cli import main
+
+        with (
+            patch("sys.argv", ["trw-mcp", "update-project", "."]),
+            patch("trw_mcp.server._cli.configure_logging") as mock_configure_logging,
+            patch("trw_mcp.server._cli.SUBCOMMAND_HANDLERS", {"update-project": lambda args: None}),
+        ):
+            main()
+
+        assert mock_configure_logging.called
+        assert mock_configure_logging.call_args.kwargs["log_level"] == "WARNING"
+
 
 # ── Logging configuration ────────────────────────────────────────────
 

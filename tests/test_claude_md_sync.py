@@ -118,6 +118,18 @@ class TestInstructionsSync:
         assert agents_md.exists(), "AGENTS.md should be created when opencode.json is detected"
         assert result["agents_md_synced"] is True
 
+    def test_fr13_writes_agents_md_when_codex_dir_present(self, tmp_path: Path) -> None:
+        """With .codex/ directory, AGENTS.md is written on auto-detection."""
+        (tmp_path / ".codex").mkdir()
+
+        result = _run_sync(tmp_path, client="auto")
+
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists(), "AGENTS.md should be created when .codex/ is detected"
+        content = agents_md.read_text(encoding="utf-8")
+        assert "OpenAI developer docs MCP server" in content
+        assert result["agents_md_synced"] is True
+
     def test_fr13_writes_both_when_both_detected(self, tmp_path: Path) -> None:
         """With both .claude/ and .opencode/, both CLAUDE.md and AGENTS.md are written."""
         (tmp_path / ".claude").mkdir()
@@ -148,6 +160,22 @@ class TestInstructionsSync:
         claude_md = tmp_path / "CLAUDE.md"
         claude_content = claude_md.read_text(encoding="utf-8")
         assert TRW_MARKER_START not in claude_content, "CLAUDE.md should NOT be modified when client='opencode'"
+
+    def test_fr13_client_override_codex_only(self, tmp_path: Path) -> None:
+        """client='codex' writes Codex-specific AGENTS.md only, not CLAUDE.md."""
+        (tmp_path / "CLAUDE.md").write_text("# Existing\n", encoding="utf-8")
+
+        result = _run_sync(tmp_path, client="codex")
+
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists(), "AGENTS.md must be written with client='codex'"
+        content = agents_md.read_text(encoding="utf-8")
+        assert "OpenAI developer docs MCP server" in content
+        assert "Agent Teams" not in content
+        assert result["agents_md_synced"] is True
+
+        claude_content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert TRW_MARKER_START not in claude_content
 
     def test_fr13_client_override_claude_code_only(self, tmp_path: Path) -> None:
         """client='claude-code' writes only CLAUDE.md, not AGENTS.md."""

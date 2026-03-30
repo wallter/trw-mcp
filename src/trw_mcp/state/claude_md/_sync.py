@@ -360,6 +360,7 @@ def execute_claude_md_sync(
             )
             synced, path = _sync_agents_md_if_needed(
                 write_agents, config, project_root, trw_dir,
+                client=client,
                 recall_fn=recall_learnings,
             )
             early_return_dict["agents_md_synced"] = synced
@@ -461,6 +462,7 @@ def execute_claude_md_sync(
         config,
         project_root,
         trw_dir,
+        client=client,
         recall_fn=recall_learnings,
     )
 

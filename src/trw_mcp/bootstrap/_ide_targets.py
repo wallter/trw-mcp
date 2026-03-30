@@ -90,6 +90,67 @@ def _update_opencode_artifacts(
         result["warnings"].append(f"AGENTS.md update skipped: {exc}")
 
 
+def _update_codex_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    ide_override: str | None = None,
+) -> None:
+    """Update Codex artifacts when Codex is detected."""
+    from ._codex import (
+        generate_codex_agents,
+        generate_codex_config,
+        generate_codex_hooks,
+        install_codex_skills,
+    )
+    from ._opencode import generate_agents_md
+
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    if "codex" not in ide_targets:
+        return
+
+    try:
+        codex_result = generate_codex_config(target_dir)
+        result["created"].extend(codex_result.get("created", []))
+        result["updated"].extend(codex_result.get("updated", []))
+        result["errors"].extend(codex_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, codex update is best-effort
+        result["warnings"].append(f".codex/config.toml update skipped: {exc}")
+
+    try:
+        hooks_result = generate_codex_hooks(target_dir)
+        result["created"].extend(hooks_result.get("created", []))
+        result["updated"].extend(hooks_result.get("updated", []))
+        result["errors"].extend(hooks_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, codex update is best-effort
+        result["warnings"].append(f".codex/hooks.json update skipped: {exc}")
+
+    try:
+        agents_result = generate_codex_agents(target_dir)
+        result["created"].extend(agents_result.get("created", []))
+        result["updated"].extend(agents_result.get("updated", []))
+        result["errors"].extend(agents_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, codex update is best-effort
+        result["warnings"].append(f".codex/agents update skipped: {exc}")
+
+    try:
+        skills_result = install_codex_skills(target_dir)
+        result["created"].extend(skills_result.get("created", []))
+        result["updated"].extend(skills_result.get("updated", []))
+        result["errors"].extend(skills_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, codex update is best-effort
+        result["warnings"].append(f".agents/skills update skipped: {exc}")
+
+    try:
+        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
+
+        agents_md_result = generate_agents_md(target_dir, render_codex_trw_section())
+        result["created"].extend(agents_md_result.get("created", []))
+        result["updated"].extend(agents_md_result.get("updated", []))
+        result["errors"].extend(agents_md_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, AGENTS update is best-effort
+        result["warnings"].append(f"Codex AGENTS.md update skipped: {exc}")
+
+
 def _extract_trw_section_content() -> str:
     """Extract the content between trw:start and trw:end from _minimal_claude_md."""
     full = _minimal_claude_md()

@@ -231,6 +231,12 @@ def init_project(
     Returns:
         Dict with ``created``, ``skipped``, ``errors`` lists.
     """
+    from ._codex import (
+        generate_codex_agents,
+        generate_codex_config,
+        generate_codex_hooks,
+        install_codex_skills,
+    )
     from ._opencode import generate_agents_md, generate_opencode_config
     from ._update_project import _extract_trw_section_content, _write_manifest
 
@@ -248,14 +254,15 @@ def init_project(
         )
         return result
 
+    # Resolve IDE targets before creating any provider-specific directories.
+    # Otherwise new scaffold directories can pollute auto-detection.
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
+
     # 1. Create directory structure
     _create_directory_structure(target_dir, result, on_progress)
 
     # 2. Copy bundled data files
     _copy_bundled_data_files(target_dir, force, result, on_progress)
-
-    # Resolve IDE targets early — needed for both config and artifact generation.
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
 
     # 3. Write generated config and seed files (includes target_platforms)
     _write_initial_config(
@@ -325,6 +332,35 @@ def init_project(
         cursor_mcp = generate_cursor_mcp_config(target_dir, force=force)
         result["created"].extend(cursor_mcp.get("created", []))
         result["skipped"].extend(cursor_mcp.get("preserved", []))
+
+    # 7d. Codex artifacts
+    if "codex" in ide_targets:
+        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
+
+        codex_config = generate_codex_config(target_dir, force=force)
+        result["created"].extend(codex_config.get("created", []))
+        result["skipped"].extend(codex_config.get("preserved", []))
+        result["errors"].extend(codex_config.get("errors", []))
+
+        codex_hooks = generate_codex_hooks(target_dir, force=force)
+        result["created"].extend(codex_hooks.get("created", []))
+        result["skipped"].extend(codex_hooks.get("preserved", []))
+        result["errors"].extend(codex_hooks.get("errors", []))
+
+        codex_agents = generate_codex_agents(target_dir, force=force)
+        result["created"].extend(codex_agents.get("created", []))
+        result["skipped"].extend(codex_agents.get("preserved", []))
+        result["errors"].extend(codex_agents.get("errors", []))
+
+        codex_skills = install_codex_skills(target_dir, force=force)
+        result["created"].extend(codex_skills.get("created", []))
+        result["skipped"].extend(codex_skills.get("preserved", []))
+        result["errors"].extend(codex_skills.get("errors", []))
+
+        codex_agents_md = generate_agents_md(target_dir, render_codex_trw_section(), force=force)
+        result["created"].extend(codex_agents_md.get("created", []))
+        result["skipped"].extend(codex_agents_md.get("preserved", []))
+        result["errors"].extend(codex_agents_md.get("errors", []))
 
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)

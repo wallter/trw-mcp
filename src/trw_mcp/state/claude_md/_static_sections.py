@@ -394,6 +394,43 @@ def render_agents_trw_section() -> str:
     )
 
 
+def render_codex_trw_section() -> str:
+    """Render a Codex-specific TRW section for AGENTS.md."""
+    return (
+        "TRW (The Real Work) persists patterns, gotchas, and project knowledge across sessions via MCP.\n"
+        "\n"
+        "## Start Here\n"
+        "\n"
+        "- Call `trw_session_start()` first to load prior learnings and recover any active run\n"
+        "- Read `.trw/frameworks/FRAMEWORK.md` early for the current project methodology\n"
+        "- Use Codex subagents for bounded research, implementation, and review work\n"
+        "\n"
+        "## Core TRW Tools\n"
+        "\n"
+        "- `trw_session_start()` — load prior learnings and current run context\n"
+        "- `trw_checkpoint(message)` — save milestone progress before context or direction shifts\n"
+        "- `trw_learn(summary, detail)` — record durable discoveries for future sessions\n"
+        "- `trw_recall(query)` — pull relevant project knowledge for the task at hand\n"
+        "- `trw_build_check()` — run the project's build, lint, type-check, and test gates\n"
+        "- `trw_deliver()` — persist work and sync instructions when the task is complete\n"
+        "\n"
+        "## Codex Workflow\n"
+        "\n"
+        "1. Start with `trw_session_start()`\n"
+        "2. Delegate bounded work to Codex subagents when it improves focus\n"
+        "3. Run tests and review the diff before completion\n"
+        "4. Call `trw_learn()` for reusable gotchas or patterns\n"
+        "5. Finish with `trw_deliver()` so future sessions inherit the result\n"
+        "\n"
+        "## OpenAI Docs\n"
+        "\n"
+        "If the task depends on current OpenAI or Codex behavior, use the OpenAI developer docs MCP server before relying on memory.\n"
+        "\n"
+        "## Session Boundaries\n"
+        "\n" + _SESSION_BOUNDARY_TEXT
+    )
+
+
 def render_agent_teams_protocol() -> str:
     """Render Agent Teams protocol section for CLAUDE.md auto-generation.
 
