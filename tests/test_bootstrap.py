@@ -2033,6 +2033,8 @@ class TestCodexBootstrap:
         assert config["mcp_servers"]["trw"]["tools"]["trw_session_start"]["approval_mode"] == "approve"
         assert config["mcp_servers"]["trw"]["tools"]["trw_build_check"]["approval_mode"] == "approve"
         assert config["mcp_servers"]["trw"]["tools"]["trw_checkpoint"]["approval_mode"] == "approve"
+        assert all(not entry["path"].endswith("/SKILL.md") for entry in config["skills"]["config"])
+        assert any(entry["path"] == ".agents/skills/trw-deliver" for entry in config["skills"]["config"])
 
     def test_codex_hooks_json_created(self, tmp_path: Path) -> None:
         result = generate_codex_hooks(tmp_path)
@@ -2093,8 +2095,12 @@ class TestCodexBootstrap:
         skill_path = tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md"
         assert skill_path.exists()
         content = skill_path.read_text(encoding="utf-8")
-        assert "Codex adaptation" in content
+        assert "Codex-specific skill" in content
         assert "AGENTS.md" in content
+        assert "allowed-tools:" not in content
+        assert "disable-model-invocation:" not in content
+        assert "user-invocable:" not in content
+        assert "model: claude-" not in content
 
     def test_codex_merge_preserves_user_settings(self) -> None:
         merged = merge_codex_config(
@@ -2138,6 +2144,11 @@ approval_mode = "prompt"
 
 [mcp_servers.trw.tools.custom_helper]
 approval_mode = "prompt"
+
+[skills]
+config = [
+  { path = ".agents/skills/trw-deliver/SKILL.md", enabled = true },
+]
 """.strip()
             + "\n",
             encoding="utf-8",
@@ -2156,6 +2167,9 @@ approval_mode = "prompt"
         assert config["mcp_servers"]["trw"]["tools"]["custom_helper"]["approval_mode"] == "prompt"
         assert "README.md" in config["project_doc_fallback_filenames"]
         assert "CLAUDE.md" in config["project_doc_fallback_filenames"]
+        skill_paths = [entry["path"] for entry in config["skills"]["config"]]
+        assert ".agents/skills/trw-deliver" in skill_paths
+        assert ".agents/skills/trw-deliver/SKILL.md" not in skill_paths
 
     def test_codex_config_reinstall_is_idempotent(self, tmp_path: Path) -> None:
         first = generate_codex_config(tmp_path)

@@ -26,7 +26,7 @@ class CodexMcpServerEntry(TypedDict, total=False):
 
 
 class CodexSkillConfigEntry(TypedDict, total=False):
-    """Single Codex skill config entry."""
+    """Single Codex skill config entry pointing at a skill directory."""
 
     path: str
     enabled: bool

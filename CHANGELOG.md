@@ -2,6 +2,14 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.35.2] — 2026-03-29
+
+### Fixed
+
+- **Codex skill path normalization** — Skill entries in `.codex/config.toml` now point to the containing directory (`.agents/skills/trw-deliver`) instead of the SKILL.md file (`.agents/skills/trw-deliver/SKILL.md`). Existing configs with `/SKILL.md` suffixes are normalized on update. Fixes Codex skill resolution which expects directory paths.
+
+---
+
 ## [0.35.1] — 2026-03-29
 
 ### Fixed — Framework Excellence Sprint (Sprint 77)
