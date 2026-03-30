@@ -912,6 +912,8 @@ def _detect_installed_clis() -> list[str]:
         detected.append("claude-code")
     if shutil.which("opencode"):
         detected.append("opencode")
+    if shutil.which("codex"):
+        detected.append("codex")
     return detected
 
 
@@ -925,13 +927,17 @@ def _detect_project_ides(project_dir: str) -> list[str]:
         _os.path.join(project_dir, "opencode.json")
     ):
         detected.append("opencode")
+    if _os.path.isdir(_os.path.join(project_dir, ".codex")) or _os.path.isfile(
+        _os.path.join(project_dir, ".codex", "config.toml")
+    ):
+        detected.append("codex")
     return detected
 
 
 def _prompt_ide_selection(detected_clis: list[str], detected_ides: list[str]) -> str | None:
     """Prompt user to select which IDE(s) to configure.
 
-    Returns: "claude-code", "opencode", "all", or None (skip).
+    Returns: "claude-code", "opencode", "codex", "all", or None (skip).
     """
     # Show what was detected
     if detected_clis:
@@ -943,16 +949,20 @@ def _prompt_ide_selection(detected_clis: list[str], detected_ides: list[str]) ->
     options: list[tuple[str, str, str | None]] = []
     has_claude = "claude-code" in detected_clis or "claude-code" in detected_ides
     has_opencode = "opencode" in detected_clis or "opencode" in detected_ides
+    has_codex = "codex" in detected_clis or "codex" in detected_ides
 
     if has_claude:
         options.append(("1", "Claude Code only", "claude-code"))
     if has_opencode:
         key = "2" if has_claude else "1"
         options.append((key, "OpenCode only", "opencode"))
+    if has_codex:
+        key = str(len(options) + 1)
+        options.append((key, "Codex only", "codex"))
 
-    # Always offer "both" and "skip"
+    # Always offer "all detected/current" and "skip"
     both_key = str(len(options) + 1)
-    options.append((both_key, "Both Claude Code and OpenCode", "all"))
+    options.append((both_key, "All supported IDEs", "all"))
     skip_key = "s"
     options.append((skip_key, "Skip (configure later)", None))
 
@@ -1489,7 +1499,7 @@ def main() -> None:
     parser.add_argument("--skip-auth", action="store_true", help="Skip device auth flow during install")
     parser.add_argument(
         "--ide",
-        choices=["claude-code", "opencode", "all"],
+        choices=["claude-code", "opencode", "codex", "all"],
         default=None,
         help="Target IDE to configure (prompted if not specified in interactive mode)",
     )

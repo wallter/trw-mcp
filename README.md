@@ -26,7 +26,7 @@ The server also manages structured run tracking (phases, checkpoints, events), b
 
 ## Quick Start
 
-See the [full quickstart guide](https://trwframework.com/docs/quickstart) for Claude Code, Cursor, and opencode setup.
+See the [full quickstart guide](https://trwframework.com/docs/quickstart) for Claude Code, Cursor, opencode, and Codex setup.
 
 ```bash
 # Install from PyPI
@@ -52,6 +52,7 @@ claude mcp add trw -- trw-mcp --debug
 ```bash
 trw-mcp init-project .              # current directory
 trw-mcp init-project /path/to/repo  # specific project
+trw-mcp init-project . --ide codex  # force Codex bootstrap
 trw-mcp init-project . --force      # overwrite existing files
 ```
 

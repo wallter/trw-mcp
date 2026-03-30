@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +17,13 @@ from trw_mcp.bootstrap import (
     init_project,
     resolve_ide_targets,
     update_project,
+)
+from trw_mcp.bootstrap._codex import (
+    generate_codex_agents,
+    generate_codex_config,
+    generate_codex_hooks,
+    install_codex_skills,
+    merge_codex_config,
 )
 from trw_mcp.bootstrap._utils import _result_action_key, _write_version_yaml
 from trw_mcp.models.config import TRWConfig
@@ -1793,6 +1801,17 @@ class TestIDEDetection:
         result = detect_ide(tmp_path)
         assert result == ["opencode"]
 
+    def test_fr08_detect_codex_dir(self, tmp_path: Path) -> None:
+        (tmp_path / ".codex").mkdir()
+        result = detect_ide(tmp_path)
+        assert result == ["codex"]
+
+    def test_fr08_detect_codex_config(self, tmp_path: Path) -> None:
+        (tmp_path / ".codex").mkdir()
+        (tmp_path / ".codex" / "config.toml").write_text("", encoding="utf-8")
+        result = detect_ide(tmp_path)
+        assert result == ["codex"]
+
     def test_fr08_detect_multiple(self, tmp_path: Path) -> None:
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".opencode").mkdir()
@@ -1813,6 +1832,7 @@ class TestIDEDetection:
         assert "claude-code" in result
         assert "opencode" in result
         assert "cursor" in result
+        assert "codex" in result
 
     def test_fr08_resolve_default_claude(self, tmp_path: Path) -> None:
         # No IDE detected → default to claude-code
@@ -1824,20 +1844,26 @@ class TestIDEDetection:
         result = resolve_ide_targets(tmp_path)
         assert result == ["opencode"]
 
+    def test_fr08_resolve_auto_detect_codex(self, tmp_path: Path) -> None:
+        (tmp_path / ".codex").mkdir()
+        result = resolve_ide_targets(tmp_path)
+        assert result == ["codex"]
+
     def test_fr08_detect_installed_clis_returns_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """detect_installed_clis returns only CLIs found on PATH."""
         import shutil as _shutil
 
-        originals: dict[str, object] = {}
-
         def fake_which(cmd: str) -> str | None:
-            return "/usr/bin/claude" if cmd == "claude" else None
+            return {
+                "claude": "/usr/bin/claude",
+                "codex": "/usr/bin/codex",
+            }.get(cmd)
 
         monkeypatch.setattr(_shutil, "which", fake_which)
         # Also patch the shutil reference inside the bootstrap module
         monkeypatch.setattr("trw_mcp.bootstrap._utils.shutil.which", fake_which)
         result = detect_installed_clis()
-        assert result == ["claude-code"]
+        assert result == ["claude-code", "codex"]
 
     def test_fr08_detect_installed_clis_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """detect_installed_clis returns empty list when no CLIs found."""
@@ -1994,6 +2020,163 @@ class TestOpenCodeJsonMerge:
         assert "trw" in config["mcp"]
 
 
+class TestCodexBootstrap:
+    """Codex bootstrap configuration and smart-merge behavior."""
+
+    def test_codex_config_created(self, tmp_path: Path) -> None:
+        result = generate_codex_config(tmp_path)
+        assert ".codex/config.toml" in result["created"]
+        config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        assert config["features"]["codex_hooks"] is True
+        assert config["mcp_servers"]["trw"]["enabled"] is True
+        assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
+        assert config["mcp_servers"]["trw"]["tools"]["trw_session_start"]["approval_mode"] == "approve"
+        assert config["mcp_servers"]["trw"]["tools"]["trw_build_check"]["approval_mode"] == "approve"
+        assert config["mcp_servers"]["trw"]["tools"]["trw_checkpoint"]["approval_mode"] == "approve"
+
+    def test_codex_hooks_json_created(self, tmp_path: Path) -> None:
+        result = generate_codex_hooks(tmp_path)
+        assert ".codex/hooks.json" in result["created"]
+        hooks = json.loads((tmp_path / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        assert "UserPromptSubmit" in hooks["hooks"]
+        assert "PreToolUse" in hooks["hooks"]
+        assert "PostToolUse" in hooks["hooks"]
+        assert "Stop" in hooks["hooks"]
+
+    def test_codex_hooks_merge_preserves_user_handlers(self, tmp_path: Path) -> None:
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "hooks.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "UserPromptSubmit": [
+                            {
+                                "description": "user custom",
+                                "hooks": [{"type": "command", "command": "echo custom"}],
+                            }
+                        ],
+                        "Notification": [
+                            {
+                                "description": "notify",
+                                "hooks": [{"type": "command", "command": "echo notify"}],
+                            }
+                        ],
+                    }
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = generate_codex_hooks(tmp_path)
+        assert ".codex/hooks.json" in result["updated"]
+        hooks = json.loads((codex_dir / "hooks.json").read_text(encoding="utf-8"))
+        assert hooks["hooks"]["Notification"][0]["description"] == "notify"
+        assert hooks["hooks"]["UserPromptSubmit"][0]["description"] == "user custom"
+        assert any(
+            entry.get("description", "").startswith("TRW managed:")
+            for entry in hooks["hooks"]["UserPromptSubmit"]
+        )
+
+    def test_codex_agents_created(self, tmp_path: Path) -> None:
+        result = generate_codex_agents(tmp_path)
+        assert ".codex/agents/trw-explorer.toml" in result["created"]
+        assert ".codex/agents/trw-implementer.toml" in result["created"]
+        explorer = (tmp_path / ".codex" / "agents" / "trw-explorer.toml").read_text(encoding="utf-8")
+        assert 'model = "gpt-5.4-mini"' in explorer
+
+    def test_codex_skills_installed(self, tmp_path: Path) -> None:
+        result = install_codex_skills(tmp_path)
+        assert any(path.endswith("/SKILL.md") for path in result["created"])
+        skill_path = tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md"
+        assert skill_path.exists()
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Codex adaptation" in content
+        assert "AGENTS.md" in content
+
+    def test_codex_merge_preserves_user_settings(self) -> None:
+        merged = merge_codex_config(
+            {
+                "model": "gpt-5.4-mini",
+                "model_reasoning_effort": "high",
+                "sandbox_mode": "read-only",
+                "approval_policy": "never",
+                "features": {"some_feature": False},
+                "mcp_servers": {"custom": {"command": "custom-mcp", "enabled": False}},
+            }
+        )
+        assert merged["model"] == "gpt-5.4-mini"
+        assert merged["model_reasoning_effort"] == "high"
+        assert merged["sandbox_mode"] == "read-only"
+        assert merged["approval_policy"] == "never"
+        assert merged["features"]["codex_hooks"] is True
+        assert merged["features"]["some_feature"] is False
+        assert "custom" in merged["mcp_servers"]
+        assert merged["mcp_servers"]["custom"]["enabled"] is False
+        assert merged["mcp_servers"]["trw"]["enabled"] is True
+        assert merged["mcp_servers"]["trw"]["tools"]["trw_session_start"]["approval_mode"] == "approve"
+
+    def test_codex_config_smart_merge_existing_file(self, tmp_path: Path) -> None:
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            """
+model = "gpt-5.4-mini"
+project_doc_fallback_filenames = ["README.md"]
+
+[features]
+legacy_toggle = false
+
+[mcp_servers.custom]
+command = "custom-server"
+enabled = false
+
+[mcp_servers.trw.tools.trw_old_tool]
+approval_mode = "prompt"
+
+[mcp_servers.trw.tools.custom_helper]
+approval_mode = "prompt"
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = generate_codex_config(tmp_path)
+        assert ".codex/config.toml" in result["updated"]
+        config = tomllib.loads((codex_dir / "config.toml").read_text(encoding="utf-8"))
+        assert config["model"] == "gpt-5.4-mini"
+        assert config["features"]["legacy_toggle"] is False
+        assert config["features"]["codex_hooks"] is True
+        assert config["mcp_servers"]["custom"]["enabled"] is False
+        assert config["mcp_servers"]["trw"]["enabled"] is True
+        assert config["mcp_servers"]["trw"]["tools"]["trw_session_start"]["approval_mode"] == "approve"
+        assert "trw_old_tool" not in config["mcp_servers"]["trw"]["tools"]
+        assert config["mcp_servers"]["trw"]["tools"]["custom_helper"]["approval_mode"] == "prompt"
+        assert "README.md" in config["project_doc_fallback_filenames"]
+        assert "CLAUDE.md" in config["project_doc_fallback_filenames"]
+
+    def test_codex_config_reinstall_is_idempotent(self, tmp_path: Path) -> None:
+        first = generate_codex_config(tmp_path)
+        assert ".codex/config.toml" in first["created"]
+
+        second = generate_codex_config(tmp_path)
+        assert ".codex/config.toml" in second["updated"]
+
+        config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        fallback_files = config["project_doc_fallback_filenames"]
+        assert fallback_files.count("AGENTS.md") == 1
+        assert fallback_files.count("CLAUDE.md") == 1
+
+        trw_tools = config["mcp_servers"]["trw"]["tools"]
+        assert trw_tools["trw_session_start"]["approval_mode"] == "approve"
+        assert list(trw_tools).count("trw_session_start") == 1
+
+        skill_paths = [entry["path"] for entry in config["skills"]["config"]]
+        assert len(skill_paths) == len(set(skill_paths))
+
+
 # ── FR15: Update-Project Multi-IDE Support ───────────────────────────────
 
 
@@ -2057,6 +2240,35 @@ class TestUpdateProjectMultiIDE:
         assert config.get("model") == "custom-model"
         # TRW entry injected
         assert "trw" in config["mcp"]
+
+    def test_fr15_update_detects_codex_by_dir(self, tmp_path: Path) -> None:
+        """With .codex/ present, update generates Codex artifacts."""
+        from unittest.mock import patch
+
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
+        (tmp_path / ".codex").mkdir()
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            update_project(tmp_path)
+
+        config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        assert config["features"]["codex_hooks"] is True
+        assert config["mcp_servers"]["trw"]["enabled"] is True
+        assert (tmp_path / ".codex" / "hooks.json").exists()
+        assert (tmp_path / ".codex" / "agents" / "trw-reviewer.toml").exists()
+        assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
+        assert (tmp_path / "AGENTS.md").exists()
 
     def test_fr15_update_no_opencode_skips(self, tmp_path: Path) -> None:
         """Without opencode indicators, update does not create opencode.json."""
@@ -2124,7 +2336,7 @@ class TestUpdateProjectMultiIDE:
         assert "<!-- trw:end -->" in agents_content
 
     def test_fr15_init_creates_both_ide_all(self, tmp_path: Path) -> None:
-        """init_project(ide='all') creates both Claude Code and opencode artifacts."""
+        """init_project(ide='all') creates Claude, OpenCode, and Codex artifacts."""
         (tmp_path / ".git").mkdir()
 
         result = init_project(tmp_path, ide="all")
@@ -2135,6 +2347,11 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / "CLAUDE.md").exists()
         # OpenCode artifacts
         assert (tmp_path / "opencode.json").exists()
+        # Codex artifacts
+        assert (tmp_path / ".codex" / "config.toml").exists()
+        assert (tmp_path / ".codex" / "hooks.json").exists()
+        assert (tmp_path / ".codex" / "agents" / "trw-implementer.toml").exists()
+        assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         assert (tmp_path / "AGENTS.md").exists()
 
     def test_fr15_init_default_no_opencode_artifacts(self, tmp_path: Path) -> None:
@@ -2159,6 +2376,24 @@ class TestUpdateProjectMultiIDE:
         agents_content = (tmp_path / "AGENTS.md").read_text()
         # The TRW section should contain tool names
         assert "trw_session_start" in agents_content or "TRW" in agents_content
+
+    def test_fr15_init_with_ide_codex(self, tmp_path: Path) -> None:
+        """init_project(ide='codex') creates Codex config, hooks, agents, skills, and AGENTS.md."""
+        (tmp_path / ".git").mkdir()
+
+        result = init_project(tmp_path, ide="codex")
+
+        assert not result["errors"], result["errors"]
+        config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        assert config["features"]["codex_hooks"] is True
+        assert config["mcp_servers"]["trw"]["enabled"] is True
+        assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
+        assert (tmp_path / ".codex" / "hooks.json").exists()
+        assert (tmp_path / ".codex" / "agents" / "trw-docs-researcher.toml").exists()
+        assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
+        agents_content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert "OpenAI developer docs MCP server" in agents_content
+        assert "trw_deliver" in agents_content
 
     def test_fr15_update_opencode_also_creates_agents_md(self, tmp_path: Path) -> None:
         """update_project with opencode detected also creates/updates AGENTS.md."""

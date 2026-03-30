@@ -111,6 +111,9 @@ from ._template_updater import (
     _update_claude_md_trw_section as _update_claude_md_trw_section,
 )
 from ._template_updater import (
+    _update_codex_artifacts as _update_codex_artifacts,
+)
+from ._template_updater import (
     _update_config_target_platforms as _update_config_target_platforms,
 )
 from ._template_updater import _update_cursor_artifacts as _update_cursor_artifacts
@@ -231,10 +234,6 @@ def _run_post_update_phases(
     _update_config_target_platforms(target_dir, ide_targets, result)
 
     if on_progress:
-        on_progress("Phase", "Verifying installation...")
-    _verify_installation(target_dir, result)
-
-    if on_progress:
         on_progress("Phase", "Syncing CLAUDE.md...")
     _run_claude_md_sync(target_dir, result)
 
@@ -246,6 +245,11 @@ def _run_post_update_phases(
         on_progress("Phase", "Updating IDE configs...")
     _update_opencode_artifacts(target_dir, result, ide_override=ide)
     _update_cursor_artifacts(target_dir, result, ide_override=ide)
+    _update_codex_artifacts(target_dir, result, ide_override=ide)
+
+    if on_progress:
+        on_progress("Phase", "Verifying installation...")
+    _verify_installation(target_dir, result)
 
 
 def update_project(

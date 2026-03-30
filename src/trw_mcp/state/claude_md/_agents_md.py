@@ -54,7 +54,7 @@ def _determine_write_targets(
         ides = detect_ide(project_root)
         # cursor-only projects still benefit from CLAUDE.md content
         write_claude = "claude-code" in ides or not ides or (ides == ["cursor"])
-        write_agents = "opencode" in ides and config.agents_md_enabled and scope == "root"
+        write_agents = any(ide in ides for ide in ("opencode", "codex")) and config.agents_md_enabled and scope == "root"
     elif client == "all":
         write_claude = True
         write_agents = config.agents_md_enabled and scope == "root"
@@ -106,6 +106,7 @@ def _sync_agents_md_if_needed(
     config: TRWConfig,
     project_root: Path,
     trw_dir: Path,
+    client: str = "auto",
     recall_fn: RecallFn | None = None,
 ) -> tuple[bool, str | None]:
     """Generate and write AGENTS.md if needed.
@@ -124,12 +125,22 @@ def _sync_agents_md_if_needed(
 
     from trw_mcp.state.claude_md._static_sections import (
         render_agents_trw_section,
+        render_codex_trw_section,
         render_minimal_protocol,
     )
+    from trw_mcp.bootstrap._utils import detect_ide
 
     agents_target = project_root / "AGENTS.md"
+    effective_client = client
+    if client == "auto":
+        detected_ides = detect_ide(project_root)
+        if "codex" in detected_ides and "opencode" not in detected_ides:
+            effective_client = "codex"
+
     if config.effective_ceremony_mode == "light":
         agents_body = render_minimal_protocol()
+    elif effective_client == "codex":
+        agents_body = render_codex_trw_section()
     else:
         agents_body = render_agents_trw_section()
 

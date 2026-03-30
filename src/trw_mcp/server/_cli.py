@@ -158,7 +158,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument(
         "--ide",
-        choices=["claude-code", "cursor", "opencode", "all"],
+        choices=["claude-code", "cursor", "opencode", "codex", "all"],
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )
@@ -191,7 +191,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     update_parser.add_argument(
         "--ide",
-        choices=["claude-code", "cursor", "opencode", "all"],
+        choices=["claude-code", "cursor", "opencode", "codex", "all"],
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )
@@ -400,6 +400,36 @@ def main() -> None:
 
     parser = _build_arg_parser()
     args = parser.parse_args()
+
+    # Resolve shared CLI logging state before dispatching subcommands so they
+    # don't inherit the noisy fallback stdlib logger.
+    debug = bool(getattr(args, "debug", False))
+    verbosity = int(getattr(args, "verbose", 0))
+    if getattr(args, "quiet", False):
+        verbosity = -1
+    elif debug and verbosity == 0:
+        verbosity = 1
+
+    is_subcommand = bool(args.command and args.command != "serve")
+    plain_subcommand_output = is_subcommand and not (debug or verbosity > 0 or getattr(args, "log_json", False))
+    effective_log_level = getattr(args, "log_level", None)
+    if plain_subcommand_output and effective_log_level is None:
+        effective_log_level = "WARNING"
+
+    subcommand_log_dir: Path | None = None
+    if debug or verbosity >= 2:
+        trw_dir = getattr(TRWConfig(), "trw_dir", ".trw")
+        logs_dir = getattr(TRWConfig(), "logs_dir", "logs")
+        subcommand_log_dir = Path.cwd() / trw_dir / logs_dir
+
+    configure_logging(
+        debug=debug,
+        verbosity=verbosity,
+        log_level=effective_log_level,
+        json_output=args.log_json or None,
+        log_dir=subcommand_log_dir,
+        package_name="trw-mcp",
+    )
 
     # Dispatch subcommands
     cmd = str(args.command or "")

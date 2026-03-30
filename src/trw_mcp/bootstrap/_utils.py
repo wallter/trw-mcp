@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -259,6 +260,19 @@ def _verify_installation(
     else:
         result["warnings"].append(".mcp.json not found")
 
+    codex_config = target_dir / ".codex" / "config.toml"
+    if codex_config.exists():
+        try:
+            data = tomllib.loads(codex_config.read_text(encoding="utf-8"))
+            mcp_servers = data.get("mcp_servers", {})
+            if not isinstance(mcp_servers, dict) or "trw" not in mcp_servers:
+                result["warnings"].append(".codex/config.toml missing TRW MCP entry")
+            features = data.get("features", {})
+            if not isinstance(features, dict) or features.get("codex_hooks") is not True:
+                result["warnings"].append(".codex/config.toml does not enable codex_hooks")
+        except (tomllib.TOMLDecodeError, OSError):
+            result["warnings"].append(".codex/config.toml is not valid TOML")
+
     # Check CLAUDE.md has TRW markers
     from trw_mcp.bootstrap._update_project import _TRW_END_MARKER, _TRW_START_MARKER
 
@@ -305,7 +319,7 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 def detect_ide(target_dir: Path) -> list[str]:
     """Detect which AI coding CLIs have configuration in the target directory.
 
-    Returns a list of IDE identifiers: "claude-code", "cursor", "opencode".
+    Returns a list of IDE identifiers: "claude-code", "cursor", "opencode", "codex".
     Detection is based on directory/file existence, not process detection.
     """
     detected: list[str] = []
@@ -315,6 +329,8 @@ def detect_ide(target_dir: Path) -> list[str]:
         detected.append("cursor")
     if (target_dir / ".opencode").is_dir() or (target_dir / "opencode.json").is_file():
         detected.append("opencode")
+    if (target_dir / ".codex").is_dir() or (target_dir / ".codex" / "config.toml").is_file():
+        detected.append("codex")
     return detected
 
 
@@ -330,6 +346,8 @@ def detect_installed_clis() -> list[str]:
         detected.append("cursor")
     if shutil.which("opencode"):
         detected.append("opencode")
+    if shutil.which("codex"):
+        detected.append("codex")
     return detected
 
 
@@ -341,14 +359,14 @@ def resolve_ide_targets(
 
     Args:
         target_dir: Project directory to check for existing IDE configs.
-        ide_override: Explicit IDE selection ("claude-code", "cursor", "opencode", "all").
+        ide_override: Explicit IDE selection ("claude-code", "cursor", "opencode", "codex", "all").
             If provided, overrides auto-detection.
 
     Returns:
         List of IDE identifiers to configure.
     """
     if ide_override == "all":
-        return ["claude-code", "cursor", "opencode"]
+        return ["claude-code", "cursor", "opencode", "codex"]
     if ide_override:
         return [ide_override]
     detected = detect_ide(target_dir)

@@ -70,12 +70,19 @@ class TestInitTargetPlatforms:
         platforms = _read_target_platforms(fake_git_repo)
         assert platforms == ["opencode"]
 
+    def test_init_codex_override(self, fake_git_repo: Path) -> None:
+        """init_project(dir, ide='codex') writes target_platforms: ['codex']."""
+        result = init_project(fake_git_repo, ide="codex")
+        assert not result["errors"]
+        platforms = _read_target_platforms(fake_git_repo)
+        assert platforms == ["codex"]
+
     def test_init_all_override(self, fake_git_repo: Path) -> None:
-        """init_project(dir, ide='all') writes all three platforms."""
+        """init_project(dir, ide='all') writes all supported platforms."""
         result = init_project(fake_git_repo, ide="all")
         assert not result["errors"]
         platforms = _read_target_platforms(fake_git_repo)
-        assert sorted(platforms) == sorted(["claude-code", "cursor", "opencode"])
+        assert sorted(platforms) == sorted(["claude-code", "cursor", "opencode", "codex"])
 
     def test_init_detects_opencode_dir(self, fake_git_repo: Path) -> None:
         """When .opencode/ exists, auto-detection includes 'opencode'."""
@@ -84,6 +91,14 @@ class TestInitTargetPlatforms:
         assert not result["errors"]
         platforms = _read_target_platforms(fake_git_repo)
         assert "opencode" in platforms
+
+    def test_init_detects_codex_dir(self, fake_git_repo: Path) -> None:
+        """When .codex/ exists, auto-detection includes 'codex'."""
+        (fake_git_repo / ".codex").mkdir()
+        result = init_project(fake_git_repo)
+        assert not result["errors"]
+        platforms = _read_target_platforms(fake_git_repo)
+        assert "codex" in platforms
 
     def test_init_detects_both_claude_and_opencode(self, fake_git_repo: Path) -> None:
         """When both .claude/ and .opencode/ exist, both platforms are written."""
@@ -157,6 +172,14 @@ class TestUpdateTargetPlatforms:
         platforms = _read_target_platforms(initialized_repo)
         assert platforms == ["opencode"]
 
+    def test_update_respects_codex_override(self, initialized_repo: Path) -> None:
+        """update_project(dir, ide='codex') updates target_platforms to ['codex']."""
+        result = update_project(initialized_repo, ide="codex")
+        assert not result["errors"]
+
+        platforms = _read_target_platforms(initialized_repo)
+        assert platforms == ["codex"]
+
     def test_update_fail_open_on_corrupt_config(self, initialized_repo: Path) -> None:
         """Corrupt config.yaml doesn't crash update; error goes to result['warnings']."""
         # Write invalid YAML to config
@@ -177,12 +200,12 @@ class TestUpdateTargetPlatforms:
             assert result is not None  # didn't raise
 
     def test_update_ide_all_writes_all_platforms(self, initialized_repo: Path) -> None:
-        """update_project(dir, ide='all') updates target_platforms to all three."""
+        """update_project(dir, ide='all') updates target_platforms to all supported platforms."""
         result = update_project(initialized_repo, ide="all")
         assert not result["errors"]
 
         platforms = _read_target_platforms(initialized_repo)
-        assert sorted(platforms) == sorted(["claude-code", "cursor", "opencode"])
+        assert sorted(platforms) == sorted(["claude-code", "cursor", "opencode", "codex"])
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +279,13 @@ class TestDeliverTargetPlatforms:
         call_kwargs = mock_sync.call_args.kwargs
         assert call_kwargs.get("client") == "opencode"
 
+    def test_single_codex_passes_codex_client(self, tmp_path: Path) -> None:
+        """target_platforms: ['codex'] -> execute_claude_md_sync called with client='codex'."""
+        client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["codex"])
+        mock_sync.assert_called_once()
+        call_kwargs = mock_sync.call_args.kwargs
+        assert call_kwargs.get("client") == "codex"
+
     def test_multiple_platforms_passes_all_client(self, tmp_path: Path) -> None:
         """target_platforms: ['claude-code', 'opencode'] -> execute_claude_md_sync called with client='all'."""
         client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["claude-code", "opencode"])
@@ -271,9 +301,9 @@ class TestDeliverTargetPlatforms:
         assert call_kwargs.get("client") == "auto"
 
     def test_three_platforms_passes_all_client(self, tmp_path: Path) -> None:
-        """target_platforms: ['claude-code', 'cursor', 'opencode'] -> client='all'."""
+        """target_platforms: four supported platforms -> client='all'."""
         client_val, mock_sync = self._run_instruction_sync_with_platforms(
-            tmp_path, ["claude-code", "cursor", "opencode"]
+            tmp_path, ["claude-code", "cursor", "opencode", "codex"]
         )
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
@@ -373,6 +403,13 @@ class TestDetermineWriteTargets:
         """client='opencode' writes AGENTS.md only."""
         cfg = TRWConfig()
         write_claude, write_agents = _determine_write_targets("opencode", cfg, tmp_path, "root")
+        assert write_claude is False
+        assert write_agents is True
+
+    def test_codex_client_writes_agents_only(self, tmp_path: Path) -> None:
+        """client='codex' writes AGENTS.md only."""
+        cfg = TRWConfig()
+        write_claude, write_agents = _determine_write_targets("codex", cfg, tmp_path, "root")
         assert write_claude is False
         assert write_agents is True
 

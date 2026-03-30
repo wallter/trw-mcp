@@ -11,10 +11,60 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import TextIO
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+def _is_detailed_cli(args: argparse.Namespace) -> bool:
+    """Return whether CLI output should use structured per-event progress."""
+    return bool(getattr(args, "log_json", False) or getattr(args, "debug", False) or getattr(args, "verbose", 0) > 0)
+
+
+def _is_quiet_cli(args: argparse.Namespace) -> bool:
+    """Return whether human-friendly output should be suppressed."""
+    return bool(getattr(args, "quiet", False))
+
+
+def _print_cli_line(message: str, *, stream: TextIO | None = None) -> None:
+    """Print a single CLI line without leaking formatting logic everywhere."""
+    print(message, file=stream or sys.stdout)
+
+
+def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_run: bool, ide: str | None) -> None:
+    """Render a concise human summary for update-project."""
+    updated = len(result["updated"])
+    created = len(result["created"])
+    preserved = len(result["preserved"])
+    cleaned = len(result.get("cleaned", []))
+    errors = len(result["errors"])
+    warnings = result.get("warnings", [])
+
+    codex_touched = any(
+        path.startswith(".codex/") or path.startswith(".agents/skills/") or path == "AGENTS.md"
+        for path in [*result["updated"], *result["created"]]
+    )
+
+    mode_label = "dry run" if dry_run else "complete"
+    _print_cli_line(f"TRW update {mode_label}")
+    _print_cli_line(f"Project: {target}")
+    _print_cli_line(
+        f"Changes: {updated} updated, {created} created, {preserved} preserved, {cleaned} cleaned, {errors} errors"
+    )
+    if ide:
+        _print_cli_line(f"Target IDE: {ide}")
+    if codex_touched:
+        _print_cli_line("Codex: managed config, hooks, agents, skills, and AGENTS.md synced")
+    if warnings:
+        _print_cli_line("")
+        _print_cli_line("Warnings:")
+        for warning in warnings:
+            _print_cli_line(f"- {warning}")
+    if not dry_run:
+        _print_cli_line("")
+        _print_cli_line("Use -v for per-file changes or --log-json for structured output.")
 
 
 def _run_init_project(args: argparse.Namespace) -> None:
@@ -22,9 +72,14 @@ def _run_init_project(args: argparse.Namespace) -> None:
     from trw_mcp.bootstrap import init_project
 
     target = Path(args.target_dir).resolve()
+    detailed = _is_detailed_cli(args)
+    quiet = _is_quiet_cli(args)
 
     def _progress(action: str, path: str) -> None:
-        logger.info("init_progress", op="init_project", action=action, path=path)
+        if detailed:
+            logger.info("init_progress", op="init_project", action=action, path=path)
+        elif not quiet and action == "Phase":
+            _print_cli_line(f"==> {path}")
 
     result = init_project(
         target,
@@ -40,8 +95,16 @@ def _run_init_project(args: argparse.Namespace) -> None:
         logger.error("init_project_error", op="init_project", error=str(e))
 
     if not result["errors"]:
-        logger.info("init_project_complete", op="init_project", target=str(target))
-        print(f"\nTRW initialized in {target}. Next: run your AI coding tool in this directory.")
+        if detailed:
+            logger.info("init_project_complete", op="init_project", target=str(target))
+        elif not quiet:
+            _print_cli_line("TRW initialization complete")
+            _print_cli_line(f"Project: {target}")
+            _print_cli_line(
+                f"Changes: {len(result['updated'])} updated, {len(result['created'])} created, {len(result['preserved'])} preserved"
+            )
+            _print_cli_line("")
+            _print_cli_line("Next: run your AI coding tool in this directory.")
 
     sys.exit(1 if result["errors"] else 0)
 
@@ -52,9 +115,14 @@ def _run_update_project(args: argparse.Namespace) -> None:
 
     target = Path(args.target_dir).resolve()
     dry_run: bool = getattr(args, "dry_run", False)
+    detailed = _is_detailed_cli(args)
+    quiet = _is_quiet_cli(args)
 
     def _progress(action: str, path: str) -> None:
-        logger.info("update_progress", op="update_project", action=action, path=path)
+        if detailed:
+            logger.info("update_progress", op="update_project", action=action, path=path)
+        elif not quiet and action == "Phase":
+            _print_cli_line(f"==> {path}")
 
     result = update_project(
         target,
@@ -64,20 +132,26 @@ def _run_update_project(args: argparse.Namespace) -> None:
         on_progress=_progress,
     )
 
-    for w in result.get("warnings", []):
-        logger.warning("update_project_warning", op="update_project", detail=str(w))
+    if detailed:
+        for w in result.get("warnings", []):
+            logger.warning("update_project_warning", op="update_project", detail=str(w))
+    elif not quiet and result.get("warnings"):
+        pass
     for e in result["errors"]:
         logger.error("update_project_error", op="update_project", error=str(e))
 
     total = len(result["updated"]) + len(result["created"])
     if not result["errors"]:
-        logger.info(
-            "update_project_complete",
-            op="update_project",
-            target=str(target),
-            total_files=total,
-            dry_run=dry_run,
-        )
+        if detailed:
+            logger.info(
+                "update_project_complete",
+                op="update_project",
+                target=str(target),
+                total_files=total,
+                dry_run=dry_run,
+            )
+        elif not quiet:
+            _summarize_update_result(result, target=target, dry_run=dry_run, ide=getattr(args, "ide", None))
 
     sys.exit(1 if result["errors"] else 0)
 
