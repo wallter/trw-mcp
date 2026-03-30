@@ -1,0 +1,5 @@
+{
+  "name": "exec-plan",
+  "version": "1.0.0",
+  "description": "Generate execution plans from groomed PRDs"
+}

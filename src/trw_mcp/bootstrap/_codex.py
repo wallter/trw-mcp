@@ -18,9 +18,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
 
-try:
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python <3.11 fallback
+else:  # pragma: no cover - Python <3.11 fallback
     import tomli as tomllib
 
 import structlog
@@ -219,7 +219,7 @@ def _trw_mcp_disabled_tools(existing_server: CodexMcpServerEntry) -> list[str]:
 
 def _parse_codex_toml(content: str) -> CodexConfigDict:
     """Parse Codex TOML config into a dict."""
-    return cast(CodexConfigDict, tomllib.loads(content))
+    return cast("CodexConfigDict", tomllib.loads(content))
 
 
 def _toml_key(key: str) -> str:
@@ -316,6 +316,49 @@ def _normalize_skill_config(existing: object) -> list[CodexSkillConfigEntry]:
     return normalized
 
 
+def _normalize_hook_command(hook: object) -> CodexHookCommand | None:
+    """Coerce a single hook command entry to the typed Codex shape."""
+    if not isinstance(hook, dict):
+        return None
+
+    normalized_hook: CodexHookCommand = {}
+    hook_type = hook.get("type")
+    command = hook.get("command")
+    status_message = hook.get("statusMessage")
+    timeout = hook.get("timeout")
+    if isinstance(hook_type, str):
+        normalized_hook["type"] = hook_type
+    if isinstance(command, str):
+        normalized_hook["command"] = command
+    if isinstance(status_message, str):
+        normalized_hook["statusMessage"] = status_message
+    if isinstance(timeout, int):
+        normalized_hook["timeout"] = timeout
+    return normalized_hook or None
+
+
+def _normalize_hook_matcher_group(group: object) -> CodexHookMatcherEntry | None:
+    """Coerce a single hook matcher group to the typed Codex shape."""
+    if not isinstance(group, dict):
+        return None
+
+    normalized_group: CodexHookMatcherEntry = {}
+    matcher = group.get("matcher")
+    description = group.get("description")
+    if isinstance(matcher, str):
+        normalized_group["matcher"] = matcher
+    if isinstance(description, str):
+        normalized_group["description"] = description
+
+    hooks = group.get("hooks")
+    if isinstance(hooks, list):
+        normalized_hooks = [hook for raw_hook in hooks if (hook := _normalize_hook_command(raw_hook)) is not None]
+        if normalized_hooks:
+            normalized_group["hooks"] = normalized_hooks
+
+    return normalized_group or None
+
+
 def _normalize_hook_config(existing: object) -> CodexHooksConfig:
     """Coerce a parsed hooks payload to the typed Codex hook config shape."""
     if not isinstance(existing, dict):
@@ -329,70 +372,97 @@ def _normalize_hook_config(existing: object) -> CodexHooksConfig:
     for event_name, groups in existing_hooks.items():
         if not isinstance(event_name, str) or not isinstance(groups, list):
             continue
-        normalized_groups: list[CodexHookMatcherEntry] = []
-        for group in groups:
-            if not isinstance(group, dict):
-                continue
-            normalized_group: CodexHookMatcherEntry = {}
-            matcher = group.get("matcher")
-            description = group.get("description")
-            if isinstance(matcher, str):
-                normalized_group["matcher"] = matcher
-            if isinstance(description, str):
-                normalized_group["description"] = description
-            hooks = group.get("hooks")
-            if isinstance(hooks, list):
-                normalized_hooks_list: list[CodexHookCommand] = []
-                for hook in hooks:
-                    if isinstance(hook, dict):
-                        normalized_hook: CodexHookCommand = {}
-                        hook_type = hook.get("type")
-                        command = hook.get("command")
-                        status_message = hook.get("statusMessage")
-                        timeout = hook.get("timeout")
-                        if isinstance(hook_type, str):
-                            normalized_hook["type"] = hook_type
-                        if isinstance(command, str):
-                            normalized_hook["command"] = command
-                        if isinstance(status_message, str):
-                            normalized_hook["statusMessage"] = status_message
-                        if isinstance(timeout, int):
-                            normalized_hook["timeout"] = timeout
-                        if normalized_hook:
-                            normalized_hooks_list.append(normalized_hook)
-                if normalized_hooks_list:
-                    normalized_group["hooks"] = normalized_hooks_list
-            if normalized_group:
-                normalized_groups.append(normalized_group)
+        normalized_groups = [
+            normalized_group
+            for group in groups
+            if (normalized_group := _normalize_hook_matcher_group(group)) is not None
+        ]
         if normalized_groups:
             normalized_hooks[event_name] = normalized_groups
 
     return {"hooks": normalized_hooks}
 
 
-def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
-    """Merge TRW-managed Codex config into an existing config dict."""
-    result = cast(CodexConfigDict, dict(existing))
-
+def _normalize_feature_flags(raw_features: object) -> CodexFeaturesConfig:
+    """Extract boolean feature flags and enforce Codex hook support."""
     features_map: dict[str, bool] = {}
-    raw_features = result.get("features")
     if isinstance(raw_features, dict):
-        for key, value in raw_features.items():
-            if isinstance(key, str) and isinstance(value, bool):
-                features_map[key] = value
+        features_map = {
+            key: value
+            for key, value in raw_features.items()
+            if isinstance(key, str) and isinstance(value, bool)
+        }
     features_map["codex_hooks"] = True
-    result["features"] = cast(CodexFeaturesConfig, features_map)
+    return cast("CodexFeaturesConfig", features_map)
+
+
+def _normalize_mcp_servers(raw_mcp_servers: object) -> dict[str, CodexMcpServerEntry]:
+    """Normalize configured MCP servers while preserving user-managed entries."""
+    if not isinstance(raw_mcp_servers, dict):
+        return {}
 
     mcp_servers: dict[str, CodexMcpServerEntry] = {}
-    raw_mcp_servers = result.get("mcp_servers")
-    if isinstance(raw_mcp_servers, dict):
-        for key, value in raw_mcp_servers.items():
-            if isinstance(key, str):
-                normalized_server = _normalize_mcp_server_entry(value)
-                if normalized_server is not None:
-                    mcp_servers[key] = normalized_server
-    trw_server = _trw_mcp_server_entry()
+    for key, value in raw_mcp_servers.items():
+        if not isinstance(key, str):
+            continue
+        normalized_server = _normalize_mcp_server_entry(value)
+        if normalized_server is not None:
+            mcp_servers[key] = normalized_server
+    return mcp_servers
+
+
+def _normalize_fallback_files(raw_fallback_files: object) -> list[str]:
+    """Normalize project-doc fallback files and add required TRW docs."""
+    fallback_files = raw_fallback_files if isinstance(raw_fallback_files, list) else []
+    normalized_fallbacks = [value for value in fallback_files if isinstance(value, str)]
+    for required_file in (_TRW_PROJECT_DOC, _LEGACY_PROJECT_DOC):
+        if required_file not in normalized_fallbacks:
+            normalized_fallbacks.append(required_file)
+    return normalized_fallbacks
+
+
+def _merge_skill_config(raw_skills: object) -> CodexSkillsConfig:
+    """Normalize skill entries and ensure bundled Codex skills are enabled."""
+    if isinstance(raw_skills, dict):
+        skills = cast("CodexSkillsConfig", dict(raw_skills))
+    else:
+        skills = {}
+
+    skill_config = _normalize_skill_config(skills.get("config"))
+    existing_paths = {
+        path
+        for entry in skill_config
+        if isinstance(path := entry.get("path"), str)
+    }
+    normalized_skill_config: list[CodexSkillConfigEntry] = []
+    for entry in skill_config:
+        path = entry.get("path")
+        if not isinstance(path, str):
+            continue
+        normalized_skill_entry: CodexSkillConfigEntry = {"path": path}
+        enabled = entry.get("enabled")
+        if isinstance(enabled, bool):
+            normalized_skill_entry["enabled"] = enabled
+        normalized_skill_config.append(normalized_skill_entry)
+
+    normalized_skill_config.extend(
+        {"path": path, "enabled": True}
+        for path in _skill_paths()
+        if path not in existing_paths
+    )
+    skills["config"] = normalized_skill_config
+    return skills
+
+
+def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
+    """Merge TRW-managed Codex config into an existing config dict."""
+    result = cast("CodexConfigDict", dict(existing))
+
+    result["features"] = _normalize_feature_flags(result.get("features"))
+
+    mcp_servers = _normalize_mcp_servers(result.get("mcp_servers"))
     existing_trw_server: CodexMcpServerEntry = mcp_servers.get("trw", {})
+    trw_server = _trw_mcp_server_entry()
     trw_server["enabled_tools"] = _trw_mcp_enabled_tools(existing_trw_server)
     disabled_tools = _trw_mcp_disabled_tools(existing_trw_server)
     if disabled_tools:
@@ -401,38 +471,10 @@ def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
     mcp_servers.setdefault("openaiDeveloperDocs", _docs_mcp_server_entry())
     result["mcp_servers"] = mcp_servers
 
-    fallback_files = result.get("project_doc_fallback_filenames", [])
-    if not isinstance(fallback_files, list):
-        fallback_files = []
-    normalized_fallbacks = [value for value in fallback_files if isinstance(value, str)]
-    for required_file in (_TRW_PROJECT_DOC, _LEGACY_PROJECT_DOC):
-        if required_file not in normalized_fallbacks:
-            normalized_fallbacks.append(required_file)
-    result["project_doc_fallback_filenames"] = normalized_fallbacks
-
-    skills: CodexSkillsConfig
-    raw_skills = result.get("skills")
-    if isinstance(raw_skills, dict):
-        skills = cast(CodexSkillsConfig, dict(raw_skills))
-    else:
-        skills = {}
-    skill_config = _normalize_skill_config(skills.get("config"))
-    existing_paths: set[str] = set()
-    normalized_skill_config: list[CodexSkillConfigEntry] = []
-    for entry in skill_config:
-        path = entry.get("path")
-        if isinstance(path, str):
-            existing_paths.add(path)
-            normalized_skill_entry: CodexSkillConfigEntry = {"path": path}
-            enabled = entry.get("enabled")
-            if isinstance(enabled, bool):
-                normalized_skill_entry["enabled"] = enabled
-            normalized_skill_config.append(normalized_skill_entry)
-    for path in _skill_paths():
-        if path not in existing_paths:
-            normalized_skill_config.append({"path": path, "enabled": True})
-    skills["config"] = normalized_skill_config
-    result["skills"] = skills
+    result["project_doc_fallback_filenames"] = _normalize_fallback_files(
+        result.get("project_doc_fallback_filenames")
+    )
+    result["skills"] = _merge_skill_config(result.get("skills"))
 
     return result
 

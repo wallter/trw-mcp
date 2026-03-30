@@ -22,7 +22,8 @@ class CodexMcpServerEntry(TypedDict, total=False):
     args: list[str]
     url: str
     enabled: bool
-    tools: dict[str, CodexMcpToolConfigEntry]
+    enabled_tools: list[str]
+    disabled_tools: list[str]
 
 
 class CodexSkillConfigEntry(TypedDict, total=False):
