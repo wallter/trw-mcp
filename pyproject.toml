@@ -148,6 +148,17 @@ unfixable = ["F841"]
 "src/trw_mcp/tools/requirements.py" = ["SIM105"]
 # Bootstrap update uses conditional imports after function-level setup
 "src/trw_mcp/bootstrap/_update_project.py" = ["E402", "S110", "F841"]
+# Backward-compat re-exports placed after class definitions — can't move to top
+"src/trw_mcp/tools/_learning_helpers.py" = ["E402"]
+# Injectable test-seam parameters use Any for callability without protocol overhead
+"src/trw_mcp/tools/_learn_impl.py" = ["ANN401"]
+"src/trw_mcp/tools/_recall_impl.py" = ["ANN401"]
+# register_learning_tools has 16 inner tool registrations — complexity is structural
+"src/trw_mcp/tools/learning.py" = ["C901"]
+# Backward-compat re-exports for _template_updater decomposition
+"src/trw_mcp/bootstrap/_template_updater.py" = ["E402"]
+# Large TypedDict registry — Codex entries grouped logically, not alphabetically
+"src/trw_mcp/models/typed_dicts/__init__.py" = ["RUF022"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["trw_mcp"]

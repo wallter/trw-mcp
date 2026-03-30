@@ -9,7 +9,7 @@ from __future__ import annotations
 # PRD-CORE-001: Base MCP tool suite — error hierarchy
 
 
-__all__ = ["TRWError", "StateError", "ValidationError", "ReflectionError", "ConfigError"]
+__all__ = ["ConfigError", "ReflectionError", "StateError", "TRWError", "ValidationError"]
 
 
 class TRWError(Exception):

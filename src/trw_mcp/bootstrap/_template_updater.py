@@ -20,6 +20,12 @@ from pathlib import Path
 
 import structlog
 
+from ._ide_targets import _extract_trw_section_content as _extract_trw_section_content
+from ._ide_targets import _run_claude_md_sync as _run_claude_md_sync
+from ._ide_targets import _update_codex_artifacts as _update_codex_artifacts
+from ._ide_targets import _update_config_target_platforms as _update_config_target_platforms
+from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
+from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
 from ._utils import (
     _DATA_DIR,
     ProgressCallback,
@@ -28,10 +34,6 @@ from ._utils import (
     _merge_mcp_json,
     _minimal_claude_md,
 )
-from ._ide_targets import _update_codex_artifacts as _update_codex_artifacts
-from ._ide_targets import _update_config_target_platforms as _update_config_target_platforms
-from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
-from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
 
 logger = structlog.get_logger(__name__)
 
@@ -406,13 +408,4 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
 
     return result
 
-
-# ---------------------------------------------------------------------------
-# Re-exports from _ide_targets — backward compatibility for existing imports
-# ---------------------------------------------------------------------------
-from ._ide_targets import _extract_trw_section_content as _extract_trw_section_content
-from ._ide_targets import _run_claude_md_sync as _run_claude_md_sync
-from ._ide_targets import _update_config_target_platforms as _update_config_target_platforms
-from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
-from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
 

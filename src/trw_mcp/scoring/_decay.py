@@ -27,8 +27,8 @@ from trw_mcp.scoring._utils import (
     safe_float,
     safe_int,
 )
-from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state._helpers import iter_yaml_entry_files
+from trw_mcp.state.persistence import FileStateReader
 
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
 
@@ -164,7 +164,7 @@ def _load_entries_from_dir(entries_dir: Path) -> Iterator[dict[str, object]]:
     for yaml_file in iter_yaml_entry_files(entries_dir):
         try:
             yield reader.read_yaml(yaml_file)
-        except Exception:  # justified: fail-open, skip unreadable YAML entries  # noqa: S112
+        except Exception:  # justified: fail-open, skip unreadable YAML entries  # noqa: S112, PERF203
             continue
 
 
