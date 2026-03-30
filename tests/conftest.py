@@ -20,12 +20,22 @@ To classify a new test file:
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastmcp import FastMCP
+
+# Prefer monorepo sources over stale site-packages when tests run from the checkout.
+_TESTS_DIR = Path(__file__).resolve().parent
+_TRW_MCP_SRC = _TESTS_DIR.parent / "src"
+_MONOREPO_ROOT = _TESTS_DIR.parent.parent
+_TRW_MEMORY_SRC = _MONOREPO_ROOT / "trw-memory" / "src"
+for _path in (str(_TRW_MEMORY_SRC), str(_TRW_MCP_SRC)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter

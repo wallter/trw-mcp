@@ -30,7 +30,8 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "ruamel.yaml>=0.18.0",
     "structlog>=24.0.0",
-    "trw-memory>=0.3.0,<1.0.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "trw-memory>=0.6.0,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 

@@ -18,10 +18,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
 
-import tomli as tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python <3.11 fallback
+    import tomli as tomllib
 
 import structlog
-import tomli_w
 
 from trw_mcp.models.typed_dicts import (
     BootstrapFileResult,
@@ -154,6 +156,8 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
     args = existing.get("args")
     url = existing.get("url")
     enabled = existing.get("enabled")
+    enabled_tools = existing.get("enabled_tools")
+    disabled_tools = existing.get("disabled_tools")
     tools = existing.get("tools")
 
     if isinstance(command, str):
@@ -164,26 +168,117 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
         entry["url"] = url
     if isinstance(enabled, bool):
         entry["enabled"] = enabled
+    if isinstance(enabled_tools, list) and all(isinstance(tool_name, str) for tool_name in enabled_tools):
+        entry["enabled_tools"] = cast("list[str]", enabled_tools)
+    if isinstance(disabled_tools, list) and all(isinstance(tool_name, str) for tool_name in disabled_tools):
+        entry["disabled_tools"] = cast("list[str]", disabled_tools)
+
+    # Backward compatibility: older TRW bootstrap versions wrote unsupported
+    # per-MCP-tool config under `tools`. Preserve only the enable/disable
+    # signal by translating it to the documented enabled/disabled tool lists.
     normalized_tools = _normalize_mcp_tool_config(tools)
     if normalized_tools:
-        entry["tools"] = normalized_tools
+        enabled_tool_set = set(entry.get("enabled_tools", []))
+        disabled_tool_set = set(entry.get("disabled_tools", []))
+        for tool_name, tool_config in normalized_tools.items():
+            tool_enabled = tool_config.get("enabled")
+            if tool_enabled is False:
+                disabled_tool_set.add(tool_name)
+                enabled_tool_set.discard(tool_name)
+            else:
+                enabled_tool_set.add(tool_name)
+                disabled_tool_set.discard(tool_name)
+        if enabled_tool_set:
+            entry["enabled_tools"] = sorted(enabled_tool_set)
+        if disabled_tool_set:
+            entry["disabled_tools"] = sorted(disabled_tool_set)
     return entry
 
 
-def _trw_mcp_tool_config(existing: object) -> dict[str, CodexMcpToolConfigEntry]:
-    """Return TRW MCP tool approvals with stale TRW entries pruned."""
-    normalized = _normalize_mcp_tool_config(existing)
-    preserved_non_trw = {
-        tool_name: entry for tool_name, entry in normalized.items() if not tool_name.startswith(_TRW_TOOL_PREFIX)
+def _trw_mcp_enabled_tools(existing_server: CodexMcpServerEntry) -> list[str]:
+    """Return the documented enabled_tools list for the TRW MCP server."""
+    enabled_tools = {
+        tool_name
+        for tool_name in existing_server.get("enabled_tools", [])
+        if isinstance(tool_name, str) and not tool_name.startswith(_TRW_TOOL_PREFIX)
     }
-    for tool_name in _registered_trw_tool_names():
-        preserved_non_trw[tool_name] = {"approval_mode": "approve"}
-    return preserved_non_trw
+    enabled_tools.update(_registered_trw_tool_names())
+    return sorted(enabled_tools)
+
+
+def _trw_mcp_disabled_tools(existing_server: CodexMcpServerEntry) -> list[str]:
+    """Preserve disabled tools that are outside the current TRW tool set."""
+    current_trw_tools = set(_registered_trw_tool_names())
+    disabled_tools = {
+        tool_name
+        for tool_name in existing_server.get("disabled_tools", [])
+        if isinstance(tool_name, str) and tool_name not in current_trw_tools
+    }
+    return sorted(disabled_tools)
 
 
 def _parse_codex_toml(content: str) -> CodexConfigDict:
     """Parse Codex TOML config into a dict."""
     return cast(CodexConfigDict, tomllib.loads(content))
+
+
+def _toml_key(key: str) -> str:
+    """Render a TOML key, quoting only when required."""
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+    if key and all(char in allowed for char in key):
+        return key
+    return json.dumps(key)
+
+
+def _toml_value(value: object) -> str:
+    """Render a TOML literal for the subset used by Codex bootstrap."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list):
+        if all(isinstance(item, dict) for item in value):
+            inline_tables: list[str] = []
+            for item in value:
+                dict_item = cast("dict[str, object]", item)
+                parts = [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in dict_item.items()]
+                inline_tables.append("{ " + ", ".join(parts) + " }")
+            return "[\n  " + ",\n  ".join(inline_tables) + ",\n]"
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    raise TypeError(f"Unsupported TOML value type: {type(value).__name__}")
+
+
+def _toml_dumps(data: dict[str, object]) -> str:
+    """Serialize the Codex config structure to TOML without external deps."""
+    lines: list[str] = []
+
+    def emit_table(table: dict[str, object], prefix: str | None = None) -> None:
+        scalar_items: list[tuple[str, object]] = []
+        child_tables: list[tuple[str, dict[str, object]]] = []
+
+        for key, value in table.items():
+            if isinstance(value, dict):
+                child_tables.append((key, cast("dict[str, object]", value)))
+            else:
+                scalar_items.append((key, value))
+
+        if prefix is not None:
+            lines.append(f"[{prefix}]")
+        for key, value in scalar_items:
+            lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
+        if prefix is not None and (scalar_items or child_tables):
+            lines.append("")
+
+        for key, child in child_tables:
+            child_prefix = _toml_key(key) if prefix is None else f"{prefix}.{_toml_key(key)}"
+            emit_table(child, child_prefix)
+
+    emit_table(data)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
 
 
 def _skill_paths() -> list[str]:
@@ -298,7 +393,10 @@ def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
                     mcp_servers[key] = normalized_server
     trw_server = _trw_mcp_server_entry()
     existing_trw_server: CodexMcpServerEntry = mcp_servers.get("trw", {})
-    trw_server["tools"] = _trw_mcp_tool_config(existing_trw_server.get("tools"))
+    trw_server["enabled_tools"] = _trw_mcp_enabled_tools(existing_trw_server)
+    disabled_tools = _trw_mcp_disabled_tools(existing_trw_server)
+    if disabled_tools:
+        trw_server["disabled_tools"] = disabled_tools
     mcp_servers["trw"] = trw_server
     mcp_servers.setdefault("openaiDeveloperDocs", _docs_mcp_server_entry())
     result["mcp_servers"] = mcp_servers
@@ -355,14 +453,14 @@ def generate_codex_config(
         try:
             existing = _parse_codex_toml(config_path.read_text(encoding="utf-8"))
             merged = merge_codex_config(existing)
-            config_path.write_text(tomli_w.dumps(merged), encoding="utf-8")
+            config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
             _record_write(result, _CODEX_CONFIG_PATH, existed=True)
         except (OSError, tomllib.TOMLDecodeError) as exc:
             result["errors"].append(f"Failed to read/merge {config_path}: {exc}")
     else:
         try:
             merged = merge_codex_config({})
-            config_path.write_text(tomli_w.dumps(merged), encoding="utf-8")
+            config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
             _record_write(result, _CODEX_CONFIG_PATH, existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {config_path}: {exc}")
