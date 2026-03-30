@@ -24,7 +24,11 @@ from trw_mcp.models.config import TRWConfig
 # --- AGENTS.md functions (extracted to _agents_md.py) ---
 from trw_mcp.state.claude_md._agents_md import (
     _determine_write_targets as _determine_write_targets,
+)
+from trw_mcp.state.claude_md._agents_md import (
     _inject_learnings_to_agents as _inject_learnings_to_agents,
+)
+from trw_mcp.state.claude_md._agents_md import (
     _sync_agents_md_if_needed as _sync_agents_md_if_needed,
 )
 from trw_mcp.state.claude_md._parser import (
@@ -37,17 +41,25 @@ from trw_mcp.state.claude_md._promotion import (
     collect_patterns,
     collect_promotable_learnings,
 )
+from trw_mcp.state.claude_md._review_md import (
+    _REVIEW_MAX_LEARNINGS as _REVIEW_MAX_LEARNINGS,
+)
+from trw_mcp.state.claude_md._review_md import (
+    _REVIEW_MIN_IMPACT as _REVIEW_MIN_IMPACT,
+)
+from trw_mcp.state.claude_md._review_md import (
+    _REVIEW_TAGS as _REVIEW_TAGS,
+)
+from trw_mcp.state.claude_md._review_md import (
+    _REVIEW_TEMPLATE as _REVIEW_TEMPLATE,
+)
 
 # --- REVIEW.md constants and helpers (extracted to _review_md.py) ---
 from trw_mcp.state.claude_md._review_md import (
     _sanitize_summary as _sanitize_summary,
-    recall_learnings as recall_learnings,
 )
 from trw_mcp.state.claude_md._review_md import (
-    _REVIEW_MAX_LEARNINGS as _REVIEW_MAX_LEARNINGS,
-    _REVIEW_MIN_IMPACT as _REVIEW_MIN_IMPACT,
-    _REVIEW_TAGS as _REVIEW_TAGS,
-    _REVIEW_TEMPLATE as _REVIEW_TEMPLATE,
+    recall_learnings as recall_learnings,
 )
 from trw_mcp.state.claude_md._static_sections import (
     render_behavioral_protocol,

@@ -59,6 +59,11 @@ from trw_mcp.state.analytics.core import (
 from trw_mcp.state.analytics.core import (
     is_error_event as is_error_event,
 )
+
+# ---------------------------------------------------------------------------
+# Module A — core: noise detection (PRD-FIX-061-FR01)
+# ---------------------------------------------------------------------------
+from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
 from trw_mcp.state.analytics.core import (
     is_success_event as is_success_event,
 )
@@ -160,11 +165,6 @@ from trw_mcp.state.analytics.entries import (
 from trw_mcp.state.analytics.entries import (
     update_learning_index as update_learning_index,
 )
-
-# ---------------------------------------------------------------------------
-# Module A — core: noise detection (PRD-FIX-061-FR01)
-# ---------------------------------------------------------------------------
-from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
 
 # ---------------------------------------------------------------------------
 # __all__ — public API (FR04: private names removed from __all__)

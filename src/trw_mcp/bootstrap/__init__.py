@@ -14,6 +14,18 @@ from __future__ import annotations
 # ``trw_mcp.bootstrap.shutil.rmtree`` continue to resolve correctly.
 import shutil as shutil  # explicit re-export for test compat
 
+from ._codex import (
+    generate_codex_agents as generate_codex_agents,
+)
+from ._codex import (
+    generate_codex_config as generate_codex_config,
+)
+from ._codex import (
+    generate_codex_hooks as generate_codex_hooks,
+)
+from ._codex import (
+    install_codex_skills as install_codex_skills,
+)
 from ._cursor import (
     _get_trw_mcp_entry_cursor as _get_trw_mcp_entry_cursor,
 )
@@ -28,18 +40,6 @@ from ._cursor import (
 )
 from ._cursor import (
     generate_cursor_rules as generate_cursor_rules,
-)
-from ._codex import (
-    generate_codex_agents as generate_codex_agents,
-)
-from ._codex import (
-    generate_codex_config as generate_codex_config,
-)
-from ._codex import (
-    generate_codex_hooks as generate_codex_hooks,
-)
-from ._codex import (
-    install_codex_skills as install_codex_skills,
 )
 from ._init_project import (
     _copy_bundled_data_files as _copy_bundled_data_files,

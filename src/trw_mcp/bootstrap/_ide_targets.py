@@ -21,7 +21,6 @@ from pathlib import Path
 import structlog
 
 from ._utils import (
-    ProgressCallback,
     _minimal_claude_md,
     resolve_ide_targets,
 )

@@ -23,20 +23,10 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from trw_mcp.models.typed_dicts import (
-    ReviewFindingDict,
-)
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.models.typed_dicts import (
-        AutoReviewResult,
-        CrossModelReviewResult,
-        ManualReviewResult,
-        MultiReviewerAnalysisResult,
-        ReconcileReviewResult,
-    )
 
 logger = structlog.get_logger(__name__)
 

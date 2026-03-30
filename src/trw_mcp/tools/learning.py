@@ -38,9 +38,17 @@ from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     get_backend,
     list_active_learnings,
+)
+from trw_mcp.state.memory_adapter import (
     recall_learnings as adapter_recall,
+)
+from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
+)
+from trw_mcp.state.memory_adapter import (
     update_access_tracking as adapter_update_access,
+)
+from trw_mcp.state.memory_adapter import (
     update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -49,12 +57,7 @@ from trw_mcp.state.recall_search import (
     search_patterns,
 )
 from trw_mcp.tools._learning_helpers import (
-    LearningParams,
-    calibrate_impact,
     check_and_handle_dedup,
-    check_soft_cap,
-    enforce_distribution,
-    is_noise_summary,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 

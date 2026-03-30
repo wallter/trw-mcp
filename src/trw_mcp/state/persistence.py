@@ -20,8 +20,6 @@ import contextvars
 import json
 import os
 import tempfile
-
-from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_sh, _lock_un
 from collections.abc import Generator
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -31,6 +29,7 @@ import structlog
 from pydantic import BaseModel
 from ruamel.yaml import YAML
 
+from trw_mcp._locking import _lock_ex, _lock_sh, _lock_un
 from trw_mcp.exceptions import StateError
 
 # PRD-CORE-001: Base MCP tool suite — atomic file state persistence

@@ -23,6 +23,7 @@ from trw_mcp.models.typed_dicts import (
     RecallOutcomeStepResult,
     TrustIncrementResult,
 )
+
 # PRD-FIX-061-FR02: Canonical definition moved to state/_session_events.py.
 # Re-exported here for backward compatibility with existing consumers and tests.
 from trw_mcp.state._session_events import _merge_session_events as _merge_session_events

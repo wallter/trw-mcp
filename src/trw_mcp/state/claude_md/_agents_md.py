@@ -9,8 +9,8 @@ under the 500-line review threshold.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import structlog
 
@@ -23,6 +23,8 @@ from trw_mcp.state.claude_md._parser import (
 )
 from trw_mcp.state.claude_md._review_md import (
     _sanitize_summary,
+)
+from trw_mcp.state.claude_md._review_md import (
     recall_learnings as _default_recall,
 )
 
@@ -123,12 +125,12 @@ def _sync_agents_md_if_needed(
     if not write_agents:
         return False, None
 
+    from trw_mcp.bootstrap._utils import detect_ide
     from trw_mcp.state.claude_md._static_sections import (
         render_agents_trw_section,
         render_codex_trw_section,
         render_minimal_protocol,
     )
-    from trw_mcp.bootstrap._utils import detect_ide
 
     agents_target = project_root / "AGENTS.md"
     effective_client = client

@@ -13,8 +13,6 @@ import threading
 import time
 import urllib.error
 import urllib.request
-
-from trw_mcp._locking import _lock_ex, _lock_un
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
@@ -22,6 +20,7 @@ from typing import ClassVar
 import structlog
 from typing_extensions import TypedDict
 
+from trw_mcp._locking import _lock_ex, _lock_un
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.telemetry.anonymizer import redact_paths, strip_pii
