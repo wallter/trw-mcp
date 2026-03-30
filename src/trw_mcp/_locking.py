@@ -42,14 +42,14 @@ try:
 
 except ImportError:  # Windows — advisory locking is a no-op
 
-    def _lock_sh(fd: int) -> None:  # noqa: ARG001
+    def _lock_sh(fd: int) -> None:
         """No-op: advisory locks unavailable on this platform."""
 
-    def _lock_ex(fd: int) -> None:  # noqa: ARG001
+    def _lock_ex(fd: int) -> None:
         """No-op: advisory locks unavailable on this platform."""
 
-    def _lock_ex_nb(fd: int) -> None:  # noqa: ARG001
+    def _lock_ex_nb(fd: int) -> None:
         """No-op: advisory locks unavailable on this platform."""
 
-    def _lock_un(fd: int) -> None:  # noqa: ARG001
+    def _lock_un(fd: int) -> None:
         """No-op: advisory locks unavailable on this platform."""

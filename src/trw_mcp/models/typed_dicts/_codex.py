@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing_extensions import Literal, TypedDict
+from typing import Literal
 
+from typing_extensions import TypedDict
 
 CodexToolApprovalMode = Literal["auto", "prompt", "approve"]
 

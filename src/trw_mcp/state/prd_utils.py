@@ -21,7 +21,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.requirements import PRDStatus, VALID_TRANSITIONS
+from trw_mcp.models.requirements import VALID_TRANSITIONS, PRDStatus
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig

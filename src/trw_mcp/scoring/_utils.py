@@ -33,7 +33,6 @@ from trw_memory.lifecycle.scoring import (
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state._helpers import safe_float, safe_int
 from trw_mcp.state._paths import resolve_trw_dir as resolve_trw_dir
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 

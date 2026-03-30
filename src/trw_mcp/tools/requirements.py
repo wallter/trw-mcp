@@ -55,13 +55,13 @@ from trw_mcp.state.validation import (
     validate_prd_quality_v2,
 )
 from trw_mcp.tools._prd_template_helpers import (
-    _apply_prefill as _apply_prefill,
-)
-from trw_mcp.tools._prd_template_helpers import (
     _CACHED_TEMPLATE_BODY as _CACHED_TEMPLATE_BODY,
 )
 from trw_mcp.tools._prd_template_helpers import (
     _CACHED_TEMPLATE_VERSION as _CACHED_TEMPLATE_VERSION,
+)
+from trw_mcp.tools._prd_template_helpers import (
+    _apply_prefill as _apply_prefill,
 )
 from trw_mcp.tools._prd_template_helpers import (
     _extract_prefill as _extract_prefill,
@@ -79,13 +79,13 @@ from trw_mcp.tools._prd_template_helpers import (
     _render_prd as _render_prd,
 )
 from trw_mcp.tools._prd_template_helpers import (
-    reset_template_cache as reset_template_cache,
-)
-from trw_mcp.tools._prd_template_helpers import (
     _strip_deprecated_fields as _strip_deprecated_fields,
 )
 from trw_mcp.tools._prd_template_helpers import (
     _substitute_template as _substitute_template,
+)
+from trw_mcp.tools._prd_template_helpers import (
+    reset_template_cache as reset_template_cache,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 

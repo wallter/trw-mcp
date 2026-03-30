@@ -21,7 +21,7 @@ from trw_mcp.state.persistence import FileStateReader
 logger = structlog.get_logger(__name__)
 
 
-def execute_recall(  # noqa: C901 — recall orchestrates multiple retrieval strategies
+def execute_recall(
     query: str,
     trw_dir: Path,
     config: TRWConfig,
@@ -242,7 +242,7 @@ def _verify_assertions(
         from trw_mcp.state._paths import resolve_project_root
 
         project_root_path = resolve_project_root()
-    except Exception:  # justified: fail-open  # noqa: S110
+    except Exception:  # justified: fail-open
         logger.debug("assertion_project_root_resolve_failed", exc_info=True)
 
     if not project_root_path:

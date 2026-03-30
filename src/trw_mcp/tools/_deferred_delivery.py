@@ -26,14 +26,13 @@ import io
 import json
 import threading
 import time
-
-from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
 from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
 
 import trw_mcp.tools._deferred_state as _ds
+from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
 
 # Re-export step functions from sub-modules so test patches on
 # "trw_mcp.tools._deferred_delivery._step_foo" continue to work.

@@ -17,13 +17,13 @@ import trw_mcp.state.analytics.core as _ac
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import LearningEntry, LearningStatus
 from trw_mcp.state._helpers import is_active_entry
+from trw_mcp.state.analytics.core import is_noise_summary
 from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
     lock_for_rmw,
     model_to_dict,
 )
-from trw_mcp.state.analytics.core import is_noise_summary
 
 logger = structlog.get_logger(__name__)
 

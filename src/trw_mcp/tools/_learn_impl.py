@@ -89,7 +89,7 @@ def _handle_consolidation(
             )
 
 
-def execute_learn(  # noqa: C901 — orchestrates validation, dedup, store, distribution
+def execute_learn(
     summary: str,
     detail: str,
     trw_dir: Path,
