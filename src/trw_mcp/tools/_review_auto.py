@@ -50,7 +50,7 @@ def handle_auto_mode(
             "findings": reviewer_findings,
         }
     else:
-        analysis = _helpers._run_multi_reviewer_analysis(diff, config)
+        analysis = _helpers._run_multi_reviewer_analysis(diff, config)  # type: ignore[operator]
 
     all_auto_findings = analysis.get("findings", [])
     if not isinstance(all_auto_findings, list):

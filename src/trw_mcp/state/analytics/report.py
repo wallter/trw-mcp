@@ -16,7 +16,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import get_config
+from trw_mcp.models.config import get_config as get_config
 from trw_mcp.models.config._client_profile import CeremonyWeights
 from trw_mcp.models.typed_dicts import (
     AggregateMetrics,
@@ -26,7 +26,8 @@ from trw_mcp.models.typed_dicts import (
     RunAnalysisResult,
     TierMetrics,
 )
-from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.state._paths import resolve_project_root as resolve_project_root
+from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)

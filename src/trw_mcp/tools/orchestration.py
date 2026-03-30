@@ -32,7 +32,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
-from trw_mcp.state.analytics.report import count_stale_runs
+from trw_mcp.state.analytics._stale_runs import count_stale_runs
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,

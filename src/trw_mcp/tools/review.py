@@ -74,12 +74,8 @@ def register_review_tools(server: FastMCP) -> None:
             prd_ids: Explicit PRD IDs for reconcile mode. Auto-discovered if None.
         """
         from trw_mcp.models.config import get_config
-        from trw_mcp.tools._review_helpers import (
-            handle_auto_mode,
-            handle_cross_model_mode,
-            handle_manual_mode,
-            handle_reconcile_mode,
-        )
+        from trw_mcp.tools._review_auto import handle_auto_mode, handle_cross_model_mode
+        from trw_mcp.tools._review_manual import handle_manual_mode, handle_reconcile_mode
 
         config = get_config()
 

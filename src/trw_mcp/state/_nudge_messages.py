@@ -15,7 +15,8 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext, ToolName
+from trw_mcp.state._nudge_state import _STEPS as _STEPS
+from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
 
 # ---------------------------------------------------------------------------
 # Constants

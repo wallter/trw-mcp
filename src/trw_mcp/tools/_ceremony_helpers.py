@@ -352,7 +352,7 @@ def run_auto_maintenance(
     # Auto-close stale runs
     try:
         if config.run_auto_close_enabled:
-            from trw_mcp.state.analytics.report import auto_close_stale_runs
+            from trw_mcp.state.analytics._stale_runs import auto_close_stale_runs
 
             close_result = auto_close_stale_runs()
             closed_count = int(str(close_result.get("count", 0)))
