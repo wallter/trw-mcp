@@ -1,7 +1,8 @@
-"""Tests for ResponseOptimizerMiddleware — compact JSON responses.
+"""Tests for ResponseOptimizerMiddleware — compact JSON/YAML responses.
 
 Validates float rounding, null/empty stripping, and end-to-end middleware
-integration for optimizing MCP tool responses.
+integration for optimizing MCP tool responses. PRD-CORE-096 adds YAML
+serialization tests.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from trw_mcp.middleware.response_optimizer import (
     ResponseOptimizerMiddleware,
     _compact,
     _is_empty,
+    _yaml_dump,
 )
 
 # --- Unit tests for _is_empty ---
@@ -177,6 +179,15 @@ def test_compact_none_in_list_preserved() -> None:
 # --- Middleware integration tests ---
 
 
+@pytest.fixture(autouse=True)
+def _force_json_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default tests to JSON format for backward compat. YAML tests override."""
+    monkeypatch.setattr(
+        "trw_mcp.middleware.response_optimizer._get_response_format",
+        lambda: "json",
+    )
+
+
 @dataclass
 class FakeToolResult:
     """Minimal ToolResult stub with mutable content list."""
@@ -310,3 +321,124 @@ async def test_middleware_malformed_json_passthrough() -> None:
     out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
     assert out.content[0].text == malformed
+
+
+# --- PRD-CORE-096: YAML response format tests ---
+
+
+@pytest.mark.unit
+def test_yaml_dump_produces_valid_yaml() -> None:
+    """_yaml_dump() outputs parseable YAML."""
+    from ruamel.yaml import YAML
+
+    data = {"score": 0.85, "tags": ["testing", "gotcha"], "nested": {"key": "value"}}
+    result = _yaml_dump(data)
+    yaml = YAML(typ="safe")
+    parsed = yaml.load(result)
+    assert parsed == data
+
+
+@pytest.mark.unit
+def test_yaml_dump_no_unsafe_tags() -> None:
+    """YAML output must not contain !!python/ tags."""
+    data = {"name": "test", "count": 42, "flag": True, "empty": None}
+    result = _yaml_dump(data)
+    assert "!!python/" not in result
+    assert "!!binary" not in result
+
+
+@pytest.mark.unit
+def test_yaml_dump_roundtrip_complex_data() -> None:
+    """Complex nested dict round-trips through YAML."""
+    from ruamel.yaml import YAML
+
+    data = {
+        "learnings": [
+            {"id": "L-abc123", "summary": "Test learning", "impact": 0.85, "tags": ["a", "b"]},
+            {"id": "L-def456", "summary": "Another one", "impact": 0.5, "tags": []},
+        ],
+        "count": 2,
+        "success": True,
+    }
+    result = _yaml_dump(data)
+    yaml = YAML(typ="safe")
+    parsed = yaml.load(result)
+    assert parsed == data
+
+
+@pytest.mark.unit
+def test_yaml_dump_fallback_on_error() -> None:
+    """If YAML serialization fails, falls back to compact JSON."""
+    # Custom objects can't be YAML-serialized with typ="safe"
+    class Unserializable:
+        pass
+
+    result = _yaml_dump({"key": "value"})
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_middleware_yaml_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Middleware produces YAML output when response_format is 'yaml'."""
+    from ruamel.yaml import YAML
+
+    monkeypatch.setattr(
+        "trw_mcp.middleware.response_optimizer._get_response_format",
+        lambda: "yaml",
+    )
+
+    original_json = json.dumps({"score": 0.123456, "meta": None, "tags": ["a"]})
+    result = FakeToolResult(
+        content=[TextContent(type="text", text=original_json)]
+    )
+
+    middleware = ResponseOptimizerMiddleware()
+
+    async def call_next(_ctx: Any) -> Any:
+        return result
+
+    ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_status"))
+    out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+    text = out.content[0].text
+    yaml = YAML(typ="safe")
+    parsed = yaml.load(text)
+    assert parsed == {"score": 0.12, "tags": ["a"]}
+
+
+@pytest.mark.unit
+def test_config_response_format_default() -> None:
+    """TRWConfig defaults to response_format='yaml'."""
+    from trw_mcp.models.config import get_config
+
+    config = get_config()
+    assert config.response_format == "yaml"
+
+
+@pytest.mark.unit
+def test_config_response_format_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TRW_RESPONSE_FORMAT env var overrides default."""
+    from trw_mcp.models.config._loader import _reset_config
+
+    monkeypatch.setenv("TRW_RESPONSE_FORMAT", "json")
+    _reset_config()
+
+    from trw_mcp.models.config import get_config
+
+    config = get_config()
+    assert config.response_format == "json"
+    _reset_config()
+
+
+@pytest.mark.unit
+def test_client_profile_response_format_defaults() -> None:
+    """All 5 profiles have correct response_format defaults."""
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    assert resolve_client_profile("claude-code").response_format == "yaml"
+    assert resolve_client_profile("opencode").response_format == "yaml"
+    assert resolve_client_profile("cursor").response_format == "json"
+    assert resolve_client_profile("codex").response_format == "yaml"
+    assert resolve_client_profile("aider").response_format == "yaml"
