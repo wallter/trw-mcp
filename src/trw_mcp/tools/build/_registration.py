@@ -229,7 +229,7 @@ def _finalize_build_result(
     """Apply coverage threshold enforcement and enrich result dict."""
     if min_coverage is None:
         return
-    coverage_pct = float(result.get("coverage_pct", 0))
+    coverage_pct = float(str(result.get("coverage_pct", 0)))
     if coverage_pct < min_coverage:
         result["tests_passed"] = False
         result["coverage_threshold_failed"] = True
