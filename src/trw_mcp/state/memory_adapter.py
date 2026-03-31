@@ -166,7 +166,7 @@ def _is_corruption_error(exc: BaseException) -> bool:
 
 
 def _recover_and_reset_backend(trw_dir: Path) -> None:
-    """Force-recover the database and reset the singleton backend."""
+    """Force-recover the database, backfill from YAML, and reset the singleton."""
     from trw_mcp.state._memory_connection import get_backend as _get_backend
     from trw_mcp.state._memory_connection import reset_backend as _reset
 
@@ -178,7 +178,12 @@ def _recover_and_reset_backend(trw_dir: Path) -> None:
 
         conn = SQLiteBackend.recover_db(db_path)
         conn.close()
-    # Re-open via the normal singleton path so migration runs again.
+    # Remove migration sentinel so ensure_migrated re-runs the YAML backfill.
+    # This restores any entries that were in YAML but lost from SQLite.
+    sentinel = trw_dir / "memory" / ".migrated"
+    if sentinel.exists():
+        sentinel.unlink()
+    # Re-open via the normal singleton path — triggers ensure_migrated (YAML backfill).
     _get_backend(trw_dir)
 
 

@@ -96,6 +96,14 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
                 conn = SQLiteBackend.recover_db(db_path)
                 conn.close()
             backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
+
+        if backend.recovered:
+            # Remove migration sentinel so ensure_migrated re-runs the
+            # YAML backfill — restores entries lost from SQLite.
+            sentinel = trw_dir / "memory" / _SENTINEL_NAME
+            if sentinel.exists():
+                sentinel.unlink()
+            logger.info("yaml_backfill_triggered", reason="post_recovery")
         ensure_migrated(trw_dir, backend)
         _backend = backend
         return _backend
