@@ -11,6 +11,7 @@ decisions (step names, booleans, tuples). They never read or write the filesyste
 from __future__ import annotations
 
 from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext
+from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-export
 
 # Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
 _PHASE_APPLICABLE_STEPS: dict[str, tuple[str, ...]] = {
@@ -21,26 +22,6 @@ _PHASE_APPLICABLE_STEPS: dict[str, tuple[str, ...]] = {
     "deliver": _STEPS,
     "done": _STEPS,
 }
-
-
-# ---------------------------------------------------------------------------
-# Step completion check
-# ---------------------------------------------------------------------------
-
-
-def _step_complete(step: str, state: CeremonyState) -> bool:
-    """Return True if the given step is considered complete given *state*."""
-    if step == "session_start":
-        return state.session_started
-    if step == "checkpoint":
-        return state.checkpoint_count > 0 and state.files_modified_since_checkpoint <= 3
-    if step == "build_check":
-        return state.build_check_result == "passed"
-    if step == "review":
-        return state.review_called
-    if step == "deliver":
-        return state.deliver_called
-    return False
 
 
 # ---------------------------------------------------------------------------
