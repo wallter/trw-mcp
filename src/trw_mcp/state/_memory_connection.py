@@ -91,7 +91,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
         except Exception:
             # If constructor fails even after internal recovery attempt,
             # force-recover and retry once.
-            logger.error("backend_init_failed", db=str(db_path), action="force_recover")
+            logger.exception("backend_init_failed", db=str(db_path), action="force_recover")
             if db_path.exists():
                 conn = SQLiteBackend.recover_db(db_path)
                 conn.close()
