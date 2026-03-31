@@ -22,8 +22,13 @@ logger = structlog.get_logger(__name__)
 _CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
     {
         "analytics.yaml",
+        "behavioral_protocol.md",
         "behavioral_protocol.yaml",
         "build-status.yaml",
+        "ceremony-feedback.yaml",
+        "ceremony-state.json",
+        "injected_learning_ids.txt",
+        "last_ups_phase",
         "messages.yaml",
         "pre_compact_state.json",
         "hooks-reference.yaml",
