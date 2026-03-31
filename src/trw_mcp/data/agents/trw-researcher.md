@@ -1,13 +1,15 @@
 ---
 name: trw-researcher
 description: >
-  Research specialist for Agent Teams. Explores codebases AND the web,
-  gathers evidence, produces structured findings. Use as a teammate for
-  research, investigation, and online documentation/API/best-practice tasks.
+  Research and investigation specialist for Agent Teams. Explores codebases
+  and the web to gather evidence, analyze patterns, and produce structured
+  findings. Handles research, investigation, documentation lookup, API
+  exploration, and best-practice analysis tasks. Read-only codebase access
+  with full web research capabilities.
 model: claude-sonnet-4-6
 maxTurns: 75
 memory: project
-allowedTools:
+tools:
   - Read
   - Glob
   - Grep
