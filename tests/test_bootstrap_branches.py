@@ -1303,17 +1303,17 @@ class TestPrefixMigrationExtra:
         (skills_dir / "trw-simplify").mkdir()
         (skills_dir / "trw-simplify" / "SKILL.md").write_text("new", encoding="utf-8")
 
-        # Agent predecessor + successor
-        (agents_dir / "lead.md").write_text("old", encoding="utf-8")
-        (agents_dir / "trw-lead.md").write_text("new", encoding="utf-8")
+        # Agent predecessor + successor (researcher.md → trw-researcher.md survives CORE-092)
+        (agents_dir / "researcher.md").write_text("old", encoding="utf-8")
+        (agents_dir / "trw-researcher.md").write_text("new", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
         _migrate_prefix_predecessors(target, result)
 
         assert not (skills_dir / "simplify").exists()
-        assert not (agents_dir / "lead.md").exists()
+        assert not (agents_dir / "researcher.md").exists()
         assert (skills_dir / "trw-simplify").exists()
-        assert (agents_dir / "trw-lead.md").exists()
+        assert (agents_dir / "trw-researcher.md").exists()
         migrated = [e for e in result["updated"] if "migrated:" in e]
         assert len(migrated) == 2
 

@@ -913,7 +913,7 @@ class TestGetPackageVersion:
 
     def test_returns_string(self) -> None:
         """_get_package_version always returns a string."""
-        from trw_mcp.tools.orchestration import _get_package_version
+        from trw_mcp.tools._orchestration_helpers import _get_package_version
 
         result = _get_package_version()
         assert isinstance(result, str)
@@ -926,7 +926,7 @@ class TestGetPackageVersion:
         """When importlib.metadata raises an exception, returns 'unknown' (lines 475-476)."""
         import importlib.metadata as im
 
-        from trw_mcp.tools.orchestration import _get_package_version
+        from trw_mcp.tools._orchestration_helpers import _get_package_version
 
         def broken_version(distribution_name: str) -> str:
             raise Exception("simulated failure")
