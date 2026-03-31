@@ -346,7 +346,10 @@ def register_learning_tools(server: FastMCP) -> None:
         )
 
         # PRD-CORE-095 FR15: Annotate already-injected learnings
-        _annotate_injected_learnings(result, trw_dir)
+        _annotate_injected_learnings(
+            result,  # type: ignore[arg-type]  # RecallResultDict is a dict subclass
+            trw_dir,
+        )
 
         return result
 
