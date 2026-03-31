@@ -1020,7 +1020,7 @@ class TestManagedArtifactsManifest:
 
         data = FileStateReader().read_yaml(manifest_path)
         assert isinstance(data, dict)
-        assert data["version"] == 1
+        assert data["version"] == 2
         skills = data.get("skills", [])
         assert isinstance(skills, list)
         assert "trw-deliver" in skills

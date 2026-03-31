@@ -12,6 +12,7 @@ lives in ``_ide_targets.py`` and is re-exported here for backward compatibility.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -182,19 +183,50 @@ def _update_skills(
                         _update_or_report(skill_file, dest, result, dry_run, on_progress=on_progress)
 
 
+def _is_user_modified(
+    dest: Path,
+    name: str,
+    manifest_hashes: dict[str, str] | None,
+) -> bool:
+    """Check if an installed file was modified by the user since last install.
+
+    PRD-FIX-068-FR05: Compares current on-disk SHA256 against the stored
+    manifest hash.  Returns ``True`` when hashes differ (user modification).
+    """
+    if not manifest_hashes or name not in manifest_hashes:
+        return False
+    if not dest.is_file():
+        return False
+    try:
+        current_hash = hashlib.sha256(dest.read_bytes()).hexdigest()
+        return current_hash != manifest_hashes[name]
+    except OSError:
+        return False
+
+
 def _update_agents(
     target_dir: Path,
     effective_data: Path,
     result: dict[str, list[str]],
     dry_run: bool,
     on_progress: ProgressCallback = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
-    """Update agent ``.md`` files (always overwritten)."""
+    """Update agent ``.md`` files.
+
+    PRD-FIX-068-FR05: If the installed file's SHA256 differs from the
+    manifest hash, the file is user-modified and is NOT overwritten.
+    """
+    _log = structlog.get_logger(__name__)
     agents_source = effective_data / "agents"
     if agents_source.is_dir():
         for agent_file in sorted(agents_source.iterdir()):
             if agent_file.suffix == ".md":
                 dest = target_dir / ".claude" / "agents" / agent_file.name
+                if _is_user_modified(dest, agent_file.name, manifest_hashes):
+                    _log.info("artifact_user_modified", path=str(dest))
+                    result.setdefault("modified", []).append(str(dest))
+                    continue
                 _update_or_report(agent_file, dest, result, dry_run, on_progress=on_progress)
 
 
@@ -204,6 +236,7 @@ def _update_framework_files(
     result: dict[str, list[str]],
     dry_run: bool,
     on_progress: ProgressCallback = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Copy/update all framework-managed files from bundled data.
 
@@ -212,22 +245,24 @@ def _update_framework_files(
     - Never-overwrite files in ``_NEVER_OVERWRITE`` (preserved reporting).
     - Hook ``.sh`` files (always overwritten, made executable).
     - Skill directories (always overwritten).
-    - Agent ``.md`` files (always overwritten).
+    - Agent ``.md`` files (overwritten unless user-modified per PRD-FIX-068-FR05).
 
     Args:
         target_dir: Root of the target git repository.
         effective_data: Resolved bundled data directory (may be overridden by
             the caller for testing).
         result: Mutable result dict accumulating ``updated``, ``created``,
-            ``preserved``, and ``errors`` entries.
+            ``preserved``, ``modified``, and ``errors`` entries.
         dry_run: When ``True``, report what would change without writing files.
         on_progress: Optional callback for real-time progress reporting.
+        manifest_hashes: SHA256 content hashes from prior manifest for
+            user-modification detection (PRD-FIX-068-FR05).
     """
     _update_always_overwrite_files(target_dir, effective_data, result, dry_run, on_progress)
     _report_preserved_files(target_dir, result)
     _update_hooks(target_dir, effective_data, result, dry_run, on_progress)
     _update_skills(target_dir, effective_data, result, dry_run, on_progress)
-    _update_agents(target_dir, effective_data, result, dry_run, on_progress)
+    _update_agents(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
 
 
 # ---------------------------------------------------------------------------
