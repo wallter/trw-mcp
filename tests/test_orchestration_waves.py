@@ -18,14 +18,14 @@ import trw_mcp.tools.orchestration as orch_mod
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.tools.orchestration import (
+from trw_mcp.tools._orchestration_helpers import (
     _check_framework_version_staleness,
     _compute_reversion_metrics,
     _compute_wave_progress,
     _get_bundled_file,
     _get_package_version,
-    register_orchestration_tools,
 )
+from trw_mcp.tools.orchestration import register_orchestration_tools
 
 
 @pytest.fixture(autouse=True)
