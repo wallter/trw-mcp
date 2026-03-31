@@ -63,6 +63,25 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
+def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
+    """Write learning IDs from session_start to the injected-IDs state file.
+
+    PRD-CORE-095 FR16: Prevents the auto-injection hook from re-injecting
+    learnings that session_start already surfaced.
+    """
+    ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
+    if not ids:
+        return
+    state_file = trw_dir / "context" / "injected_learning_ids.txt"
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        with state_file.open("a", encoding="utf-8") as f:
+            for lid in ids:
+                f.write(lid + "\n")
+    except OSError:
+        logger.debug("injected_ids_write_failed", exc_info=True)
+
+
 def _get_run_status(run_dir: Path) -> RunStatusDict:
     """Extract status summary from a run directory."""
     reader = FileStateReader()
@@ -262,6 +281,9 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 results["query_matched"] = int(str(extra["query_matched"]))
             if "total_available" in extra:
                 results["total_available"] = int(str(extra["total_available"]))
+            # PRD-CORE-095 FR16: Pre-populate injected IDs so the auto-injection
+            # hook doesn't re-inject learnings that session_start already surfaced.
+            _write_session_start_ids(trw_dir, learnings)
         except Exception as exc:  # justified: fail-open, recall failure must not block session start
             errors.append(f"recall: {exc}")
             results["learnings"] = []

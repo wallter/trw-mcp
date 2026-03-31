@@ -83,6 +83,50 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
+def _read_injected_ids(trw_dir: Path) -> set[str]:
+    """Read learning IDs already injected by the user-prompt-submit hook.
+
+    PRD-CORE-095 FR15: Returns a set of IDs from
+    ``.trw/context/injected_learning_ids.txt`` (one per line).
+    Returns empty set if file missing or unreadable.
+    """
+    state_file = trw_dir / "context" / "injected_learning_ids.txt"
+    try:
+        if state_file.exists():
+            return {line.strip() for line in state_file.read_text(encoding="utf-8").splitlines() if line.strip()}
+    except OSError:
+        pass
+    return set()
+
+
+def _annotate_injected_learnings(
+    result: dict[str, object],
+    trw_dir: Path,
+) -> None:
+    """Annotate and deprioritize already-injected learnings in recall results.
+
+    PRD-CORE-095 FR15: Reads injected IDs from state file and moves
+    already-injected learnings to the end of the list with an annotation.
+    Fresh results fill the primary slots.
+    """
+    injected_ids = _read_injected_ids(trw_dir)
+    if not injected_ids:
+        return
+    learnings = result.get("learnings")
+    if not learnings or not isinstance(learnings, list):
+        return
+    fresh: list[dict[str, object]] = []
+    already: list[dict[str, object]] = []
+    for entry in learnings:
+        lid = str(entry.get("id", ""))
+        if lid in injected_ids:
+            entry["already_in_context"] = True
+            already.append(entry)
+        else:
+            fresh.append(entry)
+    result["learnings"] = fresh + already
+
+
 def _create_llm_client() -> LLMClient:
     """Create an LLM client using current config."""
     config = get_config()
@@ -280,10 +324,11 @@ def register_learning_tools(server: FastMCP) -> None:
         """
         from trw_mcp.tools._recall_impl import execute_recall
 
+        trw_dir = resolve_trw_dir()
         # Resolve from this module's namespace so test patches work
-        return execute_recall(
+        result = execute_recall(
             query=query,
-            trw_dir=resolve_trw_dir(),
+            trw_dir=trw_dir,
             config=get_config(),
             tags=tags,
             min_impact=min_impact,
@@ -299,6 +344,11 @@ def register_learning_tools(server: FastMCP) -> None:
             _rank_by_utility=rank_by_utility,
             _collect_context=collect_context,
         )
+
+        # PRD-CORE-095 FR15: Annotate already-injected learnings
+        _annotate_injected_learnings(result, trw_dir)
+
+        return result
 
     @server.tool()
     @log_tool_call
