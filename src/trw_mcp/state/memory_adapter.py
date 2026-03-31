@@ -558,11 +558,15 @@ def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
             threshold_mb=config.wal_checkpoint_threshold_mb,
         )
 
-        # Use a fresh connection for the checkpoint pragma to avoid
-        # interfering with the singleton backend's connection.
-        conn = sqlite3.connect(str(db_path))
+        # Use a fresh connection with busy_timeout for the checkpoint.
+        # PASSIVE instead of TRUNCATE: TRUNCATE requires exclusive lock
+        # across ALL connections (including other processes), which fails
+        # under concurrent multi-process access and can corrupt the DB.
+        # PASSIVE checkpoints what it can without blocking writers.
+        conn = sqlite3.connect(str(db_path), timeout=5.0)
         try:
-            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            conn.execute("PRAGMA busy_timeout = 5000")
+            row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
             pages_checkpointed = row[1] if row else 0
         finally:
             conn.close()
