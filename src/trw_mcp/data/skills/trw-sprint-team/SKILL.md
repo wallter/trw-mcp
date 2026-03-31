@@ -183,7 +183,7 @@ For each approved teammate (in this order: implementers first, then testers, the
    - `name`: the teammate name (e.g., "implementer-1")
    - `subagent_type`: matching agent type:
      - implementer -> `trw-implementer`
-     - tester -> `trw-tester`
+     - tester -> `trw-implementer`
      - reviewer -> `trw-reviewer`
      - researcher -> `trw-researcher`
    - `model`: as proposed (claude-sonnet-4-6/claude-opus-4-6/claude-haiku-4-5-20251001)

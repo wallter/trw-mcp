@@ -270,7 +270,6 @@ class TestSkills:
         "trw-prd-ready",
         "trw-prd-review",
         "trw-project-health",
-        "trw-review-pr",
         "trw-security-check",
         "trw-simplify",
         "trw-sprint-finish",
@@ -281,7 +280,7 @@ class TestSkills:
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 22 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 23 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -368,24 +367,11 @@ class TestAgents:
     """
 
     EXPECTED_AGENTS = [
-        "reviewer-correctness.md",
-        "reviewer-integration.md",
-        "reviewer-performance.md",
-        "reviewer-security.md",
-        "reviewer-spec-compliance.md",
-        "reviewer-style.md",
-        "reviewer-test-quality.md",
-        "trw-adversarial-auditor.md",
-        "trw-code-simplifier.md",
+        "trw-auditor.md",
         "trw-implementer.md",
-        "trw-lead.md",
         "trw-prd-groomer.md",
-        "trw-requirement-reviewer.md",
-        "trw-requirement-writer.md",
         "trw-researcher.md",
         "trw-reviewer.md",
-        "trw-tester.md",
-        "trw-traceability-checker.md",
     ]
 
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
@@ -550,7 +536,7 @@ class TestUpdateOverwritesFrameworkFiles:
 
     def test_updates_agents(self, initialized_repo: Path) -> None:
         """Agent files are overwritten with latest versions."""
-        agent_path = initialized_repo / ".claude" / "agents" / "trw-code-simplifier.md"
+        agent_path = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
         agent_path.write_text("old agent", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -757,7 +743,7 @@ class TestUpdateCreatesNewArtifacts:
         agents_dir = initialized_repo / ".claude" / "agents"
         deployed = sorted(f.name for f in agents_dir.iterdir() if f.suffix == ".md")
         assert "trw-implementer.md" in deployed
-        assert "trw-tester.md" in deployed
+        assert "trw-auditor.md" in deployed
 
 
 @pytest.mark.unit
@@ -1034,7 +1020,7 @@ class TestManagedArtifactsManifest:
 
         data = FileStateReader().read_yaml(manifest_path)
         assert isinstance(data, dict)
-        assert data["version"] == 1
+        assert data["version"] == 2
         skills = data.get("skills", [])
         assert isinstance(skills, list)
         assert "trw-deliver" in skills
@@ -1052,7 +1038,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(data, dict)
         agents = data.get("agents", [])
         assert isinstance(agents, list)
-        assert "trw-code-simplifier.md" in agents
+        assert "trw-auditor.md" in agents
         assert "trw-implementer.md" in agents
 
     def test_manifest_lists_all_bundled_artifacts(self, fake_git_repo: Path) -> None:
@@ -1074,8 +1060,8 @@ class TestManagedArtifactsManifest:
         # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed, 
         # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
         # or if the skill/agent/change is for an internal monorepo skill
-        assert len(skills) == 24
-        assert len(agents) == 18
+        assert len(skills) == 23
+        assert len(agents) == 5
         assert len(hooks) > 0
 
 
@@ -1732,13 +1718,13 @@ class TestPrefixMigration:
         """Old non-prefixed agent .md file is removed when trw- successor exists."""
         agents_dir = initialized_repo / ".claude" / "agents"
         # Create predecessor and successor agent files
-        (agents_dir / "code-simplifier.md").write_text("old", encoding="utf-8")
-        (agents_dir / "trw-code-simplifier.md").write_text("new", encoding="utf-8")
+        (agents_dir / "implementer.md").write_text("old", encoding="utf-8")
+        # trw-implementer.md is already deployed by init_project
 
         result = update_project(initialized_repo)
 
-        assert not (agents_dir / "code-simplifier.md").exists()
-        migrated_entries = [e for e in result["updated"] if "migrated:" in e and "code-simplifier.md" in e]
+        assert not (agents_dir / "implementer.md").exists()
+        migrated_entries = [e for e in result["updated"] if "migrated:" in e and "implementer.md" in e]
         assert len(migrated_entries) >= 1
 
     def test_migrate_idempotent(self, initialized_repo: Path) -> None:
