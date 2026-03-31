@@ -167,8 +167,8 @@ def register_build_tools(server: FastMCP) -> None:
                 build_passed=bool(result.get("tests_passed", False)),
             )
             append_ceremony_nudge(result, trw_dir, context=ctx)
-        except Exception:  # justified: fail-open
-            pass
+        except Exception:  # justified: fail-open — ceremony nudge must not break build check
+            logger.debug("ceremony_nudge_failed_in_build_check")
 
         return result
 
