@@ -169,7 +169,8 @@ class TestFrameworkDeployment:
         template_path = tmp_path / ".trw" / "templates" / "claude_md.md"
         assert template_path.exists()
         content = template_path.read_text(encoding="utf-8")
-        assert "{{categorized_learnings}}" in content
+        # CORE-093 collapsed template to 4 compact variables
+        assert "{{imperative_opener}}" in content
 
     def test_repeated_init_preserves_custom_template(
         self,
