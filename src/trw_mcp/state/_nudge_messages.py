@@ -16,7 +16,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 from trw_mcp.state._nudge_state import _STEPS as _STEPS
-from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
+from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName, _step_complete
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -317,8 +317,6 @@ def _build_status_line(state: CeremonyState) -> str:
 
     Format:  check session_start | cross checkpoint (5 files modified, 12 min since start)
     """
-    from trw_mcp.state._nudge_rules import _step_complete
-
     parts: list[str] = []
     for step in _STEPS:
         mark = "\u2713" if _step_complete(step, state) else "\u2717"

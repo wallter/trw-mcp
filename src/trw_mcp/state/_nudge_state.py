@@ -268,3 +268,23 @@ def reset_nudge_count(trw_dir: Path, step: str) -> None:
     state = read_ceremony_state(trw_dir)
     state.nudge_counts[step] = 0
     write_ceremony_state(trw_dir, state)
+
+
+# ---------------------------------------------------------------------------
+# Step completion check (moved from _nudge_rules.py for PRD-CORE-089-FR02)
+# ---------------------------------------------------------------------------
+
+
+def _step_complete(step: str, state: CeremonyState) -> bool:
+    """Return True if the given step is considered complete given *state*."""
+    if step == "session_start":
+        return state.session_started
+    if step == "checkpoint":
+        return state.checkpoint_count > 0 and state.files_modified_since_checkpoint <= 3
+    if step == "build_check":
+        return state.build_check_result == "passed"
+    if step == "review":
+        return state.review_called
+    if step == "deliver":
+        return state.deliver_called
+    return False
