@@ -37,9 +37,9 @@ from trw_mcp.state.claude_md._parser import (
     render_template,
 )
 from trw_mcp.state.claude_md._promotion import (
-    collect_context_data,
-    collect_patterns,
-    collect_promotable_learnings,
+    collect_context_data as collect_context_data,
+    collect_patterns as collect_patterns,
+    collect_promotable_learnings as collect_promotable_learnings,
 )
 from trw_mcp.state.claude_md._review_md import (
     _REVIEW_MAX_LEARNINGS as _REVIEW_MAX_LEARNINGS,
@@ -62,21 +62,10 @@ from trw_mcp.state.claude_md._review_md import (
     recall_learnings as recall_learnings,
 )
 from trw_mcp.state.claude_md._static_sections import (
-    render_behavioral_protocol,
     render_ceremony_quick_ref,
     render_closing_reminder,
-    render_framework_reference,
     render_imperative_opener,
     render_memory_harmonization,
-)
-from trw_mcp.state.claude_md._templates import (
-    CLAUDEMD_LEARNING_CAP,
-    CLAUDEMD_PATTERN_CAP,
-    render_adherence,
-    render_architecture,
-    render_categorized_learnings,
-    render_conventions,
-    render_patterns,
 )
 from trw_mcp.state.persistence import FileStateReader
 
@@ -89,18 +78,12 @@ logger = structlog.get_logger(__name__)
 _HASH_FILE_NAME = "claude_md_hash.txt"
 
 
-def _compute_sync_hash(
-    high_impact: list[dict[str, object]],
-    patterns: list[dict[str, object]],
-) -> str:
+def _compute_sync_hash() -> str:
     """Compute a stable SHA-256 hash of the sync inputs.
 
-    FR04 (PRD-FIX-053): Hash only deterministic inputs — sorted learning
-    summaries and pattern filenames. Exclude timestamps and rendered output
-    to avoid false cache invalidations.
-
-    Includes the package version so that any trw-mcp upgrade automatically
-    invalidates the cache and forces a re-render with the new rendering logic.
+    PRD-CORE-093 FR05: Hash excludes learning content — only template version
+    (via package version) determines whether CLAUDE.md needs re-rendering.
+    This ensures consecutive trw_deliver calls produce identical CLAUDE.md.
 
     Returns:
         64-character hex SHA-256 digest.
@@ -117,18 +100,6 @@ def _compute_sync_hash(
         logger.warning("claude_md_hash_version_unknown")
     h.update(pkg_version.encode("utf-8"))
     h.update(b"\x00")
-
-    # Sorted learning summaries (deterministic order)
-    learning_summaries = sorted(str(entry.get("summary", "")) for entry in high_impact)
-    for summary in learning_summaries:
-        h.update(summary.encode("utf-8"))
-        h.update(b"\x00")  # null separator
-
-    # Sorted pattern names
-    pattern_names = sorted(str(p.get("name", p.get("id", ""))) for p in patterns)
-    for name in pattern_names:
-        h.update(name.encode("utf-8"))
-        h.update(b"\x00")
 
     return h.hexdigest()
 
@@ -327,46 +298,37 @@ def execute_claude_md_sync(
         Result dictionary with sync metadata.
     """
     import trw_mcp.state.claude_md as _pkg
-    from trw_mcp.state.analytics import mark_promoted, update_analytics_sync
-    from trw_mcp.state.llm_helpers import llm_summarize_learnings
+    from trw_mcp.state.analytics import update_analytics_sync
 
     trw_dir = _pkg.resolve_trw_dir()
     project_root = _pkg.resolve_project_root()
 
-    high_impact = collect_promotable_learnings(trw_dir, config, reader)
-    patterns = collect_patterns(trw_dir, config, reader)
-    arch_data, conv_data = collect_context_data(trw_dir, config, reader)
-
-    # FR04 (PRD-FIX-053): Content-hash change detection.
-    # Only applies to root scope — sub-CLAUDE.md generation always renders.
+    # PRD-CORE-093 FR05: Hash excludes learning content — only package version
+    # determines whether CLAUDE.md needs re-rendering. This keeps the prompt
+    # cache stable across trw_deliver calls.
     if scope != "sub":
-        current_hash = _compute_sync_hash(high_impact, patterns)
+        current_hash = _compute_sync_hash()
         stored_hash = _read_stored_hash(trw_dir)
         if stored_hash is not None and stored_hash == current_hash:
             logger.debug("claude_md_sync_cache_hit", hash=current_hash[:12])
             logger.info(
                 "claude_md_sync_skip",
                 reason="no_changes",
-                learnings_count=len(high_impact),
-                patterns_count=len(patterns),
             )
-            # Determine target path for the response (consistent with full render)
             target = project_root / "CLAUDE.md"
             early_return_dict: dict[str, object] = {
                 "path": str(target),
                 "scope": scope,
                 "status": "unchanged",
                 "hash": current_hash,
-                "learnings_promoted": len(high_impact),
-                "patterns_included": len(patterns),
+                "learnings_promoted": 0,
+                "patterns_included": 0,
                 "total_lines": 0,
                 "llm_used": False,
                 "agents_md_synced": False,
                 "agents_md_path": None,
                 "bounded_contexts_synced": 0,
             }
-            # PRD-CORE-084: AGENTS.md must still sync on cache hit because
-            # learning injection content may differ from the CLAUDE.md hash.
             _, write_agents = _determine_write_targets(
                 client, config, project_root, scope,
             )
@@ -377,7 +339,6 @@ def execute_claude_md_sync(
             )
             early_return_dict["agents_md_synced"] = synced
             early_return_dict["agents_md_path"] = path
-            # PRD-CORE-084 FR08: Ensure REVIEW.md stays fresh even on cache hits.
             try:
                 review_result = generate_review_md(trw_dir, repo_root=project_root)
                 early_return_dict["review_md"] = review_result
@@ -386,56 +347,18 @@ def execute_claude_md_sync(
                 early_return_dict["review_md"] = {"status": "failed"}
             return early_return_dict
 
-    llm_summary: str | None = None
-    if (high_impact or patterns) and config.llm_enabled and llm.available:  # pragma: no cover
-        llm_summary = llm_summarize_learnings(
-            high_impact,
-            patterns,
-            llm,
-            CLAUDEMD_LEARNING_CAP,
-            CLAUDEMD_PATTERN_CAP,
-        )
-
     template = load_claude_md_template(trw_dir)
 
-    # CLAUDE.md is the "always-on" prompt (loads every message). Keep it compact
-    # and focused on triggering trw_session_start(). The session-start hook
-    # delivers the full operational briefing (delegation, phases, watchlist,
-    # Agent Teams) as a one-time injection per session event.
+    # PRD-CORE-093 FR01/FR02: CLAUDE.md is the "always-on" prompt (loads every
+    # message). Keep it compact — only the session_start trigger, ceremony quick
+    # ref, memory routing, and closing reminder. Learning promotion removed;
+    # full protocol delivered by session-start hook once per session event.
     tpl_context: dict[str, str] = {
-        # Always in CLAUDE.md — role identity + session_start trigger
         "imperative_opener": render_imperative_opener(),
         "ceremony_quick_ref": render_ceremony_quick_ref(),
         "memory_harmonization": render_memory_harmonization(),
-        "framework_reference": render_framework_reference(),
         "closing_reminder": render_closing_reminder(),
-        # Delivered by session-start hook (one-time per session event)
-        "delegation_section": "",
-        "agent_teams_section": "",
-        "behavioral_protocol": render_behavioral_protocol(),
-        "rationalization_watchlist": "",
-        "ceremony_phases": "",
-        "ceremony_table": "",
-        "ceremony_flows": "",
     }
-
-    # Content sections: LLM summary replaces manual rendering when available
-    if llm_summary is not None:
-        tpl_context.update({
-            "architecture_section": "",
-            "conventions_section": "",
-            "categorized_learnings": llm_summary + "\n",
-            "patterns_section": "",
-            "adherence_section": "",
-        })
-    else:
-        tpl_context.update({
-            "architecture_section": render_architecture(arch_data),
-            "conventions_section": render_conventions(conv_data),
-            "categorized_learnings": render_categorized_learnings(high_impact),
-            "patterns_section": render_patterns(patterns),
-            "adherence_section": render_adherence(high_impact),
-        })
 
     trw_section = render_template(template, tpl_context)
 
@@ -464,11 +387,6 @@ def execute_claude_md_sync(
 
     update_analytics_sync(trw_dir)
 
-    for learning in high_impact:
-        lid = learning.get("id", "")
-        if isinstance(lid, str) and lid:
-            mark_promoted(trw_dir, lid)
-
     agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
         write_agents,
         config,
@@ -478,13 +396,12 @@ def execute_claude_md_sync(
         recall_fn=recall_learnings,
     )
 
-    # FR04 (PRD-FIX-053): Store hash after successful render (root scope only).
+    # Store hash after successful render (root scope only).
     if scope != "sub":
-        rendered_hash = _compute_sync_hash(high_impact, patterns)
+        rendered_hash = _compute_sync_hash()
         _write_stored_hash(trw_dir, rendered_hash)
 
     # PRD-CORE-084 FR08: Generate REVIEW.md after CLAUDE.md sync completes.
-    # Fail-open — REVIEW.md failure must not block CLAUDE.md sync.
     review_md_result: dict[str, object]
     try:
         review_md_result = generate_review_md(trw_dir, repo_root=project_root)
@@ -496,16 +413,12 @@ def execute_claude_md_sync(
         "claude_md_sync_ok",
         scope=scope,
         path=str(target),
-        promoted_count=len(high_impact),
-        total_learnings=len(high_impact) + len(patterns),
         client=client,
         write_claude=write_claude,
         write_agents=write_agents,
     )
     logger.debug(
         "claude_md_sync_detail",
-        high_impact_count=len(high_impact),
-        patterns_count=len(patterns),
         total_lines=total_lines,
         agents_md_path=agents_md_path if agents_md_synced else None,
     )
@@ -513,10 +426,10 @@ def execute_claude_md_sync(
         "path": str(target),
         "scope": scope,
         "status": "synced",
-        "learnings_promoted": len(high_impact),
-        "patterns_included": len(patterns),
+        "learnings_promoted": 0,
+        "patterns_included": 0,
         "total_lines": total_lines,
-        "llm_used": llm_summary is not None,
+        "llm_used": False,
         "agents_md_synced": agents_md_synced,
         "agents_md_path": agents_md_path,
         "bounded_contexts_synced": 0,

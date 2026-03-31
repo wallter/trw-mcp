@@ -79,9 +79,9 @@ _emit_tier_guidance() {
 _emit_protocol() {
   echo "## TRW Behavioral Protocol"
   echo ""
-  _protocol_file="$_project_root/.trw/context/behavioral_protocol.yaml"
+  _protocol_file="$_project_root/.trw/context/behavioral_protocol.md"
   if [ -f "$_protocol_file" ]; then
-    grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
+    cat "$_protocol_file"
   else
     echo "- Start: call trw_session_start() to load prior learnings and active run state"
     echo "- During: call trw_checkpoint(message) after milestones"
@@ -89,6 +89,12 @@ _emit_protocol() {
     echo "- On errors or >2 retries: call trw_learn() to record the discovery"
   fi
 }
+
+# PRD-CORE-095 FR03: Clear phase cache on all session events so the next
+# UserPromptSubmit invocation always emits phase guidance.
+rm -f "$_project_root/.trw/context/last_ups_phase" 2>/dev/null || true
+# PRD-CORE-095 FR12: Clear injection dedup state so learnings can be re-injected.
+> "$_project_root/.trw/context/injected_learning_ids.txt" 2>/dev/null || true
 
 case "$_source" in
   startup)
