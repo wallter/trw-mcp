@@ -163,9 +163,9 @@ def compute_ceremony_score(
         Dict with score, per-component booleans, and counts.
     """
     # FIX-051-FR01/FR05: Merge session-level events from the fallback path.
-    # Extracted to shared helper _merge_session_events in _deferred_delivery.py
+    # PRD-FIX-061-FR02: Import from state layer (not tools/) to fix layer violation.
     if trw_dir is not None:
-        from trw_mcp.tools._deferred_delivery import _merge_session_events
+        from trw_mcp.state._session_events import _merge_session_events
 
         events = _merge_session_events(list(events), trw_dir)
     else:
