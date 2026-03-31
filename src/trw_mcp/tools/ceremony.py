@@ -63,6 +63,25 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
+def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
+    """Write learning IDs from session_start to the injected-IDs state file.
+
+    PRD-CORE-095 FR16: Prevents the auto-injection hook from re-injecting
+    learnings that session_start already surfaced.
+    """
+    ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
+    if not ids:
+        return
+    state_file = trw_dir / "context" / "injected_learning_ids.txt"
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        with state_file.open("a", encoding="utf-8") as f:
+            for lid in ids:
+                f.write(lid + "\n")
+    except OSError:
+        logger.debug("injected_ids_write_failed", exc_info=True)
+
+
 def _get_run_status(run_dir: Path) -> RunStatusDict:
     """Extract status summary from a run directory."""
     reader = FileStateReader()
@@ -262,6 +281,9 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 results["query_matched"] = int(str(extra["query_matched"]))
             if "total_available" in extra:
                 results["total_available"] = int(str(extra["total_available"]))
+            # PRD-CORE-095 FR16: Pre-populate injected IDs so the auto-injection
+            # hook doesn't re-inject learnings that session_start already surfaced.
+            _write_session_start_ids(trw_dir, learnings)
         except Exception as exc:  # justified: fail-open, recall failure must not block session start
             errors.append(f"recall: {exc}")
             results["learnings"] = []
@@ -492,8 +514,11 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         else:
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
-        # Step 3: Sync platform instruction files (CLAUDE.md, AGENTS.md, etc.)
-        _run_step("claude_md_sync", lambda: _do_instruction_sync(trw_dir), _results_view, errors)
+        # Step 3: CLAUDE.md sync removed (PRD-CORE-093 FR06).
+        # Learning promotion no longer rotates CLAUDE.md content, so the prompt
+        # cache stays stable across delivers. Explicit trw_claude_md_sync() or
+        # update_project() remain the only triggers for CLAUDE.md re-render.
+        results["claude_md_sync"] = {"status": "skipped", "reason": "PRD-CORE-093"}
 
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
@@ -509,7 +534,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         results["deferred"] = deferred_status
 
         # Count only critical steps for immediate success evaluation
-        critical_step_count = 3  # reflect + checkpoint + claude_md_sync
+        critical_step_count = 2  # reflect + checkpoint (claude_md_sync removed per PRD-CORE-093)
         results["errors"] = errors
         results["success"] = len(errors) == 0
         results["critical_steps_completed"] = critical_step_count - len(errors)

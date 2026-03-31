@@ -1,7 +1,14 @@
-"""CLAUDE.md template rendering — data-driven section builders and constants."""
+"""CLAUDE.md template rendering — data-driven section builders and constants.
+
+.. deprecated:: 0.37.0
+    PRD-CORE-093: ``render_categorized_learnings``, ``render_architecture``,
+    ``render_patterns``, ``render_adherence``, ``render_conventions`` are
+    deprecated. Learning promotion into CLAUDE.md is removed.
+"""
 
 from __future__ import annotations
 
+import warnings
 from typing import NamedTuple
 
 # Named caps for list truncation (not user-tunable)
@@ -165,24 +172,20 @@ def _render_context_section(
 def render_architecture(arch_data: dict[str, object]) -> str:
     """Render architecture context to markdown.
 
-    Args:
-        arch_data: Architecture data from context/architecture.yaml.
-
-    Returns:
-        Markdown string or empty string if no data.
+    .. deprecated:: 0.37.0
+        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
     """
+    warnings.warn("render_architecture is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
     return _render_context_section("Architecture", arch_data, _ARCH_SKIP_KEYS)
 
 
 def render_conventions(conv_data: dict[str, object]) -> str:
     """Render conventions context to markdown.
 
-    Args:
-        conv_data: Conventions data from context/conventions.yaml.
-
-    Returns:
-        Markdown string or empty string if no data.
+    .. deprecated:: 0.37.0
+        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
     """
+    warnings.warn("render_conventions is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
     return _render_context_section("Conventions", conv_data, _CONV_SKIP_KEYS)
 
 
@@ -191,12 +194,10 @@ def render_categorized_learnings(
 ) -> str:
     """Render high-impact learnings categorized by tag type.
 
-    Args:
-        high_impact: List of high-impact learning entries.
-
-    Returns:
-        Markdown string with categorized learnings, or empty string.
+    .. deprecated:: 0.37.0
+        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
     """
+    warnings.warn("render_categorized_learnings is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
     if not high_impact:
         return ""
     categories: dict[str, list[str]] = {
@@ -244,12 +245,10 @@ def render_categorized_learnings(
 def render_patterns(patterns: list[dict[str, object]]) -> str:
     """Render discovered patterns to markdown.
 
-    Args:
-        patterns: List of pattern entries.
-
-    Returns:
-        Markdown string or empty string if no patterns.
+    .. deprecated:: 0.37.0
+        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
     """
+    warnings.warn("render_patterns is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
     if not patterns:
         return ""
     lines: list[str] = ["### Discovered Patterns"]
@@ -264,12 +263,10 @@ def render_patterns(patterns: list[dict[str, object]]) -> str:
 def render_adherence(high_impact: list[dict[str, object]]) -> str:
     """Render framework adherence directives from compliance learnings.
 
-    Args:
-        high_impact: List of high-impact learning entries.
-
-    Returns:
-        Markdown string with adherence directives, or empty string.
+    .. deprecated:: 0.37.0
+        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
     """
+    warnings.warn("render_adherence is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
     adherence_entries: list[str] = []
     for learning in high_impact:
         tags = learning.get("tags", [])

@@ -1,7 +1,14 @@
-"""Learning promotion logic — selecting which learnings go into CLAUDE.md."""
+"""Learning promotion logic — selecting which learnings go into CLAUDE.md.
+
+.. deprecated:: 0.37.0
+    PRD-CORE-093: Learning promotion into CLAUDE.md is removed. Learnings are
+    now delivered via ``trw_session_start()`` hybrid recall. Functions in this
+    module are retained for API compatibility but emit DeprecationWarning.
+"""
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import structlog
@@ -21,9 +28,9 @@ def collect_promotable_learnings(
 ) -> list[dict[str, object]]:
     """Collect active learnings eligible for CLAUDE.md promotion.
 
-    Reads from SQLite via the memory adapter. For mature entries
-    (q_observations >= threshold), q_value is used instead of static
-    impact for the promotion decision (PRD-CORE-004 1c).
+    .. deprecated:: 0.37.0
+        PRD-CORE-093: Learning promotion removed from CLAUDE.md sync.
+        Use ``trw_session_start()`` for learning delivery instead.
 
     Args:
         trw_dir: Path to .trw directory.
@@ -33,6 +40,12 @@ def collect_promotable_learnings(
     Returns:
         List of high-impact learning entry dicts.
     """
+    warnings.warn(
+        "collect_promotable_learnings is deprecated (PRD-CORE-093). "
+        "Use trw_session_start() for learning delivery.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     high_impact: list[dict[str, object]] = []
 
     try:
