@@ -1,7 +1,11 @@
 #!/bin/sh
-# PRD-INFRA-024-FR02: Phase-aware UserPromptSubmit hook.
+# PRD-INFRA-024-FR02 + PRD-CORE-095-FR01-FR06: Phase-aware UserPromptSubmit hook.
 # Emits calibrated context per execution phase. Fail-open: never blocks prompts.
 # Output target: <150 tokens (~600 chars) per phase. "done" phase: 0 tokens.
+#
+# PRD-CORE-095: Phase-change suppression — caches last emitted phase in
+# .trw/context/last_ups_phase. Same-phase messages produce no output.
+# "none" phase always emits (FR04). "done" phase is always silent (FR06).
 #
 # Performance: ~71ms avg latency (benchmarked 2026-03-29, 3 runs).
 # Fires before every user prompt. Primary cost: infer_phase() scanning events.jsonl.
@@ -18,6 +22,26 @@ init_hook_timer
 cat >/dev/null 2>&1 || true
 
 _phase=$(infer_phase)
+
+# --- PRD-CORE-095 FR01-FR06: Phase-change suppression ---
+_project_root="$(get_repo_root)" || exit 0
+_phase_cache="$_project_root/.trw/context/last_ups_phase"
+
+# FR04: "none" phase always emits (agent needs session_start reminder)
+# FR06: "done" phase is always silent
+if [ "$_phase" != "none" ]; then
+  _cached_phase=""
+  if [ -f "$_phase_cache" ]; then
+    _cached_phase=$(cat "$_phase_cache" 2>/dev/null) || true
+  fi
+  # FR02: Same-phase suppression — skip output if phase unchanged
+  if [ "$_cached_phase" = "$_phase" ]; then
+    log_hook_execution "UserPromptSubmit" "$_phase" "0" "cached"
+    exit 0
+  fi
+  # FR01: Write current phase to cache (atomic write)
+  printf '%s' "$_phase" > "$_phase_cache" 2>/dev/null || true
+fi
 
 case "$_phase" in
   none)
@@ -39,7 +63,7 @@ case "$_phase" in
     echo "TRW [DELIVER]: trw_deliver() persists learnings, syncs CLAUDE.md, and closes the run — without it, your session's work is invisible to future agents."
     ;;
   done)
-    # Silent — run is complete, no output
+    # Silent — run is complete, no output (FR06)
     ;;
 esac
 
