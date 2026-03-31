@@ -1282,7 +1282,12 @@ def phase_configure(
     else:
         # Script mode: use flags
         project_name = sanitize_project_name(opt_name) if opt_name else default_name
-        if opt_api_key:
+        # PRD-FIX-067-FR02: Check prior_config before opt_api_key
+        if prior_config.get("api_key"):
+            api_key = str(prior_config["api_key"])
+            telemetry_enabled = True
+            ui.step_ok("API key: configured (from prior install)")
+        elif opt_api_key:
             if validate_api_key(opt_api_key):
                 api_key = opt_api_key
                 telemetry_enabled = True
@@ -1565,7 +1570,7 @@ def main() -> None:
     install_ai = bool(install_ai)
     install_vec = bool(install_vec)
     has_extras = install_ai or install_vec
-    has_config = interactive or args.name or args.api_key
+    has_config = interactive or args.name or args.api_key or bool(prior_config)
 
     # ── Step count (stable from here on) ─────────────────────────────
     total = 3  # extract + install + project-setup
