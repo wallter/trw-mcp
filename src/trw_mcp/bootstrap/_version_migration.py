@@ -133,7 +133,8 @@ def _read_manifest(target_dir: Path) -> dict[str, object] | None:
                 "custom_hooks",
             )
         }
-        result["version"] = int(data.get("version", 1))
+        raw_version = data.get("version", 1)
+        result["version"] = int(str(raw_version))
         raw_hashes = data.get("content_hashes")
         if isinstance(raw_hashes, dict):
             result["content_hashes"] = {str(k): str(v) for k, v in raw_hashes.items()}
