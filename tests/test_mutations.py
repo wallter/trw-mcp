@@ -12,6 +12,13 @@ from __future__ import annotations
 
 import json
 import subprocess
+
+import pytest
+
+pytest.importorskip(
+    "trw_mcp.tools.mutations",
+    reason="PRD-CORE-098: mutations module removed — these tests are obsolete",
+)
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

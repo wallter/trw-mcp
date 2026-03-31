@@ -571,12 +571,6 @@ class TestComputeTierCeremonyScoreRawEvents:
         result = compute_tier_ceremony_score(events, "STANDARD")
         assert result["has_deliver"] is True
 
-    def test_claude_md_synced_raw_event(self) -> None:
-        """Raw 'claude_md_synced' event counts as has_deliver."""
-        events: list[dict[str, object]] = [{"event": "claude_md_synced"}]
-        result = compute_tier_ceremony_score(events, "STANDARD")
-        assert result["has_deliver"] is True
-
     def test_trw_deliver_complete_raw_event(self) -> None:
         """Raw 'trw_deliver_complete' event counts as has_deliver."""
         events: list[dict[str, object]] = [{"event": "trw_deliver_complete"}]
@@ -922,14 +916,6 @@ class TestResolveEventRewardAdditional:
         from trw_mcp.scoring import _resolve_event_reward
 
         reward, label = _resolve_event_reward(EventType.PRD_CREATED)
-        assert reward is not None
-        assert reward > 0
-
-    def test_claude_md_synced_alias_positive(self) -> None:
-        """CLAUDE_MD_SYNCED alias returns positive reward."""
-        from trw_mcp.scoring import _resolve_event_reward
-
-        reward, label = _resolve_event_reward(EventType.CLAUDE_MD_SYNCED)
         assert reward is not None
         assert reward > 0
 

@@ -302,12 +302,12 @@ class TestCeremonyScoreSessionEvents:
         # Without trw_dir: should NOT get session_start points (25)
         result_no_trw_dir = compute_ceremony_score(run_events)
         assert result_no_trw_dir["session_start"] is False
-        assert result_no_trw_dir["score"] == 15  # only checkpoint = 15 pts
+        assert result_no_trw_dir["score"] == 20  # only checkpoint = 20 pts
 
         # With trw_dir: should GET session_start points from session-events.jsonl
         result_with_trw_dir = compute_ceremony_score(run_events, trw_dir=trw_dir)
         assert result_with_trw_dir["session_start"] is True
-        assert result_with_trw_dir["score"] == 40  # checkpoint(15) + session_start(25)
+        assert result_with_trw_dir["score"] == 45  # checkpoint(20) + session_start(25)
 
     def test_score_backward_compat_without_trw_dir(self) -> None:
         """compute_ceremony_score called without trw_dir must behave identically to old code."""
@@ -318,7 +318,7 @@ class TestCeremonyScoreSessionEvents:
         result = compute_ceremony_score(events)
         assert result["session_start"] is True
         assert result["checkpoint_count"] == 1
-        assert result["score"] == 40  # session_start(25) + checkpoint(15)
+        assert result["score"] == 45  # session_start(25) + checkpoint(20)
 
     def test_score_with_missing_session_events_file(self, tmp_path: Path) -> None:
         """When session-events.jsonl doesn't exist, score must not fail."""
@@ -356,7 +356,7 @@ class TestCeremonyScoreSessionEvents:
         assert result["checkpoint_count"] >= 1
         assert result["learn_count"] >= 1
         assert result["deliver"] is True
-        assert result["score"] == 75  # 25+25+15+10
+        assert result["score"] == 80  # 25+25+20+10
 
 
 # ---------------------------------------------------------------------------

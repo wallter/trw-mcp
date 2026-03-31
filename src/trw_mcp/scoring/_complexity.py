@@ -247,7 +247,7 @@ def _detect_ceremony_events(
             has_learn = True
         elif event_type == "build_check_complete" or (is_tool and tool_name == "trw_build_check"):
             has_build_check = True
-        elif event_type in ("reflection_complete", "claude_md_synced", "trw_deliver_complete") or (
+        elif event_type in ("reflection_complete", "trw_deliver_complete") or (
             is_tool and tool_name in ("trw_deliver", "trw_reflect")
         ):
             has_deliver = True

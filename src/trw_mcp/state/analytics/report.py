@@ -75,7 +75,7 @@ def _classify_event(
                        has_build_check, has_review, build_passed).
     """
     has_session_start = event_type == "session_start" or (is_tool_invocation and tool_name == "trw_session_start")
-    has_deliver = event_type in ("reflection_complete", "claude_md_synced", "trw_deliver_complete") or (
+    has_deliver = event_type in ("reflection_complete", "trw_deliver_complete") or (
         is_tool_invocation and tool_name in ("trw_deliver", "trw_reflect")
     )
     has_checkpoint = event_type == "checkpoint" or (is_tool_invocation and tool_name == "trw_checkpoint")
@@ -142,7 +142,7 @@ def compute_ceremony_score(
 
     Scoring model (additive, per-component weight when present):
     - session_start event present: weights["session_start"] points
-    - reflection_complete or claude_md_synced present: weights["deliver"] points
+    - reflection_complete or trw_deliver_complete present: weights["deliver"] points
     - checkpoint event count >= 1: weights["checkpoint"] points
     - Any event with "learn" in type: weights["learn"] points
     - build_check_complete present: weights["build_check"] points

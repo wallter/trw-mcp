@@ -16,6 +16,13 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytest.importorskip(
+    "trw_mcp.tools.build._subprocess",
+    reason="PRD-CORE-098: subprocess/audit modules removed — these tests are obsolete",
+)
+
 from fastmcp import FastMCP
 
 from tests.conftest import get_tools_sync
