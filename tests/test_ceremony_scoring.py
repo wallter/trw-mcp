@@ -10,8 +10,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 SRC_DIR = Path(__file__).parent.parent / "src" / "trw_mcp"
 
 

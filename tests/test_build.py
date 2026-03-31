@@ -18,6 +18,7 @@ import pytest
 
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
+
 pytest.importorskip(
     "trw_mcp.tools.build._subprocess",
     reason="PRD-CORE-098: subprocess modules removed — these tests are obsolete, see test_build_check_reporter.py",

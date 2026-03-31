@@ -17,7 +17,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ── FR01: CONTRIBUTING.md ────────────────────────────────────────────
 
 

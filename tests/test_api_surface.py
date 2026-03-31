@@ -7,8 +7,6 @@ source modules.
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestApiSurfaceFR01:
     """FR01: Verify api package exposes the 10 curated public types."""

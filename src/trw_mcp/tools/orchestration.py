@@ -9,7 +9,6 @@ from __future__ import annotations
 import re
 import secrets
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import cast
 
 import structlog
@@ -27,7 +26,6 @@ from trw_mcp.models.run import (
 from trw_mcp.models.typed_dicts import (
     CheckpointEventDataDict,
     CheckpointRecordDict,
-    StatusReflectionDict,
     TrwStatusDict,
 )
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
