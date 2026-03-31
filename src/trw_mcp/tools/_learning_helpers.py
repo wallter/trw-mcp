@@ -220,7 +220,7 @@ def check_and_handle_dedup(
                             "status": "merged",
                             "merged_into": dedup_result.existing_id or "",
                             "new_id": params.learning_id,
-                            "similarity": str(round(dedup_result.similarity, 3)),
+                            "similarity": round(dedup_result.similarity, 3),
                             "message": f"Merged into existing entry: {dedup_result.existing_id}",
                         }
                 except (OSError, StateError, ValueError, TypeError):
