@@ -34,6 +34,15 @@ from trw_mcp.middleware.response_optimizer import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _force_json_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force JSON format for backward-compat tests (CORE-096 changes default to YAML)."""
+    monkeypatch.setattr(
+        "trw_mcp.middleware.response_optimizer._get_response_format",
+        lambda: "json",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Stub objects for on_call_tool integration
 # ---------------------------------------------------------------------------
