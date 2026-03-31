@@ -76,7 +76,7 @@ class LLMClient:
         self._async_client: Any = None
 
         try:
-            import anthropic  # type: ignore[import-not-found,unused-ignore]
+            import anthropic  # type: ignore[import-not-found]
 
             self._client = anthropic.Anthropic()
             self._async_client = anthropic.AsyncAnthropic()
