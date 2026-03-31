@@ -38,7 +38,11 @@ from trw_mcp.state.claude_md._parser import (
 )
 from trw_mcp.state.claude_md._promotion import (
     collect_context_data as collect_context_data,
+)
+from trw_mcp.state.claude_md._promotion import (
     collect_patterns as collect_patterns,
+)
+from trw_mcp.state.claude_md._promotion import (
     collect_promotable_learnings as collect_promotable_learnings,
 )
 from trw_mcp.state.claude_md._review_md import (

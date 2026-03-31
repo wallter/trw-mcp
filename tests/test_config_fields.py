@@ -9,11 +9,9 @@ Ensures the config decomposition maintains structural contracts:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
-
 
 # -- T01: File size gate --
 

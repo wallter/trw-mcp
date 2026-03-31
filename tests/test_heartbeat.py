@@ -12,8 +12,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from trw_mcp.state._paths import touch_heartbeat
 from trw_mcp.state.analytics.report import _get_last_activity_timestamp, _is_run_stale
 from trw_mcp.state.persistence import FileStateWriter

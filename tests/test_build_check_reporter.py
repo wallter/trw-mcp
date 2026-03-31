@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.conftest import extract_tool_fn, get_tools_sync, make_test_server
+from tests.conftest import get_tools_sync, make_test_server
 from trw_mcp.models.config import TRWConfig
 
 

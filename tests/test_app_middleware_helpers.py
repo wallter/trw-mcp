@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 
 class TestMiddlewareHelpers:
     """FR03: Verify extracted middleware init helpers exist and are fail-open."""
@@ -48,8 +46,8 @@ class TestMiddlewareHelpers:
             assert result is None
 
     def test_try_init_observation_masking_returns_none_when_disabled(self) -> None:
-        from trw_mcp.server._app import _try_init_observation_masking
         from trw_mcp.models.config import TRWConfig
+        from trw_mcp.server._app import _try_init_observation_masking
 
         config = TRWConfig()
         # observation_masking defaults to True, so let's test with disabled
