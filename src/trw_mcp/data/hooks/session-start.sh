@@ -93,6 +93,8 @@ _emit_protocol() {
 # PRD-CORE-095 FR03: Clear phase cache on all session events so the next
 # UserPromptSubmit invocation always emits phase guidance.
 rm -f "$_project_root/.trw/context/last_ups_phase" 2>/dev/null || true
+# PRD-CORE-095 FR12: Clear injection dedup state so learnings can be re-injected.
+> "$_project_root/.trw/context/injected_learning_ids.txt" 2>/dev/null || true
 
 case "$_source" in
   startup)
