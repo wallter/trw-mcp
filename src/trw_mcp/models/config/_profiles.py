@@ -71,6 +71,7 @@ _PROFILES: dict[str, ClientProfile] = {
         context_window_tokens=128_000,
         ceremony_weights=CeremonyWeights(),
         scoring_weights=ScoringDimensionWeights(),
+        response_format="json",
         hooks_enabled=False,
         include_agent_teams=False,
     ),

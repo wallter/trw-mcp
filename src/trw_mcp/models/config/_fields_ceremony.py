@@ -38,6 +38,7 @@ class _CeremonyFields:
         description="Platforms to sync instruction files for.",
     )
     ceremony_mode: Literal["full", "light"] = "full"
+    response_format: Literal["yaml", "json"] = "yaml"
     agents_md_learning_injection: bool = True
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7

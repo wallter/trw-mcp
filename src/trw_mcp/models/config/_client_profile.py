@@ -149,6 +149,9 @@ class ClientProfile(BaseModel):
     # Model tier
     default_model_tier: ModelTier = "cloud-sonnet"
 
+    # Response format (PRD-CORE-096)
+    response_format: Literal["yaml", "json"] = "yaml"
+
     # Feature flags
     hooks_enabled: bool = True
     agents_md_enabled: bool = False
