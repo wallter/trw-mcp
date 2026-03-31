@@ -87,7 +87,7 @@ fi
 _auto_recall_enabled="true"
 _auto_recall_max_results=3
 _auto_recall_max_chars=400
-_auto_recall_min_score="0.3"
+_auto_recall_min_score="0.7"
 _config_file="$_project_root/.trw/config.yaml"
 if [ -f "$_config_file" ]; then
   _val=$(grep -m1 'auto_recall_enabled:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
@@ -201,8 +201,9 @@ fi
 _sorted=$(printf '%s' "$_results" | sort -t'|' -k1 -rn | head -n "$_auto_recall_max_results")
 
 # FR10: Emit compact injection format with token cap (FR09)
+# NOTE: Use redirect (not pipeline) so _total_chars stays in parent shell scope.
 _total_chars=0
-printf '%s\n' "$_sorted" | while IFS='|' read -r _sc _lid _lsummary; do
+while IFS='|' read -r _sc _lid _lsummary; do
   [ -z "$_lid" ] && continue
   _line="TRW RECALL: [L-${_lid}] $_lsummary"
   _line_len=${#_line}
@@ -214,7 +215,9 @@ printf '%s\n' "$_sorted" | while IFS='|' read -r _sc _lid _lsummary; do
   _total_chars="$_new_total"
   # FR11: Append injected ID to state file
   printf '%s\n' "$_lid" >> "$_injected_file" 2>/dev/null || true
-done
+done <<EOF
+$(printf '%s\n' "$_sorted")
+EOF
 
 log_hook_execution "UserPromptSubmit" "$_phase" "0"
 exit 0

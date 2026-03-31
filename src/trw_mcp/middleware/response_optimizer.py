@@ -72,12 +72,34 @@ def _yaml_dump(data: object) -> str:
 
 
 def _get_response_format() -> str:
-    """Read response format from config, defaulting to 'yaml'."""
+    """Read response format from active client profile, then config override.
+
+    Resolution order (PRD-CORE-096 section 6):
+      1. TRW_RESPONSE_FORMAT env var (if set)
+      2. TRWConfig.response_format (if non-default / explicitly set)
+      3. Active ClientProfile.response_format (per-client default)
+      4. Fallback: 'yaml'
+    """
+    import os
+
+    env_val = os.environ.get("TRW_RESPONSE_FORMAT")
+    if env_val in ("yaml", "json"):
+        return env_val
+
     try:
         from trw_mcp.models.config import get_config
+        from trw_mcp.models.config._profiles import resolve_client_profile
 
-        return str(get_config().response_format)
-    except Exception:  # justified: fail-open — config unavailable defaults to yaml
+        config = get_config()
+        profile = resolve_client_profile(config.target_platforms[0] if config.target_platforms else "claude-code")
+        # Config explicit override takes precedence over profile default
+        config_fmt = str(config.response_format)
+        profile_fmt = str(profile.response_format)
+        # If config has an explicit value that differs from the profile default,
+        # it's an override. Otherwise use the profile default.
+        return config_fmt if config_fmt != "yaml" or profile_fmt == "yaml" else profile_fmt
+    except Exception as exc:  # justified: fail-open — config unavailable defaults to yaml
+        logger.warning("response_format_resolution_failed", error=str(exc), fallback="yaml")
         return "yaml"
 
 

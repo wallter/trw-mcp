@@ -208,8 +208,9 @@ def _generate_behavioral_protocol_md(
 
         content = generate_behavioral_protocol_md()
         dest.parent.mkdir(parents=True, exist_ok=True)
+        existed = dest.exists()
         dest.write_text(content, encoding="utf-8")
-        result["updated" if dest.exists() else "created"].append(str(dest))
+        result["updated" if existed else "created"].append(str(dest))
     except Exception as exc:  # justified: fail-open — protocol file generation must not block update
         _logger.warning("behavioral_protocol_md_generation_failed", error=str(exc))
         result["warnings"].append(f"behavioral_protocol.md generation failed: {exc}")

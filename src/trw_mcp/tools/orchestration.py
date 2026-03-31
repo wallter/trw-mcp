@@ -39,6 +39,14 @@ from trw_mcp.state.persistence import (
     FileStateWriter,
     model_to_dict,
 )
+from trw_mcp.tools._orchestration_helpers import (
+    _check_framework_version_staleness,
+    _compute_reversion_metrics,
+    _compute_wave_progress,
+    _deploy_frameworks,
+    _deploy_templates,
+    _get_bundled_file,
+)
 from trw_mcp.tools._orchestration_lifecycle import (
     _compute_last_activity_ts,
     _compute_reflection_metrics,
@@ -438,29 +446,3 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             result["wave_id"] = wave_id
 
         return result
-
-
-# --- Private helpers (extracted to _orchestration_helpers.py) ---
-# Re-exported here for backward compatibility with existing callers/tests.
-
-from trw_mcp.tools._orchestration_helpers import (
-    _check_framework_version_staleness as _check_framework_version_staleness,
-)
-from trw_mcp.tools._orchestration_helpers import (
-    _compute_reversion_metrics as _compute_reversion_metrics,
-)
-from trw_mcp.tools._orchestration_helpers import (
-    _compute_wave_progress as _compute_wave_progress,
-)
-from trw_mcp.tools._orchestration_helpers import (
-    _deploy_frameworks as _deploy_frameworks,
-)
-from trw_mcp.tools._orchestration_helpers import (
-    _deploy_templates as _deploy_templates,
-)
-from trw_mcp.tools._orchestration_helpers import (
-    _get_bundled_file as _get_bundled_file,
-)
-from trw_mcp.tools._orchestration_helpers import (
-    _get_package_version as _get_package_version,
-)
