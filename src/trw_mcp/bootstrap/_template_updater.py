@@ -45,7 +45,6 @@ _ALWAYS_UPDATE: list[tuple[str, str]] = [
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
-    ("settings.json", ".claude/settings.json"),
     ("trw_readme.md", "docs/TRW_README.md"),
     ("config_reference.md", "docs/CONFIG-REFERENCE.md"),
 ]
@@ -137,6 +136,60 @@ def _report_preserved_files(
         dest = target_dir / rel_path
         if dest.exists():
             result["preserved"].append(str(dest))
+
+
+def _merge_settings_json(
+    src: Path,
+    dest: Path,
+    result: dict[str, list[str]],
+    dry_run: bool = False,
+) -> None:
+    """Smart-merge bundled settings.json into existing user settings.
+
+    PRD-INFRA-044-FR04: Preserves user opt-out of ENABLE_TOOL_SEARCH
+    while adding missing env keys from the bundled template. All
+    non-env top-level keys (hooks, permissions, etc.) from the existing
+    file are preserved.
+    """
+    _log = structlog.get_logger(__name__)
+    if not src.is_file():
+        return
+    if not dest.exists():
+        # New install — copy bundled template directly
+        _update_or_report(src, dest, result, dry_run)
+        return
+    if dry_run:
+        result["updated"].append(f"would merge: {dest}")
+        return
+    try:
+        bundled = json.loads(src.read_text(encoding="utf-8"))
+        existing = json.loads(dest.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        _log.warning("settings_json_merge_fallback", path=str(dest), reason=str(exc))
+        _update_or_report(src, dest, result, dry_run)
+        return
+
+    # Merge env block: add missing keys, preserve existing values
+    bundled_env = bundled.get("env", {})
+    existing_env = existing.get("env", {})
+    for key, value in bundled_env.items():
+        if key not in existing_env:
+            existing_env[key] = value
+    existing["env"] = existing_env
+
+    # Merge hooks: add missing hook event types, preserve existing
+    bundled_hooks = bundled.get("hooks", {})
+    existing_hooks = existing.get("hooks", {})
+    for hook_event, hook_list in bundled_hooks.items():
+        if hook_event not in existing_hooks:
+            existing_hooks[hook_event] = hook_list
+    existing["hooks"] = existing_hooks
+
+    try:
+        dest.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        result["updated"].append(str(dest))
+    except OSError as exc:
+        result["errors"].append(f"Failed to merge settings.json: {exc}")
 
 
 def _update_hooks(
@@ -260,6 +313,13 @@ def _update_framework_files(
     """
     _update_always_overwrite_files(target_dir, effective_data, result, dry_run, on_progress)
     _report_preserved_files(target_dir, result)
+    # PRD-INFRA-044-FR04: Smart-merge settings.json (preserves user ENABLE_TOOL_SEARCH opt-out)
+    _merge_settings_json(
+        effective_data / "settings.json",
+        target_dir / ".claude" / "settings.json",
+        result,
+        dry_run,
+    )
     _update_hooks(target_dir, effective_data, result, dry_run, on_progress)
     _update_skills(target_dir, effective_data, result, dry_run, on_progress)
     _update_agents(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
