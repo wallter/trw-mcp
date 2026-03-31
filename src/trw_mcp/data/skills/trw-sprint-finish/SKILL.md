@@ -31,7 +31,7 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    - **Security PRD escalation (PRD-QUAL-044-FR04)**: If any PRD has `tags: [security]` or title contains "security"/"hardening"/"vulnerability" and its status is NOT `done`, escalate it to P0 — security PRDs cannot be deferred or left incomplete
    - **Do NOT update PRD statuses yet** — wait until the build gate passes (step 5)
 
-3a. **Spawn adversarial auditor (PRD-QUAL-044-FR01/FR02)**: Before proceeding to exit criteria, spawn a `trw-adversarial-auditor` agent for each sprint PRD (or batch them into one audit pass covering all PRDs). The auditor independently verifies spec compliance — this is mandatory, not optional.
+3a. **Spawn auditor (PRD-QUAL-044-FR01/FR02)**: Before proceeding to exit criteria, spawn a `trw-auditor` agent for each sprint PRD (or batch them into one audit pass covering all PRDs). The auditor independently verifies spec compliance — this is mandatory, not optional.
    - If the auditor reports **any P0 findings**: BLOCK sprint completion — status cannot be set to "done"
    - If the auditor reports **P1 findings**: report them but allow completion with user acknowledgement
    - If the auditor is unavailable (e.g., agent spawn fails): log a warning and proceed, but flag it in the report as "audit_skipped"

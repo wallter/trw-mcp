@@ -8,6 +8,7 @@ Handles:
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -32,8 +33,9 @@ _CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
 # PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
 # Used by _migrate_prefix_predecessors() to remove stale predecessors during
 # update-project when the trw- prefixed successor is already installed.
-PREDECESSOR_MAP: dict[str, dict[str, str]] = {
+PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
     "skills": {
+        # PRD-FIX-032: Non-prefixed → trw- prefixed migration
         "audit": "trw-audit",
         "commit": "trw-commit",
         "deliver": "trw-deliver",
@@ -54,8 +56,11 @@ PREDECESSOR_MAP: dict[str, dict[str, str]] = {
         "sprint-team": "trw-sprint-team",
         "team-playbook": "trw-team-playbook",
         "test-strategy": "trw-test-strategy",
+        # PRD-CORE-092: Dropped skill post-consolidation
+        "trw-review-pr": None,
     },
     "agents": {
+        # PRD-FIX-032: Non-prefixed → trw- prefixed migration
         "code-simplifier.md": "trw-code-simplifier.md",
         "implementer.md": "trw-implementer.md",
         "lead.md": "trw-lead.md",
@@ -67,6 +72,21 @@ PREDECESSOR_MAP: dict[str, dict[str, str]] = {
         "requirement-reviewer.md": "trw-requirement-reviewer.md",
         "requirement-writer.md": "trw-requirement-writer.md",
         "traceability-checker.md": "trw-traceability-checker.md",
+        # PRD-CORE-092: Dropped agents post-consolidation (18 → 5)
+        "trw-tester.md": None,
+        "trw-lead.md": None,
+        "trw-code-simplifier.md": None,
+        "trw-adversarial-auditor.md": "trw-auditor.md",
+        "trw-traceability-checker.md": "trw-auditor.md",
+        "trw-requirement-writer.md": "trw-prd-groomer.md",
+        "trw-requirement-reviewer.md": "trw-prd-groomer.md",
+        "reviewer-correctness.md": None,
+        "reviewer-integration.md": None,
+        "reviewer-performance.md": None,
+        "reviewer-security.md": None,
+        "reviewer-spec-compliance.md": None,
+        "reviewer-style.md": None,
+        "reviewer-test-quality.md": None,
     },
 }
 
@@ -81,7 +101,7 @@ def _coerce_manifest_list(value: object) -> list[str]:
     return [str(item) for item in value] if isinstance(value, list) else []
 
 
-def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
+def _read_manifest(target_dir: Path) -> dict[str, object] | None:
     """Read the managed-artifacts manifest from a target project.
 
     Returns ``None`` if the manifest does not exist (first update after
@@ -97,7 +117,7 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
         data = reader.read_yaml(manifest_path)
         if not isinstance(data, dict):
             return None
-        return {
+        result: dict[str, object] = {
             key: _coerce_manifest_list(data.get(key, []))
             for key in (
                 "skills",
@@ -108,8 +128,51 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
                 "custom_hooks",
             )
         }
+        result["version"] = int(data.get("version", 1))
+        raw_hashes = data.get("content_hashes")
+        if isinstance(raw_hashes, dict):
+            result["content_hashes"] = {str(k): str(v) for k, v in raw_hashes.items()}
+        else:
+            result["content_hashes"] = {}
+        return result
     except OSError:
         return None
+
+
+def _compute_content_hashes(
+    target_dir: Path,
+    bundled: dict[str, list[str]],
+) -> dict[str, str]:
+    """Compute SHA256 hashes of installed artifact files.
+
+    PRD-FIX-068-FR04: Hashes enable drift detection between installed
+    copies and the current bundle.
+    """
+    hashes: dict[str, str] = {}
+    mapping: list[tuple[str, str]] = [
+        (".claude/agents", name) for name in bundled["agents"]
+    ]
+    mapping.extend(
+        (".claude/hooks", name) for name in bundled["hooks"]
+    )
+    for subdir, name in mapping:
+        path = target_dir / subdir / name
+        try:
+            if path.is_file():
+                hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            logger.warning("content_hash_failed", path=str(path))
+    # Skills are directories — hash the SKILL.md inside
+    for name in bundled["skills"]:
+        path = target_dir / ".claude" / "skills" / name / "SKILL.md"
+        try:
+            if path.is_file():
+                hashes[f"{name}/SKILL.md"] = hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+        except OSError:
+            logger.warning("content_hash_failed", path=str(path))
+    return hashes
 
 
 def _write_manifest(
@@ -122,6 +185,8 @@ def _write_manifest(
     The manifest records which skills, agents, and hooks were installed
     by TRW so that ``_remove_stale_artifacts`` can distinguish
     TRW-managed artifacts from user-created custom ones.
+
+    PRD-FIX-068-FR04: Manifest version 2 includes SHA256 content hashes.
     """
     from ._template_updater import _get_bundled_names, _get_custom_names
 
@@ -131,11 +196,13 @@ def _write_manifest(
     # are not permanently protected as false-custom entries.
     predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
     predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
+    content_hashes = _compute_content_hashes(target_dir, bundled)
     manifest = {
-        "version": 1,
+        "version": 2,
         "skills": bundled["skills"],
         "agents": bundled["agents"],
         "hooks": bundled["hooks"],
+        "content_hashes": content_hashes,
         "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
         "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],
         "custom_hooks": custom["hooks"],
@@ -213,18 +280,22 @@ def _cleanup_context_transients(
 
 def _migrate_predecessor_set(
     parent_dir: Path,
-    name_map: dict[str, str],
+    name_map: dict[str, str | None],
     result: dict[str, list[str]],
     *,
     is_dir_artifact: bool,
     log_event: str,
     dry_run: bool,
 ) -> None:
-    """Remove predecessor artifacts when their ``trw-`` successor is installed.
+    """Remove predecessor artifacts when their successor is installed or dropped.
+
+    When *new_name* is ``None`` (PRD-CORE-092), the predecessor is removed
+    unconditionally (deletion-only, no successor required).
 
     Args:
         parent_dir: Directory containing both predecessor and successor artifacts.
-        name_map: Mapping of old (predecessor) name to new (successor) name.
+        name_map: Mapping of old (predecessor) name to new (successor) name,
+            or ``None`` for deletion-only entries.
         result: Mutable result dict.
         is_dir_artifact: ``True`` for directory artifacts (skills), ``False`` for files (agents).
         log_event: structlog event name on removal failure.
@@ -232,13 +303,22 @@ def _migrate_predecessor_set(
     """
     for old_name, new_name in name_map.items():
         predecessor = parent_dir / old_name
-        successor = parent_dir / new_name
+        # Check predecessor exists
         if is_dir_artifact:
-            if not predecessor.is_dir() or not successor.is_dir():
+            if not predecessor.is_dir():
                 continue
         else:
-            if not predecessor.is_file() or not successor.is_file():
+            if not predecessor.is_file():
                 continue
+        # When new_name is not None, require successor to exist before removing
+        if new_name is not None:
+            successor = parent_dir / new_name
+            if is_dir_artifact:
+                if not successor.is_dir():
+                    continue
+            else:
+                if not successor.is_file():
+                    continue
         if dry_run:
             result["updated"].append(f"would migrate:{predecessor}")
             continue
@@ -302,13 +382,14 @@ def _remove_stale_set(
     *,
     is_dir_artifact: bool,
     log_event: str,
-    require_prefix: bool = True,
+    valid_prefixes: tuple[str, ...] | None = ("trw-",),
 ) -> None:
     """Remove a set of stale artifacts from *target_dir*.
 
     Skips names that are in *prev_custom* (user-created).  When
-    *require_prefix* is ``True`` (the default), also skips names that do
-    not start with ``trw-`` (defense-in-depth for skills and agents).
+    *valid_prefixes* is not ``None``, also skips names that do not start
+    with at least one of the specified prefixes (defense-in-depth for
+    skills and agents).  Pass ``None`` to disable prefix filtering.
 
     Args:
         stale_names: Artifact names to consider for removal.
@@ -317,14 +398,15 @@ def _remove_stale_set(
         result: Mutable result dict.
         is_dir_artifact: ``True`` to use ``shutil.rmtree``, ``False`` to use ``unlink``.
         log_event: structlog event name on removal failure.
-        require_prefix: When ``True``, only remove names starting with ``trw-``.
+        valid_prefixes: Tuple of allowed prefixes for stale removal.
+            ``None`` disables prefix filtering entirely.
     """
     if not target_dir.is_dir():
         return
     for name in stale_names:
         if name in prev_custom:
             continue
-        if require_prefix and not name.startswith("trw-"):
+        if valid_prefixes is not None and not name.startswith(valid_prefixes):
             continue
         stale = target_dir / name
         exists = stale.is_dir() if is_dir_artifact else stale.is_file()
@@ -368,12 +450,16 @@ def _remove_stale_artifacts(
         _write_manifest(target_dir, result, data_dir)
         return
 
-    prev_skills = set(prev_manifest.get("skills", []))
-    prev_agents = set(prev_manifest.get("agents", []))
-    prev_hooks = set(prev_manifest.get("hooks", []))
-    prev_custom_skills = set(prev_manifest.get("custom_skills", []))
-    prev_custom_agents = set(prev_manifest.get("custom_agents", []))
-    prev_custom_hooks = set(prev_manifest.get("custom_hooks", []))
+    def _manifest_set(key: str) -> set[str]:
+        val = prev_manifest.get(key)
+        return set(_coerce_manifest_list(val)) if val else set()
+
+    prev_skills = _manifest_set("skills")
+    prev_agents = _manifest_set("agents")
+    prev_hooks = _manifest_set("hooks")
+    prev_custom_skills = _manifest_set("custom_skills")
+    prev_custom_agents = _manifest_set("custom_agents")
+    prev_custom_hooks = _manifest_set("custom_hooks")
 
     # Remove stale artifacts per category
     # Defense-in-depth: only remove trw-prefixed items to protect custom artifacts
@@ -392,6 +478,7 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_agent_removal_failed",
+        valid_prefixes=("trw-", "reviewer-"),
     )
     _remove_stale_set(
         stale_names=prev_hooks - bundled_hooks,
@@ -400,7 +487,7 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_hook_removal_failed",
-        require_prefix=False,
+        valid_prefixes=None,
     )
 
     # Write updated manifest
