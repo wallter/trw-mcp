@@ -184,6 +184,37 @@ def _init_result_dict(dry_run: bool) -> dict[str, list[str]]:
     return result
 
 
+def _generate_behavioral_protocol_md(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
+    """Generate .trw/context/behavioral_protocol.md from static sections.
+
+    PRD-CORE-093 FR03: The session-start hook reads this file once per
+    session event instead of injecting the full protocol via CLAUDE.md
+    on every message.
+    """
+    dest = target_dir / ".trw" / "context" / "behavioral_protocol.md"
+    if dry_run:
+        result["updated" if dest.exists() else "created"].append(
+            f"would {'update' if dest.exists() else 'create'}: {dest}"
+        )
+        return
+    try:
+        from trw_mcp.state.claude_md._static_sections import (
+            generate_behavioral_protocol_md,
+        )
+
+        content = generate_behavioral_protocol_md()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+        result["updated" if dest.exists() else "created"].append(str(dest))
+    except Exception as exc:  # justified: fail-open — protocol file generation must not block update
+        _logger.warning("behavioral_protocol_md_generation_failed", error=str(exc))
+        result["warnings"].append(f"behavioral_protocol.md generation failed: {exc}")
+
+
 def _run_core_update_phases(
     target_dir: Path,
     effective_data: Path,
@@ -200,6 +231,9 @@ def _run_core_update_phases(
     if on_progress:
         on_progress("Phase", "Updating framework files...")
     _update_framework_files(target_dir, effective_data, result, dry_run, on_progress)
+
+    # PRD-CORE-093 FR03: Generate behavioral_protocol.md for session-start hook
+    _generate_behavioral_protocol_md(target_dir, result, dry_run)
 
     if on_progress:
         on_progress("Phase", "Updating configuration files...")

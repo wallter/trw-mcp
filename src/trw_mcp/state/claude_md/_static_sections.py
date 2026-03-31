@@ -335,6 +335,29 @@ def render_closing_reminder() -> str:
     return "### Session Boundaries\n\n" + _SESSION_BOUNDARY_TEXT + "\n"
 
 
+def generate_behavioral_protocol_md() -> str:
+    """Generate the full behavioral protocol as a static markdown file.
+
+    PRD-CORE-093 FR03: This content is written to
+    ``.trw/context/behavioral_protocol.md`` during ``update_project`` and
+    read by the session-start hook once per session event. It replaces the
+    verbose CLAUDE.md injection that previously loaded on every message.
+
+    Returns:
+        Complete markdown string for behavioral_protocol.md.
+    """
+    parts: list[str] = [
+        "# TRW Behavioral Protocol\n",
+        render_ceremony_quick_ref(),
+        render_phase_descriptions(),
+        render_ceremony_table(),
+        render_ceremony_flows(),
+        render_framework_reference(),
+        render_closing_reminder(),
+    ]
+    return "\n".join(parts)
+
+
 def render_minimal_protocol() -> str:
     """Render a shortened ceremony protocol for local model AGENTS.md.
 

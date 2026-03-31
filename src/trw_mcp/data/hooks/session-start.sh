@@ -79,9 +79,9 @@ _emit_tier_guidance() {
 _emit_protocol() {
   echo "## TRW Behavioral Protocol"
   echo ""
-  _protocol_file="$_project_root/.trw/context/behavioral_protocol.yaml"
+  _protocol_file="$_project_root/.trw/context/behavioral_protocol.md"
   if [ -f "$_protocol_file" ]; then
-    grep '^ *-' "$_protocol_file" | sed 's/^ *- *//;s/^"//;s/"$//'
+    cat "$_protocol_file"
   else
     echo "- Start: call trw_session_start() to load prior learnings and active run state"
     echo "- During: call trw_checkpoint(message) after milestones"
