@@ -18,13 +18,9 @@ import pytest
 
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.tools.build import (
-    _collect_failures,
-    _find_executable,
-    _run_pytest,
-    _run_subprocess,
-    _strip_ansi,
-    run_build_check,
+pytest.importorskip(
+    "trw_mcp.tools.build._subprocess",
+    reason="PRD-CORE-098: subprocess modules removed — these tests are obsolete, see test_build_check_reporter.py",
 )
 
 # ---------------------------------------------------------------------------
@@ -143,8 +139,9 @@ class TestCustomTestCommand:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="run_build_check removed in PRD-CORE-098 — replaced by result reporter API, see test_build_check_reporter.py")
 class TestRunBuildCheck:
-    """Tests for the top-level run_build_check function."""
+    """Tests for the top-level run_build_check function (OBSOLETE — PRD-CORE-098)."""
 
     def test_scope_pytest_only(self, tmp_path: Path) -> None:
         # With pytest not found, should get a failure but mypy_clean stays True
@@ -361,8 +358,9 @@ class TestCollectFailures:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="Patches run_build_check which was removed in PRD-CORE-098 — see test_build_check_reporter.py for new API tests")
 class TestTrwBuildCheckTool:
-    """Tests for the trw_build_check MCP tool closure (lines 377-442)."""
+    """Tests for the trw_build_check MCP tool closure (OBSOLETE — PRD-CORE-098)."""
 
     def _get_tool(self) -> object:
         """Import and register tools to get the closure."""

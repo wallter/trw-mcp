@@ -120,27 +120,25 @@ class TestCeremonyScoring:
             (["session_start"], 25),
             # Single component: deliver proxy (reflection_complete)=25
             (["reflection_complete"], 25),
-            # Single component: deliver proxy (claude_md_synced)=25
-            (["claude_md_synced"], 25),
-            # Single component: checkpoint=15
-            (["checkpoint"], 15),
+            # Single component: checkpoint=20
+            (["checkpoint"], 20),
             # Single component: learn=10
             (["learn_recorded"], 10),
             # Single component: build_check=10
             (["build_check_complete"], 10),
             # Two components: session_start + deliver = 50
             (["session_start", "reflection_complete"], 50),
-            # Two components: session_start + checkpoint = 40
-            (["session_start", "checkpoint"], 40),
+            # Two components: session_start + checkpoint = 45
+            (["session_start", "checkpoint"], 45),
             # Three components: session_start + deliver + learn = 60
-            (["session_start", "claude_md_synced", "learn_saved"], 60),
-            # Three components: checkpoint + learn + build_check = 35
-            (["checkpoint", "learn_recorded", "build_check_complete"], 35),
-            # Four components: all except deliver = 60
-            (["session_start", "checkpoint", "learn_recorded", "build_check_complete"], 60),
-            # Four components: all except build_check = 75
-            (["session_start", "reflection_complete", "checkpoint", "learn_recorded"], 75),
-            # All five original components (no review) = 85
+            (["session_start", "reflection_complete", "learn_saved"], 60),
+            # Three components: checkpoint + learn + build_check = 40
+            (["checkpoint", "learn_recorded", "build_check_complete"], 40),
+            # Four components: all except deliver = 65
+            (["session_start", "checkpoint", "learn_recorded", "build_check_complete"], 65),
+            # Four components: all except build_check = 80
+            (["session_start", "reflection_complete", "checkpoint", "learn_recorded"], 80),
+            # All five original components (no review) = 90
             (
                 [
                     "session_start",
@@ -149,7 +147,7 @@ class TestCeremonyScoring:
                     "learn_recorded",
                     "build_check_complete",
                 ],
-                85,
+                90,
             ),
             # All six components (with review) = 100
             (
@@ -186,7 +184,7 @@ class TestCeremonyScoring:
         ]
         result = compute_ceremony_score(events)
         assert result["checkpoint_count"] == 3
-        assert result["score"] == 15  # checkpoint component is capped at 15 pts
+        assert result["score"] == 20  # checkpoint component is capped at 20 pts
 
     def test_multiple_learn_events_counted(self) -> None:
         """Multiple learn events increment learn_count; score component still capped at 10 pts."""
@@ -213,14 +211,6 @@ class TestCeremonyScoring:
         events: list[dict[str, object]] = [{"event": "session_start"}]
         result = compute_ceremony_score(events)
         assert result["build_passed"] is None
-
-    def test_deliver_proxy_claude_md_synced(self) -> None:
-        """claude_md_synced counts as a deliver proxy event."""
-        events: list[dict[str, object]] = [{"event": "claude_md_synced"}]
-        result = compute_ceremony_score(events)
-        assert result["deliver"] is True
-        assert result["score"] == 25
-        assert result["review"] is False
 
     def test_unrecognized_events_ignored(self) -> None:
         """Unknown event types do not contribute to the score."""
@@ -443,10 +433,10 @@ class TestScanAllRuns:
         """Aggregate avg_ceremony_score is computed correctly across all runs."""
         result = scan_all_runs()
         aggregate = result["aggregate"]
-        # Run 1: session_start(25) + checkpoint(15) = 40
+        # Run 1: session_start(25) + checkpoint(20) = 45
         # Run 2: session_start(25) + deliver(25) + learn(10) + build_check(10) = 70
         # Run 3: session_start(25) = 25
-        expected_avg = round((40 + 70 + 25) / 3, 2)
+        expected_avg = round((45 + 70 + 25) / 3, 2)
         assert aggregate["avg_ceremony_score"] == expected_avg  # type: ignore[index]
 
     def test_aggregate_build_pass_rate(

@@ -59,7 +59,6 @@ class StatusReflectionDict(TypedDict):
     """Nested reflection sub-dict within ``TrwStatusDict``."""
 
     count: int
-    claude_md_synced: bool
 
 
 class StatusReversionLatestDict(TypedDict, total=False):
@@ -136,4 +135,3 @@ class TrwStatusDict(TypedDict, total=False):
     stale_count: int
     stale_runs_advisory: str
     stale_count_error: bool
-    ceremony_nudge: dict[str, object]

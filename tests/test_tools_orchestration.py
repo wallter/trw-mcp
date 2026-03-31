@@ -305,10 +305,6 @@ class TestCeremonyScoring:
         assert result["deliver"] is True
         assert result["score"] == 25
 
-    def test_direct_deliver_via_claude_md_synced(self) -> None:
-        result = self._score([{"event": "claude_md_synced"}])
-        assert result["deliver"] is True
-
     def test_direct_checkpoint_counted(self) -> None:
         result = self._score(
             [
@@ -317,7 +313,7 @@ class TestCeremonyScoring:
             ]
         )
         assert result["checkpoint_count"] == 2
-        assert result["score"] == 15
+        assert result["score"] == 20
 
     def test_direct_learn_counted(self) -> None:
         result = self._score([{"event": "learn_recorded"}])
@@ -367,7 +363,7 @@ class TestCeremonyScoring:
             ]
         )
         assert result["checkpoint_count"] == 3
-        assert result["score"] == 15
+        assert result["score"] == 20
 
     def test_tool_invocation_learn_counted(self) -> None:
         result = self._score(

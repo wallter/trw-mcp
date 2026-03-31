@@ -245,11 +245,15 @@ class TestCeremonyMiddleware:
         assert out.content[0].text == "started"
 
     @pytest.mark.asyncio
-    async def test_non_ceremony_tool_without_ceremony_gets_warning(
+    async def test_non_trw_tool_without_ceremony_gets_warning(
         self,
         middleware: CeremonyMiddleware,
     ) -> None:
-        """Non-exempt tool called before ceremony gets warning prepended."""
+        """Non-trw_* tool called before ceremony gets warning prepended.
+
+        Note: trw_* tools are now blocked entirely by the post-compaction
+        gate (PRD-CORE-098-FR06). Only non-trw tools get the warning.
+        """
         result = FakeToolResult(content=[TextContent(type="text", text="status result")])
 
         async def call_next(_ctx: Any) -> Any:
@@ -258,7 +262,7 @@ class TestCeremonyMiddleware:
         req_ctx = FakeRequestContext(session_id="sess-no-ceremony")
         fake_ctx = FakeContext(request_context=req_ctx)
         ctx = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_status"),
+            message=FakeMessage(name="Read"),
             fastmcp_context=fake_ctx,
         )
         out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
@@ -318,10 +322,10 @@ class TestCeremonyMiddleware:
         )
         await middleware.on_call_tool(ctx1, call_next)  # type: ignore[arg-type]
 
-        # Session 2: no ceremony — should get warning
+        # Session 2: no ceremony — non-trw tool gets warning prepended
         req_ctx2 = FakeRequestContext(session_id="sess-2")
         ctx2 = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_status"),
+            message=FakeMessage(name="Read"),
             fastmcp_context=FakeContext(request_context=req_ctx2),
         )
         out = await middleware.on_call_tool(ctx2, call_next)  # type: ignore[arg-type]
@@ -366,7 +370,11 @@ class TestCeremonyMiddleware:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If touch_heartbeat raises, _touch_heartbeat_safe catches it and the
-        tool result is still returned (fail-open — lines 90-91 of ceremony.py)."""
+        tool result is still returned (fail-open).
+
+        Uses a non-trw_* tool to avoid the post-compaction gate
+        (trw_* tools are blocked when session is not started).
+        """
         # Patch at the source so the except block in _touch_heartbeat_safe fires
         monkeypatch.setattr(
             "trw_mcp.state._paths.touch_heartbeat",
@@ -380,7 +388,7 @@ class TestCeremonyMiddleware:
 
         req_ctx = FakeRequestContext(session_id="sess-hb")
         ctx = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_status"),
+            message=FakeMessage(name="Read"),
             fastmcp_context=FakeContext(request_context=req_ctx),
         )
         # Fail-open: exception inside _touch_heartbeat_safe must not propagate

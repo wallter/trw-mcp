@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Recognized event names for reflection and CLAUDE.md sync checks.
 _REFLECTION_EVENTS: frozenset[str] = frozenset({"reflection_complete", "trw_reflect_complete"})
-_SYNC_EVENTS: frozenset[str] = frozenset({"claude_md_sync", "claude_md_synced"})
+_SYNC_EVENTS: frozenset[str] = frozenset({"claude_md_sync"})
 
 
 def _read_events(events_path: Path) -> list[dict[str, object]]:

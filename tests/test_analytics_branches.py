@@ -1002,7 +1002,7 @@ class TestCeremonyScoreToolInvocationPaths:
         ]
         result = compute_ceremony_score(events)
         assert result["checkpoint_count"] == 1
-        assert result["score"] == 15
+        assert result["score"] == 20
 
     def test_tool_invocation_learn(self) -> None:
         """tool_invocation with tool_name=trw_learn counts as learn."""

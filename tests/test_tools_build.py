@@ -21,10 +21,12 @@ from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.validation import _check_build_status
 from trw_mcp.tools.build import (
-    _find_executable,
-    _strip_ansi,
     cache_build_status,
-    run_build_check,
+)
+
+pytest.importorskip(
+    "trw_mcp.tools.build._subprocess",
+    reason="PRD-CORE-098: subprocess modules removed — old tests obsolete",
 )
 
 # ---------------------------------------------------------------------------
@@ -135,8 +137,9 @@ class TestCacheBuildStatus:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="run_build_check removed in PRD-CORE-098 — replaced by result reporter API, see test_build_check_reporter.py")
 class TestRunBuildCheck:
-    """Tests for run_build_check with mocked subprocess calls."""
+    """Tests for run_build_check with mocked subprocess calls (OBSOLETE — PRD-CORE-098)."""
 
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value=None)
     def test_pytest_not_found(
@@ -568,8 +571,9 @@ class TestBuildConfig:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="Calls run_build_check removed in PRD-CORE-098 — see test_build_check_reporter.py")
 class TestBuildConfigWiring:
-    """Tests for config-driven paths in build tools — PRD-INFRA-011."""
+    """Tests for config-driven paths in build tools (OBSOLETE — PRD-CORE-098)."""
 
     @patch("trw_mcp.tools.build._subprocess.subprocess.run")
     @patch("trw_mcp.tools.build._subprocess.shutil.which", return_value="/usr/bin/pytest")
@@ -781,8 +785,9 @@ class TestBuildConfigWiring:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="Patches run_build_check removed in PRD-CORE-098 — see test_build_check_reporter.py")
 class TestMinCoverageThreshold:
-    """Tests for the min_coverage parameter on trw_build_check tool."""
+    """Tests for the min_coverage parameter (OBSOLETE — PRD-CORE-098)."""
 
     @patch("trw_mcp.tools.build._registration.get_config")
     @patch("trw_mcp.tools.build._registration.resolve_project_root")

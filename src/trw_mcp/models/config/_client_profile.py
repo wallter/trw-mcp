@@ -34,10 +34,10 @@ class CeremonyWeights(BaseModel):
 
     session_start: int = Field(default=25, ge=0)
     deliver: int = Field(default=25, ge=0)
-    checkpoint: int = Field(default=15, ge=0)
+    checkpoint: int = Field(default=20, ge=0)
     learn: int = Field(default=10, ge=0)
     build_check: int = Field(default=10, ge=0)
-    review: int = Field(default=15, ge=0)
+    review: int = Field(default=10, ge=0)
 
     @model_validator(mode="after")
     def _check_sum(self) -> CeremonyWeights:

@@ -17,10 +17,10 @@ def test_ceremony_weights_match_expected() -> None:
     expected = {
         "session_start": 25,
         "deliver": 25,
-        "checkpoint": 15,
+        "checkpoint": 20,
         "learn": 10,
         "build_check": 10,
-        "review": 15,
+        "review": 10,
     }
     assert CEREMONY_WEIGHTS.as_dict() == expected
 

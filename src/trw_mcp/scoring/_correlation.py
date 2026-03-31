@@ -114,7 +114,6 @@ EVENT_ALIASES: dict[str, str | float | None] = {
     # Checkpoint/reflection
     EventType.CHECKPOINT: 0.1,
     EventType.REFLECTION_COMPLETED: EventType.REFLECTION_COMPLETE,
-    EventType.CLAUDE_MD_SYNCED: 0.3,
     # Compliance
     EventType.COMPLIANCE_CHECK: None,  # Data-aware routing
 }

@@ -1,8 +1,10 @@
 """Server-side ceremony enforcement middleware.
 
-PRD-INFRA-007: Tracks per-session ceremony state and prepends a warning
-to every tool response until the agent calls a ceremony-initializing tool
-(trw_session_start, trw_init, or trw_recall).
+PRD-INFRA-007 + PRD-CORE-098-FR06: Tracks per-session ceremony state.
+Ceremony tools (trw_session_start, trw_init, trw_recall) mark the session
+as active. Until the session is active:
+- trw_* tools (non-ceremony) are BLOCKED with an error response.
+- Non-trw_* tools get a warning prepended but still execute.
 
 This is client-agnostic — works with Claude Code, Cursor, Windsurf, or
 any MCP client. FastMCP per-session state is inherently isolated per
@@ -12,6 +14,8 @@ connection, so parallel sessions are tracked independently.
 from __future__ import annotations
 
 __all__ = ["CeremonyMiddleware"]
+
+import json
 
 import structlog
 from fastmcp.server.middleware.middleware import (
@@ -96,7 +100,9 @@ class CeremonyMiddleware(Middleware):
 
     For every tool call:
     - If the tool is a ceremony tool, mark the session as active.
-    - If the session is NOT active and the tool is NOT exempt,
+    - If the session is NOT active and the tool is a trw_* tool (non-ceremony),
+      return an error response instead of executing (PRD-CORE-098-FR06).
+    - If the session is NOT active and the tool is NOT a trw_* tool,
       prepend a warning TextContent block to the tool result.
     - If fastmcp_context is None (unit tests), do nothing.
     """
@@ -124,13 +130,34 @@ class CeremonyMiddleware(Middleware):
             _touch_heartbeat_safe()
             return ceremony_result
 
+        # Post-compaction gate (PRD-CORE-098-FR06): block trw_* tools
+        # until session_start is called. This prevents agents from using
+        # tools without prior learnings after context compaction.
+        if not is_session_active(session_id) and tool_name.startswith("trw_"):
+            error_payload = json.dumps({
+                "error": "session_start_required",
+                "message": (
+                    "Call trw_session_start() to load your prior learnings"
+                    " before using other tools. This ensures you don't repeat"
+                    " solved problems or miss known gotchas."
+                ),
+                "tool_attempted": tool_name,
+            })
+            logger.info(
+                "ceremony_gate_blocked",
+                op="ceremony",
+                session_id=session_id,
+                tool=tool_name,
+            )
+            return ToolResult(content=[TextContent(type="text", text=error_payload)])
+
         # Execute the tool
         result: ToolResult = await call_next(context)
 
         # Post-tool heartbeat: signal session liveness (PRD-QUAL-050-FR01)
         _touch_heartbeat_safe()
 
-        # If session is NOT active, prepend warning
+        # If session is NOT active (non-trw tool), prepend warning
         if not is_session_active(session_id):
             warning_block = TextContent(type="text", text=CEREMONY_WARNING)
             result.content.insert(0, warning_block)
