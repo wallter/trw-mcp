@@ -153,6 +153,36 @@ def set_embed_failure_count_for_testing(n: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Corruption recovery
+# ---------------------------------------------------------------------------
+
+_MALFORMED_MARKERS = ("malformed", "database disk image", "not a database", "file is not a database")
+
+
+def _is_corruption_error(exc: BaseException) -> bool:
+    """Return True if *exc* indicates SQLite database corruption."""
+    msg = str(exc).lower()
+    return any(m in msg for m in _MALFORMED_MARKERS)
+
+
+def _recover_and_reset_backend(trw_dir: Path) -> None:
+    """Force-recover the database and reset the singleton backend."""
+    from trw_mcp.state._memory_connection import get_backend as _get_backend
+    from trw_mcp.state._memory_connection import reset_backend as _reset
+
+    db_path = trw_dir / "memory" / "memory.db"
+    logger.error("runtime_corruption_detected", db=str(db_path), action="recover_and_reset")
+    _reset()
+    if db_path.exists():
+        from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+        conn = SQLiteBackend.recover_db(db_path)
+        conn.close()
+    # Re-open via the normal singleton path so migration runs again.
+    _get_backend(trw_dir)
+
+
+# ---------------------------------------------------------------------------
 # CRUD operations (return shapes match original YAML tools)
 # ---------------------------------------------------------------------------
 
@@ -186,7 +216,6 @@ def store_learning(
     if inferred:
         enriched_tags.extend(inferred)
 
-    backend = get_backend(trw_dir)
     entry = _learning_to_memory_entry(
         learning_id,
         summary,
@@ -199,9 +228,20 @@ def store_learning(
         source_identity=source_identity,
         assertions=assertions,
     )
-    backend.store(entry)
+
+    for attempt in range(2):
+        try:
+            backend = get_backend(trw_dir)
+            backend.store(entry)
+            break
+        except Exception as exc:
+            if attempt == 0 and _is_corruption_error(exc):
+                _recover_and_reset_backend(trw_dir)
+                continue
+            raise
 
     # Generate and store embedding when enabled
+    backend = get_backend(trw_dir)
     embed_input = f"{summary} {detail}"
     _embed_and_store(backend, learning_id, embed_input)
 
@@ -235,7 +275,6 @@ def recall_learnings(
     For wildcard queries (``*`` or empty), lists all entries.
     Otherwise performs keyword search.
     """
-    backend = get_backend(trw_dir)
     is_wildcard = query.strip() in ("*", "")
 
     mem_status: MemoryStatus | None = None
@@ -243,22 +282,34 @@ def recall_learnings(
         with contextlib.suppress(ValueError):
             mem_status = MemoryStatus(status)
 
-    if is_wildcard:
-        entries = backend.list_entries(
-            status=mem_status,
-            namespace=_NAMESPACE,
-            limit=max_results if max_results > 0 else _MAX_ENTRIES,
-        )
-    else:
-        top_k = max_results if max_results > 0 else _MAX_ENTRIES
-        entries = _search_entries(
-            backend,
-            query,
-            top_k=top_k,
-            tags=tags,
-            mem_status=mem_status,
-            min_impact=min_impact,
-        )
+    from trw_memory.models.memory import MemoryEntry as _ME
+
+    entries: list[_ME] = []
+    for attempt in range(2):
+        try:
+            backend = get_backend(trw_dir)
+            if is_wildcard:
+                entries = backend.list_entries(
+                    status=mem_status,
+                    namespace=_NAMESPACE,
+                    limit=max_results if max_results > 0 else _MAX_ENTRIES,
+                )
+            else:
+                top_k = max_results if max_results > 0 else _MAX_ENTRIES
+                entries = _search_entries(
+                    backend,
+                    query,
+                    top_k=top_k,
+                    tags=tags,
+                    mem_status=mem_status,
+                    min_impact=min_impact,
+                )
+            break
+        except Exception as exc:
+            if attempt == 0 and _is_corruption_error(exc):
+                _recover_and_reset_backend(trw_dir)
+                continue
+            raise
 
     results: list[dict[str, object]] = []
     for entry in entries:

@@ -86,7 +86,16 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
         from trw_mcp.models.config import get_config
 
         cfg = get_config()
-        backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
+        try:
+            backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
+        except Exception:
+            # If constructor fails even after internal recovery attempt,
+            # force-recover and retry once.
+            logger.error("backend_init_failed", db=str(db_path), action="force_recover")
+            if db_path.exists():
+                conn = SQLiteBackend.recover_db(db_path)
+                conn.close()
+            backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
         ensure_migrated(trw_dir, backend)
         _backend = backend
         return _backend
