@@ -8,6 +8,7 @@ Handles:
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -100,7 +101,7 @@ def _coerce_manifest_list(value: object) -> list[str]:
     return [str(item) for item in value] if isinstance(value, list) else []
 
 
-def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
+def _read_manifest(target_dir: Path) -> dict[str, object] | None:
     """Read the managed-artifacts manifest from a target project.
 
     Returns ``None`` if the manifest does not exist (first update after
@@ -116,7 +117,7 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
         data = reader.read_yaml(manifest_path)
         if not isinstance(data, dict):
             return None
-        return {
+        result: dict[str, object] = {
             key: _coerce_manifest_list(data.get(key, []))
             for key in (
                 "skills",
@@ -127,8 +128,51 @@ def _read_manifest(target_dir: Path) -> dict[str, list[str]] | None:
                 "custom_hooks",
             )
         }
+        result["version"] = int(data.get("version", 1))
+        raw_hashes = data.get("content_hashes")
+        if isinstance(raw_hashes, dict):
+            result["content_hashes"] = {str(k): str(v) for k, v in raw_hashes.items()}
+        else:
+            result["content_hashes"] = {}
+        return result
     except OSError:
         return None
+
+
+def _compute_content_hashes(
+    target_dir: Path,
+    bundled: dict[str, list[str]],
+) -> dict[str, str]:
+    """Compute SHA256 hashes of installed artifact files.
+
+    PRD-FIX-068-FR04: Hashes enable drift detection between installed
+    copies and the current bundle.
+    """
+    hashes: dict[str, str] = {}
+    mapping: list[tuple[str, str]] = [
+        (".claude/agents", name) for name in bundled["agents"]
+    ]
+    mapping.extend(
+        (".claude/hooks", name) for name in bundled["hooks"]
+    )
+    for subdir, name in mapping:
+        path = target_dir / subdir / name
+        try:
+            if path.is_file():
+                hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            logger.warning("content_hash_failed", path=str(path))
+    # Skills are directories — hash the SKILL.md inside
+    for name in bundled["skills"]:
+        path = target_dir / ".claude" / "skills" / name / "SKILL.md"
+        try:
+            if path.is_file():
+                hashes[f"{name}/SKILL.md"] = hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+        except OSError:
+            logger.warning("content_hash_failed", path=str(path))
+    return hashes
 
 
 def _write_manifest(
@@ -141,6 +185,8 @@ def _write_manifest(
     The manifest records which skills, agents, and hooks were installed
     by TRW so that ``_remove_stale_artifacts`` can distinguish
     TRW-managed artifacts from user-created custom ones.
+
+    PRD-FIX-068-FR04: Manifest version 2 includes SHA256 content hashes.
     """
     from ._template_updater import _get_bundled_names, _get_custom_names
 
@@ -150,11 +196,13 @@ def _write_manifest(
     # are not permanently protected as false-custom entries.
     predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
     predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
+    content_hashes = _compute_content_hashes(target_dir, bundled)
     manifest = {
-        "version": 1,
+        "version": 2,
         "skills": bundled["skills"],
         "agents": bundled["agents"],
         "hooks": bundled["hooks"],
+        "content_hashes": content_hashes,
         "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
         "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],
         "custom_hooks": custom["hooks"],
@@ -334,13 +382,14 @@ def _remove_stale_set(
     *,
     is_dir_artifact: bool,
     log_event: str,
-    require_prefix: bool = True,
+    valid_prefixes: tuple[str, ...] | None = ("trw-",),
 ) -> None:
     """Remove a set of stale artifacts from *target_dir*.
 
     Skips names that are in *prev_custom* (user-created).  When
-    *require_prefix* is ``True`` (the default), also skips names that do
-    not start with ``trw-`` (defense-in-depth for skills and agents).
+    *valid_prefixes* is not ``None``, also skips names that do not start
+    with at least one of the specified prefixes (defense-in-depth for
+    skills and agents).  Pass ``None`` to disable prefix filtering.
 
     Args:
         stale_names: Artifact names to consider for removal.
@@ -349,14 +398,15 @@ def _remove_stale_set(
         result: Mutable result dict.
         is_dir_artifact: ``True`` to use ``shutil.rmtree``, ``False`` to use ``unlink``.
         log_event: structlog event name on removal failure.
-        require_prefix: When ``True``, only remove names starting with ``trw-``.
+        valid_prefixes: Tuple of allowed prefixes for stale removal.
+            ``None`` disables prefix filtering entirely.
     """
     if not target_dir.is_dir():
         return
     for name in stale_names:
         if name in prev_custom:
             continue
-        if require_prefix and not name.startswith("trw-"):
+        if valid_prefixes is not None and not name.startswith(valid_prefixes):
             continue
         stale = target_dir / name
         exists = stale.is_dir() if is_dir_artifact else stale.is_file()
@@ -400,12 +450,16 @@ def _remove_stale_artifacts(
         _write_manifest(target_dir, result, data_dir)
         return
 
-    prev_skills = set(prev_manifest.get("skills", []))
-    prev_agents = set(prev_manifest.get("agents", []))
-    prev_hooks = set(prev_manifest.get("hooks", []))
-    prev_custom_skills = set(prev_manifest.get("custom_skills", []))
-    prev_custom_agents = set(prev_manifest.get("custom_agents", []))
-    prev_custom_hooks = set(prev_manifest.get("custom_hooks", []))
+    def _manifest_set(key: str) -> set[str]:
+        val = prev_manifest.get(key)
+        return set(_coerce_manifest_list(val)) if val else set()
+
+    prev_skills = _manifest_set("skills")
+    prev_agents = _manifest_set("agents")
+    prev_hooks = _manifest_set("hooks")
+    prev_custom_skills = _manifest_set("custom_skills")
+    prev_custom_agents = _manifest_set("custom_agents")
+    prev_custom_hooks = _manifest_set("custom_hooks")
 
     # Remove stale artifacts per category
     # Defense-in-depth: only remove trw-prefixed items to protect custom artifacts
@@ -424,6 +478,7 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_agent_removal_failed",
+        valid_prefixes=("trw-", "reviewer-"),
     )
     _remove_stale_set(
         stale_names=prev_hooks - bundled_hooks,
@@ -432,7 +487,7 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_hook_removal_failed",
-        require_prefix=False,
+        valid_prefixes=None,
     )
 
     # Write updated manifest
