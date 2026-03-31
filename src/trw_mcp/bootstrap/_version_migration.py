@@ -32,8 +32,9 @@ _CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
 # PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
 # Used by _migrate_prefix_predecessors() to remove stale predecessors during
 # update-project when the trw- prefixed successor is already installed.
-PREDECESSOR_MAP: dict[str, dict[str, str]] = {
+PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
     "skills": {
+        # PRD-FIX-032: Non-prefixed → trw- prefixed migration
         "audit": "trw-audit",
         "commit": "trw-commit",
         "deliver": "trw-deliver",
@@ -54,8 +55,11 @@ PREDECESSOR_MAP: dict[str, dict[str, str]] = {
         "sprint-team": "trw-sprint-team",
         "team-playbook": "trw-team-playbook",
         "test-strategy": "trw-test-strategy",
+        # PRD-CORE-092: Dropped skill post-consolidation
+        "trw-review-pr": None,
     },
     "agents": {
+        # PRD-FIX-032: Non-prefixed → trw- prefixed migration
         "code-simplifier.md": "trw-code-simplifier.md",
         "implementer.md": "trw-implementer.md",
         "lead.md": "trw-lead.md",
@@ -67,6 +71,21 @@ PREDECESSOR_MAP: dict[str, dict[str, str]] = {
         "requirement-reviewer.md": "trw-requirement-reviewer.md",
         "requirement-writer.md": "trw-requirement-writer.md",
         "traceability-checker.md": "trw-traceability-checker.md",
+        # PRD-CORE-092: Dropped agents post-consolidation (18 → 5)
+        "trw-tester.md": None,
+        "trw-lead.md": None,
+        "trw-code-simplifier.md": None,
+        "trw-adversarial-auditor.md": "trw-auditor.md",
+        "trw-traceability-checker.md": "trw-auditor.md",
+        "trw-requirement-writer.md": "trw-prd-groomer.md",
+        "trw-requirement-reviewer.md": "trw-prd-groomer.md",
+        "reviewer-correctness.md": None,
+        "reviewer-integration.md": None,
+        "reviewer-performance.md": None,
+        "reviewer-security.md": None,
+        "reviewer-spec-compliance.md": None,
+        "reviewer-style.md": None,
+        "reviewer-test-quality.md": None,
     },
 }
 
@@ -213,18 +232,22 @@ def _cleanup_context_transients(
 
 def _migrate_predecessor_set(
     parent_dir: Path,
-    name_map: dict[str, str],
+    name_map: dict[str, str | None],
     result: dict[str, list[str]],
     *,
     is_dir_artifact: bool,
     log_event: str,
     dry_run: bool,
 ) -> None:
-    """Remove predecessor artifacts when their ``trw-`` successor is installed.
+    """Remove predecessor artifacts when their successor is installed or dropped.
+
+    When *new_name* is ``None`` (PRD-CORE-092), the predecessor is removed
+    unconditionally (deletion-only, no successor required).
 
     Args:
         parent_dir: Directory containing both predecessor and successor artifacts.
-        name_map: Mapping of old (predecessor) name to new (successor) name.
+        name_map: Mapping of old (predecessor) name to new (successor) name,
+            or ``None`` for deletion-only entries.
         result: Mutable result dict.
         is_dir_artifact: ``True`` for directory artifacts (skills), ``False`` for files (agents).
         log_event: structlog event name on removal failure.
@@ -232,13 +255,22 @@ def _migrate_predecessor_set(
     """
     for old_name, new_name in name_map.items():
         predecessor = parent_dir / old_name
-        successor = parent_dir / new_name
+        # Check predecessor exists
         if is_dir_artifact:
-            if not predecessor.is_dir() or not successor.is_dir():
+            if not predecessor.is_dir():
                 continue
         else:
-            if not predecessor.is_file() or not successor.is_file():
+            if not predecessor.is_file():
                 continue
+        # When new_name is not None, require successor to exist before removing
+        if new_name is not None:
+            successor = parent_dir / new_name
+            if is_dir_artifact:
+                if not successor.is_dir():
+                    continue
+            else:
+                if not successor.is_file():
+                    continue
         if dry_run:
             result["updated"].append(f"would migrate:{predecessor}")
             continue
