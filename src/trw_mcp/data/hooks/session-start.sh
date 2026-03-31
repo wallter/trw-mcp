@@ -90,6 +90,10 @@ _emit_protocol() {
   fi
 }
 
+# PRD-CORE-095 FR03: Clear phase cache on all session events so the next
+# UserPromptSubmit invocation always emits phase guidance.
+rm -f "$_project_root/.trw/context/last_ups_phase" 2>/dev/null || true
+
 case "$_source" in
   startup)
     # FR01: Fresh startup — explain what's available and why
