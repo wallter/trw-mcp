@@ -177,6 +177,29 @@ class TestInstructionsSync:
         claude_content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
         assert TRW_MARKER_START not in claude_content
 
+    def test_fr13_codex_profile_keeps_codex_specific_agents_md(self, tmp_path: Path) -> None:
+        """A real Codex profile should still render the Codex-specific AGENTS.md template."""
+        from trw_mcp.models.config import TRWConfig
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+        (trw_dir / "reflections").mkdir(exist_ok=True)
+        (trw_dir / "context").mkdir(exist_ok=True)
+        (trw_dir / "patterns").mkdir(exist_ok=True)
+
+        config = TRWConfig(trw_dir=str(trw_dir))
+        object.__setattr__(config, "target_platforms", ["codex"])
+
+        result = _run_sync(tmp_path, client="codex", config=config)
+
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists(), "AGENTS.md must be written for Codex projects"
+        content = agents_md.read_text(encoding="utf-8")
+        assert "## Codex Workflow" in content
+        assert "OpenAI developer docs MCP server" in content
+        assert result["agents_md_synced"] is True
+
     def test_fr13_client_override_claude_code_only(self, tmp_path: Path) -> None:
         """client='claude-code' writes only CLAUDE.md, not AGENTS.md."""
         (tmp_path / ".opencode").mkdir()  # presence should not trigger AGENTS.md

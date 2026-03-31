@@ -139,10 +139,10 @@ def _sync_agents_md_if_needed(
         if "codex" in detected_ides and "opencode" not in detected_ides:
             effective_client = "codex"
 
-    if config.effective_ceremony_mode == "light":
-        agents_body = render_minimal_protocol()
-    elif effective_client == "codex":
+    if effective_client == "codex":
         agents_body = render_codex_trw_section()
+    elif config.effective_ceremony_mode == "light":
+        agents_body = render_minimal_protocol()
     else:
         agents_body = render_agents_trw_section()
 
