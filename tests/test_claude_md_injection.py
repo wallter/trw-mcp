@@ -139,25 +139,12 @@ class TestBundledTemplateKeysMatchSyncContext:
         content = bundled.read_text(encoding="utf-8")
         template_keys = set(re.findall(r"\{\{(\w+)\}\}", content))
 
-        # The canonical keys from _sync.py's tpl_context
+        # The canonical keys from _sync.py's tpl_context (PRD-CORE-093: compact trigger only)
         sync_keys = {
             "imperative_opener",
             "ceremony_quick_ref",
             "memory_harmonization",
-            "framework_reference",
             "closing_reminder",
-            "behavioral_protocol",
-            "delegation_section",
-            "agent_teams_section",
-            "rationalization_watchlist",
-            "ceremony_phases",
-            "ceremony_table",
-            "ceremony_flows",
-            "architecture_section",
-            "conventions_section",
-            "categorized_learnings",
-            "patterns_section",
-            "adherence_section",
         }
 
         missing_from_template = sync_keys - template_keys

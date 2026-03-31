@@ -492,8 +492,11 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         else:
             results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
 
-        # Step 3: Sync platform instruction files (CLAUDE.md, AGENTS.md, etc.)
-        _run_step("claude_md_sync", lambda: _do_instruction_sync(trw_dir), _results_view, errors)
+        # Step 3: CLAUDE.md sync removed (PRD-CORE-093 FR06).
+        # Learning promotion no longer rotates CLAUDE.md content, so the prompt
+        # cache stays stable across delivers. Explicit trw_claude_md_sync() or
+        # update_project() remain the only triggers for CLAUDE.md re-render.
+        results["claude_md_sync"] = {"status": "skipped", "reason": "PRD-CORE-093"}
 
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
@@ -509,7 +512,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         results["deferred"] = deferred_status
 
         # Count only critical steps for immediate success evaluation
-        critical_step_count = 3  # reflect + checkpoint + claude_md_sync
+        critical_step_count = 2  # reflect + checkpoint (claude_md_sync removed per PRD-CORE-093)
         results["errors"] = errors
         results["success"] = len(errors) == 0
         results["critical_steps_completed"] = critical_step_count - len(errors)
