@@ -2,6 +2,29 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.37.0] — 2026-03-31
+
+### Added — Sprint 79: Architecture & Optimization
+
+- **Config decomposition** — `_main_fields.py` split from 468 to 54 lines into 8 domain-specific mixin files (`_fields_scoring.py`, `_fields_memory.py`, `_fields_orchestration.py`, `_fields_telemetry.py`, `_fields_ceremony.py`, `_fields_build.py`, `_fields_trust.py`, `_fields_paths.py`). All consumer imports remain unchanged.
+- **YAML response format** — New `response_format` config field with per-client-profile defaults. YAML serialization reduces tool response tokens ~20%. JSON fallback on error. Cursor stays on JSON, Claude Code/opencode default to YAML.
+- **Agent roster consolidation** — 18 agents reduced to 5 focused agents (trw-implementer, trw-researcher, trw-reviewer, trw-auditor, trw-prd-groomer). 13 PREDECESSOR_MAP entries ensure clean upgrade path.
+- **CLAUDE.md compression** — Root CLAUDE.md reduced from 299 to 177 lines. Deployment content extracted to `docs/deployment/CLAUDE.md`. Learning promotion removed from sync/deliver path.
+- **Phase-change hook suppression** — `user-prompt-submit.sh` caches last phase, skipping redundant emissions. Hook invocations per session reduced from 20-100 to 3-5.
+- **Contextual learning injection** — Keyword-based learning search injected on phase change with score threshold (0.7), token cap, and session dedup.
+- **MCP Tool Search enablement** — `ENABLE_TOOL_SEARCH=true` in settings templates with smart-merge that preserves user opt-outs.
+- **Installer auth skip** — Prior installations with existing API key skip the auth prompt.
+- **Installer artifact cleanup** — Content hashing prevents overwriting user-modified agents. Stale artifacts detected and removed on upgrade.
+
+### Fixed
+
+- **Layer violations resolved** — Zero `state/` → `tools/` imports. Scoring modules accept callbacks instead of performing direct I/O.
+- **Orchestration decomp** — Lifecycle helpers extracted to `_orchestration_lifecycle.py`. `orchestration.py` reduced to 448 lines.
+- **behavioral_protocol.md context allowlist** — New state files (`behavioral_protocol.md`, `last_ups_phase`, `injected_learning_ids.txt`) added to context cleanup allowlist.
+- **Per-profile response_format wiring** — Middleware now resolves active client profile format, not just global config.
+
+---
+
 ## [0.36.1] — 2026-03-30
 
 ### Fixed
