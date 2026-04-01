@@ -286,6 +286,42 @@ class TestPhaseContextualRecall:
         assert "testing" in str(query_arg)
         assert "gotchas" in str(query_arg)
 
+    def test_uses_compact_mode(
+        self,
+        trw_dir: Path,
+        config: TRWConfig,
+    ) -> None:
+        """Phase-contextual recall must use compact=True to limit response size."""
+        with patch(
+            "trw_mcp.state.memory_adapter.recall_learnings",
+            return_value=[],
+        ) as mock_recall:
+            _phase_contextual_recall(trw_dir, "", config, None, None)
+
+        call_kwargs = mock_recall.call_args
+        assert call_kwargs is not None
+        compact_arg = call_kwargs.kwargs.get("compact")
+        assert compact_arg is True
+
+    def test_max_results_is_bounded(
+        self,
+        trw_dir: Path,
+        config: TRWConfig,
+    ) -> None:
+        """Phase-contextual recall must not use max_results=0 (unlimited)."""
+        with patch(
+            "trw_mcp.state.memory_adapter.recall_learnings",
+            return_value=[],
+        ) as mock_recall:
+            _phase_contextual_recall(trw_dir, "", config, None, None)
+
+        call_kwargs = mock_recall.call_args
+        assert call_kwargs is not None
+        max_results_arg = call_kwargs.kwargs.get("max_results")
+        assert max_results_arg is not None
+        assert max_results_arg > 0
+        assert max_results_arg <= config.auto_recall_max_results * 3
+
 
 # --- run_auto_maintenance ---
 

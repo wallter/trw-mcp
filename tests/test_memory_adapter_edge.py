@@ -333,6 +333,71 @@ class TestMemoryToLearningDict:
         result = _memory_to_learning_dict(entry)
         assert result["shard_id"] is None
 
+    # -- Compact mode tag cap tests --
+
+    def test_compact_mode_caps_tags_at_limit(self) -> None:
+        """Compact mode truncates tags list to COMPACT_TAGS_CAP."""
+        from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
+
+        many_tags = [f"tag-{i}" for i in range(100)]
+        entry = self._make_entry(tags=many_tags)
+        result = _memory_to_learning_dict(entry, compact=True)
+        tags = list(result["tags"])  # type: ignore[arg-type]
+        assert len(tags) == COMPACT_TAGS_CAP
+        assert tags == many_tags[:COMPACT_TAGS_CAP]
+
+    def test_compact_mode_preserves_tags_under_limit(self) -> None:
+        """Compact mode keeps all tags when count is below the cap."""
+        from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
+
+        few_tags = ["a", "b", "c"]
+        assert len(few_tags) < COMPACT_TAGS_CAP
+        entry = self._make_entry(tags=few_tags)
+        result = _memory_to_learning_dict(entry, compact=True)
+        assert result["tags"] == few_tags
+
+    def test_compact_mode_exact_limit_tags(self) -> None:
+        """Compact mode keeps all tags when count equals the cap exactly."""
+        from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
+
+        exact_tags = [f"tag-{i}" for i in range(COMPACT_TAGS_CAP)]
+        entry = self._make_entry(tags=exact_tags)
+        result = _memory_to_learning_dict(entry, compact=True)
+        tags = list(result["tags"])  # type: ignore[arg-type]
+        assert tags == exact_tags
+        assert len(tags) == COMPACT_TAGS_CAP
+
+    def test_compact_mode_empty_tags(self) -> None:
+        """Compact mode handles empty tags list without error."""
+        entry = self._make_entry(tags=[])
+        result = _memory_to_learning_dict(entry, compact=True)
+        assert result["tags"] == []
+
+    def test_full_mode_does_not_cap_tags(self) -> None:
+        """Full mode returns all tags regardless of count."""
+        many_tags = [f"tag-{i}" for i in range(500)]
+        entry = self._make_entry(tags=many_tags)
+        result = _memory_to_learning_dict(entry, compact=False)
+        tags = list(result["tags"])  # type: ignore[arg-type]
+        assert tags == many_tags
+        assert len(tags) == 500
+
+    def test_compact_tag_cap_reduces_response_size(self) -> None:
+        """Verify compact tag cap meaningfully reduces serialized size."""
+        import json
+
+        huge_tags = [f"long-descriptive-tag-name-{i}" for i in range(600)]
+        entry = self._make_entry(tags=huge_tags)
+
+        full_result = _memory_to_learning_dict(entry, compact=False)
+        compact_result = _memory_to_learning_dict(entry, compact=True)
+
+        full_size = len(json.dumps(full_result))
+        compact_size = len(json.dumps(compact_result))
+
+        # Compact should be dramatically smaller
+        assert compact_size < full_size / 10
+
 
 # ---------------------------------------------------------------------------
 # _learning_to_memory_entry — parameter mapping

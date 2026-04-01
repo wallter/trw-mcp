@@ -22,3 +22,6 @@ DEFAULT_SCORING_DEFAULT_DAYS_UNUSED: int = 30
 
 # -- Ceremony adaptation (CORE-084) --
 LIGHT_MODE_RECALL_CAP: int = 10
+
+# -- Compact mode limits --
+COMPACT_TAGS_CAP: int = 10  # Max tags per learning in compact mode
