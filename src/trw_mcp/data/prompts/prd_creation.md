@@ -54,6 +54,7 @@ You are a product manager creating an AARE-F compliant PRD. Generate a complete 
    - Include acceptance criteria with confidence scores
    - Add testable criteria
    - Link to knowledge entries where applicable
+   - Prefer EARS-style wording (`When`, `If`, `While`, `Where`) for FR descriptions
 
 4. **Risk Assessment** (AARE-F C3):
    - Apply risk-based rigor scaling
@@ -65,6 +66,8 @@ You are a product manager creating an AARE-F compliant PRD. Generate a complete 
    - Map to implementation files (if known)
    - Reference test files
    - Include knowledge entry links
+   - Use backtick-wrapped repo-relative file paths like `src/module/file.py` and `tests/test_module.py`
+   - Avoid prose-only implementation cells; include one concrete implementation path and one concrete test path per FR row when grounded
 
 ## Output Format
 
@@ -119,6 +122,7 @@ The generated PRD must:
 - [ ] Have testable acceptance criteria
 - [ ] Include risk table with residual risk
 - [ ] Have complete traceability matrix
+- [ ] Use concrete backtick-wrapped implementation and test paths in the traceability matrix when grounded
 ```
 
 ---
