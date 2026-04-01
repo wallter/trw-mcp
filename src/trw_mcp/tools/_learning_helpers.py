@@ -44,6 +44,8 @@ class LearningParams:
     impact: float
     source_type: str
     source_identity: str
+    client_profile: str = ""
+    model_id: str = ""
     shard_id: str | None = None
     assertions: list[dict[str, str]] | None = None
 
@@ -208,6 +210,8 @@ def check_and_handle_dedup(
                             shard_id=params.shard_id,
                             source_type=params.source_type,
                             source_identity=params.source_identity,
+                            client_profile=params.client_profile,
+                            model_id=params.model_id,
                         )
                         merge_entries(yaml_file, model_to_dict(entry), reader, writer)
                         logger.info(

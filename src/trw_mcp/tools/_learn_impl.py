@@ -101,6 +101,8 @@ def execute_learn(
     shard_id: str | None = None,
     source_type: str = "agent",
     source_identity: str = "",
+    client_profile: str = "",
+    model_id: str = "",
     consolidated_from: list[str] | None = None,
     assertions: list[dict[str, str]] | None = None,
     is_solution_fn: Callable[[str], bool] | None = None,
@@ -211,6 +213,8 @@ def execute_learn(
             shard_id=shard_id,
             source_type=source_type,
             source_identity=source_identity,
+            client_profile=client_profile,
+            model_id=model_id,
             assertions=assertions,
         ),
         entries_dir,
@@ -234,6 +238,8 @@ def execute_learn(
             shard_id=shard_id,
             source_type=source_type,
             source_identity=source_identity,
+            client_profile=client_profile,
+            model_id=model_id,
             assertions=assertions,
         )
     except Exception:  # justified: boundary, adapter may hit SQLite/network errors; fall through to YAML
@@ -251,6 +257,7 @@ def execute_learn(
     entry_path = _save_yaml_backup(
         learning_id, summary, detail, safe_tags, safe_evidence,
         calibrated_impact, shard_id, source_type, source_identity,
+        client_profile, model_id,
         consolidated_from, trw_dir, entries_dir,
         save_entry_fn, update_analytics_fn,
     )
@@ -314,6 +321,8 @@ def _save_yaml_backup(
     shard_id: str | None,
     source_type: str,
     source_identity: str,
+    client_profile: str,
+    model_id: str,
     consolidated_from: list[str] | None,
     trw_dir: Path,
     entries_dir: Path,
@@ -334,6 +343,8 @@ def _save_yaml_backup(
             shard_id=shard_id,
             source_type=source_type,
             source_identity=source_identity,
+            client_profile=client_profile,
+            model_id=model_id,
             consolidated_from=consolidated_from or [],
         )
         entry_path: Path = Path(str(save_entry_fn(trw_dir, entry)))

@@ -54,6 +54,8 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
             "evidence": entry.evidence,
             "source_type": entry.source,
             "source_identity": entry.source_identity,
+            "client_profile": entry.client_profile,
+            "model_id": entry.model_id,
             "created": entry.created_at.date().isoformat() if entry.created_at else "",
             "updated": entry.updated_at.date().isoformat() if entry.updated_at else "",
             "access_count": entry.access_count,
@@ -82,6 +84,8 @@ def _learning_to_memory_entry(
     shard_id: str | None = None,
     source_type: str = "agent",
     source_identity: str = "",
+    client_profile: str = "",
+    model_id: str = "",
     assertions: list[dict[str, str]] | None = None,
 ) -> MemoryEntry:
     """Build a :class:`MemoryEntry` from trw_learn parameters.
@@ -112,6 +116,8 @@ def _learning_to_memory_entry(
         importance=impact,
         source=cast("Literal['human', 'agent', 'tool', 'consolidated']", source_type),
         source_identity=source_identity,
+        client_profile=client_profile,
+        model_id=model_id,
         namespace=_NAMESPACE,
         metadata=metadata,
         q_value=compute_initial_q_value(impact),

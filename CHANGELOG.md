@@ -2,6 +2,16 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.37.2] — 2026-03-31
+
+### Added
+
+- **Learning source provenance (PRD-CORE-099)** — Every learning now records which IDE/client (`client_profile`) and AI model (`model_id`) created it. Auto-detected from environment signals (env vars, config files) for Claude Code, OpenCode, Cursor, Codex, and Aider. Explicit overrides available via `trw_learn()` parameters.
+- **Source detection module** — New `trw_mcp.state.source_detection` with `detect_client_profile()` and `detect_model_id()` functions. Pure functions, no network calls, <1ms latency.
+- **trw-memory schema migration** — `client_profile` and `model_id` columns added to SQLite `memories` table with backward-compatible `ALTER TABLE ADD COLUMN` migration.
+
+---
+
 ## [0.37.1] — 2026-03-31
 
 ### Fixed
