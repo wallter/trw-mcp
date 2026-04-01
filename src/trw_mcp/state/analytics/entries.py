@@ -488,7 +488,7 @@ def backfill_source_attribution(
     if not entries_dir.is_dir():
         return {"updated_count": 0, "skipped_count": 0, "total_scanned": 0}
 
-    valid_source_types = {"human", "agent"}
+    valid_source_types = {"human", "agent", "tool", "consolidated"}
     updated = 0
     skipped = 0
     total = 0

@@ -23,6 +23,10 @@ from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 _NAMESPACE = DEFAULT_NAMESPACE
 
+# Valid source provenance values — aligned with MemoryEntry._VALID_SOURCES.
+_VALID_SOURCES: frozenset[str] = frozenset({"human", "agent", "tool", "consolidated"})
+_SourceType = Literal["human", "agent", "tool", "consolidated"]
+
 
 def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> dict[str, object]:
     """Convert a :class:`MemoryEntry` to the dict shape returned by trw_recall.
@@ -114,7 +118,7 @@ def _learning_to_memory_entry(
         tags=tags or [],
         evidence=evidence or [],
         importance=impact,
-        source=cast("Literal['human', 'agent', 'tool', 'consolidated']", source_type),
+        source=cast("_SourceType", source_type if source_type in _VALID_SOURCES else "agent"),
         source_identity=source_identity,
         client_profile=client_profile,
         model_id=model_id,

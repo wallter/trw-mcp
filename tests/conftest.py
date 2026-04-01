@@ -191,6 +191,8 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_api_import.py",
         "test_fix044_module_config.py",
         "test_fix056_status_integrity.py",
+        # PRD-CORE-099: Pure env-var detection — no filesystem I/O
+        "test_source_detection_unit.py",
     }
 )
 

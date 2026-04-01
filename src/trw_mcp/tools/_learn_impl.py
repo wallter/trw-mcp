@@ -254,12 +254,27 @@ def execute_learn(
     _handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
 
     # Save YAML backup via analytics (dual-write for rollback safety)
+    params = LearningParams(
+        summary=summary,
+        detail=detail,
+        learning_id=learning_id,
+        tags=safe_tags,
+        evidence=safe_evidence,
+        impact=calibrated_impact,
+        shard_id=shard_id,
+        source_type=source_type,
+        source_identity=source_identity,
+        client_profile=client_profile,
+        model_id=model_id,
+        assertions=assertions,
+    )
     entry_path = _save_yaml_backup(
-        learning_id, summary, detail, safe_tags, safe_evidence,
-        calibrated_impact, shard_id, source_type, source_identity,
-        client_profile, model_id,
-        consolidated_from, trw_dir, entries_dir,
-        save_entry_fn, update_analytics_fn,
+        params,
+        consolidated_from=consolidated_from,
+        trw_dir=trw_dir,
+        entries_dir=entries_dir,
+        save_entry_fn=save_entry_fn,
+        update_analytics_fn=update_analytics_fn,
     )
 
     # Forced distribution enforcement (PRD-CORE-034)
@@ -312,39 +327,30 @@ def _default_is_solution(summary: str) -> bool:
 
 
 def _save_yaml_backup(
-    learning_id: str,
-    summary: str,
-    detail: str,
-    tags: list[str],
-    evidence: list[str],
-    impact: float,
-    shard_id: str | None,
-    source_type: str,
-    source_identity: str,
-    client_profile: str,
-    model_id: str,
+    params: LearningParams,
+    *,
     consolidated_from: list[str] | None,
     trw_dir: Path,
     entries_dir: Path,
-    save_entry_fn: Any,
-    update_analytics_fn: Any,
+    save_entry_fn: Callable[..., Path],
+    update_analytics_fn: Callable[..., None],
 ) -> Path:
     """Save YAML backup via analytics (dual-write for rollback safety)."""
     try:
         from trw_mcp.models.learning import LearningEntry
 
         entry = LearningEntry(
-            id=learning_id,
-            summary=summary,
-            detail=detail,
-            tags=tags,
-            evidence=evidence,
-            impact=impact,
-            shard_id=shard_id,
-            source_type=source_type,
-            source_identity=source_identity,
-            client_profile=client_profile,
-            model_id=model_id,
+            id=params.learning_id,
+            summary=params.summary,
+            detail=params.detail,
+            tags=params.tags,
+            evidence=params.evidence,
+            impact=params.impact,
+            shard_id=params.shard_id,
+            source_type=params.source_type,
+            source_identity=params.source_identity,
+            client_profile=params.client_profile,
+            model_id=params.model_id,
             consolidated_from=consolidated_from or [],
         )
         entry_path: Path = Path(str(save_entry_fn(trw_dir, entry)))
@@ -352,9 +358,9 @@ def _save_yaml_backup(
     except (OSError, ValueError, TypeError) as _save_exc:
         logger.warning(
             "learn_db_write_failed",
-            summary=summary[:50],
+            summary=params.summary[:50],
             error=str(_save_exc),
         )
-        entry_path = entries_dir / f"{learning_id}.yaml"
+        entry_path = entries_dir / f"{params.learning_id}.yaml"
 
     return entry_path
