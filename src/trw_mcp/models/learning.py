@@ -95,9 +95,9 @@ class LearningEntry(BaseModel):
         return data
 
     # PRD-CORE-026: Source attribution for human vs agent learnings
-    source_type: str = Field(
+    source_type: Literal["human", "agent", "tool", "consolidated"] = Field(
         default="agent",
-        description="Learning provenance: 'human' or 'agent'.",
+        description="Learning provenance: 'human', 'agent', 'tool', or 'consolidated'.",
     )
     source_identity: str = Field(
         default="",

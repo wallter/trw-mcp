@@ -25,12 +25,17 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 # Env-var prefixes that identify each client.  Checked in priority order.
+# Signal strength rationale:
+#   - claude-code: CLAUDE_CODE_* is auto-injected by Claude Code — high confidence
+#   - codex: CODEX_CLI_VERSION is set by Codex CLI — high confidence
+#   - cursor: CURSOR_TRACE_ID is set by Cursor IDE — medium confidence
+#   - aider: AIDER_MODEL is user-set (not auto-injected) — medium confidence
+#   - opencode: OPENCODE_* is user-set (not auto-injected) — lowest confidence
 _CLIENT_SIGNALS: list[tuple[str, list[str]]] = [
     ("claude-code", ["CLAUDE_CODE_VERSION", "CLAUDE_CODE_ENTRYPOINT"]),
     ("codex", ["CODEX_CLI_VERSION", "CODEX_SANDBOX_TYPE"]),
     ("cursor", ["CURSOR_TRACE_ID", "CURSOR_SESSION_ID"]),
     ("aider", ["AIDER_MODEL", "AIDER_CHAT_HISTORY_FILE"]),
-    # opencode last — its signals are weaker (user-set, not auto-injected)
     ("opencode", ["OPENCODE_MODEL", "OPENCODE_CONFIG"]),
 ]
 

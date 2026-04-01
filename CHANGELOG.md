@@ -10,6 +10,14 @@ All notable changes to the TRW MCP server package.
 - **Source detection module** — New `trw_mcp.state.source_detection` with `detect_client_profile()` and `detect_model_id()` functions. Pure functions, no network calls, <1ms latency.
 - **trw-memory schema migration** — `client_profile` and `model_id` columns added to SQLite `memories` table with backward-compatible `ALTER TABLE ADD COLUMN` migration.
 
+### Improved
+
+- **Type safety** — `LearningEntry.source_type` narrowed from `str` to `Literal["human", "agent", "tool", "consolidated"]`, aligned with `MemoryEntry.source`. Source-type validation in `_memory_transforms.py` replaced `cast` with runtime check. Analytics backfill expanded to accept all four valid source types.
+- **API ergonomics** — `trw_learn()` `client_profile`/`model_id` use `None` sentinel (auto-detect) vs explicit `""` (suppress detection), preventing ambiguity.
+- **DRY refactor** — `_save_yaml_backup` refactored from 16 positional params to use `LearningParams` dataclass + keyword-only args, preventing transposition bugs.
+- **YAMLBackend fix** — `_dict_to_entry()` now reads `client_profile` and `model_id` from YAML data, preventing silent data loss on round-trip.
+- **Test organization** — Source detection unit tests split from integration tests and registered in `_UNIT_FILES` for `make test-fast`. Added wiring integration tests, compact-mode exclusion tests, YAML round-trip tests, dual-config priority test, and secondary env-var coverage.
+
 ---
 
 ## [0.37.1] — 2026-03-31
