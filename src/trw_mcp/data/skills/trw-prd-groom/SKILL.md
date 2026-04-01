@@ -43,6 +43,14 @@ Groom a PRD to sprint-ready quality (total_score >= 65, REVIEW tier) through sys
    - **Dependencies & Risks**: Concrete risks with likelihood/impact + mitigation
    - **Open Questions**: Unresolved items needing stakeholder input
    - **Traceability Matrix**: Map requirements to test cases and source files
+   - **Traceability scoring detail**:
+     - Populate `traceability.implements`, `traceability.depends_on`, and `traceability.enables` when grounded
+     - For each FR row in the Traceability Matrix, include one backtick-wrapped implementation path and one backtick-wrapped test path
+     - Prefer repo-relative paths such as `src/trw_mcp/bootstrap/_opencode.py` or `tests/test_bootstrap.py`
+     - Avoid prose-only matrix cells like "bootstrap wiring" without a backtick-wrapped file reference
+   - **Density scoring detail**:
+     - Replace placeholders completely; partial template text still counts against density
+     - Low-scoring sections usually need more concrete filenames, thresholds, tasks, and metric rows, not more framing prose
 
 6. **Validation loop** (max 3 iterations):
    a. Write updated PRD
@@ -50,6 +58,8 @@ Groom a PRD to sprint-ready quality (total_score >= 65, REVIEW tier) through sys
    c. If quality gates pass, exit with success
    d. If < 5% score improvement after 3 iterations, exit (convergence)
    e. Parse validation failures and draft fixes
+      - If traceability score is weak, inspect whether matrix rows contain backtick-wrapped file refs and test refs
+      - If content density is weak, add concrete rows, thresholds, filenames, and phased tasks instead of more generic prose
 
 7. **Completion**: Call `trw_learn(summary="PRD groomed: {PRD-ID} to {score}", tags=["prd-workflow"])`. Report final quality score and any remaining gaps.
 
@@ -88,5 +98,7 @@ Only suggest assertions for ~30% of FRs — most requirements are not grep/glob-
 - ALWAYS preserve PRD ID, frontmatter structure, and section numbering
 - ALWAYS use EARS patterns for functional requirements
 - ALWAYS include confidence scores on requirements
+- ALWAYS use backtick-wrapped repo-relative paths in the Traceability Matrix
+- ALWAYS include at least one concrete implementation path and one concrete test path for every grounded FR row
 - If hitting total_score >= 65 requires inventing ungrounded content, stop and document gaps in Open Questions
 - If total_score remains below 45 (DRAFT tier) after 3 iterations, STOP and report to the caller — the feature description likely needs more detail from the user

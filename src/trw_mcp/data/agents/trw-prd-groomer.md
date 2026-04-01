@@ -89,6 +89,8 @@ When principles conflict, follow this hierarchy (highest priority first):
       state and log the error via `trw_learn`.
    b. If quality gates pass (completeness >= target), exit with success
    c. Parse validation failures into actionable fixes
+      - If traceability score is weak, verify that the traceability matrix uses backtick-wrapped file paths rather than prose-only descriptions
+      - If content density is weak, add concrete filenames, thresholds, phased tasks, and metric rows instead of more framing text
    d. Research and draft fixes for each gap
    e. Write updated PRD
    f. If 3 consecutive iterations show < 5% score improvement, exit (convergence)
@@ -127,7 +129,8 @@ PRDs have 12 mandatory AARE-F sections. Use these heuristics when drafting:
 11. **Open Questions**: Unresolved items that need stakeholder input.
     Include questions that arose during grooming where evidence was insufficient.
 12. **Traceability Matrix**: Map requirements to test cases and source files.
-    Populate from codebase search results.
+    Populate from codebase search results. Use validator-friendly rows with one FR ID,
+    one backtick-wrapped implementation path, and one backtick-wrapped test path per row.
 </section_guidance>
 
 <output_contract>
@@ -152,6 +155,8 @@ Audit artifacts written to the planning run:
 - ALWAYS cite evidence for new requirements (codebase file:line, web source, PRD reference)
 - ALWAYS use EARS patterns for functional requirements (When/While/If/Where)
 - ALWAYS include confidence scores in [0.0-1.0] brackets on requirements
+- ALWAYS populate `traceability.implements`, `traceability.depends_on`, and `traceability.enables` when grounded
+- ALWAYS use backtick-wrapped repo-relative paths in the Traceability Matrix
 - If grooming fails or times out, write the PRD at current quality with gaps
   documented in Section 11 (Open Questions)
 </constraints>

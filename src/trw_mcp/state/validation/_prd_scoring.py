@@ -112,6 +112,13 @@ _TEST_REF_RE = re.compile(
     r")`",
 )
 
+# Backtick-wrapped source / implementation file references used inside
+# traceability matrices. Accept hyphenated repo roots (e.g. ``trw-mcp/``),
+# nested dirs, shell scripts, markdown, and optional line/anchor suffixes.
+_IMPL_REF_RE = re.compile(
+    r"`(?:[-\w./*]+(?:\.[\w]+)(?:[:#][-\w./*#]+)?)`",
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -421,7 +428,7 @@ def score_traceability_v2(
     if "Traceability Matrix" in content:
         matrix_section = content.split("Traceability Matrix")[-1]
         # Count rows with implementation file references
-        impl_refs = re.findall(r"`[\w/]+\.\w+[:\w]*`", matrix_section)
+        impl_refs = _IMPL_REF_RE.findall(matrix_section)
         test_refs = _TEST_REF_RE.findall(matrix_section)
         # Count FR references in matrix
         fr_refs = re.findall(r"FR\d+", matrix_section)

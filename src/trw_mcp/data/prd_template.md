@@ -156,6 +156,7 @@ quality_gates:
 | File | Changes |
 |------|---------|
 | `path/to/file.py` | {Description of changes} |
+| `path/to/test_file.py` | {Tests or validation wiring affected} |
 
 ### API Changes
 {New or modified APIs}
@@ -173,6 +174,7 @@ quality_gates:
 
 ### Acceptance Tests
 - [ ] {Maps to AC from user stories}
+- [ ] `FR01` -> `tests/test_feature.py`
 
 ---
 
@@ -222,6 +224,15 @@ quality_gates:
 ---
 
 ## 12. Traceability Matrix
+
+Use backtick-wrapped repo-relative file paths so validation can count them:
+
+| Requirement | Source | Implementation | Test | Status |
+|-------------|--------|----------------|------|--------|
+| FR01 | user request or prior PRD | `src/module/file.py` | `tests/test_module.py` | Pending |
+| FR02 | `PRD-CORE-001` | `src/module/other.py:42` | `tests/test_other.py` | Pending |
+
+---
 
 <!-- Finding F19: Bidirectional traceability is foundational -->
 
