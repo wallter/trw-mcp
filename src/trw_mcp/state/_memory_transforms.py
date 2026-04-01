@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - compatibility with older trw-memory ex
 
     Assertion = cast("type[Any]", None)  # type: ignore[misc]
 
+from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 _NAMESPACE = DEFAULT_NAMESPACE
@@ -36,10 +37,11 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
     Returns:
         Dict with ``id``, ``summary``, ``tags``, ``impact``, ``status``, etc.
     """
+    tags = entry.tags[:COMPACT_TAGS_CAP] if compact else entry.tags
     base: dict[str, object] = {
         "id": entry.id,
         "summary": entry.content,
-        "tags": entry.tags,
+        "tags": tags,
         "impact": entry.importance,
         "status": entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status),
     }

@@ -293,8 +293,8 @@ def _phase_contextual_recall(
         query=ar_query,
         tags=phase_tags,
         min_impact=0.5,
-        max_results=0,
-        compact=False,
+        max_results=config.auto_recall_max_results * 3,
+        compact=True,
     )
     if not ar_entries:
         return []
