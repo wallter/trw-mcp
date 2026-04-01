@@ -6,7 +6,7 @@ description: >
   findings. Handles research, investigation, documentation lookup, API
   exploration, and best-practice analysis tasks. Read-only codebase access
   with full web research capabilities.
-model: claude-sonnet-4-6
+model: sonnet
 maxTurns: 75
 memory: project
 tools:

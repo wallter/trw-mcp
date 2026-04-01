@@ -5,7 +5,7 @@ description: >
   With "resolve/obsolete L-id": changes status. Without arguments: reflects on
   session memory. Use: /trw-learn ["summary" | resolve L-id | obsolete L-id]
 user-invocable: true
-model: claude-sonnet-4-6
+model: sonnet
 disable-model-invocation: true
 argument-hint: "[\"summary\" | resolve L-id [reason] | obsolete L-id [reason]]"
 allowed-tools: Read, Bash, mcp__trw__trw_recall, mcp__trw__trw_learn, mcp__trw__trw_learn_update

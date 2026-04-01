@@ -1,6 +1,6 @@
 ---
 name: trw-prd-groom
-model: claude-opus-4-6
+model: opus
 description: >
   Internal phase: Groom a PRD to sprint-ready quality. Researches codebase,
   drafts missing sections, iterates until validation passes.

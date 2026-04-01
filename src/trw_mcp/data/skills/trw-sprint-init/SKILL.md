@@ -1,6 +1,6 @@
 ---
 name: trw-sprint-init
-model: claude-opus-4-6
+model: opus
 description: >
   Initialize a new sprint. Lists draft PRDs, creates sprint doc,
   bootstraps run directory, sets up tracking.

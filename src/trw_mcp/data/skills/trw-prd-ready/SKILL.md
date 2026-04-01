@@ -1,6 +1,6 @@
 ---
 name: trw-prd-ready
-model: claude-opus-4-6
+model: opus
 description: >
   Full PRD lifecycle in one command: create (or pick up existing) → groom → review → refine → execution plan.
   Accepts a feature description ("Add rate limiting") or a PRD ID (PRD-CORE-020).

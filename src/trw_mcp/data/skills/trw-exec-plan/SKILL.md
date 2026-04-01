@@ -1,6 +1,6 @@
 ---
 name: trw-exec-plan
-model: claude-opus-4-6
+model: opus
 description: >
   Internal phase: Generate an execution plan from a groomed PRD. Decomposes FRs
   into micro-tasks with file paths, test names, verification commands, and dependency graphs.

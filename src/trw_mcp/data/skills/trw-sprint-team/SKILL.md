@@ -5,7 +5,7 @@ description: >
   proposes team structure with file ownership, and spawns teammates with generated
   playbooks. Use: /trw-sprint-team [sprint-doc-path]
 user-invocable: true
-model: claude-opus-4-6
+model: opus
 disable-model-invocation: true
 argument-hint: "[sprint-doc-path]"
 allowed-tools: Read, Write, Glob, Grep, Bash, Edit, mcp__trw__trw_recall, mcp__trw__trw_status, mcp__trw__trw_init, mcp__trw__trw_checkpoint
@@ -67,9 +67,9 @@ Based on PRD count and complexity, propose a team composition using these rules:
 | 7+        | 3           | 1       | 1         | 5     |
 
 Model selection:
-- **Implementers**: `claude-sonnet-4-6` (cost-effective for focused coding)
-- **Testers**: `claude-sonnet-4-6` (cost-effective for focused testing)
-- **Reviewers**: `claude-sonnet-4-6` (rubric-scored review with structured output)
+- **Implementers**: `sonnet` (cost-effective for focused coding)
+- **Testers**: `sonnet` (cost-effective for focused testing)
+- **Reviewers**: `sonnet` (rubric-scored review with structured output)
 
 For each teammate, assign:
 - PRDs from the sprint (distribute evenly across implementers, group by track where possible)
@@ -84,9 +84,9 @@ Team name: {team-name}
 
 | Teammate      | Role        | Model  | PRDs            | Key Files                  |
 |---------------|-------------|--------|-----------------|----------------------------|
-| implementer-1 | implementer | claude-sonnet-4-6 | PRD-CORE-035    | src/trw_mcp/tools/learn.py |
-| tester-1      | tester      | claude-sonnet-4-6 | PRD-CORE-035    | tests/test_tools_learn*.py |
-| reviewer      | reviewer    | claude-sonnet-4-6 | All (read-only) | (read-only)                |
+| implementer-1 | implementer | sonnet | PRD-CORE-035    | src/trw_mcp/tools/learn.py |
+| tester-1      | tester      | sonnet | PRD-CORE-035    | tests/test_tools_learn*.py |
+| reviewer      | reviewer    | sonnet | All (read-only) | (read-only)                |
 
 ## PRD Dependencies
 
@@ -186,7 +186,7 @@ For each approved teammate (in this order: implementers first, then testers, the
      - tester -> `trw-implementer`
      - reviewer -> `trw-reviewer`
      - researcher -> `trw-researcher`
-   - `model`: as proposed (claude-sonnet-4-6/claude-opus-4-6/claude-haiku-4-5-20251001)
+   - `model`: as proposed (sonnet/opus/haiku)
    - `prompt`: full playbook content from `tm-{name}.md`
 
 Spawn one teammate at a time and confirm each spawn before proceeding to the next.
