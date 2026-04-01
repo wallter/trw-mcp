@@ -2,6 +2,15 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.37.1] — 2026-03-31
+
+### Fixed
+
+- **Compact mode tag cap** — `_memory_to_learning_dict` now caps tags to 10 in compact mode, preventing oversized `trw_session_start` responses (99KB → ~5KB) caused by learnings with 400-672 tags.
+- **Phase-contextual recall bounded** — `_phase_contextual_recall` changed from `max_results=0, compact=False` (unlimited full entries) to `max_results=15, compact=True`, preventing unbounded response growth.
+
+---
+
 ## [0.37.0] — 2026-03-31
 
 ### Added — Sprint 79: Architecture & Optimization
