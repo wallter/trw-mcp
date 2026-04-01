@@ -107,6 +107,8 @@ def _learnings_to_csv(entries: list[LearningEntryDict]) -> str:
         "q_value",
         "access_count",
         "source_type",
+        "client_profile",
+        "model_id",
         "created",
         "updated",
     ]
@@ -123,6 +125,8 @@ def _learnings_to_csv(entries: list[LearningEntryDict]) -> str:
             "q_value": str(entry.get("q_value", "")),
             "access_count": str(entry.get("access_count", "")),
             "source_type": str(entry.get("source_type", "")),
+            "client_profile": str(entry.get("client_profile", "")),
+            "model_id": str(entry.get("model_id", "")),
             "created": str(entry.get("created", "")),
             "updated": str(entry.get("updated", "")),
         }
@@ -365,8 +369,10 @@ def _create_and_save_entry(
         tags=tags,
         evidence=evidence,
         impact=impact,
-        source_type="cross-project",
+        source_type="tool",
         source_identity=source_project or "unknown",
+        client_profile=str(entry.get("client_profile", "")),
+        model_id=str(entry.get("model_id", "")),
     )
     save_learning_entry(trw_dir, new_entry)
     return new_id
