@@ -6,7 +6,7 @@ description: >
   test quality, integration, and spec compliance. Covers OWASP Top 10 security
   auditing, DRY/KISS/SOLID analysis, and language-agnostic review for any
   programming language or framework. Read-only access — never modifies files.
-model: claude-sonnet-4-6
+model: sonnet
 maxTurns: 50
 memory: project
 tools:

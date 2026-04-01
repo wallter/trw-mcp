@@ -1,6 +1,6 @@
 ---
 name: trw-ceremony-guide
-model: claude-sonnet-4-6
+model: sonnet
 description: >
   Load the full TRW ceremony reference: tool lifecycle table, execution
   phases, and example flows. Use when you need to know which tool to call

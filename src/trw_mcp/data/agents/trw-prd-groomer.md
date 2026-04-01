@@ -7,7 +7,7 @@ description: >
   verdicts, and iterative grooming to sprint-ready completeness (>= 0.85).
   Handles groom PRD, sprint-ready, requirement, PRD quality, completeness,
   and acceptance criteria tasks.
-model: claude-opus-4-6
+model: opus
 maxTurns: 100
 memory: project
 tools:

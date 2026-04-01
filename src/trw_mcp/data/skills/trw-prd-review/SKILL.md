@@ -1,6 +1,6 @@
 ---
 name: trw-prd-review
-model: claude-opus-4-6
+model: opus
 description: >
   Internal phase: Review a PRD for quality, returning a structured READY/NEEDS WORK/BLOCK
   verdict with per-dimension scores. Read-only — never modifies files.

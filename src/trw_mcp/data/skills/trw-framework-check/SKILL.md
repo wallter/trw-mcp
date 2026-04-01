@@ -1,6 +1,6 @@
 ---
 name: trw-framework-check
-model: claude-sonnet-4-6
+model: sonnet
 context: fork
 agent: Explore
 description: >

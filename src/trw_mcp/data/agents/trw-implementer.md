@@ -6,7 +6,7 @@ description: >
   test coverage targets of 90%+. Handles implement, write tests, TDD, test
   coverage, and code and tests tasks. Honors interface contracts and respects
   file ownership boundaries.
-model: claude-opus-4-6
+model: opus
 maxTurns: 200
 memory: project
 tools:

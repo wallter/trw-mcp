@@ -1,6 +1,6 @@
 ---
 name: trw-dry-check
-model: claude-sonnet-4-6
+model: sonnet
 description: >
   Scan files for duplicated code blocks and suggest extraction.
   Read-only analysis — reports findings without modifying code.

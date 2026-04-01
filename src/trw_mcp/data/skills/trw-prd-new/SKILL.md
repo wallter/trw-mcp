@@ -1,6 +1,6 @@
 ---
 name: trw-prd-new
-model: claude-opus-4-6
+model: opus
 description: >
   Create a new PRD from a feature description, then automatically run the full
   readiness pipeline (groom → review → execution plan) so the user gets a

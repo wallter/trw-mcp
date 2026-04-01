@@ -61,7 +61,7 @@ _TIPS = [
     "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
     "Export learnings anytime: trw-mcp export . learnings --format csv",
     "Your learnings auto-decay \u2014 high-impact ones persist longest",
-    "Set CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6 for faster subagents",
+    "Set CLAUDE_CODE_SUBAGENT_MODEL=sonnet for faster subagents",
     "TRW hooks run automatically \u2014 no setup needed after install",
 ]
 

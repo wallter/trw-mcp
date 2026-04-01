@@ -8,7 +8,7 @@ description: >
   waves with self-review between each. Use for audit, spec-vs-code, PRD
   verification, traceability check, and adversarial review tasks. Read-only
   access — never modifies files.
-model: claude-sonnet-4-6
+model: sonnet
 maxTurns: 200
 memory: project
 tools:
