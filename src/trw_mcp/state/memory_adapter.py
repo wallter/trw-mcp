@@ -204,6 +204,8 @@ def store_learning(
     shard_id: str | None = None,
     source_type: str = "agent",
     source_identity: str = "",
+    client_profile: str = "",
+    model_id: str = "",
     assertions: list[dict[str, str]] | None = None,
 ) -> dict[str, object]:
     """Store a learning entry in SQLite and return the tool result dict.
@@ -231,6 +233,8 @@ def store_learning(
         shard_id=shard_id,
         source_type=source_type,
         source_identity=source_identity,
+        client_profile=client_profile,
+        model_id=model_id,
         assertions=assertions,
     )
 

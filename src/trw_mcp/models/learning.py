@@ -104,6 +104,16 @@ class LearningEntry(BaseModel):
         description="Name of the source (e.g., 'Tyler', 'claude-opus-4-6').",
     )
 
+    # PRD-CORE-099: Client & model provenance auto-detection
+    client_profile: str = Field(
+        default="",
+        description="IDE/client that created this entry (e.g., 'claude-code', 'opencode').",
+    )
+    model_id: str = Field(
+        default="",
+        description="AI model that created this entry (e.g., 'claude-opus-4-6').",
+    )
+
     # PRD-CORE-042: Dedup merge tracking
     merged_from: list[str] = Field(
         default_factory=list,

@@ -151,6 +151,8 @@ def register_learning_tools(server: FastMCP) -> None:
         shard_id: str | None = None,
         source_type: str = "agent",
         source_identity: str = "",
+        client_profile: str = "",
+        model_id: str = "",
         consolidated_from: list[str] | None = None,
         assertions: list[dict[str, str]] | None = None,
     ) -> LearnResultDict:
@@ -169,12 +171,23 @@ def register_learning_tools(server: FastMCP) -> None:
             shard_id: Optional shard identifier for sub-agent attribution.
             source_type: Learning provenance — "human" or "agent".
             source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
+            client_profile: IDE/client override (e.g., "claude-code"). Auto-detected when empty.
+            model_id: Model override (e.g., "claude-opus-4-6"). Auto-detected when empty.
             consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
             assertions: Machine-verifiable assertions (PRD-CORE-086). Each dict has type, pattern, target.
 
         See Also: trw_recall, trw_learn_update
         """
         from trw_mcp.tools._learn_impl import execute_learn
+
+        # PRD-CORE-099: Auto-detect client and model when not explicitly provided
+        if not client_profile or not model_id:
+            from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
+
+            if not client_profile:
+                client_profile = detect_client_profile()
+            if not model_id:
+                model_id = detect_model_id()
 
         # Resolve from this module's namespace so test patches work
         return execute_learn(
@@ -188,6 +201,8 @@ def register_learning_tools(server: FastMCP) -> None:
             shard_id=shard_id,
             source_type=source_type,
             source_identity=source_identity,
+            client_profile=client_profile,
+            model_id=model_id,
             consolidated_from=consolidated_from,
             assertions=assertions,
             is_solution_fn=_is_solution_summary,

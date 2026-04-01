@@ -250,6 +250,8 @@ class TestMemoryToLearningDict:
             "evidence",
             "source_type",
             "source_identity",
+            "client_profile",
+            "model_id",
             "created",
             "updated",
             "access_count",
