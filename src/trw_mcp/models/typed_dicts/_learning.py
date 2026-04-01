@@ -26,6 +26,8 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     evidence: list[str] | None
     source_type: str
     source_identity: str
+    client_profile: str
+    model_id: str
     created: str
     updated: str
     access_count: int

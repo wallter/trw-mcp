@@ -18,6 +18,14 @@ All notable changes to the TRW MCP server package.
 - **YAMLBackend fix** — `_dict_to_entry()` now reads `client_profile` and `model_id` from YAML data, preventing silent data loss on round-trip.
 - **Test organization** — Source detection unit tests split from integration tests and registered in `_UNIT_FILES` for `make test-fast`. Added wiring integration tests, compact-mode exclusion tests, YAML round-trip tests, dual-config priority test, and secondary env-var coverage.
 
+### Fixed
+
+- **Export source_type violation** — `import_learning()` used `source_type="cross-project"` which failed Literal validation after wave 2 type narrowing. Changed to `"tool"` with provenance fields preserved from source entry.
+- **LearningEntryDict TypedDict** — Added `client_profile` and `model_id` to the TypedDict so type-checked callers can see the fields.
+- **CSV export** — `_learnings_to_csv()` now includes `client_profile` and `model_id` columns.
+- **trw-memory migration** — `from_trw.py` now reads `client_profile` and `model_id` from YAML data during migration, preventing silent data loss.
+- **Consolidation provenance** — Consolidated entries now inherit `client_profile`, `model_id`, and `source_identity` from the highest-importance source entry.
+
 ---
 
 ## [0.37.1] — 2026-03-31
