@@ -2,6 +2,18 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.38.2] — 2026-04-02
+
+### Fixed
+
+- **`trw_build_check` correlation fan-out** — session-scoped outcome correlation now reads session boundaries from `.trw/runs` instead of `docs/*/runs`, so `trw_build_check` no longer falls back to the 480-minute window during normal runs.
+- **Outcome rows excluded from recall correlation** — `correlate_recalls()` now ignores outcome-only `recall_tracking.jsonl` rows and only correlates actual recall receipts, preventing `build_check` from re-rewarding nearly the entire learning store.
+- **Faster YAML path resolution for correlated entries** — when SQLite already has the learning entry, correlation resolves the YAML file via `find_yaml_path_for_entry()` instead of performing a full YAML scan per ID.
+
+### Tests
+
+- Added regression coverage for session boundary discovery from `.trw/runs` and for ignoring outcome-only tracking rows during correlation.
+
 ## [0.38.1] — 2026-04-02
 
 ### Added — Per-Client Instruction Files (PRD-CORE-115)
