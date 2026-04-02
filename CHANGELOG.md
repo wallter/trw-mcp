@@ -2,6 +2,23 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.38.1] — 2026-04-02
+
+### Added — Per-Client Instruction Files (PRD-CORE-115)
+
+- **Per-client instruction renderers** — `render_codex_instructions()` and `render_opencode_instructions(model_family)` generate tailored `.codex/INSTRUCTIONS.md` and `.opencode/INSTRUCTIONS.md` instead of a shared AGENTS.md. Each client gets ceremony guidance optimized for its capabilities.
+- **Model-family-specific headings and notes** — OpenCode instructions include model-specific workflow headings (`## GPT-5.4 Optimized Workflow`, `## Qwen-Coder-Next Optimized Workflow`, etc.) and `### {Family}-Specific Notes` sections with prompting guidance tailored to each model family.
+- **Portable prompting guide loading** — Replaced hard-coded absolute paths with `importlib.resources.files()` for loading bundled model-family prompting guides (`data/prompting/*.md`).
+- **Conditional checkpoint guidance** — Generic/limited-context models no longer receive `trw_checkpoint` references, respecting their constrained context budgets.
+
+### Fixed
+
+- **`generate_agents_md()` false error on double-write** — Fixed `if`/`if`/`else` logic bug where successful TRW marker replacement still triggered a "malformed TRW markers" error when AGENTS.md was written twice during `update_project(ide='all')`. Changed second `if` to `elif`.
+- **Test alignment for 3-tuple `_determine_write_targets`** — Updated 7 tests in `test_target_platforms.py` to unpack the 3-value return `(write_claude, write_agents, instruction_path)`.
+- **Bootstrap tests for per-client instructions** — Updated 6 tests in `test_bootstrap.py` to verify `.codex/INSTRUCTIONS.md` and `.opencode/INSTRUCTIONS.md` instead of the legacy shared `AGENTS.md` pattern.
+
+---
+
 ## [0.38.0] — 2026-04-01
 
 ### Added — Meta-Learning Phase A (Sprint 80-82, PRD-CORE-110/111)

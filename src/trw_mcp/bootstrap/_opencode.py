@@ -243,7 +243,7 @@ def generate_agents_md(
                 result["updated"].append(str(agents_md_path.name))
             except OSError as exc:
                 result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
-        if start_idx == -1 and end_idx == -1:
+        elif start_idx == -1 and end_idx == -1:
             # No TRW section yet — append it
             if not content.endswith("\n"):
                 content += "\n"
