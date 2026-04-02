@@ -451,3 +451,126 @@ def test_density_weight_ten_is_valid() -> None:
     """Weight of 10.0 must be accepted (le=10.0)."""
     config = TRWConfig(density_weight_traceability_matrix=10.0)
     assert config.density_weight_traceability_matrix == 10.0
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: end-to-end _generate_prd_body + regression scoring
+# ---------------------------------------------------------------------------
+
+
+def test_prd_create_fix_category() -> None:
+    """End-to-end: _generate_prd_body with category='FIX' produces exactly 8 numbered sections
+    matching the Fix template names (PRD-CORE-080-FR01).
+
+    Note: section ordering in the generated body follows the position of each section in the
+    full 12-section feature template (the filter preserves relative order). We assert on the
+    SET of section names, not their order.
+    """
+    import re
+
+    from trw_mcp.tools.requirements import _generate_prd_body
+
+    body = _generate_prd_body(
+        prd_id="PRD-FIX-001",
+        title="Test Fix PRD",
+        input_text="Fix the broken thing",
+        category="FIX",
+    )
+
+    # Extract all ## N. <Section Name> headings
+    matches = re.findall(r"^## (\d+)\. (.+)$", body, re.MULTILINE)
+    section_names = [name.strip() for _num, name in matches]
+
+    assert len(section_names) == 8, (
+        f"FIX PRD should have 8 sections, got {len(section_names)}: {section_names}"
+    )
+
+    expected_fix_sections = {
+        "Problem Statement",
+        "Root Cause Analysis",
+        "Functional Requirements",
+        "Non-Functional Requirements",
+        "Test Strategy",
+        "Rollback Plan",
+        "Traceability Matrix",
+        "Open Questions",
+    }
+    assert set(section_names) == expected_fix_sections, (
+        f"FIX section names mismatch.\nGot:      {sorted(section_names)}\nExpected: {sorted(expected_fix_sections)}"
+    )
+
+
+def test_prd_create_research_category() -> None:
+    """End-to-end: _generate_prd_body with category='RESEARCH' produces exactly 7 numbered sections
+    matching the Research template names (PRD-CORE-080-FR01).
+
+    Note: section ordering in the generated body follows the position of each section in the
+    full 12-section feature template (the filter preserves relative order). We assert on the
+    SET of section names, not their order.
+    """
+    import re
+
+    from trw_mcp.tools.requirements import _generate_prd_body
+
+    body = _generate_prd_body(
+        prd_id="PRD-RESEARCH-001",
+        title="Test Research PRD",
+        input_text="Investigate the unknown thing",
+        category="RESEARCH",
+    )
+
+    matches = re.findall(r"^## (\d+)\. (.+)$", body, re.MULTILINE)
+    section_names = [name.strip() for _num, name in matches]
+
+    assert len(section_names) == 7, (
+        f"RESEARCH PRD should have 7 sections, got {len(section_names)}: {section_names}"
+    )
+
+    expected_research_sections = {
+        "Problem Statement",
+        "Background & Prior Art",
+        "Research Questions",
+        "Methodology",
+        "Findings",
+        "Recommendations",
+        "Open Questions",
+    }
+    assert set(section_names) == expected_research_sections, (
+        f"RESEARCH section names mismatch.\nGot:      {sorted(section_names)}\nExpected: {sorted(expected_research_sections)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "prd_filename",
+    [
+        "PRD-FIX-054.md",
+        "PRD-CORE-080.md",
+        "PRD-CORE-055.md",
+    ],
+)
+def test_existing_prd_score_regression(prd_filename: str) -> None:
+    """Regression: well-formed existing PRDs must score >= 58 (PRD-CORE-080-NFR02 tolerance band).
+
+    PRDs that previously scored >=60 must not drop below 58 — a 2-point tolerance
+    band to absorb minor algorithm adjustments without false regressions.
+    """
+    from pathlib import Path
+
+    from trw_mcp.state.validation.prd_quality import validate_prd_quality_v2
+
+    prds_dir = (
+        Path(__file__).resolve().parent.parent.parent
+        / "docs"
+        / "requirements-aare-f"
+        / "prds"
+    )
+    prd_path = prds_dir / prd_filename
+    assert prd_path.exists(), f"PRD file not found: {prd_path}"
+
+    content = prd_path.read_text(encoding="utf-8")
+    result = validate_prd_quality_v2(content)
+
+    assert result.total_score >= 58, (
+        f"{prd_filename} scored {result.total_score:.2f} — must be >= 58 "
+        f"(PRD-CORE-080 NFR02 regression tolerance band)"
+    )
