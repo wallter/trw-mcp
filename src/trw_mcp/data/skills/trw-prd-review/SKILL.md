@@ -8,17 +8,17 @@ description: >
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 context: fork
-agent: trw-prd-groomer
+agent: trw-requirement-reviewer
 ---
 <!-- ultrathink -->
 
 # PRD Review Skill
 
-Performs a comprehensive quality review of a PRD using the trw-prd-groomer agent.
+Performs a comprehensive quality review of a PRD using the trw-requirement-reviewer agent.
 
 ## How It Works
 
-This skill forks execution to the `trw-prd-groomer` agent, which performs a read-only 5-dimension quality assessment:
+This skill forks execution to the `trw-requirement-reviewer` agent, which performs a read-only 5-dimension quality assessment:
 
 1. **Structure** — AARE-F section completeness and formatting
 2. **Content Quality** — substantive depth vs. placeholder content
@@ -54,4 +54,4 @@ When invoked as part of the `/trw-prd-ready` pipeline, return only the structure
 
 - This skill is read-only — it never modifies the PRD file
 - Uses fork mode to keep the review output out of the main conversation context
-- The trw-prd-groomer agent runs on the default model with project memory
+- The trw-requirement-reviewer agent runs on the default model with project memory

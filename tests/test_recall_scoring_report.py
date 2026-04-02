@@ -443,7 +443,7 @@ class TestFindSessionStartTs:
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig()
-        object.__setattr__(cfg, "task_root", "tasks")
+        object.__setattr__(cfg, "runs_root", "tasks")
         return patch("trw_mcp.scoring._correlation.get_config", return_value=cfg)
 
     def test_finds_run_init_event(self, tmp_path: Path) -> None:
@@ -452,9 +452,9 @@ class TestFindSessionStartTs:
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        task_dir = tmp_path / "tasks" / "my-task"
-        meta_dir = task_dir / "runs" / "20260101T000000Z-abc12345" / "meta"
+        meta_dir = tmp_path / "tasks" / "my-task" / "20260101T000000Z-abc12345" / "meta"
         meta_dir.mkdir(parents=True)
+        FileStateWriter().write_yaml(meta_dir / "run.yaml", {"id": "20260101T000000Z-abc12345"})
         FileStateWriter().append_jsonl(
             meta_dir / "events.jsonl",
             {
@@ -474,8 +474,9 @@ class TestFindSessionStartTs:
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        meta_dir = tmp_path / "tasks" / "another-task" / "runs" / "20260115T000000Z-def67890" / "meta"
+        meta_dir = tmp_path / "tasks" / "another-task" / "20260115T000000Z-def67890" / "meta"
         meta_dir.mkdir(parents=True)
+        writer.write_yaml(meta_dir / "run.yaml", {"id": "20260115T000000Z-def67890"})
         writer.append_jsonl(
             meta_dir / "events.jsonl",
             {

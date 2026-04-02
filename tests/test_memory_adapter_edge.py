@@ -261,6 +261,17 @@ class TestMemoryToLearningDict:
             "recurrence",
             "shard_id",
             "outcome_history",
+            "type",
+            "nudge_line",
+            "expires",
+            "confidence",
+            "task_type",
+            "domain",
+            "phase_origin",
+            "phase_affinity",
+            "team_origin",
+            "protection_tier",
+            "anchor_validity",
         }
         assert expected_keys == set(result.keys())
 

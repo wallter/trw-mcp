@@ -22,6 +22,7 @@ from trw_mcp.models.typed_dicts._opencode import (
     OpencodeServerEntry,
     OpencodeTemplateDict,
 )
+
 from ._utils import _DATA_DIR
 
 logger = structlog.get_logger(__name__)
@@ -144,10 +145,9 @@ def _copy_file(
 
     try:
         existed = dest.exists()
-        if existed and not force:
-            if dest.read_text(encoding="utf-8") == src.read_text(encoding="utf-8"):
-                result["preserved"].append(rel_path)
-                return
+        if existed and not force and dest.read_text(encoding="utf-8") == src.read_text(encoding="utf-8"):
+            result["preserved"].append(rel_path)
+            return
         shutil.copy2(src, dest)
         result["updated" if existed else "created"].append(rel_path)
     except OSError as exc:

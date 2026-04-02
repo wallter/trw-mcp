@@ -1283,7 +1283,7 @@ class TestRunClaudeMdSync:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Sync operations that exceed the timeout are captured as warnings."""
-        import time
+        import concurrent.futures
 
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
 
@@ -1291,12 +1291,23 @@ class TestRunClaudeMdSync:
         # _run_claude_md_sync proceeds to call LLMClient().
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-timeout")
 
-        def _slow_llm_client() -> None:
-            time.sleep(10)  # Will exceed the 1-second timeout below
+        class _TimeoutFuture:
+            def result(self, timeout: float | None = None) -> dict[str, object]:
+                raise concurrent.futures.TimeoutError()
+
+        class _TimeoutExecutor:
+            def __init__(self, max_workers: int = 1) -> None:
+                self.max_workers = max_workers
+
+            def submit(self, fn: object, /, *args: object, **kwargs: object) -> _TimeoutFuture:
+                return _TimeoutFuture()
+
+            def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+                return None
 
         monkeypatch.setattr(
-            "trw_mcp.state.llm_helpers.LLMClient",
-            _slow_llm_client,
+            "concurrent.futures.ThreadPoolExecutor",
+            _TimeoutExecutor,
         )
 
         result: dict[str, list[str]] = {
@@ -1329,6 +1340,7 @@ class TestClaudeMdSyncTimeoutFix:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When sync times out, the function returns within timeout + buffer — not indefinitely."""
+        import concurrent.futures
         import time as time_mod
 
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
@@ -1337,12 +1349,23 @@ class TestClaudeMdSyncTimeoutFix:
         # _run_claude_md_sync proceeds to call LLMClient().
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-timeout-fix")
 
-        def _hanging_llm(*_args: object, **_kwargs: object) -> None:
-            time_mod.sleep(300)  # Simulate LLMClient network hang
+        class _TimeoutFuture:
+            def result(self, timeout: float | None = None) -> dict[str, object]:
+                raise concurrent.futures.TimeoutError()
+
+        class _TimeoutExecutor:
+            def __init__(self, max_workers: int = 1) -> None:
+                self.max_workers = max_workers
+
+            def submit(self, fn: object, /, *args: object, **kwargs: object) -> _TimeoutFuture:
+                return _TimeoutFuture()
+
+            def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+                return None
 
         monkeypatch.setattr(
-            "trw_mcp.state.llm_helpers.LLMClient",
-            _hanging_llm,
+            "concurrent.futures.ThreadPoolExecutor",
+            _TimeoutExecutor,
         )
 
         init_project(fake_git_repo)
@@ -2485,7 +2508,7 @@ class TestUpdateProjectMultiIDE:
         manifest_path = tmp_path / ".trw" / "managed-artifacts.yaml"
         manifest = FileStateReader().read_yaml(manifest_path)
         assert isinstance(manifest, dict)
-        manifest["opencode_commands"] = list(manifest.get("opencode_commands", [])) + ["trw-stale.md"]
+        manifest["opencode_commands"] = [*manifest.get("opencode_commands", []), "trw-stale.md"]
         manifest.setdefault("custom_opencode_commands", [])
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -2535,7 +2558,7 @@ class TestUpdateProjectMultiIDE:
         manifest_path = tmp_path / ".trw" / "managed-artifacts.yaml"
         manifest = FileStateReader().read_yaml(manifest_path)
         assert isinstance(manifest, dict)
-        manifest["opencode_agents"] = list(manifest.get("opencode_agents", [])) + ["trw-stale-agent.md"]
+        manifest["opencode_agents"] = [*manifest.get("opencode_agents", []), "trw-stale-agent.md"]
         manifest.setdefault("custom_opencode_agents", [])
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -2557,7 +2580,7 @@ class TestUpdateProjectMultiIDE:
         manifest_path = tmp_path / ".trw" / "managed-artifacts.yaml"
         manifest = FileStateReader().read_yaml(manifest_path)
         assert isinstance(manifest, dict)
-        manifest["opencode_skills"] = list(manifest.get("opencode_skills", [])) + ["trw-stale-skill"]
+        manifest["opencode_skills"] = [*manifest.get("opencode_skills", []), "trw-stale-skill"]
         manifest.setdefault("custom_opencode_skills", [])
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 

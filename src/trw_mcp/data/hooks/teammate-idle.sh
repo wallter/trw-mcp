@@ -46,6 +46,8 @@ fi
 if [ -n "$_teammate_name" ] && [ -n "$_team_name" ]; then
   # Sanitize team name for filesystem path (prevent traversal)
   _safe_team=$(printf '%s' "$_team_name" | tr -c 'a-zA-Z0-9_-' '_' | head -c 64)
+  # NOTE: Agent Teams tasks are stored under $HOME/.claude/tasks/ (Claude Code system dir),
+  # not under the project root. $HOME is correct here — this is not a project-relative path.
   _task_dir="$HOME/.claude/tasks/$_safe_team"
   if [ -d "$_task_dir" ]; then
     _incomplete_tasks=""

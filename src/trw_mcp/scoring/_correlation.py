@@ -317,14 +317,17 @@ def _default_lookup_entry(
     data: dict[str, object] | None = None
 
     sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
+    yaml_found: tuple[Path, dict[str, object]] | None = None
+    if entries_dir.exists():
+        yaml_found = yaml_find_entry_by_id(entries_dir, lid)
+
     if sqlite_data is not None:
         data = sqlite_data
         entry_path = find_yaml_path_for_entry(trw_dir, lid)
-    else:
-        if entries_dir.exists():
-            yaml_found = yaml_find_entry_by_id(entries_dir, lid)
-            if yaml_found is not None:
-                entry_path, data = yaml_found
+        if entry_path is None and yaml_found is not None:
+            entry_path, _yaml_data = yaml_found
+    elif yaml_found is not None:
+        entry_path, data = yaml_found
 
     return entry_path, data
 
