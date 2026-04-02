@@ -6,7 +6,6 @@ process and bridging stdio transport to it via an async proxy.
 
 from __future__ import annotations
 
-import contextlib
 import os
 import sys
 from pathlib import Path
@@ -289,11 +288,11 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
                         proxy.create_initialization_options(),
                     )
                 return  # Clean exit
-        except (
+        except (  # noqa: PERF203
             ConnectionError,
             OSError,
             Exception,
-        ) as exc:  # per-item error handling: retry logic per connection attempt  # noqa: PERF203
+        ) as exc:  # per-item error handling: retry logic per connection attempt
             last_error = exc
             if attempt < max_retries - 1:
                 delay = 2**attempt  # 1s, 2s, 4s

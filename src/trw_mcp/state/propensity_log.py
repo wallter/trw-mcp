@@ -44,7 +44,7 @@ class PropensityEntry(TypedDict, total=False):
     session_id: str  # Session identifier
 
 
-from trw_mcp.state._helpers import rotate_jsonl as _shared_rotate_jsonl
+from trw_mcp.state._helpers import rotate_jsonl as _shared_rotate_jsonl  # noqa: E402
 
 
 def _rotate_jsonl(log_path: Path) -> None:
@@ -151,10 +151,7 @@ def read_propensity_entries(
         return []
     try:
         lines = log_path.read_text(encoding="utf-8").strip().split("\n")
-        entries: list[PropensityEntry] = []
-        for line in lines[-max_entries:]:
-            if line.strip():
-                entries.append(json.loads(line))
+        entries: list[PropensityEntry] = [json.loads(line) for line in lines[-max_entries:] if line.strip()]
         return entries
     except Exception:  # justified: fail-open, read failure returns empty
         logger.debug("propensity_read_failed", path=str(log_path), exc_info=True)

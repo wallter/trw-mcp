@@ -239,7 +239,7 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
 
         project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
         git_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607
             capture_output=True, text=True, timeout=5,
             cwd=str(project_root),
         )
@@ -308,6 +308,6 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
 
     logger.info(
         "delivery_metrics_computed",
-        metrics=list(k for k in result if k != "status"),
+        metrics=[k for k in result if k != "status"],
     )
     return result

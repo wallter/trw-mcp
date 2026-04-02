@@ -159,8 +159,8 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "EVENT_ALIASES",
-    "RecallContext",
     "REWARD_MAP",
+    "RecallContext",
     "apply_impact_decay",
     "apply_time_decay",
     "bayesian_calibrate",

@@ -23,10 +23,10 @@ _SURFACE_FILE = "surface_tracking.jsonl"
 __all__ = [
     "NudgeFatigueResult",
     "SurfaceEvent",
+    "check_nudge_fatigue",
+    "compute_recall_pull_rate",
     "log_surface_event",
     "read_surface_events",
-    "compute_recall_pull_rate",
-    "check_nudge_fatigue",
 ]
 
 
@@ -34,7 +34,7 @@ __all__ = [
 # Schema
 # ---------------------------------------------------------------------------
 
-from typing import TypedDict
+from typing import TypedDict  # noqa: E402
 
 
 class SurfaceEvent(TypedDict, total=False):
@@ -62,8 +62,7 @@ class SurfaceEvent(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 
-from trw_mcp.state._helpers import rotate_jsonl as _rotate_jsonl
-
+from trw_mcp.state._helpers import rotate_jsonl as _rotate_jsonl  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging

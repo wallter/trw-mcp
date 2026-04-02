@@ -60,8 +60,8 @@ def compute_rework_rate(
         batch = changed_files[i : i + _BATCH_SIZE]
         for file_path in batch:
             try:
-                result = subprocess.run(
-                    [
+                result = subprocess.run(  # noqa: S603
+                    [  # noqa: S607
                         "git",
                         "log",
                         f"--since={lookback_days} days ago",

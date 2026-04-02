@@ -296,12 +296,11 @@ def detect_model_family(opencode_json: Mapping[str, Any]) -> str:
 
     if "qwen" in model_lower:
         return "qwen"
-    elif "gpt" in model_lower:
+    if "gpt" in model_lower:
         return "gpt"
-    elif "claude" in model_lower:
+    if "claude" in model_lower:
         return "claude"
-    else:
-        return "generic"
+    return "generic"
 
 
 # ---------------------------------------------------------------------------

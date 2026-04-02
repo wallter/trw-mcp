@@ -188,15 +188,13 @@ def rank_by_utility(
         if context is not None:
             # 1. Domain match boost (1.4x)
             entry_domains = entry.get("domain", [])
-            if isinstance(entry_domains, list) and context.active_domains:
-                if any(d in context.active_domains for d in entry_domains):
-                    boost *= 1.4
+            if isinstance(entry_domains, list) and context.active_domains and any(d in context.active_domains for d in entry_domains):
+                boost *= 1.4
 
             # 2. Phase match boost (1.3x)
             entry_phase_affinity = entry.get("phase_affinity", [])
-            if isinstance(entry_phase_affinity, list) and context.current_phase:
-                if context.current_phase.upper() in [p.upper() for p in entry_phase_affinity]:
-                    boost *= 1.3
+            if isinstance(entry_phase_affinity, list) and context.current_phase and context.current_phase.upper() in [p.upper() for p in entry_phase_affinity]:
+                boost *= 1.3
 
             # 3. Team match boost (1.2x)
             entry_team = str(entry.get("team_origin", ""))

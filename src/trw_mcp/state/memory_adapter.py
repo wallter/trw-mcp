@@ -366,7 +366,7 @@ def recall_learnings(
     return results
 
 
-def update_learning(
+def update_learning(  # noqa: C901
     trw_dir: Path,
     learning_id: str,
     *,
