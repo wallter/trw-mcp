@@ -2,6 +2,19 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.39.1] — 2026-04-02
+
+### Fixed
+
+- **Outcome-correlation persistence hardening** — `process_outcome()` now falls back to the canonical YAML ID scan when the summary-slug filename cannot be derived from the learning ID, so Q-value and outcome-history updates are persisted reliably alongside SQLite-backed entries.
+- **Session-boundary regression coverage aligned** — correlation tests now create modern `.trw/runs/{task}/{run_id}/meta/run.yaml` run trees, matching the runtime scan path used for session-scoped rewards.
+- **Template and learning-shape assertions normalized** — requirement and memory-transform tests now reflect template `2.3`, pre-seeded Q-values, and the current typed-learning response fields.
+
+### Validation
+
+- Full `trw-mcp` package suite passed: `5984` passed, `5` skipped, `3` xfailed.
+- Ruff and strict mypy passed for `trw-mcp`.
+
 ## [0.39.0] — 2026-04-02
 
 ### Added — OpenCode Native Commands, Agents, and Curated Skills

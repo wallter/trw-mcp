@@ -98,7 +98,7 @@ Delegate to a **trw-prd-groomer** subagent (`subagent_type: "trw-prd-groomer"`) 
 
 **Entry**: PRD score >= 0.85 from Phase 2.
 
-Delegate to a **trw-prd-groomer** subagent (`subagent_type: "trw-prd-groomer"`) for independent review:
+Delegate to a **trw-requirement-reviewer** subagent (`subagent_type: "trw-requirement-reviewer"`) for independent review:
 
 1. Perform 5-dimension quality assessment:
    - **Structure** — AARE-F section completeness and formatting

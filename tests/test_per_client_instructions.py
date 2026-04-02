@@ -16,9 +16,12 @@ from trw_mcp.bootstrap._opencode import (
     generate_opencode_instructions,
 )
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.claude_md._agents_md import TRW_MARKER_START, TRW_MARKER_END, _migrate_trw_content_from_agents_md
+from trw_mcp.state.claude_md._agents_md import (
+    TRW_MARKER_END,
+    TRW_MARKER_START,
+    _migrate_trw_content_from_agents_md,
+)
 from trw_mcp.state.claude_md._static_sections import render_codex_instructions, render_opencode_instructions
-
 
 # ── Render Tests ──────────────────────────────────────────────────────────
 
@@ -377,5 +380,5 @@ class TestWriteTargetsInstructionPath:
         from trw_mcp.models.config import WriteTargets
 
         targets = WriteTargets()
-        with pytest.raises(Exception):  # noqa: BLE001
+        with pytest.raises(Exception):
             targets.instruction_path = "new-value"  # type: ignore[misc]

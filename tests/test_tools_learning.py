@@ -12,7 +12,12 @@ import pytest
 
 from tests.conftest import get_tools_sync, make_test_server
 from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.scoring import correlate_recalls, process_outcome, process_outcome_for_event
+from trw_mcp.scoring import (
+    compute_initial_q_value,
+    correlate_recalls,
+    process_outcome,
+    process_outcome_for_event,
+)
 from trw_mcp.state.analytics import (
     extract_learnings_from_llm,
     extract_learnings_mechanical,
@@ -1610,7 +1615,7 @@ class TestOutcomeCorrelation:
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
             if data.get("id") == lid:
-                assert float(str(data.get("q_value", 0.5))) < 0.5
+                assert float(str(data.get("q_value", 0.5))) < compute_initial_q_value(0.5)
                 break
 
     def test_negative_reward_decreases_q(self, tmp_path: Path, reader: FileStateReader) -> None:
@@ -1633,7 +1638,7 @@ class TestOutcomeCorrelation:
             data = reader.read_yaml(entry_file)
             if data.get("id") == lid:
                 q_val = float(str(data.get("q_value", 0.5)))
-                assert q_val < 0.5  # decreased from default
+                assert q_val < compute_initial_q_value(0.7)
                 break
 
     def test_multiple_outcomes_converge(self, tmp_path: Path, reader: FileStateReader) -> None:

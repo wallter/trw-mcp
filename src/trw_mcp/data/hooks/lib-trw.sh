@@ -4,13 +4,16 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
-# get_repo_root: Resolve the project root.
-# Prefers $CLAUDE_PROJECT_DIR (set by Claude Code), falls back to git.
+# get_repo_root: Resolve the project root portably.
+# Priority: $CLAUDE_PROJECT_DIR (set by Claude Code) > git > $PWD fallback.
+# All hooks MUST use this function instead of hardcoded paths.
 get_repo_root() {
   if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
     printf '%s' "$CLAUDE_PROJECT_DIR"
+  elif _gr_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$_gr_root" ]; then
+    printf '%s' "$_gr_root"
   else
-    git rev-parse --show-toplevel 2>/dev/null
+    pwd
   fi
 }
 

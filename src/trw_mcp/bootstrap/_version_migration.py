@@ -161,50 +161,26 @@ def _compute_content_hashes(
     copies and the current bundle.
     """
     hashes: dict[str, str] = {}
-    mapping: list[tuple[str, str]] = [
-        (".claude/agents", name) for name in bundled["agents"]
-    ]
-    mapping.extend(
-        (".claude/hooks", name) for name in bundled["hooks"]
-    )
-    for subdir, name in mapping:
-        path = target_dir / subdir / name
+
+    def _record_hash(path: Path, key: str) -> None:
         try:
             if path.is_file():
-                hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+                hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:
             logger.warning("content_hash_failed", path=str(path))
-    # Skills are directories — hash the SKILL.md inside
+
+    for name in bundled["agents"]:
+        _record_hash(target_dir / ".claude" / "agents" / name, name)
+    for name in bundled["hooks"]:
+        _record_hash(target_dir / ".claude" / "hooks" / name, name)
     for name in bundled["skills"]:
-        path = target_dir / ".claude" / "skills" / name / "SKILL.md"
-        try:
-            if path.is_file():
-                hashes[f"{name}/SKILL.md"] = hashlib.sha256(
-                    path.read_bytes()
-                ).hexdigest()
-        except OSError:
-            logger.warning("content_hash_failed", path=str(path))
+        _record_hash(target_dir / ".claude" / "skills" / name / "SKILL.md", f"{name}/SKILL.md")
     for name in bundled.get("opencode_commands", []):
-        path = target_dir / ".opencode" / "commands" / name
-        try:
-            if path.is_file():
-                hashes[f".opencode/commands/{name}"] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            logger.warning("content_hash_failed", path=str(path))
+        _record_hash(target_dir / ".opencode" / "commands" / name, f".opencode/commands/{name}")
     for name in bundled.get("opencode_agents", []):
-        path = target_dir / ".opencode" / "agents" / name
-        try:
-            if path.is_file():
-                hashes[f".opencode/agents/{name}"] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            logger.warning("content_hash_failed", path=str(path))
+        _record_hash(target_dir / ".opencode" / "agents" / name, f".opencode/agents/{name}")
     for name in bundled.get("opencode_skills", []):
-        path = target_dir / ".opencode" / "skills" / name / "SKILL.md"
-        try:
-            if path.is_file():
-                hashes[f".opencode/skills/{name}/SKILL.md"] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            logger.warning("content_hash_failed", path=str(path))
+        _record_hash(target_dir / ".opencode" / "skills" / name / "SKILL.md", f".opencode/skills/{name}/SKILL.md")
     return hashes
 
 
