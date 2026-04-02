@@ -25,6 +25,7 @@ from trw_mcp.scoring._utils import (
     safe_int,
     update_q_value,
 )
+from trw_mcp.state._paths import iter_run_dirs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # Type alias for the entry lookup callable used by process_outcome.
@@ -134,34 +135,50 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
     """
     project_root = trw_dir.parent
     cfg: TRWConfig = get_config()
-    task_root = project_root / cfg.task_root
+    runs_root = project_root / cfg.runs_root
 
-    if not task_root.exists():
+    if not runs_root.exists():
         return None
 
     reader = FileStateReader()
-    for task_dir in sorted(task_root.iterdir()):
-        runs_dir = task_dir / "runs"
-        if not runs_dir.is_dir():
+    for run_dir, _run_yaml in sorted(iter_run_dirs(runs_root), reverse=True):
+        events_path = run_dir / "meta" / "events.jsonl"
+        if not events_path.exists():
             continue
-        # Check the most recent run only
-        for run_dir in sorted(runs_dir.iterdir(), reverse=True):
-            events_path = run_dir / "meta" / "events.jsonl"
-            if not events_path.exists():
-                continue
-            records = reader.read_jsonl(events_path)
-            for record in reversed(records):
-                if str(record.get("event", "")) in ("run_init", "session_start"):
-                    ts_str = str(record.get("ts", ""))
-                    if ts_str:
-                        try:
-                            return _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
-                        except ValueError:
-                            continue
-            # Only check the most recent run directory
-            break
+        records = reader.read_jsonl(events_path)
+        for record in reversed(records):
+            if str(record.get("event", "")) in ("run_init", "session_start"):
+                ts_str = str(record.get("ts", ""))
+                if ts_str:
+                    try:
+                        return _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
+                    except ValueError:
+                        continue
+        # Only check the most recent run directory
+        break
 
     return None
+
+
+def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
+    """Return learning IDs only for actual recall receipts.
+
+    ``recall_tracking.jsonl`` mixes recall events and later outcome-only rows.
+    Outcome rows must not be treated as fresh recall evidence for correlation.
+    """
+    matched_ids = record.get("matched_ids")
+    if isinstance(matched_ids, list) and matched_ids:
+        return [lid for lid in matched_ids if isinstance(lid, str) and lid]
+
+    lid_single = record.get("learning_id")
+    if not isinstance(lid_single, str) or not lid_single:
+        return []
+
+    outcome = record.get("outcome")
+    if outcome not in (None, ""):
+        return []
+
+    return [lid_single]
 
 
 def correlate_recalls(
@@ -249,15 +266,9 @@ def correlate_recalls(
             1.0 - elapsed_secs / total_window_secs,
         )
 
-        # Support both formats for learning IDs
-        matched_ids = record.get("matched_ids")
-        if isinstance(matched_ids, list) and matched_ids:
-            results.extend((lid, discount) for lid in matched_ids if isinstance(lid, str) and lid)
-        else:
-            # recall_tracking format: single learning_id
-            lid_single = record.get("learning_id")
-            if isinstance(lid_single, str) and lid_single:
-                results.append((lid_single, discount))
+        recalled_ids = _extract_recalled_ids(record)
+        if recalled_ids:
+            results.extend((lid, discount) for lid in recalled_ids)
 
     return results
 
@@ -295,7 +306,10 @@ def _default_lookup_entry(
         Tuple of (yaml_path_or_None, entry_data_or_None).
     """
     from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
-    from trw_mcp.state.memory_adapter import find_entry_by_id as sqlite_find_entry_by_id
+    from trw_mcp.state.memory_adapter import (
+        find_entry_by_id as sqlite_find_entry_by_id,
+        find_yaml_path_for_entry,
+    )
 
     entry_path: Path | None = None
     data: dict[str, object] | None = None
@@ -303,10 +317,7 @@ def _default_lookup_entry(
     sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
     if sqlite_data is not None:
         data = sqlite_data
-        if entries_dir.exists():
-            yaml_found = yaml_find_entry_by_id(entries_dir, lid)
-            if yaml_found is not None:
-                entry_path = yaml_found[0]
+        entry_path = find_yaml_path_for_entry(trw_dir, lid)
     else:
         if entries_dir.exists():
             yaml_found = yaml_find_entry_by_id(entries_dir, lid)

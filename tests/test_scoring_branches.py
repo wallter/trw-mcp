@@ -6,7 +6,7 @@ Targets the lines at 76% coverage -> improves to ~85%+.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -741,3 +741,69 @@ class TestCorrelateRecallsPath:
         found_id, discount = results[0]
         assert found_id == "L-test001"
         assert 0.0 < discount <= 1.0
+
+    @pytest.mark.unit
+    def test_outcome_only_rows_are_ignored(self, tmp_path: Path) -> None:
+        """Outcome-tracking rows must not count as new recall evidence."""
+        import json
+
+        from trw_mcp.scoring import correlate_recalls
+
+        logs_dir = tmp_path / ".trw" / "logs"
+        logs_dir.mkdir(parents=True)
+        receipt_file = logs_dir / "recall_tracking.jsonl"
+        now = datetime.now(timezone.utc)
+        records = [
+            {
+                "timestamp": now.timestamp(),
+                "learning_id": "L-recall001",
+                "query": "test query",
+                "outcome": None,
+            },
+            {
+                "timestamp": now.timestamp(),
+                "learning_id": "L-outcome001",
+                "outcome": "positive",
+            },
+        ]
+        receipt_file.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+        results = correlate_recalls(tmp_path / ".trw", window_minutes=60, scope="window")
+
+        assert any(learning_id == "L-recall001" for learning_id, _discount in results)
+        assert all(learning_id != "L-outcome001" for learning_id, _discount in results)
+
+    @pytest.mark.unit
+    def test_session_scope_uses_runs_root_not_task_root(self, tmp_path: Path) -> None:
+        """Session lookup should read events from .trw/runs, not docs/*/runs."""
+        import json
+
+        from trw_mcp.scoring import correlate_recalls
+
+        trw_dir = tmp_path / ".trw"
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True)
+        run_dir = trw_dir / "runs" / "task-a" / "20260402T010000Z-test"
+        meta_dir = run_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "run.yaml").write_text("status: active\n")
+
+        session_start = datetime.now(timezone.utc) - timedelta(minutes=10)
+        old_recall = datetime.now(timezone.utc) - timedelta(hours=2)
+        recent_recall = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+        events_path = meta_dir / "events.jsonl"
+        events_path.write_text(
+            json.dumps({"ts": session_start.isoformat(), "event": "session_start"}) + "\n",
+        )
+
+        receipt_file = logs_dir / "recall_tracking.jsonl"
+        records = [
+            {"timestamp": old_recall.timestamp(), "learning_id": "L-old", "query": "older", "outcome": None},
+            {"timestamp": recent_recall.timestamp(), "learning_id": "L-new", "query": "recent", "outcome": None},
+        ]
+        receipt_file.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+        results = correlate_recalls(trw_dir, window_minutes=480, scope="session")
+
+        assert [learning_id for learning_id, _discount in results] == ["L-new"]
