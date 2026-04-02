@@ -28,7 +28,7 @@ def register_report_tools(server: FastMCP) -> None:
         server: FastMCP server instance to register tools on.
     """
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_run_report(run_path: str | None = None) -> RunReportResultDict:
         """See what happened in a run — phase timing, event counts, learning yield, and build results.
@@ -59,7 +59,7 @@ def register_report_tools(server: FastMCP) -> None:
         except StateError as exc:
             return {"error": str(exc), "status": "failed"}
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_analytics_report(since: str | None = None) -> AnalyticsReport:
         """See trends across all runs — build pass rate, ceremony compliance, and whether process is improving.

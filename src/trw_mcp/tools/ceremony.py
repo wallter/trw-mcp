@@ -230,7 +230,7 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
 def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool registration with 6 nested tool defs
     """Register session ceremony composite tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_session_start(query: str = "") -> SessionStartResultDict:  # noqa: C901 — complex session start orchestration
         """Load your prior learnings and any active run — gives you full context before writing code.
@@ -396,7 +396,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         )
         return results
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_deliver(  # noqa: C901 — delivery lifecycle with deferred background steps
         run_path: str | None = None,

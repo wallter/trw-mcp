@@ -30,7 +30,7 @@ logger = structlog.get_logger(__name__)
 def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_build_check(
         tests_passed: bool,
@@ -172,7 +172,7 @@ def register_build_tools(server: FastMCP) -> None:
 
         return result
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_quality_dashboard(
         window_days: int = 90,

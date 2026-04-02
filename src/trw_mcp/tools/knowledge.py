@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 def register_knowledge_tools(server: FastMCP) -> None:
     """Register knowledge topology tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_knowledge_sync(
         dry_run: bool = False,

@@ -71,7 +71,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         server: FastMCP server instance to register tools on.
     """
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_init(
         task_name: str,
@@ -272,7 +272,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
         return result
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_status(run_path: str | None = None) -> TrwStatusDict:
         """See your current phase, completed work, and what to do next — so you pick up where you left off instead of redoing work.
@@ -372,7 +372,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
         return result
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_checkpoint(
         run_path: str | None = None,

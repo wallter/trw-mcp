@@ -107,7 +107,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         server: FastMCP server instance to register tools on.
     """
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_prd_create(
         input_text: str,
@@ -265,7 +265,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             "index_synced": index_synced,
         }
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_prd_validate(
         prd_path: str,

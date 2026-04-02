@@ -25,6 +25,7 @@ All notable changes to the TRW MCP server package.
 - **CSV export** — `_learnings_to_csv()` now includes `client_profile` and `model_id` columns.
 - **trw-memory migration** — `from_trw.py` now reads `client_profile` and `model_id` from YAML data during migration, preventing silent data loss.
 - **Consolidation provenance** — Consolidated entries now inherit `client_profile`, `model_id`, and `source_identity` from the highest-importance source entry.
+- **Output schema validation error** — Disabled FastMCP 3.x auto-inferred `outputSchema` on all 24 tools via `output_schema=None`. FastMCP 3.x infers output schemas from TypedDict return annotations and advertises them to clients, but the stdio proxy doesn't forward `structuredContent`, causing Claude Code to reject responses with "outputSchema defined but no structured output returned".
 
 ---
 
