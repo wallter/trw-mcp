@@ -609,7 +609,7 @@ class TestTrwReviewReconcileDispatch:
 
         with (
             patch(
-                "trw_mcp.tools._review_helpers.handle_reconcile_mode",
+                "trw_mcp.tools._review_manual.handle_reconcile_mode",
                 return_value={"verdict": "clean", "mismatches": []},
             ) as mock_handler,
             patch("trw_mcp.state._paths.find_active_run", return_value=run_d),

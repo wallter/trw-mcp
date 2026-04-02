@@ -431,17 +431,17 @@ class TestSessionStartAutoClose:
         cfg = TRWConfig()
         object.__setattr__(cfg, "run_auto_close_enabled", True)
 
-        import trw_mcp.state.analytics.report as ar_mod
+        import trw_mcp.state.analytics._stale_runs as stale_mod
 
         close_result = {"runs_closed": ["run-001"], "count": 1, "errors": []}
-        original_fn = ar_mod.auto_close_stale_runs
+        original_fn = stale_mod.auto_close_stale_runs
         mock_close = MagicMock(return_value=close_result)
 
         fn = self._get_session_start_fn()
 
         try:
-            # Step 5 uses a function-local import: patch at the source module
-            ar_mod.auto_close_stale_runs = mock_close  # type: ignore[method-assign]
+            # _ceremony_helpers imports from _stale_runs directly (function-local import)
+            stale_mod.auto_close_stale_runs = mock_close  # type: ignore[method-assign]
             with (
                 patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
                 patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
@@ -452,7 +452,7 @@ class TestSessionStartAutoClose:
             ):
                 result = fn()
         finally:
-            ar_mod.auto_close_stale_runs = original_fn  # type: ignore[method-assign]
+            stale_mod.auto_close_stale_runs = original_fn  # type: ignore[method-assign]
 
         mock_close.assert_called_once()
         # count > 0 means stale_runs_closed is populated in the result

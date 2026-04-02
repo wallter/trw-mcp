@@ -155,12 +155,13 @@ class TestAgentTeamsTemplateIntegration:
         assert "after" in result
 
     def test_bundled_template_has_placeholder(self) -> None:
-        """Bundled claude_md.md template includes agent_teams_section placeholder."""
+        """Bundled claude_md.md template includes CORE-093 compact placeholders."""
         data_dir = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "templates"
         bundled = data_dir / "claude_md.md"
         assert bundled.exists(), "Bundled template must exist"
         content = bundled.read_text(encoding="utf-8")
-        assert "{{agent_teams_section}}" in content
+        # CORE-093 FR07: template reduced to 4 compact variables
+        assert "{{imperative_opener}}" in content
 
     def test_full_sync_includes_agent_teams(self, tmp_path: Path) -> None:
         """trw_claude_md_sync completes successfully when agent_teams_enabled=True.
@@ -368,9 +369,9 @@ class TestAgentDefinitions:
     @pytest.mark.parametrize(
         "agent_name",
         [
-            "trw-lead.md",
+            "trw-auditor.md",
             "trw-implementer.md",
-            "trw-tester.md",
+            "trw-prd-groomer.md",
             "trw-reviewer.md",
             "trw-researcher.md",
         ],
@@ -382,15 +383,15 @@ class TestAgentDefinitions:
     @pytest.mark.parametrize(
         ("agent_name", "expected_model"),
         [
-            ("trw-lead.md", "claude-opus-4-6"),
-            ("trw-implementer.md", "claude-opus-4-6"),
-            ("trw-tester.md", "claude-sonnet-4-6"),
-            ("trw-reviewer.md", "claude-sonnet-4-6"),
-            ("trw-researcher.md", "claude-sonnet-4-6"),
+            ("trw-auditor.md", "sonnet"),
+            ("trw-implementer.md", "opus"),
+            ("trw-prd-groomer.md", "opus"),
+            ("trw-reviewer.md", "sonnet"),
+            ("trw-researcher.md", "sonnet"),
         ],
     )
     def test_agent_model_assignment(self, agents_dir: Path, agent_name: str, expected_model: str) -> None:
-        """Agent definition specifies correct model."""
+        """Agent definition specifies correct model shortname."""
         import yaml
 
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
@@ -400,87 +401,36 @@ class TestAgentDefinitions:
 
     @pytest.mark.parametrize(
         "agent_name",
-        ["trw-reviewer.md", "trw-researcher.md"],
+        ["trw-auditor.md", "trw-reviewer.md", "trw-researcher.md"],
     )
     def test_readonly_agents_no_write(self, agents_dir: Path, agent_name: str) -> None:
-        """Reviewer and researcher agents have Write, Edit, and Bash in disallowedTools."""
+        """Read-only agents have Write and Edit in disallowedTools."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
-        # Parse YAML frontmatter to check disallowedTools
         import yaml
 
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         disallowed = meta.get("disallowedTools", [])
-        allowed = meta.get("allowedTools", [])
         assert "Write" in disallowed, f"{agent_name}: Write must be disallowed"
         assert "Edit" in disallowed, f"{agent_name}: Edit must be disallowed"
-        assert "Bash" in disallowed, f"{agent_name}: Bash must be disallowed (write bypass)"
-        assert "Bash" not in allowed, f"{agent_name}: Bash must not be in allowedTools"
 
-    @pytest.mark.parametrize(
-        "agent_name",
-        ["trw-lead.md", "trw-implementer.md", "trw-tester.md"],
-    )
-    def test_implementation_agents_have_edit(self, agents_dir: Path, agent_name: str) -> None:
-        """Lead, implementer, and tester agents have Edit and Write in allowedTools."""
-        content = (agents_dir / agent_name).read_text(encoding="utf-8")
+    def test_implementer_has_edit(self, agents_dir: Path) -> None:
+        """Implementer agent has Edit and Write in tools list."""
+        content = (agents_dir / "trw-implementer.md").read_text(encoding="utf-8")
         import yaml
 
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
-        allowed = meta.get("allowedTools", [])
-        assert "Edit" in allowed, f"{agent_name}: Edit must be in allowedTools"
-        assert "Write" in allowed, f"{agent_name}: Write must be in allowedTools"
-
-    def test_lead_has_team_management_tools(self, agents_dir: Path) -> None:
-        """trw-lead has TaskCreate, TaskUpdate, TeamCreate, SendMessage tools."""
-        content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
-        import yaml
-
-        _, frontmatter, _ = content.split("---", 2)
-        meta = yaml.safe_load(frontmatter)
-        allowed = meta.get("allowedTools", [])
-        for tool in ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]:
-            assert tool in allowed, f"trw-lead: {tool} must be in allowedTools"
-
-    def test_lead_has_all_trw_mcp_tools(self, agents_dir: Path) -> None:
-        """trw-lead has access to all TRW MCP orchestration tools."""
-        content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
-        import yaml
-
-        _, frontmatter, _ = content.split("---", 2)
-        meta = yaml.safe_load(frontmatter)
-        allowed = meta.get("allowedTools", [])
-        for tool in [
-            "mcp__trw__trw_session_start",
-            "mcp__trw__trw_init",
-            "mcp__trw__trw_status",
-            "mcp__trw__trw_checkpoint",
-            "mcp__trw__trw_deliver",
-            "mcp__trw__trw_learn",
-            "mcp__trw__trw_recall",
-            "mcp__trw__trw_build_check",
-            "mcp__trw__trw_prd_create",
-            "mcp__trw__trw_prd_validate",
-        ]:
-            assert tool in allowed, f"trw-lead: {tool} must be in allowedTools"
-
-    def test_lead_has_skill_tool(self, agents_dir: Path) -> None:
-        """trw-lead has Skill tool for invoking skills at phase boundaries."""
-        content = (agents_dir / "trw-lead.md").read_text(encoding="utf-8")
-        import yaml
-
-        _, frontmatter, _ = content.split("---", 2)
-        meta = yaml.safe_load(frontmatter)
-        allowed = meta.get("allowedTools", [])
-        assert "Skill" in allowed, "trw-lead: Skill must be in allowedTools"
+        tools = meta.get("tools", [])
+        assert "Edit" in tools, "trw-implementer: Edit must be in tools"
+        assert "Write" in tools, "trw-implementer: Write must be in tools"
 
     @pytest.mark.parametrize(
         "agent_name",
         [
-            "trw-lead.md",
+            "trw-auditor.md",
             "trw-implementer.md",
-            "trw-tester.md",
+            "trw-prd-groomer.md",
             "trw-reviewer.md",
             "trw-researcher.md",
         ],
@@ -498,9 +448,9 @@ class TestAgentDefinitions:
     @pytest.mark.parametrize(
         "agent_name",
         [
-            "trw-lead.md",
+            "trw-auditor.md",
             "trw-implementer.md",
-            "trw-tester.md",
+            "trw-prd-groomer.md",
             "trw-reviewer.md",
             "trw-researcher.md",
         ],

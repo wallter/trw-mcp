@@ -201,7 +201,7 @@ class TestVersionTracking:
         """Run first init at default version, then patch config to trigger upgrade."""
         _make_orch_tools()["trw_init"].fn(task_name="upgrade-task1")
         monkeypatch.setattr(
-            "trw_mcp.tools.orchestration.get_config", lambda: TRWConfig(framework_version=upgraded_version)
+            "trw_mcp.tools._orchestration_helpers.get_config", lambda: TRWConfig(framework_version=upgraded_version)
         )
 
     def test_same_version_skips_rewrite(

@@ -45,14 +45,13 @@ def _get_trw_mcp_entry() -> OpencodeServerEntry:
     Falls back to absolute Python path if trw-mcp not on PATH.
     """
     if shutil.which("trw-mcp"):
-        command: list[str] = ["trw-mcp"]
+        command: list[str] = ["trw-mcp", "--debug"]
     else:
-        command = [sys.executable, "-m", "trw_mcp.server"]
+        command = [sys.executable, "-m", "trw_mcp.server", "--debug"]
 
     return {
         "type": "local",
         "command": command,
-        "args": ["--debug"],
         "enabled": True,
     }
 

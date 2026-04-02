@@ -524,7 +524,7 @@ class TestComputeReversionMetrics:
         """Moderate reversion rate classified as 'elevated'."""
         # concerning > 0.5, elevated > 0.1 — give a rate in between
         cfg = TRWConfig(reversion_rate_concerning=0.9, reversion_rate_elevated=0.1)
-        monkeypatch.setattr("trw_mcp.tools.orchestration.get_config", lambda: cfg)
+        monkeypatch.setattr("trw_mcp.tools._orchestration_helpers.get_config", lambda: cfg)
 
         # 1 revert + 1 phase_enter = rate 0.5 (between 0.1 and 0.9)
         events: list[dict[str, object]] = [

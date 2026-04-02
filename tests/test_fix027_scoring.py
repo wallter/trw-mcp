@@ -101,24 +101,15 @@ class TestDeliverCompleteEventType:
 
 
 class TestBuildCheckQLearningWiring:
-    """Bug 2: trw_build_check must call process_outcome_for_event after each run."""
+    """Bug 2: trw_build_check must call process_outcome_for_event after each run.
 
-    def _make_mock_status(self, passed: bool) -> MagicMock:
-        mock_status = MagicMock()
-        mock_status.tests_passed = passed
-        mock_status.mypy_clean = passed
-        mock_status.coverage_pct = 95.0 if passed else 60.0
-        mock_status.test_count = 100 if passed else 50
-        mock_status.failure_count = 0 if passed else 5
-        mock_status.failures = [] if passed else ["test_foo failed"]
-        mock_status.scope = "full"
-        mock_status.duration_secs = 1.0
-        return mock_status
+    PRD-CORE-098: trw_build_check is now a reporter API — agents pass results
+    directly instead of running subprocesses.
+    """
 
     def _get_tool_fn(
         self,
         tmp_path: Path,
-        passed: bool,
         monkeypatch: pytest.MonkeyPatch,
     ) -> object:
         """Register build tools with mocked dependencies, return the tool fn."""
@@ -128,20 +119,12 @@ class TestBuildCheckQLearningWiring:
         import trw_mcp.tools.build._registration as reg_mod
         from trw_mcp.models.config import TRWConfig
 
-        mock_status = self._make_mock_status(passed)
         mock_config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
-        # Patch get_config so function-level calls return the mock config.
         monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
-        monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
-        monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
-        monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
-        monkeypatch.setattr(reg_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
-        monkeypatch.setattr(build_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
-        monkeypatch.setattr(build_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(reg_mod, "resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
 
         server = FastMCP("test")
         build_mod.register_build_tools(server)
@@ -155,16 +138,15 @@ class TestBuildCheckQLearningWiring:
         """When build passes, process_outcome_for_event('build_passed') must be called."""
         called_events: list[str] = []
 
-        # Patch at the module level so local import inside the tool function picks it up
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
             lambda event_type: called_events.append(event_type) or [],
         )
 
-        tool_fn = self._get_tool_fn(tmp_path, passed=True, monkeypatch=monkeypatch)
+        tool_fn = self._get_tool_fn(tmp_path, monkeypatch=monkeypatch)
         assert tool_fn is not None, "trw_build_check tool not found"
 
-        tool_fn(scope="full", run_path=None, timeout_secs=30)
+        tool_fn(tests_passed=True, test_count=100, coverage_pct=95.0, scope="full")
 
         assert "build_passed" in called_events, (
             "trw_build_check did not call process_outcome_for_event('build_passed') — "
@@ -180,10 +162,10 @@ class TestBuildCheckQLearningWiring:
             lambda event_type: called_events.append(event_type) or [],
         )
 
-        tool_fn = self._get_tool_fn(tmp_path, passed=False, monkeypatch=monkeypatch)
+        tool_fn = self._get_tool_fn(tmp_path, monkeypatch=monkeypatch)
         assert tool_fn is not None, "trw_build_check tool not found"
 
-        tool_fn(scope="full", run_path=None, timeout_secs=30)
+        tool_fn(tests_passed=False, test_count=50, failure_count=5, coverage_pct=60.0, scope="full")
 
         assert "build_failed" in called_events, (
             "trw_build_check did not call process_outcome_for_event('build_failed') — "
@@ -200,11 +182,11 @@ class TestBuildCheckQLearningWiring:
 
         monkeypatch.setattr("trw_mcp.scoring.process_outcome_for_event", exploding_process)
 
-        tool_fn = self._get_tool_fn(tmp_path, passed=True, monkeypatch=monkeypatch)
+        tool_fn = self._get_tool_fn(tmp_path, monkeypatch=monkeypatch)
         assert tool_fn is not None, "trw_build_check tool not found"
 
         # Must not raise even when Q-learning throws
-        result = tool_fn(scope="full", run_path=None, timeout_secs=30)
+        result = tool_fn(tests_passed=True, test_count=100, coverage_pct=95.0, scope="full")
         assert result["tests_passed"] is True
 
 
@@ -831,28 +813,18 @@ class TestBuildCheckMypyOnlyScope:
     def test_mypy_only_scope_fires_build_event(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR03 (impl): For scope='mypy' with clean results, build_passed event fires.
 
-        Note: PRD specifies mypy-only should NOT fire. Implementation fires 'build_passed'.
-        This test captures current behavior. If PRD compliance is required, add scope guard
-        in build.py: only fire Q-learning for scope in ('full', 'pytest').
+        PRD-CORE-098: trw_build_check is a reporter API — agents pass results directly.
         """
-
         import trw_mcp.tools.build as build_mod
         import trw_mcp.tools.build._registration as reg_mod
 
         called_events: list[str] = []
-        mock_status = self._make_mypy_status(mypy_clean=True)
         mock_config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
         monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
-        monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
-        monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
-        monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
-        monkeypatch.setattr(reg_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
-        monkeypatch.setattr(build_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
-        monkeypatch.setattr(build_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(reg_mod, "resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
             lambda event_type: called_events.append(event_type) or [],
@@ -863,10 +835,8 @@ class TestBuildCheckMypyOnlyScope:
         tools = get_tools_sync(server)
         assert "trw_build_check" in tools
         tool_fn = tools["trw_build_check"].fn
-        tool_fn(scope="mypy", run_path=None, timeout_secs=30)
+        tool_fn(tests_passed=True, mypy_clean=True, scope="mypy")
 
-        # Current implementation fires build_passed even for mypy-only scope
-        # (tests_passed=True default + mypy_clean=True => "build_passed")
         assert "build_passed" in called_events, "scope='mypy' fires 'build_passed' event in current implementation"
 
     def test_q_observations_increments_in_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -933,21 +903,16 @@ class TestBuildCheckMypyOnlyScope:
         mock_status.duration_secs = 1.0
 
         monkeypatch.setattr(reg_mod, "get_config", lambda: cfg)
-        monkeypatch.setattr(build_mod, "run_build_check", lambda *a, **kw: mock_status)
-        monkeypatch.setattr(reg_mod, "run_build_check", lambda *a, **kw: mock_status)
-        monkeypatch.setattr(build_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
-        monkeypatch.setattr(reg_mod, "cache_build_status", lambda *a, **kw: Path("/tmp/cache"))
-        monkeypatch.setattr(build_mod, "resolve_trw_dir", lambda: trw_dir)
         monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: trw_dir)
-        monkeypatch.setattr(build_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(reg_mod, "resolve_project_root", lambda: tmp_path)
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
 
         server = FastMCP("test")
         build_mod.register_build_tools(server)
         tools = get_tools_sync(server)
         assert "trw_build_check" in tools
         tool_fn = tools["trw_build_check"].fn
-        result = tool_fn(scope="full", run_path=None, timeout_secs=30)
+        # PRD-CORE-098: reporter API — pass results directly
+        result = tool_fn(tests_passed=True, test_count=100, coverage_pct=95.0, scope="full")
         assert result["tests_passed"] is True
 
         stored = reader.read_yaml(entry_path)

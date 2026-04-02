@@ -161,10 +161,9 @@ class TestCeremonyDeliverSubStepFailures:
         ):
             result = tool(skip_reflect=False, skip_index_sync=False)
 
-        assert result["claude_md_sync"]["status"] == "failed"
-        assert "sync failed" in result["claude_md_sync"]["error"]
-        sync_errors = [e for e in result["errors"] if "claude_md_sync" in e]
-        assert len(sync_errors) == 1
+        # CORE-093 FR06: claude_md_sync removed from deliver critical path
+        assert result["claude_md_sync"]["status"] == "skipped"
+        assert result["claude_md_sync"]["reason"] == "PRD-CORE-093"
 
     def test_deliver_auto_progress_failure_captured(self, tmp_path: Path) -> None:
         """auto_progress exception is captured by _run_step in deferred path."""
