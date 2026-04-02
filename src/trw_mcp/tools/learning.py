@@ -140,7 +140,7 @@ def _create_llm_client() -> LLMClient:
 def register_learning_tools(server: FastMCP) -> None:
     """Register self-learning tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_learn(
         summary: str,
@@ -215,7 +215,7 @@ def register_learning_tools(server: FastMCP) -> None:
             _check_and_handle_dedup=check_and_handle_dedup,
         )
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_learn_update(
         learning_id: str,
@@ -368,7 +368,7 @@ def register_learning_tools(server: FastMCP) -> None:
 
         return result
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_claude_md_sync(
         scope: str = "root",

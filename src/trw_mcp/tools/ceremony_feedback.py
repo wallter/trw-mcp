@@ -23,7 +23,7 @@ logger = structlog.get_logger(__name__)
 def register_ceremony_feedback_tools(server: FastMCP) -> None:
     """Register ceremony feedback tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_ceremony_status(
         task_class: str | None = None,
@@ -43,7 +43,7 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         trw_dir = resolve_trw_dir()
         return cast("CeremonyStatusResult", get_ceremony_status(trw_dir, task_class))
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_ceremony_approve(
         proposal_id: str,
@@ -63,7 +63,7 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
         trw_dir = resolve_trw_dir()
         return cast("CeremonyApproveResult", approve_proposal(trw_dir, proposal_id))
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_ceremony_revert(
         change_id: str,

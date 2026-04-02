@@ -56,7 +56,7 @@ def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
 def register_usage_tools(server: FastMCP) -> None:
     """Register LLM usage reporting tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_usage_report(
         period: str = "all",
@@ -214,7 +214,7 @@ def register_usage_tools(server: FastMCP) -> None:
 
         return result
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_progressive_expand(group: str) -> ProgressiveExpandResult:
         """Expand a capability group so its tools show full schemas.
@@ -243,7 +243,7 @@ def register_usage_tools(server: FastMCP) -> None:
             "already_expanded": already,
         }
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_trust_level(
         security_tags: list[str] | None = None,

@@ -266,7 +266,7 @@ def _write_compact_instructions(
 def register_checkpoint_tools(server: FastMCP) -> None:
     """Register checkpoint tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_pre_compact_checkpoint() -> PreCompactResultDict:
         """Create a safety checkpoint before context compaction (PRD-CORE-053).

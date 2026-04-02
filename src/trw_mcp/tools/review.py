@@ -46,7 +46,7 @@ logger = structlog.get_logger(__name__)
 def register_review_tools(server: FastMCP) -> None:
     """Register review tools on the MCP server."""
 
-    @server.tool()
+    @server.tool(output_schema=None)
     @log_tool_call
     def trw_review(
         findings: list[dict[str, str]] | None = None,
