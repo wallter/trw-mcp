@@ -19,7 +19,6 @@ This module is the public facade -- all external imports should come here.
 
 from __future__ import annotations
 
-import contextlib
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -207,6 +206,19 @@ def store_learning(
     client_profile: str = "",
     model_id: str = "",
     assertions: list[dict[str, str]] | None = None,
+    # PRD-CORE-110: Typed learning fields
+    type: str = "pattern",
+    nudge_line: str = "",
+    expires: str = "",
+    confidence: str = "unverified",
+    task_type: str = "",
+    domain: list[str] | None = None,
+    phase_origin: str = "",
+    phase_affinity: list[str] | None = None,
+    team_origin: str = "",
+    protection_tier: str = "normal",
+    # PRD-CORE-111: Code-grounded anchors
+    anchors: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Store a learning entry in SQLite and return the tool result dict.
 
@@ -236,6 +248,17 @@ def store_learning(
         client_profile=client_profile,
         model_id=model_id,
         assertions=assertions,
+        type=type,
+        nudge_line=nudge_line,
+        expires=expires,
+        confidence=confidence,
+        task_type=task_type,
+        domain=domain,
+        phase_origin=phase_origin,
+        phase_affinity=phase_affinity,
+        team_origin=team_origin,
+        protection_tier=protection_tier,
+        anchors=anchors,
     )
 
     for attempt in range(2):
@@ -288,8 +311,10 @@ def recall_learnings(
 
     mem_status: MemoryStatus | None = None
     if status is not None:
-        with contextlib.suppress(ValueError):
+        try:
             mem_status = MemoryStatus(status)
+        except ValueError:
+            logger.debug("invalid_status_ignored", status=status)
 
     from trw_memory.models.memory import MemoryEntry as _ME
 
@@ -349,6 +374,17 @@ def update_learning(
     detail: str | None = None,
     impact: float | None = None,
     summary: str | None = None,
+    # PRD-CORE-110: Typed learning update fields
+    type: str | None = None,
+    nudge_line: str | None = None,
+    expires: str | None = None,
+    confidence: str | None = None,
+    task_type: str | None = None,
+    domain: list[str] | None = None,
+    phase_origin: str | None = None,
+    phase_affinity: list[str] | None = None,
+    team_origin: str | None = None,
+    protection_tier: str | None = None,
 ) -> dict[str, str]:
     """Update a learning entry in SQLite.
 
@@ -386,6 +422,44 @@ def update_learning(
             return {"error": f"Impact must be 0.0-1.0, got {impact}", "status": "invalid"}
         fields["importance"] = impact
         changes.append(f"impact\u2192{impact}")
+
+    # PRD-CORE-110: Typed learning fields
+    if type is not None:
+        valid_types = {"incident", "pattern", "convention", "hypothesis", "workaround"}
+        if type not in valid_types:
+            return {
+                "error": f"Invalid type '{type}'. Must be one of: {valid_types}",
+                "status": "invalid",
+            }
+        fields["type"] = type
+        changes.append(f"type\u2192{type}")
+    if nudge_line is not None:
+        fields["nudge_line"] = nudge_line
+        changes.append("nudge_line updated")
+    if expires is not None:
+        fields["expires"] = expires
+        changes.append("expires updated")
+    if confidence is not None:
+        fields["confidence"] = confidence
+        changes.append(f"confidence\u2192{confidence}")
+    if task_type is not None:
+        fields["task_type"] = task_type
+        changes.append(f"task_type\u2192{task_type}")
+    if domain is not None:
+        fields["domain"] = domain
+        changes.append("domain updated")
+    if phase_origin is not None:
+        fields["phase_origin"] = phase_origin
+        changes.append(f"phase_origin\u2192{phase_origin}" if phase_origin else "phase_origin cleared")
+    if phase_affinity is not None:
+        fields["phase_affinity"] = phase_affinity
+        changes.append("phase_affinity updated")
+    if team_origin is not None:
+        fields["team_origin"] = team_origin
+        changes.append(f"team_origin\u2192{team_origin}" if team_origin else "team_origin cleared")
+    if protection_tier is not None:
+        fields["protection_tier"] = protection_tier
+        changes.append(f"protection_tier\u2192{protection_tier}")
 
     if not changes:
         return {"learning_id": learning_id, "status": "no_changes"}
@@ -429,9 +503,7 @@ def list_active_learnings(
         limit=limit,
     )
     results: list[dict[str, object]] = [
-        _memory_to_learning_dict(entry)
-        for entry in entries
-        if entry.importance >= min_impact
+        _memory_to_learning_dict(entry) for entry in entries if entry.importance >= min_impact
     ]
     return results
 
@@ -458,9 +530,7 @@ def list_entries_by_status(
         limit=limit,
     )
     results: list[dict[str, object]] = [
-        _memory_to_learning_dict(entry)
-        for entry in entries
-        if entry.importance >= min_impact
+        _memory_to_learning_dict(entry) for entry in entries if entry.importance >= min_impact
     ]
     return results
 

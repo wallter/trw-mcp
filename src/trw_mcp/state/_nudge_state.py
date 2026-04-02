@@ -20,6 +20,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 # ---------------------------------------------------------------------------
 # Shared constants (used by both _nudge_messages and _nudge_rules)
@@ -27,6 +28,19 @@ from pathlib import Path
 
 # Step names in display order (FR01 PRD-CORE-084: includes review)
 _STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review", "deliver")
+
+# ---------------------------------------------------------------------------
+# Nudge history entry (PRD-CORE-103-FR02)
+# ---------------------------------------------------------------------------
+
+
+class NudgeHistoryEntry(TypedDict):
+    """Record of when/where a learning was shown as a nudge."""
+
+    phases_shown: list[str]  # Phases where this learning was shown
+    turn_first_shown: int  # Tool response number when first shown
+    last_shown_turn: int  # Tool response number when last shown
+
 
 # ---------------------------------------------------------------------------
 # State dataclass
@@ -50,6 +64,8 @@ class CeremonyState:
     review_called: bool = False
     review_verdict: str | None = None  # "pass" | "warn" | "block" | None
     review_p0_count: int = 0
+    # PRD-CORE-103-FR02: Nudge history for deduplication
+    nudge_history: dict[str, NudgeHistoryEntry] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +118,25 @@ def _state_path(trw_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _parse_nudge_history(raw: object) -> dict[str, NudgeHistoryEntry]:
+    """Parse nudge_history from JSON with fail-open defaults."""
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, NudgeHistoryEntry] = {}
+    for key, val in raw.items():
+        if not isinstance(key, str) or not isinstance(val, dict):
+            continue
+        try:
+            result[str(key)] = NudgeHistoryEntry(
+                phases_shown=[str(p) for p in val.get("phases_shown", []) if isinstance(p, str)],
+                turn_first_shown=int(val.get("turn_first_shown", 0)),
+                last_shown_turn=int(val.get("last_shown_turn", 0)),
+            )
+        except (TypeError, ValueError):
+            continue  # skip malformed entries
+    return result
+
+
 def _from_dict(data: dict[str, object]) -> CeremonyState:
     """Deserialize a CeremonyState from a plain dict.
 
@@ -144,6 +179,8 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         review_called=_bool("review_called"),
         review_verdict=_opt_str("review_verdict"),
         review_p0_count=_int("review_p0_count"),
+        # PRD-CORE-103-FR02: nudge_history with fail-open empty dict
+        nudge_history=_parse_nudge_history(data.get("nudge_history", {})),
     )
 
 
@@ -268,6 +305,73 @@ def reset_nudge_count(trw_dir: Path, step: str) -> None:
     state = read_ceremony_state(trw_dir)
     state.nudge_counts[step] = 0
     write_ceremony_state(trw_dir, state)
+
+
+# ---------------------------------------------------------------------------
+# Nudge history mutation helpers (PRD-CORE-103-FR02)
+# ---------------------------------------------------------------------------
+
+_NUDGE_HISTORY_CAP = 100  # Max entries per session
+
+
+def record_nudge_shown(
+    trw_dir: Path,
+    learning_id: str,
+    phase: str,
+    turn: int = 0,
+) -> None:
+    """Record that a learning was shown as a nudge in the given phase.
+
+    Updates nudge_history with dedup tracking. Enforces capacity cap
+    by evicting the entry with the oldest last_shown_turn.
+    """
+    state = read_ceremony_state(trw_dir)
+
+    if learning_id in state.nudge_history:
+        entry = state.nudge_history[learning_id]
+        if phase not in entry["phases_shown"]:
+            entry["phases_shown"].append(phase)
+        entry["last_shown_turn"] = turn
+    else:
+        # Enforce capacity cap
+        if len(state.nudge_history) >= _NUDGE_HISTORY_CAP:
+            # Evict oldest by last_shown_turn
+            oldest_id = min(
+                state.nudge_history,
+                key=lambda k: state.nudge_history[k]["last_shown_turn"],
+            )
+            del state.nudge_history[oldest_id]
+
+        state.nudge_history[learning_id] = NudgeHistoryEntry(
+            phases_shown=[phase],
+            turn_first_shown=turn,
+            last_shown_turn=turn,
+        )
+
+    write_ceremony_state(trw_dir, state)
+
+
+def clear_nudge_history(trw_dir: Path) -> None:
+    """Clear nudge_history (called on context compaction detection)."""
+    state = read_ceremony_state(trw_dir)
+    state.nudge_history = {}
+    write_ceremony_state(trw_dir, state)
+
+
+def is_nudge_eligible(
+    state: CeremonyState,
+    learning_id: str,
+    current_phase: str,
+) -> bool:
+    """Check if a learning is eligible for nudge display in the current phase.
+
+    Returns False if the learning was already shown in this phase.
+    Returns True if the learning was never shown, or only shown in other phases.
+    """
+    if learning_id not in state.nudge_history:
+        return True
+    entry = state.nudge_history[learning_id]
+    return current_phase not in entry["phases_shown"]
 
 
 # ---------------------------------------------------------------------------

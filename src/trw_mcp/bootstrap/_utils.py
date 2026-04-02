@@ -313,11 +313,12 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
         result["preserved"].append(f"trw-mcp package v{installed_version} (up to date)")
 
 
-
-
 # ---------------------------------------------------------------------------
 # IDE Detection and Adaptive Bootstrap (FR08 -- PRD-CORE-074)
 # ---------------------------------------------------------------------------
+
+# Supported IDEs - DRY constant for all IDE target operations
+SUPPORTED_IDES = ["claude-code", "cursor", "opencode", "codex"]
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -370,7 +371,7 @@ def resolve_ide_targets(
         List of IDE identifiers to configure.
     """
     if ide_override == "all":
-        return ["claude-code", "cursor", "opencode", "codex"]
+        return SUPPORTED_IDES.copy()
     if ide_override:
         return [ide_override]
     detected = detect_ide(target_dir)

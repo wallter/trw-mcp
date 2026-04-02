@@ -7,7 +7,6 @@ import shared helper functions and constants from here.
 from __future__ import annotations
 
 import re
-import secrets
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -292,9 +291,19 @@ def find_entry_by_id(
 
 
 def generate_learning_id() -> str:
-    """Generate a unique learning entry ID.
+    """Generate a unique compact learning entry ID (PRD-CORE-110).
+
+    Uses base-62 compact IDs from trw-memory for shorter, more readable IDs.
+    Falls back to secrets.token_hex(4) if trw-memory is unavailable.
 
     Returns:
-        String ID in format 'L-{random_hex}'.
+        String ID in format 'L-{compact_id}'.
     """
-    return f"L-{secrets.token_hex(4)}"
+    try:
+        from trw_memory.utils import generate_compact_id
+
+        return generate_compact_id(prefix="L")
+    except (ImportError, RuntimeError):
+        import secrets
+
+        return f"L-{secrets.token_hex(4)}"

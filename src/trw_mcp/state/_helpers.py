@@ -83,6 +83,26 @@ def safe_str(data: Mapping[str, object], key: str, default: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
+def rotate_jsonl(path: Path, max_bytes: int = 10 * 1024 * 1024) -> None:
+    """Rotate a JSONL file when it exceeds *max_bytes*.
+
+    Renames the current file to ``{name}.1`` (overwriting any existing
+    ``.1``).  The caller starts writing to a fresh file.
+
+    Fail-open: rotation failure does not block logging.
+
+    Args:
+        path: Path to the JSONL file to potentially rotate.
+        max_bytes: Maximum file size before rotation (default 10 MB).
+    """
+    try:
+        if path.exists() and path.stat().st_size > max_bytes:
+            rotated = path.with_suffix(path.suffix + ".1")
+            path.rename(rotated)
+    except OSError:
+        pass  # fail-open: rotation failure doesn't block logging
+
+
 def iter_yaml_entry_files(entries_dir: Path) -> Iterator[Path]:
     """Iterate over YAML entry files in a directory, skipping index.yaml.
 

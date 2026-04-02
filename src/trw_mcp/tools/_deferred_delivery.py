@@ -40,6 +40,7 @@ from trw_mcp.tools._deferred_steps_learning import _do_auto_progress as _do_auto
 from trw_mcp.tools._deferred_steps_learning import _do_index_sync as _do_index_sync
 from trw_mcp.tools._deferred_steps_learning import _merge_session_events as _merge_session_events
 from trw_mcp.tools._deferred_steps_learning import _step_auto_progress as _step_auto_progress
+from trw_mcp.tools._deferred_steps_learning import _step_delivery_metrics as _step_delivery_metrics
 from trw_mcp.tools._deferred_steps_learning import _step_outcome_correlation as _step_outcome_correlation
 from trw_mcp.tools._deferred_steps_learning import _step_publish_learnings as _step_publish_learnings
 from trw_mcp.tools._deferred_steps_learning import _step_recall_outcome as _step_recall_outcome
@@ -175,6 +176,9 @@ def _run_deferred_steps(
         _timed_step("batch_send", lambda: _step_batch_send())
         _timed_step("trust_increment", lambda: _step_trust_increment(resolved_run))
         _timed_step("ceremony_feedback", lambda: _step_ceremony_feedback(resolved_run, critical_results))
+
+        # Sprint 84: Delivery metrics (PRD-CORE-104)
+        _timed_step("delivery_metrics", lambda: _step_delivery_metrics(trw_dir, resolved_run))
 
         steps_ok = sum(
             1 for k, v in results.items()

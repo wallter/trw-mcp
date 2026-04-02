@@ -16,9 +16,64 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import RecallContextDict, RecallResultDict
+from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.state.surface_tracking import log_surface_event
 
 logger = structlog.get_logger(__name__)
+
+
+def _detect_surface_phase() -> str:
+    """Best-effort detection of the current ceremony phase.
+
+    Returns the phase string (e.g. ``"IMPLEMENT"``) or ``""`` when
+    detection fails.  Never raises.
+    """
+    try:
+        from trw_mcp.state._paths import detect_current_phase
+
+        phase = detect_current_phase()
+        return phase.upper() if phase else ""
+    except Exception:  # justified: fail-open, phase detection is optional
+        return ""
+
+
+def build_recall_context(
+    trw_dir: Path,
+    query: str,
+) -> RecallContext | None:
+    """Build a RecallContext from the current session state.
+
+    Best-effort: returns None if context can't be built.
+    """
+    from trw_mcp.scoring._recall import RecallContext, infer_domains
+
+    current_phase: str | None = _detect_surface_phase() or None
+    modified_files: list[str] = []
+
+    try:
+        import subprocess
+
+        git_result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(trw_dir.parent) if trw_dir.name == ".trw" else str(trw_dir),
+        )
+        if git_result.returncode == 0:
+            modified_files = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
+    except Exception:
+        pass
+
+    active_domains = infer_domains(modified_files=modified_files, query=query)
+
+    if not current_phase and not active_domains:
+        return None
+
+    return RecallContext(
+        current_phase=current_phase,
+        active_domains=active_domains,
+        modified_files=modified_files,
+    )
 
 
 def execute_recall(
@@ -82,6 +137,13 @@ def execute_recall(
     query_tokens = [] if is_wildcard else query.lower().split()
     use_compact = compact if compact is not None else is_wildcard
 
+    # Build recall context for contextual boosting (PRD-CORE-102)
+    recall_context: RecallContext | None = None
+    try:
+        recall_context = build_recall_context(trw_dir, query)
+    except Exception:
+        logger.debug("recall_context_build_failed", exc_info=True)
+
     # Search entries via SQLite adapter
     matching_learnings = recall_fn(
         trw_dir,
@@ -119,6 +181,7 @@ def execute_recall(
         matching_learnings,
         query_tokens,
         config.recall_utility_lambda,
+        context=recall_context,
     )
 
     # Capture pre-cap counts for the total_available response field
@@ -128,9 +191,30 @@ def execute_recall(
     if max_results > 0:
         ranked_learnings = ranked_learnings[:max_results]
 
+    # --- Surface event logging (PRD-CORE-103-FR01) ---
+    # Log each surfaced learning for telemetry/fatigue detection.
+    # Skip compact/wildcard queries (bulk operations, not intentional surfacings).
+    if not use_compact:
+        try:
+            phase = _detect_surface_phase()
+            for entry in ranked_learnings:
+                lid = str(entry.get("id", ""))
+                if lid:
+                    log_surface_event(
+                        trw_dir,
+                        learning_id=lid,
+                        surface_type="recall",
+                        phase=phase,
+                        files_context=[],  # No file context in base recall; session_start path adds its own
+                    )
+        except Exception:  # justified: fail-open, surface logging must not block recall
+            logger.debug("surface_logging_failed", exc_info=True)
+
     # --- Assertion verification (PRD-CORE-086 FR06) ---
     if not use_compact:
-        ranked_learnings = _verify_assertions(ranked_learnings, query_tokens, config, rank_fn)
+        ranked_learnings = _verify_assertions(
+            ranked_learnings, query_tokens, config, rank_fn, context=recall_context
+        )
 
     # Strip to compact fields when requested
     if use_compact:
@@ -234,6 +318,7 @@ def _verify_assertions(
     query_tokens: list[str],
     config: TRWConfig,
     rank_fn: Callable[..., list[dict[str, object]]],
+    context: RecallContext | None = None,
 ) -> list[dict[str, object]]:
     """Run assertion verification on ranked learnings (PRD-CORE-086 FR06)."""
     assertion_penalties: dict[str, float] = {}
@@ -289,6 +374,7 @@ def _verify_assertions(
             ranked_learnings = rank_fn(
                 ranked_learnings, query_tokens, config.recall_utility_lambda,
                 assertion_penalties=assertion_penalties,
+                context=context,
             )
     except (ImportError, OSError):
         logger.debug("assertion_verification_unavailable", exc_info=True)

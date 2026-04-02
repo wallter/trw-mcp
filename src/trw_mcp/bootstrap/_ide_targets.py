@@ -52,7 +52,12 @@ def _update_opencode_artifacts(
     Fail-open: errors are captured in ``result["warnings"]`` so they never
     break the overall update flow.
     """
-    from ._opencode import generate_agents_md, generate_opencode_config
+    from ._opencode import (
+        detect_model_family,
+        generate_agents_md,
+        generate_opencode_config,
+        generate_opencode_instructions,
+    )
 
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
     if "opencode" not in ide_targets:
@@ -88,6 +93,26 @@ def _update_opencode_artifacts(
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
         result["warnings"].append(f"AGENTS.md update skipped: {exc}")
 
+    # Update .opencode/INSTRUCTIONS.md with model-specific content (FR01)
+    try:
+        opencode_path = target_dir / "opencode.json"
+        model_family = "generic"
+        if opencode_path.exists():
+            import json
+
+            try:
+                opencode_data = json.loads(opencode_path.read_text(encoding="utf-8"))
+                model_family = detect_model_family(opencode_data)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        instructions_result = generate_opencode_instructions(target_dir, model_family)
+        result["created"].extend(instructions_result.get("created", []))
+        result["updated"].extend(instructions_result.get("updated", []))
+        result["errors"].extend(instructions_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
+        result["warnings"].append(f".opencode/INSTRUCTIONS.md update skipped: {exc}")
+
 
 def _update_codex_artifacts(
     target_dir: Path,
@@ -101,7 +126,12 @@ def _update_codex_artifacts(
         generate_codex_hooks,
         install_codex_skills,
     )
-    from ._opencode import generate_agents_md
+    from ._opencode import (
+        detect_model_family,
+        generate_agents_md,
+        generate_opencode_config,
+        generate_opencode_instructions,
+    )
 
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
     if "codex" not in ide_targets:
@@ -148,6 +178,16 @@ def _update_codex_artifacts(
         result["errors"].extend(agents_md_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, AGENTS update is best-effort
         result["warnings"].append(f"Codex AGENTS.md update skipped: {exc}")
+
+    try:
+        from ._opencode import generate_codex_instructions
+
+        codex_instructions_result = generate_codex_instructions(target_dir)
+        result["created"].extend(codex_instructions_result.get("created", []))
+        result["updated"].extend(codex_instructions_result.get("updated", []))
+        result["errors"].extend(codex_instructions_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
+        result["warnings"].append(f".codex/INSTRUCTIONS.md update skipped: {exc}")
 
 
 def _extract_trw_section_content() -> str:

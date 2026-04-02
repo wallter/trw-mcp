@@ -92,8 +92,7 @@ def _read_injected_ids(trw_dir: Path) -> set[str]:
     """
     state_file = trw_dir / "context" / "injected_learning_ids.txt"
     try:
-        if state_file.exists():
-            return {line.strip() for line in state_file.read_text(encoding="utf-8").splitlines() if line.strip()}
+        return {line.strip() for line in state_file.read_text(encoding="utf-8").splitlines() if line.strip()}
     except OSError:
         pass
     return set()
@@ -155,6 +154,17 @@ def register_learning_tools(server: FastMCP) -> None:
         model_id: str | None = None,
         consolidated_from: list[str] | None = None,
         assertions: list[dict[str, str]] | None = None,
+        # PRD-CORE-110: Typed learning fields
+        type: str = "pattern",
+        nudge_line: str = "",
+        expires: str = "",
+        confidence: str = "unverified",
+        task_type: str = "",
+        domain: list[str] | None = None,
+        phase_origin: str = "",
+        phase_affinity: list[str] | None = None,
+        team_origin: str = "",
+        protection_tier: str = "normal",
     ) -> LearnResultDict:
         """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
@@ -175,14 +185,23 @@ def register_learning_tools(server: FastMCP) -> None:
             model_id: Model override (e.g., "claude-opus-4-6"). Auto-detected when None.
             consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
             assertions: Machine-verifiable assertions (PRD-CORE-086). Each dict has type, pattern, target.
+            type: Learning type — "incident", "pattern", "convention", "hypothesis", or "workaround".
+            nudge_line: Compact text for ceremony nudge display (max 80 chars, auto-truncated).
+            expires: Expiration date/condition (ISO 8601 or free text like "when v2 ships").
+            confidence: Validation confidence — "unverified", "low", "medium", "high", or "verified".
+            task_type: Task type identifier (e.g., "bug-fix", "feature", "refactor").
+            domain: Domain tags (e.g., ["testing", "security"]) for contextual recall boosting.
+            phase_origin: Framework phase when created (auto-detected when empty).
+            phase_affinity: Phases where most relevant (e.g., ["implement", "validate"]).
+            team_origin: Team identifier for team-aware recall boosting.
+            protection_tier: Protection level — "critical", "high", "normal", "low".
 
         See Also: trw_recall, trw_learn_update
         """
-        from trw_mcp.tools._learn_impl import execute_learn
-
         # PRD-CORE-099: Auto-detect client and model when not explicitly provided.
         # None = "not provided" → auto-detect. Empty string = explicit blank.
         from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
+        from trw_mcp.tools._learn_impl import execute_learn
 
         if client_profile is None:
             client_profile = detect_client_profile()
@@ -206,6 +225,16 @@ def register_learning_tools(server: FastMCP) -> None:
             consolidated_from=consolidated_from,
             assertions=assertions,
             is_solution_fn=_is_solution_summary,
+            type=type,
+            nudge_line=nudge_line,
+            expires=expires,
+            confidence=confidence,
+            task_type=task_type,
+            domain=domain,
+            phase_origin=phase_origin,
+            phase_affinity=phase_affinity,
+            team_origin=team_origin,
+            protection_tier=protection_tier,
             # Dependency injection: pass module-level refs for testability
             _adapter_store=adapter_store,
             _generate_learning_id=generate_learning_id,
@@ -224,6 +253,17 @@ def register_learning_tools(server: FastMCP) -> None:
         impact: float | None = None,
         summary: str | None = None,
         assertions: list[dict[str, str]] | None = None,
+        # PRD-CORE-110: Typed learning update fields
+        type: str | None = None,
+        nudge_line: str | None = None,
+        expires: str | None = None,
+        confidence: str | None = None,
+        task_type: str | None = None,
+        domain: list[str] | None = None,
+        phase_origin: str | None = None,
+        phase_affinity: list[str] | None = None,
+        team_origin: str | None = None,
+        protection_tier: str | None = None,
     ) -> dict[str, str]:
         """Keep your knowledge base accurate — mark resolved issues, retire obsolete gotchas, or refine details.
 
@@ -238,10 +278,34 @@ def register_learning_tools(server: FastMCP) -> None:
             impact: Updated impact score (0.0-1.0).
             summary: Updated summary text (replaces existing summary).
             assertions: Replace assertions on this entry (PRD-CORE-086 FR12). Empty list removes all.
+            type: Updated type — "incident", "pattern", "convention", "hypothesis", or "workaround".
+            nudge_line: Updated nudge text (max 80 chars, auto-truncated).
+            expires: Updated expiration date/condition.
+            confidence: Updated confidence — "unverified", "low", "medium", "high", or "verified".
+            task_type: Updated task type identifier.
+            domain: Updated domain tags.
+            phase_affinity: Updated phase affinities.
+            protection_tier: Updated protection tier.
         """
         config = get_config()
         writer = FileStateWriter()
         trw_dir = resolve_trw_dir()
+
+        # PRD-CORE-110: Validate enum fields before forwarding to adapter
+        _valid_types = {"incident", "pattern", "convention", "hypothesis", "workaround"}
+        if type is not None and type not in _valid_types:
+            return {"error": f"Invalid type '{type}'. Must be one of: {_valid_types}", "status": "invalid"}
+        _valid_confidences = {"unverified", "low", "medium", "high", "verified"}
+        if confidence is not None and confidence not in _valid_confidences:
+            return {"error": f"Invalid confidence '{confidence}'. Must be one of: {_valid_confidences}", "status": "invalid"}
+        _valid_tiers = {"critical", "high", "normal", "low", "protected", "permanent"}
+        if protection_tier is not None and protection_tier not in _valid_tiers:
+            return {"error": f"Invalid protection_tier '{protection_tier}'. Must be one of: {_valid_tiers}", "status": "invalid"}
+        _valid_phases = {"", "RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"}
+        if phase_origin is not None and phase_origin not in _valid_phases:
+            return {"error": f"Invalid phase_origin '{phase_origin}'. Must be one of: {_valid_phases}", "status": "invalid"}
+        if nudge_line is not None and len(nudge_line) > 80:
+            return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
 
         # Validate and store assertions via backend (PRD-CORE-086 FR12)
         if assertions is not None:
@@ -264,15 +328,29 @@ def register_learning_tools(server: FastMCP) -> None:
             detail=detail,
             impact=impact,
             summary=summary,
+            type=type,
+            nudge_line=nudge_line,
+            expires=expires,
+            confidence=confidence,
+            task_type=task_type,
+            domain=domain,
+            phase_origin=phase_origin,
+            phase_affinity=phase_affinity,
+            team_origin=team_origin,
+            protection_tier=protection_tier,
         )
 
         # Dual-write: also update YAML backup for rollback safety
         if result.get("status") == "updated":
             _updated_field = (
-                "status" if status is not None
-                else "detail" if detail is not None
-                else "summary" if summary is not None
-                else "impact" if impact is not None
+                "status"
+                if status is not None
+                else "detail"
+                if detail is not None
+                else "summary"
+                if summary is not None
+                else "impact"
+                if impact is not None
                 else "unknown"
             )
             logger.info("learn_update_ok", id=learning_id, field_updated=_updated_field)
@@ -396,6 +474,4 @@ def register_learning_tools(server: FastMCP) -> None:
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()
-        return cast(
-            "ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, llm, client)
-        )
+        return cast("ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, llm, client))

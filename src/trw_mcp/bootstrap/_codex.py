@@ -116,11 +116,7 @@ def _registered_trw_tool_names() -> list[str]:
     from trw_mcp.server._app import mcp
 
     tools = cast("list[_NamedTool]", _run_async(mcp.list_tools()))
-    tool_names = sorted(
-        tool.name
-        for tool in tools
-        if tool.name.startswith(_TRW_TOOL_PREFIX)
-    )
+    tool_names = sorted(tool.name for tool in tools if tool.name.startswith(_TRW_TOOL_PREFIX))
     if not tool_names:
         logger.warning("codex_trw_tool_discovery_empty")
     return tool_names
@@ -388,9 +384,7 @@ def _normalize_feature_flags(raw_features: object) -> CodexFeaturesConfig:
     features_map: dict[str, bool] = {}
     if isinstance(raw_features, dict):
         features_map = {
-            key: value
-            for key, value in raw_features.items()
-            if isinstance(key, str) and isinstance(value, bool)
+            key: value for key, value in raw_features.items() if isinstance(key, str) and isinstance(value, bool)
         }
     features_map["codex_hooks"] = True
     return cast("CodexFeaturesConfig", features_map)
@@ -415,7 +409,7 @@ def _normalize_fallback_files(raw_fallback_files: object) -> list[str]:
     """Normalize project-doc fallback files and add required TRW docs."""
     fallback_files = raw_fallback_files if isinstance(raw_fallback_files, list) else []
     normalized_fallbacks = [value for value in fallback_files if isinstance(value, str)]
-    for required_file in (_TRW_PROJECT_DOC, _LEGACY_PROJECT_DOC):
+    for required_file in (".codex/INSTRUCTIONS.md",):
         if required_file not in normalized_fallbacks:
             normalized_fallbacks.append(required_file)
     return normalized_fallbacks
@@ -429,11 +423,7 @@ def _merge_skill_config(raw_skills: object) -> CodexSkillsConfig:
         skills = {}
 
     skill_config = _normalize_skill_config(skills.get("config"))
-    existing_paths = {
-        path
-        for entry in skill_config
-        if isinstance(path := entry.get("path"), str)
-    }
+    existing_paths = {path for entry in skill_config if isinstance(path := entry.get("path"), str)}
     normalized_skill_config: list[CodexSkillConfigEntry] = []
     for entry in skill_config:
         path = entry.get("path")
@@ -446,9 +436,7 @@ def _merge_skill_config(raw_skills: object) -> CodexSkillsConfig:
         normalized_skill_config.append(normalized_skill_entry)
 
     normalized_skill_config.extend(
-        {"path": path, "enabled": True}
-        for path in _skill_paths()
-        if path not in existing_paths
+        {"path": path, "enabled": True} for path in _skill_paths() if path not in existing_paths
     )
     skills["config"] = normalized_skill_config
     return skills
@@ -471,9 +459,7 @@ def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
     mcp_servers.setdefault("openaiDeveloperDocs", _docs_mcp_server_entry())
     result["mcp_servers"] = mcp_servers
 
-    result["project_doc_fallback_filenames"] = _normalize_fallback_files(
-        result.get("project_doc_fallback_filenames")
-    )
+    result["project_doc_fallback_filenames"] = _normalize_fallback_files(result.get("project_doc_fallback_filenames"))
     result["skills"] = _merge_skill_config(result.get("skills"))
 
     return result
@@ -519,7 +505,7 @@ def _trw_hook_group(
     timeout: int | None = None,
 ) -> CodexHookMatcherEntry:
     """Create a single TRW-managed hook matcher group."""
-    git_root = '$(git rev-parse --show-toplevel)'
+    git_root = "$(git rev-parse --show-toplevel)"
     command = f'/bin/sh "{git_root}/.claude/hooks/{script_name}"'
     hook_command: CodexHookCommand = {"type": "command", "command": command}
     if status_message is not None:
@@ -612,9 +598,7 @@ def merge_codex_hooks(existing: CodexHooksConfig) -> CodexHooksConfig:
 
     for event_name in sorted(set(current_hooks) | set(trw_hooks)):
         user_groups = [
-            group
-            for group in current_hooks.get(event_name, [])
-            if not _is_trw_hook_group(event_name, group)
+            group for group in current_hooks.get(event_name, []) if not _is_trw_hook_group(event_name, group)
         ]
         if event_name in trw_hooks:
             merged_hooks[event_name] = user_groups + trw_hooks[event_name]
@@ -730,6 +714,7 @@ def install_codex_skills(
 ) -> BootstrapFileResult:
     """Install TRW bundled skills into `.agents/skills/` for Codex."""
     from ._init_project import _validate_skill
+
     result = _new_result()
     skills_source = _codex_skills_source_dir()
     dest_root = target_dir / _CODEX_SKILLS_DIR

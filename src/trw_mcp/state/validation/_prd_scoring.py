@@ -119,6 +119,50 @@ _IMPL_REF_RE = re.compile(
     r"`(?:[-\w./*]+(?:\.[\w]+)(?:[:#][-\w./*#]+)?)`",
 )
 
+_SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
+
+# AI/Agentic detection keywords (PRD-QUAL-055)
+_AI_KEYWORDS = ("ai", "llm", "agentic", "agent", "generative", "model")
+
+_REQUIRED_SUBSECTIONS_BY_VARIANT: dict[str, list[str]] = {
+    "feature": [
+        "Primary Control Points",
+        "Behavior Switch Matrix",
+        "Unit Tests",
+        "Integration Tests",
+        "Acceptance Tests",
+        "Regression Tests",
+        "Negative / Fallback Tests",
+        "Completion Evidence (Definition of Done)",
+        "Migration / Backward Compatibility",
+    ],
+    "infrastructure": [
+        "Primary Control Points",
+        "Behavior Switch Matrix",
+        "Unit Tests",
+        "Integration Tests",
+        "Acceptance Tests",
+        "Regression Tests",
+        "Negative / Fallback Tests",
+        "Completion Evidence (Definition of Done)",
+        "Migration / Backward Compatibility",
+    ],
+    "fix": [
+        "Root Cause",
+        "Contributing Factors",
+        "Fix Verification",
+        "Regression Tests",
+        "Negative / Fallback Tests",
+        "Completion Evidence (Definition of Done)",
+        "Migration / Backward Compatibility",
+    ],
+    "research": [
+        "Approach",
+        "Data Sources",
+        "Evaluation Criteria",
+    ],
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -197,6 +241,59 @@ def _parse_section_content(content: str) -> list[tuple[str, str]]:
         sections.append((name, body[start:end]))
 
     return sections
+
+
+def _extract_subheadings(content: str) -> set[str]:
+    """Return all level-3 markdown subheading titles present in the PRD body."""
+    return {match.group(1).strip() for match in _SUBHEADING_RE.finditer(content)}
+
+
+def _is_ai_agentic_prd(frontmatter: dict, content: str) -> bool:
+    """Heuristic detection of AI/LLM/agentic PRDs.
+
+    Returns True if:
+    - PRD risk_level is "high" or "critical" AND category is QUAL/CORE, OR
+    - PRD contains AI/LLM/agentic keywords in content
+    - PRD frontmatter category is "QUAL" (explicit AI focus)
+
+    Args:
+        frontmatter: Parsed YAML frontmatter dictionary.
+        content: Full PRD markdown content.
+
+    Returns:
+        True if the PRD appears to be AI/LLM/agentic in nature.
+    """
+    category = str(frontmatter.get("category", "")).upper()
+    risk_level = str(frontmatter.get("risk_level", "")).lower()
+
+    # Explicit QUAL category or high-risk flag
+    if category == "QUAL" or risk_level in ("high", "critical"):
+        return True
+
+    # Keyword detection (case-insensitive)
+    content_lower = content.lower()
+    return any(keyword in content_lower for keyword in _AI_KEYWORDS)
+
+
+def _count_table_rows(content: str, heading: str) -> int:
+    """Count substantive markdown table rows under a named subsection."""
+    marker = f"### {heading}"
+    start = content.find(marker)
+    if start == -1:
+        return 0
+    tail = content[start + len(marker) :]
+    next_heading = re.search(r"^###\s+.+$", tail, re.MULTILINE)
+    body = tail[: next_heading.start()] if next_heading else tail
+
+    rows = 0
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        if re.match(r"^\|[\s\-:|]+\|$", stripped):
+            continue
+        rows += 1
+    return max(rows - 1, 0)
 
 
 def _is_substantive_line(line: str) -> bool:
@@ -324,6 +421,7 @@ def score_structural_completeness(
     sections: list[str],
     config: TRWConfig | None = None,
     category: str | None = None,
+    content: str | None = None,
 ) -> DimensionScore:
     """Score the Structural Completeness dimension (15 points max).
 
@@ -335,12 +433,18 @@ def score_structural_completeness(
     Unknown or missing categories default to the 12-section Feature
     template for backward compatibility.
 
+    For AI/LLM/agentic PRDs, also scores AI/agentic operational subsections
+    in section 7 ("AI/LLM Operational Sections"): Data/Context Provenance,
+    Failure Modes, Human Oversight, Evaluation Plan, Release Gate,
+    Monitoring Plan, and Risk Register By Failure Class.
+
     Args:
         frontmatter: Parsed YAML frontmatter.
         sections: List of section heading names found.
         config: Optional config for weight override.
         category: Optional explicit category override. When ``None``,
             extracted from ``frontmatter["category"]``.
+        content: Full PRD markdown content. Required for structural scoring.
 
     Returns:
         DimensionScore for structural completeness.
@@ -374,20 +478,70 @@ def score_structural_completeness(
         conf_present = sum(1 for f in confidence_fields if f in confidence)
     conf_ratio = conf_present / len(confidence_fields)
 
-    # Weighted: sections 50%, frontmatter 30%, confidence 20%
-    composite = section_ratio * 0.5 + fm_ratio * 0.3 + conf_ratio * 0.2
+    subsection_ratio = 1.0
+    matched_subsections = 0
+    expected_subsections = 0
+    if content is not None:
+        from trw_mcp.state.validation.template_variants import get_variant_for_category
+
+        variant = get_variant_for_category(resolved_category)
+        required_subsections = _REQUIRED_SUBSECTIONS_BY_VARIANT.get(variant, [])
+        expected_subsections = len(required_subsections)
+        if required_subsections:
+            present_subsections = _extract_subheadings(content)
+            matched_subsections = sum(1 for name in required_subsections if name in present_subsections)
+            subsection_ratio = matched_subsections / expected_subsections
+
+    # AI/LLM/agentic detection and operational sections scoring (PRD-QUAL-055)
+    ai_operational_sections_found = 0
+    ai_operational_sections_expected = 7
+    ai_section_keywords = [
+        "Data / Context Provenance",
+        "Failure Modes",
+        "Safe Degradation",
+        "Human Oversight",
+        "Escalation",
+        "Evaluation Plan",
+        "Release Gate",
+        "Monitoring Plan",
+        "Risk Register",
+        "Failure Class",
+    ]
+
+    ai_operational_section_found = False
+    if content is not None:
+        ai_operational_section_found = _is_ai_agentic_prd(frontmatter, content)
+        if ai_operational_section_found:
+            present_subsections = _extract_subheadings(content)
+            ai_operational_sections_found = sum(
+                1 for kw in ai_section_keywords if any(kw.lower() in ss.lower() for ss in present_subsections)
+            )
+            subsection_ratio = (subsection_ratio * 0.75) + (
+                ai_operational_sections_found / ai_operational_sections_expected * 0.25
+            )
+
+    # Weighted: sections 35%, frontmatter 25%, confidence 15%, required subsections 25%
+    composite = section_ratio * 0.35 + fm_ratio * 0.25 + conf_ratio * 0.15 + subsection_ratio * 0.25
     score = composite * max_score
+
+    details: dict[str, object] = {
+        "sections_found": found,
+        "sections_expected": expected,
+        "frontmatter_fields": fm_present,
+        "confidence_fields": conf_present,
+        "required_subsections_found": matched_subsections,
+        "required_subsections_expected": expected_subsections,
+    }
+    if ai_operational_section_found:
+        details["ai_operational_sections_found"] = ai_operational_sections_found
+        details["ai_operational_sections_expected"] = ai_operational_sections_expected
+        details["ai_section_detected"] = True
 
     return DimensionScore(
         name="structural_completeness",
         score=round(min(score, max_score), 2),
         max_score=max_score,
-        details={
-            "sections_found": found,
-            "sections_expected": expected,
-            "frontmatter_fields": fm_present,
-            "confidence_fields": conf_present,
-        },
+        details=details,
     )
 
 
@@ -425,29 +579,114 @@ def score_traceability_v2(
 
     # Check traceability matrix content
     matrix_score = 0.0
+    proof_score = 0.0
     if "Traceability Matrix" in content:
         matrix_section = content.split("Traceability Matrix")[-1]
-        # Count rows with implementation file references
         impl_refs = _IMPL_REF_RE.findall(matrix_section)
         test_refs = _TEST_REF_RE.findall(matrix_section)
-        # Count FR references in matrix
         fr_refs = re.findall(r"FR\d+", matrix_section)
+        matrix_rows = [
+            line.strip()
+            for line in matrix_section.splitlines()
+            if line.strip().startswith("|") and not re.match(r"^\|[\s\-:|]+\|$", line.strip())
+        ]
 
-        ref_count = len(impl_refs) + len(test_refs)
         if fr_refs:
-            matrix_score = min(ref_count / max(len(fr_refs), 1), 1.0)
+            rows_with_impl = sum(1 for row in matrix_rows if _IMPL_REF_RE.search(row))
+            rows_with_test = sum(1 for row in matrix_rows if _TEST_REF_RE.search(row))
+            rows_with_both = sum(1 for row in matrix_rows if _IMPL_REF_RE.search(row) and _TEST_REF_RE.search(row))
+            matrix_score = min((rows_with_impl + rows_with_test) / (2 * max(len(fr_refs), 1)), 1.0)
+            proof_score = min(rows_with_both / max(len(fr_refs), 1), 1.0)
 
-    # Composite: field population 40%, matrix quality 60%
-    composite = field_ratio * 0.4 + matrix_score * 0.6
+    behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
+    behavior_switch_score = min(behavior_switch_rows / max(len(re.findall(r"FR\d+", content)), 1), 1.0)
+
+    # AI/LLM(agentic evaluation, release, monitoring evidence scoring (PRD-QUAL-055)
+    ai_evaluation_score = 0.0
+    ai_release_score = 0.0
+    ai_monitoring_score = 0.0
+    ai_operational_evidence_detected = _is_ai_agentic_prd(frontmatter, content)
+
+    if ai_operational_evidence_detected and content is not None:
+        if "Evaluation Plan" in content:
+            eval_section = content.split("Evaluation Plan")[-1]
+            eval_keywords = [
+                "baseline",
+                "criteria",
+                "threshold",
+                "accuracy",
+                "latency",
+                "reliability",
+                "A/B",
+                "test",
+                "user study",
+                "metric",
+            ]
+            eval_section_lower = eval_section.lower()
+            ai_evaluation_score = min(
+                sum(1 for kw in eval_keywords if kw in eval_section_lower) / len(eval_keywords), 1.0
+            )
+
+        if "Release Gate" in content:
+            release_section = content.split("Release Gate")[-1]
+            release_keywords = [
+                "canary",
+                "phased",
+                "rollback",
+                "trigger",
+                "threshold",
+                "error rate",
+                "latency",
+                "confidence",
+            ]
+            release_section_lower = release_section.lower()
+            ai_release_score = min(
+                sum(1 for kw in release_keywords if kw in release_section_lower) / len(release_keywords), 1.0
+            )
+
+        if "Monitoring Plan" in content:
+            monitoring_section = content.split("Monitoring Plan")[-1]
+            monitoring_keywords = [
+                "primary signal",
+                "target threshold",
+                "escalation",
+                "alert",
+                "drift",
+                "latency",
+                "error rate",
+                "trust",
+            ]
+            monitoring_section_lower = monitoring_section.lower()
+            ai_monitoring_score = min(
+                sum(1 for kw in monitoring_keywords if kw in monitoring_section_lower) / len(monitoring_keywords), 1.0
+            )
+
+    ai_operational_evidence_score = (ai_evaluation_score + ai_release_score + ai_monitoring_score) / 3
+
+    # Composite: field population 40%, matrix quality 35%, proof coverage 15%,
+    # switch-matrix coverage 10%. AI operational evidence adds 10% weight for AI AGentic PRDs.
+    composite = field_ratio * 0.40 + matrix_score * 0.35 + proof_score * 0.15 + behavior_switch_score * 0.10
+    if ai_operational_evidence_detected:
+        composite = composite * 0.90 + ai_operational_evidence_score * 0.10
     score = composite * max_score
+
+    details: dict[str, object] = {
+        "populated_fields": populated_fields,
+        "field_ratio": round(field_ratio, 4),
+        "matrix_score": round(matrix_score, 4),
+        "proof_score": round(proof_score, 4),
+        "behavior_switch_score": round(behavior_switch_score, 4),
+    }
+    if ai_operational_evidence_detected:
+        details["ai_evaluation_score"] = round(ai_evaluation_score, 4)
+        details["ai_release_score"] = round(ai_release_score, 4)
+        details["ai_monitoring_score"] = round(ai_monitoring_score, 4)
+        details["ai_operational_evidence_score"] = round(ai_operational_evidence_score, 4)
+        details["ai_operational_evidence_detected"] = True
 
     return DimensionScore(
         name="traceability",
         score=round(min(score, max_score), 2),
         max_score=max_score,
-        details={
-            "populated_fields": populated_fields,
-            "field_ratio": round(field_ratio, 4),
-            "matrix_score": round(matrix_score, 4),
-        },
+        details=details,
     )

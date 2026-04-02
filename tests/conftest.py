@@ -193,6 +193,10 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_fix056_status_integrity.py",
         # PRD-CORE-099: Pure env-var detection — no filesystem I/O
         "test_source_detection_unit.py",
+        # PRD-CORE-104: Delivery metrics — pure scoring, no I/O
+        "test_composite_score.py",
+        "test_sigmoid.py",
+        "test_rework_rate.py",
     }
 )
 

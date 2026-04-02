@@ -73,6 +73,7 @@ def _visible_len(text: str) -> int:
 
 # ── Box drawing ──────────────────────────────────────────────────────
 
+
 def draw_box(
     lines: list[str],
     color: str = CYAN,
@@ -105,6 +106,7 @@ def draw_divider(label: str = "", color: str = DIM) -> None:
 
 
 # ── Output helpers ───────────────────────────────────────────────────
+
 
 class UI:
     """Output helper that adapts to interactive/quiet/script modes."""
@@ -216,6 +218,7 @@ class _Spinner:
 
 # ── Input helpers ────────────────────────────────────────────────────
 
+
 def _open_tty():  # noqa: ANN202 — returns TextIO | None
     """Open /dev/tty for reading, or None if unavailable."""
     try:
@@ -285,6 +288,7 @@ def prompt_choice(label: str, options: list[str], default: int = 0) -> int:
 
 # ── Prior installation detection ─────────────────────────────────────
 
+
 def _load_prior_config(target_dir: Path) -> dict[str, object]:
     """Load prior installation config from .trw/config.yaml if it exists.
 
@@ -334,6 +338,7 @@ def _detect_installed_extras(python: str) -> dict[str, bool]:
 
 # ── Validation / sanitization ────────────────────────────────────────
 
+
 def sanitize_project_name(name: str) -> str:
     """Lowercase, strip non-alphanumeric, collapse hyphens, truncate to 64."""
     result = name.lower()
@@ -349,19 +354,18 @@ def validate_api_key(key: str) -> bool:
 
 # ── Python discovery ─────────────────────────────────────────────────
 
+
 def check_python_version(ui: UI) -> str:
     """Verify Python meets minimum version. Returns executable path."""
     major, minor = sys.version_info[:2]
     if (major, minor) < MIN_PYTHON_VERSION:
-        ui.error(
-            f"Python {major}.{minor} found but "
-            f">= {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]} required"
-        )
+        ui.error(f"Python {major}.{minor} found but >= {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]} required")
         sys.exit(1)
     return sys.executable
 
 
 # ── Wheel extraction ─────────────────────────────────────────────────
+
 
 def _extract_wheel_data(marker: str) -> bytes:
     """Read base64 data following *marker* from this script file.
@@ -370,11 +374,7 @@ def _extract_wheel_data(marker: str) -> bytes:
     end of the file (e.g. MEMORY_WHEEL_DATA, WHEEL_DATA). Each marker
     is followed by comment-prefixed base64 lines.
     """
-    script_path = (
-        Path(sys.argv[0]).resolve()
-        if sys.argv[0] != "-"
-        else Path(__file__).resolve()
-    )
+    script_path = Path(sys.argv[0]).resolve() if sys.argv[0] != "-" else Path(__file__).resolve()
     text = script_path.read_text(encoding="utf-8", errors="replace")
 
     collecting = False
@@ -417,6 +417,7 @@ def extract_wheels(tmpdir: Path) -> tuple[Path, Path]:
 
 # ── pip install with fallback ────────────────────────────────────────
 
+
 def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
     """Run a command silently, return True if exit code == 0.
 
@@ -427,10 +428,15 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
     the caller so the user can abort the entire installer with Ctrl-C.
     """
     try:
-        return subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=timeout,
-        ).returncode == 0
+        return (
+            subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            ).returncode
+            == 0
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
@@ -458,6 +464,7 @@ def pip_install(python: str, package: str, label: str, ui: UI) -> bool:
 
 # ── Run command with live progress ───────────────────────────────────
 
+
 def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 180) -> bool:
     """Run *cmd* showing live progress. Returns True on success.
 
@@ -467,7 +474,10 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
     """
     try:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
     except FileNotFoundError:
         return False
@@ -518,6 +528,7 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
 
 
 # ── Config file update ───────────────────────────────────────────────
+
 
 def update_config(
     config_path: Path,
@@ -576,8 +587,10 @@ def update_config(
 
         # Skip commented-out platform config hints
         skip_prefixes = (
-            "# platform_urls:", '#   - "https://api.',
-            "# platform_api_key:", "# platform_telemetry_enabled:",
+            "# platform_urls:",
+            '#   - "https://api.',
+            "# platform_api_key:",
+            "# platform_telemetry_enabled:",
             "# Platform telemetry",
         )
         if any(s.startswith(p) for p in skip_prefixes):
@@ -605,6 +618,7 @@ def update_config(
 
 
 # ── Health check ─────────────────────────────────────────────────
+
 
 def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
     """Probe a backend health endpoint. Returns status dict.
@@ -661,9 +675,7 @@ def _check_all_backends(
             pass
 
     # Check for local Docker backend
-    if (target_dir / "docker-compose.yml").is_file() or (
-        target_dir / "docker-compose.yaml"
-    ).is_file():
+    if (target_dir / "docker-compose.yml").is_file() or (target_dir / "docker-compose.yaml").is_file():
         local_url = "http://localhost:8000"
         if local_url not in urls:
             urls.insert(0, local_url)
@@ -675,6 +687,7 @@ def _check_all_backends(
         return [_check_backend_health(urls[0])]
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     with ThreadPoolExecutor(max_workers=min(len(urls), 4)) as pool:
         futures = {pool.submit(_check_backend_health, url): url for url in urls}
         for future in as_completed(futures, timeout=10):
@@ -691,6 +704,7 @@ def _check_all_backends(
 
 # ── MCP server restart ───────────────────────────────────────────
 
+
 def _is_process_alive(pid: int) -> bool:
     """Check if a process with the given PID is running. Cross-platform.
 
@@ -703,6 +717,7 @@ def _is_process_alive(pid: int) -> bool:
     if sys.platform == "win32":
         try:
             import ctypes
+
             SYNCHRONIZE = 0x00100000
             handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, 0, pid)  # type: ignore[union-attr]
             if handle == 0:
@@ -793,10 +808,12 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
 def _iso_now() -> str:
     """Return current UTC timestamp in ISO 8601 format."""
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).isoformat()
 
 
 # ── Banners ──────────────────────────────────────────────────────────
+
 
 def show_banner(ui: UI) -> None:
     """Display the installer header banner."""
@@ -905,6 +922,7 @@ def show_success_banner(
 
 # ── IDE detection and selection ──────────────────────────────────────
 
+
 def _detect_installed_clis() -> list[str]:
     """Detect which AI coding CLI binaries are on PATH."""
     detected = []
@@ -920,6 +938,7 @@ def _detect_installed_clis() -> list[str]:
 def _detect_project_ides(project_dir: str) -> list[str]:
     """Detect which IDE configs exist in the project."""
     import os as _os
+
     detected = []
     if _os.path.isdir(_os.path.join(project_dir, ".claude")):
         detected.append("claude-code")
@@ -989,6 +1008,7 @@ def _prompt_ide_selection(detected_clis: list[str], detected_ides: list[str]) ->
 
 # ── Find trw-mcp command ─────────────────────────────────────────────
 
+
 def find_trw_cmd(python: str) -> list[str]:
     """Return the command list for invoking trw-mcp CLI."""
     if shutil.which("trw-mcp"):
@@ -997,6 +1017,7 @@ def find_trw_cmd(python: str) -> list[str]:
 
 
 # ── Installation phases ──────────────────────────────────────────────
+
 
 def phase_extract_wheels(ui: UI, step: int, total: int, tmpdir: Path) -> tuple[Path, Path]:
     """Phase 2: Extract embedded wheel files."""
@@ -1107,7 +1128,8 @@ def phase_install_packages(
     for mod in ("trw_memory", "trw_mcp"):
         rc = subprocess.run(
             [python, "-c", f"import {mod}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         ).returncode
         if rc != 0:
             ui.step_fail(f"{mod} not importable after install")
@@ -1211,6 +1233,11 @@ def phase_project_setup(
     ok = run_with_progress(ui, f"{label} project...", cmd)
     ui.stop_spinner(ok, f"Project {'updated' if is_update else 'initialized'}", f"Project {action} failed")
 
+    # Generate per-client instruction files after project setup
+    # (FR01, FR02, FR03: Split AGENTS.md into per-client instruction files)
+    if resolved_ide in ("all", "opencode", "codex"):
+        _generate_per_client_instructions(ui, target_dir, resolved_ide, is_update)
+
 
 def phase_configure(
     ui: UI,
@@ -1302,7 +1329,10 @@ def phase_configure(
     # Write to config (including feature flags for future reinstall detection)
     config_path = target_dir / ".trw" / "config.yaml"
     if update_config(
-        config_path, project_name, api_key, telemetry_enabled,
+        config_path,
+        project_name,
+        api_key,
+        telemetry_enabled,
         embeddings_enabled=install_ai or None,
         sqlite_vec_enabled=install_vec or None,
     ):
@@ -1389,7 +1419,8 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
         body = _json.dumps({"client_id": "trw-cli"}).encode("utf-8")
         req = urllib.request.Request(
             f"{api_url}/v1/auth/device/code",
-            data=body, method="POST",
+            data=body,
+            method="POST",
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1436,14 +1467,17 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
     while _time.monotonic() < deadline:
         _time.sleep(poll_interval)
         try:
-            body = _json.dumps({
-                "client_id": "trw-cli",
-                "device_code": device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            }).encode("utf-8")
+            body = _json.dumps(
+                {
+                    "client_id": "trw-cli",
+                    "device_code": device_code,
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                }
+            ).encode("utf-8")
             req = urllib.request.Request(
                 f"{api_url}/v1/auth/device/token",
-                data=body, method="POST",
+                data=body,
+                method="POST",
                 headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1471,7 +1505,50 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
     return None
 
 
+# ── Per-client instruction file generation ────────────────────────────
+
+
+def _generate_per_client_instructions(ui: UI, target_dir: Path, ide_selection: str, is_update: bool) -> None:
+    """Generate per-client instruction files for selected IDEs.
+
+    Calls the TRW bootstrap functions to generate INSTRUCTIONS.md files
+    optimized for each selected IDE's model family (qwen, gpt, claude).
+
+    FR01, FR02, FR03: Split AGENTS.md into per-client instruction files
+    FR06, FR07: Wire per-client instruction generation into installer
+    """
+    import subprocess
+
+    trw_cmd = ["trw-mcp", "update-project", str(target_dir)]
+
+    if ide_selection == "all":
+        # Generate for all supported IDEs
+        trw_cmd.extend(["--ide", "all"])
+    else:
+        trw_cmd.extend(["--ide", ide_selection])
+
+    try:
+        result = subprocess.run(
+            trw_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            if is_update:
+                ui.step_ok("Per-client instruction files updated")
+            else:
+                ui.step_ok("Per-client instruction files generated")
+        else:
+            ui.step_warn("Instruction file generation encountered warnings")
+    except subprocess.TimeoutExpired:
+        ui.step_warn("Instruction file generation timed out (may still be running)")
+    except Exception as exc:
+        ui.step_warn(f"Failed to generate per-client instruction files: {exc}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -1493,7 +1570,9 @@ def main() -> None:
     parser.add_argument("--upgrade", action="store_true", help="Upgrade package only")
     parser.add_argument("--ai", dest="install_ai", action="store_true", default=None, help="Install AI/LLM extras")
     parser.add_argument("--no-ai", dest="install_ai", action="store_false", help="Skip AI extras")
-    parser.add_argument("--sqlite-vec", dest="install_vec", action="store_true", default=None, help="Install sqlite-vec")
+    parser.add_argument(
+        "--sqlite-vec", dest="install_vec", action="store_true", default=None, help="Install sqlite-vec"
+    )
     parser.add_argument("--no-sqlite-vec", dest="install_vec", action="store_false", help="Skip sqlite-vec")
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     parser.add_argument("--script", action="store_true", help="Force non-interactive mode")
@@ -1564,7 +1643,10 @@ def main() -> None:
     # Feature selection (interactive: prompt now; script: already resolved)
     if interactive:
         install_ai, install_vec = phase_prompt_features(
-            ui, install_ai, install_vec, prior_extras=prior_extras,
+            ui,
+            install_ai,
+            install_vec,
+            prior_extras=prior_extras,
         )
 
     install_ai = bool(install_ai)
@@ -1597,13 +1679,23 @@ def main() -> None:
         if has_extras:
             step += 1
             features = phase_install_extras(
-                ui, step, total, python, install_ai, install_vec,
+                ui,
+                step,
+                total,
+                python,
+                install_ai,
+                install_vec,
             )
 
         # Step N: Project setup
         step += 1
         phase_project_setup(
-            ui, step, total, python, target_dir, args.upgrade,
+            ui,
+            step,
+            total,
+            python,
+            target_dir,
+            args.upgrade,
             interactive=interactive,
             ide=args.ide,
         )
@@ -1613,8 +1705,14 @@ def main() -> None:
         if has_config:
             step += 1
             platform_status = phase_configure(
-                ui, step, total, target_dir, interactive,
-                args.name, args.api_key, args.telemetry,
+                ui,
+                step,
+                total,
+                target_dir,
+                interactive,
+                args.name,
+                args.api_key,
+                args.telemetry,
                 prior_config=prior_config,
                 install_ai=install_ai,
                 install_vec=install_vec,
@@ -1625,9 +1723,11 @@ def main() -> None:
         _restart_mcp_servers(target_dir, ui)
 
         backend_results: list[dict[str, object]] = []
-        if platform_status in ("connected", "telemetry") or (
-            target_dir / "docker-compose.yml"
-        ).is_file() or (target_dir / "docker-compose.yaml").is_file():
+        if (
+            platform_status in ("connected", "telemetry")
+            or (target_dir / "docker-compose.yml").is_file()
+            or (target_dir / "docker-compose.yaml").is_file()
+        ):
             if interactive:
                 ui.start_spinner("Checking backend connectivity...")
             backend_results = _check_all_backends(target_dir, prior_config)
@@ -1636,7 +1736,9 @@ def main() -> None:
 
         # Done!
         show_success_banner(
-            ui, platform_status, features,
+            ui,
+            platform_status,
+            features,
             is_reinstall=is_reinstall,
             backend_results=backend_results,
         )

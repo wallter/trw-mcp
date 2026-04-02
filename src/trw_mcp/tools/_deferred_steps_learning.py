@@ -214,3 +214,100 @@ def _do_auto_progress(run_dir: Path | None) -> AutoProgressStepResult:
 def _step_auto_progress(resolved_run: Path | None) -> AutoProgressStepResult:
     """Step 5: Auto-progress PRD statuses."""
     return _do_auto_progress(resolved_run)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 84: Delivery metrics (PRD-CORE-104)
+# ---------------------------------------------------------------------------
+
+
+def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str, object]:
+    """Step 12: Compute delivery metrics — rework rate, composite outcome, reward.
+
+    PRD-CORE-104: Produces reward signals at deliver time by aggregating
+    rework_rate, composite_outcome, learning_exposure, and normalized_reward.
+
+    Fail-open: returns partial results if individual metrics fail.
+    """
+    result: dict[str, object] = {"status": "success"}
+
+    # Rework rate (PRD-CORE-103-FR04) — based on git modified files
+    try:
+        import subprocess
+
+        from trw_mcp.scoring.rework_rate import compute_rework_rate
+
+        project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
+        git_result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(project_root),
+        )
+        changed = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
+        rework = compute_rework_rate(changed, project_root=str(project_root))
+        result["rework_rate"] = rework
+    except Exception:  # justified: fail-open, individual metric failure
+        logger.debug("delivery_metric_rework_rate_failed", exc_info=True)
+        result["rework_rate"] = {"error": "computation_failed"}
+
+    # Composite outcome score (PRD-CORE-104-FR01)
+    try:
+        from trw_mcp.scoring._correlation import compute_composite_outcome
+
+        rework_val = 0.0
+        rw = result.get("rework_rate")
+        if isinstance(rw, dict) and "rework_rate" in rw:
+            rework_val = float(rw["rework_rate"])
+        composite = compute_composite_outcome(rework_rate=rework_val)
+        result["composite_outcome"] = composite
+    except Exception:  # justified: fail-open
+        logger.debug("delivery_metric_composite_outcome_failed", exc_info=True)
+        result["composite_outcome"] = {"error": "computation_failed"}
+
+    # Proximal reward detection (PRD-CORE-104-FR02) — from run events
+    try:
+        from trw_mcp.scoring.proximal_reward import detect_proximal_signals
+
+        events: list[dict[str, object]] = []
+        if resolved_run is not None:
+            events_path = resolved_run / "meta" / "events.jsonl"
+            if events_path.exists():
+                reader = FileStateReader()
+                events = reader.read_jsonl(events_path)
+        signals = detect_proximal_signals(events)
+        result["proximal_signals"] = [dict(s) for s in signals]
+    except Exception:  # justified: fail-open
+        logger.debug("delivery_metric_proximal_signals_failed", exc_info=True)
+        result["proximal_signals"] = []
+
+    # Learning exposure (recall pull rate from surface tracking)
+    try:
+        from trw_mcp.state.surface_tracking import compute_recall_pull_rate
+
+        pull_rate, nudge_count = compute_recall_pull_rate(trw_dir)
+        result["learning_exposure"] = {
+            "recall_pull_rate": round(pull_rate, 4),
+            "nudge_count": nudge_count,
+        }
+    except Exception:  # justified: fail-open
+        logger.debug("delivery_metric_learning_exposure_failed", exc_info=True)
+        result["learning_exposure"] = {"error": "computation_failed"}
+
+    # Normalized reward (sigmoid of composite outcome)
+    try:
+        from trw_mcp.scoring._correlation import sigmoid_normalize
+
+        composite_val = result.get("composite_outcome")
+        if isinstance(composite_val, dict) and "score" in composite_val:
+            raw_score = float(composite_val["score"])
+            result["normalized_reward"] = round(sigmoid_normalize(raw_score), 4)
+        elif isinstance(composite_val, (int, float)):
+            result["normalized_reward"] = round(sigmoid_normalize(float(composite_val)), 4)
+    except Exception:  # justified: fail-open
+        logger.debug("delivery_metric_normalized_reward_failed", exc_info=True)
+
+    logger.info(
+        "delivery_metrics_computed",
+        metrics=list(k for k in result if k != "status"),
+    )
+    return result

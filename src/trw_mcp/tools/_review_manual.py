@@ -192,11 +192,14 @@ def _extract_fr_mismatches(
 def _count_frs_in_prd(prd_path: Path) -> int:
     """Count FR entries in a PRD file."""
     try:
-        content = prd_path.read_text(encoding="utf-8")
+        return len(
+            re.findall(
+                r"(?:^|\n)(?:###?\s*)?FR\d+",
+                _extract_section(prd_path.read_text(encoding="utf-8"), "Functional Requirements"),
+            )
+        )
     except OSError:
         return 0
-    section = _extract_section(content, "Functional Requirements")
-    return len(re.findall(r"(?:^|\n)(?:###?\s*)?FR\d+", section))
 
 
 def handle_reconcile_mode(

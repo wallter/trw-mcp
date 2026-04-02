@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
 
-
 # ---------------------------------------------------------------------------
 # detect_client_profile — env var signals
 # ---------------------------------------------------------------------------

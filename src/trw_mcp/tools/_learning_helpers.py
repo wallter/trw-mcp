@@ -16,7 +16,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import structlog
 
@@ -27,12 +27,45 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
+# Re-export from canonical source for backward compatibility
+from trw_mcp.state._constants import VALID_SOURCES as _VALID_SOURCES
+
+
+def _validate_source_type(source_type: str) -> Literal["human", "agent", "tool", "consolidated"]:
+    """Validate and coerce source_type to Literal type.
+
+    For backward compatibility, unknown values are coerced to 'agent'.
+    """
+    if source_type not in _VALID_SOURCES:
+        logger.debug("unknown_source_coerced", source_type=source_type)
+        return "agent"
+    return cast("Literal['human', 'agent', 'tool', 'consolidated']", source_type)
+
+
+def truncate_nudge_line(text: str, max_length: int = 80) -> str:
+    """Truncate a nudge line to max_length chars, preferring word boundaries.
+
+    Args:
+        text: The text to truncate.
+        max_length: Maximum length (default 80).
+
+    Returns:
+        Truncated text with ellipsis at a word boundary, or hard-cut at max_length.
+    """
+    if len(text) <= max_length:
+        return text
+    boundary_start = max(max_length - 20, 0)
+    for i in range(boundary_start, max_length):
+        if text[i] == " ":
+            return text[:i] + "\u2026"
+    return text[:max_length]
+
 
 @dataclass(slots=True)
 class LearningParams:
     """Bundle of per-entry fields passed to check_and_handle_dedup.
 
-    Groups the nine caller-supplied fields so the helper signature stays
+    Groups the caller-supplied fields so the helper signature stays
     narrow (5 params) regardless of how many entry attributes exist.
     """
 
@@ -48,6 +81,17 @@ class LearningParams:
     model_id: str = ""
     shard_id: str | None = None
     assertions: list[dict[str, str]] | None = None
+    # PRD-CORE-110: Typed learning fields
+    type: str = "pattern"
+    nudge_line: str = ""
+    expires: str = ""
+    confidence: str = "unverified"
+    task_type: str = ""
+    domain: list[str] | None = None
+    phase_origin: str = ""
+    phase_affinity: list[str] | None = None
+    team_origin: str = ""
+    protection_tier: str = "normal"
 
 
 # PRD-FIX-061-FR01: Canonical definition moved to state/analytics/core.py.
@@ -130,7 +174,9 @@ def check_soft_cap(
                 )
                 return round(adjusted, 4), warning
     except (OSError, RuntimeError, ValueError, TypeError):
-        logger.debug("distribution_check_skipped", exc_info=True)  # justified: fail-open, must not block learning recording
+        logger.debug(
+            "distribution_check_skipped", exc_info=True
+        )  # justified: fail-open, must not block learning recording
 
     return impact, None
 
@@ -208,7 +254,7 @@ def check_and_handle_dedup(
                             evidence=params.evidence,
                             impact=params.impact,
                             shard_id=params.shard_id,
-                            source_type=params.source_type,
+                            source_type=_validate_source_type(params.source_type),
                             source_identity=params.source_identity,
                             client_profile=params.client_profile,
                             model_id=params.model_id,
@@ -295,6 +341,8 @@ def enforce_distribution(
                 f"IDs: {[d[0] for d in demotions]}"
             )
     except (OSError, RuntimeError, ValueError, TypeError):
-        logger.debug("distribution_enforcement_skipped", exc_info=True)  # justified: fail-open, must not block learning recording
+        logger.debug(
+            "distribution_enforcement_skipped", exc_info=True
+        )  # justified: fail-open, must not block learning recording
 
     return distribution_warning, demoted_ids

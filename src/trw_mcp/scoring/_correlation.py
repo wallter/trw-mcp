@@ -617,13 +617,52 @@ def process_outcome_for_event(
         return []
 
 
+def compute_composite_outcome(
+    *,
+    rework_rate: float = 0.0,
+    p0_defect_count: int = 0,
+    velocity_tasks: float = 0.0,
+    learning_rate: float = 0.0,
+    weight_rework: float = -2.0,
+    weight_p0_defects: float = -1.5,
+    weight_velocity: float = 0.5,
+    weight_learning_rate: float = 0.3,
+) -> float:
+    """Compute composite outcome score respecting TRW value hierarchy.
+
+    Formula: w_rework * rework + w_p0 * p0_count + w_velocity * velocity + w_lr * learning_rate
+    Quality penalties outweigh velocity rewards (Truthfulness > Quality > Velocity).
+
+    PRD-CORE-104-FR02.
+    """
+    return (
+        weight_rework * rework_rate
+        + weight_p0_defects * p0_defect_count
+        + weight_velocity * velocity_tasks
+        + weight_learning_rate * learning_rate
+    )
+
+
+def sigmoid_normalize(score: float, steepness: float = 1.0) -> float:
+    """Map composite outcome score to [0, 1] via sigmoid.
+
+    sigmoid(0) = 0.5, negative -> <0.5, positive -> >0.5.
+    PRD-CORE-104-FR05.
+    """
+    import math
+
+    return 1.0 / (1.0 + math.exp(-steepness * score))
+
+
 __all__ = [
     "EVENT_ALIASES",
     "REWARD_MAP",
     "_find_session_start_ts",
     "_resolve_event_reward",
+    "compute_composite_outcome",
     "compute_initial_q_value",
     "correlate_recalls",
     "process_outcome",
     "process_outcome_for_event",
+    "sigmoid_normalize",
 ]

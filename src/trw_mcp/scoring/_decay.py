@@ -58,18 +58,37 @@ def _days_since_access(
     return fallback_days
 
 
+# Type-aware decay half-lives (PRD-CORE-102)
+_TYPE_HALF_LIFE: dict[str, float] = {
+    "incident": 90.0,       # Incidents stay relevant longer (postmortem knowledge)
+    "convention": 365.0,    # Conventions are near-permanent
+    "pattern": 30.0,        # Patterns decay at moderate rate
+    "hypothesis": 7.0,      # Hypotheses should be validated quickly
+    "workaround": 14.0,     # Workarounds are temporary by nature
+}
+
+
+def _type_half_life(entry_type: str, cfg: TRWConfig) -> float:
+    """Get decay half-life based on learning type.
+
+    Falls back to config default for unrecognized types.
+    """
+    return _TYPE_HALF_LIFE.get(entry_type, cfg.learning_decay_half_life_days)
+
+
 def _entry_utility(
     entry: dict[str, object],
     today: date,
     fallback_days: int | None = None,
 ) -> float:
-    """Compute utility score for a learning entry using config defaults.
+    """Compute utility score with type-aware decay curves.
 
     Extracts scoring fields from the entry dict and delegates to
     compute_utility_score with TRWConfig parameters.
 
     PRD-CORE-034: Applies time decay to base_impact before computing utility
     so that older learnings naturally sink in recall ranking results.
+    PRD-CORE-102: Uses type-aware half-life for more accurate decay.
     """
     q_value = safe_float(entry, "q_value", safe_float(entry, "impact", 0.5))
     base_impact = safe_float(entry, "impact", 0.5)
@@ -79,10 +98,26 @@ def _entry_utility(
     source_type = str(entry.get("source_type", "agent"))
     days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
 
-    # Double-decay fix (PRD-QUAL-032-FR03): apply_time_decay was removed here
-    # because compute_utility_score() already applies Ebbinghaus exponential
-    # decay internally via retention = exp(-decay_rate * days).
     cfg: TRWConfig = get_config()
+
+    # Type-aware half-life (PRD-CORE-102)
+    entry_type = str(entry.get("type", ""))
+    half_life = _type_half_life(entry_type, cfg)
+
+    # Unverified incidents don't decay (preserve postmortem knowledge until verified)
+    entry_confidence = str(entry.get("confidence", "unverified"))
+    if entry_type == "incident" and entry_confidence == "unverified":
+        half_life = 9999.0  # Effectively no decay
+
+    # Check expiry (PRD-CORE-110)
+    expires_str = str(entry.get("expires", ""))
+    if expires_str:
+        try:
+            expires_date = date.fromisoformat(expires_str.replace("Z", "+00:00"))
+            if today > expires_date:
+                return 0.01  # Expired → demote to very low utility
+        except ValueError:
+            pass  # Malformed expiry, ignore
 
     return compute_utility_score(
         q_value=q_value,
@@ -90,7 +125,7 @@ def _entry_utility(
         recurrence_count=recurrence,
         base_impact=base_impact,
         q_observations=q_observations,
-        half_life_days=cfg.learning_decay_half_life_days,
+        half_life_days=half_life,
         use_exponent=cfg.learning_decay_use_exponent,
         cold_start_threshold=cfg.q_cold_start_threshold,
         access_count=access_count,

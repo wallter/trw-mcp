@@ -143,7 +143,7 @@ def find_duplicated_blocks(
                 encoding="utf-8",
                 errors="replace",
             ).splitlines()
-        except OSError:
+        except OSError:  # justified: skip unreadable files
             continue
 
         # Build list of (original_line_num, normalized_content) for significant lines

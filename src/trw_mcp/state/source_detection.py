@@ -62,7 +62,7 @@ def detect_client_profile(*, cwd: str | Path | None = None) -> str:
         if (base / ".aider.conf.yml").is_file():
             logger.debug("client_detected_fs", client="aider")
             return "aider"
-    except OSError:
+    except OSError:  # justified: fail-open, filesystem errors don't break detection
         pass
 
     return ""
@@ -92,9 +92,10 @@ def _parse_opencode_model(cwd: str | Path | None = None) -> str:
         base = Path(cwd) if cwd else Path.cwd()
         for candidate in [base / ".opencode" / "opencode.json", base / "opencode.json"]:
             if candidate.is_file():
-                data = json.loads(candidate.read_text(encoding="utf-8"))
+                raw_text = candidate.read_text(encoding="utf-8")
+                data = json.loads(raw_text)
                 raw_model = data.get("model", "")
-                if raw_model and isinstance(raw_model, str):
+                if isinstance(raw_model, str) and raw_model:
                     # Strip provider prefix: "anthropic/claude-sonnet-4-6" -> "claude-sonnet-4-6"
                     return raw_model.split("/", 1)[-1] if "/" in raw_model else raw_model
     except (OSError, json.JSONDecodeError, TypeError):

@@ -511,3 +511,182 @@ def render_agent_teams_protocol() -> str:
         "| `trw-researcher` | sonnet | Codebase research, docs |\n"
         "\n"
     )
+
+
+def render_codex_instructions() -> str:
+    """Render instructions content for Codex .codex/INSTRUCTIONS.md.
+
+    Returns:
+        Markdown string for Codex-specific instructions.
+    """
+    return (
+        "# Codex TRW Instructions\n"
+        "\n"
+        "## Framework Reference\n"
+        "\n"
+        "Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines the "
+        "methodology your tools implement.\n"
+        "\n"
+        "## Codex Workflow\n"
+        "\n"
+        "1. **Start**: call `trw_session_start()` - loads all prior learnings\n"
+        "2. **Delegate**: Use Codex subagents for bounded research, implementation, and review work\n"
+        "3. **Verify**: Run tests after each change — fix failures before moving on\n"
+        "4. **Learn**: Call `trw_learn()` for reusable gotchas or patterns\n"
+        "5. **Finish**: call `trw_deliver()` - persists work for future sessions\n"
+        "\n"
+        "## Ceremony Protocol\n"
+        "\n"
+        "- `trw_checkpoint(message)` - saves progress so you can resume after context compaction\n"
+        "- `trw_learn(summary, detail)` - records discoveries for all future sessions\n"
+        "- `trw_deliver()` - persists everything in one call when done\n"
+        "\n"
+        "## Structured Output Conventions\n"
+        "\n"
+        "- Use structured output with typed Pydantic models when supported\n"
+        "- Prefer typed tool arguments over freeform JSON\n"
+        "- Validate outputs against schema before processing\n"
+        "\n"
+        "## Context Budget Guidance\n"
+        "\n"
+        "- Codex has 200K context budget\n"
+        "- Use `trw_checkpoint()` to compact context before major changes\n"
+        "- Leverage learnings store to reduce context for known patterns\n"
+        "\n"
+        "## Key Gotchas\n"
+        "\n"
+        "- **Context compaction**: Always checkpoint before context-heavy operations\n"
+        "- **Test coverage**: Codex responds better to test-first instructions\n"
+        "- **File navigation**: Be explicit about file paths\n"
+        "- **Delegation**: Use subagents for better outcomes than direct implementation\n"
+        "\n"
+    )
+
+
+def _load_prompting_guide(model_family: str) -> str:
+    """Load bundled model-family prompting guide from package data.
+
+    Args:
+        model_family: One of 'qwen', 'gpt', 'claude', or 'generic'.
+
+    Returns:
+        Content of the prompting guide, or empty string on failure.
+    """
+    from importlib.resources import files as pkg_files
+
+    filename = f"{model_family}.md"
+    try:
+        data_path = pkg_files("trw_mcp.data") / "prompting" / filename
+        return data_path.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError, TypeError):
+        return ""
+
+
+# Model-family display names and workflow headings.
+_FAMILY_META: dict[str, tuple[str, str]] = {
+    "qwen": ("Qwen-Coder-Next", "Qwen-Coder-Next Optimized Workflow"),
+    "gpt": ("GPT-5.4", "GPT-5.4 Optimized Workflow"),
+    "claude": ("Claude", "Claude Optimized Workflow"),
+    "generic": ("Generic", "General Model Workflow"),
+}
+
+# Concise model-specific notes (non-generic families only).
+_FAMILY_NOTES: dict[str, str] = {
+    "qwen": (
+        "### Qwen-Specific Notes\n"
+        "\n"
+        "- Qwen models work well with structured, explicit instructions\n"
+        "- Use `/think` tags for complex reasoning when supported\n"
+        "- Keep context concise — local models have smaller context windows\n"
+    ),
+    "gpt": (
+        "### GPT-Specific Notes\n"
+        "\n"
+        "- GPT excels at multi-step reasoning and task decomposition\n"
+        "- Leverage structured JSON output for typed results\n"
+        "- Optimize for test coverage with test-first instruction patterns\n"
+    ),
+    "claude": (
+        "### Claude-Specific Notes\n"
+        "\n"
+        "- Claude excels at file navigation and codebase understanding\n"
+        "- Leverage Agent Teams for multi-file coordination\n"
+        "- Use extended thinking for complex architectural decisions\n"
+    ),
+}
+
+
+def render_opencode_instructions(model_family: str) -> str:
+    """Render instructions content for OpenCode .opencode/INSTRUCTIONS.md.
+
+    Model-family specific content to optimize instructions for Qwen, GPT, or Claude.
+
+    Args:
+        model_family: One of 'qwen', 'gpt', 'claude', or 'generic'.
+
+    Returns:
+        Markdown string for OpenCode-specific instructions.
+    """
+    family_name, workflow_title = _FAMILY_META.get(
+        model_family, _FAMILY_META["generic"]
+    )
+    prompting_content = _load_prompting_guide(model_family)
+    include_checkpoint = model_family != "generic"
+
+    parts: list[str] = [
+        f"# {family_name} TRW Instructions\n",
+        "\n",
+        "## Framework Reference\n",
+        "\n",
+        "Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines the "
+        "methodology your tools implement.\n",
+        "\n",
+        f"## {workflow_title}\n",
+        "\n",
+        "1. **Start**: call `trw_session_start()` — loads all prior learnings\n",
+        "2. **Delegate**: Use focused subagents for bounded tasks\n",
+        "3. **Verify**: Run tests after each change — fix failures before moving on\n",
+        "4. **Learn**: Call `trw_learn()` for reusable gotchas or patterns\n",
+        "5. **Finish**: call `trw_deliver()` — persists work for future sessions\n",
+        "\n",
+    ]
+
+    # Ceremony tools — checkpoint only for non-generic families.
+    if include_checkpoint:
+        parts.extend([
+            "## Ceremony Protocol\n",
+            "\n",
+            "- `trw_checkpoint(message)` — saves progress so you can resume after context compaction\n",
+            "- `trw_learn(summary, detail)` — records discoveries for all future sessions\n",
+            "- `trw_deliver()` — persists everything in one call when done\n",
+            "\n",
+        ])
+
+    parts.extend([
+        "## Structured Output Conventions\n",
+        "\n",
+        "- Use structured output with typed Pydantic models\n",
+        "- Prefer typed tool arguments over freeform JSON\n",
+        "- Validate outputs against schema before processing\n",
+        "\n",
+        "## Context Budget Guidance\n",
+        "\n",
+        "- OpenCode has 200K context budget for cloud models, 128K for local models\n",
+        "- Leverage learnings store to reduce context for known patterns\n",
+        "\n",
+    ])
+
+    # Model-specific notes section (non-generic only).
+    if model_family in _FAMILY_NOTES:
+        parts.extend([_FAMILY_NOTES[model_family], "\n"])
+
+    # Embedded prompting guide from bundled data.
+    if prompting_content:
+        parts.extend([
+            "## Model-Specific Prompting Guide\n",
+            "\n",
+            prompting_content,
+            "\n",
+        ])
+
+    return "".join(parts)

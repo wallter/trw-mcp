@@ -39,14 +39,14 @@ def _determine_write_targets(
     config: TRWConfig,
     project_root: Path,
     scope: str,
-) -> tuple[bool, bool]:
+) -> tuple[bool, bool, str | None]:
     """Determine whether to write CLAUDE.md and/or AGENTS.md based on client param.
 
     For known clients, delegates to the ClientProfile.write_targets model
     (single source of truth). The 'auto' and 'all' cases require runtime
     logic beyond what a static profile can express.
 
-    Returns (write_claude, write_agents).
+    Returns (write_claude, write_agents, instruction_path).
     """
     from trw_mcp.models.config._profiles import resolve_client_profile
 
@@ -56,17 +56,26 @@ def _determine_write_targets(
         ides = detect_ide(project_root)
         # cursor-only projects still benefit from CLAUDE.md content
         write_claude = "claude-code" in ides or not ides or (ides == ["cursor"])
-        write_agents = any(ide in ides for ide in ("opencode", "codex")) and config.agents_md_enabled and scope == "root"
+        write_agents = (
+            any(ide in ides for ide in ("opencode", "codex")) and config.agents_md_enabled and scope == "root"
+        )
+        if write_agents:
+            profile = resolve_client_profile(ides[0])
+            return write_claude, write_agents, profile.write_targets.instruction_path
+        return write_claude, write_agents, None
     elif client == "all":
         write_claude = True
         write_agents = config.agents_md_enabled and scope == "root"
+        if write_agents:
+            profile = resolve_client_profile("opencode")
+            return write_claude, write_agents, profile.write_targets.instruction_path
+        return write_claude, write_agents, None
     else:
         # Delegate to profile write_targets — single source of truth
         profile = resolve_client_profile(client)
         write_claude = profile.write_targets.claude_md
         write_agents = profile.write_targets.agents_md
-
-    return write_claude, write_agents
+        return write_claude, write_agents, profile.write_targets.instruction_path
 
 
 def _inject_learnings_to_agents(
@@ -159,3 +168,90 @@ def _sync_agents_md_if_needed(
         )
     merge_trw_section(agents_target, agents_section, config.max_auto_lines)
     return True, str(agents_target)
+
+
+def _migrate_trw_content_from_agents_md(
+    target_dir: Path,
+    config: TRWConfig,
+    *,
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Migrate TRW auto-generated content from AGENTS.md to per-client INSTRUCTIONS.md files.
+
+    For existing projects that have TRW content in AGENTS.md, this function:
+    1. Detects if AGENTS.md has TRW markers
+    2. Extracts the TRW section content
+    3. Creates .opencode/INSTRUCTIONS.md or .codex/INSTRUCTIONS.md as appropriate
+    4. Updates AGENTS.md to reference the new per-client instruction file
+
+    Args:
+        target_dir: Project root directory.
+        config: TRW configuration.
+        force: If True, overwrite existing per-client instructions.
+
+    Returns (migrated, instructions_path).
+    """
+    from trw_mcp.bootstrap._opencode import (
+        detect_model_family,
+        generate_codex_instructions,
+        generate_opencode_instructions,
+    )
+    from trw_mcp.bootstrap._utils import detect_ide
+
+    agents_path = target_dir / "AGENTS.md"
+
+    if not agents_path.exists():
+        return False, ""
+
+    content = agents_path.read_text(encoding="utf-8")
+    start_idx = content.find(TRW_MARKER_START)
+    end_idx = content.find(TRW_MARKER_END)
+
+    if start_idx == -1 or end_idx == -1:
+        return False, ""
+
+    trw_content = content[start_idx : end_idx + len(TRW_MARKER_END)]
+
+    opencode_json_path = target_dir / "opencode.json"
+    model_family = "generic"
+    if opencode_json_path.exists():
+        try:
+            import json
+
+            opencode_data = json.loads(opencode_json_path.read_text(encoding="utf-8"))
+            model_family = detect_model_family(opencode_data)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    detected_ides = detect_ide(target_dir)
+
+    instructions_path = None
+
+    if "opencode" in detected_ides:
+        result = generate_opencode_instructions(target_dir, model_family, force=force)
+        if "created" in result or "updated" in result:
+            instructions_path = str((target_dir / ".opencode" / "INSTRUCTIONS.md").relative_to(target_dir))
+        if result.get("errors"):
+            logger.warning("opencode_instructions_migration_failed", errors=result["errors"])
+            return False, ""
+    elif "codex" in detected_ides:
+        result = generate_codex_instructions(target_dir, force=force)
+        if "created" in result or "updated" in result:
+            instructions_path = str((target_dir / ".codex" / "INSTRUCTIONS.md").relative_to(target_dir))
+        if result.get("errors"):
+            logger.warning("codex_instructions_migration_failed", errors=result["errors"])
+            return False, ""
+    else:
+        return False, ""
+
+    if instructions_path:
+        remaining_content = content[:start_idx] + content[end_idx + len(TRW_MARKER_END) :]
+        try:
+            agents_path.write_text(remaining_content, encoding="utf-8")
+        except OSError as exc:
+            logger.warning("agents_md_trw_section_removal_failed", error=str(exc))
+            return False, ""
+
+        return True, instructions_path
+
+    return False, ""
