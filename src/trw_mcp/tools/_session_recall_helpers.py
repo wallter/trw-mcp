@@ -117,7 +117,7 @@ def append_ceremony_nudge(
 
                             record_nudge_shown(effective_dir, sel_id, state.phase)
                         except Exception:  # justified: fail-open
-                            logger.debug("nudge_dedup_record_failed", exc_info=True)
+                            logger.warning("nudge_dedup_record_failed", exc_info=True)
 
                         # Surface logging for nudge channel (PRD-CORE-103-FR01)
                         try:
@@ -130,7 +130,7 @@ def append_ceremony_nudge(
                                 phase=state.phase,
                             )
                         except Exception:  # justified: fail-open
-                            logger.debug("nudge_surface_log_failed", exc_info=True)
+                            logger.warning("nudge_surface_log_failed", exc_info=True)
 
                         # Propensity logging (PRD-CORE-103-FR03)
                         try:
@@ -145,9 +145,9 @@ def append_ceremony_nudge(
                                 exploration=is_fallback,
                             )
                         except Exception:  # justified: fail-open
-                            logger.debug("nudge_propensity_log_failed", exc_info=True)
+                            logger.warning("nudge_propensity_log_failed", exc_info=True)
             except Exception:  # justified: fail-open
-                logger.debug("learning_nudge_selection_failed", exc_info=True)
+                logger.warning("learning_nudge_selection_failed", exc_info=True)
 
         logger.debug(
             "append_ceremony_nudge",
@@ -363,7 +363,7 @@ def perform_session_recalls(
                 surface_type="session_start",
             )
     except Exception:  # justified: fail-open, surface logging must not block session start
-        logger.debug("session_start_surface_log_failed", exc_info=True)
+        logger.warning("session_start_surface_log_failed", exc_info=True)
 
     extra["total_available"] = len(learnings)
     logger.debug(

@@ -71,7 +71,7 @@ class TestLearnBehavior:
         tools = _get_tools()
         result = _seed_learning(tools)
         assert result["learning_id"].startswith("L-")
-        assert len(result["learning_id"]) == 10  # L- + 8 hex chars
+        assert len(result["learning_id"]) == 6  # L- + 4 base62 chars (PRD-CORE-110)
 
     def test_learn_creates_yaml_file(self, tmp_path: Path) -> None:
         tools = _get_tools()
