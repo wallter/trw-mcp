@@ -1,0 +1,22 @@
+version: 1
+skills:
+  trw-deliver:
+    disposition: portable
+    source: variant
+    reason: OpenCode-safe delivery workflow without TaskList or CLAUDE-only references
+  trw-prd-ready:
+    disposition: portable
+    source: variant
+    reason: OpenCode-safe PRD pipeline without subagent assumptions
+  trw-framework-check:
+    disposition: portable
+    source: variant
+    reason: Read-only compliance check is directly portable
+  trw-test-strategy:
+    disposition: portable
+    source: variant
+    reason: Read-only coverage audit is directly portable
+  trw-sprint-team:
+    disposition: exclude
+    source: shared
+    reason: Depends on explicit team spawning and approval loops that OpenCode does not guarantee

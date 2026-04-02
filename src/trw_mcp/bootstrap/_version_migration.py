@@ -128,9 +128,15 @@ def _read_manifest(target_dir: Path) -> dict[str, object] | None:
                 "skills",
                 "agents",
                 "hooks",
+                "opencode_commands",
+                "opencode_agents",
+                "opencode_skills",
                 "custom_skills",
                 "custom_agents",
                 "custom_hooks",
+                "custom_opencode_commands",
+                "custom_opencode_agents",
+                "custom_opencode_skills",
             )
         }
         raw_version = data.get("version", 1)
@@ -178,6 +184,27 @@ def _compute_content_hashes(
                 ).hexdigest()
         except OSError:
             logger.warning("content_hash_failed", path=str(path))
+    for name in bundled.get("opencode_commands", []):
+        path = target_dir / ".opencode" / "commands" / name
+        try:
+            if path.is_file():
+                hashes[f".opencode/commands/{name}"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            logger.warning("content_hash_failed", path=str(path))
+    for name in bundled.get("opencode_agents", []):
+        path = target_dir / ".opencode" / "agents" / name
+        try:
+            if path.is_file():
+                hashes[f".opencode/agents/{name}"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            logger.warning("content_hash_failed", path=str(path))
+    for name in bundled.get("opencode_skills", []):
+        path = target_dir / ".opencode" / "skills" / name / "SKILL.md"
+        try:
+            if path.is_file():
+                hashes[f".opencode/skills/{name}/SKILL.md"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            logger.warning("content_hash_failed", path=str(path))
     return hashes
 
 
@@ -208,10 +235,16 @@ def _write_manifest(
         "skills": bundled["skills"],
         "agents": bundled["agents"],
         "hooks": bundled["hooks"],
+        "opencode_commands": [n for n in bundled.get("opencode_commands", []) if (target_dir / ".opencode" / "commands" / n).is_file()],
+        "opencode_agents": [n for n in bundled.get("opencode_agents", []) if (target_dir / ".opencode" / "agents" / n).is_file()],
+        "opencode_skills": [n for n in bundled.get("opencode_skills", []) if (target_dir / ".opencode" / "skills" / n).is_dir()],
         "content_hashes": content_hashes,
         "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
         "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],
         "custom_hooks": custom["hooks"],
+        "custom_opencode_commands": custom.get("opencode_commands", []),
+        "custom_opencode_agents": custom.get("opencode_agents", []),
+        "custom_opencode_skills": custom.get("opencode_skills", []),
     }
     manifest_path = target_dir / ".trw" / _MANIFEST_FILE
     try:
@@ -450,6 +483,9 @@ def _remove_stale_artifacts(
     bundled_skills = set(bundled["skills"])
     bundled_agents = set(bundled["agents"])
     bundled_hooks = set(bundled["hooks"])
+    bundled_opencode_commands = set(bundled.get("opencode_commands", []))
+    bundled_opencode_agents = set(bundled.get("opencode_agents", []))
+    bundled_opencode_skills = set(bundled.get("opencode_skills", []))
 
     if prev_manifest is None:
         # First run with manifest support -- write manifest, skip cleanup
@@ -466,6 +502,12 @@ def _remove_stale_artifacts(
     prev_custom_skills = _manifest_set("custom_skills")
     prev_custom_agents = _manifest_set("custom_agents")
     prev_custom_hooks = _manifest_set("custom_hooks")
+    prev_opencode_commands = _manifest_set("opencode_commands")
+    prev_opencode_agents = _manifest_set("opencode_agents")
+    prev_opencode_skills = _manifest_set("opencode_skills")
+    prev_custom_opencode_commands = _manifest_set("custom_opencode_commands")
+    prev_custom_opencode_agents = _manifest_set("custom_opencode_agents")
+    prev_custom_opencode_skills = _manifest_set("custom_opencode_skills")
 
     # Remove stale artifacts per category
     # Defense-in-depth: only remove trw-prefixed items to protect custom artifacts
@@ -494,6 +536,30 @@ def _remove_stale_artifacts(
         is_dir_artifact=False,
         log_event="stale_hook_removal_failed",
         valid_prefixes=None,
+    )
+    _remove_stale_set(
+        stale_names=prev_opencode_commands - bundled_opencode_commands,
+        target_dir=target_dir / ".opencode" / "commands",
+        prev_custom=prev_custom_opencode_commands,
+        result=result,
+        is_dir_artifact=False,
+        log_event="stale_opencode_command_removal_failed",
+    )
+    _remove_stale_set(
+        stale_names=prev_opencode_agents - bundled_opencode_agents,
+        target_dir=target_dir / ".opencode" / "agents",
+        prev_custom=prev_custom_opencode_agents,
+        result=result,
+        is_dir_artifact=False,
+        log_event="stale_opencode_agent_removal_failed",
+    )
+    _remove_stale_set(
+        stale_names=prev_opencode_skills - bundled_opencode_skills,
+        target_dir=target_dir / ".opencode" / "skills",
+        prev_custom=prev_custom_opencode_skills,
+        result=result,
+        is_dir_artifact=True,
+        log_event="stale_opencode_skill_removal_failed",
     )
 
     # Write updated manifest

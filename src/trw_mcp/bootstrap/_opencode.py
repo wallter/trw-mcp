@@ -6,6 +6,7 @@ FR16: opencode.json Smart Merge (PRD-CORE-074)
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -21,6 +22,7 @@ from trw_mcp.models.typed_dicts._opencode import (
     OpencodeServerEntry,
     OpencodeTemplateDict,
 )
+from ._utils import _DATA_DIR
 
 logger = structlog.get_logger(__name__)
 
@@ -33,6 +35,12 @@ _DEFAULT_PERMISSIONS: dict[str, str] = {
     "write": "ask",
     "edit": "ask",
 }
+
+_OPENCODE_DATA_DIR = _DATA_DIR / "opencode"
+_OPENCODE_COMMANDS_DIR = _OPENCODE_DATA_DIR / "commands"
+_OPENCODE_AGENTS_DIR = _OPENCODE_DATA_DIR / "agents"
+_OPENCODE_SKILLS_DIR = _OPENCODE_DATA_DIR / "skills"
+_OPENCODE_SKILLS_INVENTORY = _OPENCODE_DATA_DIR / "skills_inventory.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +107,161 @@ def _parse_jsonc(content: str) -> OpencodeConfig:
         i += 1
     stripped = "".join(result_parts)
     result: OpencodeConfig = json.loads(stripped)
+    return result
+
+
+def _new_result() -> dict[str, list[str]]:
+    return {"created": [], "updated": [], "preserved": [], "errors": []}
+
+
+def _is_user_modified(dest: Path, key: str, manifest_hashes: dict[str, str] | None) -> bool:
+    if not manifest_hashes or key not in manifest_hashes or not dest.is_file():
+        return False
+    try:
+        return manifest_hashes[key] != hashlib.sha256(dest.read_bytes()).hexdigest()
+    except OSError:
+        return False
+
+
+def _copy_file(
+    src: Path,
+    dest: Path,
+    rel_path: str,
+    result: dict[str, list[str]],
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+) -> None:
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        result["errors"].append(f"Failed to create directory {dest.parent}: {exc}")
+        return
+
+    if _is_user_modified(dest, rel_path, manifest_hashes):
+        result["preserved"].append(rel_path)
+        return
+
+    try:
+        existed = dest.exists()
+        if existed and not force:
+            if dest.read_text(encoding="utf-8") == src.read_text(encoding="utf-8"):
+                result["preserved"].append(rel_path)
+                return
+        shutil.copy2(src, dest)
+        result["updated" if existed else "created"].append(rel_path)
+    except OSError as exc:
+        result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+
+
+def _copy_markdown_dir(
+    source_dir: Path,
+    target_dir: Path,
+    rel_root: str,
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+) -> dict[str, list[str]]:
+    result = _new_result()
+    if not source_dir.is_dir():
+        return result
+
+    for src in sorted(source_dir.iterdir()):
+        if src.suffix != ".md":
+            continue
+        rel_path = f"{rel_root}/{src.name}"
+        _copy_file(src, target_dir / src.name, rel_path, result, force=force, manifest_hashes=manifest_hashes)
+    return result
+
+
+def load_opencode_skill_inventory(data_dir: Path | None = None) -> dict[str, dict[str, str]]:
+    """Load the OpenCode skill compatibility inventory."""
+    from ruamel.yaml import YAML
+
+    inventory_path = (data_dir or _OPENCODE_DATA_DIR) / "skills_inventory.yaml"
+    yaml = YAML(typ="safe")
+    data = yaml.load(inventory_path.read_text(encoding="utf-8")) or {}
+    raw_skills = data.get("skills", {})
+    if not isinstance(raw_skills, dict):
+        return {}
+    skills: dict[str, dict[str, str]] = {}
+    for name, config in raw_skills.items():
+        if isinstance(name, str) and isinstance(config, dict):
+            skills[name] = {str(k): str(v) for k, v in config.items()}
+    return skills
+
+
+def install_opencode_commands(
+    target_dir: Path,
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+) -> dict[str, list[str]]:
+    """Install bundled OpenCode native commands into ``.opencode/commands``."""
+    return _copy_markdown_dir(
+        _OPENCODE_COMMANDS_DIR,
+        target_dir / ".opencode" / "commands",
+        ".opencode/commands",
+        force=force,
+        manifest_hashes=manifest_hashes,
+    )
+
+
+def install_opencode_agents(
+    target_dir: Path,
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+) -> dict[str, list[str]]:
+    """Install bundled OpenCode specialist agents into ``.opencode/agents``."""
+    return _copy_markdown_dir(
+        _OPENCODE_AGENTS_DIR,
+        target_dir / ".opencode" / "agents",
+        ".opencode/agents",
+        force=force,
+        manifest_hashes=manifest_hashes,
+    )
+
+
+def install_opencode_skills(
+    target_dir: Path,
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+    data_dir: Path | None = None,
+) -> dict[str, list[str]]:
+    """Install the curated OpenCode skill subset into ``.opencode/skills``."""
+    result = _new_result()
+    base_dir = data_dir or _OPENCODE_DATA_DIR
+    inventory = load_opencode_skill_inventory(base_dir)
+    variant_root = base_dir / "skills"
+    dest_root = target_dir / ".opencode" / "skills"
+
+    for skill_name, cfg in sorted(inventory.items()):
+        if cfg.get("disposition") == "exclude":
+            continue
+        skill_dir = variant_root / skill_name
+        if not skill_dir.is_dir():
+            result["errors"].append(f"Missing OpenCode skill variant for {skill_name}")
+            continue
+        try:
+            dest_skill = dest_root / skill_name
+            dest_skill.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            result["errors"].append(f"Failed to create directory {dest_root / skill_name}: {exc}")
+            continue
+        for skill_file in sorted(skill_dir.iterdir()):
+            if not skill_file.is_file():
+                continue
+            rel_path = f".opencode/skills/{skill_name}/{skill_file.name}"
+            _copy_file(
+                skill_file,
+                dest_root / skill_name / skill_file.name,
+                rel_path,
+                result,
+                force=force,
+                manifest_hashes=manifest_hashes,
+            )
     return result
 
 

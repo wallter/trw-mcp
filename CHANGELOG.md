@@ -2,6 +2,28 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.39.0] — 2026-04-02
+
+### Added — OpenCode Native Commands, Agents, and Curated Skills
+
+- **Native OpenCode commands** — `init-project --ide opencode` and `update-project` now install `.opencode/commands/trw-deliver.md`, `.opencode/commands/trw-prd-ready.md`, and `.opencode/commands/trw-sprint-team.md`.
+- **Specialist OpenCode agents** — TRW now ships `.opencode/agents/trw-researcher.md`, `.opencode/agents/trw-reviewer.md`, and `.opencode/agents/trw-implementer.md` with role-appropriate permissions and explicit output contracts.
+- **Curated OpenCode skill subset** — reviewed OpenCode-safe skill variants now install into `.opencode/skills/` for `trw-deliver`, `trw-prd-ready`, `trw-framework-check`, and `trw-test-strategy`.
+- **Inventory-backed compatibility policy** — new `data/opencode/skills_inventory.yaml` defines the supported phase-1 skill subset and explicitly excludes `trw-sprint-team` from default OpenCode skill exposure.
+
+### Changed
+
+- **Managed artifact lifecycle extended** — OpenCode commands, agents, and curated skills now participate in the same manifest-driven create/update/preserve/stale-cleanup flow as other managed client assets.
+- **Update safety hardened** — `update-project` now preserves user-modified managed OpenCode artifacts by comparing against pre-update manifest hashes instead of clobbering local edits.
+- **OpenCode documentation expanded** — `docs/CLIENT-PROFILES.md` now documents the managed OpenCode artifact surface, lifecycle rules, and intentional exclusions.
+- **Bundle-sync coverage expanded** — `scripts/check-bundle-sync.sh` now validates the OpenCode skills inventory against bundled OpenCode variants.
+
+### Tests
+
+- Added OpenCode bootstrap coverage for command, agent, and curated-skill installation.
+- Added update-project regression tests for preserving user-modified OpenCode commands, agents, and skills.
+- Added stale-cleanup regression tests for removing manifest-tracked OpenCode commands, agents, and skills safely.
+
 ## [0.38.2] — 2026-04-02
 
 ### Fixed
