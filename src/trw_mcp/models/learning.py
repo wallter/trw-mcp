@@ -11,7 +11,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # PRD-CORE-001, PRD-CORE-004: Learning entry models with utility scoring
 
@@ -29,6 +29,38 @@ class LearningStatus(str, Enum):
     OBSOLETE = "obsolete"
 
 
+# PRD-CORE-110: Type classifications for learnings
+class LearningType(str, Enum):
+    """Type classification for learning entries (PRD-CORE-110)."""
+
+    INCIDENT = "incident"
+    PATTERN = "pattern"
+    CONVENTION = "convention"
+    HYPOTHESIS = "hypothesis"
+    WORKAROUND = "workaround"
+
+
+class LearningConfidence(str, Enum):
+    """Validation confidence level for learning entries (PRD-CORE-110)."""
+
+    UNVERIFIED = "unverified"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    VERIFIED = "verified"
+
+
+class LearningProtectionTier(str, Enum):
+    """Protection level for learning entries (PRD-CORE-110)."""
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
+    PROTECTED = "protected"
+    PERMANENT = "permanent"
+
+
 class LearningEntry(BaseModel):
     """Individual learning entry stored in .trw/learnings/entries/.
 
@@ -36,7 +68,7 @@ class LearningEntry(BaseModel):
     Impact scores drive CLAUDE.md promotion and pruning decisions.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, use_enum_values=True)
 
     id: str
     summary: str
@@ -93,6 +125,98 @@ class LearningEntry(BaseModel):
 
             data["q_value"] = compute_initial_q_value(float(impact))
         return data
+
+    # PRD-CORE-110: Typed learning fields
+    type: LearningType = Field(
+        default=LearningType.PATTERN,
+        description="Learning type classification.",
+    )
+    nudge_line: str = Field(
+        default="",
+        description="Compact nudge text for ceremony display (max 80 chars).",
+    )
+    expires: str = Field(
+        default="",
+        description="Expiration date/condition (ISO 8601 or free text).",
+    )
+    confidence: LearningConfidence = Field(
+        default=LearningConfidence.UNVERIFIED,
+        description="Validation confidence level.",
+    )
+    task_type: str = Field(
+        default="",
+        description="Task type identifier (e.g., 'bug-fix', 'feature').",
+    )
+    domain: list[str] = Field(
+        default_factory=list,
+        description="Domain tags (e.g., ['testing', 'security']).",
+    )
+    phase_origin: str = Field(
+        default="",
+        description="Framework phase when this learning was created.",
+    )
+    phase_affinity: list[str] = Field(
+        default_factory=list,
+        description="Phases where this learning is most relevant.",
+    )
+    team_origin: str = Field(
+        default="",
+        description="Team identifier that created this learning.",
+    )
+    protection_tier: LearningProtectionTier = Field(
+        default=LearningProtectionTier.NORMAL,
+        description="Protection level against pruning/archival.",
+    )
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _coerce_type(cls, v: object) -> LearningType:
+        """Coerce string/enum values to LearningType."""
+        if isinstance(v, LearningType):
+            return v
+        if isinstance(v, str):
+            try:
+                return LearningType(v)
+            except ValueError:
+                return LearningType.PATTERN
+        return LearningType.PATTERN
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, v: object) -> LearningConfidence:
+        """Coerce string/enum values to LearningConfidence."""
+        if isinstance(v, LearningConfidence):
+            return v
+        if isinstance(v, str):
+            try:
+                return LearningConfidence(v)
+            except ValueError:
+                return LearningConfidence.UNVERIFIED
+        return LearningConfidence.UNVERIFIED
+
+    @field_validator("protection_tier", mode="before")
+    @classmethod
+    def _coerce_protection_tier(cls, v: object) -> LearningProtectionTier:
+        """Coerce string/enum values to LearningProtectionTier."""
+        if isinstance(v, LearningProtectionTier):
+            return v
+        if isinstance(v, str):
+            try:
+                return LearningProtectionTier(v)
+            except ValueError:
+                return LearningProtectionTier.NORMAL
+        return LearningProtectionTier.NORMAL
+
+    @field_validator("nudge_line", mode="before")
+    @classmethod
+    def _truncate_nudge_line(cls, v: str) -> str:
+        """Truncate nudge_line to max 80 chars, preferring word boundaries."""
+        if not isinstance(v, str) or len(v) <= 80:
+            return v if isinstance(v, str) else ""
+        for i in range(60, 80):
+            if v[i] == " ":
+                return v[:i] + "\u2026"
+        return v[:80]
 
     # PRD-CORE-026: Source attribution for human vs agent learnings
     source_type: Literal["human", "agent", "tool", "consolidated"] = Field(

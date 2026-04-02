@@ -46,6 +46,9 @@ def append_ceremony_nudge(
     """Append ceremony nudge to a tool response dict.
 
     Reads ceremony state, computes nudge, adds it under 'ceremony_status' key.
+    Also wires nudge dedup (PRD-CORE-103-FR02), surface logging, and propensity
+    logging when a learning-backed nudge is present.
+
     Fail-open: if anything fails, returns response unchanged.
 
     Args:
@@ -78,6 +81,74 @@ def append_ceremony_nudge(
         if pending:
             with contextlib.suppress(Exception):
                 increment_nudge_count(effective_dir, pending)
+
+        # PRD-CORE-103-FR02: Learning-backed nudge with dedup + telemetry
+        # Embed a relevant learning tip in the nudge response when learnings exist
+        if available_learnings > 0 and config.effective_ceremony_mode != "light":
+            try:
+                from trw_mcp.state._nudge_rules import select_nudge_learning
+                from trw_mcp.state.memory_adapter import recall_learnings
+
+                candidates = recall_learnings(
+                    effective_dir,
+                    query="*",
+                    min_impact=0.5,
+                    max_results=10,
+                    compact=True,
+                )
+                selected, is_fallback = select_nudge_learning(state, candidates, state.phase)
+
+                if selected:
+                    sel_id = str(selected.get("id", ""))
+                    sel_summary = str(selected.get("summary", ""))[:80]
+
+                    # Append learning tip to ceremony_status
+                    if isinstance(nudge, str) and sel_summary:
+                        tip = f"\nTIP: {sel_summary}"
+                        if sel_id:
+                            tip += f" (id={sel_id})"
+                        nudge = nudge + tip
+                        response["ceremony_status"] = nudge
+
+                    if sel_id:
+                        # Record in nudge history for dedup
+                        try:
+                            from trw_mcp.state._nudge_state import record_nudge_shown
+
+                            record_nudge_shown(effective_dir, sel_id, state.phase)
+                        except Exception:  # justified: fail-open
+                            logger.debug("nudge_dedup_record_failed", exc_info=True)
+
+                        # Surface logging for nudge channel (PRD-CORE-103-FR01)
+                        try:
+                            from trw_mcp.state.surface_tracking import log_surface_event
+
+                            log_surface_event(
+                                effective_dir,
+                                learning_id=sel_id,
+                                surface_type="nudge",
+                                phase=state.phase,
+                            )
+                        except Exception:  # justified: fail-open
+                            logger.debug("nudge_surface_log_failed", exc_info=True)
+
+                        # Propensity logging (PRD-CORE-103-FR03)
+                        try:
+                            from trw_mcp.state.propensity_log import log_selection
+
+                            candidate_ids = [str(c.get("id", "")) for c in candidates if c.get("id")]
+                            log_selection(
+                                effective_dir,
+                                selected=sel_id,
+                                candidate_set=candidate_ids,
+                                context_phase=state.phase,
+                                exploration=is_fallback,
+                            )
+                        except Exception:  # justified: fail-open
+                            logger.debug("nudge_propensity_log_failed", exc_info=True)
+            except Exception:  # justified: fail-open
+                logger.debug("learning_nudge_selection_failed", exc_info=True)
+
         logger.debug(
             "append_ceremony_nudge",
             phase=state.phase,
@@ -280,6 +351,19 @@ def perform_session_recalls(
     matched_ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
     adapter_update_access(trw_dir, matched_ids)
     log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
+
+    # PRD-CORE-103-FR01: Surface logging for session_start channel
+    try:
+        from trw_mcp.state.surface_tracking import log_surface_event
+
+        for lid in matched_ids:
+            log_surface_event(
+                trw_dir,
+                learning_id=lid,
+                surface_type="session_start",
+            )
+    except Exception:  # justified: fail-open, surface logging must not block session start
+        logger.debug("session_start_surface_log_failed", exc_info=True)
 
     extra["total_available"] = len(learnings)
     logger.debug(

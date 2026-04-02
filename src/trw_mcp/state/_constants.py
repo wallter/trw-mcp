@@ -12,3 +12,6 @@ DEFAULT_LIST_LIMIT: int = 10_000
 
 # Default namespace for memory backend operations.
 DEFAULT_NAMESPACE: str = "default"
+
+# Valid source provenance values — aligned with trw_memory MemoryEntry._VALID_SOURCES.
+VALID_SOURCES: frozenset[str] = frozenset({"human", "agent", "tool", "consolidated"})

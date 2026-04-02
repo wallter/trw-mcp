@@ -8,6 +8,7 @@ remain effective without needing to know about this module.
 from __future__ import annotations
 
 import contextlib
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -16,10 +17,16 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.learning import (
+    LearningConfidence,
+    LearningProtectionTier,
+    LearningType,
+)
 from trw_mcp.models.typed_dicts import LearnResultDict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._learning_helpers import (
     LearningParams,
+    _validate_source_type,
     calibrate_impact,
     check_soft_cap,
     enforce_distribution,
@@ -80,7 +87,7 @@ def _handle_consolidation(
                     ref_id=ref_id,
                     compendium_id=learning_id,
                 )
-        except Exception:  # per-item error handling: skip failing obsolete-mark, continue with next ref  # noqa: PERF203
+        except Exception:  # per-item error handling: skip failing obsolete-mark, continue with next ref
             logger.warning(
                 "auto_obsolete_failed",
                 ref_id=ref_id,
@@ -106,6 +113,17 @@ def execute_learn(
     consolidated_from: list[str] | None = None,
     assertions: list[dict[str, str]] | None = None,
     is_solution_fn: Callable[[str], bool] | None = None,
+    # PRD-CORE-110: Typed learning fields
+    type: str = "pattern",
+    nudge_line: str = "",
+    expires: str = "",
+    confidence: str = "unverified",
+    task_type: str = "",
+    domain: list[str] | None = None,
+    phase_origin: str = "",
+    phase_affinity: list[str] | None = None,
+    team_origin: str = "",
+    protection_tier: str = "normal",
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_store: Any = None,
     _generate_learning_id: Any = None,
@@ -178,6 +196,25 @@ def execute_learn(
         except (ImportError, OSError, ValueError, TypeError):
             logger.debug("learning_migration_failed", exc_info=True)
 
+    # PRD-CORE-110: Auto-detect phase_origin if not explicitly provided
+    if not phase_origin:
+        try:
+            from trw_mcp.state._paths import detect_current_phase
+
+            detected = detect_current_phase()
+            if detected:
+                phase_origin = detected.upper()
+        except Exception:  # justified: fail-open
+            pass
+
+    # PRD-CORE-110: Auto-generate nudge_line from summary if not provided
+    from trw_mcp.tools._learning_helpers import truncate_nudge_line
+
+    if nudge_line:
+        nudge_line = truncate_nudge_line(nudge_line)
+    else:
+        nudge_line = truncate_nudge_line(summary)
+
     # PRD-FIX-052-FR05: Pattern tag auto-suggestion for solution summaries
     safe_tags = list(tags or [])
     _is_sol = is_solution_fn if callable(is_solution_fn) else _default_is_solution
@@ -216,6 +253,16 @@ def execute_learn(
             client_profile=client_profile,
             model_id=model_id,
             assertions=assertions,
+            type=type,
+            nudge_line=nudge_line,
+            expires=expires,
+            confidence=confidence,
+            task_type=task_type,
+            domain=domain,
+            phase_origin=phase_origin,
+            phase_affinity=phase_affinity,
+            team_origin=team_origin,
+            protection_tier=protection_tier,
         ),
         entries_dir,
         reader,
@@ -224,6 +271,30 @@ def execute_learn(
     )
     if dedup_result is not None:
         return cast("LearnResultDict", dedup_result)
+
+    # PRD-CORE-111: Generate code-grounded anchors from recently modified files
+    anchors: list[dict[str, object]] = []
+    try:
+        project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
+        git_result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=str(project_root),
+        )
+        if git_result.returncode == 0:
+            modified_rel = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
+            if modified_rel:
+                # Resolve relative paths against project root for file reading
+                modified_abs = [str(project_root / f) for f in modified_rel]
+                from trw_mcp.state.anchor_generation import generate_anchors
+
+                raw_anchors = generate_anchors(modified_abs, {})
+                if raw_anchors:
+                    anchors = [dict(a) for a in raw_anchors]
+    except Exception:  # justified: fail-open, anchor generation is best-effort
+        logger.debug("anchor_generation_skipped", exc_info=True)
 
     # Store via SQLite adapter (primary path)
     try:
@@ -241,6 +312,17 @@ def execute_learn(
             client_profile=client_profile,
             model_id=model_id,
             assertions=assertions,
+            type=type,
+            nudge_line=nudge_line,
+            expires=expires,
+            confidence=confidence,
+            task_type=task_type,
+            domain=domain,
+            phase_origin=phase_origin,
+            phase_affinity=phase_affinity,
+            team_origin=team_origin,
+            protection_tier=protection_tier,
+            anchors=anchors,
         )
     except Exception:  # justified: boundary, adapter may hit SQLite/network errors; fall through to YAML
         logger.warning(
@@ -267,6 +349,16 @@ def execute_learn(
         client_profile=client_profile,
         model_id=model_id,
         assertions=assertions,
+        type=type,
+        nudge_line=nudge_line,
+        expires=expires,
+        confidence=confidence,
+        task_type=task_type,
+        domain=domain,
+        phase_origin=phase_origin,
+        phase_affinity=phase_affinity,
+        team_origin=team_origin,
+        protection_tier=protection_tier,
     )
     entry_path = _save_yaml_backup(
         params,
@@ -279,7 +371,12 @@ def execute_learn(
 
     # Forced distribution enforcement (PRD-CORE-034)
     distribution_warning, _demoted_ids = enforce_distribution(
-        impact, calibrated_impact, learning_id, all_active, trw_dir, config,
+        impact,
+        calibrated_impact,
+        learning_id,
+        all_active,
+        trw_dir,
+        config,
     )
 
     logger.info(
@@ -347,11 +444,25 @@ def _save_yaml_backup(
             evidence=params.evidence,
             impact=params.impact,
             shard_id=params.shard_id,
-            source_type=params.source_type,
+            source_type=_validate_source_type(params.source_type),
             source_identity=params.source_identity,
             client_profile=params.client_profile,
             model_id=params.model_id,
             consolidated_from=consolidated_from or [],
+            type=LearningType(params.type) if isinstance(params.type, str) else params.type,
+            nudge_line=params.nudge_line,
+            expires=params.expires,
+            confidence=LearningConfidence(params.confidence)
+            if isinstance(params.confidence, str)
+            else params.confidence,
+            task_type=params.task_type,
+            domain=params.domain or [],
+            phase_origin=params.phase_origin,
+            phase_affinity=params.phase_affinity or [],
+            team_origin=params.team_origin,
+            protection_tier=LearningProtectionTier(params.protection_tier)
+            if isinstance(params.protection_tier, str)
+            else params.protection_tier,
         )
         entry_path: Path = Path(str(save_entry_fn(trw_dir, entry)))
         update_analytics_fn(trw_dir, 1)

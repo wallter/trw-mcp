@@ -171,7 +171,13 @@ def validate_prd_quality_v2(
         ("content_density", lambda: score_content_density(content, _config), _config.validation_density_weight),
         (
             "structural_completeness",
-            lambda: score_structural_completeness(frontmatter, sections, _config, str(frontmatter.get("category", ""))),
+            lambda: score_structural_completeness(
+                frontmatter,
+                sections,
+                _config,
+                str(frontmatter.get("category", "")),
+                content=content,
+            ),
             _config.validation_structure_weight,
         ),
         (

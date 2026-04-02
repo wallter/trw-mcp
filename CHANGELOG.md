@@ -2,6 +2,39 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.38.0] — 2026-04-01
+
+### Added — Meta-Learning Phase A (Sprint 80-82, PRD-CORE-110/111)
+
+- **Typed learning model** — `LearningEntry` extended with 10 new fields: `type` (incident/pattern/convention/hypothesis/workaround), `nudge_line`, `expires`, `confidence`, `task_type`, `domain`, `phase_origin`, `phase_affinity`, `team_origin`, `protection_tier`. String-to-enum coercion via `mode="before"` validators.
+- **Compact base-62 IDs** — `generate_learning_id()` now uses `generate_compact_id(prefix="L")` from trw-memory for shorter, more readable IDs (e.g., `L-a3Fq` instead of `L-4e4d6ca8`). Falls back to hex on import/runtime errors.
+- **Code-grounded anchors** — `execute_learn()` auto-generates up to 3 code symbol anchors from `git diff` modified files via regex-based extraction (Python/JS/TS/Go/Rust). Anchors flow through `store_learning()` to SQLite.
+- **Auto phase-origin detection** — `execute_learn()` auto-detects and uppercases the current ceremony phase when `phase_origin` is not explicitly provided.
+- **Auto nudge_line** — Summary text is auto-truncated to 80 chars (word-boundary-preferring) as the nudge_line when not explicitly provided.
+- **`trw_learn()` typed params** — 10 new parameters on the MCP tool surface for typed learning creation.
+- **`trw_learn_update()` typed params** — 10 new update parameters with enum validation (rejects invalid type/confidence/protection_tier/phase_origin values).
+- **Contextual recall scoring** — `RecallContext` dataclass with 6 boost dimensions (domain 1.4x, phase 1.3x, team 1.2x, outcome 1.5x/0.5x, anchor validity exclusion).
+- **Type-aware decay** — `_TYPE_HALF_LIFE` dict with per-type half-lives (incident:90d, convention:365d, pattern:30d, hypothesis:7d, workaround:14d).
+
+### Added — Meta-Learning Phase B (Sprint 83-84, PRD-CORE-103/104)
+
+- **Delivery metrics pipeline** — New `_step_delivery_metrics()` deferred step in `trw_deliver()` computing rework_rate, composite_outcome, proximal_reward, learning_exposure, and normalized_reward at delivery time.
+- **Learning-backed ceremony nudges** — `append_ceremony_nudge()` now queries learnings, uses `select_nudge_learning()` for dedup-aware selection, and appends a `TIP: <summary>` line to ceremony nudge text.
+- **Surface logging for all channels** — `log_surface_event()` now wired for `session_start` (in `perform_session_recalls()`), `nudge` (in `append_ceremony_nudge()`), and `recall` (in `execute_recall()`).
+- **Propensity logging** — `log_selection()` wired into the nudge selection path with candidate set, phase context, and exploration flag.
+- **Nudge dedup** — `record_nudge_shown()` called after each learning-backed nudge to prevent re-showing the same learning in the same phase.
+
+### Improved — DRY & Type Safety (Wave 3)
+
+- **Shared `rotate_jsonl()`** — Extracted from `surface_tracking.py` and `propensity_log.py` into `state/_helpers.py`. Both modules now delegate to the shared implementation.
+- **Canonical `VALID_SOURCES`** — Consolidated triplicated `_VALID_SOURCES` frozenset into `state/_constants.py`; consumers re-import from canonical source.
+- **`ReworkRateResult` TypedDict** — `compute_rework_rate()` return type changed from `dict[str, object]` to typed `ReworkRateResult`.
+- **`NudgeFatigueResult` TypedDict** — `check_nudge_fatigue()` return type changed from `dict[str, object]` to typed `NudgeFatigueResult`.
+- **Unconditional Assertion/Anchor imports** — `_memory_transforms.py` imports `Assertion`, `Anchor`, `Confidence`, `MemoryType`, `ProtectionTier` unconditionally instead of behind try/except fallback.
+- **`truncate_nudge_line()` helper** — Reusable word-boundary-aware truncation extracted to `_learning_helpers.py`.
+
+---
+
 ## [0.37.2] — 2026-03-31
 
 ### Added

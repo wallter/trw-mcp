@@ -2,7 +2,7 @@
 # PRD Metadata (LLM-Parseable)
 # Research basis: AARE-F Framework v1.1.0
 # AARE-F Components: C1 (Traceability), C2 (Governance), C7 (Req-as-Code)
-# Findings: F2 (LLM-parseable), F3 (confidence), F7 (metrics), F19 (traceability)
+# Findings: F2 (LLM-parseable), F3 (confidence), F7 (metrics), F19 (traceability), F24 (implementation completeness)
 
 prd:
   id: PRD-{CATEGORY}-{SEQUENCE}
@@ -152,6 +152,23 @@ quality_gates:
 ### Architecture Impact
 {How this affects existing architecture}
 
+### Primary Control Points
+List the runtime surfaces that MUST change for this PRD to be truly implemented.
+
+| Surface | Current Behavior | Required Change | Code Path | Proof |
+|---------|------------------|-----------------|-----------|-------|
+| Generation | {What creates artifacts today} | {What must create/update now} | `path/to/source.py` | {How you will verify it} |
+| Config / Discovery | {What points clients to behavior today} | {What must point to new behavior} | `path/to/config.ext` | {Config assertion or integration test} |
+| Sync / Update | {What keeps it current after bootstrap} | {What must update later runs} | `path/to/sync.py` | {Update-project / deliver proof} |
+| Migration | {Legacy state that exists} | {How it transitions safely} | `path/to/migrate.py` | {Migration fixture / idempotency proof} |
+
+### Behavior Switch Matrix
+For each requirement, show the concrete behavior change and the executable proof.
+
+| Requirement | Old Behavior | New Behavior | Trigger | Code Path | Proof Test |
+|-------------|--------------|--------------|---------|-----------|------------|
+| FR01 | {Old behavior} | {New behavior} | {init/update/runtime action} | `path/to/file.py` | `tests/test_feature.py::test_fr01` |
+
 ### Key Files
 | File | Changes |
 |------|---------|
@@ -163,7 +180,56 @@ quality_gates:
 
 ---
 
-## 7. Test Strategy
+## 7. AI/LLM Operational Sections
+
+### Data / Context Provenance
+{Data sources and provenance chain for AI/LLM/agentic behavior}
+- **Data Sources**: List datasets, APIs, or external sources used
+- **Provenance Chain**: Input → Processing → Model → Output
+- **Data Quality Signals**: Validation metrics, drift detection thresholds
+
+### Failure Modes / Safe Degradation
+{Fallback behavior when AI/LLM/agentic systems fail}
+- **Failure Mode**: What happens when the AI system fails?
+- **Safe Behavior**: Expected fallback behavior (e.g., rule-based heuristic, cached response)
+- **Escalation Path**: Human-in-the-loop review when confidence is low
+
+### Human Oversight / Escalation
+{Human review requirements for AI decisions}
+- **Review Triggers**: Confidence scores, uncertainty thresholds, high-stakes decisions
+- **Escalation Paths**: How to escalate to human reviewer
+- **Audit Trail**: What decisions are logged for later review
+
+### Evaluation Plan
+{How AI/LLM/agentic behavior is evaluated and baselined}
+- **Baseline Criteria**: Acceptable performance thresholds (accuracy, latency, reliability)
+- **Evaluation Method**: A/B test, user study, automated metrics
+- **Performance Metrics**: Key metrics to track (e.g., p99 latency, error rate)
+
+### Release Gate
+{Rollout conditions and rollback triggers for AI/LLM features}
+- **Rollout Strategy**: Canary (5% → 25% → 100%), phased over time
+- **Rollback Triggers**: Error rate > X%, latency P99 > Yms, confidence < Z
+- **Canary Duration**: Minimum time per phase before next increment
+
+### Monitoring Plan
+{Live monitoring signals and triggers for AI/LLM features}
+- **Primary Signal**: Key metric to monitor (prediction latency, drift score, error rate)
+- **Target Threshold**: Acceptable value or action triggers
+- **Escalation Action**: What happens when threshold exceeded (scale, alert, rollback)
+
+### Risk Register By Failure Class
+{Failure modes specific to AI/LLM/agentic behavior}
+| Failure Class | Scenario | Detection | Mitigation | Residual Risk |
+|---------------|----------|-----------|------------|---------------|
+| Correctness | Low confidence predictions | Confidence score < 0.6 | Human review | {Low/Med/High} |
+| Safety | Unsafe recommendations | Safety filter triggered | Halt, alert, revert | {Low/Med/High} |
+| Maintainability | Model drift | Performance degradation | Retrain, alert | {Low/Med/High} |
+| Governance | Unattributable output | No source attribution | Human review | {Low/Med/High} |
+
+---
+
+## 8. Test Strategy
 
 ### Unit Tests
 - [ ] {Test case 1}
@@ -175,6 +241,26 @@ quality_gates:
 ### Acceptance Tests
 - [ ] {Maps to AC from user stories}
 - [ ] `FR01` -> `tests/test_feature.py`
+
+### Migration Tests
+- [ ] {Legacy state is migrated to the new state}
+- [ ] {Migration is idempotent on repeated runs}
+
+### Regression Tests
+- [ ] {Exact prior failure mode stays fixed}
+- [ ] {Adjacent code path remains correct}
+
+### Negative / Fallback Tests
+- [ ] {Missing config / absent file / partial state fails safely}
+- [ ] {Fallback behavior is explicit and tested}
+
+### Completion Evidence (Definition of Done)
+- [ ] Generated artifacts exist at the intended paths
+- [ ] Runtime/config consumers reference the new behavior
+- [ ] Sync/update flows keep the new behavior current
+- [ ] Legacy state migrates or is explicitly declared out of scope
+- [ ] Acceptance proof exists for each user story / FR
+- [ ] Regression and fallback coverage exist for the changed control points
 
 ---
 
@@ -191,6 +277,11 @@ quality_gates:
 
 ### Rollback Plan
 {How to revert if issues arise}
+
+### Migration / Backward Compatibility
+- {State what legacy surfaces remain}
+- {State how mixed old/new state is handled}
+- {State whether repeated update/init runs are idempotent}
 
 ---
 
@@ -368,6 +459,8 @@ Before submitting this PRD for review, verify:
 - [ ] Knowledge entry links documented
 - [ ] Implementation files identified (if known)
 - [ ] Test files identified (if known)
+- [ ] Primary control points named for generation, config, sync, and migration surfaces
+- [ ] Behavior Switch Matrix populated with proof tests
 
 ### Risk Management (AARE-F C3: Risk-Based Rigor)
 - [ ] Risk table has "Residual Risk" column
@@ -378,9 +471,10 @@ Before submitting this PRD for review, verify:
 - [ ] Ambiguity rate <= 5% (no vague terms)
 - [ ] V2 total_score >= 65 (REVIEW tier minimum)
 - [ ] Traceability >= 90% (linked requirements)
+- [ ] Completion Evidence proves generated, referenced, updated, migrated, and tested surfaces
 
 ---
 
-*Template version: 2.2 (AARE-F v1.1.0 Enhanced — FIX/RESEARCH variants)*
+*Template version: 2.3 (AARE-F v1.1.0 Enhanced — implementation-readiness hardening)*
 *Research basis: AARE-F Framework v1.1.0*
 *Prompts: docs/requirements-aare-f/prompts/prd-creation.md*

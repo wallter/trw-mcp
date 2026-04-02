@@ -75,8 +75,8 @@ def _get_last_activity_timestamp(run_dir: Path) -> datetime | None:
             hb_dt = datetime.fromtimestamp(hb_mtime, tz=timezone.utc)
             if latest is None or hb_dt > latest:
                 latest = hb_dt
-    except OSError:
-        pass  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
+    except OSError:  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
+        pass
 
     return latest
 

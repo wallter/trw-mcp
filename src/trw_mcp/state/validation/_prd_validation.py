@@ -242,8 +242,14 @@ def generate_improvement_suggestions(
     # they have no scorer and will never appear in the dimensions list.
     _messages: dict[str, str] = {
         "content_density": "Add substantive content to sections -- replace template placeholders with actual requirements and details.",
-        "structural_completeness": "Complete missing sections and frontmatter fields -- ensure all 12 AARE-F sections are present.",
-        "traceability": "Add traceability links (implements, depends_on, enables) and populate the Traceability Matrix with implementation and test references.",
+        "structural_completeness": "Complete missing sections, frontmatter fields, and implementation-readiness subsections -- name control points, behavior-switch coverage, and completion evidence.",
+        "traceability": "Add traceability links (implements, depends_on, enables), prove each behavior switch with executable tests, and populate the Traceability Matrix with implementation plus test references.",
+    }
+
+    # AI/LLM/agentic operational gates suggestions (PRD-QUAL-055)
+    _ai_operational_messages: dict[str, str] = {
+        "structural_completeness": "Add AI/LLM/agentic operational sections (Data/Context Provenance, Failure Modes, Human Oversight, Evaluation Plan, Release Gate, Monitoring Plan, Risk Register By Failure Class) when AI/agentic behavior is involved.",
+        "traceability": "Add AI/LLM/agentic operational evidence: evaluation plan with baseline criteria, release gate with rollback triggers, and monitoring plan with signal thresholds when AI/agentic behavior is involved.",
     }
 
     suggestions: list[ImprovementSuggestion] = []
@@ -252,11 +258,22 @@ def generate_improvement_suggestions(
         if ratio < 0.7:
             potential_gain = dim.max_score - dim.score
             priority = "high" if ratio < 0.3 else "medium"
+
+            # Check if AI operational evidence is detected in dimension details
+            ai_detected = dim.details.get("ai_operational_evidence_detected", False) or dim.details.get(
+                "ai_section_detected", False
+            )
+            message = (
+                _ai_operational_messages.get(dim.name, _messages.get(dim.name, f"Improve {dim.name} score."))
+                if ai_detected
+                else _messages.get(dim.name, f"Improve {dim.name} score.")
+            )
+
             suggestions.append(
                 ImprovementSuggestion(
                     dimension=dim.name,
                     priority=priority,
-                    message=_messages.get(dim.name, f"Improve {dim.name} score."),
+                    message=message,
                     current_score=round(dim.score, 2),
                     potential_gain=round(potential_gain, 2),
                 )

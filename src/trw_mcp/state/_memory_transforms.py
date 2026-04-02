@@ -9,22 +9,25 @@ External code should import from ``memory_adapter`` (the public facade).
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
-try:
-    from trw_memory.models.memory import Assertion, MemoryEntry, MemoryStatus
-except ImportError:  # pragma: no cover - compatibility with older trw-memory exports
-    from trw_memory.models.memory import MemoryEntry, MemoryStatus
-
-    Assertion = cast("type[Any]", None)  # type: ignore[misc]
+from trw_memory.models.memory import (
+    Anchor,
+    Assertion,
+    Confidence,
+    MemoryEntry,
+    MemoryStatus,
+    MemoryType,
+    ProtectionTier,
+)
 
 from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 _NAMESPACE = DEFAULT_NAMESPACE
 
-# Valid source provenance values — aligned with MemoryEntry._VALID_SOURCES.
-_VALID_SOURCES: frozenset[str] = frozenset({"human", "agent", "tool", "consolidated"})
+# Re-export from canonical source for backward compatibility
+from trw_mcp.state._constants import VALID_SOURCES as _VALID_SOURCES
 _SourceType = Literal["human", "agent", "tool", "consolidated"]
 
 
@@ -74,6 +77,24 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
     # Include assertions when present (PRD-CORE-086)
     if entry.assertions:
         base["assertions"] = [a.model_dump() for a in entry.assertions]
+
+    # Meta-learning typed classification (PRD-CORE-110)
+    base["type"] = entry.type
+    base["nudge_line"] = entry.nudge_line
+    base["expires"] = entry.expires
+    base["confidence"] = entry.confidence
+    base["task_type"] = entry.task_type
+    base["domain"] = list(entry.domain)
+    base["phase_origin"] = entry.phase_origin
+    base["phase_affinity"] = list(entry.phase_affinity)
+    base["team_origin"] = entry.team_origin
+    base["protection_tier"] = entry.protection_tier
+
+    # Code-grounded anchors (PRD-CORE-111)
+    if entry.anchors:
+        base["anchors"] = [a.model_dump() for a in entry.anchors]
+    base["anchor_validity"] = entry.anchor_validity
+
     return base
 
 
@@ -91,6 +112,19 @@ def _learning_to_memory_entry(
     client_profile: str = "",
     model_id: str = "",
     assertions: list[dict[str, str]] | None = None,
+    # PRD-CORE-110: Typed learning fields
+    type: str = "pattern",
+    nudge_line: str = "",
+    expires: str = "",
+    confidence: str = "unverified",
+    task_type: str = "",
+    domain: list[str] | None = None,
+    phase_origin: str = "",
+    phase_affinity: list[str] | None = None,
+    team_origin: str = "",
+    protection_tier: str = "normal",
+    # PRD-CORE-111: Code-grounded anchors
+    anchors: list[dict[str, object]] | None = None,
 ) -> MemoryEntry:
     """Build a :class:`MemoryEntry` from trw_learn parameters.
 
@@ -104,12 +138,23 @@ def _learning_to_memory_entry(
         metadata["shard_id"] = shard_id
 
     # Validate and attach assertions (PRD-CORE-086)
-    assertion_objects: list[Any] = []
+    assertion_objects: list[Assertion] = []
     if assertions:
-        if Assertion is not None:
-            assertion_objects.extend(Assertion.model_validate(a) for a in assertions)
-        else:
-            assertion_objects.extend(assertions)
+        assertion_objects.extend(Assertion.model_validate(a) for a in assertions)
+
+    # Validate anchors (PRD-CORE-111)
+    anchor_objects: list[Anchor] = []
+    if anchors:
+        for a in anchors:
+            try:
+                # Convert absolute paths to relative (Anchor rejects absolute)
+                anchor_data = dict(a)
+                file_val = str(anchor_data.get("file", ""))
+                if file_val.startswith("/"):
+                    anchor_data["file"] = file_val.lstrip("/")
+                anchor_objects.append(Anchor.model_validate(anchor_data))
+            except Exception:  # justified: fail-open, skip invalid anchors
+                pass
 
     return MemoryEntry(
         id=learning_id,
@@ -126,4 +171,17 @@ def _learning_to_memory_entry(
         metadata=metadata,
         q_value=compute_initial_q_value(impact),
         assertions=assertion_objects,
+        # PRD-CORE-110: Typed learning fields - convert strings to enums
+        type=MemoryType(type) if isinstance(type, str) else type,
+        nudge_line=nudge_line,
+        expires=expires,
+        confidence=Confidence(confidence) if isinstance(confidence, str) else confidence,
+        task_type=task_type,
+        domain=domain or [],
+        phase_origin=phase_origin,
+        phase_affinity=phase_affinity or [],
+        team_origin=team_origin,
+        protection_tier=ProtectionTier(protection_tier) if isinstance(protection_tier, str) else protection_tier,
+        # PRD-CORE-111: Code-grounded anchors
+        anchors=anchor_objects,
     )

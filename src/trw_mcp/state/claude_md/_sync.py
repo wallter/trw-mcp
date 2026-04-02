@@ -145,7 +145,6 @@ def invalidate_claude_md_hash(trw_dir: Path) -> None:
         logger.debug("claude_md_hash_invalidate_failed", path=str(hash_file))
 
 
-
 # ---------------------------------------------------------------------------
 # REVIEW.md generation (PRD-CORE-084 FR08)
 # ---------------------------------------------------------------------------
@@ -169,6 +168,8 @@ def _get_repo_root() -> Path | None:
     except Exception:  # justified: fail-open, git root detection failure is non-fatal
         logger.debug("git_repo_root_detection_skipped", exc_info=True)
     return None
+
+
 # Constants and helpers (_sanitize_summary, _get_repo_root, recall_learnings)
 # are re-exported from _review_md.py. generate_review_md stays here because
 # tests patch _sync.recall_learnings and _sync.tempfile at module level.
@@ -333,11 +334,17 @@ def execute_claude_md_sync(
                 "agents_md_path": None,
                 "bounded_contexts_synced": 0,
             }
-            _, write_agents = _determine_write_targets(
-                client, config, project_root, scope,
+            _, write_agents, _ = _determine_write_targets(
+                client,
+                config,
+                project_root,
+                scope,
             )
             synced, path = _sync_agents_md_if_needed(
-                write_agents, config, project_root, trw_dir,
+                write_agents,
+                config,
+                project_root,
+                trw_dir,
                 client=client,
                 recall_fn=recall_learnings,
             )
@@ -383,7 +390,7 @@ def execute_claude_md_sync(
         target = project_root / "CLAUDE.md"
         max_lines = config.claude_md_max_lines
 
-    write_claude, write_agents = _determine_write_targets(client, config, project_root, scope)
+    write_claude, write_agents, _ = _determine_write_targets(client, config, project_root, scope)
 
     total_lines = 0
     if write_claude:

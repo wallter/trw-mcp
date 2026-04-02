@@ -677,7 +677,7 @@ class TestRankByUtilityEdgeCases:
             query_tokens=["pytest"],
             lambda_weight=0.0,
         )
-        assert result[0] is entry_in_detail
+        assert result[0]["id"] == entry_in_detail["id"]
 
     def test_lambda_weight_one_pure_utility(self) -> None:
         """lambda_weight=1.0 means pure utility, ignores relevance."""
@@ -688,7 +688,7 @@ class TestRankByUtilityEdgeCases:
             query_tokens=["pytest"],
             lambda_weight=1.0,
         )
-        assert result[0] is high_impact
+        assert result[0]["id"] == high_impact["id"]
 
     def test_lambda_weight_zero_pure_relevance(self) -> None:
         """lambda_weight=0.0 means pure relevance, ignores utility."""
@@ -699,7 +699,7 @@ class TestRankByUtilityEdgeCases:
             query_tokens=["pytest", "testing"],
             lambda_weight=0.0,
         )
-        assert result[0] is matching
+        assert result[0]["id"] == matching["id"]
 
     def test_summary_hits_weighted_higher_than_detail(self) -> None:
         """Summary matches are weighted 3x vs detail matches 1x."""
@@ -710,7 +710,7 @@ class TestRankByUtilityEdgeCases:
             query_tokens=["pytest"],
             lambda_weight=0.0,
         )
-        assert result[0] is entry_summary
+        assert result[0]["id"] == entry_summary["id"]
 
     def test_stable_sort_equal_scores(self) -> None:
         """Entries with equal scores maintain their relative order (sort stability)."""

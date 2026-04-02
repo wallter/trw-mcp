@@ -295,21 +295,26 @@ def init_project(
         result["skipped"].extend(oc_result.get("preserved", []))
         result["errors"].extend(oc_result.get("errors", []))
 
-        from trw_mcp.models.config import get_config
-        from trw_mcp.state.claude_md._static_sections import (
-            render_agents_trw_section,
-            render_minimal_protocol,
-        )
+        # 7b-i. Generate INSTRUCTIONS.md with model-family content (FR01)
+        from ._opencode import detect_model_family, generate_opencode_instructions
 
-        _cfg = get_config()
-        if _cfg.effective_ceremony_mode == "light":
-            agents_section = render_minimal_protocol()
-        else:
-            agents_section = render_agents_trw_section()
-        agents_result = generate_agents_md(target_dir, agents_section, force=force)
-        result["created"].extend(agents_result.get("created", []))
-        result["skipped"].extend(agents_result.get("preserved", []))
-        result["errors"].extend(agents_result.get("errors", []))
+        try:
+            opencode_path = target_dir / "opencode.json"
+            model_family = "generic"
+            if opencode_path.exists():
+                import json
+
+                try:
+                    opencode_data = json.loads(opencode_path.read_text(encoding="utf-8"))
+                    model_family = detect_model_family(opencode_data)
+                except (json.JSONDecodeError, OSError):
+                    pass
+            instructions_result = generate_opencode_instructions(target_dir, model_family, force=force)
+            result["created"].extend(instructions_result.get("created", []))
+            result["skipped"].extend(instructions_result.get("preserved", []))
+            result["errors"].extend(instructions_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
+            result["warnings"].append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
 
     # 7c. Cursor artifacts (FR05, FR06, FR07: Cursor IDE support)
     if "cursor" in ide_targets:
@@ -357,10 +362,17 @@ def init_project(
         result["skipped"].extend(codex_skills.get("preserved", []))
         result["errors"].extend(codex_skills.get("errors", []))
 
-        codex_agents_md = generate_agents_md(target_dir, render_codex_trw_section(), force=force)
-        result["created"].extend(codex_agents_md.get("created", []))
-        result["skipped"].extend(codex_agents_md.get("preserved", []))
-        result["errors"].extend(codex_agents_md.get("errors", []))
+    # 7d-i. Codex INSTRUCTIONS.md (FR01)
+    if "codex" in ide_targets:
+        from ._opencode import generate_codex_instructions
+
+        try:
+            instructions_result = generate_codex_instructions(target_dir, force=force)
+            result["created"].extend(instructions_result.get("created", []))
+            result["skipped"].extend(instructions_result.get("preserved", []))
+            result["errors"].extend(instructions_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
+            result["warnings"].append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
 
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)

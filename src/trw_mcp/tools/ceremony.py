@@ -78,7 +78,7 @@ def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) 
         with state_file.open("a", encoding="utf-8") as f:
             for lid in ids:
                 f.write(lid + "\n")
-    except OSError:
+    except OSError:  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
         logger.debug("injected_ids_write_failed", exc_info=True)
 
 
@@ -163,19 +163,26 @@ def _do_reflect(
     success_patterns = find_success_patterns(events)
 
     new_learnings = extract_learnings_mechanical(
-        error_events, repeated_ops, trw_dir,
-        max_errors=5, max_repeated=3,
+        error_events,
+        repeated_ops,
+        trw_dir,
+        max_errors=5,
+        max_repeated=3,
     )
 
     # Success patterns are analytics data only — do NOT create learning entries
     # (PRD-FIX-021: suppress telemetry noise from "Success: X (Nx)" entries).
 
     if run_dir and (run_dir / "meta").exists():
-        _events.log_event(run_dir / "meta" / "events.jsonl", "reflection_complete", {
-            "reflection_id": "delivery",
-            "scope": "delivery",
-            "learnings_produced": len(new_learnings),
-        })
+        _events.log_event(
+            run_dir / "meta" / "events.jsonl",
+            "reflection_complete",
+            {
+                "reflection_id": "delivery",
+                "scope": "delivery",
+                "learnings_produced": len(new_learnings),
+            },
+        )
 
     update_analytics(trw_dir, len(new_learnings))
 
@@ -271,7 +278,10 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         try:
             trw_dir = resolve_trw_dir()
             learnings, _auto_recalled, extra = perform_session_recalls(
-                trw_dir, query, config, reader,
+                trw_dir,
+                query,
+                config,
+                reader,
             )
             results["learnings"] = learnings
             results["learnings_count"] = len(learnings)
@@ -342,7 +352,10 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 trw_dir_ar = resolve_trw_dir()
                 run_status_obj: RunStatusDict | None = results.get("run")
                 phase_recalled = _phase_contextual_recall(
-                    trw_dir_ar, query, config, run_dir,
+                    trw_dir_ar,
+                    query,
+                    config,
+                    run_dir,
                     run_status_obj,
                 )
                 if phase_recalled:
@@ -359,9 +372,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
         if config.effective_ceremony_mode == "light":
-            results["framework_reminder"] = (
-                "Call trw_deliver() when done to persist your work."
-            )
+            results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
         else:
             results["framework_reminder"] = (
                 "Read .trw/frameworks/FRAMEWORK.md — it defines the methodology "
@@ -475,6 +486,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # Step 0c: Copy compliance artifacts (INFRA-027-FR05)
         from trw_mcp.tools._ceremony_helpers import copy_compliance_artifacts
+
         compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
         if "compliance_artifacts_copied" in compliance_result:
             results["compliance_artifacts_copied"] = compliance_result["compliance_artifacts_copied"]
@@ -520,6 +532,19 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # update_project() remain the only triggers for CLAUDE.md re-render.
         results["claude_md_sync"] = {"status": "skipped", "reason": "PRD-CORE-093"}
 
+        # Nudge fatigue detection (PRD-CORE-103-FR05, synchronous)
+        try:
+            from trw_mcp.state.surface_tracking import check_nudge_fatigue
+
+            fatigue = check_nudge_fatigue(trw_dir)
+            if fatigue.get("nudge_fatigue_warning"):
+                _results_view["nudge_fatigue_warning"] = True
+                _results_view["recall_pull_rate"] = fatigue["recall_pull_rate"]
+            elif int(str(fatigue.get("nudge_count", 0))) > 0:
+                _results_view["recall_pull_rate"] = fatigue["recall_pull_rate"]
+        except Exception:  # justified: fail-open, fatigue check must not block delivery
+            logger.debug("fatigue_check_failed", exc_info=True)
+
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
 
@@ -528,7 +553,9 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # affect the next session's startup and can run after we return.
         # Concurrency-safe: file lock prevents overlapping deferred batches.
         deferred_status = _launch_deferred(
-            trw_dir, resolved_run, _results_view,
+            trw_dir,
+            resolved_run,
+            _results_view,
             skip_index_sync=skip_index_sync,
         )
         results["deferred"] = deferred_status
@@ -556,6 +583,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # Mark deliver called in ceremony state tracker (PRD-CORE-074 FR04)
         try:
             from trw_mcp.state.ceremony_nudge import mark_deliver
+
             mark_deliver(trw_dir)
         except Exception:  # justified: fail-open, ceremony state tracking must not block delivery
             logger.debug("deliver_ceremony_state_update_skipped", exc_info=True)
@@ -564,6 +592,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         try:
             from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
             ctx = NudgeContext(tool_name=ToolName.DELIVER)
             append_ceremony_nudge(cast("dict[str, object]", results), trw_dir, context=ctx)
         except Exception:  # justified: fail-open, nudge injection is advisory and must not block delivery

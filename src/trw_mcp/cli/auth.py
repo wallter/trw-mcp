@@ -68,10 +68,9 @@ class _Spinner:
 
 def _open_tty() -> TextIO | None:
     """Open /dev/tty for reading, or None if unavailable."""
-    try:
+    with contextlib.suppress(OSError):
         return open("/dev/tty")
-    except OSError:
-        return None
+    return None
 
 
 # ── HTTP helpers (stdlib only) ────────────────────────────────────────
@@ -265,8 +264,7 @@ def _poll_for_token(
             # Unknown HTTP error
             if interactive:
                 print(
-                    f"\n  {RED}Error:{NC} Unexpected response "
-                    f"(HTTP {exc.code}): {error_code or 'unknown'}",
+                    f"\n  {RED}Error:{NC} Unexpected response (HTTP {exc.code}): {error_code or 'unknown'}",
                 )
             return None
 

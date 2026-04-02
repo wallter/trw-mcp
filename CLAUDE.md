@@ -63,10 +63,6 @@ Default to `trw_learn()` for knowledge. Use native auto-memory only for personal
 
 Gotcha or error pattern → `trw_learn()`. User’s preferred commit style → native memory. Build trick that saves time → `trw_learn()`. Communication preference → native memory.
 
-### Framework Reference
-
-Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates, exit criteria, quality rubrics, and formation selection. Re-read after context compaction.
-
 ### Session Boundaries
 
 Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.

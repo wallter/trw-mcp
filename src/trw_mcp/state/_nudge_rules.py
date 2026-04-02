@@ -112,6 +112,56 @@ def _reversion_prompt(context: NudgeContext | None, state: CeremonyState) -> str
 
 
 # ---------------------------------------------------------------------------
+# PRD-CORE-103: Learning nudge deduplication
+# ---------------------------------------------------------------------------
+
+
+def select_nudge_learning(
+    state: CeremonyState,
+    candidates: list[dict[str, object]],
+    current_phase: str,
+) -> tuple[dict[str, object] | None, bool]:
+    """Select the best learning for nudge display with deduplication.
+
+    Filters candidates by nudge eligibility (not shown in current phase),
+    then returns the top remaining candidate. If all candidates are
+    already shown, falls back to the least-recently-shown candidate.
+
+    Args:
+        state: Current ceremony state with nudge_history.
+        candidates: Ranked learning dicts (best first).
+        current_phase: Current ceremony phase.
+
+    Returns:
+        Tuple of (selected_learning_dict_or_None, is_fallback).
+        is_fallback is True if we fell back to least-recently-shown.
+    """
+    from trw_mcp.state._nudge_state import is_nudge_eligible
+
+    # Filter to eligible candidates
+    eligible = [
+        c for c in candidates if is_nudge_eligible(state, str(c.get("id", "")), current_phase)
+    ]
+
+    if eligible:
+        return eligible[0], False
+
+    # Fallback: least recently shown candidate
+    if candidates:
+
+        def _last_shown_turn(c: dict[str, object]) -> int:
+            lid = str(c.get("id", ""))
+            if lid in state.nudge_history:
+                return state.nudge_history[lid]["last_shown_turn"]
+            return 0
+
+        fallback = min(candidates, key=_last_shown_turn)
+        return fallback, True
+
+    return None, False
+
+
+# ---------------------------------------------------------------------------
 # FR12: Local model detection (PRD-CORE-074)
 # ---------------------------------------------------------------------------
 

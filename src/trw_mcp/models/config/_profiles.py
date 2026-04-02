@@ -21,20 +21,38 @@ logger = structlog.get_logger(__name__)
 
 # Shared constants for light-mode profiles (opencode, codex, aider) — DRY (P1-B)
 _LIGHT_CEREMONY = CeremonyWeights(
-    session_start=30, deliver=30, checkpoint=5, learn=20, build_check=15, review=0,
+    session_start=30,
+    deliver=30,
+    checkpoint=5,
+    learn=20,
+    build_check=15,
+    review=0,
 )
 _LIGHT_SCORING = ScoringDimensionWeights(
-    outcome=0.60, plan_quality=0.05, implementation=0.15, ceremony=0.05, knowledge=0.15,
+    outcome=0.60,
+    plan_quality=0.05,
+    implementation=0.15,
+    ceremony=0.05,
+    knowledge=0.15,
 )
 _LIGHT_PHASES = ["implement", "deliver"]
 
+# Model tier adjustments for resolve_client_profile (F06 -- model_copy, not mutate)
+# NOTE: This is a merged type for pydantic fields (int, str, bool) - but we only use int/string fields
+_TIER_OVERRIDES: dict[ModelTier, dict[str, object]] = {
+    "cloud-opus": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
+    "cloud-sonnet": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
+    "local-30b": {"context_window_tokens": 128_000, "instruction_max_lines": 350},
+    "local-8b": {"context_window_tokens": 32_000, "instruction_max_lines": 200},
+}
 
-def _light_profile(client_id: str, display_name: str) -> ClientProfile:
+
+def _light_profile(client_id: str, display_name: str, instruction_path: str) -> ClientProfile:
     """Construct a light-mode profile with eval-calibrated defaults."""
     return ClientProfile(
         client_id=client_id,
         display_name=display_name,
-        write_targets=WriteTargets(agents_md=True),
+        write_targets=WriteTargets(agents_md=True, instruction_path=instruction_path),
         instruction_max_lines=200,
         context_window_tokens=32_000,
         ceremony_mode="light",
@@ -54,7 +72,7 @@ _PROFILES: dict[str, ClientProfile] = {
     "claude-code": ClientProfile(
         client_id="claude-code",
         display_name="Claude Code",
-        write_targets=WriteTargets(claude_md=True),
+        write_targets=WriteTargets(claude_md=True, instruction_path=".claude/INSTRUCTIONS.md"),
         ceremony_weights=CeremonyWeights(),  # defaults = claude-code
         scoring_weights=ScoringDimensionWeights(),  # defaults = claude-code
         hooks_enabled=True,
@@ -62,11 +80,11 @@ _PROFILES: dict[str, ClientProfile] = {
         include_agent_teams=True,
         include_delegation=True,
     ),
-    "opencode": _light_profile("opencode", "OpenCode"),
+    "opencode": _light_profile("opencode", "OpenCode", ".opencode/INSTRUCTIONS.md"),
     "cursor": ClientProfile(
         client_id="cursor",
         display_name="Cursor",
-        write_targets=WriteTargets(cursor_rules=True),
+        write_targets=WriteTargets(cursor_rules=True, instruction_path=".cursor/rules/trw-ceremony.mdc"),
         instruction_max_lines=400,
         context_window_tokens=128_000,
         ceremony_weights=CeremonyWeights(),
@@ -75,16 +93,8 @@ _PROFILES: dict[str, ClientProfile] = {
         hooks_enabled=False,
         include_agent_teams=False,
     ),
-    "codex": _light_profile("codex", "Codex CLI"),
-    "aider": _light_profile("aider", "Aider"),
-}
-
-# Model tier adjustments for resolve_client_profile (F06 -- model_copy, not mutate)
-_TIER_OVERRIDES: dict[ModelTier, dict[str, int]] = {
-    "cloud-opus": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
-    "cloud-sonnet": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
-    "local-30b": {"context_window_tokens": 128_000, "instruction_max_lines": 350},
-    "local-8b": {"context_window_tokens": 32_000, "instruction_max_lines": 200},
+    "codex": _light_profile("codex", "Codex CLI", ".codex/INSTRUCTIONS.md"),
+    "aider": _light_profile("aider", "Aider", ".aider/instructions.md"),
 }
 
 

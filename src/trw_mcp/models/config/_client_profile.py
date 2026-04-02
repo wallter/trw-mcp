@@ -41,14 +41,7 @@ class CeremonyWeights(BaseModel):
 
     @model_validator(mode="after")
     def _check_sum(self) -> CeremonyWeights:
-        total = (
-            self.session_start
-            + self.deliver
-            + self.checkpoint
-            + self.learn
-            + self.build_check
-            + self.review
-        )
+        total = self.session_start + self.deliver + self.checkpoint + self.learn + self.build_check + self.review
         if total != 100:
             msg = f"CeremonyWeights must sum to 100, got {total}"
             raise ValueError(msg)
@@ -72,13 +65,7 @@ class ScoringDimensionWeights(BaseModel):
 
     @model_validator(mode="after")
     def _check_sum(self) -> ScoringDimensionWeights:
-        total = (
-            self.outcome
-            + self.plan_quality
-            + self.implementation
-            + self.ceremony
-            + self.knowledge
-        )
+        total = self.outcome + self.plan_quality + self.implementation + self.ceremony + self.knowledge
         if abs(total - 1.0) > 0.01:
             msg = f"ScoringDimensionWeights must sum to ~1.0, got {total}"
             raise ValueError(msg)
@@ -93,6 +80,7 @@ class WriteTargets(BaseModel):
     claude_md: bool = False
     agents_md: bool = False
     cursor_rules: bool = False
+    instruction_path: str = ""
 
 
 class ClientProfile(BaseModel):
@@ -142,9 +130,7 @@ class ClientProfile(BaseModel):
         return self
 
     # Scoring calibration (eval dimensions -- NOT PRD validation dimensions, F13)
-    scoring_weights: ScoringDimensionWeights = Field(
-        default_factory=ScoringDimensionWeights
-    )
+    scoring_weights: ScoringDimensionWeights = Field(default_factory=ScoringDimensionWeights)
 
     # Model tier
     default_model_tier: ModelTier = "cloud-sonnet"

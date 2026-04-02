@@ -16,7 +16,6 @@ from trw_mcp.state.source_detection import (
     detect_model_id,
 )
 
-
 # ---------------------------------------------------------------------------
 # detect_client_profile — filesystem markers
 # ---------------------------------------------------------------------------
