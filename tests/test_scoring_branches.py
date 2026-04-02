@@ -498,7 +498,11 @@ class TestUtilityBasedPruneCandidates:
 
     def test_recent_high_utility_not_candidate(self) -> None:
         """Recent entry with high impact is not a prune candidate."""
-        entries = [self._make_entry_tuple("L-new", "2026-02-15", impact=0.95)]
+        from datetime import date, timedelta
+
+        # Use a date within the last 3 days to ensure utility stays high
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        entries = [self._make_entry_tuple("L-new", recent_date, impact=0.95)]
         result = utility_based_prune_candidates(entries)
         assert result == []
 

@@ -554,7 +554,8 @@ class TestDeliverPartialFailure:
 
         assert result["success"] is False
         assert result["checkpoint"]["status"] == "failed"
-        assert result["claude_md_sync"]["status"] == "success"
+        # CORE-093 FR06: claude_md_sync removed from deliver critical path
+        assert result["claude_md_sync"]["status"] == "skipped"
 
     def test_index_sync_failure_does_not_block_auto_progress(
         self,
@@ -1170,8 +1171,8 @@ class TestDeliverTelemetryIntegration:
         ):
             result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
 
-        # Critical path: reflect (skipped) + checkpoint (skipped) + claude_md_sync = 3
-        assert result["critical_steps_completed"] == 3
+        # CORE-093 FR06: critical path is reflect + checkpoint (claude_md_sync removed)
+        assert result["critical_steps_completed"] == 2
         assert result["deferred_steps"] == 11
         assert result["deferred"] == "launched"
         assert result["success"] is True
@@ -1321,14 +1322,14 @@ class TestSessionStartWithQuery:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Step 6 ar_query includes user query tokens + phase context."""
+        """Auto-recall query includes user query tokens + phase context."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         (trw_dir / "context").mkdir(parents=True)
 
-        # Track what query Step 6 auto-recall receives
-        step6_queries: list[str] = []
+        # Track all recall queries
+        all_queries: list[str] = []
 
         def _fake_recall(
             _trw_d: Any,
@@ -1340,9 +1341,7 @@ class TestSessionStartWithQuery:
             tags: Any = None,
             status: Any = None,
         ) -> list[dict[str, object]]:
-            # Step 1 calls use compact=True, Step 6 uses compact=False
-            if not compact:
-                step6_queries.append(query)
+            all_queries.append(query)
             return []
 
         # Create a run dir so phase context is available
@@ -1359,15 +1358,13 @@ class TestSessionStartWithQuery:
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=_fake_recall),
         ):
-            # Enable auto-recall for this test
             monkeypatch.setattr("trw_mcp.tools.ceremony._config.auto_recall_enabled", True)
             _result = tools["trw_session_start"].fn(query="JWT validation")
 
-        # Step 6 should have been called with user tokens merged in
-        assert len(step6_queries) >= 1
-        ar_query = step6_queries[0]
-        # User query tokens should appear in auto-recall query
-        assert "JWT" in ar_query or "validation" in ar_query
+        # At least one recall call should contain user query tokens
+        assert len(all_queries) >= 1
+        has_user_tokens = any("JWT" in q or "validation" in q for q in all_queries)
+        assert has_user_tokens, f"Expected user tokens in recall queries: {all_queries}"
 
 
 # --- Deferred delivery infrastructure tests ---

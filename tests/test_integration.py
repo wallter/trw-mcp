@@ -160,7 +160,8 @@ class TestSessionLifecycle:
             skip_index_sync=True,
         )
         assert deliver_result["success"]
-        assert deliver_result["critical_steps_completed"] >= 3
+        # CORE-093 FR06: critical path is reflect + checkpoint (claude_md_sync removed)
+        assert deliver_result["critical_steps_completed"] >= 2
 
     def test_fresh_project_session_start(self, tmp_path: Path) -> None:
         """session_start on empty .trw/ returns zero learnings, no active run."""

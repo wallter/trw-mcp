@@ -95,7 +95,7 @@ class TestClaudeMdHashDetection:
             result1 = execute_claude_md_sync(**args)
             assert result1["status"] in ("synced", "unchanged")
 
-            # Add a learning — should invalidate the hash
+            # Add a learning
             store_learning(
                 trw_dir,
                 "L-hash001",
@@ -105,9 +105,11 @@ class TestClaudeMdHashDetection:
                 impact=0.8,
             )
 
-            # Second sync should re-render
+            # CORE-093 FR05: Hash excludes learning content, so hash stays stable
             result2 = execute_claude_md_sync(**args)
-            assert result2["status"] == "synced", "After adding a learning, sync must re-render (not return unchanged)"
+            assert result2["status"] == "unchanged", (
+                "CORE-093 FR05: hash should be stable across learning changes"
+            )
 
     def test_unchanged_returns_hash_field(self, tmp_path: Path) -> None:
         """When status=unchanged, response includes hash field."""

@@ -5,6 +5,7 @@ Extracted from _ceremony_helpers.py to keep modules under the 500-line gate.
 Public API (re-exported by _ceremony_helpers.py):
 - append_ceremony_nudge: inject ceremony nudge into a tool response
 - perform_session_recalls: execute focused + baseline recalls, return merged results
+- log_nudge_event: log a nudge_shown event to events.jsonl
 - _phase_contextual_recall: phase-tag-aware recall for auto-recall feature
 - _phase_to_tags: map framework phase to relevant learning tags
 - _apply_antipattern_alerts: prepend alert prefix to matching learning summaries
@@ -85,6 +86,49 @@ def append_ceremony_nudge(
     except Exception:  # justified: fail-open — nudge injection must never raise or block
         logger.warning("append_ceremony_nudge_failed", exc_info=True)
     return response
+
+
+# ── FR02: Nudge event logging (PRD-CORE-103) ─────────────────────────────
+
+
+def log_nudge_event(
+    events_path: Path,
+    learning_id: str,
+    phase: str,
+    is_fallback: bool,
+) -> None:
+    """Log a nudge_shown event to events.jsonl for proximal reward detection.
+
+    Fail-open: if anything fails, silently returns without raising.
+
+    Args:
+        events_path: Path to events.jsonl file.
+        learning_id: ID of the learning that was surfaced.
+        phase: Current ceremony phase when the nudge was shown.
+        is_fallback: True if the learning was a fallback (all candidates were dedup-filtered).
+    """
+    try:
+        from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+
+        writer = FileStateWriter()
+        event_logger = FileEventLogger(writer)
+        event_logger.log_event(
+            events_path,
+            "nudge_shown",
+            {
+                "learning_id": learning_id,
+                "phase": phase,
+                "fallback": is_fallback,
+            },
+        )
+        logger.debug(
+            "nudge_event_logged",
+            learning_id=learning_id,
+            phase=phase,
+            fallback=is_fallback,
+        )
+    except Exception:  # justified: fail-open — nudge event logging must never raise
+        logger.warning("nudge_event_log_failed", exc_info=True)
 
 
 # ── Phase-contextual tag map (PRD-CORE-049) ──────────────────────────────

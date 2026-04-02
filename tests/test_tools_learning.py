@@ -371,16 +371,15 @@ class TestTrwClaudeMdSync:
         # Sync
         result = tools["trw_claude_md_sync"].fn(scope="root")
         assert result["status"] == "synced"
-        assert result["learnings_promoted"] >= 1
+        # CORE-093: learning promotion removed — learnings_promoted always 0
+        assert result["learnings_promoted"] == 0
 
-        # Verify CLAUDE.md was created
+        # Verify CLAUDE.md was created with static behavioral protocol
         claude_md = tmp_path / "CLAUDE.md"
         assert claude_md.exists()
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         assert "trw:end" in content
-        # Learnings now rendered in CLAUDE.md (categorized by tag)
-        assert "Critical pattern" in content
 
     def test_preserves_existing_content(self, tmp_path: Path) -> None:
         # Create existing CLAUDE.md
@@ -417,8 +416,8 @@ class TestTrwClaudeMdSync:
 
         content = claude_md.read_text(encoding="utf-8")
         assert "Old content" not in content
-        # Learnings now rendered in CLAUDE.md (categorized by tag)
-        assert "Replacement learning" in content
+        # CORE-093: static behavioral protocol, no individual learnings
+        assert "trw:start" in content
         assert "Other section" in content  # Preserved
 
     def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path) -> None:
@@ -498,10 +497,11 @@ class TestClaudeMdTemplate:
     """Tests for the CLAUDE.md template system (PRD-CORE-002 Phase 1)."""
 
     def test_loads_bundled_template(self, tmp_path: Path) -> None:
-        """Default template loaded from package data."""
+        """Default template loaded from package data (CORE-093 compact format)."""
         template = load_claude_md_template(tmp_path / _CFG.trw_dir)
-        assert "{{categorized_learnings}}" in template
-        assert "{{architecture_section}}" in template
+        # CORE-093 FR07: template reduced to 4 compact variables
+        assert "{{imperative_opener}}" in template
+        assert "{{ceremony_quick_ref}}" in template
         assert "trw:start" in template
         assert "trw:end" in template
 
@@ -547,17 +547,13 @@ class TestClaudeMdTemplate:
 
         result = tools["trw_claude_md_sync"].fn(scope="root")
         assert result["status"] == "synced"
-        assert result["learnings_promoted"] >= 1
+        # CORE-093: learning promotion removed
+        assert result["learnings_promoted"] == 0
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         assert "trw:end" in content
-        # Learnings now rendered in CLAUDE.md (categorized by tag)
-        assert "Template sync test learning" in content
-        assert "### Gotchas" in content
-        # Quick ref card present
-        assert "/trw-ceremony-guide" in content
 
     def test_custom_template_with_extra_sections(self, tmp_path: Path) -> None:
         """Custom templates can add static content alongside placeholders."""
@@ -575,18 +571,13 @@ class TestClaudeMdTemplate:
             "\n"
             "{{imperative_opener}}"
             "{{ceremony_quick_ref}}"
-            "{{categorized_learnings}}"
-            "{{adherence_section}}"
+            "{{memory_harmonization}}"
+            "{{closing_reminder}}"
             "<!-- trw:end -->\n"
         )
         (templates_dir / "claude_md.md").write_text(custom_template, encoding="utf-8")
 
         tools = _get_tools()
-        tools["trw_learn"].fn(
-            summary="Custom template learning",
-            detail="Should appear alongside custom content",
-            impact=0.9,
-        )
 
         result = tools["trw_claude_md_sync"].fn(scope="root")
         assert result["status"] == "synced"
@@ -595,9 +586,6 @@ class TestClaudeMdTemplate:
         content = claude_md.read_text(encoding="utf-8")
         assert "Project-Specific Notes" in content
         assert "React 19" in content
-        # Learnings now rendered; quick ref present
-        assert "Custom template learning" in content
-        assert "/trw-ceremony-guide" in content
 
 
 class TestCeremonyRendering:
@@ -689,14 +677,13 @@ class TestCeremonyRendering:
         assert "teammates do the implementation" in result
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
-        """Bundled template contains all ceremony placeholder tokens."""
+        """Bundled template contains CORE-093 compact placeholder tokens."""
         # Use a non-existent trw_dir so it falls through to bundled template
         template = load_claude_md_template(Path("/nonexistent/.trw"))
+        # CORE-093 FR07: template reduced to 4 compact variables
         assert "{{imperative_opener}}" in template
-        assert "{{ceremony_phases}}" in template
-        assert "{{ceremony_table}}" in template
-        assert "{{ceremony_flows}}" in template
-        assert "{{delegation_section}}" in template
+        assert "{{ceremony_quick_ref}}" in template
+        assert "{{memory_harmonization}}" in template
         assert "{{closing_reminder}}" in template
 
     def test_sync_includes_ceremony_sections(self, tmp_path: Path) -> None:
@@ -760,7 +747,7 @@ class TestProgressiveDisclosure:
         assert line_count <= 300, f"Auto-gen section is {line_count} lines, exceeds 300"
 
     def test_auto_gen_includes_learnings(self, tmp_path: Path) -> None:
-        """High-impact learnings are rendered in CLAUDE.md (categorized by tag)."""
+        """CORE-093: CLAUDE.md no longer includes individual learnings."""
         tools = _get_tools()
         for i in range(5):
             tools["trw_learn"].fn(
@@ -768,12 +755,12 @@ class TestProgressiveDisclosure:
                 detail=f"Detail for learning {i}",
                 impact=0.9,
             )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        result = tools["trw_claude_md_sync"].fn(scope="root")
+        # CORE-093: learnings_promoted always 0
+        assert result["learnings_promoted"] == 0
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        # At least some high-impact learnings should be promoted and rendered
-        found = sum(1 for i in range(5) if f"High impact learning {i}" in content)
-        assert found >= 3, f"Expected at least 3 learnings in CLAUDE.md, found {found}"
+        assert "trw:start" in content
 
     def test_auto_gen_contains_skill_reference(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR02: rendered output contains /trw-ceremony-guide."""
@@ -938,19 +925,19 @@ class TestProgressiveDisclosure:
             assert "flexible_tools:" not in content
 
     def test_mark_promoted_still_fires(self, tmp_path: Path) -> None:
-        """Learnings collected for analytics and rendered in CLAUDE.md."""
+        """CORE-093: learning promotion removed — sync produces static protocol."""
         tools = _get_tools()
-        result = tools["trw_learn"].fn(
+        tools["trw_learn"].fn(
             summary="Promotion analytics test",
             detail="Should be promoted for analytics",
             impact=0.9,
         )
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        assert sync_result["learnings_promoted"] >= 1
-        # Learnings now rendered in CLAUDE.md
+        # CORE-093: learnings_promoted always 0
+        assert sync_result["learnings_promoted"] == 0
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Promotion analytics test" in content
+        assert "trw:start" in content
 
 
 class TestTrwClaudeMdSyncLLM:
@@ -969,14 +956,12 @@ class TestTrwClaudeMdSyncLLM:
         result = tools["trw_claude_md_sync"].fn(scope="root")
         assert result["status"] == "synced"
         assert result["llm_used"] is False
-        assert result["learnings_promoted"] >= 1
+        # CORE-093: learning promotion removed
+        assert result["learnings_promoted"] == 0
 
-        # Learnings now rendered in CLAUDE.md
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "Sync no LLM test learning" in content
-        # Quick ref card present
-        assert "/trw-ceremony-guide" in content
+        assert "trw:start" in content
 
     def test_sync_llm_flag_present(self, tmp_path: Path) -> None:
         """Verify llm_used field is in return value."""
@@ -1704,51 +1689,37 @@ class TestClaudeMdSyncQValuePromotion:
     """Tests for PRD-CORE-004 Phase 1c — q_value-based promotion in claude_md_sync."""
 
     def test_mature_entry_uses_q_value(self, tmp_path: Path) -> None:
-        """Entry with q_observations >= threshold uses q_value for promotion."""
+        """CORE-093: learning promotion removed — q_value no longer drives CLAUDE.md content."""
         from trw_mcp.state.memory_adapter import get_backend
 
         tools = _get_tools()
         result = tools["trw_learn"].fn(
             summary="Mature q promotion test",
             detail="Has high q_value",
-            impact=0.3,  # Below promotion threshold
+            impact=0.3,
         )
         learning_id = result["learning_id"]
 
-        # Update q_value and q_observations in SQLite (where list_active_learnings reads from)
         trw_dir = tmp_path / _CFG.trw_dir
         backend = get_backend(trw_dir)
         backend.update(learning_id, q_value=0.9, q_observations=5)
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        # Learnings collected for analytics and rendered in CLAUDE.md
-        assert sync_result["learnings_promoted"] >= 1
-        claude_md = tmp_path / "CLAUDE.md"
-        content = claude_md.read_text(encoding="utf-8")
-        assert "Mature q promotion test" in content
+        # CORE-093: learnings_promoted always 0
+        assert sync_result["learnings_promoted"] == 0
 
     def test_immature_entry_uses_impact(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
-        """Entry with q_observations < threshold uses impact for promotion."""
+        """CORE-093: learning promotion removed — impact no longer drives CLAUDE.md content."""
         tools = _get_tools()
-        result = tools["trw_learn"].fn(
+        tools["trw_learn"].fn(
             summary="Immature impact promotion test",
             detail="Uses impact because too few observations",
-            impact=0.9,  # Above promotion threshold
+            impact=0.9,
         )
 
-        # Set q_value low but q_observations below threshold
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                data["q_value"] = 0.2  # Below promotion threshold
-                data["q_observations"] = 1  # Below cold-start threshold
-                writer.write_yaml(entry_file, data)
-                break
-
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        # Should use impact (0.9), not q_value (0.2) — so it IS promoted
-        assert sync_result["learnings_promoted"] >= 1
+        # CORE-093: learnings_promoted always 0
+        assert sync_result["learnings_promoted"] == 0
 
     def test_mature_low_q_not_promoted(self, tmp_path: Path) -> None:
         """Mature entry with low q_value is not promoted even if impact is high."""
@@ -1852,35 +1823,16 @@ class TestBehavioralProtocol:
         assert "short detail" not in result
 
     def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """Full trw_claude_md_sync includes quick ref header but not full directives."""
-        context_dir = tmp_path / _CFG.trw_dir / _CFG.context_dir
-        writer.ensure_dir(context_dir)
-        writer.write_yaml(
-            context_dir / "behavioral_protocol.yaml",
-            {
-                "directives": [
-                    "Execute trw_recall at session start",
-                    "Execute trw_reflect after tasks",
-                ],
-            },
-        )
-
+        """Full trw_claude_md_sync includes compact behavioral protocol (CORE-093)."""
         tools = _get_tools()
-        tools["trw_learn"].fn(
-            summary="Behavioral sync test learning",
-            detail="Trigger sync",
-            impact=0.9,
-        )
         result = tools["trw_claude_md_sync"].fn(scope="root")
         assert result["status"] == "synced"
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        # Behavioral protocol header from quick ref card
-        assert "TRW Behavioral Protocol" in content
-        # Behavioral directives now rendered in CLAUDE.md
-        assert "Execute trw_recall at session start" in content
-        assert "Execute trw_reflect after tasks" in content
+        # CORE-093: compact protocol with session boundaries reminder
+        assert "trw:start" in content
+        assert "trw:end" in content
 
 
 # ---------------------------------------------------------------------------

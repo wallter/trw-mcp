@@ -202,7 +202,7 @@ class TestDistinctEventNames:
                 return_value={"available": False},
             ),
             patch(
-                "trw_mcp.state.analytics.report.auto_close_stale_runs",
+                "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
                 side_effect=Exception("stale runs error"),
             ),
             patch(
