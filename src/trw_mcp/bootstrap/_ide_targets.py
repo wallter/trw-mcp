@@ -127,10 +127,7 @@ def _update_codex_artifacts(
         install_codex_skills,
     )
     from ._opencode import (
-        detect_model_family,
         generate_agents_md,
-        generate_opencode_config,
-        generate_opencode_instructions,
     )
 
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)

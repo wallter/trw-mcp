@@ -188,4 +188,4 @@ def generate_anchors(
     return anchors[:_MAX_ANCHORS]
 
 
-__all__ = ["AnchorDict", "MARKER_PATTERN", "extract_marker_ids", "generate_anchors"]
+__all__ = ["MARKER_PATTERN", "AnchorDict", "extract_marker_ids", "generate_anchors"]

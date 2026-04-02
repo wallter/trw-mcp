@@ -63,19 +63,18 @@ def _determine_write_targets(
             profile = resolve_client_profile(ides[0])
             return write_claude, write_agents, profile.write_targets.instruction_path
         return write_claude, write_agents, None
-    elif client == "all":
+    if client == "all":
         write_claude = True
         write_agents = config.agents_md_enabled and scope == "root"
         if write_agents:
             profile = resolve_client_profile("opencode")
             return write_claude, write_agents, profile.write_targets.instruction_path
         return write_claude, write_agents, None
-    else:
-        # Delegate to profile write_targets — single source of truth
-        profile = resolve_client_profile(client)
-        write_claude = profile.write_targets.claude_md
-        write_agents = profile.write_targets.agents_md
-        return write_claude, write_agents, profile.write_targets.instruction_path
+    # Delegate to profile write_targets — single source of truth
+    profile = resolve_client_profile(client)
+    write_claude = profile.write_targets.claude_md
+    write_agents = profile.write_targets.agents_md
+    return write_claude, write_agents, profile.write_targets.instruction_path
 
 
 def _inject_learnings_to_agents(
@@ -209,8 +208,6 @@ def _migrate_trw_content_from_agents_md(
 
     if start_idx == -1 or end_idx == -1:
         return False, ""
-
-    trw_content = content[start_idx : end_idx + len(TRW_MARKER_END)]
 
     opencode_json_path = target_dir / "opencode.json"
     model_family = "generic"

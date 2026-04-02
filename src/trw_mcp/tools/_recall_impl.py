@@ -55,13 +55,13 @@ def build_recall_context(
         import subprocess
 
         git_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607
             capture_output=True, text=True, timeout=5,
             cwd=str(trw_dir.parent) if trw_dir.name == ".trw" else str(trw_dir),
         )
         if git_result.returncode == 0:
             modified_files = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
-    except Exception:
+    except Exception:  # noqa: S110  # fail-open for git
         pass
 
     active_domains = infer_domains(modified_files=modified_files, query=query)

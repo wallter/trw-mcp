@@ -308,6 +308,8 @@ def _default_lookup_entry(
     from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
     from trw_mcp.state.memory_adapter import (
         find_entry_by_id as sqlite_find_entry_by_id,
+    )
+    from trw_mcp.state.memory_adapter import (
         find_yaml_path_for_entry,
     )
 

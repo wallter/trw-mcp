@@ -248,7 +248,7 @@ def _extract_subheadings(content: str) -> set[str]:
     return {match.group(1).strip() for match in _SUBHEADING_RE.finditer(content)}
 
 
-def _is_ai_agentic_prd(frontmatter: dict, content: str) -> bool:
+def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
     """Heuristic detection of AI/LLM/agentic PRDs.
 
     Returns True if:
@@ -582,8 +582,8 @@ def score_traceability_v2(
     proof_score = 0.0
     if "Traceability Matrix" in content:
         matrix_section = content.split("Traceability Matrix")[-1]
-        impl_refs = _IMPL_REF_RE.findall(matrix_section)
-        test_refs = _TEST_REF_RE.findall(matrix_section)
+        _impl_refs = _IMPL_REF_RE.findall(matrix_section)
+        _test_refs = _TEST_REF_RE.findall(matrix_section)
         fr_refs = re.findall(r"FR\d+", matrix_section)
         matrix_rows = [
             line.strip()

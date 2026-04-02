@@ -27,7 +27,8 @@ from trw_mcp.state._constants import DEFAULT_NAMESPACE
 _NAMESPACE = DEFAULT_NAMESPACE
 
 # Re-export from canonical source for backward compatibility
-from trw_mcp.state._constants import VALID_SOURCES as _VALID_SOURCES
+from trw_mcp.state._constants import VALID_SOURCES as _VALID_SOURCES  # noqa: E402
+
 _SourceType = Literal["human", "agent", "tool", "consolidated"]
 
 
@@ -153,7 +154,7 @@ def _learning_to_memory_entry(
                 if file_val.startswith("/"):
                     anchor_data["file"] = file_val.lstrip("/")
                 anchor_objects.append(Anchor.model_validate(anchor_data))
-            except Exception:  # justified: fail-open, skip invalid anchors
+            except Exception:  # noqa: S110, PERF203  # justified: fail-open, skip invalid anchors
                 pass
 
     return MemoryEntry(

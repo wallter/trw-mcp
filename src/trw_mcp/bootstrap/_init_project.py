@@ -237,7 +237,7 @@ def init_project(
         generate_codex_hooks,
         install_codex_skills,
     )
-    from ._opencode import generate_agents_md, generate_opencode_config
+    from ._opencode import generate_opencode_config
     from ._update_project import _extract_trw_section_content, _write_manifest
 
     result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
@@ -340,7 +340,6 @@ def init_project(
 
     # 7d. Codex artifacts
     if "codex" in ide_targets:
-        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
 
         codex_config = generate_codex_config(target_dir, force=force)
         result["created"].extend(codex_config.get("created", []))

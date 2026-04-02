@@ -87,7 +87,7 @@ def _handle_consolidation(
                     ref_id=ref_id,
                     compendium_id=learning_id,
                 )
-        except Exception:  # per-item error handling: skip failing obsolete-mark, continue with next ref
+        except Exception:  # noqa: PERF203  # per-item error handling: skip failing obsolete-mark, continue with next ref
             logger.warning(
                 "auto_obsolete_failed",
                 ref_id=ref_id,
@@ -96,7 +96,7 @@ def _handle_consolidation(
             )
 
 
-def execute_learn(
+def execute_learn(  # noqa: C901
     summary: str,
     detail: str,
     trw_dir: Path,
@@ -204,7 +204,7 @@ def execute_learn(
             detected = detect_current_phase()
             if detected:
                 phase_origin = detected.upper()
-        except Exception:  # justified: fail-open
+        except Exception:  # noqa: S110  # justified: fail-open
             pass
 
     # PRD-CORE-110: Auto-generate nudge_line from summary if not provided
@@ -277,7 +277,7 @@ def execute_learn(
     try:
         project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
         git_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=5,

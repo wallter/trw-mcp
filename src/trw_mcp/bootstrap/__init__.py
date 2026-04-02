@@ -186,6 +186,9 @@ from ._utils import (
     _DATA_DIR as _DATA_DIR,
 )
 from ._utils import (
+    SUPPORTED_IDES as SUPPORTED_IDES,
+)
+from ._utils import (
     ProgressCallback as ProgressCallback,
 )
 from ._utils import (
@@ -234,9 +237,6 @@ from ._utils import (
     _write_version_yaml as _write_version_yaml,
 )
 from ._utils import (
-    SUPPORTED_IDES as SUPPORTED_IDES,
-)
-from ._utils import (
     detect_ide as detect_ide,
 )
 from ._utils import (
@@ -275,6 +275,7 @@ _DATA_FILE_MAP: list[tuple[str, str]] = [
 
 __all__ = [
     "PREDECESSOR_MAP",
+    "SUPPORTED_IDES",
     "_CONTEXT_ALLOWLIST",
     "_DATA_DIR",
     "_DATA_FILE_MAP",
@@ -287,7 +288,6 @@ __all__ = [
     "_TRW_HEADER_MARKER",
     "_TRW_START_MARKER",
     "ProgressCallback",
-    "SUPPORTED_IDES",
     "_check_package_version",
     "_cleanup_context_transients",
     "_cleanup_stale_artifacts",
