@@ -296,7 +296,13 @@ def init_project(
         result["errors"].extend(oc_result.get("errors", []))
 
         # 7b-i. Generate INSTRUCTIONS.md with model-family content (FR01)
-        from ._opencode import detect_model_family, generate_opencode_instructions
+        from ._opencode import (
+            detect_model_family,
+            generate_opencode_instructions,
+            install_opencode_agents,
+            install_opencode_commands,
+            install_opencode_skills,
+        )
 
         try:
             opencode_path = target_dir / "opencode.json"
@@ -315,6 +321,21 @@ def init_project(
             result["errors"].extend(instructions_result.get("errors", []))
         except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
             result["warnings"].append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
+
+        commands_result = install_opencode_commands(target_dir, force=force)
+        result["created"].extend(commands_result.get("created", []))
+        result["skipped"].extend(commands_result.get("preserved", []))
+        result["errors"].extend(commands_result.get("errors", []))
+
+        agents_result = install_opencode_agents(target_dir, force=force)
+        result["created"].extend(agents_result.get("created", []))
+        result["skipped"].extend(agents_result.get("preserved", []))
+        result["errors"].extend(agents_result.get("errors", []))
+
+        skills_result = install_opencode_skills(target_dir, force=force)
+        result["created"].extend(skills_result.get("created", []))
+        result["skipped"].extend(skills_result.get("preserved", []))
+        result["errors"].extend(skills_result.get("errors", []))
 
     # 7c. Cursor artifacts (FR05, FR06, FR07: Cursor IDE support)
     if "cursor" in ide_targets:

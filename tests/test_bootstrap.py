@@ -1866,6 +1866,10 @@ from trw_mcp.bootstrap._opencode import (
     _parse_jsonc,
     generate_agents_md,
     generate_opencode_config,
+    install_opencode_agents,
+    install_opencode_commands,
+    install_opencode_skills,
+    load_opencode_skill_inventory,
     merge_opencode_json,
 )
 
@@ -1929,6 +1933,33 @@ class TestOpenCodeBootstrap:
         assert "More user content" in content
         assert "New TRW content" in content
         assert "Old TRW" not in content
+
+    def test_opencode_commands_installed(self, tmp_path: Path) -> None:
+        result = install_opencode_commands(tmp_path)
+        assert ".opencode/commands/trw-deliver.md" in result["created"]
+        assert (tmp_path / ".opencode" / "commands" / "trw-prd-ready.md").exists()
+        assert (tmp_path / ".opencode" / "commands" / "trw-sprint-team.md").exists()
+
+    def test_opencode_agents_installed(self, tmp_path: Path) -> None:
+        result = install_opencode_agents(tmp_path)
+        assert ".opencode/agents/trw-researcher.md" in result["created"]
+        content = (tmp_path / ".opencode" / "agents" / "trw-reviewer.md").read_text(encoding="utf-8")
+        assert "mode: subagent" in content
+        assert "write: deny" in content
+
+    def test_opencode_skills_inventory_curated(self) -> None:
+        inventory = load_opencode_skill_inventory()
+        assert inventory["trw-deliver"]["disposition"] == "portable"
+        assert inventory["trw-sprint-team"]["disposition"] == "exclude"
+
+    def test_opencode_skills_installed_curated_subset(self, tmp_path: Path) -> None:
+        result = install_opencode_skills(tmp_path)
+        assert ".opencode/skills/trw-deliver/SKILL.md" in result["created"]
+        assert (tmp_path / ".opencode" / "skills" / "trw-prd-ready" / "SKILL.md").exists()
+        assert not (tmp_path / ".opencode" / "skills" / "trw-sprint-team").exists()
+        content = (tmp_path / ".opencode" / "skills" / "trw-deliver" / "SKILL.md").read_text(encoding="utf-8")
+        assert "trw_claude_md_sync" not in content
+        assert "TaskList" not in content
 
 
 class TestOpenCodeJsonMerge:
@@ -2335,6 +2366,10 @@ class TestUpdateProjectMultiIDE:
         instructions = (tmp_path / ".opencode" / "INSTRUCTIONS.md").read_text()
         assert "trw_session_start" in instructions
         assert "trw_deliver" in instructions
+        assert (tmp_path / ".opencode" / "commands" / "trw-deliver.md").exists()
+        assert (tmp_path / ".opencode" / "agents" / "trw-implementer.md").exists()
+        assert (tmp_path / ".opencode" / "skills" / "trw-deliver" / "SKILL.md").exists()
+        assert not (tmp_path / ".opencode" / "skills" / "trw-sprint-team").exists()
 
     def test_fr15_init_creates_both_ide_all(self, tmp_path: Path) -> None:
         """init_project(ide='all') creates Claude, OpenCode, and Codex artifacts."""
@@ -2423,6 +2458,114 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / "AGENTS.md").exists()
         content = (tmp_path / "AGENTS.md").read_text()
         assert "<!-- trw:start -->" in content
+
+    def test_fr15_update_opencode_preserves_user_modified_command(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="opencode")
+        assert not init_result["errors"], init_result["errors"]
+
+        command_path = tmp_path / ".opencode" / "commands" / "trw-deliver.md"
+        command_path.write_text("user-modified-command\n", encoding="utf-8")
+
+        result = update_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        assert command_path.read_text(encoding="utf-8") == "user-modified-command\n"
+        assert ".opencode/commands/trw-deliver.md" in result["preserved"]
+
+    def test_fr15_update_opencode_removes_stale_managed_command(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="opencode")
+        assert not init_result["errors"], init_result["errors"]
+
+        stale_path = tmp_path / ".opencode" / "commands" / "trw-stale.md"
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_text("stale\n", encoding="utf-8")
+
+        manifest_path = tmp_path / ".trw" / "managed-artifacts.yaml"
+        manifest = FileStateReader().read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        manifest["opencode_commands"] = list(manifest.get("opencode_commands", [])) + ["trw-stale.md"]
+        manifest.setdefault("custom_opencode_commands", [])
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        result = update_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        assert not stale_path.exists()
+        assert any("removed:" in item and "trw-stale.md" in item for item in result["updated"])
+
+    def test_fr15_update_opencode_preserves_user_modified_agent(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="opencode")
+        assert not init_result["errors"], init_result["errors"]
+
+        agent_path = tmp_path / ".opencode" / "agents" / "trw-reviewer.md"
+        agent_path.write_text("user-modified-agent\n", encoding="utf-8")
+
+        result = update_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        assert agent_path.read_text(encoding="utf-8") == "user-modified-agent\n"
+        assert ".opencode/agents/trw-reviewer.md" in result["preserved"]
+
+    def test_fr15_update_opencode_preserves_user_modified_skill(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="opencode")
+        assert not init_result["errors"], init_result["errors"]
+
+        skill_path = tmp_path / ".opencode" / "skills" / "trw-deliver" / "SKILL.md"
+        skill_path.write_text("user-modified-skill\n", encoding="utf-8")
+
+        result = update_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        assert skill_path.read_text(encoding="utf-8") == "user-modified-skill\n"
+        assert ".opencode/skills/trw-deliver/SKILL.md" in result["preserved"]
+
+    def test_fr15_update_opencode_removes_stale_managed_agent(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="opencode")
+        assert not init_result["errors"], init_result["errors"]
+
+        stale_path = tmp_path / ".opencode" / "agents" / "trw-stale-agent.md"
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_text("stale\n", encoding="utf-8")
+
+        manifest_path = tmp_path / ".trw" / "managed-artifacts.yaml"
+        manifest = FileStateReader().read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        manifest["opencode_agents"] = list(manifest.get("opencode_agents", [])) + ["trw-stale-agent.md"]
+        manifest.setdefault("custom_opencode_agents", [])
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        result = update_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        assert not stale_path.exists()
+        assert any("removed:" in item and "trw-stale-agent.md" in item for item in result["updated"])
+
+    def test_fr15_update_opencode_removes_stale_managed_skill(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="opencode")
+        assert not init_result["errors"], init_result["errors"]
+
+        stale_path = tmp_path / ".opencode" / "skills" / "trw-stale-skill" / "SKILL.md"
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_text("stale\n", encoding="utf-8")
+
+        manifest_path = tmp_path / ".trw" / "managed-artifacts.yaml"
+        manifest = FileStateReader().read_yaml(manifest_path)
+        assert isinstance(manifest, dict)
+        manifest["opencode_skills"] = list(manifest.get("opencode_skills", [])) + ["trw-stale-skill"]
+        manifest.setdefault("custom_opencode_skills", [])
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        result = update_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        assert not stale_path.parent.exists()
+        assert any("removed:" in item and "trw-stale-skill" in item for item in result["updated"])
 
 
 # ── FR09: A/B Test Infrastructure (CORE-074) ─────────────────────────────

@@ -42,6 +42,7 @@ def _update_opencode_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
     ide_override: str | None = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Update opencode artifacts when opencode is detected (FR15).
 
@@ -57,8 +58,10 @@ def _update_opencode_artifacts(
         generate_agents_md,
         generate_opencode_config,
         generate_opencode_instructions,
+        install_opencode_agents,
+        install_opencode_commands,
+        install_opencode_skills,
     )
-
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
     if "opencode" not in ide_targets:
         return
@@ -112,6 +115,33 @@ def _update_opencode_artifacts(
         result["errors"].extend(instructions_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
         result["warnings"].append(f".opencode/INSTRUCTIONS.md update skipped: {exc}")
+
+    try:
+        commands_result = install_opencode_commands(target_dir, manifest_hashes=manifest_hashes)
+        result["created"].extend(commands_result.get("created", []))
+        result["updated"].extend(commands_result.get("updated", []))
+        result["preserved"].extend(commands_result.get("preserved", []))
+        result["errors"].extend(commands_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, command update is best-effort
+        result["warnings"].append(f".opencode/commands update skipped: {exc}")
+
+    try:
+        agents_result = install_opencode_agents(target_dir, manifest_hashes=manifest_hashes)
+        result["created"].extend(agents_result.get("created", []))
+        result["updated"].extend(agents_result.get("updated", []))
+        result["preserved"].extend(agents_result.get("preserved", []))
+        result["errors"].extend(agents_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, agent update is best-effort
+        result["warnings"].append(f".opencode/agents update skipped: {exc}")
+
+    try:
+        skills_result = install_opencode_skills(target_dir, manifest_hashes=manifest_hashes)
+        result["created"].extend(skills_result.get("created", []))
+        result["updated"].extend(skills_result.get("updated", []))
+        result["preserved"].extend(skills_result.get("preserved", []))
+        result["errors"].extend(skills_result.get("errors", []))
+    except Exception as exc:  # justified: fail-open, skill update is best-effort
+        result["warnings"].append(f".opencode/skills update skipped: {exc}")
 
 
 def _update_codex_artifacts(

@@ -253,6 +253,8 @@ def _run_post_update_phases(
     ide: str | None,
     result: dict[str, list[str]],
     on_progress: ProgressCallback,
+    data_dir: Path | None = None,
+    prev_manifest: dict[str, object] | None = None,
 ) -> None:
     """Execute post-update phases (package install, verification, IDE configs)."""
     if pip_install:
@@ -276,11 +278,16 @@ def _run_post_update_phases(
         on_progress("Phase", "Running auto-maintenance...")
     _run_auto_maintenance(target_dir, result, on_progress=on_progress)
 
+    manifest_hashes = prev_manifest.get("content_hashes") if isinstance(prev_manifest, dict) else None
+    if not isinstance(manifest_hashes, dict):
+        manifest_hashes = None
+
     if on_progress:
         on_progress("Phase", "Updating IDE configs...")
-    _update_opencode_artifacts(target_dir, result, ide_override=ide)
+    _update_opencode_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_cursor_artifacts(target_dir, result, ide_override=ide)
     _update_codex_artifacts(target_dir, result, ide_override=ide)
+    _write_manifest(target_dir, result, data_dir)
 
     if on_progress:
         on_progress("Phase", "Verifying installation...")
@@ -339,11 +346,13 @@ def update_project(
         )
         return result
 
+    prev_manifest = _read_manifest(target_dir)
+
     effective_data = data_dir or _DATA_DIR
     _run_core_update_phases(target_dir, effective_data, result, dry_run, on_progress)
 
     if not dry_run:
-        _run_post_update_phases(target_dir, pip_install, ide, result, on_progress)
+        _run_post_update_phases(target_dir, pip_install, ide, result, on_progress, effective_data, prev_manifest)
 
     result["warnings"].append(
         "Running Claude Code sessions use cached hooks/settings. "
