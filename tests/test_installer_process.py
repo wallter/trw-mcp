@@ -203,13 +203,29 @@ def update_config(
     if not config_path.is_file():
         return False
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    platform_url = "https://api.trwframework.com"
     updated: set[str] = set()
     out: list[str] = []
+    replacing_platform_urls = False
     for line in lines:
-        s = line.lstrip()
+        normalized_line = line if line.endswith("\n") else line + "\n"
+        s = normalized_line.lstrip()
+        if replacing_platform_urls:
+            if s.startswith("- "):
+                continue
+            replacing_platform_urls = False
         if s.startswith("installation_id:"):
             out.append(f"installation_id: {project_name}\n")
             updated.add("installation_id")
+            continue
+        if s.startswith("platform_api_key:"):
+            out.append(f'platform_api_key: "{api_key}"\n' if api_key else normalized_line)
+            updated.add("platform_api_key")
+            continue
+        if s.startswith("platform_telemetry_enabled:"):
+            val = "true" if telemetry_enabled else "false"
+            out.append(f"platform_telemetry_enabled: {val}\n")
+            updated.add("platform_telemetry_enabled")
             continue
         if s.startswith("embeddings_enabled:") and embeddings_enabled is not None:
             out.append(f"embeddings_enabled: {'true' if embeddings_enabled else 'false'}\n")
@@ -219,7 +235,26 @@ def update_config(
             out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
             updated.add("sqlite_vec_enabled")
             continue
-        out.append(line)
+        if s.startswith("platform_urls:"):
+            updated.add("platform_urls")
+            if api_key or telemetry_enabled:
+                out.append("platform_urls:\n")
+                out.append(f'  - "{platform_url}"\n')
+                updated.add("platform_urls_written")
+                replacing_platform_urls = True
+                continue
+            out.append(normalized_line)
+            continue
+        out.append(normalized_line)
+    if "installation_id" not in updated:
+        out.append(f"installation_id: {project_name}\n")
+    if api_key and "platform_api_key" not in updated:
+        out.append(f'platform_api_key: "{api_key}"\n')
+    if telemetry_enabled and "platform_telemetry_enabled" not in updated:
+        out.append("platform_telemetry_enabled: true\n")
+    if (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
+        out.append("platform_urls:\n")
+        out.append(f'  - "{platform_url}"\n')
     if embeddings_enabled and "embeddings_enabled" not in updated:
         out.append("embeddings_enabled: true\n")
     if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
@@ -470,6 +505,35 @@ class TestUpdateConfig:
         content = config.read_text(encoding="utf-8")
         assert content.count("embeddings_enabled") == 1
         assert "embeddings_enabled: true" in content
+
+    def test_preserves_newlines_before_appending_platform_urls(self, tmp_path: Path) -> None:
+        """Appending platform URLs must not merge onto a prior line without newline."""
+        config = tmp_path / "config.yaml"
+        config.write_text('platform_user_email: "user@example.com"', encoding="utf-8")
+
+        update_config(config, "test", "trw_key_123", True)
+
+        content = config.read_text(encoding="utf-8")
+        assert 'platform_user_email: "user@example.com"platform_urls:' not in content
+        assert 'platform_user_email: "user@example.com"\n' in content
+        assert "platform_urls:\n" in content
+
+    def test_rewrites_platform_urls_without_duplication(self, tmp_path: Path) -> None:
+        """Existing platform_urls blocks are replaced in place, not duplicated."""
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            'platform_api_key: ""\n'
+            "platform_urls:\n"
+            '  - "http://old.example.com"\n',
+            encoding="utf-8",
+        )
+
+        update_config(config, "test", "trw_key_123", True)
+
+        content = config.read_text(encoding="utf-8")
+        assert content.count("platform_urls:") == 1
+        assert '"https://api.trwframework.com"' in content
+        assert '"http://old.example.com"' not in content
 
 
 class TestPhasePromptFeatures:

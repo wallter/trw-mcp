@@ -552,9 +552,16 @@ def update_config(
 
     updated: set[str] = set()
     out: list[str] = []
+    replacing_platform_urls = False
 
     for line in lines:
-        s = line.lstrip()
+        normalized_line = line if line.endswith("\n") else line + "\n"
+        s = normalized_line.lstrip()
+
+        if replacing_platform_urls:
+            if s.startswith("- "):
+                continue
+            replacing_platform_urls = False
 
         if s.startswith("installation_id:"):
             out.append(f"installation_id: {project_name}\n")
@@ -579,11 +586,14 @@ def update_config(
             continue
         if s.startswith("platform_urls:"):
             updated.add("platform_urls")
+            if api_key or telemetry_enabled:
+                out.append("platform_urls:\n")
+                out.append(f'  - "{platform_url}"\n')
+                updated.add("platform_urls_written")
+                replacing_platform_urls = True
+                continue
+            out.append(normalized_line)
             continue
-        if s.startswith("- ") and "platform_urls" in updated and "platform_urls_done" not in updated:
-            continue
-        if "platform_urls" in updated and "platform_urls_done" not in updated and not s.startswith("- "):
-            updated.add("platform_urls_done")
 
         # Skip commented-out platform config hints
         skip_prefixes = (
@@ -596,7 +606,7 @@ def update_config(
         if any(s.startswith(p) for p in skip_prefixes):
             continue
 
-        out.append(line)
+        out.append(normalized_line)
 
     # Append missing keys
     if "installation_id" not in updated:
@@ -605,7 +615,7 @@ def update_config(
         out.append(f'platform_api_key: "{api_key}"\n')
     if telemetry_enabled and "platform_telemetry_enabled" not in updated:
         out.append("platform_telemetry_enabled: true\n")
-    if api_key or telemetry_enabled:
+    if (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
         out.append("platform_urls:\n")
         out.append(f'  - "{platform_url}"\n')
     if embeddings_enabled and "embeddings_enabled" not in updated:

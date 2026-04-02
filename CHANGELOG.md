@@ -2,6 +2,20 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.39.2] — 2026-04-02
+
+### Fixed
+
+- **Installer config append corruption** — the bundled installer now normalizes trailing newlines before rewriting `.trw/config.yaml`, preventing appended `platform_urls:` blocks from being merged onto the previous line.
+- **Platform URL rewrites are now idempotent** — updating an existing project replaces stale `platform_urls` entries in place instead of duplicating the block on each reinstall or upgrade.
+- **Installer regression coverage expanded** — added tests for newline preservation and single-block `platform_urls` rewrites so Codex/CLI installs do not silently corrupt repo-local TRW config.
+
+### Validation
+
+- `trw-mcp/tests/test_installer_process.py`: `44` passed.
+
+---
+
 ## [0.39.1] — 2026-04-02
 
 ### Fixed
