@@ -110,6 +110,71 @@ class TestCompressJson:
         result = compress_json(data, "minimal")
         assert result["a"]["b"] == "[nested]"  # type: ignore[index]
 
+    def test_recall_payload_drops_context_before_truncating_summaries(self) -> None:
+        long_summary = "x" * 250
+        data = {
+            "learnings": [
+                {
+                    "id": "L-1",
+                    "summary": long_summary,
+                    "impact": 0.95,
+                    "tags": ["a", "b", "c"],
+                    "status": "active",
+                }
+            ],
+            "context": {"architecture": {"big": True}},
+        }
+
+        result = compress_json(data, "compact")
+
+        assert "context" not in result
+        assert result["learnings"][0] == {  # type: ignore[index]
+            "id": "L-1",
+            "summary": long_summary,
+            "impact": 0.95,
+        }
+
+    def test_minimal_recall_payload_keeps_structured_learning_items(self) -> None:
+        long_summary = "y" * 350
+        data = {
+            "auto_recalled": [
+                {
+                    "id": "L-2",
+                    "summary": long_summary,
+                    "impact": 0.88,
+                    "status": "obsolete",
+                }
+            ]
+        }
+
+        result = compress_json(data, "minimal")
+
+        item = result["auto_recalled"][0]  # type: ignore[index]
+        assert item["id"] == "L-2"
+        assert len(item["summary"]) == 301
+        assert item["summary"].endswith("\u2026")
+        assert item["impact"] == 0.88
+        assert item["status"] == "obsolete"
+
+    def test_delivery_style_nested_dicts_are_shallow_compacted(self) -> None:
+        data = {
+            "reflect": {
+                "events_analyzed": 41,
+                "learnings_produced": 0,
+                "status": "success",
+                "details": {"large": {"nested": True}},
+            }
+        }
+
+        result = compress_json(data, "compact")
+
+        assert result["reflect"] == {  # type: ignore[index]
+            "events_analyzed": 41,
+            "learnings_produced": 0,
+            "status": "success",
+            "details": "[nested]",
+        }
+
 
 class TestCompressTextBlock:
     def test_full_tier_passthrough(self) -> None:
@@ -153,6 +218,47 @@ class TestCompressTextBlock:
     def test_empty_text_unchanged(self) -> None:
         assert compress_text_block("", "compact") == ""
         assert compress_text_block("", "minimal") == ""
+
+    def test_recall_json_keeps_long_learning_summary_in_compact_tier(self) -> None:
+        summary = "important " * 30
+        text = json.dumps(
+            {
+                "learnings": [
+                    {
+                        "id": "L-3",
+                        "summary": summary,
+                        "impact": 0.9,
+                        "tags": ["noise"] * 5,
+                    }
+                ],
+                "context": {"conventions": {"verbose": True}},
+            }
+        )
+
+        result = json.loads(compress_text_block(text, "compact"))
+
+        assert "context" not in result
+        assert result["learnings"][0]["summary"] == summary
+        assert "tags" not in result["learnings"][0]
+
+    def test_delivery_json_shallow_compacts_nested_status_blocks(self) -> None:
+        text = json.dumps(
+            {
+                "reflect": {
+                    "events_analyzed": 41,
+                    "learnings_produced": 0,
+                    "status": "success",
+                    "notes": ["a", "b", "c", "d", "e", "f"],
+                    "deep": {"nested": True},
+                }
+            }
+        )
+
+        result = json.loads(compress_text_block(text, "compact"))
+
+        assert result["reflect"]["status"] == "success"
+        assert result["reflect"]["notes"] == ["a", "b", "c", "d", "e"]
+        assert result["reflect"]["deep"] == "[nested]"
 
 
 class TestHashContent:

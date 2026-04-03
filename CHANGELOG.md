@@ -2,6 +2,14 @@
 
 All notable changes to the TRW MCP server package.
 
+## [Unreleased]
+
+### Fixed
+
+- **Recall/session-start masking preserves useful summary text** — observation masking now drops bulky recall context and per-learning noise before truncating, so `trw_session_start` and `trw_recall` responses keep substantially more of each learning summary.
+- **Delivery/status masking is now structure-aware** — nested status blocks such as `reflect`, `checkpoint`, `claude_md_sync`, `run`, and related delivery metadata are shallow-compacted to keep key scalar fields while avoiding oversized nested payloads.
+- **Compression regressions covered** — added focused middleware tests for recall-shaped and delivery-shaped payloads under compact and minimal observation-masking tiers.
+
 ## [0.39.2] — 2026-04-02
 
 ### Fixed
