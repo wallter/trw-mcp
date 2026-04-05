@@ -60,6 +60,8 @@ class CeremonyState:
     learnings_this_session: int = 0
     nudge_counts: dict[str, int] = field(default_factory=dict)  # step -> nudge count
     phase: str = "early"  # early, implement, validate, review, deliver, done
+    # PRD-CORE-105 P0: Track previous phase for transition detection
+    previous_phase: str = ""
     # FR01 (PRD-CORE-084): Review tracking fields
     review_called: bool = False
     review_verdict: str | None = None  # "pass" | "warn" | "block" | None
@@ -175,6 +177,8 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         learnings_this_session=_int("learnings_this_session"),
         nudge_counts=nudge_counts,
         phase=_str("phase", "early"),
+        # PRD-CORE-105 P0: previous_phase for transition detection
+        previous_phase=_str("previous_phase", ""),
         # FR01 (PRD-CORE-084): review fields with fail-open defaults
         review_called=_bool("review_called"),
         review_verdict=_opt_str("review_verdict"),
@@ -277,6 +281,19 @@ def mark_review(trw_dir: Path, verdict: str, p0_count: int = 0) -> None:
     state.review_verdict = verdict
     state.review_p0_count = p0_count
     write_ceremony_state(trw_dir, state)
+
+
+def set_ceremony_phase(trw_dir: Path, new_phase: str) -> None:
+    """Update ceremony phase, preserving the old phase as previous_phase.
+
+    PRD-CORE-105 P0: Tracks phase transitions for bandit burst detection.
+    Only updates if the new phase differs from the current phase.
+    """
+    state = read_ceremony_state(trw_dir)
+    if state.phase != new_phase:
+        state.previous_phase = state.phase
+        state.phase = new_phase
+        write_ceremony_state(trw_dir, state)
 
 
 def increment_files_modified(trw_dir: Path, count: int = 1) -> None:

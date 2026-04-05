@@ -124,6 +124,7 @@ def select_nudge_learning(
     bandit: object | None = None,
     previous_phase: str = "",
     client_class: str = "full_mode",
+    burst_items: list[dict[str, object]] | None = None,
 ) -> tuple[dict[str, object] | None, bool]:
     """Select the best learning for nudge display with deduplication.
 
@@ -137,6 +138,10 @@ def select_nudge_learning(
     then returns the top remaining candidate. If all candidates are
     already shown, falls back to the least-recently-shown candidate.
 
+    PRD-CORE-105 P0: When *burst_items* is provided and the bandit detects
+    a phase transition, extra burst items (beyond the first) are appended
+    to the list so the caller can render them.
+
     Args:
         state: Current ceremony state with nudge_history.
         candidates: Ranked learning dicts (best first).
@@ -144,6 +149,9 @@ def select_nudge_learning(
         bandit: Optional BanditSelector for bandit-based selection.
         previous_phase: Previous phase for transition detection.
         client_class: Client class for withholding rates.
+        burst_items: Optional mutable list to receive additional burst
+            selections during phase transitions. The primary selection
+            is still returned normally; extra items go here.
 
     Returns:
         Tuple of (selected_learning_dict_or_None, is_fallback).
@@ -180,6 +188,9 @@ def select_nudge_learning(
                     previous_phase=previous_phase,
                 )
                 if selected_list:
+                    # PRD-CORE-105 P0: Populate burst_items with extras
+                    if burst_items is not None and len(selected_list) > 1:
+                        burst_items.extend(selected_list[1:])
                     return selected_list[0], False
                 # Bandit returned nothing; fall through to deterministic path
         except ImportError:

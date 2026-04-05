@@ -42,6 +42,10 @@ class PropensityEntry(TypedDict, total=False):
     context_domain: list[str]  # Active domains at selection time
     context_agent_type: str  # Agent type (e.g., "claude-code")
     session_id: str  # Session identifier
+    # PRD-CORE-103: Metadata fields for stratified analysis
+    client_profile: str  # Client profile identifier (e.g., "claude-code")
+    model_family: str  # Model family (e.g., "claude", "gpt")
+    trw_version: str  # Framework version (e.g., "v24.4_TRW")
 
 
 from trw_mcp.state._helpers import rotate_jsonl as _shared_rotate_jsonl  # noqa: E402
@@ -67,6 +71,9 @@ def log_selection(
     context_domain: list[str] | None = None,
     context_agent_type: str = "",
     session_id: str = "",
+    client_profile: str = "",
+    model_family: str = "",
+    trw_version: str = "",
 ) -> None:
     """Log a learning selection decision to propensity.jsonl.
 
@@ -75,6 +82,9 @@ def log_selection(
 
     IMPORTANT: No learning content (summary, detail) is logged --
     only IDs for cross-referencing.
+
+    PRD-CORE-103: When *client_profile*, *model_family*, or *trw_version*
+    are empty strings, auto-detection from config is attempted (best-effort).
 
     Args:
         trw_dir: Path to the ``.trw`` directory.
@@ -88,6 +98,9 @@ def log_selection(
         context_domain: Active domains at selection time.
         context_agent_type: Agent type identifier (e.g., "claude-code").
         session_id: Session identifier for cross-referencing.
+        client_profile: Client profile identifier. Auto-detected if empty.
+        model_family: Model family identifier. Auto-detected if empty.
+        trw_version: Framework version. Auto-detected if empty.
     """
     try:
         log_dir = trw_dir / _LOG_DIR
@@ -95,6 +108,23 @@ def log_selection(
         log_path = log_dir / _PROPENSITY_FILE
 
         _rotate_jsonl(log_path)
+
+        # PRD-CORE-103: Auto-detect metadata fields from config when empty
+        if not client_profile or not trw_version:
+            try:
+                from trw_mcp.models.config import get_config
+
+                cfg = get_config()
+                if not client_profile:
+                    client_profile = (
+                        cfg.client_profile.client_id
+                        if hasattr(cfg.client_profile, "client_id")
+                        else str(cfg.client_profile)
+                    )
+                if not trw_version:
+                    trw_version = cfg.framework_version or ""
+            except Exception:  # justified: fail-open, auto-detection is best-effort
+                pass
 
         # Resolve candidate set and auto-populate runner_up
         candidates = candidate_set or []
@@ -121,6 +151,9 @@ def log_selection(
             "context_domain": context_domain or [],
             "context_agent_type": context_agent_type,
             "session_id": session_id,
+            "client_profile": client_profile,
+            "model_family": model_family,
+            "trw_version": trw_version,
         }
 
         with log_path.open("a", encoding="utf-8") as f:
