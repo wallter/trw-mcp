@@ -142,14 +142,16 @@ def _extract_path_stems(paths: list[str]) -> list[str]:
 def _sanitize_path(p: str) -> str:
     """Sanitize a file path for domain inference.
 
-    Strips leading '/', removes '..' traversal components, and rejects
-    null bytes.  Returns a cleaned relative path string.
+    Strips leading '/', rejects null bytes, and rejects any path containing
+    '..' traversal components entirely (PRD-CORE-116-FR02).
     """
     if "\0" in p:
         return ""
+    # Reject paths containing traversal sequences entirely
+    if ".." in p.split("/"):
+        return ""
     p = p.lstrip("/")
-    parts = PurePosixPath(p).parts
-    return str(PurePosixPath(*[part for part in parts if part != ".."])) if parts else ""
+    return p
 
 
 def infer_domains(

@@ -53,7 +53,7 @@ class TestCoerceConfidenceRejects:
 
     def test_valid_confidences_accepted(self) -> None:
         """All valid confidence strings are accepted."""
-        for c in ("unverified", "low", "medium", "high", "verified"):
+        for c in ("hypothesis", "unverified", "low", "medium", "high", "verified"):
             entry = LearningEntry(id="L-x", summary="s", detail="d", confidence=c)
             assert entry.confidence == c
 

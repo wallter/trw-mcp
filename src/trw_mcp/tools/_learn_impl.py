@@ -204,8 +204,10 @@ def execute_learn(  # noqa: C901
             detected = detect_current_phase()
             if detected:
                 phase_origin = detected.upper()
-        except Exception:  # noqa: S110  # justified: fail-open
-            pass
+            else:
+                logger.warning("phase_origin_no_active_run")
+        except Exception:  # justified: fail-open
+            logger.warning("phase_origin_detection_failed", exc_info=True)
 
     # PRD-CORE-110: Auto-generate nudge_line from summary if not provided
     from trw_mcp.tools._learning_helpers import truncate_nudge_line
@@ -274,6 +276,7 @@ def execute_learn(  # noqa: C901
 
     # PRD-CORE-111: Generate code-grounded anchors from recently modified files
     anchors: list[dict[str, object]] = []
+    anchor_validity = 1.0
     try:
         project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
         git_result = subprocess.run(
@@ -295,6 +298,15 @@ def execute_learn(  # noqa: C901
                     anchors = [dict(a) for a in raw_anchors]
     except Exception:  # justified: fail-open, anchor generation is best-effort
         logger.debug("anchor_generation_skipped", exc_info=True)
+
+    # PRD-CORE-111: Compute initial anchor validity
+    if anchors:
+        try:
+            from trw_memory.lifecycle.anchor_validation import compute_anchor_validity as _cav
+
+            anchor_validity = _cav(anchors, str(project_root))
+        except Exception:  # justified: fail-open, validity computation is best-effort
+            logger.debug("anchor_validity_computation_skipped", exc_info=True)
 
     # Store via SQLite adapter (primary path)
     try:
@@ -323,6 +335,7 @@ def execute_learn(  # noqa: C901
             team_origin=team_origin,
             protection_tier=protection_tier,
             anchors=anchors,
+            anchor_validity=anchor_validity,
         )
     except Exception:  # justified: boundary, adapter may hit SQLite/network errors; fall through to YAML
         logger.warning(
@@ -359,6 +372,8 @@ def execute_learn(  # noqa: C901
         phase_affinity=phase_affinity,
         team_origin=team_origin,
         protection_tier=protection_tier,
+        anchors=anchors,
+        anchor_validity=anchor_validity,
     )
     entry_path = _save_yaml_backup(
         params,
@@ -463,6 +478,8 @@ def _save_yaml_backup(
             protection_tier=LearningProtectionTier(params.protection_tier)
             if isinstance(params.protection_tier, str)
             else params.protection_tier,
+            anchors=params.anchors or [],
+            anchor_validity=params.anchor_validity,
         )
         entry_path: Path = Path(str(save_entry_fn(trw_dir, entry)))
         update_analytics_fn(trw_dir, 1)
