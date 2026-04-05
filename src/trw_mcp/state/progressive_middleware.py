@@ -15,7 +15,7 @@ from collections.abc import Sequence
 import mcp.types as mt
 import structlog
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
-from fastmcp.tools.tool import Tool, ToolResult
+from fastmcp.tools.base import Tool, ToolResult
 
 logger = structlog.get_logger(__name__)
 

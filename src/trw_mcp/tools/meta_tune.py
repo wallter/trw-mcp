@@ -377,7 +377,7 @@ def _step_graph_maintenance(
         clusters = detect_clusters(conn, min_size=5, min_connectivity=0.6)
         if out_clusters is not None:
             # Enrich clusters with skill-generation fields from member learnings
-            member_id_set = set()
+            member_id_set: set[str] = set()
             for cluster in clusters:
                 member_ids = cluster.get("member_ids", [])
                 if isinstance(member_ids, list):
@@ -385,7 +385,8 @@ def _step_graph_maintenance(
 
             for cluster in clusters:
                 member_ids = cluster.get("member_ids", [])
-                members = [e for e in learnings if str(e.get("id", "")) in set(str(m) for m in member_ids)]
+                mid_list: list[object] = list(member_ids) if isinstance(member_ids, list) else []
+                members = [e for e in learnings if str(e.get("id", "")) in {str(m) for m in mid_list}]
                 n = max(len(members), 1)
 
                 avg_surfaced = sum(int(e.get("sessions_surfaced", 0) or 0) for e in members) / n
