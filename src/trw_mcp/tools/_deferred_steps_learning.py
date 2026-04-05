@@ -302,11 +302,18 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         session_hours = max(0.1, len(session_events) / 60.0)
         learning_rate = learning_count / session_hours
 
+        from trw_mcp.models.config import get_config as _get_cfg
+
+        _cfg = _get_cfg()
         composite = compute_composite_outcome(
             rework_rate=rework_val,
             p0_defect_count=p0_count,
             velocity_tasks=velocity_tasks,
             learning_rate=learning_rate,
+            weight_rework=getattr(_cfg, "outcome_weight_rework", -2.0),
+            weight_p0_defects=getattr(_cfg, "outcome_weight_p0_defects", -1.5),
+            weight_velocity=getattr(_cfg, "outcome_weight_velocity", 0.5),
+            weight_learning_rate=getattr(_cfg, "outcome_weight_learning_rate", 0.3),
         )
         result["composite_outcome"] = composite
     except Exception:  # justified: fail-open

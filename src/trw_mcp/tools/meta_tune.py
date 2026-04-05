@@ -406,13 +406,25 @@ def _step_graph_maintenance(
 def _step_bandit_update(
     learnings: list[dict[str, Any]],
     trw_dir: Path | None = None,
+    config: dict[str, Any] | None = None,
 ) -> StepResult:
     """Step 6: Update Thompson Sampling posteriors and run Page-Hinkley (PRD-CORE-105).
 
     Loads bandit state, updates posteriors from accumulated outcome data,
     runs change detection per arm, and persists updated state.
+
+    PRD-CORE-105 P0: State is wrapped with client_profile, model_family,
+    and quarantined fields. Model family changes quarantine old posteriors.
+
+    Args:
+        learnings: Learning entry dicts to process.
+        trw_dir: Path to the .trw directory.
+        config: Configuration dict with model_family, client_profile, etc.
+            Falls back to get_config() when not provided.
     """
     try:
+        import json
+
         from trw_memory.bandit import BanditSelector, PageHinkleyDetector
 
         if trw_dir is None:
@@ -420,10 +432,47 @@ def _step_bandit_update(
 
         state_path = trw_dir / "meta" / "bandit_state.json"
 
-        # Load or create bandit
+        # Resolve config for metadata fields
+        resolved_config = config
+        if resolved_config is None:
+            try:
+                from trw_mcp.models.config import get_config
+                cfg = get_config()
+                resolved_config = {
+                    "client_profile": (
+                        cfg.client_profile.client_id
+                        if hasattr(cfg.client_profile, "client_id")
+                        else ""
+                    ),
+                    "model_family": getattr(cfg, "model_family", "") or "",
+                }
+            except Exception:  # justified: fail-open, metadata enrichment is best-effort
+                resolved_config = {}
+
+        client_profile = str(resolved_config.get("client_profile", ""))
+        if not client_profile:
+            # Try nested object (real config with client_id attr)
+            cp_obj = resolved_config.get("client_profile")
+            if cp_obj is not None and hasattr(cp_obj, "client_id"):
+                client_profile = str(getattr(cp_obj, "client_id", ""))
+        model_family = str(resolved_config.get("model_family", ""))
+
+        # Load or create bandit (supporting wrapped and legacy formats)
         bandit: BanditSelector
+        old_state: dict[str, Any] = {}
         if state_path.exists():
-            bandit = BanditSelector.from_json(state_path.read_text(encoding="utf-8"))
+            raw_text = state_path.read_text(encoding="utf-8")
+            try:
+                raw = json.loads(raw_text)
+                if isinstance(raw, dict) and "bandit" in raw:
+                    # Wrapped format
+                    bandit = BanditSelector.from_json(json.dumps(raw["bandit"]))
+                    old_state = raw
+                else:
+                    # Legacy format (backward compat)
+                    bandit = BanditSelector.from_json(raw_text)
+            except (json.JSONDecodeError, KeyError):
+                bandit = BanditSelector()
         else:
             bandit = BanditSelector()
 
@@ -450,14 +499,33 @@ def _step_bandit_update(
                 alarms += 1
                 _logger.info("page_hinkley_alarm_meta_tune", learning_id=lid)
 
+        # Build wrapped state with metadata (PRD-CORE-105 P0)
+        bandit_data = json.loads(bandit.to_json())
+        wrapped_state: dict[str, Any] = {
+            "client_profile": client_profile,
+            "model_family": model_family,
+            "bandit": bandit_data,
+            "quarantined": {},
+        }
+
+        # Check for model family change -- quarantine old posteriors
+        old_family = str(old_state.get("model_family", ""))
+        new_family = model_family
+        if old_family and new_family and old_family != new_family:
+            quarantined = dict(old_state.get("quarantined", {}))
+            quarantined[old_family] = old_state.get("bandit", {})
+            wrapped_state["quarantined"] = quarantined
+            _logger.info("model_family_quarantine", old=old_family, new=new_family)
+
         # Persist updated state (atomic temp-file + rename)
         import os
         import tempfile
 
+        state_json = json.dumps(wrapped_state, indent=2)
         state_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(dir=str(state_path.parent), suffix=".tmp")
         try:
-            os.write(fd, bandit.to_json().encode("utf-8"))
+            os.write(fd, state_json.encode("utf-8"))
             os.close(fd)
             os.rename(tmp_path, str(state_path))
         except Exception:
@@ -695,7 +763,7 @@ def execute_meta_tune(
             last_tune_date=last_tune_date, shadow_mode=shadow_mode)),
         (4, "compute_correlations", lambda: _step_compute_correlations(learnings, trw_dir=trw_dir)),
         (5, "graph_maintenance", lambda: _step_graph_maintenance(learnings, trw_dir=trw_dir, out_clusters=detected_clusters)),
-        (6, "bandit_update", lambda: _step_bandit_update(learnings, trw_dir=trw_dir)),
+        (6, "bandit_update", lambda: _step_bandit_update(learnings, trw_dir=trw_dir, config=config)),
         (7, "synthesize_artifacts", lambda: _step_synthesize_artifacts(
             trw_dir, learnings, config, clusters=detected_clusters)),
         (8, "prd_nudge_analysis", lambda: _step_prd_nudge_analysis(learnings)),
