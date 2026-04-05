@@ -394,3 +394,49 @@ class TestFullPipeline:
         normal = next(e for e in learnings if e["id"] == "L-normal")
         assert normal["status"] == "active"
         assert normal["type"] == "pattern"
+
+
+# ---------------------------------------------------------------------------
+# Wiring test: learning dict has all fields meta-tune depends on
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLearningDictWiring:
+    """Verify _memory_to_learning_dict includes all fields meta-tune reads."""
+
+    def test_learning_dict_has_meta_tune_fields(self, tmp_path: Path) -> None:
+        """list_active_learnings must return dicts with outcome_correlation,
+        sessions_surfaced, and session_count — otherwise meta-tune steps 3+4
+        silently no-op via dict.get() defaults.
+        """
+        from trw_memory.models.memory import MemoryEntry
+        from trw_mcp.state._memory_transforms import _memory_to_learning_dict
+
+        # Test the transform directly — this is the exact function that
+        # list_active_learnings calls on each MemoryEntry from SQLite
+        entry_obj = MemoryEntry(
+            id="L-wiring-test",
+            content="Wiring test entry",
+            tags=["testing"],
+            importance=0.7,
+            namespace="learnings",
+        )
+
+        entry = _memory_to_learning_dict(entry_obj)
+        # These 3 fields were missing before the fix — meta-tune steps 3+4 depend on them
+        assert "outcome_correlation" in entry, "outcome_correlation missing — Step 4 attribution will no-op"
+        assert "sessions_surfaced" in entry, "sessions_surfaced missing — Step 4 eligibility filter broken"
+        assert "session_count" in entry, "session_count missing — Step 3 hypothesis resolution broken"
+
+        # Also verify all other meta-learning fields the meta-tune reads
+        required_fields = [
+            "type", "anchor_validity", "protection_tier",
+            "expires", "tags", "domain", "nudge_line", "confidence",
+        ]
+        for field in required_fields:
+            assert field in entry, f"{field} missing from learning dict"
+
+        # "anchors" is only present when non-empty (conditional in transform)
+        # meta-tune uses entry.get("anchors", []) which handles absence correctly
+        assert "anchors" not in entry or isinstance(entry["anchors"], list)
