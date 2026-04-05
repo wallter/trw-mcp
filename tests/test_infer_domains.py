@@ -42,8 +42,8 @@ def test_deduplicates() -> None:
             "tests/auth/test_middleware.py",
         ]
     )
-    assert result.count("auth") == 1
-    assert result.count("middleware") == 1
+    assert "auth" in result
+    assert "middleware" in result
 
 
 def test_empty_input() -> None:
@@ -51,7 +51,7 @@ def test_empty_input() -> None:
     from trw_mcp.scoring._recall import infer_domains
 
     result = infer_domains()
-    assert result == []
+    assert result == set()
 
 
 def test_none_input() -> None:
@@ -59,7 +59,7 @@ def test_none_input() -> None:
     from trw_mcp.scoring._recall import infer_domains
 
     result = infer_domains(modified_files=None, query=None)
-    assert result == []
+    assert result == set()
 
 
 def test_single_char_excluded() -> None:
@@ -92,7 +92,7 @@ def test_query_deduplicates_with_files() -> None:
         modified_files=["src/auth/login.py"],
         query="auth security",
     )
-    assert result.count("auth") == 1
+    assert "auth" in result
     assert "security" in result
 
 
