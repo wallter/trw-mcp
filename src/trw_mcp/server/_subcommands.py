@@ -101,8 +101,9 @@ def _run_init_project(args: argparse.Namespace) -> None:
             _print_cli_line("TRW initialization complete")
             _print_cli_line(f"Project: {target}")
             preserved = result.get("preserved", [])
+            updated = result.get("updated", [])
             _print_cli_line(
-                f"Changes: {len(result['updated'])} updated, {len(result['created'])} created, {len(preserved)} preserved"
+                f"Changes: {len(updated)} updated, {len(result['created'])} created, {len(preserved)} preserved"
             )
             _print_cli_line("")
             _print_cli_line("Next: run your AI coding tool in this directory.")
