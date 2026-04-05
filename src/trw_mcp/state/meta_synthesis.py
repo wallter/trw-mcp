@@ -31,7 +31,7 @@ ALLOWED_KNOBS: frozenset[str] = frozenset(
         "surface_timing",
         "evidence_burden",
         "wording_style",
-        "review_strictness",
+        "review_strictness_routing",
         "withholding_rate",
     }
 )
