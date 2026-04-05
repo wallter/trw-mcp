@@ -126,6 +126,7 @@ def _learning_to_memory_entry(
     protection_tier: str = "normal",
     # PRD-CORE-111: Code-grounded anchors
     anchors: list[dict[str, object]] | None = None,
+    anchor_validity: float = 1.0,
 ) -> MemoryEntry:
     """Build a :class:`MemoryEntry` from trw_learn parameters.
 
@@ -185,4 +186,5 @@ def _learning_to_memory_entry(
         protection_tier=ProtectionTier(protection_tier) if isinstance(protection_tier, str) else protection_tier,
         # PRD-CORE-111: Code-grounded anchors
         anchors=anchor_objects,
+        anchor_validity=anchor_validity,
     )

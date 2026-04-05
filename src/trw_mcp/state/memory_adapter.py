@@ -219,6 +219,7 @@ def store_learning(
     protection_tier: str = "normal",
     # PRD-CORE-111: Code-grounded anchors
     anchors: list[dict[str, object]] | None = None,
+    anchor_validity: float = 1.0,
 ) -> dict[str, object]:
     """Store a learning entry in SQLite and return the tool result dict.
 
@@ -259,6 +260,7 @@ def store_learning(
         team_origin=team_origin,
         protection_tier=protection_tier,
         anchors=anchors,
+        anchor_validity=anchor_validity,
     )
 
     for attempt in range(2):

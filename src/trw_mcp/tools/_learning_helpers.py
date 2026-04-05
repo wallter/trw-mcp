@@ -92,6 +92,9 @@ class LearningParams:
     phase_affinity: list[str] | None = None
     team_origin: str = ""
     protection_tier: str = "normal"
+    # PRD-CORE-111: Code-grounded anchors
+    anchors: list[dict[str, object]] | None = None
+    anchor_validity: float = 1.0
 
 
 # PRD-FIX-061-FR01: Canonical definition moved to state/analytics/core.py.

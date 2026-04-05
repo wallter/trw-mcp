@@ -43,6 +43,7 @@ class LearningType(str, Enum):
 class LearningConfidence(str, Enum):
     """Validation confidence level for learning entries (PRD-CORE-110)."""
 
+    HYPOTHESIS = "hypothesis"
     UNVERIFIED = "unverified"
     LOW = "low"
     MEDIUM = "medium"
@@ -277,6 +278,10 @@ class LearningEntry(BaseModel):
         default=None,
         description="Rolling average rework impact delta.",
     )
+
+    # PRD-CORE-111: Code-grounded anchors
+    anchors: list[dict[str, object]] = Field(default_factory=list, description="Code symbol anchors")
+    anchor_validity: float = Field(ge=0.0, le=1.0, default=1.0, description="Anchor validity score")
 
     # PRD-FIX-052-FR02: Impact tier label (assigned during deliver tier sweep)
     impact_tier: Literal["critical", "high", "medium", "low", "?"] = "?"
