@@ -96,6 +96,15 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
         base["anchors"] = [a.model_dump() for a in entry.anchors]
     base["anchor_validity"] = entry.anchor_validity
 
+    # Outcome attribution fields (PRD-CORE-108)
+    base["sessions_surfaced"] = entry.sessions_surfaced
+    base["avg_rework_delta"] = entry.avg_rework_delta
+    base["outcome_correlation"] = entry.outcome_correlation
+
+    # Session count for hypothesis resolution (meta-tune Step 3)
+    # Uses access_count as a proxy — each recall/surface increments it
+    base["session_count"] = entry.access_count or 0
+
     return base
 
 
