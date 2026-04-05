@@ -44,6 +44,9 @@ def build_recall_context(
 ) -> RecallContext | None:
     """Build a RecallContext from the current session state.
 
+    PRD-CORE-116-FR04: Populates inferred_domains as set[str] and
+    threads client_profile/model_family from config.
+
     Best-effort: returns None if context can't be built.
     """
     from trw_mcp.scoring._recall import RecallContext, infer_domains
@@ -64,15 +67,57 @@ def build_recall_context(
     except Exception:  # noqa: S110  # fail-open for git
         pass
 
-    active_domains = infer_domains(modified_files=modified_files, query=query)
+    inferred_domains = infer_domains(file_paths=modified_files, query=query)
 
-    if not current_phase and not active_domains:
+    if not current_phase and not inferred_domains:
         return None
+
+    # Thread client_profile and model_family from config (PRD-CORE-116)
+    client_profile = ""
+    model_family = ""
+    try:
+        from trw_mcp.models.config import get_config
+
+        config = get_config()
+        profile = config.client_profile
+        client_profile = profile.client_id if profile else ""
+        model_family = getattr(config, "model_family", "") or ""
+    except Exception:  # justified: fail-open
+        pass
+
+    # Thread PRD knowledge IDs from artifact scanning (CORE-106/CORE-116)
+    prd_knowledge_ids: set[str] = set()
+    try:
+        from trw_mcp.state._paths import find_active_run
+
+        active_run = find_active_run()
+        if active_run:
+            kr_path = Path(active_run) / "meta" / "knowledge_requirements.yaml"
+            if kr_path.exists():
+                reader = FileStateReader()
+                kr_data = reader.read_yaml(kr_path)
+                raw_ids = kr_data.get("learning_ids", [])
+                if isinstance(raw_ids, list):
+                    prd_knowledge_ids = {str(lid) for lid in raw_ids}
+    except Exception:  # justified: fail-open
+        pass
+
+    logger.debug(
+        "recall_context_built",
+        phase=current_phase,
+        domains=sorted(inferred_domains),
+        client_profile=client_profile,
+        model_family=model_family,
+        prd_knowledge_ids_count=len(prd_knowledge_ids),
+    )
 
     return RecallContext(
         current_phase=current_phase,
-        active_domains=active_domains,
+        inferred_domains=inferred_domains,
         modified_files=modified_files,
+        client_profile=client_profile,
+        model_family=model_family,
+        prd_knowledge_ids=prd_knowledge_ids,
     )
 
 

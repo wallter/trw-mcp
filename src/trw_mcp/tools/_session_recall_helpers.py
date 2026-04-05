@@ -26,6 +26,7 @@ from trw_mcp.models.typed_dicts import (
     SessionRecallExtrasDict,
 )
 from trw_mcp.scoring import rank_by_utility
+from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_nudge import NudgeContext, compute_nudge, read_ceremony_state
 from trw_mcp.state.persistence import FileStateReader
@@ -96,7 +97,37 @@ def append_ceremony_nudge(
                     max_results=10,
                     compact=True,
                 )
-                selected, is_fallback = select_nudge_learning(state, candidates, state.phase)
+
+                # Load bandit state if available (CORE-105)
+                bandit_instance = None
+                try:
+                    from trw_memory.bandit import BanditSelector
+
+                    bandit_state_path = effective_dir / "meta" / "bandit_state.json"
+                    if bandit_state_path.exists():
+                        bandit_instance = BanditSelector.from_json(
+                            bandit_state_path.read_text(encoding="utf-8")
+                        )
+                except (ImportError, Exception):  # justified: fail-open, bandit is optional
+                    pass
+
+                # Resolve client class for withholding rates
+                _client_class = "full_mode"
+                try:
+                    from trw_mcp.state.bandit_policy import resolve_client_class
+
+                    _client_class = resolve_client_class(config.client_profile.client_id)
+                except Exception:  # justified: fail-open, client class is best-effort
+                    pass
+
+                selected, is_fallback = select_nudge_learning(
+                    state,
+                    candidates,
+                    state.phase,
+                    bandit=bandit_instance,
+                    previous_phase=getattr(state, "previous_phase", ""),
+                    client_class=_client_class,
+                )
 
                 if selected:
                     sel_id = str(selected.get("id", ""))
@@ -404,6 +435,7 @@ def _phase_contextual_recall(
         query_tokens.extend(query.strip().split())
 
     phase_tags: list[str] | None = None
+    phase: str = ""
     if run_dir is not None and run_status is not None:
         task_name = str(run_status.get("task_name", ""))
         phase = str(run_status.get("phase", ""))
@@ -427,10 +459,13 @@ def _phase_contextual_recall(
     if not ar_entries:
         return []
 
+    # PRD-CORE-116: Build RecallContext for phase-aware scoring
+    context = RecallContext(current_phase=phase.upper() if phase else None)
     ranked = rank_by_utility(
         ar_entries,
         query_tokens,
         lambda_weight=config.recall_utility_lambda,
+        context=context,
     )
     capped = ranked[: config.auto_recall_max_results]
     return [

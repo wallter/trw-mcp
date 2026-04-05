@@ -58,13 +58,13 @@ def _days_since_access(
     return fallback_days
 
 
-# Type-aware decay half-lives (PRD-CORE-102)
+# Type-aware decay half-lives (PRD-CORE-110, PRD-CORE-116)
 _TYPE_HALF_LIFE: dict[str, float] = {
-    "incident": 90.0,       # Incidents stay relevant longer (postmortem knowledge)
-    "convention": 365.0,    # Conventions are near-permanent
-    "pattern": 30.0,        # Patterns decay at moderate rate
-    "hypothesis": 7.0,      # Hypotheses should be validated quickly
-    "workaround": 14.0,     # Workarounds are temporary by nature
+    "incident": 90.0,       # Slow decay until fix confirmed (unverified = ∞, see _entry_utility)
+    "pattern": 180.0,       # Very slow — validated patterns are durable
+    "convention": 9999.0,   # No auto-decay — stable until human override
+    "hypothesis": 7.0,      # Fast — validate or die
+    "workaround": 14.0,     # Fast — scheduled expiry, typically paired with expires field
 }
 
 

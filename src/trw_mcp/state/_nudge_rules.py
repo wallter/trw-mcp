@@ -120,8 +120,18 @@ def select_nudge_learning(
     state: CeremonyState,
     candidates: list[dict[str, object]],
     current_phase: str,
+    *,
+    bandit: object | None = None,
+    previous_phase: str = "",
+    client_class: str = "full_mode",
 ) -> tuple[dict[str, object] | None, bool]:
     """Select the best learning for nudge display with deduplication.
+
+    When *bandit* is provided (a ``BanditSelector`` instance), delegates to
+    the bandit-based selection path (PRD-CORE-105 FR03/FR04/FR06) which
+    supports tiered withholding and phase-transition bursts.
+
+    Without *bandit*, falls back to the original deterministic ranking.
 
     Filters candidates by nudge eligibility (not shown in current phase),
     then returns the top remaining candidate. If all candidates are
@@ -131,12 +141,51 @@ def select_nudge_learning(
         state: Current ceremony state with nudge_history.
         candidates: Ranked learning dicts (best first).
         current_phase: Current ceremony phase.
+        bandit: Optional BanditSelector for bandit-based selection.
+        previous_phase: Previous phase for transition detection.
+        client_class: Client class for withholding rates.
 
     Returns:
         Tuple of (selected_learning_dict_or_None, is_fallback).
         is_fallback is True if we fell back to least-recently-shown.
     """
     from trw_mcp.state._nudge_state import is_nudge_eligible
+
+    # --- Bandit-based selection path (PRD-CORE-105) ---
+    if bandit is not None:
+        try:
+            from trw_memory.bandit import BanditSelector as _BanditSelector
+
+            from trw_mcp.state.bandit_policy import (
+                WithholdingPolicy,
+                select_nudge_learning_bandit,
+            )
+
+            if isinstance(bandit, _BanditSelector):
+                # Pre-filter to nudge-eligible candidates
+                eligible = [
+                    c
+                    for c in candidates
+                    if is_nudge_eligible(state, str(c.get("id", "")), current_phase)
+                ]
+                if not eligible:
+                    eligible = candidates  # fall back to all if none eligible
+
+                policy = WithholdingPolicy(client_class=client_class)
+                selected_list, _is_transition = select_nudge_learning_bandit(
+                    candidates=eligible,
+                    bandit=bandit,
+                    policy=policy,
+                    phase=current_phase,
+                    previous_phase=previous_phase,
+                )
+                if selected_list:
+                    return selected_list[0], False
+                # Bandit returned nothing; fall through to deterministic path
+        except ImportError:
+            pass  # trw-memory bandit not available; fall through
+
+    # --- Deterministic ranking path (original behavior) ---
 
     # Filter to eligible candidates
     eligible = [

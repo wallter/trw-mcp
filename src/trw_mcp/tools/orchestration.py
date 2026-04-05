@@ -30,6 +30,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
+from trw_mcp.state.artifact_scanner import scan_artifacts
 from trw_mcp.state.analytics._stale_runs import count_stale_runs
 from trw_mcp.state.persistence import (
     FileEventLogger,
@@ -82,6 +83,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         task_root: str | None = None,
         wave_manifest: list[dict[str, object]] | None = None,
         complexity_signals: dict[str, object] | None = None,
+        artifacts: list[str] | None = None,
     ) -> dict[str, str]:
         """Create your run directory so checkpoints and progress tracking work — required for structured tasks.
 
@@ -100,6 +102,9 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
                 trw_wave_plan after run scaffolding for one-step initialization.
             complexity_signals: Optional complexity signals dict for adaptive ceremony depth.
                 When provided, classifies task complexity into MINIMAL/STANDARD/COMPREHENSIVE tier.
+            artifacts: Optional list of artifact file paths (PRDs, exec plans, sprint docs)
+                to scan for knowledge requirements (PRD-CORE-106). Extracted domains and
+                learning IDs are stored in run metadata for recall boosting.
         """
         # Input validation (PRD-QUAL-042-FR01)
         if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", task_name):
@@ -191,6 +196,9 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             complexity_override_val = override
             phase_reqs_val = get_phase_requirements(tier)
 
+        # PRD-CORE-106: Resolve artifact paths for storage
+        resolved_artifacts = [str(p) for p in (artifacts or [])]
+
         run_state = RunState(
             run_id=run_id,
             task=task_name,
@@ -206,11 +214,39 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             complexity_signals=parsed_signals,
             complexity_override=complexity_override_val,
             phase_requirements=phase_reqs_val,
+            artifacts=resolved_artifacts,
         )
         writer.write_yaml(
             run_root / "meta" / "run.yaml",
             model_to_dict(run_state),
         )
+
+        # PRD-CORE-106: Scan artifacts for knowledge requirements
+        if resolved_artifacts:
+            try:
+                kr = scan_artifacts(resolved_artifacts)
+                # Write scanned knowledge requirements alongside run.yaml
+                kr_data: dict[str, object] = {
+                    "learning_ids": sorted(kr.learning_ids),
+                    "domains": sorted(kr.domains),
+                    "checks": kr.checks,
+                    "research_notes": kr.research_notes,
+                    "prd_references": sorted(kr.prd_references),
+                    "phase_requirements": kr.phase_requirements,
+                }
+                writer.write_yaml(
+                    run_root / "meta" / "knowledge_requirements.yaml",
+                    kr_data,
+                )
+                logger.info(
+                    "artifact_scan_complete",
+                    run_id=run_id,
+                    artifact_count=len(resolved_artifacts),
+                    domains=len(kr.domains),
+                    learning_ids=len(kr.learning_ids),
+                )
+            except Exception:  # justified: fail-open, artifact scanning must not block run init
+                logger.warning("artifact_scan_failed", run_id=run_id, exc_info=True)
 
         # Pin this run as the active run for this process (RC-001 fix).
         # Prevents telemetry hijack when parallel instances share filesystem.

@@ -253,3 +253,50 @@ def test_build_recall_context_git_nonzero_returncode(tmp_path: Path) -> None:
     # With non-zero returncode, modified_files=[], query provides domains
     if ctx is not None:
         assert ctx.modified_files == []
+
+
+def test_build_recall_context_threads_prd_knowledge_ids(tmp_path: Path) -> None:
+    """build_recall_context reads prd_knowledge_ids from knowledge_requirements.yaml."""
+    from trw_mcp.tools._recall_impl import build_recall_context
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+
+    # Create a mock active run with knowledge_requirements.yaml
+    run_dir = tmp_path / "runs" / "test-task" / "run-001"
+    meta_dir = run_dir / "meta"
+    meta_dir.mkdir(parents=True)
+
+    # Write knowledge_requirements.yaml with learning IDs
+    kr_path = meta_dir / "knowledge_requirements.yaml"
+    kr_path.write_text("learning_ids:\n  - L-abc01\n  - L-def02\n")
+
+    with (
+        patch("subprocess.run") as mock_run,
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="IMPLEMENT"),
+        patch("trw_mcp.state._paths.find_active_run", return_value=run_dir),
+    ):
+        mock_run.return_value = MagicMock(returncode=0, stdout="src/auth/login.py\n")
+        ctx = build_recall_context(trw_dir, "auth scoring")
+
+    assert ctx is not None
+    assert ctx.prd_knowledge_ids == {"L-abc01", "L-def02"}
+
+
+def test_build_recall_context_no_active_run_empty_prd_ids(tmp_path: Path) -> None:
+    """build_recall_context returns empty prd_knowledge_ids when no active run."""
+    from trw_mcp.tools._recall_impl import build_recall_context
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+
+    with (
+        patch("subprocess.run") as mock_run,
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="PLAN"),
+        patch("trw_mcp.state._paths.find_active_run", return_value=None),
+    ):
+        mock_run.return_value = MagicMock(returncode=0, stdout="src/auth/login.py\n")
+        ctx = build_recall_context(trw_dir, "auth scoring")
+
+    assert ctx is not None
+    assert ctx.prd_knowledge_ids == set()
