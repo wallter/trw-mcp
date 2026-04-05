@@ -269,14 +269,19 @@ class TestPropensityEntrySchema:
         annotations = PropensityEntry.__annotations__
         expected_fields = {
             "timestamp",
+            "turn",
             "selected",
             "selection_probability",
             "candidate_set",
             "runner_up",
+            "runner_up_probability",
             "exploration",
             "context_phase",
             "context_domain",
             "context_agent_type",
+            "context_task_type",
+            "context_files_modified",
+            "context_session_progress",
             "session_id",
             # PRD-CORE-103: metadata fields
             "client_profile",

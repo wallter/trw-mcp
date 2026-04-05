@@ -33,14 +33,19 @@ class PropensityEntry(TypedDict, total=False):
     """
 
     timestamp: str  # ISO 8601
+    turn: int  # Tool response number in session
     selected: str  # ID of the selected learning
     selection_probability: float  # P(selected) -- 1.0 for deterministic
     candidate_set: list[str]  # IDs of all candidates considered
     runner_up: str  # ID of the next-best candidate
+    runner_up_probability: float  # P(runner_up) -- 0.0 when single candidate
     exploration: bool  # True if exploration pick (false pre-bandit)
     context_phase: str  # Current ceremony phase
     context_domain: list[str]  # Active domains at selection time
     context_agent_type: str  # Agent type (e.g., "claude-code")
+    context_task_type: str  # Task type (e.g., "bugfix", "feature")
+    context_files_modified: int  # Number of files modified at selection time
+    context_session_progress: str  # Session progress (e.g., "early", "mid", "late")
     session_id: str  # Session identifier
     # PRD-CORE-103: Metadata fields for stratified analysis
     client_profile: str  # Client profile identifier (e.g., "claude-code")
@@ -65,11 +70,16 @@ def log_selection(
     selected: str,
     candidate_set: list[str] | None = None,
     runner_up: str = "",
+    runner_up_probability: float = 0.0,
     selection_probability: float = 1.0,
     exploration: bool = False,
+    turn: int = 0,
     context_phase: str = "",
     context_domain: list[str] | None = None,
     context_agent_type: str = "",
+    context_task_type: str = "",
+    context_files_modified: int = 0,
+    context_session_progress: str = "",
     session_id: str = "",
     client_profile: str = "",
     model_family: str = "",
@@ -142,14 +152,19 @@ def log_selection(
 
         entry: PropensityEntry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "turn": turn,
             "selected": selected,
             "selection_probability": selection_probability,
             "candidate_set": candidates,
             "runner_up": runner_up,
+            "runner_up_probability": runner_up_probability,
             "exploration": exploration,
             "context_phase": context_phase,
             "context_domain": context_domain or [],
             "context_agent_type": context_agent_type,
+            "context_task_type": context_task_type,
+            "context_files_modified": context_files_modified,
+            "context_session_progress": context_session_progress,
             "session_id": session_id,
             "client_profile": client_profile,
             "model_family": model_family,
