@@ -57,6 +57,38 @@ from trw_mcp.tools._helpers import _run_step
 logger = structlog.get_logger(__name__)
 
 
+def _persist_session_metrics(
+    metrics_result: dict[str, object],
+    resolved_run: Path | None,
+) -> None:
+    """Persist session_metrics to run.yaml after delivery metrics step.
+
+    PRD-CORE-104: Writes the delivery metrics result dict into
+    run.yaml under the ``session_metrics`` key so that downstream
+    consumers (meta-tune, dashboards) can access session-level
+    reward signals without re-computing them.
+
+    Fail-open: errors are logged but never raised.
+    """
+    if resolved_run is None:
+        return
+    if not isinstance(metrics_result, dict) or metrics_result.get("status") != "success":
+        return
+    try:
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        run_yaml_path = resolved_run / "meta" / "run.yaml"
+        if run_yaml_path.exists():
+            run_data = reader.read_yaml(run_yaml_path)
+            run_data["session_metrics"] = metrics_result
+            writer.write_yaml(run_yaml_path, run_data)
+            logger.info("session_metrics_persisted", path=str(run_yaml_path))
+    except Exception:  # justified: fail-open, session metrics persistence is best-effort
+        logger.warning("session_metrics_persist_failed", exc_info=True)
+
+
 def _try_acquire_deferred_lock(trw_dir: Path) -> io.TextIOWrapper | None:
     """Try to acquire the deferred-deliver file lock (non-blocking).
 
@@ -179,6 +211,11 @@ def _run_deferred_steps(
 
         # Sprint 84: Delivery metrics (PRD-CORE-104)
         _timed_step("delivery_metrics", lambda: _step_delivery_metrics(trw_dir, resolved_run))
+
+        # P0 (CORE-104): Persist session_metrics to run.yaml
+        metrics_result = results.get("delivery_metrics")
+        if isinstance(metrics_result, dict):
+            _persist_session_metrics(metrics_result, resolved_run)
 
         steps_ok = sum(
             1 for k, v in results.items()
