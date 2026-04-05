@@ -376,7 +376,29 @@ def _step_graph_maintenance(
 
         clusters = detect_clusters(conn, min_size=5, min_connectivity=0.6)
         if out_clusters is not None:
-            out_clusters.extend(clusters)
+            # Enrich clusters with skill-generation fields from member learnings
+            member_id_set = set()
+            for cluster in clusters:
+                member_ids = cluster.get("member_ids", [])
+                if isinstance(member_ids, list):
+                    member_id_set.update(str(m) for m in member_ids)
+
+            for cluster in clusters:
+                member_ids = cluster.get("member_ids", [])
+                members = [e for e in learnings if str(e.get("id", "")) in set(str(m) for m in member_ids)]
+                n = max(len(members), 1)
+
+                avg_surfaced = sum(int(e.get("sessions_surfaced", 0) or 0) for e in members) / n
+                oc_map = {"strong_positive": 1.0, "positive": 0.5, "neutral": 0.0, "negative": -0.5}
+                avg_lift = sum(oc_map.get(str(e.get("outcome_correlation", "")), 0.0) for e in members) / n
+                avg_validity = sum(float(e.get("anchor_validity", 1.0) or 1.0) for e in members) / n
+
+                enriched = dict(cluster)
+                enriched["exposure"] = avg_surfaced
+                enriched["causal_lift"] = avg_lift
+                enriched["avg_anchor_validity"] = avg_validity
+                enriched["learnings"] = members
+                out_clusters.append(enriched)
         actions = len(clusters)
 
         # Propagate impact for learnings with strong outcome correlation
