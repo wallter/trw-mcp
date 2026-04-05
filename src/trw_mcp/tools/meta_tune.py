@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
 _logger = structlog.get_logger(__name__)
 
+# PRD-CORE-109 spec: "1/3 valid anchors" triggers review flag.
+# 1/3 ≈ 0.333; use < 0.34 to match spec precisely.
+_ANCHOR_FLAG_THRESHOLD: float = 1 / 3 + 0.01  # 0.3433...
+
 # ---------------------------------------------------------------------------
 # Data classes for step results and the overall report
 # ---------------------------------------------------------------------------
@@ -81,7 +85,7 @@ def _step_validate_anchors(
     """Step 1: Check anchor validity for learnings with anchors.
 
     - anchor_validity == 0.0 -> demote (set status to obsolete)
-    - anchor_validity < 0.5 -> flag for review (count as action)
+    - anchor_validity < 0.34 (1/3 valid) -> flag for review (count as action)
     - Entries without anchors are skipped.
     - Entries with reviewed_at > last_tune_date are protected (NFR03).
     """
@@ -114,7 +118,7 @@ def _step_validate_anchors(
                     validity=validity,
                 )
             demoted += 1
-        elif validity < 0.5:
+        elif validity < _ANCHOR_FLAG_THRESHOLD:
             flagged += 1
             details_parts.append(f"flagged {entry.get('id')} for review (validity={validity})")
             _logger.info(
@@ -839,7 +843,7 @@ def register_meta_tune_tools(server: FastMCP) -> None:
     @log_tool_call
     def trw_meta_tune(
         steps: list[int] | None = None,
-        shadow: bool = False,
+        dry_run: bool = False,
     ) -> dict[str, object]:
         """Run the meta-tune synthesis process -- validates, attributes, synthesizes, and reports.
 
@@ -848,7 +852,7 @@ def register_meta_tune_tools(server: FastMCP) -> None:
 
         Args:
             steps: Specific steps to run (1-9). None = all steps.
-            shadow: Shadow mode -- produce report only, no active modifications.
+            dry_run: Dry-run mode -- produce report only, no active modifications.
         """
         from trw_mcp.models.config import get_config
         from trw_mcp.state._paths import resolve_trw_dir
@@ -869,7 +873,7 @@ def register_meta_tune_tools(server: FastMCP) -> None:
         config_dict: dict[str, object] = {
             "model_family": model_family,
             "trw_version": config.framework_version or "",
-            "shadow_mode": shadow,
+            "shadow_mode": dry_run,
         }
 
         report = execute_meta_tune(
@@ -877,7 +881,7 @@ def register_meta_tune_tools(server: FastMCP) -> None:
             config=config_dict,
             learnings=learnings,
             steps=steps,
-            shadow_mode=shadow,
+            shadow_mode=dry_run,
         )
         return {
             "steps": [

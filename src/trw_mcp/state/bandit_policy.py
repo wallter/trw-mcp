@@ -43,23 +43,32 @@ _WITHHOLDING_RATES: dict[str, dict[str, tuple[float, float]]] = {
         "high": (0.05, 0.05),
         "normal": (0.12, 0.25),
         "low": (0.30, 0.50),
+        "protected": (0.0, 0.0),   # Same as critical — human-protected entries
+        "permanent": (0.0, 0.0),   # Same as critical — permanent entries
     },
     "light_mode": {
         "critical": (0.0, 0.0),
         "high": (0.05, 0.05),
         "normal": (0.20, 0.35),
         "low": (0.30, 0.50),
+        "protected": (0.0, 0.0),
+        "permanent": (0.0, 0.0),
     },
 }
+
+# Fallback rate for unknown tiers — matches normal-tier behavior
+_UNKNOWN_TIER_RATE: tuple[float, float] = (0.12, 0.25)
 
 # Phase one-hot encoding slots (6 phases)
 _PHASES: tuple[str, ...] = ("research", "plan", "implement", "validate", "review", "deliver")
 
-# Agent type one-hot encoding slots (5 types)
-_AGENT_TYPES: tuple[str, ...] = ("lead", "implementer", "tester", "reviewer", "auditor")
+# Agent type one-hot encoding slots (4 types per PRD-CORE-105 spec)
+# "lead" is accepted as alias for "orchestrator"
+_AGENT_TYPES: tuple[str, ...] = ("orchestrator", "implementer", "tester", "reviewer")
+_AGENT_ALIASES: dict[str, str] = {"lead": "orchestrator", "auditor": "reviewer"}
 
-# Task type one-hot encoding slots (5 types)
-_TASK_TYPES: tuple[str, ...] = ("feature", "bugfix", "refactor", "test", "docs")
+# Task type one-hot encoding slots (6 types per PRD-CORE-105 spec)
+_TASK_TYPES: tuple[str, ...] = ("feature", "bugfix", "refactor", "infrastructure", "docs", "investigation")
 
 # Files count normalization ceiling
 _FILES_COUNT_MAX = 100.0
@@ -127,7 +136,7 @@ class WithholdingPolicy:
 
         # Look up rate range
         client_rates = _WITHHOLDING_RATES.get(self._client_class, _WITHHOLDING_RATES["full_mode"])
-        floor, ceiling = client_rates.get(tier, (0.12, 0.25))
+        floor, ceiling = client_rates.get(tier, _UNKNOWN_TIER_RATE)
 
         # Critical with no forced trigger: never withhold
         if tier == "critical" and not forced:
@@ -309,10 +318,10 @@ def build_context_vector(
 ) -> list[float]:
     """Build a 21-dimensional engineering context feature vector for LinUCB.
 
-    Layout (21 dimensions total):
+    Layout (21 dimensions total, per PRD-CORE-105 spec):
     - [0:6]   Phase one-hot encoding (6 phases)
-    - [6:11]  Agent type one-hot encoding (5 types)
-    - [11:16] Task type one-hot encoding (5 types)
+    - [6:10]  Agent type one-hot encoding (4 types: orchestrator, implementer, tester, reviewer)
+    - [10:16] Task type one-hot encoding (6 types: feature, bugfix, refactor, infrastructure, docs, investigation)
     - [16]    Session progress (0.0 to 1.0)
     - [17]    Domain similarity (0.0 to 1.0)
     - [18]    Files count normalized (0.0 to 1.0)
@@ -327,11 +336,12 @@ def build_context_vector(
     for p in _PHASES:
         vec.append(1.0 if phase == p else 0.0)
 
-    # Agent type one-hot (5 dims)
+    # Agent type one-hot (4 dims) — resolve aliases first
+    resolved_agent = _AGENT_ALIASES.get(agent_type, agent_type)
     for at in _AGENT_TYPES:
-        vec.append(1.0 if agent_type == at else 0.0)
+        vec.append(1.0 if resolved_agent == at else 0.0)
 
-    # Task type one-hot (5 dims)
+    # Task type one-hot (6 dims)
     for tt in _TASK_TYPES:
         vec.append(1.0 if task_type == tt else 0.0)
 

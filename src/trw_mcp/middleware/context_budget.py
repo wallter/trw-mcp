@@ -23,7 +23,7 @@ from fastmcp.server.middleware.middleware import (
     Middleware,
     MiddlewareContext,
 )
-from fastmcp.tools.base import ToolResult
+from fastmcp.tools.tool import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 
 from trw_mcp.middleware._compression import compress_text_block, hash_content
