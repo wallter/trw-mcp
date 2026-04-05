@@ -2,13 +2,14 @@
 
 PRD-FIX-010: Utility-based recall ranking and prune candidates.
 PRD-CORE-102: Enhanced recall scoring with contextual boosts.
+PRD-CORE-116: Multi-dimensional boost factors and client-aware context.
 
 Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 
@@ -22,25 +23,83 @@ _logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# RecallContext (PRD-CORE-102)
+# RecallContext (PRD-CORE-102, PRD-CORE-116)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RecallContext:
     """Contextual information for recall scoring boosts.
 
-    All fields are optional — when None, the corresponding boost
+    All fields are optional — when absent/empty, the corresponding boost
     defaults to 1.0 (neutral). This preserves backward compatibility.
 
-    PRD-CORE-102 (Enhanced Recall Scoring)
+    PRD-CORE-116: Extended with client_profile, model_family, inferred_domains,
+    team, prd_knowledge_ids. Old field names kept as deprecated aliases.
     """
 
-    current_phase: str | None = None
-    active_domains: list[str] = field(default_factory=list)
-    team_id: str | None = None
-    active_prd_ids: list[str] = field(default_factory=list)
-    modified_files: list[str] = field(default_factory=list)
+    current_phase: str | None
+    inferred_domains: set[str]
+    team: str
+    prd_knowledge_ids: set[str]
+    modified_files: list[str]
+    client_profile: str
+    model_family: str
+
+    def __init__(
+        self,
+        *,
+        current_phase: str | None = None,
+        inferred_domains: set[str] | None = None,
+        team: str = "",
+        prd_knowledge_ids: set[str] | None = None,
+        modified_files: list[str] | None = None,
+        client_profile: str = "",
+        model_family: str = "",
+        # Deprecated aliases (backward compat)
+        active_domains: list[str] | set[str] | None = None,
+        team_id: str | None = None,
+        active_prd_ids: list[str] | set[str] | None = None,
+    ) -> None:
+        # Handle deprecated aliases
+        if active_domains is not None:
+            _logger.warning("recall_context_deprecated_field", field="active_domains", use_instead="inferred_domains")
+            if inferred_domains is None:
+                inferred_domains = set(active_domains)
+        if team_id is not None:
+            _logger.warning("recall_context_deprecated_field", field="team_id", use_instead="team")
+            if not team:
+                team = team_id
+        if active_prd_ids is not None:
+            _logger.warning("recall_context_deprecated_field", field="active_prd_ids", use_instead="prd_knowledge_ids")
+            if prd_knowledge_ids is None:
+                prd_knowledge_ids = set(active_prd_ids)
+
+        object.__setattr__(self, "current_phase", current_phase)
+        object.__setattr__(self, "inferred_domains", inferred_domains if inferred_domains is not None else set())
+        object.__setattr__(self, "team", team)
+        object.__setattr__(self, "prd_knowledge_ids", prd_knowledge_ids if prd_knowledge_ids is not None else set())
+        object.__setattr__(self, "modified_files", modified_files if modified_files is not None else [])
+        object.__setattr__(self, "client_profile", client_profile)
+        object.__setattr__(self, "model_family", model_family)
+
+    @property
+    def active_domains(self) -> set[str]:
+        """Deprecated: use ``inferred_domains`` instead."""
+        _logger.warning("recall_context_deprecated_field", field="active_domains", use_instead="inferred_domains")
+        return self.inferred_domains
+
+    @property
+    def team_id(self) -> str:
+        """Deprecated: use ``team`` instead."""
+        _logger.warning("recall_context_deprecated_field", field="team_id", use_instead="team")
+        return self.team
+
+    @property
+    def active_prd_ids(self) -> set[str]:
+        """Deprecated: use ``prd_knowledge_ids`` instead."""
+        _logger.warning("recall_context_deprecated_field", field="active_prd_ids", use_instead="prd_knowledge_ids")
+        return self.prd_knowledge_ids
 
 
 # ---------------------------------------------------------------------------
@@ -80,30 +139,81 @@ def _extract_path_stems(paths: list[str]) -> list[str]:
     return stems
 
 
-def infer_domains(
-    modified_files: list[str] | None = None,
-    query: str | None = None,
-) -> list[str]:
-    """Infer domain labels from modified files and query text.
+def _sanitize_path(p: str) -> str:
+    """Sanitize a file path for domain inference.
 
-    Combines path-derived stems with query-derived keywords.
-    Returns unique, deduplicated domain labels.
+    Strips leading '/', removes '..' traversal components, and rejects
+    null bytes.  Returns a cleaned relative path string.
+    """
+    if "\0" in p:
+        return ""
+    p = p.lstrip("/")
+    parts = PurePosixPath(p).parts
+    return str(PurePosixPath(*[part for part in parts if part != ".."])) if parts else ""
+
+
+def infer_domains(
+    file_paths: list[str] | None = None,
+    query: str | None = None,
+    path_domain_map: dict[str, str] | None = None,
+    *,
+    modified_files: list[str] | None = None,
+) -> set[str]:
+    """Infer domain labels from file paths and query text.
+
+    Two-stage resolution per PRD-CORE-116-FR02:
+    1. Configurable prefix mapping (longest prefix wins)
+    2. Directory name extraction fallback
 
     Args:
-        modified_files: Currently modified file paths.
-        query: Search query text.
+        file_paths: File paths to extract domains from.
+        query: Search query text for keyword extraction.
+        path_domain_map: Explicit prefix-to-domain mapping
+            (e.g. ``{"backend/payments": "payments"}``).
+        modified_files: Deprecated alias for ``file_paths``.
 
     Returns:
-        List of unique domain label strings.
+        Set of unique domain label strings.
     """
-    domains: list[str] = []
-    seen: set[str] = set()
+    # Handle deprecated alias
+    effective_paths = file_paths
+    if effective_paths is None and modified_files is not None:
+        effective_paths = modified_files
 
-    if modified_files:
-        for stem in _extract_path_stems(modified_files):
-            if stem not in seen:
-                seen.add(stem)
-                domains.append(stem)
+    domains: set[str] = set()
+
+    if effective_paths:
+        # Sanitize paths
+        sanitized = [_sanitize_path(p) for p in effective_paths]
+        sanitized = [p for p in sanitized if p]
+
+        if path_domain_map:
+            # Sort prefixes by length descending for greedy matching
+            sorted_prefixes = sorted(path_domain_map.keys(), key=len, reverse=True)
+            # Filter out prefixes with path traversal
+            safe_prefixes = []
+            for pfx in sorted_prefixes:
+                if ".." in pfx.split("/"):
+                    _logger.warning("domain_map_traversal_dropped", prefix=pfx)
+                else:
+                    safe_prefixes.append(pfx)
+
+            mapped_paths: set[int] = set()
+            for i, p in enumerate(sanitized):
+                for pfx in safe_prefixes:
+                    if p.startswith(pfx):
+                        domain_label = path_domain_map[pfx]
+                        domains.add(domain_label)
+                        mapped_paths.add(i)
+                        _logger.debug("domain_prefix_mapped", prefix=pfx, domain=domain_label)
+                        break
+
+            # Fallback: extract stems from unmapped paths
+            unmapped = [p for i, p in enumerate(sanitized) if i not in mapped_paths]
+            if unmapped:
+                domains.update(_extract_path_stems(unmapped))
+        else:
+            domains.update(_extract_path_stems(sanitized))
 
     if query:
         for token in query.lower().split():
@@ -112,10 +222,8 @@ def infer_domains(
                 token
                 and len(token) > 1
                 and token not in _STRUCTURAL_STEMS
-                and token not in seen
             ):
-                seen.add(token)
-                domains.append(token)
+                domains.add(token)
 
     return domains
 
@@ -123,6 +231,37 @@ def infer_domains(
 # ---------------------------------------------------------------------------
 # Recall ranking (PRD-FIX-010 + PRD-CORE-102 boosts)
 # ---------------------------------------------------------------------------
+
+
+def _outcome_boost_factor(outcome_corr: float | str) -> float:
+    """Map outcome_correlation to a multiplicative boost factor.
+
+    PRD-CORE-116-FR01: Handles both string categories and float values.
+
+    String values: "strong_positive"=1.5, "positive"=1.2,
+        "neutral"=1.0, "negative"=0.5.
+    Float values mapped via thresholds: >=0.75 → 1.5, >=0.5 → 1.2,
+        <=-0.5 → 0.5, else → 1.0.
+    """
+    if isinstance(outcome_corr, str):
+        return {
+            "strong_positive": 1.5,
+            "positive": 1.2,
+            "neutral": 1.0,
+            "negative": 0.5,
+        }.get(outcome_corr, 1.0)
+
+    # Float path — clamp to [-1.0, 1.0]
+    val = max(-1.0, min(1.0, float(outcome_corr)))
+    if val != outcome_corr:
+        _logger.debug("outcome_correlation_clamped", original=outcome_corr, clamped=val)
+    if val >= 0.75:
+        return 1.5
+    if val >= 0.5:
+        return 1.2
+    if val <= -0.5:
+        return 0.5
+    return 1.0
 
 
 def rank_by_utility(
@@ -135,7 +274,8 @@ def rank_by_utility(
 ) -> list[dict[str, object]]:
     """Re-rank matched learnings by combined relevance + utility score.
 
-    Combined score = (1 - lambda) * relevance + lambda * utility
+    PRD-CORE-116: 6-factor multiplicative boost formula:
+    ``combined = base * domain * phase * team * outcome * anchor * prd``
 
     Args:
         matches: List of matched learning entry dicts.
@@ -143,8 +283,8 @@ def rank_by_utility(
         lambda_weight: Blend factor. 0.0 = pure relevance, 1.0 = pure utility.
         assertion_penalties: Optional mapping of entry ID to penalty amount
             for failing assertions (PRD-CORE-086 FR06).
-        context: Optional RecallContext for contextual score boosting
-            (PRD-CORE-102). When None, all boosts default to 1.0 (neutral).
+        context: Optional RecallContext for contextual score boosting.
+            When None, all boosts default to 1.0 (neutral).
 
     Returns:
         Sorted list (highest combined score first) with ``combined_score`` field.
@@ -182,45 +322,66 @@ def rank_by_utility(
             if entry_id in assertion_penalties:
                 combined = max(0.0, combined - assertion_penalties[entry_id])
 
-        # --- Contextual boosts (PRD-CORE-102) ---
-        boost = 1.0
+        # --- 6-factor multiplicative boosts (PRD-CORE-116-FR01) ---
+        domain_boost = 1.0
+        phase_boost = 1.0
+        team_boost = 1.0
+        outcome_boost = 1.0
+        anchor_val = 1.0
+        prd_boost = 1.0
 
         if context is not None:
             # 1. Domain match boost (1.4x)
             entry_domains = entry.get("domain", [])
-            if isinstance(entry_domains, list) and context.active_domains and any(d in context.active_domains for d in entry_domains):
-                boost *= 1.4
+            if isinstance(entry_domains, list) and context.inferred_domains:
+                if any(d in context.inferred_domains for d in entry_domains):
+                    domain_boost = 1.4
 
             # 2. Phase match boost (1.3x)
             entry_phase_affinity = entry.get("phase_affinity", [])
-            if isinstance(entry_phase_affinity, list) and context.current_phase and context.current_phase.upper() in [p.upper() for p in entry_phase_affinity]:
-                boost *= 1.3
+            if isinstance(entry_phase_affinity, list) and context.current_phase:
+                phase_upper = context.current_phase.upper()
+                if any(p.upper() == phase_upper for p in entry_phase_affinity):
+                    phase_boost = 1.3
 
             # 3. Team match boost (1.2x)
             entry_team = str(entry.get("team_origin", ""))
-            if entry_team and context.team_id and entry_team == context.team_id:
-                boost *= 1.2
+            if entry_team and context.team and entry_team == context.team:
+                team_boost = 1.2
 
-            # 4. Outcome strength boost (positive=1.5x, negative=0.5x)
-            outcome_corr = safe_float(entry, "outcome_correlation", 0.0)
-            if outcome_corr > 0.5:
-                boost *= 1.5
-            elif outcome_corr < -0.5:
-                boost *= 0.5
+            # 4. Outcome boost (1.5/1.2/1.0/0.5)
+            raw_outcome = entry.get("outcome_correlation", 0.0)
+            if isinstance(raw_outcome, str):
+                outcome_boost = _outcome_boost_factor(raw_outcome)
+            else:
+                outcome_boost = _outcome_boost_factor(safe_float(entry, "outcome_correlation", 0.0))
 
-            # 5. Anchor validity exclusion (0.0 validity = exclude)
-            anchor_validity = safe_float(entry, "anchor_validity", 1.0)
-            if anchor_validity == 0.0:
-                boost = 0.0  # Exclude entirely
+            # 5. Anchor validity — multiplicative (not binary exclusion)
+            anchor_val = safe_float(entry, "anchor_validity", 1.0)
 
-            if boost != 1.0:
+            # 6. PRD boost (1.5x)
+            if context.prd_knowledge_ids:
+                eid = str(entry.get("id", ""))
+                if eid in context.prd_knowledge_ids:
+                    prd_boost = 1.5
+
+            # Log when any factor differs from 1.0
+            if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost)):
                 _logger.debug(
                     "recall_boost_applied",
                     entry_id=str(entry.get("id", "")),
-                    boost=round(boost, 3),
+                    domain_boost=domain_boost,
+                    phase_boost=phase_boost,
+                    team_boost=team_boost,
+                    outcome_boost=outcome_boost,
+                    anchor_validity=anchor_val,
+                    prd_boost=prd_boost,
+                    final_boost=round(domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost, 4),
                 )
 
-        combined *= boost
+        combined *= domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost
+        # Clamp final score
+        combined = max(0.0, min(2.0, combined))
 
         entry_copy = dict(entry)
         entry_copy["combined_score"] = round(combined, 4)
@@ -330,6 +491,7 @@ def utility_based_prune_candidates(
 
 __all__ = [
     "RecallContext",
+    "_outcome_boost_factor",
     "infer_domains",
     "rank_by_utility",
     "utility_based_prune_candidates",

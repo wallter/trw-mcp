@@ -171,41 +171,53 @@ class LearningEntry(BaseModel):
     @field_validator("type", mode="before")
     @classmethod
     def _coerce_type(cls, v: object) -> LearningType:
-        """Coerce string/enum values to LearningType."""
+        """Coerce string/enum values to LearningType, rejecting invalid values."""
         if isinstance(v, LearningType):
             return v
         if isinstance(v, str):
+            if not v:  # Empty string -> default (backward compat)
+                return LearningType.PATTERN
             try:
                 return LearningType(v)
             except ValueError:
-                return LearningType.PATTERN
-        return LearningType.PATTERN
+                raise ValueError(
+                    f"type must be one of {', '.join(t.value for t in LearningType)}"
+                )
+        raise ValueError(f"type must be a string or LearningType, got {type(v).__name__}")
 
     @field_validator("confidence", mode="before")
     @classmethod
     def _coerce_confidence(cls, v: object) -> LearningConfidence:
-        """Coerce string/enum values to LearningConfidence."""
+        """Coerce string/enum values to LearningConfidence, rejecting invalid values."""
         if isinstance(v, LearningConfidence):
             return v
         if isinstance(v, str):
+            if not v:  # Empty string -> default (backward compat)
+                return LearningConfidence.UNVERIFIED
             try:
                 return LearningConfidence(v)
             except ValueError:
-                return LearningConfidence.UNVERIFIED
-        return LearningConfidence.UNVERIFIED
+                raise ValueError(
+                    f"confidence must be one of {', '.join(c.value for c in LearningConfidence)}"
+                )
+        raise ValueError(f"confidence must be a string or LearningConfidence, got {type(v).__name__}")
 
     @field_validator("protection_tier", mode="before")
     @classmethod
     def _coerce_protection_tier(cls, v: object) -> LearningProtectionTier:
-        """Coerce string/enum values to LearningProtectionTier."""
+        """Coerce string/enum values to LearningProtectionTier, rejecting invalid values."""
         if isinstance(v, LearningProtectionTier):
             return v
         if isinstance(v, str):
+            if not v:  # Empty string -> default (backward compat)
+                return LearningProtectionTier.NORMAL
             try:
                 return LearningProtectionTier(v)
             except ValueError:
-                return LearningProtectionTier.NORMAL
-        return LearningProtectionTier.NORMAL
+                raise ValueError(
+                    f"protection_tier must be one of {', '.join(p.value for p in LearningProtectionTier)}"
+                )
+        raise ValueError(f"protection_tier must be a string or LearningProtectionTier, got {type(v).__name__}")
 
     @field_validator("nudge_line", mode="before")
     @classmethod
@@ -250,6 +262,21 @@ class LearningEntry(BaseModel):
         description="IDs of learnings consolidated into this entry (source entries).",
     )
     consolidated_into: str | None = None
+
+    # PRD-CORE-108: Causal outcome attribution fields
+    outcome_correlation: str = Field(
+        default="",
+        description="Causal outcome attribution (e.g. 'positive', 'strong_positive').",
+    )
+    sessions_surfaced: int = Field(
+        ge=0,
+        default=0,
+        description="Number of sessions this learning was surfaced in.",
+    )
+    avg_rework_delta: float | None = Field(
+        default=None,
+        description="Rolling average rework impact delta.",
+    )
 
     # PRD-FIX-052-FR02: Impact tier label (assigned during deliver tier sweep)
     impact_tier: Literal["critical", "high", "medium", "low", "?"] = "?"

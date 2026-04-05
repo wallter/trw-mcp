@@ -375,6 +375,27 @@ def register_learning_tools(server: FastMCP) -> None:
                     if impact is not None:
                         data["impact"] = impact
                     data["updated"] = _today_iso
+                    # PRD-CORE-110: Sync typed fields to YAML backup
+                    if type is not None:
+                        data["type"] = type
+                    if nudge_line is not None:
+                        data["nudge_line"] = nudge_line
+                    if expires is not None:
+                        data["expires"] = expires
+                    if confidence is not None:
+                        data["confidence"] = confidence
+                    if task_type is not None:
+                        data["task_type"] = task_type
+                    if domain is not None:
+                        data["domain"] = domain
+                    if phase_origin is not None:
+                        data["phase_origin"] = phase_origin
+                    if phase_affinity is not None:
+                        data["phase_affinity"] = phase_affinity
+                    if team_origin is not None:
+                        data["team_origin"] = team_origin
+                    if protection_tier is not None:
+                        data["protection_tier"] = protection_tier
                     writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
             except (OSError, ValueError, TypeError):
