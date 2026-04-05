@@ -221,6 +221,20 @@ def _step_auto_progress(resolved_run: Path | None) -> AutoProgressStepResult:
 # ---------------------------------------------------------------------------
 
 
+def _read_run_events(resolved_run: Path | None) -> list[dict[str, object]]:
+    """Read events.jsonl from a resolved run directory (fail-open)."""
+    if resolved_run is None:
+        return []
+    events_path = resolved_run / "meta" / "events.jsonl"
+    if not events_path.exists():
+        return []
+    try:
+        reader = FileStateReader()
+        return reader.read_jsonl(events_path)
+    except Exception:  # justified: fail-open
+        return []
+
+
 def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str, object]:
     """Step 12: Compute delivery metrics — rework rate, composite outcome, reward.
 
@@ -258,7 +272,42 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         rw = result.get("rework_rate")
         if isinstance(rw, dict) and "rework_rate" in rw:
             rework_val = float(rw["rework_rate"])
-        composite = compute_composite_outcome(rework_rate=rework_val)
+
+        # PRD-CORE-104 P0: Compute all 4 inputs for composite outcome
+        p0_count = 0
+        velocity_tasks = 0
+        learning_count = 0
+        session_events: list[dict[str, object]] = []
+        try:
+            session_events = _read_run_events(resolved_run)
+            for evt in session_events:
+                evt_type = str(evt.get("event", ""))
+                evt_data = evt.get("data", {})
+                if not isinstance(evt_data, dict):
+                    evt_data = {}
+                if evt_type == "review_complete":
+                    p0_count += int(evt_data.get("critical_count", 0))
+                elif evt_type in ("phase_gate_passed", "checkpoint"):
+                    velocity_tasks += 1
+                elif evt_type in ("learn", "trw_learn"):
+                    learning_count += 1
+                elif evt_type == "tool_invocation":
+                    tool_name = str(evt_data.get("tool_name", ""))
+                    if "trw_learn" in tool_name:
+                        learning_count += 1
+        except Exception:  # justified: fail-open, event scan is best-effort
+            logger.debug("delivery_metric_event_scan_failed", exc_info=True)
+
+        # Compute learning rate (learnings per hour, rough estimate)
+        session_hours = max(0.1, len(session_events) / 60.0)
+        learning_rate = learning_count / session_hours
+
+        composite = compute_composite_outcome(
+            rework_rate=rework_val,
+            p0_defect_count=p0_count,
+            velocity_tasks=velocity_tasks,
+            learning_rate=learning_rate,
+        )
         result["composite_outcome"] = composite
     except Exception:  # justified: fail-open
         logger.debug("delivery_metric_composite_outcome_failed", exc_info=True)
@@ -293,6 +342,9 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         logger.debug("delivery_metric_learning_exposure_failed", exc_info=True)
         result["learning_exposure"] = {"error": "computation_failed"}
 
+    # PRD-CORE-104 P0: Safe default for normalized_reward before computation
+    result["normalized_reward"] = 0.5
+
     # Normalized reward (sigmoid of composite outcome)
     try:
         from trw_mcp.scoring._correlation import sigmoid_normalize
@@ -305,6 +357,20 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
             result["normalized_reward"] = round(sigmoid_normalize(float(composite_val)), 4)
     except Exception:  # justified: fail-open
         logger.debug("delivery_metric_normalized_reward_failed", exc_info=True)
+
+    # PRD-CORE-104 P0: Add client_profile and model_family to session metrics
+    try:
+        from trw_mcp.models.config import get_config
+
+        cfg = get_config()
+        result["client_profile"] = (
+            cfg.client_profile.client_id
+            if hasattr(cfg.client_profile, "client_id")
+            else ""
+        )
+        result["model_family"] = getattr(cfg, "model_family", "") or ""
+    except Exception:  # justified: fail-open, metadata enrichment is best-effort
+        pass
 
     logger.info(
         "delivery_metrics_computed",

@@ -278,6 +278,10 @@ class TestPropensityEntrySchema:
             "context_domain",
             "context_agent_type",
             "session_id",
+            # PRD-CORE-103: metadata fields
+            "client_profile",
+            "model_family",
+            "trw_version",
         }
         assert expected_fields == set(annotations.keys())
 

@@ -55,6 +55,10 @@ class SurfaceEvent(TypedDict, total=False):
     bandit_score: float  # Selection score (0.0 before bandit)
     exploration: bool  # Exploration pick (false before bandit)
     session_id: str  # Session identifier
+    # PRD-CORE-103: Metadata fields for stratified analysis
+    client_profile: str  # Client profile identifier (e.g., "claude-code")
+    model_family: str  # Model family (e.g., "claude", "gpt")
+    trw_version: str  # Framework version (e.g., "v24.4_TRW")
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +85,9 @@ def log_surface_event(
     bandit_score: float = 0.0,
     exploration: bool = False,
     session_id: str = "",
+    client_profile: str = "",
+    model_family: str = "",
+    trw_version: str = "",
 ) -> None:
     """Append a surface event to ``surface_tracking.jsonl``.
 
@@ -89,6 +96,9 @@ def log_surface_event(
 
     IMPORTANT: No learning content (summary, detail) is logged --
     only the ``learning_id`` for cross-referencing.
+
+    PRD-CORE-103: When *client_profile*, *model_family*, or *trw_version*
+    are empty strings, auto-detection from config is attempted (best-effort).
     """
     try:
         log_dir = trw_dir / _LOG_DIR
@@ -97,6 +107,23 @@ def log_surface_event(
 
         # Rotate if needed
         _rotate_jsonl(log_path)
+
+        # PRD-CORE-103: Auto-detect metadata fields from config when empty
+        if not client_profile or not trw_version:
+            try:
+                from trw_mcp.models.config import get_config
+
+                cfg = get_config()
+                if not client_profile:
+                    client_profile = (
+                        cfg.client_profile.client_id
+                        if hasattr(cfg.client_profile, "client_id")
+                        else str(cfg.client_profile)
+                    )
+                if not trw_version:
+                    trw_version = cfg.framework_version or ""
+            except Exception:  # justified: fail-open, auto-detection is best-effort
+                pass
 
         event: SurfaceEvent = {
             "learning_id": learning_id,
@@ -109,6 +136,9 @@ def log_surface_event(
             "bandit_score": bandit_score,
             "exploration": exploration,
             "session_id": session_id,
+            "client_profile": client_profile,
+            "model_family": model_family,
+            "trw_version": trw_version,
         }
 
         with log_path.open("a", encoding="utf-8") as f:

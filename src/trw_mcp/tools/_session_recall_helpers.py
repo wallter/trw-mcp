@@ -120,6 +120,7 @@ def append_ceremony_nudge(
                 except Exception:  # justified: fail-open, client class is best-effort
                     pass
 
+                burst_items: list[dict[str, object]] = []
                 selected, is_fallback = select_nudge_learning(
                     state,
                     candidates,
@@ -127,6 +128,7 @@ def append_ceremony_nudge(
                     bandit=bandit_instance,
                     previous_phase=getattr(state, "previous_phase", ""),
                     client_class=_client_class,
+                    burst_items=burst_items,
                 )
 
                 if selected:
@@ -138,6 +140,14 @@ def append_ceremony_nudge(
                         tip = f"\nTIP: {sel_summary}"
                         if sel_id:
                             tip += f" (id={sel_id})"
+                        # PRD-CORE-105 P0: Render burst items for phase transitions
+                        for burst_item in burst_items:
+                            burst_line = str(
+                                burst_item.get("nudge_line")
+                                or burst_item.get("summary", "")
+                            )[:80]
+                            if burst_line:
+                                tip += f"\n  - {burst_line}"
                         nudge = nudge + tip
                         response["ceremony_status"] = nudge
 
