@@ -847,8 +847,11 @@ def register_meta_tune_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Run the meta-tune synthesis process -- validates, attributes, synthesizes, and reports.
 
-        Periodic reflection that closes the meta-learning loop. Each step is
-        independent -- partial completion is valid.
+        Periodic reflection that closes the meta-learning loop. 9 steps:
+        (1) validate anchors, (2) resolve hypotheses, (3) domain clustering,
+        (4) exposure analysis, (5) causal lift, (6) synthesis,
+        (7) skill generation, (8) meta.yaml update, (9) report generation.
+        Each step is independent -- partial completion is valid.
 
         Args:
             steps: Specific steps to run (1-9). None = all steps.

@@ -168,12 +168,15 @@ def register_learning_tools(server: FastMCP) -> None:
     ) -> LearnResultDict:
         """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
-        Writes a learning entry to .trw/learnings/ with utility scoring. High-impact
-        learnings (>=0.7) get promoted into CLAUDE.md during delivery, becoming
-        permanent project knowledge that every session loads automatically.
+        Writes a learning entry to the knowledge store with utility scoring.
+        High-impact learnings surface automatically via trw_session_start()
+        and trw_recall(), becoming part of every future session's context.
+
+        Most learnings need only summary and optionally detail + tags.
+        All other fields are auto-detected when omitted.
 
         Args:
-            summary: One-line summary — this appears in CLAUDE.md when promoted.
+            summary: One-line summary of the discovery.
             detail: Full context including what you tried, what failed, and what worked.
             tags: Categorization tags (e.g., ["testing", "gotcha"]) for filtered recall.
             evidence: Supporting evidence (file paths, error messages) that validates the learning.
@@ -418,7 +421,10 @@ def register_learning_tools(server: FastMCP) -> None:
         """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
 
         Searches the learning store by keyword, tags, and impact score. Results are
-        ranked by utility (impact x recency x relevance). Use this before starting
+        ranked by a combined relevance-utility score: relevance matches your query
+        against summaries, tags, and details; utility considers impact, recency
+        (type-aware decay), and learned outcomes. Context boosts prioritize learnings
+        matching your current domain, phase, and team. Use this before starting
         work on an unfamiliar area to load existing project knowledge.
 
         Args:
@@ -474,11 +480,11 @@ def register_learning_tools(server: FastMCP) -> None:
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Promote your best learnings into CLAUDE.md — the next session starts with your insights built in.
+        """Sync the auto-generated CLAUDE.md section — keeps ceremony protocol and session instructions current.
 
-        Renders high-impact learnings, behavioral protocol, ceremony guidance, and
-        patterns into the auto-generated CLAUDE.md section. This is how individual
-        session discoveries become permanent project instructions.
+        Renders behavioral protocol and ceremony guidance into the auto-generated
+        CLAUDE.md section. Learnings are delivered via trw_session_start() recall,
+        not embedded in CLAUDE.md (per PRD-CORE-093).
 
         Also writes AGENTS.md for opencode users (FR13) when detected or explicitly
         requested via the ``client`` parameter.

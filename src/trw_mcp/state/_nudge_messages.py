@@ -90,10 +90,9 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
                     "Call trw_session_start() to begin."
                 ),
                 high=(
-                    f"\u26a1 {n} prior learnings available — "
-                    "past discoveries become active context, preventing repeat mistakes. "
-                    f"Skipping means re-discovering what {n} prior sessions already learned. "
-                    "trw_session_start() takes 1s."
+                    f"\u26a1 {n} learnings from prior sessions — "
+                    f"skipping means re-discovering known gotchas from scratch. "
+                    "trw_session_start() takes <1s."
                 ),
             )
         return _select_message_by_urgency(
