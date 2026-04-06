@@ -276,8 +276,8 @@ def rank_by_utility(
 ) -> list[dict[str, object]]:
     """Re-rank matched learnings by combined relevance + utility score.
 
-    PRD-CORE-116: 6-factor multiplicative boost formula:
-    ``combined = base * domain * phase * team * outcome * anchor * prd``
+    PRD-CORE-116 + PRD-INFRA-053: 7-factor multiplicative boost formula:
+    ``combined = base * domain * phase * team * outcome * anchor * prd * intel``
 
     Args:
         matches: List of matched learning entry dicts.
@@ -324,13 +324,14 @@ def rank_by_utility(
             if entry_id in assertion_penalties:
                 combined = max(0.0, combined - assertion_penalties[entry_id])
 
-        # --- 6-factor multiplicative boosts (PRD-CORE-116-FR01) ---
+        # --- 7-factor multiplicative boosts (PRD-CORE-116-FR01, PRD-INFRA-053) ---
         domain_boost = 1.0
         phase_boost = 1.0
         team_boost = 1.0
         outcome_boost = 1.0
         anchor_val = 1.0
         prd_boost = 1.0
+        intel_boost = 1.0
 
         if context is not None:
             # 1. Domain match boost (1.4x)
@@ -367,8 +368,19 @@ def rank_by_utility(
                 if eid in context.prd_knowledge_ids:
                     prd_boost = 1.5
 
+            # 7. Intel boost from backend bandit params (PRD-INFRA-053)
+            intel_cache = getattr(context, "intel_cache", None)
+            if intel_cache is not None:
+                get_fn = getattr(intel_cache, "get_bandit_params", None)
+                if callable(get_fn):
+                    bandit_params = get_fn()
+                    if bandit_params:
+                        entry_id = str(entry.get("id", ""))
+                        if entry_id in bandit_params:
+                            intel_boost = max(0.5, min(2.0, float(bandit_params[entry_id])))
+
             # Log when any factor differs from 1.0
-            if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost)):
+            if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost, intel_boost)):
                 _logger.debug(
                     "recall_boost_applied",
                     entry_id=str(entry.get("id", "")),
@@ -378,10 +390,11 @@ def rank_by_utility(
                     outcome_boost=outcome_boost,
                     anchor_validity=anchor_val,
                     prd_boost=prd_boost,
-                    final_boost=round(domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost, 4),
+                    intel_boost=intel_boost,
+                    final_boost=round(domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost * intel_boost, 4),
                 )
 
-        combined *= domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost
+        combined *= domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost * intel_boost
         # Clamp final score
         combined = max(0.0, min(2.0, combined))
 
