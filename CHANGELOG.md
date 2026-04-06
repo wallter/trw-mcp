@@ -6,6 +6,9 @@ All notable changes to the TRW MCP server package.
 
 ### Fixed
 
+- **Dedup re-learning loop fixed (PRD-CORE-042)** — `check_duplicate()` now checks obsolete/resolved entries for skip (>= 0.95 similarity), preventing the runaway loop where `session_start` injects content → agent re-learns it → deliver obsoletes it → next session repeats. Root cause: PRD-CORE-042-FR02 scoped dedup to active-only entries, but later systems (consolidation, outcome correlation) obsoleted entries that then got re-learned.
+- **sqlite-vec KNN fast path for dedup** — `check_duplicate()` now tries `backend.search_vectors()` first (sub-ms KNN, status-agnostic) before falling back to the O(n) YAML linear scan that re-embeds every entry. Adds `_check_duplicate_via_backend()` and `_distance_to_similarity()` helpers.
+- **Status-aware merge gating** — obsolete/resolved entries trigger `skip` (>= 0.95) but never `merge` (0.85–0.95), preventing knowledge from being appended into dead entries.
 - **Recall/session-start masking preserves useful summary text** — observation masking now drops bulky recall context and per-learning noise before truncating, so `trw_session_start` and `trw_recall` responses keep substantially more of each learning summary.
 - **Delivery/status masking is now structure-aware** — nested status blocks such as `reflect`, `checkpoint`, `claude_md_sync`, `run`, and related delivery metadata are shallow-compacted to keep key scalar fields while avoiding oversized nested payloads.
 - **Compression regressions covered** — added focused middleware tests for recall-shaped and delivery-shaped payloads under compact and minimal observation-masking tiers.
