@@ -92,7 +92,7 @@ class BackendSyncClient:
         """Get dirty entries from local storage via DeltaTracker."""
         try:
             from trw_memory.sync.delta import DeltaTracker
-            from trw_mcp.state.persistence import _get_backend
+            from trw_mcp.state._memory_connection import get_backend as _get_backend
 
             backend = _get_backend()
             last_seq = self._coordinator.get_last_push_seq()
@@ -105,7 +105,7 @@ class BackendSyncClient:
         """Mark entries as synced in local storage."""
         try:
             from trw_memory.sync.delta import DeltaTracker
-            from trw_mcp.state.persistence import _get_backend
+            from trw_mcp.state._memory_connection import get_backend as _get_backend
 
             backend = _get_backend()
             DeltaTracker.mark_synced([e.id for e in entries if hasattr(e, "id")], backend)
