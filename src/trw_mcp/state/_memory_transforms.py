@@ -101,8 +101,11 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
     base["avg_rework_delta"] = entry.avg_rework_delta
     base["outcome_correlation"] = entry.outcome_correlation
 
-    # Session count for hypothesis resolution (meta-tune Step 3)
-    # Uses access_count as a proxy — each recall/surface increments it
+    # KNOWN LIMITATION: access_count is a proxy for session_count.
+    # It overcounts when multiple recalls happen per session (e.g., 5 recalls → count 5, not 1).
+    # The meta-tune Step 3 threshold (>=30) is set high enough to tolerate this inflation,
+    # but a true session_count field (incremented only by trw_session_start) would be more accurate.
+    # See PRD-CORE-119 FR04 for the proper fix.
     base["session_count"] = entry.access_count or 0
 
     return base

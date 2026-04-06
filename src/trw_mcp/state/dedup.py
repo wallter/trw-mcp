@@ -2,7 +2,12 @@
 
 Prevents near-duplicate learnings using embedding cosine similarity.
 Three-tier decision: skip (>=0.95), merge (>=0.85), store (<0.85).
-Gracefully degrades to no-op when embeddings are unavailable.
+
+Uses sqlite-vec KNN search when available (sub-ms); falls back to
+linear YAML scan when the backend is unavailable.
+
+Obsolete entries are checked for skip (>=0.95) but NOT for merge,
+preventing runaway re-learning of content surfaced by session_start.
 """
 
 from __future__ import annotations
@@ -43,6 +48,76 @@ class DedupResult(NamedTuple):
     similarity: float
 
 
+def _distance_to_similarity(distance: float) -> float:
+    """Convert sqlite-vec L2 distance to cosine similarity.
+
+    For unit-normalized vectors (which all-MiniLM-L6-v2 produces via
+    ``normalize_embeddings=True``), the relationship is:
+    ``distance² = 2 * (1 - cosine_similarity)``
+    so ``cosine_similarity = 1 - distance² / 2``.
+    """
+    return 1.0 - (distance * distance) / 2.0
+
+
+def _check_duplicate_via_backend(
+    new_vector: list[float],
+    trw_dir: Path,
+    skip_threshold: float,
+    merge_threshold: float,
+) -> DedupResult | None:
+    """Try KNN dedup via the sqlite-vec backend (fast path).
+
+    Returns a DedupResult if the backend is available and produces a
+    definitive answer, or None to signal the caller should fall back
+    to the YAML linear scan.
+
+    Obsolete/resolved entries trigger ``skip`` (>= skip_threshold) but
+    never ``merge``, preventing runaway re-learning of content that was
+    already recorded and later obsoleted.
+    """
+    try:
+        from trw_mcp.state.memory_adapter import get_backend
+
+        backend = get_backend(trw_dir)
+        # Ask for more candidates than we strictly need so we can
+        # filter by status and still find the best match.
+        hits = backend.search_vectors(new_vector, top_k=10)
+        if not hits:
+            return None  # No vectors indexed yet — fall back to YAML
+
+        best_similarity = 0.0
+        best_id: str | None = None
+        best_is_active = False
+
+        for entry_id, distance in hits:
+            sim = _distance_to_similarity(distance)
+            if sim <= best_similarity:
+                continue
+
+            entry = backend.get(entry_id)
+            if entry is None:
+                continue
+
+            is_active = str(entry.status.value if hasattr(entry.status, "value") else entry.status) == "active"
+
+            best_similarity = sim
+            best_id = entry_id
+            best_is_active = is_active
+
+        if best_id is not None and best_similarity >= skip_threshold:
+            # Skip against both active AND obsolete entries
+            return DedupResult("skip", best_id, best_similarity)
+        if best_id is not None and best_similarity >= merge_threshold and best_is_active:
+            # Merge only into active entries
+            return DedupResult("merge", best_id, best_similarity)
+
+        return DedupResult("store", None, best_similarity)
+
+    except Exception:
+        logger.debug("dedup_backend_unavailable_fallback_to_yaml", exc_info=True)
+        return None
+
+
 def check_duplicate(
     summary: str,
     detail: str,
@@ -53,12 +128,16 @@ def check_duplicate(
 ) -> DedupResult:
     """Check if a new learning is a duplicate of an existing entry.
 
-    Steps:
-    1. Generate embedding for ``summary + " " + detail``.
-    2. If embedding unavailable → return DedupResult("store", None, 0.0).
-    3. Load all active entries from entries_dir.
-    4. For each entry, compute cosine similarity with the new embedding.
-    5. Return DedupResult based on thresholds from config.
+    Two-tier strategy:
+    1. **Fast path** (sqlite-vec): KNN search via the memory backend.
+       Sub-millisecond, status-agnostic — filters status *after* retrieval.
+    2. **Fallback** (YAML scan): Linear scan of entry files when the
+       backend is unavailable.
+
+    In both paths, obsolete/resolved entries trigger ``skip`` (>= 0.95)
+    but never ``merge``, preventing the runaway re-learning loop where
+    session_start injects content → agent re-learns it → deliver
+    obsoletes it → next session repeats.
 
     Args:
         summary: Summary of the new learning.
@@ -99,9 +178,26 @@ def check_duplicate(
         logger.debug("dedup_embed_unavailable", text_len=len(new_text))
         return DedupResult("store", None, 0.0)
 
-    # Load and compare against all active entries
+    # --- Fast path: sqlite-vec KNN search ---
+    # Resolve .trw dir from entries_dir (entries_dir = trw_dir / learnings / entries)
+    trw_dir = entries_dir.parent.parent
+    backend_result = _check_duplicate_via_backend(
+        new_vector, trw_dir, skip_threshold, merge_threshold
+    )
+    if backend_result is not None:
+        logger.debug(
+            "dedup_check_complete",
+            duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+            action=backend_result.action,
+            similarity=round(backend_result.similarity, 4),
+            path="backend",
+        )
+        return backend_result
+
+    # --- Fallback: YAML linear scan ---
     best_similarity = 0.0
     best_id: str | None = None
+    best_is_active = False
 
     if not entries_dir.exists():
         return DedupResult("store", None, 0.0)
@@ -114,9 +210,8 @@ def check_duplicate(
         except (OSError, StateError):
             continue
 
-        # Only compare against active entries
-        if str(data.get("status", "active")) != "active":
-            continue
+        entry_status = str(data.get("status", "active"))
+        is_active = entry_status == "active"
 
         entry_summary = str(data.get("summary", ""))
         entry_detail = str(data.get("detail", ""))
@@ -130,11 +225,14 @@ def check_duplicate(
         if sim > best_similarity:
             best_similarity = sim
             best_id = str(data.get("id", ""))
+            best_is_active = is_active
 
-    # Determine action based on thresholds
+    # Determine action based on thresholds + status
     if best_id is not None and best_similarity >= skip_threshold:
+        # Skip against both active AND obsolete entries
         result = DedupResult("skip", best_id, best_similarity)
-    elif best_id is not None and best_similarity >= merge_threshold:
+    elif best_id is not None and best_similarity >= merge_threshold and best_is_active:
+        # Merge only into active entries
         result = DedupResult("merge", best_id, best_similarity)
     else:
         result = DedupResult("store", None, best_similarity)
@@ -144,6 +242,7 @@ def check_duplicate(
         duration_ms=round((time.monotonic() - _t0) * 1000, 2),
         action=result.action,
         similarity=round(result.similarity, 4),
+        path="yaml_fallback",
     )
     return result
 

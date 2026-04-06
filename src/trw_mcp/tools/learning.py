@@ -175,6 +175,10 @@ def register_learning_tools(server: FastMCP) -> None:
         Most learnings need only summary and optionally detail + tags.
         All other fields are auto-detected when omitted.
 
+        Only record learnings that prevent repeated mistakes, document
+        non-obvious gotchas, or capture architecture decisions not obvious
+        from code.
+
         Args:
             summary: One-line summary of the discovery.
             detail: Full context including what you tried, what failed, and what worked.

@@ -142,7 +142,30 @@ _TOPIC_TAG_MAX = 3
 # Auto-generated noise prefixes that should never be persisted as learnings.
 # These are produced by ceremony/telemetry tools and add no institutional value.
 # Canonical location — tools/_learning_helpers.py re-exports for backward compat.
-_NOISE_PREFIXES = ("Repeated operation:", "Success:")
+_NOISE_PREFIXES = (
+    "Repeated operation:",
+    "Success:",
+    "Task completed:",
+    "Confirmed:",
+    "Done:",
+    "Completed:",
+)
+
+# PRD-CORE-119 M-2: Regex patterns for common low-value agent outputs.
+# These catch file-read confirmations, test-pass notifications, simple edit
+# confirmations, and status acknowledgments that add no institutional value.
+# Patterns are deliberately specific to avoid rejecting valid learnings
+# (e.g., "File reads fail silently..." should NOT match).
+_NOISE_REGEX = re.compile(
+    r"^(?:"
+    r"i read the \w+"  # "I read the file", "I read the configuration"
+    r"|(?:the |all )?tests? (?:passed|are passing)"  # "The test passed", "All tests passed"
+    r"|i made the (?:edit|change)"  # "I made the edit", "I made the change"
+    r"|updated the (?:file|code)\b"  # "Updated the file", "Updated the code"
+    r"|the build (?:completed|passed|succeeded)"  # "The build completed successfully"
+    r")",
+    flags=re.IGNORECASE,
+)
 
 
 def is_noise_summary(summary: str) -> bool:
@@ -151,6 +174,10 @@ def is_noise_summary(summary: str) -> bool:
     PRD-QUAL-032-FR09: Reject entries whose summary starts with known
     noise prefixes before they are persisted.
 
+    PRD-CORE-119-M2: Also rejects regex-matched low-value agent outputs
+    such as file-read confirmations, test-pass notifications, simple edit
+    confirmations, and status acknowledgments.
+
     PRD-FIX-061-FR01: Canonical location moved from tools/_learning_helpers.py
     to state/analytics/core.py to resolve tools/ -> state/ layer violation.
 
@@ -158,10 +185,12 @@ def is_noise_summary(summary: str) -> bool:
         summary: The learning entry summary text to check.
 
     Returns:
-        True if the summary starts with a known noise prefix.
+        True if the summary matches a known noise prefix or regex pattern.
     """
     lower = summary.lower()
-    return any(lower.startswith(prefix.lower()) for prefix in _NOISE_PREFIXES)
+    if any(lower.startswith(prefix.lower()) for prefix in _NOISE_PREFIXES):
+        return True
+    return bool(_NOISE_REGEX.search(lower))
 
 
 # ---------------------------------------------------------------------------

@@ -670,3 +670,83 @@ class TestNoiseFilter:
     def test_does_not_match_substring(self) -> None:
         """Prefix match only — 'Success:' in the middle should pass."""
         assert is_noise_summary("The operation was a Success: tests passed") is False
+
+    # PRD-CORE-119 M-2: Expanded noise patterns for low-value agent outputs
+
+    @pytest.mark.unit
+    def test_rejects_file_read_confirmation(self) -> None:
+        assert is_noise_summary("I read the file successfully") is True
+
+    @pytest.mark.unit
+    def test_rejects_file_read_variation(self) -> None:
+        assert is_noise_summary("I read the configuration file") is True
+
+    @pytest.mark.unit
+    def test_rejects_test_pass_notification(self) -> None:
+        assert is_noise_summary("The test passed") is True
+
+    @pytest.mark.unit
+    def test_rejects_tests_passing(self) -> None:
+        assert is_noise_summary("The tests are passing now") is True
+
+    @pytest.mark.unit
+    def test_rejects_all_tests_passed(self) -> None:
+        assert is_noise_summary("All tests passed") is True
+
+    @pytest.mark.unit
+    def test_rejects_edit_confirmation(self) -> None:
+        assert is_noise_summary("I made the edit to the file") is True
+
+    @pytest.mark.unit
+    def test_rejects_edit_variation(self) -> None:
+        assert is_noise_summary("I made the change successfully") is True
+
+    @pytest.mark.unit
+    def test_rejects_updated_the_file(self) -> None:
+        assert is_noise_summary("Updated the file with the fix") is True
+
+    @pytest.mark.unit
+    def test_rejects_updated_the_code(self) -> None:
+        assert is_noise_summary("Updated the code to handle the edge case") is True
+
+    @pytest.mark.unit
+    def test_rejects_status_acknowledgment(self) -> None:
+        assert is_noise_summary("The build completed successfully") is True
+
+    @pytest.mark.unit
+    def test_rejects_task_completed(self) -> None:
+        assert is_noise_summary("Task completed: updated the tests") is True
+
+    @pytest.mark.unit
+    def test_rejects_confirmed_prefix(self) -> None:
+        assert is_noise_summary("Confirmed: the fix works") is True
+
+    @pytest.mark.unit
+    def test_rejects_done_prefix(self) -> None:
+        assert is_noise_summary("Done: all changes applied") is True
+
+    @pytest.mark.unit
+    def test_rejects_completed_prefix(self) -> None:
+        assert is_noise_summary("Completed: migration script updated") is True
+
+    # Ensure valid learnings with similar words are NOT rejected
+
+    @pytest.mark.unit
+    def test_accepts_read_pattern_learning(self) -> None:
+        """A learning ABOUT reading should not be rejected."""
+        assert is_noise_summary("File reads fail silently when path contains unicode") is False
+
+    @pytest.mark.unit
+    def test_accepts_test_pattern_learning(self) -> None:
+        """A learning ABOUT tests should not be rejected."""
+        assert is_noise_summary("Tests require reset_backend() fixture for SQLite isolation") is False
+
+    @pytest.mark.unit
+    def test_accepts_update_pattern_learning(self) -> None:
+        """A learning ABOUT updates should not be rejected."""
+        assert is_noise_summary("Updating config requires singleton reset between tests") is False
+
+    @pytest.mark.unit
+    def test_accepts_completion_learning(self) -> None:
+        """A learning that mentions completion in a substantive way."""
+        assert is_noise_summary("Completion handler must flush before process exit") is False
