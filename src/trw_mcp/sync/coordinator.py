@@ -1,0 +1,116 @@
+"""Multi-MCP sync coordination — PRD-INFRA-051-FR08.
+
+Uses fcntl.flock (via _locking.py shim) for process coordination.
+Tracks last sync time in .trw/sync-state.json.
+Only one MCP server syncs at a time; others skip if recent.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Generator
+
+import structlog
+
+from trw_mcp._locking import _lock_ex_nb, _lock_un
+
+logger = structlog.get_logger(__name__)
+
+_STATE_FILE = "sync-state.json"
+_LOCK_FILE = "sync.lock"
+
+
+class SyncCoordinator:
+    """Manages multi-MCP lock acquisition and sync state."""
+
+    def __init__(self, trw_dir: Path, sync_interval: int = 300) -> None:
+        self._trw_dir = trw_dir
+        self._sync_interval = sync_interval
+        self._state_path = trw_dir / _STATE_FILE
+        self._lock_path = trw_dir / _LOCK_FILE
+
+    def should_sync(self) -> bool:
+        """Check sync-state.json: is it time for a sync cycle?"""
+        if not self._state_path.exists():
+            return True
+        try:
+            state = json.loads(self._state_path.read_text())
+            last_push_at = state.get("last_push_at")
+            if not last_push_at:
+                return True
+            last_dt = datetime.fromisoformat(last_push_at)
+            elapsed = (datetime.now(tz=timezone.utc) - last_dt).total_seconds()
+            return elapsed >= self._sync_interval
+        except (json.JSONDecodeError, ValueError, KeyError):
+            return True
+
+    @contextmanager
+    def acquire_sync_lock(self) -> Generator[bool, None, None]:
+        """Try to acquire .trw/sync.lock (LOCK_NB). Yields True if acquired."""
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = None
+        try:
+            fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
+            _lock_ex_nb(fd)
+            logger.debug("sync_lock_acquired", pid=os.getpid())
+            yield True
+        except OSError:
+            logger.debug("sync_lock_skipped", reason="held by another MCP")
+            if fd is not None:
+                os.close(fd)
+                fd = None
+            yield False
+        finally:
+            if fd is not None:
+                try:
+                    _lock_un(fd)
+                except OSError:
+                    pass
+                os.close(fd)
+
+    def record_sync_success(self, pushed: int, pulled: int) -> None:
+        """Update sync-state.json with success info."""
+        state = self._read_state()
+        now = datetime.now(tz=timezone.utc).isoformat()
+        state["last_push_at"] = now
+        state["last_push_seq"] = state.get("last_push_seq", 0) + pushed
+        state["push_count"] = state.get("push_count", 0) + 1
+        if pulled > 0:
+            state["last_pull_at"] = now
+            state["last_pull_seq"] = state.get("last_pull_seq", 0) + pulled
+            state["pull_count"] = state.get("pull_count", 0) + 1
+        state["last_error"] = None
+        state["version"] = 1
+        self._write_state(state)
+
+    def record_sync_failure(self, error: str) -> None:
+        """Update sync-state.json with failure info."""
+        state = self._read_state()
+        state["last_error"] = error[:500]
+        state["last_error_at"] = datetime.now(tz=timezone.utc).isoformat()
+        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
+        state["version"] = 1
+        self._write_state(state)
+
+    def get_last_push_seq(self) -> int:
+        """Read the last push sequence number from state."""
+        state = self._read_state()
+        return int(state.get("last_push_seq", 0))
+
+    def _read_state(self) -> dict[str, object]:
+        if not self._state_path.exists():
+            return {}
+        try:
+            return json.loads(self._state_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+    def _write_state(self, state: dict[str, object]) -> None:
+        """Atomically write state using write-then-rename."""
+        tmp = self._state_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2, default=str))
+        os.replace(str(tmp), str(self._state_path))
