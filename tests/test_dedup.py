@@ -263,10 +263,118 @@ class TestCheckDuplicate:
         # This test verifies the tool-level integration skips the call
         assert result is not None  # check_duplicate itself doesn't check config
 
-    def test_skip_non_active_entries(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
-        """Resolved/obsolete entries are skipped during dedup comparison."""
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
+    def test_skip_against_obsolete_entry(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+        """Obsolete entries with identical content trigger 'skip' — prevents re-learning loop."""
+        entries_dir = tmp_path / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+        config = TRWConfig(embeddings_enabled=True)
+
+        path = entries_dir / "L-obsolete01.yaml"
+        writer.write_yaml(
+            path,
+            {
+                "id": "L-obsolete01",
+                "summary": "unique test summary for dedup",
+                "detail": "unique test detail for dedup",
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "obsolete",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+            },
+        )
+
+        with (
+            patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
+            patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
+        ):
+            result = check_duplicate(
+                "unique test summary for dedup",
+                "unique test detail for dedup",
+                entries_dir,
+                reader,
+                config=config,
+            )
+
+        # Obsolete entries now trigger skip (>= 0.95 similarity)
+        assert result.action == "skip"
+        assert result.existing_id == "L-obsolete01"
+
+    def test_no_merge_into_obsolete_entry(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """Obsolete entries in the merge zone (0.85-0.95) do NOT trigger merge — only skip."""
+        entries_dir = tmp_path / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+        config = TRWConfig(embeddings_enabled=True)
+
+        existing_summary = "some learning about python testing"
+        existing_detail = "detail about pytest fixtures"
+        path = entries_dir / "L-obsolete-merge.yaml"
+        writer.write_yaml(
+            path,
+            {
+                "id": "L-obsolete-merge",
+                "summary": existing_summary,
+                "detail": existing_detail,
+                "tags": [],
+                "evidence": [],
+                "impact": 0.5,
+                "status": "obsolete",
+                "recurrence": 1,
+                "created": "2026-01-01",
+                "updated": "2026-01-01",
+            },
+        )
+        existing_key = existing_summary + " " + existing_detail
+
+        # Build a vector at 0.90 similarity (merge zone) from the existing entry
+        existing_vec = mock_embed(existing_key)
+        orth = [0.0] * len(existing_vec)
+        orth[0] = -existing_vec[1]
+        orth[1] = existing_vec[0]
+        orth_norm = sum(v * v for v in orth) ** 0.5
+        if orth_norm > 0:
+            orth = [v / orth_norm for v in orth]
+
+        import math
+
+        cos_theta = 0.90
+        sin_theta = math.sqrt(1 - cos_theta**2)
+        new_vec = [cos_theta * e + sin_theta * o for e, o in zip(existing_vec, orth)]
+        new_norm = sum(v * v for v in new_vec) ** 0.5
+        new_vec = [v / new_norm for v in new_vec]
+
+        new_text = "new-unique-text-xyz"
+
+        def controlled_embed(text: str) -> list[float]:
+            if text == (new_text + " "):
+                return new_vec
+            return mock_embed(text)
+
+        with (
+            patch("trw_mcp.state.dedup.embed", side_effect=controlled_embed),
+            patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
+        ):
+            result = check_duplicate(
+                new_text,
+                "",
+                entries_dir,
+                reader,
+                config=config,
+            )
+
+        # Obsolete entry in merge zone → store (not merge), because we don't merge into dead entries
+        assert result.action == "store"
+
+    def test_resolved_entry_triggers_skip(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """Resolved entries with identical content also trigger 'skip'."""
+        entries_dir = tmp_path / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
         config = TRWConfig(embeddings_enabled=True)
 
         path = entries_dir / "L-resolved01.yaml"
@@ -286,7 +394,10 @@ class TestCheckDuplicate:
             },
         )
 
-        with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
+        with (
+            patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
+            patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
+        ):
             result = check_duplicate(
                 "unique test summary for dedup",
                 "unique test detail for dedup",
@@ -295,8 +406,8 @@ class TestCheckDuplicate:
                 config=config,
             )
 
-        # Resolved entries are skipped, so no match
-        assert result.action == "store"
+        # Resolved entries now trigger skip (>= 0.95 similarity)
+        assert result.action == "skip"
 
 
 # ---------------------------------------------------------------------------
@@ -832,6 +943,223 @@ class TestCheckDuplicateEdgeCases:
         # new_vec is at 0.87 similarity → in merge zone [0.85, 0.95) → merge action
         assert result.action == "merge"
         assert 0.85 <= result.similarity < 0.95
+
+
+# ---------------------------------------------------------------------------
+# Backend fast path: _check_duplicate_via_backend & _distance_to_similarity
+# ---------------------------------------------------------------------------
+
+
+class TestDistanceToSimilarity:
+    """Tests for the _distance_to_similarity helper."""
+
+    def test_zero_distance_is_perfect_similarity(self) -> None:
+        from trw_mcp.state.dedup import _distance_to_similarity
+
+        assert abs(_distance_to_similarity(0.0) - 1.0) < 1e-9
+
+    def test_sqrt2_distance_is_zero_similarity(self) -> None:
+        """For unit-normalized vectors, L2 distance of sqrt(2) = cosine similarity 0."""
+        import math
+
+        from trw_mcp.state.dedup import _distance_to_similarity
+
+        result = _distance_to_similarity(math.sqrt(2.0))
+        assert abs(result - 0.0) < 1e-9
+
+    def test_known_distance_to_similarity(self) -> None:
+        """distance² = 2(1 - sim), so distance=0.316 → sim ≈ 0.95."""
+        import math
+
+        from trw_mcp.state.dedup import _distance_to_similarity
+
+        # For sim=0.95: d² = 2*(1-0.95) = 0.1, d = sqrt(0.1) ≈ 0.3162
+        distance = math.sqrt(0.1)
+        result = _distance_to_similarity(distance)
+        assert abs(result - 0.95) < 1e-6
+
+
+class TestCheckDuplicateViaBackend:
+    """Tests for the sqlite-vec fast path."""
+
+    def test_backend_skip_against_active_entry(self, tmp_path: Path) -> None:
+        """Backend returns 'skip' for active entry above skip threshold."""
+        from unittest.mock import MagicMock
+
+        from trw_mcp.state.dedup import _check_duplicate_via_backend
+
+        mock_entry = MagicMock()
+        mock_entry.status = MagicMock()
+        mock_entry.status.value = "active"
+
+        mock_backend = MagicMock()
+        # distance=0 → similarity=1.0 (identical)
+        mock_backend.search_vectors.return_value = [("L-active01", 0.0)]
+        mock_backend.get.return_value = mock_entry
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+            result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
+
+        assert result is not None
+        assert result.action == "skip"
+        assert result.existing_id == "L-active01"
+        assert result.similarity >= 0.95
+
+    def test_backend_skip_against_obsolete_entry(self, tmp_path: Path) -> None:
+        """Backend returns 'skip' for obsolete entry above skip threshold."""
+        from unittest.mock import MagicMock
+
+        from trw_mcp.state.dedup import _check_duplicate_via_backend
+
+        mock_entry = MagicMock()
+        mock_entry.status = MagicMock()
+        mock_entry.status.value = "obsolete"
+
+        mock_backend = MagicMock()
+        mock_backend.search_vectors.return_value = [("L-obsolete01", 0.0)]
+        mock_backend.get.return_value = mock_entry
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+            result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
+
+        assert result is not None
+        assert result.action == "skip"
+        assert result.existing_id == "L-obsolete01"
+
+    def test_backend_no_merge_into_obsolete_entry(self, tmp_path: Path) -> None:
+        """Backend returns 'store' for obsolete entry in merge zone (0.85-0.95)."""
+        import math
+        from unittest.mock import MagicMock
+
+        from trw_mcp.state.dedup import _check_duplicate_via_backend
+
+        mock_entry = MagicMock()
+        mock_entry.status = MagicMock()
+        mock_entry.status.value = "obsolete"
+
+        mock_backend = MagicMock()
+        # distance for similarity=0.90: d² = 2*(1-0.90) = 0.2, d = sqrt(0.2)
+        distance_for_090 = math.sqrt(0.2)
+        mock_backend.search_vectors.return_value = [("L-obsolete-merge", distance_for_090)]
+        mock_backend.get.return_value = mock_entry
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+            result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
+
+        assert result is not None
+        assert result.action == "store"
+
+    def test_backend_merge_into_active_entry(self, tmp_path: Path) -> None:
+        """Backend returns 'merge' for active entry in merge zone."""
+        import math
+        from unittest.mock import MagicMock
+
+        from trw_mcp.state.dedup import _check_duplicate_via_backend
+
+        mock_entry = MagicMock()
+        mock_entry.status = MagicMock()
+        mock_entry.status.value = "active"
+
+        mock_backend = MagicMock()
+        distance_for_090 = math.sqrt(0.2)
+        mock_backend.search_vectors.return_value = [("L-active-merge", distance_for_090)]
+        mock_backend.get.return_value = mock_entry
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+            result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
+
+        assert result is not None
+        assert result.action == "merge"
+        assert result.existing_id == "L-active-merge"
+
+    def test_backend_returns_none_on_empty_results(self, tmp_path: Path) -> None:
+        """Backend returns None when no vectors are indexed."""
+        from unittest.mock import MagicMock
+
+        from trw_mcp.state.dedup import _check_duplicate_via_backend
+
+        mock_backend = MagicMock()
+        mock_backend.search_vectors.return_value = []
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+            result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
+
+        assert result is None  # Signals caller to fall back to YAML scan
+
+    def test_backend_returns_none_on_exception(self, tmp_path: Path) -> None:
+        """Backend returns None when get_backend raises (triggers YAML fallback)."""
+        from trw_mcp.state.dedup import _check_duplicate_via_backend
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", side_effect=RuntimeError("no db")):
+            result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
+
+        assert result is None
+
+    def test_backend_skips_entries_not_in_db(self, tmp_path: Path) -> None:
+        """Backend skips entries where backend.get() returns None."""
+        from unittest.mock import MagicMock
+
+        from trw_mcp.state.dedup import _check_duplicate_via_backend
+
+        mock_backend = MagicMock()
+        mock_backend.search_vectors.return_value = [("L-ghost", 0.0)]
+        mock_backend.get.return_value = None  # Entry not found in memories table
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+            result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
+
+        assert result is not None
+        assert result.action == "store"
+
+
+class TestCheckDuplicateFastPathIntegration:
+    """Integration tests verifying check_duplicate uses the backend fast path."""
+
+    def test_uses_backend_when_available(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """check_duplicate uses backend result and doesn't scan YAML files."""
+        from trw_mcp.state.dedup import DedupResult as _DedupResult
+
+        entries_dir = tmp_path / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+        config = TRWConfig(embeddings_enabled=True)
+
+        # Write an active entry to YAML (should NOT be scanned if backend path works)
+        write_entry(entries_dir, writer, "L-yaml-only", "yaml only summary", "yaml detail")
+
+        backend_result = _DedupResult("skip", "L-from-backend", 0.99)
+
+        with (
+            patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
+            patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=backend_result),
+        ):
+            result = check_duplicate("any summary", "any detail", entries_dir, reader, config=config)
+
+        assert result.action == "skip"
+        assert result.existing_id == "L-from-backend"
+
+    def test_falls_back_to_yaml_when_backend_unavailable(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """check_duplicate falls back to YAML scan when backend returns None."""
+        entries_dir = tmp_path / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+        config = TRWConfig(embeddings_enabled=True)
+
+        summary = "yaml fallback test summary"
+        detail = "yaml fallback test detail"
+        write_entry(entries_dir, writer, "L-yaml01", summary, detail)
+
+        with (
+            patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
+            patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
+        ):
+            result = check_duplicate(summary, detail, entries_dir, reader, config=config)
+
+        # YAML fallback finds the active entry → skip
+        assert result.action == "skip"
+        assert result.existing_id == "L-yaml01"
 
 
 # ---------------------------------------------------------------------------
