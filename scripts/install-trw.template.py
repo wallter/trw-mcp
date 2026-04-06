@@ -441,17 +441,23 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
         return False
 
 
-def pip_install(python: str, package: str, label: str, ui: UI) -> bool:
+def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str = "") -> bool:
     """Try pip install with escalating fallbacks.
+
+    When *target_dir* is set, passes ``--target DIR`` to pip so packages
+    are written to that directory instead of site-packages.  This is used
+    to redirect writes to a tmpfs mount (PRD-INFRA-058).
 
     Tries: normal -> --user -> --break-system-packages.
     """
     base = [python, "-m", "pip", "install", "--upgrade", "--quiet"]
+    if target_dir:
+        base += ["--target", target_dir]
 
     if _run_quiet(base + [package]):
         return True
 
-    if _run_quiet(base + ["--user", package]):
+    if not target_dir and _run_quiet(base + ["--user", package]):
         ui.step_warn(f"Installed {label} with --user (PEP 668 managed environment)")
         return True
 
@@ -1112,12 +1118,19 @@ def phase_install_packages(
     python: str,
     memory_whl: Path,
     mcp_whl: Path,
+    pip_target: str = "",
 ) -> None:
-    """Phase 3: Install base packages (order: memory -> mcp)."""
+    """Phase 3: Install base packages (order: memory -> mcp).
+
+    When *pip_target* is set, passes ``--target`` to pip so all packages
+    are written to that directory (e.g. a tmpfs mount) instead of
+    site-packages.  A PYTHONPATH wrapper is generated at
+    ``/usr/local/bin/trw-mcp`` so the CLI finds the packages at runtime.
+    """
     ui.step_header(step, total, "Installing packages")
 
     ui.start_spinner("Installing trw-memory...")
-    if not pip_install(python, str(memory_whl), "trw-memory", ui):
+    if not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=pip_target):
         ui.stop_spinner(False, "", "pip install failed for trw-memory")
         ui.error("Try installing in a virtual environment:")
         ui.error("  python3 -m venv .venv && source .venv/bin/activate")
@@ -1126,7 +1139,7 @@ def phase_install_packages(
     ui.stop_spinner(True, "Installed trw-memory")
 
     ui.start_spinner(f"Installing trw-mcp v{TRW_VERSION}...")
-    if not pip_install(python, str(mcp_whl), "trw-mcp", ui):
+    if not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=pip_target):
         ui.stop_spinner(False, "", "pip install failed for trw-mcp")
         ui.error("Try installing in a virtual environment:")
         ui.error("  python3 -m venv .venv && source .venv/bin/activate")
@@ -1134,10 +1147,23 @@ def phase_install_packages(
         sys.exit(1)
     ui.stop_spinner(True, f"Installed trw-mcp v{TRW_VERSION}")
 
-    # Verify imports
+    # When using --pip-target, generate a PYTHONPATH wrapper (FR04)
+    if pip_target:
+        wrapper = Path("/usr/local/bin/trw-mcp")
+        wrapper.write_text(
+            f"#!/bin/bash\n"
+            f"export PYTHONPATH={pip_target}:$PYTHONPATH\n"
+            f'exec {python} -c "from trw_mcp.server import main; main()" "$@"\n'
+        )
+        wrapper.chmod(0o755)
+        ui.info(f"PYTHONPATH wrapper: {wrapper} -> {pip_target}")
+
+    # Verify imports (set PYTHONPATH for --pip-target case)
+    env_prefix = f"PYTHONPATH={pip_target}:$PYTHONPATH " if pip_target else ""
     for mod in ("trw_memory", "trw_mcp"):
         rc = subprocess.run(
-            [python, "-c", f"import {mod}"],
+            f"{env_prefix}{python} -c 'import {mod}'",
+            shell=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         ).returncode
@@ -1592,6 +1618,12 @@ def main() -> None:
     parser.add_argument("--no-telemetry", dest="telemetry", action="store_false", help="Disable telemetry")
     parser.add_argument("--skip-auth", action="store_true", help="Skip device auth flow during install")
     parser.add_argument(
+        "--pip-target",
+        default="",
+        metavar="DIR",
+        help="Install packages to DIR instead of site-packages (for tmpfs mounts)",
+    )
+    parser.add_argument(
         "--ide",
         choices=["claude-code", "opencode", "codex", "all"],
         default=None,
@@ -1682,7 +1714,7 @@ def main() -> None:
 
         # Step 2: Install base packages
         step += 1
-        phase_install_packages(ui, step, total, python, memory_whl, mcp_whl)
+        phase_install_packages(ui, step, total, python, memory_whl, mcp_whl, pip_target=args.pip_target)
 
         # Step 3 (conditional): Install extras
         features: list[str] = []
