@@ -4,6 +4,14 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Improved
+
+- **Learning prompting text quality (PRD-QUAL-057)** — Removed 3 unsourced quantitative claims ("3x fewer P0 defects", "80%+ of integration issues", "hundreds of past sessions") from CLAUDE.md static sections and messages.yaml. Updated stale docstrings referencing CLAUDE.md learning promotion (removed per PRD-CORE-093). Expanded `trw_recall()` ranking description to reflect actual 6-factor scoring. Fixed `server_instructions` inaccuracy about learnings being "lost" without deliver. Tightened high-urgency nudge repetition. Generalized Sprint 26 watchlist references. Added 9 step names to `trw_meta_tune()` docstring.
+
+- **Nudge architecture and protocol deduplication (PRD-CORE-120)** — Removed protocol table emission from session-start hook on `startup` events (CLAUDE.md is single source of truth; hook still emits on `compact`/`clear`/`resume` for context recovery). Added hard character truncation at tier budget in `_assemble_nudge()` with `[truncated]` indicator. Budget-checked `reactive_msg` before inclusion. Added phase-to-message mapping rationale documentation in `_nudge_rules.py`.
+
+- **Learning tool quality gates (PRD-CORE-119)** — Added quality gate guidance to `trw_learn()` docstring ("Only record learnings that prevent repeated mistakes..."). Expanded noise pattern detection from 2 to 6 prefix patterns plus 5 regex patterns covering file-read confirmations, test-pass notifications, edit confirmations, and status acknowledgments (23 tests). Documented `session_count` proxy limitation in `_memory_transforms.py` with PRD reference for proper fix.
+
 ### Fixed
 
 - **Dedup re-learning loop fixed (PRD-CORE-042)** — `check_duplicate()` now checks obsolete/resolved entries for skip (>= 0.95 similarity), preventing the runaway loop where `session_start` injects content → agent re-learns it → deliver obsoletes it → next session repeats. Root cause: PRD-CORE-042-FR02 scoped dedup to active-only entries, but later systems (consolidation, outcome correlation) obsoleted entries that then got re-learned.
