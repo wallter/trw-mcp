@@ -14,6 +14,25 @@ from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext
 from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-export
 
 # Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
+#
+# PRD-CORE-120-FR04: Rationale for each phase's ceremony step selection.
+#
+# Each phase only nudges for ceremony steps that are actionable at that point.
+# Steps are cumulative -- later phases include all earlier steps plus new ones:
+#
+#   early:      session_start, checkpoint
+#               (only startup and progress-saving matter before real work begins)
+#   implement:  session_start, checkpoint
+#               (same as early -- build_check/review/deliver are premature during coding)
+#   validate:   session_start, checkpoint, build_check
+#               (build_check becomes actionable -- tests and type-checks should run now)
+#   review:     session_start, checkpoint, build_check, review
+#               (review becomes actionable -- independent verification of completed work)
+#   deliver:    all steps (session_start, checkpoint, build_check, review, deliver)
+#               (deliver becomes actionable -- persist learnings and close the session)
+#   done:       all steps
+#               (same as deliver -- any incomplete step should still be nudged)
+#
 _PHASE_APPLICABLE_STEPS: dict[str, tuple[str, ...]] = {
     "early": ("session_start", "checkpoint"),
     "implement": ("session_start", "checkpoint"),
