@@ -39,13 +39,13 @@ def render_imperative_opener() -> str:
     return (
         "Your primary role is **orchestration** \u2014 delegate to focused agents "
         "for better outcomes than direct implementation. Focused subagents produce "
-        "3x fewer P0 defects because they get deeper context per task. Reserve "
+        "fewer defects because they get deeper context per task. Reserve "
         "self-implementation for trivial edits (\u22643 lines, 1 file).\n"
         "\n"
         "**Your first action in every session must be `trw_session_start()`.**\n"
         "\n"
         "This single call loads everything you need: prior learnings from "
-        "hundreds of past sessions, any active run state you can resume, "
+        "past sessions, any active run state you can resume, "
         "and the full operational protocol (delegation guidance, phase gates, "
         "quality rubrics). Without it, you start from zero \u2014 with it, you "
         "start from the team\u2019s accumulated experience.\n"
@@ -237,9 +237,9 @@ def render_rationalization_watchlist() -> str:
         "| Past agents who skipped trw_deliver lost all session learnings |\n"
         '| "I already know the codebase" '
         "| Prior learnings contain gotchas for exactly this area "
-        "| Sprint 26 had 6 P0/P1 defects from agents who skipped recall |\n"
+        "| Agents who skip recall consistently re-discover known gotchas, spending 2-3x the time |\n"
         '| "I can implement directly, delegation is overhead" '
-        "| Subagent implementation has 3x fewer P0 defects "
+        "| Focused subagents produce fewer defects "
         "| Your focused context is valuable \u2014 subagents get deeper context per task |\n"
         '| "The build check can wait until the end" '
         "| Late build failures cascade into multi-file rework "
@@ -311,7 +311,7 @@ def render_memory_harmonization() -> str:
         "|---|---|---|\n"
         "| Search | `trw_recall(query)` \u2014 semantic + keyword | Filename scan only |\n"
         "| Visibility | All agents, subagents, teammates | Primary session only |\n"
-        "| Lifecycle | Impact-scored, auto-promotes to CLAUDE.md | Static until manually edited |\n"
+        "| Lifecycle | Impact-scored, recalled at session start | Static until manually edited |\n"
         "| Scale | Hundreds of entries, auto-pruned by staleness | 200-line index cap |\n"
         "\n"
         "Gotcha or error pattern \u2192 `trw_learn()`. "
