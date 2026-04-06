@@ -378,12 +378,32 @@ def _assemble_nudge(
 ) -> str:
     """Assemble nudge components within a character budget.
 
-    Priority: status_line (always) > reactive_msg (always if present) >
+    Priority: status_line (always) > reactive_msg (budget-checked) >
     next_then (if budget allows) > reversion (if budget allows).
+
+    PRD-CORE-120-FR02: Hard truncation enforced. If the final assembled
+    string exceeds the budget, it is truncated to (budget - 12) characters
+    with `` [truncated]`` appended. The status_line is never truncated --
+    if it alone exceeds budget, it is returned as-is.
     """
+    _TRUNCATION_MARKER = " [truncated]"
+    _MARKER_LEN = len(_TRUNCATION_MARKER)  # 12
+
     components: list[str] = [status_line]
+
+    # Check remaining budget before adding reactive_msg
     if reactive_msg:
-        components.append(reactive_msg)
+        current_len = len(status_line)
+        remaining = budget - current_len - 1  # -1 for the newline separator
+        if remaining > 0:
+            if len(reactive_msg) <= remaining:
+                components.append(reactive_msg)
+            else:
+                # Truncate reactive_msg to fit within budget
+                if remaining > _MARKER_LEN:
+                    components.append(reactive_msg[: remaining - _MARKER_LEN] + _TRUNCATION_MARKER)
+                else:
+                    components.append(reactive_msg[:remaining])
 
     current = "\n".join(components)
     if next_then and len(current) + len(next_then) + 1 <= budget:
@@ -393,4 +413,21 @@ def _assemble_nudge(
     if reversion and len(current) + len(reversion) + 1 <= budget:
         components.append(reversion)
 
-    return "\n".join(components)
+    result = "\n".join(components)
+
+    # PRD-CORE-120-FR02: Hard truncation at budget limit
+    if len(result) > budget:
+        # Status line alone exceeds budget — return as-is (never truncate status)
+        if len(status_line) >= budget:
+            return status_line
+        # Truncate the full result with indicator
+        truncated = result[: budget - _MARKER_LEN] + _TRUNCATION_MARKER
+        logger.debug(
+            "nudge_truncated",
+            pre_truncation_len=len(result),
+            budget=budget,
+            chars_removed=len(result) - len(truncated),
+        )
+        return truncated
+
+    return result
