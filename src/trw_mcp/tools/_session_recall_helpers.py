@@ -111,14 +111,10 @@ def append_ceremony_nudge(
                 except (ImportError, Exception):  # justified: fail-open, bandit is optional
                     pass
 
-                # Resolve client class for withholding rates
+                # Client class for withholding rates — intelligence code
+                # (resolve_client_class) was extracted to backend in PRD-INFRA-052
+                # and removed from trw-mcp in PRD-INFRA-054.  Use neutral default.
                 _client_class = "full_mode"
-                try:
-                    from trw_mcp.state.bandit_policy import resolve_client_class
-
-                    _client_class = resolve_client_class(config.client_profile.client_id)
-                except Exception:  # justified: fail-open, client class is best-effort
-                    pass
 
                 burst_items: list[dict[str, object]] = []
                 selected, is_fallback = select_nudge_learning(

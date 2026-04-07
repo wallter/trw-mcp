@@ -455,37 +455,30 @@ class TestBurstTruncationFix:
         assert selected is not None
         assert selected["id"] == "L-1"
 
-    @pytest.mark.skipif(
-        not _bandit_available(),
-        reason="trw-memory bandit not installed",
-    )
-    def test_burst_items_populated_on_transition(self) -> None:
-        """With bandit + phase transition, burst_items gets extra selections."""
-        from trw_memory.bandit import BanditSelector
-
+    def test_bandit_param_falls_through_to_deterministic(self) -> None:
+        """After PRD-INFRA-054, bandit param is accepted but falls through to deterministic."""
         from trw_mcp.state._nudge_rules import select_nudge_learning
         from trw_mcp.state._nudge_state import CeremonyState
 
         state = CeremonyState()
-        # Use "critical" tier to bypass withholding (critical is never withheld)
         candidates = [
-            {"id": "L-1", "summary": "First", "protection_tier": "critical"},
-            {"id": "L-2", "summary": "Second", "protection_tier": "critical"},
-            {"id": "L-3", "summary": "Third", "protection_tier": "critical"},
+            {"id": "L-1", "summary": "First"},
+            {"id": "L-2", "summary": "Second"},
+            {"id": "L-3", "summary": "Third"},
         ]
-        bandit = BanditSelector()
         burst: list[dict[str, object]] = []
-        # Fix select_count to 3 for deterministic test
-        with patch("trw_mcp.state.bandit_policy.random.randint", return_value=3):
-            selected, is_fallback = select_nudge_learning(
-                state,
-                candidates,
-                "implement",
-                bandit=bandit,
-                previous_phase="early",  # transition: early -> implement
-                burst_items=burst,
-            )
-        # On transition, bandit selects 3 items (patched)
-        # First goes as return value, extras (2) go in burst
+        # Passing a bandit object (any truthy value) should still work
+        # but fall through to deterministic ranking (PRD-INFRA-054)
+        selected, is_fallback = select_nudge_learning(
+            state,
+            candidates,
+            "implement",
+            bandit=object(),  # non-None but not a BanditSelector
+            previous_phase="early",
+            burst_items=burst,
+        )
+        # Deterministic path: first eligible candidate selected, no burst
         assert selected is not None
-        assert len(burst) == 2
+        assert selected["id"] == "L-1"
+        assert burst == []
+        assert is_fallback is False

@@ -199,8 +199,8 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_rework_rate.py",
         # PRD-CORE-116: Enhanced recall scoring — pure scoring, no I/O
         "test_core_116_recall_scoring.py",
-        # PRD-CORE-108: Attribution pipeline — pure scoring, no I/O
-        "test_attribution.py",
+        # PRD-INFRA-054: Import guard regression test — pure source scanning, no I/O
+        "test_no_intelligence_imports.py",
     }
 )
 

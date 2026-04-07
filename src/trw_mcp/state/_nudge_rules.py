@@ -179,41 +179,12 @@ def select_nudge_learning(
     from trw_mcp.state._nudge_state import is_nudge_eligible
 
     # --- Bandit-based selection path (PRD-CORE-105) ---
-    if bandit is not None:
-        try:
-            from trw_memory.bandit import BanditSelector as _BanditSelector
-
-            from trw_mcp.state.bandit_policy import (
-                WithholdingPolicy,
-                select_nudge_learning_bandit,
-            )
-
-            if isinstance(bandit, _BanditSelector):
-                # Pre-filter to nudge-eligible candidates
-                eligible = [
-                    c
-                    for c in candidates
-                    if is_nudge_eligible(state, str(c.get("id", "")), current_phase)
-                ]
-                if not eligible:
-                    eligible = candidates  # fall back to all if none eligible
-
-                policy = WithholdingPolicy(client_class=client_class)
-                selected_list, _is_transition = select_nudge_learning_bandit(
-                    candidates=eligible,
-                    bandit=bandit,
-                    policy=policy,
-                    phase=current_phase,
-                    previous_phase=previous_phase,
-                )
-                if selected_list:
-                    # PRD-CORE-105 P0: Populate burst_items with extras
-                    if burst_items is not None and len(selected_list) > 1:
-                        burst_items.extend(selected_list[1:])
-                    return selected_list[0], False
-                # Bandit returned nothing; fall through to deterministic path
-        except ImportError:
-            pass  # trw-memory bandit not available; fall through
+    # Intelligence code (WithholdingPolicy, select_nudge_learning_bandit) was
+    # extracted to the backend in PRD-INFRA-052 and removed from trw-mcp in
+    # PRD-INFRA-054.  The bandit parameter is accepted for API compatibility
+    # but the selection now falls through to the deterministic ranking path.
+    # When a backend is connected, cached intelligence enriches scoring via
+    # intel_boost (PRD-INFRA-053) rather than local bandit computation.
 
     # --- Deterministic ranking path (original behavior) ---
 
