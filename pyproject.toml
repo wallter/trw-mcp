@@ -155,6 +155,16 @@ unfixable = ["F841"]
 "src/trw_mcp/tools/_recall_impl.py" = ["ANN401"]
 # register_learning_tools has 16 inner tool registrations — complexity is structural
 "src/trw_mcp/tools/learning.py" = ["C901"]
+# correlate_recalls/_get_last_active_run are algorithmic — complexity is inherent
+"src/trw_mcp/scoring/_correlation.py" = ["C901"]
+# rank_by_utility applies 10+ scoring boosts in sequence — structural complexity
+"src/trw_mcp/scoring/_recall.py" = ["C901"]
+# _populate_from_yaml parses multi-format YAML schemas — structural complexity
+"src/trw_mcp/state/artifact_scanner.py" = ["C901"]
+# _step_delivery_metrics collects metrics from 10+ sources — structural complexity
+"src/trw_mcp/tools/_deferred_steps_learning.py" = ["C901"]
+# append_ceremony_nudge applies multi-phase ceremony logic — structural complexity
+"src/trw_mcp/tools/_session_recall_helpers.py" = ["C901"]
 # Backward-compat re-exports for _template_updater decomposition
 "src/trw_mcp/bootstrap/_template_updater.py" = ["E402"]
 # Large TypedDict registry — Codex entries grouped logically, not alphabetically

@@ -20,6 +20,7 @@ from trw_mcp.sync.push import SyncPusher
 
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
+
     from trw_mcp.models.config._main import TRWConfig
 
 logger = structlog.get_logger(__name__)
@@ -58,7 +59,7 @@ class BackendSyncClient:
             try:
                 await asyncio.sleep(self._config.sync_interval_seconds)
                 await self._run_one_cycle()
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: PERF203 — loop exception handling is intentional for resilient sync
                 logger.info("sync_loop_cancelled")
                 break
             except Exception:
@@ -116,6 +117,7 @@ class BackendSyncClient:
         """Get dirty entries from local storage via DeltaTracker."""
         try:
             from trw_memory.sync.delta import DeltaTracker
+
             from trw_mcp.state._memory_connection import get_backend as _get_backend
 
             backend = _get_backend()
@@ -129,6 +131,7 @@ class BackendSyncClient:
         """Mark entries as synced in local storage."""
         try:
             from trw_memory.sync.delta import DeltaTracker
+
             from trw_mcp.state._memory_connection import get_backend as _get_backend
 
             backend = _get_backend()

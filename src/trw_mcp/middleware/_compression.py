@@ -67,10 +67,7 @@ def _should_strip_key(
 
     # Recall payloads often carry bulky architecture/conventions context.
     # Drop that before truncating the actual learning content.
-    if key == "context" and ("learnings" in data or "patterns" in data or "auto_recalled" in data):
-        return True
-
-    return False
+    return key == "context" and ("learnings" in data or "patterns" in data or "auto_recalled" in data)
 
 
 def _compress_learning_item(

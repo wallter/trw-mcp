@@ -39,7 +39,7 @@ class IntelligenceCache:
             return None
         if not isinstance(raw, dict):
             return None
-        return raw  # type: ignore[return-value]
+        return raw
 
     def get_attribution_results(self) -> dict[str, dict[str, Any]] | None:
         """Read cached attribution results."""
@@ -51,7 +51,7 @@ class IntelligenceCache:
             return None
         if not isinstance(raw, dict):
             return None
-        return raw  # type: ignore[return-value]
+        return raw
 
     def get_synthesis_overlay(self) -> dict[str, Any] | None:
         """Read cached synthesis overlay."""

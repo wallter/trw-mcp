@@ -406,7 +406,7 @@ def _verify_assertions(
 
                 # FR06: Update assertion fields with verification results
                 updated_assertions: list[dict[str, object]] = []
-                for assertion, result in zip(assertions_list, results):
+                for assertion, result in zip(assertions_list, results, strict=False):
                     a_dict = assertion.model_dump()
                     a_dict["last_result"] = result.passed
                     a_dict["last_verified_at"] = now.isoformat()
