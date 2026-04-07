@@ -107,3 +107,5 @@ class ValidateResultDict(TypedDict, total=False):
     effective_risk_level: str
     risk_scaled: bool
     status_drift_warnings: list[str]
+    # Ceremony
+    ceremony_nudge: dict[str, object]
