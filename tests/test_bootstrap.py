@@ -271,6 +271,7 @@ class TestSkills:
         "trw-prd-review",
         "trw-project-health",
         "trw-security-check",
+        "trw-self-review",
         "trw-simplify",
         "trw-sprint-finish",
         "trw-sprint-init",
@@ -280,7 +281,7 @@ class TestSkills:
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 23 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 24 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -1067,7 +1068,7 @@ class TestManagedArtifactsManifest:
         # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed, 
         # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
         # or if the skill/agent/change is for an internal monorepo skill
-        assert len(skills) == 23
+        assert len(skills) == 24
         assert len(agents) == 12
         assert len(hooks) > 0
 
