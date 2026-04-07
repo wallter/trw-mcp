@@ -22,8 +22,8 @@ from trw_mcp.models.config._fields_memory import _MemoryFields
 from trw_mcp.models.config._fields_orchestration import _OrchestrationFields
 from trw_mcp.models.config._fields_paths import _PathsFields
 from trw_mcp.models.config._fields_scoring import _ScoringFields
-from trw_mcp.models.config._fields_telemetry import _TelemetryFields
 from trw_mcp.models.config._fields_sync import _SyncFields
+from trw_mcp.models.config._fields_telemetry import _TelemetryFields
 from trw_mcp.models.config._fields_trust import _TrustFields
 
 

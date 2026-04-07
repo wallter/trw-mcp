@@ -180,10 +180,10 @@ class LearningEntry(BaseModel):
                 return LearningType.PATTERN
             try:
                 return LearningType(v)
-            except ValueError:
+            except ValueError as err:
                 raise ValueError(
                     f"type must be one of {', '.join(t.value for t in LearningType)}"
-                )
+                ) from err
         raise ValueError(f"type must be a string or LearningType, got {type(v).__name__}")
 
     @field_validator("confidence", mode="before")
@@ -197,10 +197,10 @@ class LearningEntry(BaseModel):
                 return LearningConfidence.UNVERIFIED
             try:
                 return LearningConfidence(v)
-            except ValueError:
+            except ValueError as err:
                 raise ValueError(
                     f"confidence must be one of {', '.join(c.value for c in LearningConfidence)}"
-                )
+                ) from err
         raise ValueError(f"confidence must be a string or LearningConfidence, got {type(v).__name__}")
 
     @field_validator("protection_tier", mode="before")
@@ -214,10 +214,10 @@ class LearningEntry(BaseModel):
                 return LearningProtectionTier.NORMAL
             try:
                 return LearningProtectionTier(v)
-            except ValueError:
+            except ValueError as err:
                 raise ValueError(
                     f"protection_tier must be one of {', '.join(p.value for p in LearningProtectionTier)}"
-                )
+                ) from err
         raise ValueError(f"protection_tier must be a string or LearningProtectionTier, got {type(v).__name__}")
 
     @field_validator("nudge_line", mode="before")

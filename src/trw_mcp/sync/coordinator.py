@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 import os
-from contextlib import contextmanager
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Generator
 
 import structlog
 
@@ -66,10 +66,8 @@ class SyncCoordinator:
             yield False
         finally:
             if fd is not None:
-                try:
+                with suppress(OSError):
                     _lock_un(fd)
-                except OSError:
-                    pass
                 os.close(fd)
 
     def record_sync_success(self, pushed: int, pulled: int) -> None:
@@ -77,12 +75,12 @@ class SyncCoordinator:
         state = self._read_state()
         now = datetime.now(tz=timezone.utc).isoformat()
         state["last_push_at"] = now
-        state["last_push_seq"] = state.get("last_push_seq", 0) + pushed
-        state["push_count"] = state.get("push_count", 0) + 1
+        state["last_push_seq"] = self._int_field(state, "last_push_seq") + pushed
+        state["push_count"] = self._int_field(state, "push_count") + 1
         if pulled > 0:
             state["last_pull_at"] = now
-            state["last_pull_seq"] = state.get("last_pull_seq", 0) + pulled
-            state["pull_count"] = state.get("pull_count", 0) + 1
+            state["last_pull_seq"] = self._int_field(state, "last_pull_seq") + pulled
+            state["pull_count"] = self._int_field(state, "pull_count") + 1
         state["last_error"] = None
         state["version"] = 1
         self._write_state(state)
@@ -92,20 +90,29 @@ class SyncCoordinator:
         state = self._read_state()
         state["last_error"] = error[:500]
         state["last_error_at"] = datetime.now(tz=timezone.utc).isoformat()
-        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
+        state["consecutive_failures"] = self._int_field(state, "consecutive_failures") + 1
         state["version"] = 1
         self._write_state(state)
 
     def get_last_push_seq(self) -> int:
         """Read the last push sequence number from state."""
         state = self._read_state()
-        return int(state.get("last_push_seq", 0))
+        return self._int_field(state, "last_push_seq")
+
+    @staticmethod
+    def _int_field(state: dict[str, object], key: str) -> int:
+        """Extract an integer field from state, defaulting to 0 if missing/invalid."""
+        raw = state.get(key, 0)
+        return int(raw) if isinstance(raw, (int, float)) else 0
 
     def _read_state(self) -> dict[str, object]:
         if not self._state_path.exists():
             return {}
         try:
-            return json.loads(self._state_path.read_text())
+            raw: object = json.loads(self._state_path.read_text())
+            if isinstance(raw, dict):
+                return raw
+            return {}
         except (json.JSONDecodeError, OSError):
             return {}
 

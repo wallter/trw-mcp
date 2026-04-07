@@ -336,9 +336,8 @@ def rank_by_utility(
         if context is not None:
             # 1. Domain match boost (1.4x)
             entry_domains = entry.get("domain", [])
-            if isinstance(entry_domains, list) and context.inferred_domains:
-                if any(d in context.inferred_domains for d in entry_domains):
-                    domain_boost = 1.4
+            if isinstance(entry_domains, list) and context.inferred_domains and any(d in context.inferred_domains for d in entry_domains):
+                domain_boost = 1.4
 
             # 2. Phase match boost (1.3x)
             entry_phase_affinity = entry.get("phase_affinity", [])

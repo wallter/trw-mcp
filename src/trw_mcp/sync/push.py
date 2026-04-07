@@ -108,14 +108,18 @@ class SyncPusher:
 
     def _serialize_entry(self, entry: MemoryEntry) -> dict[str, object]:
         """Serialize a MemoryEntry for push, applying anonymization."""
-        d = entry.to_dict() if hasattr(entry, "to_dict") else dict(entry)
+        d: dict[str, object] = entry.to_dict() if hasattr(entry, "to_dict") else dict(entry)
+        raw_impact = d.get("importance") or d.get("impact") or 0.5
+        impact = float(raw_impact) if isinstance(raw_impact, (int, float)) else 0.5
+        raw_tags = d.get("tags", [])
+        tags = list(raw_tags)[:20] if isinstance(raw_tags, list) else []
         return {
             "source_learning_id": d.get("id", ""),
             "sync_hash": d.get("sync_hash", ""),
             "summary": str(d.get("summary", d.get("content", "")))[:1000],
             "detail": str(d.get("detail", ""))[:10000] if d.get("detail") else None,
-            "impact": float(d.get("importance", d.get("impact", 0.5))),
-            "tags": list(d.get("tags", []))[:20],
+            "impact": impact,
+            "tags": tags,
             "type": str(d.get("type", "pattern")),
             "status": str(d.get("status", "active")),
             "metadata": {},

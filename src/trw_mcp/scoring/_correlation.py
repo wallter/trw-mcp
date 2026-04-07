@@ -17,6 +17,21 @@ import structlog
 import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import EventType
+from trw_mcp.scoring._io_boundary import (
+    _batch_sync_to_sqlite,
+    _PendingUpdate,
+    _read_recall_tracking_jsonl,
+    _write_pending_entries,
+)
+from trw_mcp.scoring._io_boundary import (
+    _default_lookup_entry as _default_lookup_entry,
+)
+from trw_mcp.scoring._io_boundary import (
+    _find_session_start_ts as _find_session_start_ts,
+)
+from trw_mcp.scoring._io_boundary import (
+    _sync_to_sqlite as _sync_to_sqlite,
+)
 from trw_mcp.scoring._utils import (
     TRWConfig,
     _ensure_utc,
@@ -25,8 +40,6 @@ from trw_mcp.scoring._utils import (
     safe_int,
     update_q_value,
 )
-from trw_mcp.state._paths import iter_run_dirs
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # Type alias for the entry lookup callable used by process_outcome.
 # Given (learning_id, trw_dir, entries_dir) returns (yaml_path_or_None, data_or_None).
@@ -120,44 +133,7 @@ EVENT_ALIASES: dict[str, str | float | None] = {
 }
 
 
-def _find_session_start_ts(trw_dir: Path) -> datetime | None:
-    """Find the timestamp of the most recent session-start event.
-
-    Scans all events.jsonl files under docs/*/runs/*/meta/ for the most
-    recent ``run_init`` or ``session_start`` event. Used for session-scoped
-    correlation.
-
-    Args:
-        trw_dir: Path to .trw directory.
-
-    Returns:
-        Timestamp of the most recent session-start event, or None.
-    """
-    project_root = trw_dir.parent
-    cfg: TRWConfig = get_config()
-    runs_root = project_root / cfg.runs_root
-
-    if not runs_root.exists():
-        return None
-
-    reader = FileStateReader()
-    for run_dir, _run_yaml in sorted(iter_run_dirs(runs_root), reverse=True):
-        events_path = run_dir / "meta" / "events.jsonl"
-        if not events_path.exists():
-            continue
-        records = reader.read_jsonl(events_path)
-        for record in reversed(records):
-            if str(record.get("event", "")) in ("run_init", "session_start"):
-                ts_str = str(record.get("ts", ""))
-                if ts_str:
-                    try:
-                        return _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
-                    except ValueError:
-                        continue
-        # Only check the most recent run directory
-        break
-
-    return None
+# _find_session_start_ts re-exported from _io_boundary (PRD-FIX-061-FR05).
 
 
 def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
@@ -227,8 +203,8 @@ def correlate_recalls(
     total_window_secs = max((now - cutoff_ts).total_seconds(), 1.0)
     results: list[tuple[str, float]] = []
 
-    reader_corr = FileStateReader()
-    records = reader_corr.read_jsonl(receipt_path)
+    # PRD-FIX-061-FR05: file I/O delegated to _io_boundary
+    records = _read_recall_tracking_jsonl(receipt_path)
     for record in records:
         # Support both receipt formats:
         # - Legacy receipts: {"ts": ISO string, "matched_ids": [...]}
@@ -284,54 +260,7 @@ def _deduplicate_recalls(
     return best_discount
 
 
-def _default_lookup_entry(
-    lid: str,
-    trw_dir: Path,
-    entries_dir: Path,
-) -> tuple[Path | None, dict[str, object] | None]:
-    """Default entry lookup: SQLite primary, YAML fallback.
-
-    PRD-FIX-061-FR05: This is the default backend selector, extracted so
-    that ``process_outcome`` can accept an alternative lookup callable
-    for testing or alternative storage backends.  Backend selection
-    (state-layer I/O) happens here at the call boundary, not inside the
-    pure scoring logic.
-
-    Args:
-        lid: Learning entry ID to look up.
-        trw_dir: Path to .trw directory (for SQLite backend).
-        entries_dir: Path to YAML entries directory (fallback).
-
-    Returns:
-        Tuple of (yaml_path_or_None, entry_data_or_None).
-    """
-    from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
-    from trw_mcp.state.memory_adapter import (
-        find_entry_by_id as sqlite_find_entry_by_id,
-    )
-    from trw_mcp.state.memory_adapter import (
-        find_yaml_path_for_entry,
-    )
-
-    entry_path: Path | None = None
-    data: dict[str, object] | None = None
-
-    sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
-    yaml_found: tuple[Path, dict[str, object]] | None = None
-    if entries_dir.exists():
-        yaml_found = yaml_find_entry_by_id(entries_dir, lid)
-
-    if sqlite_data is not None:
-        data = sqlite_data
-        entry_path = find_yaml_path_for_entry(trw_dir, lid)
-        if entry_path is None and yaml_found is not None:
-            entry_path, _yaml_data = yaml_found
-    elif yaml_found is not None:
-        entry_path, data = yaml_found
-
-    return entry_path, data
-
-
+# _default_lookup_entry re-exported from _io_boundary (PRD-FIX-061-FR05).
 # Backward-compat alias (tests may patch this name directly)
 _lookup_learning_entry = _default_lookup_entry
 
@@ -386,26 +315,8 @@ def _update_entry_history(
     return data
 
 
-def _sync_to_sqlite(
-    lid: str,
-    q_new: float,
-    q_obs: int,
-    history: list[str],
-    trw_dir: Path,
-) -> None:
-    """Sync Q-value and outcome_history back to SQLite (best-effort)."""
-    try:
-        from trw_mcp.state.memory_adapter import get_backend
-
-        backend = get_backend(trw_dir)
-        backend.update(
-            lid,
-            q_value=round(q_new, 4),
-            q_observations=q_obs,  # already incremented by _update_entry_q_values
-            outcome_history=history,
-        )
-    except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)
-        logger.debug("q_value_sqlite_sync_skipped", exc_info=True)  # justified: fail-open, YAML is authoritative
+# _sync_to_sqlite re-exported from _io_boundary (PRD-FIX-061-FR05).
+# _PendingUpdate type alias re-exported from _io_boundary for backward compat.
 
 
 def process_outcome(
@@ -452,34 +363,28 @@ def process_outcome(
     effective_lookup = lookup_fn if lookup_fn is not None else _default_lookup_entry
     best_discount = _deduplicate_recalls(correlated)
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-    updated_ids: list[str] = []
-    writer = FileStateWriter()
 
+    # Phase 1: Compute all Q-values (no I/O writes) -- PRD-FIX-070-FR04
+    pending_updates: list[_PendingUpdate] = []
     for lid, discount in best_discount.items():
         entry_path, data = effective_lookup(lid, trw_dir, entries_dir)
         if data is None:
             continue
-
         q_new, data = _update_entry_q_values(data, reward, discount, cfg)
-        data = _update_entry_history(data, reward, event_label, cfg.learning_outcome_history_cap)
-
-        if entry_path is not None:
-            try:
-                writer.write_yaml(entry_path, data)
-            except (OSError, Exception):
-                logger.warning(
-                    "q_value_yaml_write_failed",
-                    learning_id=lid,
-                    exc_info=True,
-                )
-                continue  # Do not claim this ID was updated
-
+        data = _update_entry_history(
+            data, reward, event_label, cfg.learning_outcome_history_cap
+        )
         q_obs = safe_int(data, "q_observations", 0)
         history = data.get("outcome_history", [])
-        if isinstance(history, list):
-            _sync_to_sqlite(lid, q_new, q_obs, history, trw_dir)
+        if not isinstance(history, list):
+            history = []
+        pending_updates.append((lid, entry_path, data, q_new, q_obs, history))
 
-        updated_ids.append(lid)
+    # Phase 2: Batch YAML writes -- PRD-FIX-070-FR04 / PRD-FIX-061-FR05
+    updated_ids = _write_pending_entries(pending_updates)
+
+    # Phase 3: Batch SQLite syncs -- PRD-FIX-070-FR03
+    _batch_sync_to_sqlite(pending_updates, trw_dir)
 
     if updated_ids:
         _su.logger.info(

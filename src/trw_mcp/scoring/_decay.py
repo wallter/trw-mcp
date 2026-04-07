@@ -8,12 +8,15 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.models.typed_dicts import ImpactDistributionResult, ImpactTierInfo, LearningEntryDict
+from trw_mcp.scoring._io_boundary import (
+    _load_entries_from_dir as _load_entries_from_dir,
+)
 from trw_mcp.scoring._utils import (
     _IMPACT_DECAY_FLOOR,
     _LN2,
@@ -27,8 +30,6 @@ from trw_mcp.scoring._utils import (
     safe_float,
     safe_int,
 )
-from trw_mcp.state._helpers import iter_yaml_entry_files
-from trw_mcp.state.persistence import FileStateReader
 
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
 
@@ -60,11 +61,11 @@ def _days_since_access(
 
 # Type-aware decay half-lives (PRD-CORE-110, PRD-CORE-116)
 _TYPE_HALF_LIFE: dict[str, float] = {
-    "incident": 90.0,       # Slow decay until fix confirmed (unverified = ∞, see _entry_utility)
-    "pattern": 180.0,       # Very slow — validated patterns are durable
-    "convention": 9999.0,   # No auto-decay — stable until human override
-    "hypothesis": 7.0,      # Fast — validate or die
-    "workaround": 14.0,     # Fast — scheduled expiry, typically paired with expires field
+    "incident": 90.0,       # Slow decay until fix confirmed (unverified = no decay, see _entry_utility)
+    "pattern": 180.0,       # Very slow -- validated patterns are durable
+    "convention": 9999.0,   # No auto-decay -- stable until human override
+    "hypothesis": 7.0,      # Fast -- validate or die
+    "workaround": 14.0,     # Fast -- scheduled expiry, typically paired with expires field
 }
 
 
@@ -115,7 +116,7 @@ def _entry_utility(
         try:
             expires_date = date.fromisoformat(expires_str.replace("Z", "+00:00"))
             if today > expires_date:
-                return 0.01  # Expired → demote to very low utility
+                return 0.01  # Expired -> demote to very low utility
         except ValueError:
             pass  # Malformed expiry, ignore
 
@@ -183,32 +184,12 @@ def _compute_distribution_from_entries(
     )
 
 
-def _load_entries_from_dir(entries_dir: Path) -> Iterator[dict[str, object]]:
-    """Load entry dicts from a YAML entries directory.
-
-    Yields parsed dicts for each readable YAML entry file.
-    Silently skips files that fail to parse.
-
-    Args:
-        entries_dir: Directory containing YAML entry files.
-
-    Yields:
-        Parsed entry dicts.
-    """
-    reader = FileStateReader()
-    for yaml_file in iter_yaml_entry_files(entries_dir):
-        try:
-            yield reader.read_yaml(yaml_file)
-        except Exception:  # justified: fail-open, skip unreadable YAML entries  # noqa: S112, PERF203
-            continue
-
-
 def compute_impact_distribution(
     entries_dir: Path,
 ) -> ImpactDistributionResult:
     """Compute the current impact score distribution across active learnings.
 
-    PRD-FIX-061-FR04: File I/O is now at the boundary — the actual scoring
+    PRD-FIX-061-FR04: File I/O is now at the boundary -- the actual scoring
     logic is in ``_compute_distribution_from_entries()``.  This function
     provides backward-compatible Path-based entry point.
 

@@ -133,7 +133,7 @@ def log_selection(
                     )
                 if not trw_version:
                     trw_version = cfg.framework_version or ""
-            except Exception:  # justified: fail-open, auto-detection is best-effort
+            except Exception:  # noqa: S110 — justified: fail-open, auto-detection is best-effort
                 pass
 
         # Resolve candidate set and auto-populate runner_up
