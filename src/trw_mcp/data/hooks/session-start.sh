@@ -98,11 +98,9 @@ rm -f "$_project_root/.trw/context/last_ups_phase" 2>/dev/null || true
 
 case "$_source" in
   startup)
-    # FR01: Fresh startup — explain what's available and why
-    # PRD-CORE-120-FR01: Protocol table is NOT emitted here — CLAUDE.md is the
-    # single source of truth for the protocol table during startup (always loaded).
-    # compact/clear/resume paths still call _emit_protocol() because CLAUDE.md
-    # context may be lost or degraded after those events.
+    # FR01: Fresh startup — protocol table lives in CLAUDE.md (single source of truth).
+    # _emit_protocol is NOT called here to avoid duplication (PRD-CORE-120-FR01).
+    # It IS called for compact/clear/resume where CLAUDE.md context may be lost.
     _emit_tier_guidance
     echo ""
     echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
