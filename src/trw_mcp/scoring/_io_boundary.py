@@ -12,16 +12,9 @@ to eliminate layer violations (scoring -> state).
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime
 from pathlib import Path
 
 import structlog
-
-from trw_mcp.scoring._utils import (
-    TRWConfig,
-    _ensure_utc,
-    get_config,
-)
 
 logger = structlog.get_logger(__name__)
 
@@ -137,66 +130,6 @@ def _batch_sync_to_sqlite(
         logger.debug("q_value_sqlite_batch_sync_failed", exc_info=True)
 
 
-def _find_session_start_ts(trw_dir: Path) -> datetime | None:
-    """Find the timestamp of the most recent session-start event.
-
-    Scans all events.jsonl files under runs_root/**/ for the most recent
-    session-start event. Uses glob to handle all directory layouts
-    (PROPER, FLAT, OLD_NESTED).
-
-    PRD-FIX-070-FR01: Replaced iter_run_dirs (which only found PROPER layout)
-    with a direct glob across all run directory structures.
-
-    Args:
-        trw_dir: Path to .trw directory.
-
-    Returns:
-        Timestamp of the most recent session-start event, or None.
-    """
-    from trw_mcp.state.persistence import FileStateReader
-
-    project_root = trw_dir.parent
-    cfg: TRWConfig = get_config()
-    runs_root = project_root / cfg.runs_root
-
-    if not runs_root.exists():
-        return None
-
-    # Glob across all directory layouts (PROPER, FLAT, OLD_NESTED)
-    events_files: list[tuple[float, Path]] = []
-    for events_path in runs_root.glob("**/meta/events.jsonl"):
-        try:
-            mtime = events_path.stat().st_mtime
-            events_files.append((mtime, events_path))
-        except OSError:  # noqa: PERF203 — fail-open per-file, one OSError shouldn't abort the glob
-            continue
-
-    events_files.sort(reverse=True)  # Most recent first
-    reader = FileStateReader()
-
-    for _mtime, events_path in events_files[:5]:
-        records = reader.read_jsonl(events_path)
-        for record in reversed(records):
-            if str(record.get("event", "")) in ("run_init", "session_start"):
-                ts_str = str(record.get("ts", ""))
-                if ts_str:
-                    try:
-                        result = _ensure_utc(
-                            datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                        )
-                        logger.debug(
-                            "session_scope_resolved",
-                            source=str(events_path),
-                            ts=str(result),
-                        )
-                        return result
-                    except ValueError:
-                        continue
-
-    logger.debug("session_scope_fallback_to_window")
-    return None
-
-
 def _write_pending_entries(
     pending_updates: list[_PendingUpdate],
 ) -> list[str]:
@@ -306,7 +239,6 @@ __all__ = [
     "_PendingUpdate",
     "_batch_sync_to_sqlite",
     "_default_lookup_entry",
-    "_find_session_start_ts",
     "_load_entries_from_dir",
     "_read_recall_tracking_jsonl",
     "_sync_to_sqlite",

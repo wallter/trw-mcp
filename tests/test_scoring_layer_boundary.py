@@ -109,12 +109,6 @@ class TestIoBoundaryModule:
 
         assert callable(_batch_sync_to_sqlite)
 
-    def test_find_session_start_ts_importable(self) -> None:
-        """_find_session_start_ts is importable from _io_boundary."""
-        from trw_mcp.scoring._io_boundary import _find_session_start_ts
-
-        assert callable(_find_session_start_ts)
-
     def test_write_pending_entries_importable(self) -> None:
         """_write_pending_entries is importable from _io_boundary."""
         from trw_mcp.scoring._io_boundary import _write_pending_entries
