@@ -316,15 +316,17 @@ def register_learning_tools(server: FastMCP) -> None:
 
         # Validate and store assertions via backend (PRD-CORE-086 FR12)
         if assertions is not None:
-            from trw_memory.models.memory import Assertion
-
-            validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
             try:
+                from trw_memory.models.memory import Assertion
+
+                validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
                 backend = get_backend(trw_dir)
                 existing = backend.get(learning_id)
                 if existing is not None:
                     existing.assertions = validated
                     backend.update(learning_id, assertions=[a.model_dump() for a in validated])
+            except (ValueError, TypeError) as exc:
+                return {"error": f"invalid assertion: {exc}", "status": "invalid"}
             except Exception:  # justified: fail-open, assertion persistence must not block learn_update
                 logger.debug("assertion_update_failed", learning_id=learning_id, exc_info=True)
 
