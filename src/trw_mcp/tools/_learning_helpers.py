@@ -262,7 +262,11 @@ def check_and_handle_dedup(
                             client_profile=params.client_profile,
                             model_id=params.model_id,
                         )
-                        merge_entries(yaml_file, model_to_dict(entry), reader, writer)
+                        entry_dict = model_to_dict(entry)
+                        # PRD-CORE-086 FR05: Include assertions in merge data
+                        if params.assertions:
+                            entry_dict["assertions"] = params.assertions
+                        merge_entries(yaml_file, entry_dict, reader, writer)
                         logger.info(
                             "learning_dedup_merged",
                             new_id=params.learning_id,
