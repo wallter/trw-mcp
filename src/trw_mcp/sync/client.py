@@ -1,8 +1,8 @@
-"""BackendSyncClient — top-level orchestrator for background sync — PRD-INFRA-051-FR13.
+"""BackendSyncClient — top-level orchestrator for bidirectional sync — PRD-INFRA-051/053.
 
-Composes SyncCoordinator + SyncPusher. Runs as an asyncio task in the
-MCP server lifespan. The sync loop catches all exceptions at the top level
-to never crash the MCP server.
+Composes SyncCoordinator + SyncPusher + SyncPuller + IntelligenceCache.
+Runs as an asyncio task in the MCP server lifespan. The sync loop catches
+all exceptions at the top level to never crash the MCP server.
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from trw_mcp.sync.cache import IntelligenceCache
 from trw_mcp.sync.coordinator import SyncCoordinator
+from trw_mcp.sync.pull import SyncPuller
 from trw_mcp.sync.push import SyncPusher
 
 if TYPE_CHECKING:
@@ -23,7 +25,7 @@ logger = structlog.get_logger(__name__)
 
 
 class BackendSyncClient:
-    """Orchestrates background push sync."""
+    """Orchestrates bidirectional push+pull sync."""
 
     def __init__(self, config: TRWConfig, trw_dir: Path) -> None:
         self._config = config
@@ -37,6 +39,15 @@ class BackendSyncClient:
             api_key=config.backend_api_key,
             batch_size=config.sync_push_batch_size,
             timeout=config.sync_push_timeout_seconds,
+        )
+        self._puller = SyncPuller(
+            backend_url=config.backend_url,
+            api_key=config.backend_api_key,
+            timeout=getattr(config, "sync_pull_timeout_seconds", 5.0),
+        )
+        self._cache = IntelligenceCache(
+            trw_dir=trw_dir,
+            ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
         )
 
     async def run_sync_loop(self) -> None:
@@ -82,11 +93,23 @@ class BackendSyncClient:
             result = self._pusher.push_learnings(dirty)
 
             if result.failed == 0:
-                # Mark successfully pushed entries as synced
                 self._mark_synced(dirty[:result.pushed + result.skipped])
-                self._coordinator.record_sync_success(pushed=result.pushed, pulled=0)
             else:
                 self._coordinator.record_sync_failure(f"push failed: {result.failed} entries")
+
+            # Pull phase (PRD-INFRA-053 FR25)
+            pulled = 0
+            pull_result = self._puller.pull_intel_state(
+                etag=self._cache.etag,
+                since_seq=self._coordinator.get_last_push_seq(),
+            )
+            if pull_result is not None and pull_result.state is not None:
+                self._cache.update(pull_result.state, etag=pull_result.etag)
+                team_learnings = pull_result.team_learnings or []
+                pulled = len(team_learnings)
+                logger.info("sync_pull_completed", pulled=pulled, etag=pull_result.etag)
+
+            self._coordinator.record_sync_success(pushed=result.pushed, pulled=pulled)
 
     def _get_dirty_entries(self) -> list[Any]:
         """Get dirty entries from local storage via DeltaTracker."""
