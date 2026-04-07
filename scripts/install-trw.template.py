@@ -32,6 +32,9 @@ from pathlib import Path
 TRW_VERSION = "{{VERSION}}"
 WHEEL_FILENAME = "{{WHEEL_FILENAME}}"
 MEMORY_WHEEL_FILENAME = "{{MEMORY_WHEEL_FILENAME}}"
+# SHA-256 checksums (substituted by build_installer.py, empty = skip verification)
+WHEEL_SHA256 = "{{WHEEL_SHA256}}"
+MEMORY_WHEEL_SHA256 = "{{MEMORY_WHEEL_SHA256}}"
 MIN_PYTHON_VERSION = (3, 10)
 DOCS_BASE = "https://trwframework.com/docs"
 
@@ -220,11 +223,16 @@ class _Spinner:
 
 
 def _open_tty():  # noqa: ANN202 — returns TextIO | None
-    """Open /dev/tty for reading, or None if unavailable."""
-    try:
-        return open("/dev/tty", "r")  # noqa: SIM115
-    except OSError:
-        return None
+    """Open a TTY for reading, or None if unavailable.
+
+    Uses /dev/tty on Unix and CON on Windows.
+    """
+    for tty_path in ("/dev/tty", "CON"):
+        try:
+            return open(tty_path)  # noqa: SIM115
+        except OSError:
+            continue
+    return None
 
 
 def prompt_yes_no(question: str, default: str = "n") -> bool:
@@ -289,11 +297,42 @@ def prompt_choice(label: str, options: list[str], default: int = 0) -> int:
 # ── Prior installation detection ─────────────────────────────────────
 
 
+def _parse_simple_yaml(text: str) -> dict[str, str]:
+    """Parse flat YAML key-value pairs (no nesting, no lists).
+
+    Handles quoted/unquoted values, ignores comments and blank lines.
+    Skips indented lines (nested structures) and list items (- prefix).
+    This is intentionally minimal — install-trw.py ships without pyyaml.
+    """
+    result: dict[str, str] = {}
+    for line in text.splitlines():
+        # Skip comments, blank lines, indented lines (nested), and list items
+        if not line or line[0] in ("#", " ", "\t", "-"):
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        # Strip inline comments
+        for quote in ('"', "'"):
+            if value.startswith(quote) and value.endswith(quote) and len(value) > 1:
+                value = value[1:-1]
+                break
+        else:
+            # Unquoted — strip trailing inline comment
+            if " #" in value:
+                value = value[: value.index(" #")].rstrip()
+        if key and value:
+            result[key] = value
+    return result
+
+
 def _load_prior_config(target_dir: Path) -> dict[str, object]:
     """Load prior installation config from .trw/config.yaml if it exists.
 
     Returns a dict with keys that were previously configured, or empty dict
-    for first-time installs. Parses YAML manually — no pyyaml dependency.
+    for first-time installs.
     """
     config_path = target_dir / ".trw" / "config.yaml"
     if not config_path.is_file():
@@ -301,23 +340,17 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
 
     prior: dict[str, object] = {}
     try:
-        for line in config_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("#") or not line or ":" not in line:
-                continue
-            key, _, value = line.partition(":")
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key == "installation_id":
-                prior["project_name"] = value
-            elif key == "platform_api_key":
-                prior["api_key"] = value
-            elif key == "platform_telemetry_enabled":
-                prior["telemetry"] = value.lower() == "true"
-            elif key == "embeddings_enabled":
-                prior["embeddings"] = value.lower() == "true"
-            elif key == "sqlite_vec_enabled":
-                prior["sqlite_vec"] = value.lower() == "true"
+        flat = _parse_simple_yaml(config_path.read_text(encoding="utf-8"))
+        if "installation_id" in flat:
+            prior["project_name"] = flat["installation_id"]
+        if "platform_api_key" in flat:
+            prior["api_key"] = flat["platform_api_key"]
+        if "platform_telemetry_enabled" in flat:
+            prior["telemetry"] = flat["platform_telemetry_enabled"].lower() == "true"
+        if "embeddings_enabled" in flat:
+            prior["embeddings"] = flat["embeddings_enabled"].lower() == "true"
+        if "sqlite_vec_enabled" in flat:
+            prior["sqlite_vec"] = flat["sqlite_vec_enabled"].lower() == "true"
     except (OSError, UnicodeDecodeError):
         pass
     return prior
@@ -401,16 +434,38 @@ def _extract_wheel_data(marker: str) -> bytes:
     return base64.b64decode("".join(b64_chunks))
 
 
+def _verify_checksum(data: bytes, expected_sha256: str, label: str) -> None:
+    """Verify SHA-256 checksum of extracted wheel data.
+
+    Skips verification if expected_sha256 is empty or a template placeholder.
+    """
+    if not expected_sha256 or expected_sha256.startswith("{{"):
+        return
+    import hashlib
+
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected_sha256:
+        raise RuntimeError(
+            f"Checksum mismatch for {label}: "
+            f"expected {expected_sha256[:16]}..., got {actual[:16]}..."
+        )
+
+
 def extract_wheels(tmpdir: Path) -> tuple[Path, Path]:
     """Extract all embedded wheels into *tmpdir*.
 
     Returns (memory_wheel_path, mcp_wheel_path).
+    Verifies SHA-256 checksums when available (set by build_installer.py).
     """
+    memory_data = _extract_wheel_data("__MEMORY_WHEEL_DATA__")
+    _verify_checksum(memory_data, MEMORY_WHEEL_SHA256, MEMORY_WHEEL_FILENAME)
     memory_path = tmpdir / MEMORY_WHEEL_FILENAME
-    memory_path.write_bytes(_extract_wheel_data("__MEMORY_WHEEL_DATA__"))
+    memory_path.write_bytes(memory_data)
 
+    mcp_data = _extract_wheel_data("__WHEEL_DATA__")
+    _verify_checksum(mcp_data, WHEEL_SHA256, WHEEL_FILENAME)
     mcp_path = tmpdir / WHEEL_FILENAME
-    mcp_path.write_bytes(_extract_wheel_data("__WHEEL_DATA__"))
+    mcp_path.write_bytes(mcp_data)
 
     return memory_path, mcp_path
 
