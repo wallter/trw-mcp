@@ -15,7 +15,6 @@ for step functions should target that module directly:
 
 from __future__ import annotations
 
-import contextlib
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -259,11 +258,9 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         from trw_mcp.tools._ceremony_helpers import (
             _phase_contextual_recall,
             perform_session_recalls,
-            step_ceremony_nudge,
             step_embed_health,
             step_increment_session_counter,
             step_log_session_event,
-            step_mark_session_started,
             step_sanitize_and_maintain,
             step_telemetry_startup,
         )
@@ -367,6 +364,45 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # FR01 (PRD-FIX-053): Embed health advisory for agents.
         results["embed_health"] = step_embed_health()
 
+        # FR07 (PRD-CORE-086): Assertion health summary from cached last_result fields.
+        try:
+            ah_start = time.monotonic()
+            from trw_mcp.state.memory_adapter import get_backend
+
+            ah_trw_dir = resolve_trw_dir()
+            backend = get_backend(ah_trw_dir)
+            if hasattr(backend, "entries_with_assertions"):
+                entries_with_assertions = backend.entries_with_assertions()
+                if entries_with_assertions:
+                    from datetime import timedelta
+
+                    stale_threshold = datetime.now(timezone.utc) - timedelta(days=7)
+                    ah_passing = 0
+                    ah_failing = 0
+                    ah_stale = 0
+                    ah_unverifiable = 0
+                    for entry in entries_with_assertions:
+                        for a in entry.assertions:
+                            if a.last_verified_at is None or a.last_verified_at < stale_threshold:
+                                ah_stale += 1
+                            elif a.last_result is True:
+                                ah_passing += 1
+                            elif a.last_result is False:
+                                ah_failing += 1
+                            else:
+                                ah_unverifiable += 1
+                    results["assertion_health"] = {
+                        "passing": ah_passing,
+                        "failing": ah_failing,
+                        "stale": ah_stale,
+                        "unverifiable": ah_unverifiable,
+                        "total": len(entries_with_assertions),
+                    }
+            ah_ms = (time.monotonic() - ah_start) * 1000
+            logger.debug("assertion_health_computed", duration_ms=round(ah_ms, 1))
+        except Exception:  # justified: fail-open, assertion health must not block session start
+            logger.debug("assertion_health_failed", exc_info=True)
+
         results["errors"] = errors
         results["success"] = len(errors) == 0
 
@@ -380,14 +416,6 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 "formations, quality gates, phase reversion). Re-read after "
                 "context compaction."
             )
-
-        # Mark session started in ceremony state tracker (PRD-CORE-074 FR04)
-        with contextlib.suppress(Exception):
-            step_mark_session_started()
-
-        # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        with contextlib.suppress(Exception):
-            step_ceremony_nudge(cast("dict[str, object]", results), int(str(results.get("learnings_count", 0))))
 
         run_info: RunStatusDict | None = results.get("run")
         _active_run_id = str(run_info.get("active_run", "")) if run_info else ""
@@ -532,19 +560,6 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # update_project() remain the only triggers for CLAUDE.md re-render.
         results["claude_md_sync"] = {"status": "skipped", "reason": "PRD-CORE-093"}
 
-        # Nudge fatigue detection (PRD-CORE-103-FR05, synchronous)
-        try:
-            from trw_mcp.state.surface_tracking import check_nudge_fatigue
-
-            fatigue = check_nudge_fatigue(trw_dir)
-            if fatigue.get("nudge_fatigue_warning"):
-                _results_view["nudge_fatigue_warning"] = True
-                _results_view["recall_pull_rate"] = fatigue["recall_pull_rate"]
-            elif int(str(fatigue.get("nudge_count", 0))) > 0:
-                _results_view["recall_pull_rate"] = fatigue["recall_pull_rate"]
-        except Exception:  # justified: fail-open, fatigue check must not block delivery
-            logger.debug("fatigue_check_failed", exc_info=True)
-
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
 
@@ -579,24 +594,6 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                     "errors": len(errors),
                 },
             )
-
-        # Mark deliver called in ceremony state tracker (PRD-CORE-074 FR04)
-        try:
-            from trw_mcp.state.ceremony_nudge import mark_deliver
-
-            mark_deliver(trw_dir)
-        except Exception:  # justified: fail-open, ceremony state tracking must not block delivery
-            logger.debug("deliver_ceremony_state_update_skipped", exc_info=True)
-
-        # Inject ceremony nudge into response (PRD-CORE-084 FR02)
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-            ctx = NudgeContext(tool_name=ToolName.DELIVER)
-            append_ceremony_nudge(cast("dict[str, object]", results), trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection is advisory and must not block delivery
-            logger.debug("deliver_nudge_injection_skipped", exc_info=True)
 
         _deliver_run_id = str(resolved_run.name) if resolved_run else ""
         _events_jsonl = resolved_run / "meta" / "events.jsonl" if resolved_run else None

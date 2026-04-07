@@ -100,7 +100,6 @@ class RecallResultDict(TypedDict, total=False):
     compact: bool
     max_results: int
     topic_filter_ignored: bool
-    ceremony_nudge: dict[str, object]
 
 
 class RunStatusDict(TypedDict, total=False):
@@ -134,6 +133,8 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_recall_count: int
     # Embed health advisory (PRD-FIX-053)
     embed_health: dict[str, object]
+    # Assertion health summary (PRD-CORE-086 FR07) — omitted when no assertions
+    assertion_health: dict[str, int]
     # Auto-maintenance results merged in from AutoMaintenanceDict
     update_advisory: str
     auto_upgrade: dict[str, object]
