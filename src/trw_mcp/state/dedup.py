@@ -312,6 +312,31 @@ def merge_entries(
         else:
             existing["detail"] = new_detail
 
+    # Assertions: union by (type, pattern, target) tuple (PRD-CORE-086 FR05)
+    raw_existing_assertions = existing.get("assertions") or []
+    raw_new_assertions = new_entry_data.get("assertions") or []
+    if raw_new_assertions and isinstance(raw_new_assertions, list):
+        existing_assertions = (
+            list(raw_existing_assertions) if isinstance(raw_existing_assertions, list) else []
+        )
+        seen_keys: set[tuple[str, str, str]] = set()
+        for a in existing_assertions:
+            if isinstance(a, dict):
+                seen_keys.add(
+                    (str(a.get("type", "")), str(a.get("pattern", "")), str(a.get("target", "")))
+                )
+        for a in raw_new_assertions:
+            if isinstance(a, dict):
+                key = (
+                    str(a.get("type", "")),
+                    str(a.get("pattern", "")),
+                    str(a.get("target", "")),
+                )
+                if key not in seen_keys:
+                    existing_assertions.append(a)
+                    seen_keys.add(key)
+        existing["assertions"] = existing_assertions
+
     # merged_from: append new entry ID
     raw_merged_from = existing.get("merged_from") or []
     existing_merged_from = [str(x) for x in cast("list[object]", raw_merged_from)]
