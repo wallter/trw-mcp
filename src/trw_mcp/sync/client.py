@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -19,6 +19,7 @@ from trw_mcp.sync.pull import SyncPuller
 from trw_mcp.sync.push import SyncPusher
 
 if TYPE_CHECKING:
+    from trw_memory.models.memory import MemoryEntry
     from trw_mcp.models.config._main import TRWConfig
 
 logger = structlog.get_logger(__name__)
@@ -111,7 +112,7 @@ class BackendSyncClient:
 
             self._coordinator.record_sync_success(pushed=result.pushed, pulled=pulled)
 
-    def _get_dirty_entries(self) -> list[Any]:
+    def _get_dirty_entries(self) -> list[MemoryEntry]:
         """Get dirty entries from local storage via DeltaTracker."""
         try:
             from trw_memory.sync.delta import DeltaTracker
@@ -124,7 +125,7 @@ class BackendSyncClient:
             logger.debug("sync_get_dirty_failed", exc_info=True)
             return []
 
-    def _mark_synced(self, entries: list[Any]) -> None:
+    def _mark_synced(self, entries: list[MemoryEntry]) -> None:
         """Mark entries as synced in local storage."""
         try:
             from trw_memory.sync.delta import DeltaTracker
