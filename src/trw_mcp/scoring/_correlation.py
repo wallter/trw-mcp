@@ -18,19 +18,12 @@ import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring._io_boundary import (
-    _batch_sync_to_sqlite,
     _PendingUpdate,
-    _read_recall_tracking_jsonl,
-    _write_pending_entries,
-)
-from trw_mcp.scoring._io_boundary import (
+    _batch_sync_to_sqlite,
     _default_lookup_entry as _default_lookup_entry,
-)
-from trw_mcp.scoring._io_boundary import (
-    _find_session_start_ts as _find_session_start_ts,
-)
-from trw_mcp.scoring._io_boundary import (
+    _read_recall_tracking_jsonl,
     _sync_to_sqlite as _sync_to_sqlite,
+    _write_pending_entries,
 )
 from trw_mcp.scoring._utils import (
     TRWConfig,
@@ -133,7 +126,77 @@ EVENT_ALIASES: dict[str, str | float | None] = {
 }
 
 
-# _find_session_start_ts re-exported from _io_boundary (PRD-FIX-061-FR05).
+def _find_session_start_ts(trw_dir: Path) -> datetime | None:
+    """Find the timestamp of the most recent session-start event.
+
+    Scans all events.jsonl files under runs_root/**/ for the most recent
+    ``run_init`` or ``session_start`` event. Uses glob to handle all
+    directory layouts (PROPER, FLAT, OLD_NESTED).
+
+    PRD-FIX-061-FR05: Reimplemented without state.persistence import.
+    PRD-FIX-070-FR01: glob-based discovery replaces iter_run_dirs.
+
+    Args:
+        trw_dir: Path to .trw directory.
+
+    Returns:
+        Timestamp of the most recent session-start event, or None.
+    """
+    import json
+
+    project_root = trw_dir.parent
+    cfg: TRWConfig = get_config()
+    runs_root = project_root / cfg.runs_root
+
+    if not runs_root.exists():
+        return None
+
+    # Glob across all directory layouts (PROPER, FLAT, OLD_NESTED)
+    events_files: list[tuple[float, Path]] = []
+    for events_path in runs_root.glob("**/meta/events.jsonl"):
+        try:
+            mtime = events_path.stat().st_mtime
+            events_files.append((mtime, events_path))
+        except OSError:  # noqa: PERF203 — fail-open per-file
+            continue
+
+    events_files.sort(reverse=True)  # Most recent first
+
+    for _mtime, events_path in events_files[:5]:
+        records: list[dict[str, object]] = []
+        try:
+            with events_path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        record = json.loads(stripped)
+                        if isinstance(record, dict):
+                            records.append(record)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            continue
+        for record in reversed(records):
+            if str(record.get("event", "")) in ("run_init", "session_start"):
+                ts_str = str(record.get("ts", ""))
+                if ts_str:
+                    try:
+                        result = _ensure_utc(
+                            datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        )
+                        logger.debug(
+                            "session_scope_resolved",
+                            source=str(events_path),
+                            ts=str(result),
+                        )
+                        return result
+                    except ValueError:
+                        continue
+
+    logger.debug("session_scope_fallback_to_window")
+    return None
 
 
 def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
