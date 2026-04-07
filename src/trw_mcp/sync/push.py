@@ -6,10 +6,13 @@ never raises, returns PushResult on all paths.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import structlog
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from trw_memory.models.memory import MemoryEntry
 
 logger = structlog.get_logger(__name__)
 
@@ -36,7 +39,7 @@ class SyncPusher:
         self._batch_size = batch_size
         self._timeout = timeout
 
-    def push_learnings(self, entries: list[Any]) -> PushResult:
+    def push_learnings(self, entries: list[MemoryEntry]) -> PushResult:
         """Batch push learnings to POST /v1/sync/learnings. Never raises."""
         import httpx
 
@@ -103,7 +106,7 @@ class SyncPusher:
             logger.debug("sync_push_outcomes_failed", count=len(outcomes))
             return PushResult(failed=len(outcomes))
 
-    def _serialize_entry(self, entry: Any) -> dict[str, object]:
+    def _serialize_entry(self, entry: MemoryEntry) -> dict[str, object]:
         """Serialize a MemoryEntry for push, applying anonymization."""
         d = entry.to_dict() if hasattr(entry, "to_dict") else dict(entry)
         return {
