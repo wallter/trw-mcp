@@ -44,14 +44,10 @@
 | `_tier_scoring.py` | — | Internal | Importance score computation |
 | `trust.py` | — | Primary | Progressive trust model |
 
-### Ceremony & Nudges
+### Ceremony
 | Module | Lines | Owner | Purpose |
 |--------|-------|-------|---------|
 | `ceremony_feedback.py` | 686 | Primary | Self-improving ceremony feedback loop (CORE-069) |
-| `ceremony_nudge.py` | — | Facade | Nudge orchestration (delegates to rules/messages) |
-| `_nudge_state.py` | — | Internal | CeremonyState, NudgeContext data models |
-| `_nudge_messages.py` | 401 | Internal | Nudge message templates and formatting |
-| `_nudge_rules.py` | — | Internal | Nudge decision logic (when to show which nudge) |
 
 ### Analytics & Reporting
 | Module | Lines | Owner | Purpose |
