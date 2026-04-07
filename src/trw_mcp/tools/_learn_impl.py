@@ -410,6 +410,24 @@ def execute_learn(  # noqa: C901
     if distribution_soft_cap_warning:
         result_dict["distribution_warning"] = distribution_soft_cap_warning
 
+    # Increment learnings count in ceremony state tracker (PRD-CORE-074 FR04)
+    try:
+        from trw_mcp.state.ceremony_nudge import increment_learnings
+
+        increment_learnings(trw_dir)
+    except Exception:  # justified: fail-open
+        logger.debug("learn_ceremony_state_update_skipped", exc_info=True)
+
+    # Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+    try:
+        from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
+        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
+        ctx = NudgeContext(tool_name=ToolName.LEARN)
+        append_ceremony_nudge(cast("dict[str, object]", result_dict), trw_dir, context=ctx)
+    except Exception:  # justified: fail-open
+        logger.debug("learn_nudge_injection_skipped", exc_info=True)
+
     return result_dict
 
 

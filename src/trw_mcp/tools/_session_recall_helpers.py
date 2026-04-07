@@ -3,7 +3,9 @@
 Extracted from _ceremony_helpers.py to keep modules under the 500-line gate.
 
 Public API (re-exported by _ceremony_helpers.py):
+- append_ceremony_nudge: inject ceremony nudge into a tool response
 - perform_session_recalls: execute focused + baseline recalls, return merged results
+- log_nudge_event: log a nudge_shown event to events.jsonl
 - _phase_contextual_recall: phase-tag-aware recall for auto-recall feature
 - _phase_to_tags: map framework phase to relevant learning tags
 - _apply_antipattern_alerts: prepend alert prefix to matching learning summaries
@@ -11,6 +13,7 @@ Public API (re-exported by _ceremony_helpers.py):
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import structlog
@@ -24,10 +27,216 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.scoring._recall import RecallContext
+from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state.ceremony_nudge import NudgeContext, compute_nudge, read_ceremony_state
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.receipts import log_recall_receipt
 
 logger = structlog.get_logger(__name__)
+
+
+# ── FR01: Ceremony nudge injection ──────────────────────────────────────
+
+
+def append_ceremony_nudge(
+    response: dict[str, object],
+    trw_dir: Path | None = None,
+    available_learnings: int = 0,
+    context: NudgeContext | None = None,
+) -> dict[str, object]:
+    """Append ceremony nudge to a tool response dict.
+
+    Reads ceremony state, computes nudge, adds it under 'ceremony_status' key.
+    Also wires nudge dedup (PRD-CORE-103-FR02), surface logging, and propensity
+    logging when a learning-backed nudge is present.
+
+    Fail-open: if anything fails, returns response unchanged.
+
+    Args:
+        response: The tool response dict to augment.
+        trw_dir: Override the .trw directory (defaults to resolve_trw_dir()).
+        available_learnings: Number of available learnings for nudge context.
+        context: Optional NudgeContext for context-reactive messages (PRD-CORE-084).
+
+    Returns:
+        The response dict with 'ceremony_status' key added (or unchanged on error).
+    """
+    try:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.ceremony_nudge import (
+            _highest_priority_pending_step,
+            compute_nudge_minimal,
+            increment_nudge_count,
+        )
+
+        effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
+        state = read_ceremony_state(effective_dir)
+        config = get_config()
+        if config.effective_ceremony_mode == "light":
+            nudge = compute_nudge_minimal(state, available_learnings=available_learnings)
+        else:
+            nudge = compute_nudge(state, available_learnings=available_learnings, context=context)
+        response["ceremony_status"] = nudge
+        # Increment nudge count for the pending step (tracks progressive urgency)
+        pending = _highest_priority_pending_step(state)
+        if pending:
+            with contextlib.suppress(Exception):
+                increment_nudge_count(effective_dir, pending)
+
+        # PRD-CORE-103-FR02: Learning-backed nudge with dedup + telemetry
+        # Embed a relevant learning tip in the nudge response when learnings exist
+        if available_learnings > 0 and config.effective_ceremony_mode != "light":
+            try:
+                from trw_mcp.state._nudge_rules import select_nudge_learning
+                from trw_mcp.state.memory_adapter import recall_learnings
+
+                candidates = recall_learnings(
+                    effective_dir,
+                    query="*",
+                    min_impact=0.5,
+                    max_results=10,
+                    compact=True,
+                )
+
+                # Load bandit state if available (CORE-105)
+                bandit_instance = None
+                try:
+                    from trw_memory.bandit import BanditSelector
+
+                    bandit_state_path = effective_dir / "meta" / "bandit_state.json"
+                    if bandit_state_path.exists():
+                        bandit_instance = BanditSelector.from_json(
+                            bandit_state_path.read_text(encoding="utf-8")
+                        )
+                except (ImportError, Exception):  # justified: fail-open, bandit is optional
+                    pass
+
+                # Client class for withholding rates — intelligence code
+                # (resolve_client_class) was extracted to backend in PRD-INFRA-052
+                # and removed from trw-mcp in PRD-INFRA-054.  Use neutral default.
+                _client_class = "full_mode"
+
+                burst_items: list[dict[str, object]] = []
+                selected, is_fallback = select_nudge_learning(
+                    state,
+                    candidates,
+                    state.phase,
+                    bandit=bandit_instance,
+                    previous_phase=getattr(state, "previous_phase", ""),
+                    client_class=_client_class,
+                    burst_items=burst_items,
+                )
+
+                if selected:
+                    sel_id = str(selected.get("id", ""))
+                    sel_summary = str(selected.get("summary", ""))[:80]
+
+                    # Append learning tip to ceremony_status
+                    if isinstance(nudge, str) and sel_summary:
+                        tip = f"\nTIP: {sel_summary}"
+                        if sel_id:
+                            tip += f" (id={sel_id})"
+                        # PRD-CORE-105 P0: Render burst items for phase transitions
+                        for burst_item in burst_items:
+                            burst_line = str(
+                                burst_item.get("nudge_line")
+                                or burst_item.get("summary", "")
+                            )[:80]
+                            if burst_line:
+                                tip += f"\n  - {burst_line}"
+                        nudge = nudge + tip
+                        response["ceremony_status"] = nudge
+
+                    if sel_id:
+                        # Record in nudge history for dedup
+                        try:
+                            from trw_mcp.state._nudge_state import record_nudge_shown
+
+                            record_nudge_shown(effective_dir, sel_id, state.phase)
+                        except Exception:  # justified: fail-open
+                            logger.warning("nudge_dedup_record_failed", exc_info=True)
+
+                        # Surface logging for nudge channel (PRD-CORE-103-FR01)
+                        try:
+                            from trw_mcp.state.surface_tracking import log_surface_event
+
+                            log_surface_event(
+                                effective_dir,
+                                learning_id=sel_id,
+                                surface_type="nudge",
+                                phase=state.phase,
+                            )
+                        except Exception:  # justified: fail-open
+                            logger.warning("nudge_surface_log_failed", exc_info=True)
+
+                        # Propensity logging (PRD-CORE-103-FR03)
+                        try:
+                            from trw_mcp.state.propensity_log import log_selection
+
+                            candidate_ids = [str(c.get("id", "")) for c in candidates if c.get("id")]
+                            log_selection(
+                                effective_dir,
+                                selected=sel_id,
+                                candidate_set=candidate_ids,
+                                context_phase=state.phase,
+                                exploration=is_fallback,
+                            )
+                        except Exception:  # justified: fail-open
+                            logger.warning("nudge_propensity_log_failed", exc_info=True)
+            except Exception:  # justified: fail-open
+                logger.warning("learning_nudge_selection_failed", exc_info=True)
+
+        logger.debug(
+            "append_ceremony_nudge",
+            phase=state.phase,
+            has_nudge=len(nudge) > 0,
+        )
+    except Exception:  # justified: fail-open — nudge injection must never raise or block
+        logger.warning("append_ceremony_nudge_failed", exc_info=True)
+    return response
+
+
+# ── FR02: Nudge event logging (PRD-CORE-103) ─────────────────────────────
+
+
+def log_nudge_event(
+    events_path: Path,
+    learning_id: str,
+    phase: str,
+    is_fallback: bool,
+) -> None:
+    """Log a nudge_shown event to events.jsonl for proximal reward detection.
+
+    Fail-open: if anything fails, silently returns without raising.
+
+    Args:
+        events_path: Path to events.jsonl file.
+        learning_id: ID of the learning that was surfaced.
+        phase: Current ceremony phase when the nudge was shown.
+        is_fallback: True if the learning was a fallback (all candidates were dedup-filtered).
+    """
+    try:
+        from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+
+        writer = FileStateWriter()
+        event_logger = FileEventLogger(writer)
+        event_logger.log_event(
+            events_path,
+            "nudge_shown",
+            {
+                "learning_id": learning_id,
+                "phase": phase,
+                "fallback": is_fallback,
+            },
+        )
+        logger.debug(
+            "nudge_event_logged",
+            learning_id=learning_id,
+            phase=phase,
+            fallback=is_fallback,
+        )
+    except Exception:  # justified: fail-open — nudge event logging must never raise
+        logger.warning("nudge_event_log_failed", exc_info=True)
 
 
 # ── Phase-contextual tag map (PRD-CORE-049) ──────────────────────────────
