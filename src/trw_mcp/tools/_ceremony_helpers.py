@@ -10,11 +10,9 @@ Modularizes the two longest tool functions into focused, testable helpers:
 - step_increment_session_counter: increment sessions_tracked counter
 - step_sanitize_and_maintain: sanitize ceremony feedback + run auto-maintenance
 - step_embed_health: check embeddings health status
-- step_mark_session_started: mark session started in ceremony state
-- step_ceremony_nudge: inject ceremony nudge into response
 
 Sub-modules (extracted for the 500-line module size gate):
-- _session_recall_helpers: recall, nudge injection, phase tags, antipattern alerts
+- _session_recall_helpers: recall, phase tags, antipattern alerts
 - _delivery_helpers: delivery gates, compliance copy, finalize_run
 """
 
@@ -106,9 +104,6 @@ from trw_mcp.tools._session_recall_helpers import (
 )
 from trw_mcp.tools._session_recall_helpers import (
     _phase_to_tags as _phase_to_tags,
-)
-from trw_mcp.tools._session_recall_helpers import (
-    append_ceremony_nudge as append_ceremony_nudge,
 )
 from trw_mcp.tools._session_recall_helpers import (
     perform_session_recalls as perform_session_recalls,
@@ -241,36 +236,6 @@ def step_embed_health() -> dict[str, object]:
             "advisory": "",
             "recent_failures": 0,
         }
-
-
-def step_mark_session_started() -> None:
-    """Mark session started in ceremony state tracker (PRD-CORE-074 FR04)."""
-    from trw_mcp.state.ceremony_nudge import mark_session_started
-    mark_session_started(resolve_trw_dir())
-
-
-def step_ceremony_nudge(
-    results: dict[str, object],
-    learnings_count: int,
-) -> None:
-    """Inject ceremony nudge into response (PRD-CORE-074 FR01, PRD-CORE-084 FR02).
-
-    Skipped for light ceremony mode (FR07, PRD-CORE-084).
-    """
-    from trw_mcp.models.config import get_config
-    from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-
-    config = get_config()
-    if config.effective_ceremony_mode == "light":
-        return
-
-    ctx = NudgeContext(tool_name=ToolName.SESSION_START)
-    append_ceremony_nudge(
-        results,
-        resolve_trw_dir(),
-        available_learnings=learnings_count,
-        context=ctx,
-    )
 
 
 def _check_version_sentinel(

@@ -82,7 +82,7 @@ def build_recall_context(
         profile = config.client_profile
         client_profile = profile.client_id if profile else ""
         model_family = getattr(config, "model_family", "") or ""
-    except Exception:  # justified: fail-open
+    except Exception:  # noqa: S110 — justified: fail-open, config auto-detection is best-effort
         pass
 
     # Thread PRD knowledge IDs from artifact scanning (CORE-106/CORE-116)
@@ -99,7 +99,7 @@ def build_recall_context(
                 raw_ids = kr_data.get("learning_ids", [])
                 if isinstance(raw_ids, list):
                     prd_knowledge_ids = {str(lid) for lid in raw_ids}
-    except Exception:  # justified: fail-open
+    except Exception:  # noqa: S110 — justified: fail-open, PRD knowledge ID loading is best-effort
         pass
 
     logger.debug(
@@ -293,19 +293,6 @@ def execute_recall(
         "max_results": max_results,
         "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
     }
-
-    # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-    if not (is_wildcard and use_compact):
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-            ctx = NudgeContext(tool_name=ToolName.RECALL)
-            append_ceremony_nudge(
-                cast("dict[str, object]", recall_result), trw_dir, available_learnings=total_available, context=ctx
-            )
-        except Exception:  # justified: fail-open
-            logger.debug("recall_nudge_injection_skipped", exc_info=True)
 
     return recall_result
 

@@ -37,12 +37,10 @@ ORC        := Orchestrator
 ```yaml
 PARALLELISM_MAX: 10          # max concurrent shards
 MIN_SHARDS_TARGET: 3         # minimum parallel (adaptive)
-MIN_SHARDS_FLOOR: 2          # hard floor
 CONSENSUS_QUORUM: 0.67       # 2/3 judges agree
 CORRELATION_MIN: 0.7         # inter-judge agreement
 TIMEBOX_HOURS: 8
 MAX_CHILD_DEPTH: 2           # max self-decomposition recursion
-MAX_RESEARCH_WAVES: 3
 ```
 
 ---
@@ -92,7 +90,7 @@ ORC tracks elapsed wall-clock against TIMEBOX_HOURS. ORC MUST NOT advance until 
 
 ### Dynamic Research
 
-After each RESEARCH wave, ORC evaluates findings. If >30% have `open_questions`, spawn follow-up wave. If findings contradict, spawn DEBATE reconciliation. Max: MAX_RESEARCH_WAVES. Proven pattern: 3-wave (discovery → deep-dive → synthesis), Wave 3 MUST NOT be parallelized.
+After each RESEARCH wave, ORC evaluates findings. If >30% have `open_questions`, spawn follow-up wave. If findings contradict, spawn DEBATE reconciliation. Proven pattern: 3-wave (discovery → deep-dive → synthesis); stop when findings are sufficient, Wave 3 MUST NOT be parallelized.
 
 ---
 
@@ -104,8 +102,8 @@ If you catch yourself thinking any of these, stop and follow the process — the
 |---------|---------------|-------------|
 | "This is too simple for ceremony" | Simple tasks compound into gaps when 10 agents skip in parallel | You skip checkpoint → context compacts → you re-implement from scratch |
 | "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings — zero knowledge transfer |
-| "I already know the codebase, I don't need trw_recall" | Prior learnings contain gotchas for exactly this area | Sprint 26 had 6 P0/P1 defects from agents who skipped recall |
-| "I can implement directly, delegation is overhead" | Subagent implementation has 3x fewer P0 defects than direct | Your focused context is valuable — subagents get deeper context per task |
+| "I already know the codebase, I don't need trw_recall" | Prior learnings contain gotchas for exactly this area | Agents who skip recall consistently re-discover known gotchas, spending avoidable time on solved problems |
+| "I can implement directly, delegation is overhead" | Focused subagents produce fewer defects due to deeper focus | Your focused context is valuable — subagents get deeper context per task |
 | "The build check can wait until the end" | Late build failures cascade into multi-file rework | 2x rework when caught at DELIVER vs catching at VALIDATE |
 | "This refactor is small, I'll inline it" | Small inlined refactors break file ownership in teams | Creates merge conflicts and unreviewed code in teammate files |
 
@@ -365,7 +363,7 @@ RESEARCH and PLAN phases MUST use parallel blocking shards with persisted findin
 
 ORC MUST: identify independent axes → launch parallel blocking Task() in ONE message → each shard writes findings to disk BEFORE returning.
 
-Shard count: `clamp(MIN_SHARDS_FLOOR, axes_of_inquiry, PARALLELISM_MAX)`
+Shard count: choose based on axes of inquiry, capped at PARALLELISM_MAX. For atomic tasks use 1 shard.
 
 Shard output: `scratch/shard-{id}/findings.yaml` — fields: `shard_id`, `phase` (research|plan), `status` (complete|partial|failed), `summary`, `findings[]` (key, detail, evidence, confidence), `open_questions`, `files_examined`.
 
@@ -380,7 +378,7 @@ Shard output: `scratch/shard-{id}/findings.yaml` — fields: `shard_id`, `phase`
 
 ## PARALLELISM
 
-Heuristic: if shards independent (<=5% file overlap), spawn `clamp(MIN_SHARDS_FLOOR, axes, PARALLELISM_MAX)`. Default: 3. Trivial: 1.
+Heuristic: if shards independent (<=5% file overlap), spawn based on axes of inquiry up to PARALLELISM_MAX. Default: 3. Trivial (single axis): 1.
 
 <parallelism-rules>
 - Every Task() MUST block. WHY: background agents lose MCP tools, cause 30-50K+ token explosion, context staleness, file lock deadlocks.
