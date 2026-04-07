@@ -385,7 +385,7 @@ def _verify_assertions(
             entry_id = str(learning.get("id", ""))
             try:
                 assertions_list = [
-                    Assertion.model_validate(a) for a in raw_assertions if isinstance(a, dict)
+                    Assertion.model_validate(a, strict=False) for a in raw_assertions if isinstance(a, dict)
                 ]
                 results = verify_assertions(assertions_list, project_root_path)
 

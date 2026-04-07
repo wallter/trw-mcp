@@ -154,7 +154,7 @@ def _learning_to_memory_entry(
     # Validate and attach assertions (PRD-CORE-086)
     assertion_objects: list[Assertion] = []
     if assertions:
-        assertion_objects.extend(Assertion.model_validate(a) for a in assertions)
+        assertion_objects.extend(Assertion.model_validate(a, strict=False) for a in assertions)
 
     # Validate anchors (PRD-CORE-111)
     anchor_objects: list[Anchor] = []

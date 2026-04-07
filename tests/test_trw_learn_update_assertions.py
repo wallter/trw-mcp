@@ -87,8 +87,8 @@ class TestUpdateReplacesAssertions:
         """Existing assertions are replaced with the new list."""
         from trw_memory.models.memory import Assertion, MemoryEntry
 
-        existing_assertion = Assertion(
-            type="grep_present", pattern="old_pattern", target="**/*.py"
+        existing_assertion = Assertion.model_validate(
+            {"type": "grep_present", "pattern": "old_pattern", "target": "**/*.py"}, strict=False
         )
         mock_backend = MagicMock()
         mock_entry = MemoryEntry(
@@ -136,8 +136,8 @@ class TestDeleteAssertionsWithEmptyList:
         """Passing empty list clears all assertions."""
         from trw_memory.models.memory import Assertion, MemoryEntry
 
-        existing_assertion = Assertion(
-            type="grep_present", pattern="some_pattern", target="**/*.py"
+        existing_assertion = Assertion.model_validate(
+            {"type": "grep_present", "pattern": "some_pattern", "target": "**/*.py"}, strict=False
         )
         mock_backend = MagicMock()
         mock_entry = MemoryEntry(

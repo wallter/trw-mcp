@@ -318,7 +318,7 @@ def register_learning_tools(server: FastMCP) -> None:
         if assertions is not None:
             from trw_memory.models.memory import Assertion
 
-            validated: list[Assertion] = [Assertion.model_validate(a) for a in assertions]
+            validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
             try:
                 backend = get_backend(trw_dir)
                 existing = backend.get(learning_id)
