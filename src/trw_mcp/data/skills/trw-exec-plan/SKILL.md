@@ -78,6 +78,30 @@ Map each FR to:
 - Test files (who tests them)
 - Integration points (who verifies the wiring)
 
+### Step 7b: Pre-Implementation Checklist (PRD-QUAL-056-FR03)
+
+Include the following mandatory checklist in the execution plan output. Implementers MUST confirm each item before writing code:
+
+1. **PRD read**: Read the full PRD and all referenced documents (dependencies, related PRDs)
+2. **File paths confirmed**: Identified every FR's planned implementation file path (verify with Glob)
+3. **Test paths confirmed**: Identified every FR's planned test file path and test function name
+4. **Learnings recalled**: Called `trw_recall(query='<prd-domain>')` to load domain-relevant gotchas
+5. **Open questions clear**: Confirmed no open questions (OQs) block implementation
+6. **Execution plan reviewed**: Reviewed this execution plan's wave plan and dependency graph
+
+The checklist completion SHOULD be logged as a `pre_implementation_checklist_complete` event in events.jsonl.
+
+### Step 7c: Per-FR Inline Verification Commands (PRD-QUAL-056-FR04)
+
+For each FR that has machine-verifiable assertions in the PRD (grep_present, grep_absent, glob_exists, command_succeeds), include inline verification commands in the execution plan task:
+
+```bash
+# FR{N} Verification (run after implementing this FR):
+grep -q '<pattern>' <file> && echo 'FR{N} PASS' || echo 'FR{N} FAIL'
+```
+
+FRs with dependencies SHOULD be grouped into verification waves. All assertions in a wave MUST pass before proceeding to the next wave. This catches errors incrementally rather than compounding them across all FRs.
+
 ### Step 8: Write Execution Plan
 
 Write to `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`:
