@@ -187,3 +187,16 @@ class IndexSyncResult(TypedDict):
     status: str
     index: dict[str, object]
     roadmap: dict[str, object]
+
+
+class ReworkMetricsResult(TypedDict, total=False):
+    """Return shape of ``_step_collect_rework_metrics()`` (PRD-QUAL-056-FR09).
+
+    Contains per-PRD audit cycle counts and first-pass compliance flags,
+    plus sprint-level aggregates.
+    """
+
+    audit_cycles: dict[str, int]
+    first_pass_compliance: dict[str, bool]
+    sprint_avg_audit_cycles: float
+    sprint_first_pass_compliance_rate: float

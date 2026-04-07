@@ -176,3 +176,10 @@ class _CeremonyFields:
     agent_learning_injection: bool = True
     agent_learning_max: int = 5
     agent_learning_min_impact: float = 0.5
+
+    # -- PRD-QUAL-056 audit quality fields --
+
+    max_audit_cycles: int = Field(default=3, ge=1, le=10, description="Maximum audit cycles before escalation")
+    audit_pattern_promotion_threshold: int = Field(
+        default=3, ge=1, le=20, description="Minimum distinct PRDs for audit pattern promotion"
+    )
