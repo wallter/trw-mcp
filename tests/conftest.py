@@ -204,6 +204,8 @@ _UNIT_FILES: frozenset[str] = frozenset(
         # PRD-FIX-061: Layer boundary enforcement — pure source scanning, no I/O
         "test_layer_boundaries.py",
         "test_scoring_layer_boundary.py",
+        # PRD-QUAL-056: PRD scoring dimensions — pure scoring, no I/O
+        "test_prd_quality_flywheel.py",
     }
 )
 
