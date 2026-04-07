@@ -201,6 +201,9 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_core_116_recall_scoring.py",
         # PRD-INFRA-054: Import guard regression test — pure source scanning, no I/O
         "test_no_intelligence_imports.py",
+        # PRD-FIX-061: Layer boundary enforcement — pure source scanning, no I/O
+        "test_layer_boundaries.py",
+        "test_scoring_layer_boundary.py",
     }
 )
 

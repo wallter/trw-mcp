@@ -91,3 +91,85 @@ def test_merge_session_events_in_state_layer() -> None:
     from trw_mcp.state._session_events import _merge_session_events
 
     assert callable(_merge_session_events)
+
+
+# --- FR05-T06: correlation accepts injected finder (no hard-coded state imports) ---
+
+
+@pytest.mark.unit
+def test_correlation_accepts_finder_arg() -> None:
+    """process_outcome accepts a custom lookup_fn — no hard-coded state imports in _correlation.py.
+
+    Verifies FR05: scoring/_correlation.py has zero from trw_mcp.state.analytics
+    and from trw_mcp.state.memory_adapter imports.
+    """
+    correlation_src = _SCORING_DIR / "_correlation.py"
+    content = correlation_src.read_text(encoding="utf-8")
+    assert "from trw_mcp.state.analytics" not in content, (
+        "_correlation.py imports from state.analytics (FR05 violation)"
+    )
+    assert "from trw_mcp.state.memory_adapter" not in content, (
+        "_correlation.py imports from state.memory_adapter (FR05 violation)"
+    )
+    # Verify the lookup_fn parameter exists (dependency injection in place)
+    assert "lookup_fn" in content, (
+        "_correlation.process_outcome must have a lookup_fn parameter"
+    )
+
+
+# --- FR06-T07: decay accepts entry iterator (no file I/O imports in _decay.py) ---
+
+
+@pytest.mark.unit
+def test_decay_accepts_entry_iterator() -> None:
+    """_decay.py has zero iter_yaml_entry_files and FileStateReader imports.
+
+    Verifies FR06: compute_impact_distribution delegates I/O to _io_boundary.
+    """
+    decay_src = _SCORING_DIR / "_decay.py"
+    content = decay_src.read_text(encoding="utf-8")
+    assert "iter_yaml_entry_files" not in content, (
+        "_decay.py still references iter_yaml_entry_files (FR06 violation)"
+    )
+    assert "FileStateReader" not in content, (
+        "_decay.py still references FileStateReader (FR06 violation)"
+    )
+    # Verify _load_entries_from_dir is still accessible (re-exported from _io_boundary)
+    from trw_mcp.scoring._decay import _load_entries_from_dir
+
+    assert callable(_load_entries_from_dir)
+
+
+# --- FR03/FR05/FR06-T08: scoring computation modules have no direct state I/O imports ---
+
+
+@pytest.mark.unit
+def test_scoring_no_direct_state_io_imports() -> None:
+    """The pure scoring modules (_correlation.py, _decay.py) have no state.persistence
+    or state.memory_adapter imports — all I/O goes through _io_boundary.py.
+
+    _io_boundary.py is intentionally excluded as it IS the boundary module.
+    _utils.py is excluded as it only imports safe_float/safe_int from state._helpers
+    (pure helpers, not I/O primitives).
+    """
+    # Modules that must not have direct state I/O imports
+    io_violation_modules = ["_correlation.py", "_decay.py"]
+    forbidden_patterns = [
+        "from trw_mcp.state.persistence",
+        "from trw_mcp.state.memory_adapter",
+    ]
+
+    violations: list[str] = []
+    for module_name in io_violation_modules:
+        py_file = _SCORING_DIR / module_name
+        if not py_file.exists():
+            continue
+        content = py_file.read_text(encoding="utf-8")
+        for pattern in forbidden_patterns:
+            if pattern in content:
+                violations.append(f"{module_name}: contains '{pattern}'")
+
+    assert not violations, (
+        f"scoring/ I/O layer violations (FR03/FR05/FR06):\n"
+        + "\n".join(violations)
+    )
