@@ -2,6 +2,35 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.40.0] - 2026-04-07
+
+### Added
+
+- **Sync pipeline client** (PHASE-BACKEND-INTELLIGENCE, PRDs 051/053)
+  - `sync/coordinator.py` — multi-MCP lock coordination via fcntl + sync-state.json
+  - `sync/push.py` — batch push with fail-open contract (never raises)
+  - `sync/pull.py` — conditional GET with ETag support
+  - `sync/cache.py` — local intelligence cache with atomic writes and TTL
+  - `sync/client.py` — BackendSyncClient orchestrating bidirectional push+pull
+  - `_fields_sync.py` config mixin — backend_url, sync_interval, cache TTL, feature gates
+  - 7th scoring factor `intel_boost` in `_recall.py` (neutral 1.0 when offline)
+
+### Removed
+
+- **Intelligence code deleted for IP protection** (PRD-INFRA-054)
+  - `scoring/attribution/` — 7 files, 739 lines (extracted to backend)
+  - `state/bandit_policy.py` — 362 lines (extracted to backend)
+  - `state/meta_synthesis.py` — 457 lines (extracted to backend)
+  - `tools/meta_tune.py` — 902 lines (extracted to backend)
+  - 7 corresponding test files (3,596 lines)
+  - `pip install trw-mcp` now contains zero intelligence algorithms
+
+### Changed
+
+- `_nudge_rules.py` — bandit import replaced with stub
+- `_session_recall_helpers.py` — resolve_client_class replaced with stub
+- `server/_tools.py` — register_meta_tune_tools removed
+
 ## [Unreleased]
 
 ### Improved
