@@ -480,3 +480,69 @@ class TestOnCallTool:
         out = await middleware.on_call_tool(None, call_next)  # type: ignore[arg-type]
         # Compact output must not have spaces after : or ,
         assert " " not in out.content[0].text
+
+
+# ---------------------------------------------------------------------------
+# YAML format path (tests that do NOT use the autouse json-override fixture)
+# ---------------------------------------------------------------------------
+
+
+class TestYamlFormatPath:
+    """Tests for YAML serialization path in ResponseOptimizerMiddleware."""
+
+    @pytest.fixture
+    def middleware(self) -> ResponseOptimizerMiddleware:
+        return ResponseOptimizerMiddleware()
+
+    @pytest.mark.unit
+    async def test_yaml_format_used_when_format_is_yaml(
+        self, middleware: ResponseOptimizerMiddleware, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When format is 'yaml', output is YAML not JSON."""
+        monkeypatch.setattr(
+            "trw_mcp.middleware.response_optimizer._get_response_format",
+            lambda: "yaml",
+        )
+        payload = json.dumps({"score": 0.87654, "status": "ok"})
+        result = FakeToolResult(content=[TextContent(type="text", text=payload)])
+
+        async def call_next(_ctx: Any) -> Any:
+            return result
+
+        out = await middleware.on_call_tool(None, call_next)  # type: ignore[arg-type]
+        # YAML output contains colons without quotes (not compact JSON)
+        assert "score:" in out.content[0].text or "status:" in out.content[0].text
+
+    @pytest.mark.unit
+    def test_yaml_dump_success(self) -> None:
+        """_yaml_dump serializes dict to YAML string."""
+        from trw_mcp.middleware.response_optimizer import _yaml_dump
+
+        result = _yaml_dump({"key": "value", "num": 42})
+        assert "key:" in result
+        assert "value" in result
+
+    @pytest.mark.unit
+    def test_yaml_dump_fallback_to_json_on_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_yaml_dump falls back to compact JSON when YAML serialization fails."""
+        from trw_mcp.middleware import response_optimizer as ro
+
+        monkeypatch.setattr(
+            ro._yaml,
+            "dump",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("yaml error")),
+        )
+        from trw_mcp.middleware.response_optimizer import _yaml_dump
+
+        result = _yaml_dump({"a": 1})
+        # Fallback to compact JSON
+        parsed = json.loads(result)
+        assert parsed == {"a": 1}
+
+
+# Note: Tests for _get_response_format and _yaml_dump live in
+# test_response_optimizer_format.py to avoid the autouse _force_json_format
+# fixture in this file (which always returns "json" and prevents those
+# code paths from being covered here).
