@@ -367,11 +367,18 @@ class TestAgents:
     """
 
     EXPECTED_AGENTS = [
+        "trw-adversarial-auditor.md",
         "trw-auditor.md",
+        "trw-code-simplifier.md",
         "trw-implementer.md",
+        "trw-lead.md",
         "trw-prd-groomer.md",
+        "trw-requirement-reviewer.md",
+        "trw-requirement-writer.md",
         "trw-researcher.md",
         "trw-reviewer.md",
+        "trw-tester.md",
+        "trw-traceability-checker.md",
     ]
 
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
@@ -1061,7 +1068,7 @@ class TestManagedArtifactsManifest:
         # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
         # or if the skill/agent/change is for an internal monorepo skill
         assert len(skills) == 23
-        assert len(agents) == 5
+        assert len(agents) == 12
         assert len(hooks) > 0
 
 

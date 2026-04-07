@@ -77,14 +77,7 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "requirement-reviewer.md": "trw-requirement-reviewer.md",
         "requirement-writer.md": "trw-requirement-writer.md",
         "traceability-checker.md": "trw-traceability-checker.md",
-        # PRD-CORE-092: Dropped agents post-consolidation (18 → 5)
-        "trw-tester.md": None,
-        "trw-lead.md": None,
-        "trw-code-simplifier.md": None,
-        "trw-adversarial-auditor.md": "trw-auditor.md",
-        "trw-traceability-checker.md": "trw-auditor.md",
-        "trw-requirement-writer.md": "trw-prd-groomer.md",
-        "trw-requirement-reviewer.md": "trw-prd-groomer.md",
+        # Non-prefixed reviewers: local-only, never bundled
         "reviewer-correctness.md": None,
         "reviewer-integration.md": None,
         "reviewer-performance.md": None,
