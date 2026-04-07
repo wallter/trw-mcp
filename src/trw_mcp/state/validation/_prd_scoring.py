@@ -121,6 +121,14 @@ _IMPL_REF_RE = re.compile(
 
 _SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
+# FR heading pattern for extracting individual FR sections (PRD-QUAL-056-FR01)
+_FR_HEADING_RE = re.compile(r"^###\s+(?:PRD-[\w-]+-)?FR\d+.*$", re.MULTILINE)
+
+# Assertion keyword pattern for machine-verifiable assertions (PRD-QUAL-056-FR02)
+_ASSERTION_RE = re.compile(
+    r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists"
+)
+
 # AI/Agentic detection keywords (PRD-QUAL-055)
 _AI_KEYWORDS = ("ai", "llm", "agentic", "agent", "generative", "model")
 
@@ -320,6 +328,71 @@ def _is_substantive_line(line: str) -> bool:
         return False
     # Horizontal rules
     return not re.match(r"^\s*---\s*$", line)
+
+
+def _extract_fr_sections(content: str) -> list[tuple[str, str]]:
+    """Extract (fr_name, fr_body) pairs from PRD ``### FR`` headings.
+
+    Body extraction stops at the next ``## `` heading to avoid leaking
+    into non-FR sections.
+    """
+    matches = list(_FR_HEADING_RE.finditer(content))
+    sections: list[tuple[str, str]] = []
+    for i, m in enumerate(matches):
+        name = m.group(0).strip().lstrip("#").strip()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        # Truncate at next ## heading (non-FR section boundary)
+        segment = content[start:end]
+        for line in segment.splitlines(keepends=True):
+            if line.startswith("## ") and not line.startswith("###"):
+                end = start + segment.find(line)
+                break
+        sections.append((name, content[start:end]))
+    return sections
+
+
+def _score_file_path_coverage(
+    content: str,
+    fr_sections: list[tuple[str, str]],
+) -> float:
+    """Score (FRs_with_impl + FRs_with_test) / (2 * total_FRs).
+
+    Uses ``_IMPL_REF_RE`` and ``_TEST_REF_RE`` to detect backtick-wrapped
+    file paths inside each FR section. Returns 0.0--1.0.
+    """
+    if not fr_sections:
+        return 0.0
+
+    total_frs = len(fr_sections)
+    frs_with_impl = 0
+    frs_with_test = 0
+
+    for _name, body in fr_sections:
+        if _IMPL_REF_RE.search(body):
+            frs_with_impl += 1
+        if _TEST_REF_RE.search(body):
+            frs_with_test += 1
+
+    return (frs_with_impl + frs_with_test) / (2 * total_frs)
+
+
+def _score_assertion_coverage(
+    content: str,
+    fr_sections: list[tuple[str, str]],
+) -> float:
+    """Score FRs_with_assertion / total_FRs.
+
+    An FR "has an assertion" when it contains grep_present, grep_absent,
+    file_exists, command_succeeds, or glob_exists. Returns 0.0--1.0.
+    """
+    if not fr_sections:
+        return 0.0
+
+    frs_with_assertion = sum(
+        1 for _name, body in fr_sections if _ASSERTION_RE.search(body)
+    )
+    return frs_with_assertion / len(fr_sections)
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +756,37 @@ def score_traceability_v2(
         details["ai_monitoring_score"] = round(ai_monitoring_score, 4)
         details["ai_operational_evidence_score"] = round(ai_operational_evidence_score, 4)
         details["ai_operational_evidence_detected"] = True
+
+    # PRD-QUAL-056-FR01/FR02: File path and assertion coverage sub-dimensions
+    fr_sections = _extract_fr_sections(content)
+    file_path_cov = _score_file_path_coverage(content, fr_sections)
+    assertion_cov = _score_assertion_coverage(content, fr_sections)
+
+    details["file_path_coverage"] = round(file_path_cov, 4)
+    details["assertion_coverage"] = round(assertion_cov, 4)
+
+    # Additive bonus: file paths and assertions improve the score but their
+    # absence does not penalize (backward compat per NFR01).
+    # PRD-CORE-086 FR10: assertions get +5 bonus (capped at max_score).
+    file_path_bonus = file_path_cov * 0.05 * max_score  # up to 1pt
+    assertion_bonus = assertion_cov * min(5.0, max_score * 0.25)  # up to 5pt
+    coverage_bonus = file_path_bonus + assertion_bonus
+    score = min(score + coverage_bonus, max_score)
+
+    # Suggestions when coverage is low
+    suggestions: list[str] = []
+    if file_path_cov < 0.7:
+        suggestions.append(
+            "Add implementation and test file paths to FR acceptance "
+            "criteria for first-pass audit compliance"
+        )
+    if assertion_cov < 0.5:
+        suggestions.append(
+            "Add machine-verifiable assertions (grep_present/grep_absent) "
+            "to FRs for automated audit pre-flight"
+        )
+    if suggestions:
+        details["suggestions"] = suggestions
 
     return DimensionScore(
         name="traceability",
