@@ -7,6 +7,8 @@ Integration: score_traceability_v2 includes new dimensions
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from trw_mcp.state.validation._prd_scoring import (
@@ -313,3 +315,251 @@ class TestScoreTraceabilityV2Integration:
         ac = result.details["assertion_coverage"]
         assert isinstance(ac, float)
         assert 0.0 <= ac <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — FR09: Rework Metrics (_deferred_steps_learning.py)
+# ---------------------------------------------------------------------------
+
+
+class TestReworkMetrics:
+    """Tests for _step_collect_rework_metrics (PRD-QUAL-056-FR09)."""
+
+    @pytest.mark.unit
+    def test_empty_events_returns_empty_metrics(self, tmp_path: Path) -> None:
+        """No audit events = empty metrics with zero aggregates."""
+        from trw_mcp.state.persistence import FileStateReader
+
+        from trw_mcp.tools._deferred_steps_learning import (
+            _step_collect_rework_metrics,
+        )
+
+        # Create empty events.jsonl
+        meta = tmp_path / "meta"
+        meta.mkdir()
+        (meta / "events.jsonl").write_text("")
+
+        reader = FileStateReader()
+        result = _step_collect_rework_metrics(tmp_path, reader)
+
+        assert result["audit_cycles"] == {}
+        assert result["first_pass_compliance"] == {}
+        assert result["sprint_avg_audit_cycles"] == 0.0
+        assert result["sprint_first_pass_compliance_rate"] == 0.0
+
+    @pytest.mark.unit
+    def test_single_prd_two_cycles(self, tmp_path: Path) -> None:
+        """PRD with 2 audit cycles has audit_cycles=2, first_pass_compliance=False."""
+        import json
+
+        from trw_mcp.state.persistence import FileStateReader
+
+        from trw_mcp.tools._deferred_steps_learning import (
+            _step_collect_rework_metrics,
+        )
+
+        meta = tmp_path / "meta"
+        meta.mkdir()
+        events = [
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-TEST-001", "verdict": "FAIL"}},
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-TEST-001", "verdict": "PASS"}},
+        ]
+        (meta / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+        reader = FileStateReader()
+        result = _step_collect_rework_metrics(tmp_path, reader)
+
+        assert result["audit_cycles"] == {"PRD-TEST-001": 2}
+        assert result["first_pass_compliance"]["PRD-TEST-001"] is False
+        assert result["sprint_avg_audit_cycles"] == 2.0
+
+    @pytest.mark.unit
+    def test_first_pass_compliance_true(self, tmp_path: Path) -> None:
+        """PRD that passes on first audit has first_pass_compliance=True."""
+        import json
+
+        from trw_mcp.state.persistence import FileStateReader
+
+        from trw_mcp.tools._deferred_steps_learning import (
+            _step_collect_rework_metrics,
+        )
+
+        meta = tmp_path / "meta"
+        meta.mkdir()
+        events = [
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-TEST-002", "verdict": "PASS"}},
+        ]
+        (meta / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+        reader = FileStateReader()
+        result = _step_collect_rework_metrics(tmp_path, reader)
+
+        assert result["audit_cycles"] == {"PRD-TEST-002": 1}
+        assert result["first_pass_compliance"]["PRD-TEST-002"] is True
+        assert result["sprint_first_pass_compliance_rate"] == 1.0
+
+    @pytest.mark.unit
+    def test_sprint_aggregates(self, tmp_path: Path) -> None:
+        """Sprint avg and compliance rate computed correctly across 3 PRDs."""
+        import json
+
+        from trw_mcp.state.persistence import FileStateReader
+
+        from trw_mcp.tools._deferred_steps_learning import (
+            _step_collect_rework_metrics,
+        )
+
+        meta = tmp_path / "meta"
+        meta.mkdir()
+        events = [
+            # PRD-A: 1 cycle, pass on first -> first_pass_compliance=True
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-A", "verdict": "PASS"}},
+            # PRD-B: 2 cycles, fail then pass -> first_pass_compliance=False
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-B", "verdict": "FAIL"}},
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-B", "verdict": "PASS"}},
+            # PRD-C: 3 cycles -> first_pass_compliance=False
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-C", "verdict": "FAIL"}},
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-C", "verdict": "FAIL"}},
+            {"event": "audit_cycle_complete", "data": {"prd_id": "PRD-C", "verdict": "PASS"}},
+        ]
+        (meta / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+        reader = FileStateReader()
+        result = _step_collect_rework_metrics(tmp_path, reader)
+
+        assert result["audit_cycles"] == {"PRD-A": 1, "PRD-B": 2, "PRD-C": 3}
+        assert result["first_pass_compliance"] == {"PRD-A": True, "PRD-B": False, "PRD-C": False}
+        # avg = (1+2+3)/3 = 2.0
+        assert result["sprint_avg_audit_cycles"] == 2.0
+        # 1 out of 3 passed first time
+        assert abs(result["sprint_first_pass_compliance_rate"] - 1.0 / 3.0) < 1e-6
+
+    @pytest.mark.unit
+    def test_no_run_path_returns_empty(self) -> None:
+        """None run_path returns empty metrics."""
+        from trw_mcp.state.persistence import FileStateReader
+
+        from trw_mcp.tools._deferred_steps_learning import (
+            _step_collect_rework_metrics,
+        )
+
+        reader = FileStateReader()
+        result = _step_collect_rework_metrics(None, reader)
+
+        assert result["audit_cycles"] == {}
+        assert result["sprint_avg_audit_cycles"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — FR10: Audit Pattern Auto-Promotion (_cycle.py)
+# ---------------------------------------------------------------------------
+
+
+class TestAuditPatternRecurrence:
+    """Tests for detect_audit_finding_recurrence (PRD-QUAL-056-FR10)."""
+
+    @pytest.mark.unit
+    def test_no_audit_findings_returns_empty(self) -> None:
+        """No audit-finding tags = no promotion candidates."""
+        from trw_mcp.state.consolidation._cycle import (
+            detect_audit_finding_recurrence,
+        )
+
+        entries: list[dict[str, object]] = [
+            {"id": "L-1", "tags": ["testing", "pattern"], "summary": "something"},
+            {"id": "L-2", "tags": ["bug"], "summary": "another thing"},
+        ]
+        result = detect_audit_finding_recurrence(entries)
+        assert result == []
+
+    @pytest.mark.unit
+    def test_below_threshold_not_promoted(self) -> None:
+        """2 PRDs with same category (below threshold of 3) = not promoted."""
+        from trw_mcp.state.consolidation._cycle import (
+            detect_audit_finding_recurrence,
+        )
+
+        entries: list[dict[str, object]] = [
+            {"id": "L-1", "tags": ["audit-finding", "spec_gap", "PRD-A"], "summary": "missing spec"},
+            {"id": "L-2", "tags": ["audit-finding", "spec_gap", "PRD-B"], "summary": "spec gap again"},
+        ]
+        result = detect_audit_finding_recurrence(entries)
+        assert result == []
+
+    @pytest.mark.unit
+    def test_above_threshold_promoted(self) -> None:
+        """3+ PRDs with same category = promoted."""
+        from trw_mcp.state.consolidation._cycle import (
+            detect_audit_finding_recurrence,
+        )
+
+        entries: list[dict[str, object]] = [
+            {"id": "L-1", "tags": ["audit-finding", "spec_gap", "PRD-A"], "summary": "missing spec in A"},
+            {"id": "L-2", "tags": ["audit-finding", "spec_gap", "PRD-B"], "summary": "spec gap in B"},
+            {"id": "L-3", "tags": ["audit-finding", "spec_gap", "PRD-C"], "summary": "spec gap in C"},
+        ]
+        result = detect_audit_finding_recurrence(entries)
+        assert len(result) == 1
+        candidate = result[0]
+        assert candidate["category"] == "spec_gap"
+        assert candidate["prd_count"] == 3
+        assert set(candidate["prd_ids"]) == {"PRD-A", "PRD-B", "PRD-C"}  # type: ignore[arg-type]
+        assert len(candidate["sample_summaries"]) <= 3  # type: ignore[arg-type]
+        assert isinstance(candidate["nudge_line"], str)
+        assert len(str(candidate["nudge_line"])) > 0
+
+    @pytest.mark.unit
+    def test_multiple_categories_independent(self) -> None:
+        """Each category counted independently."""
+        from trw_mcp.state.consolidation._cycle import (
+            detect_audit_finding_recurrence,
+        )
+
+        entries: list[dict[str, object]] = [
+            # spec_gap across 3 PRDs -> promoted
+            {"id": "L-1", "tags": ["audit-finding", "spec_gap", "PRD-A"], "summary": "s1"},
+            {"id": "L-2", "tags": ["audit-finding", "spec_gap", "PRD-B"], "summary": "s2"},
+            {"id": "L-3", "tags": ["audit-finding", "spec_gap", "PRD-C"], "summary": "s3"},
+            # impl_gap across only 2 PRDs -> NOT promoted
+            {"id": "L-4", "tags": ["audit-finding", "impl_gap", "PRD-A"], "summary": "i1"},
+            {"id": "L-5", "tags": ["audit-finding", "impl_gap", "PRD-B"], "summary": "i2"},
+        ]
+        result = detect_audit_finding_recurrence(entries)
+        assert len(result) == 1
+        assert result[0]["category"] == "spec_gap"
+
+    @pytest.mark.unit
+    def test_custom_threshold(self) -> None:
+        """threshold=5 requires 5 distinct PRDs."""
+        from trw_mcp.state.consolidation._cycle import (
+            detect_audit_finding_recurrence,
+        )
+
+        entries: list[dict[str, object]] = [
+            {"id": f"L-{i}", "tags": ["audit-finding", "spec_gap", f"PRD-{chr(65+i)}"], "summary": f"s{i}"}
+            for i in range(4)
+        ]
+        # 4 PRDs, threshold=5 -> not promoted
+        assert detect_audit_finding_recurrence(entries, threshold=5) == []
+
+        # Add a 5th PRD -> promoted
+        entries.append({"id": "L-4", "tags": ["audit-finding", "spec_gap", "PRD-E"], "summary": "s4"})
+        result = detect_audit_finding_recurrence(entries, threshold=5)
+        assert len(result) == 1
+        assert result[0]["prd_count"] == 5
+
+    @pytest.mark.unit
+    def test_duplicate_prd_in_same_category_counted_once(self) -> None:
+        """Same PRD appearing multiple times in same category counted as 1 distinct PRD."""
+        from trw_mcp.state.consolidation._cycle import (
+            detect_audit_finding_recurrence,
+        )
+
+        entries: list[dict[str, object]] = [
+            {"id": "L-1", "tags": ["audit-finding", "spec_gap", "PRD-A"], "summary": "s1"},
+            {"id": "L-2", "tags": ["audit-finding", "spec_gap", "PRD-A"], "summary": "s2"},
+            {"id": "L-3", "tags": ["audit-finding", "spec_gap", "PRD-B"], "summary": "s3"},
+        ]
+        # Only 2 distinct PRDs (A, B) -> below default threshold of 3
+        result = detect_audit_finding_recurrence(entries)
+        assert result == []

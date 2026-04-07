@@ -280,3 +280,113 @@ def consolidate_cycle(
         errors=len(errors),
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-056-FR10 — Audit Pattern Auto-Promotion
+# ---------------------------------------------------------------------------
+
+# Known audit-finding category tags.
+_AUDIT_FINDING_CATEGORIES: frozenset[str] = frozenset({
+    "spec_gap",
+    "impl_gap",
+    "test_gap",
+    "doc_gap",
+    "config_gap",
+    "security_gap",
+    "perf_gap",
+    "compat_gap",
+})
+
+_PRD_TAG_PREFIX = "PRD-"
+
+
+def detect_audit_finding_recurrence(
+    entries: list[dict[str, object]],
+    threshold: int = 3,
+) -> list[dict[str, object]]:
+    """Detect audit-finding learnings that recur across distinct PRDs.
+
+    Scans learnings tagged with ``audit-finding`` and groups by finding
+    category (spec_gap, impl_gap, etc.). When a category has findings
+    from ``threshold``+ distinct PRD IDs, it is flagged for CLAUDE.md
+    promotion.
+
+    Args:
+        entries: List of learning entry dicts.
+        threshold: Minimum distinct PRD count to trigger promotion flag.
+
+    Returns:
+        List of promotion candidate dicts with:
+        - category: finding category
+        - prd_count: number of distinct PRDs
+        - prd_ids: list of PRD IDs
+        - sample_summaries: up to 3 representative summaries
+        - nudge_line: recommended CLAUDE.md nudge text
+    """
+    # Group: category -> {prd_id -> [summaries]}
+    category_data: dict[str, dict[str, list[str]]] = {}
+
+    for entry in entries:
+        raw_tags = entry.get("tags")
+        if not raw_tags or not isinstance(raw_tags, list):
+            continue
+
+        tags: list[str] = [str(t) for t in raw_tags]
+
+        # Only process entries tagged with "audit-finding"
+        if "audit-finding" not in tags:
+            continue
+
+        # Find category tags and PRD tags
+        categories: list[str] = []
+        prd_ids: list[str] = []
+        for tag in tags:
+            if tag in _AUDIT_FINDING_CATEGORIES:
+                categories.append(tag)
+            elif tag.startswith(_PRD_TAG_PREFIX):
+                prd_ids.append(tag)
+
+        summary = str(entry.get("summary", ""))
+
+        # Associate each (category, prd_id) pair
+        for cat in categories:
+            if cat not in category_data:
+                category_data[cat] = {}
+            for prd_id in prd_ids:
+                if prd_id not in category_data[cat]:
+                    category_data[cat][prd_id] = []
+                category_data[cat][prd_id].append(summary)
+
+    # Build promotion candidates
+    candidates: list[dict[str, object]] = []
+    for category, prd_map in sorted(category_data.items()):
+        distinct_prds = len(prd_map)
+        if distinct_prds < threshold:
+            continue
+
+        prd_ids_sorted = sorted(prd_map.keys())
+        # Collect up to 3 sample summaries from distinct PRDs
+        sample_summaries: list[str] = []
+        for pid in prd_ids_sorted[:3]:
+            sums = prd_map[pid]
+            if sums:
+                sample_summaries.append(sums[0])
+
+        nudge_line = (
+            f"Recurring {category.replace('_', ' ')} across {distinct_prds} PRDs"
+            f" — consider adding a checklist item"
+        )
+        # Truncate to 80 chars max
+        if len(nudge_line) > 80:
+            nudge_line = nudge_line[:77] + "..."
+
+        candidates.append({
+            "category": category,
+            "prd_count": distinct_prds,
+            "prd_ids": prd_ids_sorted,
+            "sample_summaries": sample_summaries,
+            "nudge_line": nudge_line,
+        })
+
+    return candidates

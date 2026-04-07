@@ -68,6 +68,9 @@ from ._cycle import (
 from ._cycle import (
     consolidate_cycle as consolidate_cycle,
 )
+from ._cycle import (
+    detect_audit_finding_recurrence as detect_audit_finding_recurrence,
+)
 
 # --- Summarization: LLM + fallback ---
 from ._summarize import (
@@ -90,6 +93,7 @@ __all__ = [
     "_summarize_cluster_fallback",
     "_tag_overlap_clusters",
     "consolidate_cycle",
+    "detect_audit_finding_recurrence",
     "find_clusters",
     "get_config",
 ]

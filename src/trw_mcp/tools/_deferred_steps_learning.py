@@ -21,6 +21,7 @@ from trw_mcp.models.typed_dicts import (
     OutcomeCorrelationStepResult,
     PublishLearningsResult,
     RecallOutcomeStepResult,
+    ReworkMetricsResult,
     TrustIncrementResult,
 )
 
@@ -384,3 +385,93 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         metrics=[k for k in result if k != "status"],
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-056-FR09: Rework metrics for delivery report
+# ---------------------------------------------------------------------------
+
+
+def _step_collect_rework_metrics(
+    run_path: Path | None,
+    reader: FileStateReader,
+) -> ReworkMetricsResult:
+    """Collect audit rework metrics from events.jsonl for the delivery report.
+
+    Scans events.jsonl for:
+    - audit_cycle_complete events (counted per PRD ID)
+    - First verdict per PRD determines first-pass compliance
+
+    Returns dict with:
+    - audit_cycles: dict mapping PRD ID to cycle count
+    - first_pass_compliance: dict mapping PRD ID to bool
+    - sprint_avg_audit_cycles: float average across all PRDs
+    - sprint_first_pass_compliance_rate: float (0.0-1.0)
+    """
+    empty: ReworkMetricsResult = {
+        "audit_cycles": {},
+        "first_pass_compliance": {},
+        "sprint_avg_audit_cycles": 0.0,
+        "sprint_first_pass_compliance_rate": 0.0,
+    }
+
+    if run_path is None:
+        return empty
+
+    events_path = run_path / "meta" / "events.jsonl"
+    if not events_path.exists():
+        return empty
+
+    try:
+        events = reader.read_jsonl(events_path)
+    except Exception:  # justified: fail-open, metrics are best-effort
+        logger.debug("rework_metrics_read_failed", exc_info=True)
+        return empty
+
+    # Track per-PRD: cycle count and first verdict
+    audit_cycles: dict[str, int] = {}
+    first_verdict: dict[str, str] = {}
+
+    for ev in events:
+        ev_type = str(ev.get("event", ""))
+        if ev_type != "audit_cycle_complete":
+            continue
+
+        ev_data = ev.get("data", {})
+        if not isinstance(ev_data, dict):
+            continue
+
+        prd_id = str(ev_data.get("prd_id", ""))
+        if not prd_id:
+            continue
+
+        verdict = str(ev_data.get("verdict", "")).upper()
+
+        audit_cycles[prd_id] = audit_cycles.get(prd_id, 0) + 1
+
+        # Record first verdict for first-pass compliance
+        if prd_id not in first_verdict:
+            first_verdict[prd_id] = verdict
+
+    if not audit_cycles:
+        return empty
+
+    # Compute first-pass compliance per PRD
+    first_pass_compliance: dict[str, bool] = {
+        prd_id: first_verdict.get(prd_id, "") == "PASS"
+        for prd_id in audit_cycles
+    }
+
+    # Sprint-level aggregates
+    total_cycles = sum(audit_cycles.values())
+    prd_count = len(audit_cycles)
+    sprint_avg = total_cycles / prd_count if prd_count > 0 else 0.0
+    compliant_count = sum(1 for v in first_pass_compliance.values() if v)
+    compliance_rate = compliant_count / prd_count if prd_count > 0 else 0.0
+
+    return {
+        "audit_cycles": audit_cycles,
+        "first_pass_compliance": first_pass_compliance,
+        "sprint_avg_audit_cycles": sprint_avg,
+        "sprint_first_pass_compliance_rate": compliance_rate,
+    }
