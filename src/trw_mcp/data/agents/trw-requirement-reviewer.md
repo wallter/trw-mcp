@@ -1,7 +1,9 @@
 ---
 name: trw-requirement-reviewer
-effort: medium
-description: "Use this agent when you need to assess PRD quality before sprint planning or after grooming. This agent returns a structured review with per-dimension scores and a READY/NEEDS WORK/BLOCK verdict covering completeness, ambiguity, traceability, and acceptance criteria testability. Read-only access."
+description: >
+  Invoke to assess PRD quality before sprint planning or after grooming.
+  Returns a structured review with per-dimension scores and a
+  READY/NEEDS WORK/BLOCK verdict. Read-only — never modifies files.
 model: sonnet
 maxTurns: 20
 memory: project

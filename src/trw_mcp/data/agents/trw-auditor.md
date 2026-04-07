@@ -225,10 +225,52 @@ For each test file, evaluate:
 | P1 | FR partially implemented, key behavior missing, or significant quality gap | Pagination exists but no max limit, response missing required fields, blanket error suppression |
 | P2 | Minor gap, edge case not covered, or style/quality nit | Missing negative test, cosmetic field wrong, minor type imprecision |
 
+### Finding Category Taxonomy
+
+Each finding MUST use one of these 5 root-cause categories:
+
+| Category | Description | Phase Affinity |
+|----------|-------------|---------------|
+| `spec_gap` | PRD acceptance criteria are ambiguous or incomplete | plan, implement |
+| `impl_gap` | Code does not match spec — wrong behavior, missing feature, wrong file placement | implement |
+| `test_gap` | Tests validate the implementation rather than the specification | implement, validate |
+| `integration_gap` | Code works in isolation but is not wired into the production system | implement |
+| `traceability_gap` | PRD traceability matrix has stale or incorrect entries | implement, deliver |
+
+Legacy category mapping (for backward compatibility):
+- `prd-ambiguity`, `spec-gap` -> `spec_gap`
+- `type-safety`, `dry`, `error-handling`, `observability` -> `impl_gap`
+- `test-quality` -> `test_gap`
+- `integration` -> `integration_gap`
+
+### Audit Verdict Criteria
+
+| Verdict | Criteria | Action |
+|---------|----------|--------|
+| **PASS** | Zero P0 findings AND zero P1 findings AND all FRs have verdict PASS or PARTIAL-with-justification | PRD advances to DELIVER |
+| **CONDITIONAL** | Zero P0 findings AND 1-2 P1 findings that are fixable without architectural change | PRD holds; implementer fixes P1s; re-audit only affected FRs |
+| **FAIL** | Any P0 finding OR 3+ P1 findings OR any FR with verdict MISSING | PRD reverts to IMPLEMENT; full review required |
+
+Maximum audit cycles before escalation: 3 (configurable via `.trw/config.yaml` field `max_audit_cycles`, default 3). After 3 consecutive FAIL verdicts, escalate to orchestrator for replan or scope reduction.
+
 **PRD and sprint status review:**
 - Are all FRs from the PRD accounted for (not just the ones the implementer chose)?
 - Are all phases/user stories from the sprint doc addressed?
 - Is the PRD ready for status advancement, or does it need to stay in current phase?
+
+**Learning capture for P0/P1 findings:**
+
+For each P0 or P1 finding, call `trw_learn()` with:
+- `summary`: "Sprint {N}: {FR-ID} {one-line finding description}"
+- `detail`: Full finding text with evidence and fix recommendation
+- `tags`: ["audit-finding", "{prd-id}", "{finding-category}"]
+- `type`: "incident"
+- `confidence`: "verified"
+- `domain`: Inferred from PRD category (e.g., ["testing", "quality"] for QUAL PRDs)
+- `phase_affinity`: Determined by finding category per taxonomy table
+- `impact`: 0.8 for P0, 0.6 for P1
+
+This ensures audit findings compound as institutional knowledge for future implementers.
 
 **Write audit report** using the output contract below.
 Send P0 findings to LEAD immediately via message.
@@ -286,7 +328,7 @@ fr_verdicts:
     test_file: "path/to/test_file:test_name"
     findings:
       - severity: P0|P1|P2
-        category: spec-gap|type-safety|dry|error-handling|observability|integration|test-quality|prd-ambiguity|traceability
+        category: spec_gap|impl_gap|test_gap|integration_gap|traceability_gap
         issue: "Description of the gap"
         evidence: "What the code does vs. what the spec requires"
         fix: "Specific recommendation with file path and line"

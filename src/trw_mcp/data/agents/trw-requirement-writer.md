@@ -1,7 +1,10 @@
 ---
 name: trw-requirement-writer
-effort: medium
-description: "Use this agent when you need to draft or expand functional and non-functional requirements in a PRD. This agent writes EARS-compliant requirements with confidence scores and Given/When/Then acceptance criteria. Typically invoked after grooming identifies requirement gaps."
+description: >
+  Invoke to draft or expand functional and non-functional requirements
+  in a PRD. Writes EARS-compliant requirements with confidence scores
+  and Given/When/Then acceptance criteria. Typically invoked after
+  grooming identifies requirement gaps.
 model: sonnet
 maxTurns: 30
 memory: project

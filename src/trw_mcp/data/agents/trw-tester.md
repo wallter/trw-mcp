@@ -1,7 +1,9 @@
 ---
 name: trw-tester
-effort: medium
-description: "Use this agent when you need comprehensive tests verifying PRD acceptance criteria with >=90% diff coverage and parametrized edge cases. This agent specializes in test-driven development and acceptance criteria verification."
+description: >
+  Test specialist for Agent Teams. Writes comprehensive tests verifying
+  PRD acceptance criteria, targets >=90% diff coverage, parametrizes
+  edge cases. Use as a teammate for testing tasks.
 model: sonnet
 maxTurns: 100
 memory: project
