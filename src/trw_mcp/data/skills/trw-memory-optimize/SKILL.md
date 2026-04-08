@@ -13,36 +13,62 @@ Optimize the TRW self-learning layer by pruning low-value entries, consolidating
 
 ## Workflow
 
-1. **Audit first**: Run the same analysis as `/trw-memory-audit`:
-   - Call `trw_recall('*', compact=true)` for all learnings
-   - Read `.trw/learnings/index.yaml`
-   - Analyze tags, impact, staleness, duplicates
+### Step 1: Audit first
 
-2. **Build optimization plan**:
-   - **Prune candidates**: Entries with impact < 0.4, entries tagged `repeated` with count suffix, entries referencing removed features
-   - **Consolidate candidates**: Near-duplicate entries that can be merged into a single compendium entry
-   - **Tag cleanup**: Orphan tags to remove, inconsistent tag names to normalize
-   - **Impact recalibration**: Entries whose impact scores seem miscalibrated based on actual utility
+Run `/trw-memory-audit` or the trw-maintain audit command to understand the current state:
 
-3. **Present plan**: Show the user:
-   - Entries to delete (with summary and current impact)
-   - Entries to consolidate (showing which merge into what)
-   - Tag changes proposed
-   - Ask for confirmation before proceeding
+```bash
+trw-maintain audit --trw-dir .trw --no-llm
+```
 
-4. **Execute** (only after user confirmation):
-   - For deletions: Read each entry YAML file, update status to `obsolete` (do not delete the file — TRW tracks obsolete entries)
-   - For consolidations: Create a new compendium entry via `trw_learn`, then mark originals as `obsolete`
-   - For tag cleanup: Edit entry YAML files to update tags
+### Step 2: Build optimization plan
 
-5. **Sync**: Call `trw_claude_md_sync()` to update CLAUDE.md with the optimized learning set.
+Use `trw-maintain optimize` to build a structured plan:
 
-6. **Report**: Before/after summary:
-   - Active entries: before → after
-   - Entries made obsolete
-   - Entries consolidated
-   - Tags normalized
-   - CLAUDE.md updated
+```bash
+# Dry-run: show what would change
+trw-maintain optimize --trw-dir .trw --no-impact
+
+# With LLM-powered impact assessment (requires Ollama + gemma4)
+trw-maintain optimize --trw-dir .trw --model gemma4:e2b
+
+# Machine-readable plan
+trw-maintain optimize --trw-dir .trw --format json
+```
+
+The plan identifies:
+- **Prune candidates**: Low impact + stale, noise patterns, very old entries
+- **Consolidation groups**: Semantically similar entries (requires embedding model)
+- **Tag cleanup**: Orphan tags, near-duplicate tags, hot tags
+- **Impact adjustments**: Entries with miscalibrated scores (requires LLM)
+
+### Step 3: Present plan to user
+
+Show the plan and ask for confirmation before proceeding. The user should review:
+- Entries proposed for pruning (are any valuable?)
+- Consolidation groups (are they truly duplicates?)
+- Tag renames (are the canonical forms correct?)
+
+### Step 4: Execute (after confirmation)
+
+```bash
+# Apply the optimization plan
+trw-maintain optimize --trw-dir .trw --apply
+```
+
+Or apply selectively using `trw_learn_update()` for individual entries.
+
+### Step 5: Sync
+
+Call `trw_claude_md_sync()` to update CLAUDE.md with the optimized learning set.
+
+### Step 6: Report
+
+Run `trw-maintain audit` again and compare before/after:
+- Active entries: before → after
+- Entries made obsolete
+- Tags normalized
+- Assertion coverage change
 
 ## Sizing Guidelines
 
