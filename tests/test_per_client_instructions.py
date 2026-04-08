@@ -59,20 +59,19 @@ class TestRenderOpencodeInstructions:
     """Tests for render_opencode_instructions(model_family)."""
 
     @pytest.mark.parametrize(
-        ("model_family", "expected_headings"),
+        ("model_family", "expected_title"),
         [
-            ("qwen", ["## Qwen-Coder-Next Optimized Workflow", "### Qwen-Specific Notes"]),
-            ("gpt", ["## GPT-5.4 Optimized Workflow", "### GPT-Specific Notes"]),
-            ("claude", ["## Claude Optimized Workflow", "### Claude-Specific Notes"]),
-            ("generic", ["## General Model Workflow"]),
+            ("qwen", "# Qwen-Coder-Next TRW Instructions"),
+            ("gpt", "# GPT TRW Instructions"),
+            ("claude", "# Claude TRW Instructions"),
+            ("generic", "# TRW Instructions"),
         ],
     )
-    def test_model_family_specific_headings(self, model_family: str, expected_headings: list[str]) -> None:
-        """Each model family has its own heading and section structure."""
+    def test_model_family_specific_title(self, model_family: str, expected_title: str) -> None:
+        """Each model family has its own title."""
         result = render_opencode_instructions(model_family)
 
-        for heading in expected_headings:
-            assert heading in result, f"Missing heading '{heading}' for {model_family}"
+        assert expected_title in result, f"Missing title '{expected_title}' for {model_family}"
 
     def test_all_model_families_share_common_workflow(self) -> None:
         """All model families share the same 5-step workflow."""
@@ -88,7 +87,7 @@ class TestRenderOpencodeInstructions:
             ("qwen", True),
             ("gpt", True),
             ("claude", True),
-            ("generic", False),
+            ("generic", True),
         ],
     )
     def test_checkpoint_reference_toggles_per_family(
@@ -108,22 +107,21 @@ class TestRenderOpencodeInstructions:
         result = render_opencode_instructions("qwen")
 
         assert "Qwen" in result
-        assert "structured" in result
+        assert "vLLM" in result or "vllm" in result
 
     def test_gpt_specific_notes_contains_gpt_content(self) -> None:
         """GPT-specific instructions contain GPT-relevant guidance."""
         result = render_opencode_instructions("gpt")
 
-        assert "GPT" in result or "reasoning" in result
-        assert "reasoning" in result
-        assert "test coverage" in result
+        assert "GPT" in result
+        assert "chain" in result.lower() or "reasoning" in result.lower()
 
     def test_claude_specific_notes_contains_claude_content(self) -> None:
         """Claude-specific instructions contain Claude-relevant guidance."""
         result = render_opencode_instructions("claude")
 
-        assert "Claude" in result or "Agent Teams" in result
-        assert "file navigation" in result
+        assert "Claude" in result
+        assert "extended thinking" in result.lower() or "XML" in result
 
 
 # ── Generate Instructions Tests ───────────────────────────────────────────
@@ -302,8 +300,8 @@ class TestMigrateTrwContentFromAgentsMd:
         assert migrated is False
         assert path == ""
 
-    def test_returns_false_when_no_trw_section_content(self, tmp_path: Path) -> None:
-        """Empty TRW section → no migration."""
+    def test_strips_empty_trw_markers_from_agents_md(self, tmp_path: Path) -> None:
+        """Empty TRW markers are stripped from AGENTS.md and migrated=True is returned."""
         agents_path = tmp_path / "AGENTS.md"
         agents_path.write_text(
             f"# My Project\n\n{TRW_MARKER_START}\n{TRW_MARKER_END}\n",
@@ -312,8 +310,13 @@ class TestMigrateTrwContentFromAgentsMd:
 
         migrated, path = _migrate_trw_content_from_agents_md(tmp_path, TRWConfig())
 
-        assert migrated is False
+        # Empty markers are still cleaned up — markers removed, user content preserved.
+        assert migrated is True
         assert path == ""
+        content = agents_path.read_text(encoding="utf-8")
+        assert TRW_MARKER_START not in content
+        assert TRW_MARKER_END not in content
+        assert "# My Project" in content
 
     def test_migrates_trw_content_to_opencode_instructions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

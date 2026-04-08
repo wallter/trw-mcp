@@ -30,6 +30,7 @@ fi
 _project_root="$(get_repo_root)" || true
 if [ -n "$_project_root" ]; then
   cleanup_block_files "$_project_root/.trw/context"
+  cleanup_phase_cycle "$_project_root"
 fi
 
 # Events exist but no reflection — warn

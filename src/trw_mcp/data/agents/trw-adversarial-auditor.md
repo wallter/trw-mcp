@@ -68,7 +68,14 @@ This pause-and-reflect pattern catches the drift that occurs when auditors becom
 - What does the vision SAY the feature should achieve?
 - What do the user stories SAY the user should experience?
 
-> WAVE PAUSE: Review the extracted checklist. Is every requirement captured? Are there implicit requirements the spec assumes but doesn't state?
+**Check for prior domain learnings (PRD-QUAL-056-FR08):**
+- Call `trw_recall(query='<prd-domain> audit-finding')` to find learnings from prior audits of similar PRDs
+- If relevant learnings are found:
+  1. Note them in audit context as "known patterns to watch for"
+  2. Explicitly verify whether each known pattern has been addressed in this implementation
+  3. Include a "Prior Learning Verification" section in the audit report
+
+> WAVE PAUSE: Review the extracted checklist. Is every requirement captured? Are there implicit requirements the spec assumes but doesn't state? Are prior audit patterns from this domain addressed?
 
 ### Phase 2: Implementation Discovery and Wiring (Wave 2)
 

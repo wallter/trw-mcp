@@ -301,3 +301,39 @@ cleanup_block_files() {
   [ -d "$_cbd_dir" ] || return 0
   rm -f "$_cbd_dir"/idle_block_* "$_cbd_dir"/tc_block_* 2>/dev/null || true
 }
+
+# cleanup_phase_cycle: Remove phase-cycle state files older than 4 hours.
+# Called by session-end.sh as housekeeping.
+# Args: $1=project_root (optional, defaults to get_repo_root)
+cleanup_phase_cycle() {
+  _cpc_root="${1:-$(get_repo_root 2>/dev/null)}"
+  [ -n "$_cpc_root" ] || return 0
+  _cpc_state="$_cpc_root/.claude/trw-phase-cycle.local.md"
+  [ -f "$_cpc_state" ] || return 0
+  # Remove if older than 4 hours (240 minutes)
+  if find "$_cpc_state" -mmin "+240" 2>/dev/null | grep -q .; then
+    rm -f "$_cpc_state" 2>/dev/null || true
+  fi
+}
+
+# read_build_failures: Extract the failures list from build-status.yaml.
+# Prints failures as newline-separated strings, or empty if none.
+# Args: $1=build_status_path (optional, defaults to .trw/context/build-status.yaml)
+read_build_failures() {
+  _rbf_path="${1:-}"
+  if [ -z "$_rbf_path" ]; then
+    _rbf_root="$(get_repo_root 2>/dev/null)" || return 0
+    _rbf_path="$_rbf_root/.trw/context/build-status.yaml"
+  fi
+  [ -f "$_rbf_path" ] || return 0
+  # Extract list items under the 'failures:' key
+  # Handles both inline '[]' and indented '- item' YAML list forms
+  awk '
+    /^failures:/ { in_list=1; next }
+    in_list && /^[^[:space:]]/ { exit }
+    in_list && /^[[:space:]]*-[[:space:]]+/ {
+      sub(/^[[:space:]]*-[[:space:]]+/, "")
+      print
+    }
+  ' "$_rbf_path" 2>/dev/null || true
+}

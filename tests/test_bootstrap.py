@@ -211,6 +211,7 @@ class TestHooks:
     EXPECTED_HOOKS = [
         "lib-ide-adapter.sh",
         "lib-trw.sh",
+        "phase-cycle-stop.sh",
         "post-tool-event.sh",
         "pre-compact.sh",
         "pre-tool-deliver-gate.sh",
