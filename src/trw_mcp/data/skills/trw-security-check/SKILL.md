@@ -1,6 +1,5 @@
 ---
 name: trw-security-check
-model: sonnet
 context: fork
 agent: Explore
 description: >
@@ -10,7 +9,6 @@ description: >
   Use: /trw-security-check [module or 'all']
 user-invocable: true
 argument-hint: "[module or 'all']"
-allowed-tools: Read, Glob, Grep, Bash
 ---
 
 # Security Audit Skill

@@ -1,13 +1,11 @@
 ---
 name: trw-sprint-init
-model: opus
 description: >
   Initialize a new sprint. Lists draft PRDs, creates sprint doc,
   bootstraps run directory, sets up tracking.
   Use: /trw-sprint-init "Sprint 16: Skills Architecture"
 user-invocable: true
 argument-hint: "[sprint name]"
-allowed-tools: Read, Grep, Glob, Write, Edit, Bash, mcp__trw__trw_init, mcp__trw__trw_checkpoint
 ---
 <!-- ultrathink -->
 

@@ -1,12 +1,10 @@
 ---
 name: trw-simplify
-model: sonnet
 description: >
   Simplifies and refines code for clarity, consistency, and maintainability
   while preserving all functionality. Focuses on recently modified code
   unless instructed otherwise.
 user-invocable: true
-allowed-tools: Read, Edit, Bash, Glob, Grep, Write
 ---
 
 # TRW Code Simplifier

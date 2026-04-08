@@ -1,6 +1,5 @@
 ---
 name: trw-memory-audit
-model: sonnet
 context: fork
 agent: Explore
 description: >
@@ -8,7 +7,6 @@ description: >
   staleness, duplicate candidates, and recommendations. Read-only.
   Use: /trw-memory-audit
 user-invocable: true
-allowed-tools: Read, Glob, Grep, mcp__trw__trw_recall
 ---
 
 # Memory Audit Skill

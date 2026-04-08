@@ -1,13 +1,11 @@
 ---
 name: trw-self-review
-model: sonnet
 description: >
   Pre-audit self-review checklist. Run BEFORE requesting formal adversarial audit
   to catch 60%+ of typical findings. Covers assertion verification, wiring checks,
   NFR mini-checklist, and test quality spot-check.
 user-invocable: true
 argument-hint: "[PRD-ID]"
-allowed-tools: Read, Grep, Glob, Bash, mcp__trw__trw_recall, mcp__trw__trw_checkpoint
 ---
 
 # Pre-Audit Self-Review Skill (PRD-QUAL-056-FR05)

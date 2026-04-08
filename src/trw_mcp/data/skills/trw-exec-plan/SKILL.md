@@ -1,13 +1,11 @@
 ---
 name: trw-exec-plan
-model: opus
 description: >
   Internal phase: Generate an execution plan from a groomed PRD. Decomposes FRs
   into micro-tasks with file paths, test names, verification commands, and dependency graphs.
   Called automatically by /trw-prd-ready and /trw-prd-new.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
-allowed-tools: Read, Grep, Glob, Write, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn
 ---
 <!-- ultrathink -->
 

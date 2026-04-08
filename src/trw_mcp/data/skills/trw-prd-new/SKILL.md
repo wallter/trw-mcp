@@ -1,6 +1,5 @@
 ---
 name: trw-prd-new
-model: opus
 description: >
   Create a new PRD from a feature description, then automatically run the full
   readiness pipeline (groom → review → execution plan) so the user gets a
@@ -8,7 +7,6 @@ description: >
   Use: /trw-prd-new "Add rate limiting to the API"
 user-invocable: true
 argument-hint: "[feature description]"
-allowed-tools: Read, Grep, Glob, Write, Bash, WebSearch, Agent, mcp__trw__trw_recall, mcp__trw__trw_prd_create, mcp__trw__trw_prd_validate, mcp__trw__trw_learn
 ---
 
 # PRD Creation + Full Pipeline

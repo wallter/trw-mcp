@@ -5,10 +5,8 @@ description: >
   type(scope): msg format with WHY rationale and PRD-ID linking.
   Use: /trw-commit or /trw-commit "optional message hint"
 user-invocable: true
-model: sonnet
 disable-model-invocation: true
 argument-hint: "[optional message hint]"
-allowed-tools: Read, Grep, Glob, Bash
 ---
 
 # Convention-Enforced Commit Skill
