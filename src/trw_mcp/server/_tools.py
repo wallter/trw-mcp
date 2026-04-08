@@ -1,6 +1,6 @@
 """Tool, resource, and prompt registration for the TRW MCP server.
 
-All 23 tools, 6 resources, and prompts are registered eagerly at import
+All 24 tools, 6 resources, and prompts are registered eagerly at import
 so they are available via ``fastmcp run`` and test imports.
 """
 
