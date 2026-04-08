@@ -301,6 +301,45 @@ _AUDIT_FINDING_CATEGORIES: frozenset[str] = frozenset({
 _PRD_TAG_PREFIX = "PRD-"
 
 
+def _accumulate_audit_entry(
+    entry: dict[str, object],
+    category_data: dict[str, dict[str, list[str]]],
+) -> None:
+    """Accumulate a single entry's audit-finding data into *category_data*.
+
+    Skips entries that are not tagged ``audit-finding`` or lack valid tags.
+    """
+    raw_tags = entry.get("tags")
+    if not raw_tags or not isinstance(raw_tags, list):
+        return
+
+    tags: list[str] = [str(t) for t in raw_tags]
+
+    # Only process entries tagged with "audit-finding"
+    if "audit-finding" not in tags:
+        return
+
+    # Find category tags and PRD tags
+    categories: list[str] = []
+    prd_ids: list[str] = []
+    for tag in tags:
+        if tag in _AUDIT_FINDING_CATEGORIES:
+            categories.append(tag)
+        elif tag.startswith(_PRD_TAG_PREFIX):
+            prd_ids.append(tag)
+
+    summary = str(entry.get("summary", ""))
+
+    # Associate each (category, prd_id) pair
+    for cat in categories:
+        if cat not in category_data:
+            category_data[cat] = {}
+        for prd_id in prd_ids:
+            if prd_id not in category_data[cat]:
+                category_data[cat][prd_id] = []
+            category_data[cat][prd_id].append(summary)
+
+
 def detect_audit_finding_recurrence(
     entries: list[dict[str, object]],
     threshold: int = 3,
@@ -328,35 +367,7 @@ def detect_audit_finding_recurrence(
     category_data: dict[str, dict[str, list[str]]] = {}
 
     for entry in entries:
-        raw_tags = entry.get("tags")
-        if not raw_tags or not isinstance(raw_tags, list):
-            continue
-
-        tags: list[str] = [str(t) for t in raw_tags]
-
-        # Only process entries tagged with "audit-finding"
-        if "audit-finding" not in tags:
-            continue
-
-        # Find category tags and PRD tags
-        categories: list[str] = []
-        prd_ids: list[str] = []
-        for tag in tags:
-            if tag in _AUDIT_FINDING_CATEGORIES:
-                categories.append(tag)
-            elif tag.startswith(_PRD_TAG_PREFIX):
-                prd_ids.append(tag)
-
-        summary = str(entry.get("summary", ""))
-
-        # Associate each (category, prd_id) pair
-        for cat in categories:
-            if cat not in category_data:
-                category_data[cat] = {}
-            for prd_id in prd_ids:
-                if prd_id not in category_data[cat]:
-                    category_data[cat][prd_id] = []
-                category_data[cat][prd_id].append(summary)
+        _accumulate_audit_entry(entry, category_data)
 
     # Build promotion candidates
     candidates: list[dict[str, object]] = []

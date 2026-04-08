@@ -82,7 +82,7 @@ def build_recall_context(
         profile = config.client_profile
         client_profile = profile.client_id if profile else ""
         model_family = getattr(config, "model_family", "") or ""
-    except Exception:  # justified: fail-open
+    except Exception:  # noqa: S110  # justified: fail-open
         pass
 
     # Thread PRD knowledge IDs from artifact scanning (CORE-106/CORE-116)
@@ -99,7 +99,7 @@ def build_recall_context(
                 raw_ids = kr_data.get("learning_ids", [])
                 if isinstance(raw_ids, list):
                     prd_knowledge_ids = {str(lid) for lid in raw_ids}
-    except Exception:  # justified: fail-open
+    except Exception:  # noqa: S110  # justified: fail-open
         pass
 
     logger.debug(
