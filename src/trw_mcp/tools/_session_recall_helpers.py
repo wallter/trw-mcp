@@ -108,7 +108,7 @@ def append_ceremony_nudge(
                         bandit_instance = BanditSelector.from_json(
                             bandit_state_path.read_text(encoding="utf-8")
                         )
-                except (ImportError, Exception):  # justified: fail-open, bandit is optional
+                except (ImportError, Exception):  # noqa: S110  # justified: fail-open, bandit is optional
                     pass
 
                 # Client class for withholding rates — intelligence code
