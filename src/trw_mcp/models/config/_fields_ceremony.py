@@ -45,7 +45,7 @@ class _CeremonyFields:
 
     # -- Framework version & AARE-F --
 
-    framework_version: str = "v24.4_TRW"
+    framework_version: str = "v24.5_TRW"
     aaref_version: str = "v2.0.0"
 
     # -- PRD quality gates & semantic validation --

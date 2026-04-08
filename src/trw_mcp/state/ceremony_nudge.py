@@ -118,10 +118,10 @@ from trw_mcp.state._nudge_state import (
     reset_ceremony_state as reset_ceremony_state,
 )
 from trw_mcp.state._nudge_state import (
-    set_ceremony_phase as set_ceremony_phase,
+    reset_nudge_count as reset_nudge_count,
 )
 from trw_mcp.state._nudge_state import (
-    reset_nudge_count as reset_nudge_count,
+    set_ceremony_phase as set_ceremony_phase,
 )
 from trw_mcp.state._nudge_state import (
     write_ceremony_state as write_ceremony_state,
