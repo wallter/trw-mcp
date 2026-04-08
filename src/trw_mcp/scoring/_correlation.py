@@ -18,12 +18,16 @@ import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring._io_boundary import (
-    _PendingUpdate,
     _batch_sync_to_sqlite,
-    _default_lookup_entry as _default_lookup_entry,
+    _PendingUpdate,
     _read_recall_tracking_jsonl,
-    _sync_to_sqlite as _sync_to_sqlite,
     _write_pending_entries,
+)
+from trw_mcp.scoring._io_boundary import (
+    _default_lookup_entry as _default_lookup_entry,
+)
+from trw_mcp.scoring._io_boundary import (
+    _sync_to_sqlite as _sync_to_sqlite,
 )
 from trw_mcp.scoring._utils import (
     TRWConfig,
