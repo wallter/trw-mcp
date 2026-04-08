@@ -582,6 +582,16 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         results["critical_steps_completed"] = critical_step_count - len(errors)
         results["deferred_steps"] = 11  # launched in background
 
+        # PRD-QUAL-058-FR05: Read nudge_counts from CeremonyState for deliver event
+        _nudge_summary: dict[str, int] = {}
+        try:
+            from trw_mcp.state._nudge_state import read_ceremony_state as _read_cs
+
+            _cs = _read_cs(trw_dir)
+            _nudge_summary = dict(_cs.nudge_counts)
+        except Exception:  # justified: fail-open
+            pass
+
         # Log trw_deliver_complete to events.jsonl so hooks can detect it
         if resolved_run is not None and (resolved_run / "meta").exists():
             _events.log_event(
@@ -592,6 +602,8 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                     "deferred": deferred_status,
                     "critical_elapsed_seconds": critical_elapsed,
                     "errors": len(errors),
+                    # PRD-QUAL-058-FR05: Aggregate nudge signal at deliver time
+                    "nudge_summary": _nudge_summary,
                 },
             )
 
