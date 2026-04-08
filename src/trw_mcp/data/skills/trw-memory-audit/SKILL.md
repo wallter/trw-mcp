@@ -15,45 +15,46 @@ Analyze the health of TRW's self-learning memory layer and provide actionable re
 
 ## Workflow
 
-1. **Retrieve all learnings**: Call `trw_recall('*', compact=true)` to get the full learning index.
+### Step 1: Run trw-maintain audit
 
-2. **Read index file**: Read `.trw/learnings/index.yaml` for the complete index with metadata.
+The heavy analysis runs locally via `trw-maintain audit`:
 
-3. **Analyze dimensions**:
+```bash
+# Full audit with assertion verification (slower, requires codebase)
+trw-maintain audit --trw-dir .trw --no-llm
 
-   **Tag distribution**:
-   - Count entries per tag
-   - Identify orphan tags (used by only 1 entry)
-   - Identify missing coverage areas (phases or topics with no learnings)
+# Quick audit without verification
+trw-maintain audit --trw-dir .trw --no-llm --no-verify
 
-   **Impact distribution**:
-   - Histogram: how many entries at each impact level (0.0-0.3, 0.3-0.5, 0.5-0.7, 0.7-0.9, 0.9-1.0)
-   - Flag entries with impact >= 0.9 that may be over-rated
-   - Flag entries with impact < 0.3 that provide little value
+# Machine-readable output for further processing
+trw-maintain audit --trw-dir .trw --no-llm --format json
+```
 
-   **Staleness analysis**:
-   - Entries older than 30 days with no recent access
-   - Entries referencing removed tools or deprecated features
-   - Entries tagged with `repeated` or `auto-discovered` that may be noise
+This produces a structured report covering:
+- **Tag distribution**: counts, orphan tags (1 entry), hot tags (>30%)
+- **Impact histogram**: 5 buckets from 0.0 to 1.0
+- **Staleness**: never-accessed, stale at 30/60/90 day thresholds
+- **Assertion health**: coverage %, passing/failing counts
+- **Domain sizing**: topic clusters, target range, overshoot
+- **Recommendations**: algorithmic suggestions for improvement
 
-   **Duplicate detection**:
-   - Entries with similar summaries (fuzzy match on keywords)
-   - Compendium entries that overlap with individual entries
-   - Multiple entries about the same topic that could be consolidated
+### Step 2: Run assertion verification (optional)
 
-4. **Generate recommendations** (top 5):
-   - Entries to prune (low value, stale, or noise)
-   - Entries to consolidate (near-duplicates)
-   - Tags to retire or rename
-   - Coverage gaps to fill
+For deeper assertion health analysis:
 
-5. **Report**: Output structured report with:
-   - Total active/obsolete/resolved counts
-   - Tag distribution table
-   - Impact histogram
-   - Staleness warnings
-   - Duplicate candidates
-   - Top 5 recommendations
+```bash
+trw-maintain verify --trw-dir .trw --workers 4
+```
+
+Reports per-entry pass/fail with specific failing assertions.
+
+### Step 3: Interpret and present results
+
+Read the audit output and present to the user:
+- Highlight the most actionable recommendations
+- Flag entries with failing assertions for investigation
+- Compare domain sizing against the target formula
+- Identify coverage gaps (domains with fewer than 3 entries)
 
 ## Sizing Guidelines
 
