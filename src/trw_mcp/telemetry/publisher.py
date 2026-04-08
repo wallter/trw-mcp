@@ -199,8 +199,13 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                 else:
                     errors += 1
 
-            except Exception:  # justified: fail-open, skip individual entry failures during publish
-                logger.debug("learning_file_processing_failed", file=yaml_file.name)
+            except Exception as exc:  # justified: fail-open, skip individual entry failures during publish
+                logger.debug(
+                    "learning_file_processing_failed",
+                    file=yaml_file.name,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
                 errors += 1
     finally:
         if executor:
@@ -253,11 +258,18 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
                 )
                 _time.sleep(min(retry_after, 10))
                 continue
+            body_preview = ""
+            try:
+                body_preview = e.read(500).decode("utf-8", errors="replace")
+            except Exception:
+                pass
             logger.warning(
                 "learning_post_failed",
                 url=platform_url,
                 status_code=e.code,
                 reason=e.reason,
+                response_body=body_preview,
+                learning_id=payload.get("source_learning_id", ""),
             )
             return False
         except (urllib.error.URLError, OSError) as e:
