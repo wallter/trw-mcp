@@ -1,7 +1,7 @@
 <!-- last-verified: 2026-03-04 -->
 # TRW Framework — Developer Quickstart & Usage Guide
 
-> **Version**: v24.4_TRW | **MCP Tools**: 24 | **Skills**: 24 | **Agents**: 12 | **Hooks**: 15 | **Python**: 3.10+
+> **Version**: <!-- inv:framework_version -->v24.4_TRW<!-- /inv --> | **MCP Tools**: <!-- inv:tools -->24<!-- /inv --> | **Skills**: <!-- inv:skills -->24<!-- /inv --> | **Agents**: <!-- inv:agents -->12<!-- /inv --> | **Hooks**: <!-- inv:hooks -->13<!-- /inv --> | **Python**: 3.10+
 
 This is the hands-on guide for using TRW (The Real Work) in your projects. It covers installation, first-run setup, daily usage, configuration, and observability.
 
