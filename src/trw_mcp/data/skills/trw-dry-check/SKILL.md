@@ -1,6 +1,5 @@
 ---
 name: trw-dry-check
-model: sonnet
 description: >
   Scan files for duplicated code blocks and suggest extraction.
   Read-only analysis — reports findings without modifying code.
@@ -9,7 +8,6 @@ user-invocable: true
 context: fork
 agent: Explore
 argument-hint: "[file-patterns...]"
-allowed-tools: Read, Glob, Grep
 ---
 
 # /trw-dry-check

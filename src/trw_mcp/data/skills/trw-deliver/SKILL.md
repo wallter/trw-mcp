@@ -5,9 +5,7 @@ description: >
   Runs build check (catches bugs before they ship), synthesizes teammate
   learnings (resolves duplicates/conflicts), then trw_deliver. Use: /trw-deliver
 user-invocable: true
-model: sonnet
 disable-model-invocation: true
-allowed-tools: Read, Bash, mcp__trw__trw_build_check, mcp__trw__trw_deliver, mcp__trw__trw_recall, mcp__trw__trw_status, mcp__trw__trw_learn_update, mcp__trw__trw_learn
 ---
 
 # Enhanced Delivery Skill

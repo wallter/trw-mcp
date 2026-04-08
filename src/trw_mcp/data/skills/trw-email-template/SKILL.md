@@ -1,6 +1,5 @@
 ---
 name: trw-email-template
-model: sonnet
 description: >
   Create branded, responsive HTML email templates for transactional emails.
   Generates Jinja2 templates with table-based layout, dark mode support,
@@ -8,7 +7,6 @@ description: >
   Use: /trw-email-template "verification code" or /trw-email-template "password reset"
 user-invocable: true
 argument-hint: "[email type or description]"
-allowed-tools: Read, Glob, Grep, Write, Edit, Bash
 ---
 
 # trw-email-template

@@ -5,9 +5,7 @@ description: >
   updates PRD statuses, archives sprint doc, runs delivery ceremony.
   Use: /trw-sprint-finish
 user-invocable: true
-model: sonnet
 disable-model-invocation: true
-allowed-tools: Read, Grep, Glob, Write, Edit, Bash, mcp__trw__trw_build_check, mcp__trw__trw_deliver
 ---
 
 # Sprint Completion Skill

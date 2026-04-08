@@ -1,13 +1,11 @@
 ---
 name: trw-project-health
-model: sonnet
 description: >
   Audit TRW health in the current or target project. Summarizes tool usage,
   ceremony compliance, hook enforcement, active runs, learnings, and issues.
   Use: /project-health [path]
 user-invocable: true
 argument-hint: "[optional project path]"
-allowed-tools: Read, Grep, Glob, Bash
 ---
 
 # Project Health Skill

@@ -1,6 +1,5 @@
 ---
 name: trw-test-strategy
-model: sonnet
 context: fork
 agent: Explore
 description: >
@@ -10,7 +9,6 @@ description: >
   Use: /trw-test-strategy [module or 'all']
 user-invocable: true
 argument-hint: "[module or 'all']"
-allowed-tools: Read, Glob, Grep, Bash, mcp__trw__trw_build_check
 ---
 
 # Test Strategy Audit Skill

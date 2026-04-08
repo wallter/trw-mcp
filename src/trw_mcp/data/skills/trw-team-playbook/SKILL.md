@@ -1,13 +1,11 @@
 ---
 name: trw-team-playbook
-model: opus
 description: >
   Generate structured teammate playbooks with file ownership and YAML interface
   contracts for Agent Teams. Produces per-teammate playbook files and a validated
   file_ownership.yaml. Use: /trw-team-playbook [sprint-doc-path]
 user-invocable: true
 argument-hint: "[sprint-doc-path or structured args]"
-allowed-tools: Read, Write, Glob, Grep, Bash, Edit, mcp__trw__trw_recall, mcp__trw__trw_status
 ---
 
 # Team Playbook Generation Skill

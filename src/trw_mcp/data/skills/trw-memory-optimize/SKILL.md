@@ -1,12 +1,10 @@
 ---
 name: trw-memory-optimize
-model: sonnet
 description: >
   Optimize learning memory. Prunes stale entries, consolidates duplicates,
   rebalances tags. Interactive — confirms before deleting.
   Use: /trw-memory-optimize
 user-invocable: true
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__trw__trw_recall, mcp__trw__trw_learn_update, mcp__trw__trw_claude_md_sync
 ---
 
 # Memory Optimization Skill

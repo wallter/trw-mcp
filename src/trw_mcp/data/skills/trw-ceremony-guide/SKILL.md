@@ -1,13 +1,11 @@
 ---
 name: trw-ceremony-guide
-model: sonnet
 description: >
   Load the full TRW ceremony reference: tool lifecycle table, execution
   phases, and example flows. Use when you need to know which tool to call
   and when. Invoke: /trw-ceremony-guide
 user-invocable: true
 argument-hint: ""
-allowed-tools: []
 ---
 
 # TRW Ceremony Guide

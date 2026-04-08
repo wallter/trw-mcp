@@ -1,6 +1,5 @@
 ---
 name: trw-audit
-model: sonnet
 context: fork
 agent: general-purpose
 description: >
@@ -10,7 +9,6 @@ description: >
   Use: /trw-audit PRD-CORE-055
 user-invocable: true
 argument-hint: "[PRD-ID or file path]"
-allowed-tools: Read, Grep, Glob, LSP, Write, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn, mcp__trw__trw_review
 ---
 
 # Adversarial Spec-vs-Code Audit Skill
