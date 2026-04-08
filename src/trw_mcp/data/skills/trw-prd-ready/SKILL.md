@@ -1,13 +1,11 @@
 ---
 name: trw-prd-ready
-model: opus
 description: >
   Full PRD lifecycle in one command: create (or pick up existing) → groom → review → refine → execution plan.
   Accepts a feature description ("Add rate limiting") or a PRD ID (PRD-CORE-020).
   Use: /trw-prd-ready "Add rate limiting to the API" or /trw-prd-ready PRD-CORE-020
 user-invocable: true
 argument-hint: "[feature description or PRD-ID]"
-allowed-tools: Read, Grep, Glob, Edit, Write, Bash, WebSearch, Agent, mcp__trw__trw_recall, mcp__trw__trw_prd_create, mcp__trw__trw_prd_validate, mcp__trw__trw_learn
 ---
 
 # PRD Ready — Full Lifecycle Skill

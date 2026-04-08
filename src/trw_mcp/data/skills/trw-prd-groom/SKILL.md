@@ -1,13 +1,11 @@
 ---
 name: trw-prd-groom
-model: opus
 description: >
   Internal phase: Groom a PRD to sprint-ready quality. Researches codebase,
   drafts missing sections, iterates until validation passes.
   Called automatically by /trw-prd-ready and /trw-prd-new. Not intended for direct user invocation.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
-allowed-tools: Read, Grep, Glob, Edit, Write, WebSearch, Bash, mcp__trw__trw_recall, mcp__trw__trw_prd_validate, mcp__trw__trw_learn
 ---
 <!-- ultrathink -->
 
