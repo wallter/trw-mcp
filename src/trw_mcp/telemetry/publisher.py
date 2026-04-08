@@ -40,6 +40,7 @@ class _LearningPayload(TypedDict):
     embedding: list[float] | None
     source_project: str
     source_learning_id: str
+    status: str
 
 
 def _content_hash(data: dict[str, object]) -> str:
@@ -138,12 +139,6 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                     continue
 
                 status = str(data.get("status", "active"))
-                if status != "active":
-                    skipped += 1
-                    # Remove hash for non-active entries so re-activation triggers publish
-                    entry_id = str(data.get("id", yaml_file.stem))
-                    new_hashes.pop(entry_id, None)
-                    continue
 
                 impact = float(str(data.get("impact", 0.5)))
                 if impact < min_impact:
@@ -178,6 +173,7 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                     "embedding": embedding,
                     "source_project": cfg.installation_id or "unknown",
                     "source_learning_id": entry_id,
+                    "status": status,
                 }
 
                 # Fan-out: publish to all configured backends in parallel

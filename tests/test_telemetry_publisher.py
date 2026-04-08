@@ -156,8 +156,8 @@ class TestPublishFiltering:
         assert result["published"] == 2, "entries with impact >= 0.5 should now be published"
         assert result["skipped"] == 0
 
-    def test_publish_skips_non_active_resolved(self, tmp_path: Path) -> None:
-        """Resolved learnings are skipped."""
+    def test_publish_includes_resolved(self, tmp_path: Path) -> None:
+        """Resolved learnings are published with status preserved."""
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -168,18 +168,26 @@ class TestPublishFiltering:
         entries_dir = trw_dir / "learnings" / "entries"
         _write_learning(entries_dir, "resolved.yaml", _make_learning(status="resolved", impact=0.9))
 
+        captured_payloads: list[dict[str, object]] = []
+
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+            captured_payloads.append(payload)
+            return True
+
         with (
             patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.telemetry.publisher._post_learning", return_value=True),
+            patch("trw_mcp.telemetry.publisher._post_learning", side_effect=_fake_post),
         ):
             result = publish_learnings()
 
-        assert result["published"] == 0
-        assert result["skipped"] == 1
+        assert result["published"] == 1
+        assert result["skipped"] == 0
+        assert len(captured_payloads) == 1
+        assert captured_payloads[0]["status"] == "resolved"
 
-    def test_publish_skips_non_active_obsolete(self, tmp_path: Path) -> None:
-        """Obsolete learnings are skipped."""
+    def test_publish_includes_obsolete(self, tmp_path: Path) -> None:
+        """Obsolete learnings are published with status preserved."""
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -190,15 +198,23 @@ class TestPublishFiltering:
         entries_dir = trw_dir / "learnings" / "entries"
         _write_learning(entries_dir, "obsolete.yaml", _make_learning(status="obsolete", impact=0.9))
 
+        captured_payloads: list[dict[str, object]] = []
+
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+            captured_payloads.append(payload)
+            return True
+
         with (
             patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.telemetry.publisher._post_learning", return_value=True),
+            patch("trw_mcp.telemetry.publisher._post_learning", side_effect=_fake_post),
         ):
             result = publish_learnings()
 
-        assert result["published"] == 0
-        assert result["skipped"] == 1
+        assert result["published"] == 1
+        assert result["skipped"] == 0
+        assert len(captured_payloads) == 1
+        assert captured_payloads[0]["status"] == "obsolete"
 
     def test_publish_sends_source_learning_id(self, tmp_path: Path) -> None:
         """source_learning_id from YAML id field is included in payload."""
@@ -230,6 +246,35 @@ class TestPublishFiltering:
         assert result["published"] == 1
         assert len(captured_payloads) == 1
         assert captured_payloads[0]["source_learning_id"] == "L-abc12345"
+
+    def test_publish_sends_status_in_payload(self, tmp_path: Path) -> None:
+        """Status field is included in the payload for active learnings."""
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig(
+            platform_url="https://api.example.com",
+            platform_telemetry_enabled=True,
+        )
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        _write_learning(entries_dir, "active.yaml", _make_learning(status="active", impact=0.9))
+
+        captured_payloads: list[dict[str, object]] = []
+
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+            captured_payloads.append(payload)
+            return True
+
+        with (
+            patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
+            patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", side_effect=_fake_post),
+        ):
+            result = publish_learnings()
+
+        assert result["published"] == 1
+        assert len(captured_payloads) == 1
+        assert captured_payloads[0]["status"] == "active"
 
     def test_publish_skips_unchanged_on_second_call(self, tmp_path: Path) -> None:
         """Content-hash tracking: unchanged entries are skipped on subsequent calls."""
