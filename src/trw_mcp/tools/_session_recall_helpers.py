@@ -156,6 +156,24 @@ def append_ceremony_nudge(
                         except Exception:  # justified: fail-open
                             logger.warning("nudge_dedup_record_failed", exc_info=True)
 
+                        # PRD-QUAL-058-FR04: Emit nudge_shown event to session events
+                        try:
+                            from trw_mcp.state._paths import find_active_run
+
+                            _run = find_active_run()
+                            if _run is not None:
+                                _evt_path = _run / "meta" / "events.jsonl"
+                            else:
+                                _evt_path = effective_dir / config.context_dir / "session-events.jsonl"
+                            log_nudge_event(
+                                _evt_path,
+                                learning_id=sel_id,
+                                phase=state.phase,
+                                is_fallback=is_fallback,
+                            )
+                        except Exception:  # justified: fail-open
+                            logger.warning("nudge_event_emit_failed", exc_info=True)
+
                         # Surface logging for nudge channel (PRD-CORE-103-FR01)
                         try:
                             from trw_mcp.state.surface_tracking import log_surface_event
@@ -204,8 +222,13 @@ def log_nudge_event(
     learning_id: str,
     phase: str,
     is_fallback: bool,
+    turn: int = 0,
+    surface_type: str = "nudge",
 ) -> None:
     """Log a nudge_shown event to events.jsonl for proximal reward detection.
+
+    PRD-QUAL-058-FR04: Emits a structured nudge_shown event with the schema
+    expected by proximal_reward.py and the eval pipeline's pre-analyzers.
 
     Fail-open: if anything fails, silently returns without raising.
 
@@ -214,6 +237,8 @@ def log_nudge_event(
         learning_id: ID of the learning that was surfaced.
         phase: Current ceremony phase when the nudge was shown.
         is_fallback: True if the learning was a fallback (all candidates were dedup-filtered).
+        turn: Tool response number when the nudge was shown.
+        surface_type: How the learning was surfaced ("nudge", "recall", etc).
     """
     try:
         from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
@@ -224,6 +249,12 @@ def log_nudge_event(
             events_path,
             "nudge_shown",
             {
+                "data": {
+                    "learning_id": learning_id,
+                    "phase": phase,
+                    "turn": turn,
+                    "surface_type": surface_type,
+                },
                 "learning_id": learning_id,
                 "phase": phase,
                 "fallback": is_fallback,
