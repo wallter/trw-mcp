@@ -33,6 +33,21 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Added
+
+- **Complete ceremony nudge coverage (PRD-CORE-124)** — Wired nudge injection into 7 additional tools (trw_session_start, trw_init, trw_status, trw_checkpoint, trw_prd_create, trw_prd_validate, trw_deliver state). Coverage: 4/24 → 11/24 tools (all workflow-relevant). Added `ToolName.PRD_CREATE`, `ToolName.PRD_VALIDATE` constants, context-reactive messages for STATUS/PRD_CREATE/PRD_VALIDATE, and "review" step urgency-tier static messages.
+- **File modification hydration** — `_hydrate_files_modified()` counts `file_modified` events from events.jsonl at nudge computation time, bridging the shell-hook/Python-state gap so checkpoint nudges accurately report "N files modified since last checkpoint".
+- **Nudge system documentation** — `docs/documentation/nudge-system.md` (315 lines) covering architecture, tool coverage, message types, ceremony modes, budgets, and extension guide.
+- **16 new nudge tests** — Tool response schema tests (init, status, checkpoint, prd_create, prd_validate), state mutation wiring tests (mark_session_started, mark_deliver, mark_checkpoint), hydration tests (5), context-reactive message tests (3).
+
+### Fixed
+
+- **mark_session_started() never called** — `trw_session_start` now calls `mark_session_started()` so `CeremonyState.session_started` reflects reality. Previously always `False`, causing incorrect "call session_start" nudges even after it ran.
+- **mark_deliver() never called** — `trw_deliver` now calls `mark_deliver()` so `CeremonyState.deliver_called` reflects reality. Previously always `False`, causing unresolvable deliver nudge escalation.
+- **mark_checkpoint() never called from trw_checkpoint** — `trw_checkpoint` now calls `mark_checkpoint()` to track checkpoint count and reset files-modified counter.
+- **Missing exc_info in build_check nudge handler** — `build/_registration.py` now logs with `exc_info=True` so nudge failure tracebacks aren't silently lost.
+- **Import inconsistency** — All tool-level nudge imports standardized to use `ceremony_nudge` public facade instead of private `_nudge_state` module. Added `record_nudge_shown` and `is_nudge_eligible` to facade exports.
+
 ### Improved
 
 - **Learning prompting text quality (PRD-QUAL-057)** — Removed 3 unsourced quantitative claims ("3x fewer P0 defects", "80%+ of integration issues", "hundreds of past sessions") from CLAUDE.md static sections and messages.yaml. Updated stale docstrings referencing CLAUDE.md learning promotion (removed per PRD-CORE-093). Expanded `trw_recall()` ranking description to reflect actual 6-factor scoring. Fixed `server_instructions` inaccuracy about learnings being "lost" without deliver. Tightened high-urgency nudge repetition. Generalized Sprint 26 watchlist references. Added 9 step names to `trw_meta_tune()` docstring.
