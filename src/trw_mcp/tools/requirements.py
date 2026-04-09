@@ -125,7 +125,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         Args:
             input_text: Feature request, requirements, or description --- becomes the Problem Statement and Background.
-            category: PRD category (CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX).
+            category: PRD category (CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX, EVAL).
             priority: Priority level (P0, P1, P2, P3). Determines base confidence scores.
             title: PRD title. Auto-generated from input if not provided.
             sequence: Sequence number for PRD ID. Auto-increments from existing PRDs when default (1).
@@ -137,7 +137,7 @@ def register_requirements_tools(server: FastMCP) -> None:
         writer = FileStateWriter()
 
         # Input validation (PRD-QUAL-042-FR03): category enum
-        valid_categories = {"CORE", "QUAL", "INFRA", "LOCAL", "EXPLR", "RESEARCH", "FIX"}
+        valid_categories = {"CORE", "QUAL", "INFRA", "LOCAL", "EXPLR", "RESEARCH", "FIX", "EVAL"}
         if category.upper() not in valid_categories:
             raise ValidationError(
                 f"Invalid category: {category!r}. Must be one of {sorted(valid_categories)}",
@@ -254,7 +254,7 @@ def register_requirements_tools(server: FastMCP) -> None:
             prd_scope=prd_id,
         )
 
-        return {
+        prd_result: PrdCreateResultDict = {
             "prd_id": prd_id,
             "title": title,
             "category": category.upper(),
@@ -264,6 +264,21 @@ def register_requirements_tools(server: FastMCP) -> None:
             "sections_generated": len(_EXPECTED_SECTIONS),
             "index_synced": index_synced,
         }
+
+        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
+            ctx = NudgeContext(tool_name=ToolName.PRD_CREATE)
+            append_ceremony_nudge(
+                cast("dict[str, object]", prd_result), resolve_trw_dir(), context=ctx
+            )
+        except Exception:  # justified: fail-open — ceremony nudge must not break prd_create
+            logger.debug("prd_create_nudge_injection_skipped", exc_info=True)
+
+        return prd_result
 
     @server.tool(output_schema=None)
     @log_tool_call
@@ -391,6 +406,20 @@ def register_requirements_tools(server: FastMCP) -> None:
             "effective_risk_level": v2_result.effective_risk_level,
             "risk_scaled": v2_result.risk_scaled,
         }
+
+        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
+            ctx = NudgeContext(tool_name=ToolName.PRD_VALIDATE)
+            append_ceremony_nudge(
+                cast("dict[str, object]", validate_result), _resolve_trw_dir(), context=ctx
+            )
+        except Exception:  # justified: fail-open — ceremony nudge must not break prd_validate
+            logger.debug("prd_validate_nudge_injection_skipped", exc_info=True)
+
         return validate_result
 
 
