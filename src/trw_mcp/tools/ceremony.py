@@ -597,6 +597,14 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         results["critical_steps_completed"] = critical_step_count - len(errors)
         results["deferred_steps"] = 11  # launched in background
 
+        # Mark deliver in ceremony state (PRD-CORE-124 FR-deliver)
+        try:
+            from trw_mcp.state.ceremony_nudge import mark_deliver
+
+            mark_deliver(trw_dir)
+        except Exception:  # justified: fail-open — state mutation must not block deliver
+            logger.debug("mark_deliver_failed", exc_info=True)
+
         # PRD-QUAL-058-FR05: Read nudge_counts from CeremonyState for deliver event
         _nudge_summary: dict[str, int] = {}
         try:
