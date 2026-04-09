@@ -247,9 +247,11 @@ def execute_recall(
     else:
         tokens_used = sum(estimate_entry_tokens(e) for e in ranked_learnings)
 
-    # Apply result cap
-    if max_results > 0:
+    # Apply result cap (after token budget so budget sees full corpus)
+    if max_results > 0 and len(ranked_learnings) > max_results:
         ranked_learnings = ranked_learnings[:max_results]
+        # Recompute tokens_used to reflect actual returned set
+        tokens_used = sum(estimate_entry_tokens(e) for e in ranked_learnings)
 
     # --- Surface event logging (PRD-CORE-103-FR01) ---
     # Log each surfaced learning for telemetry/fatigue detection.
