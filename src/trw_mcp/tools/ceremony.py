@@ -258,9 +258,11 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         from trw_mcp.tools._ceremony_helpers import (
             _phase_contextual_recall,
             perform_session_recalls,
+            step_ceremony_nudge,
             step_embed_health,
             step_increment_session_counter,
             step_log_session_event,
+            step_mark_session_started,
             step_sanitize_and_maintain,
             step_telemetry_startup,
         )
@@ -416,6 +418,19 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 "formations, quality gates, phase reversion). Re-read after "
                 "context compaction."
             )
+
+        # Mark session started in ceremony state (PRD-CORE-074 FR04)
+        try:
+            step_mark_session_started()
+        except Exception:  # justified: fail-open, state mutation must not block session start
+            logger.debug("session_mark_started_failed", exc_info=True)
+
+        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        try:
+            _learnings_count_nudge = int(str(results.get("learnings_count", 0)))
+            step_ceremony_nudge(cast("dict[str, object]", results), _learnings_count_nudge)
+        except Exception:  # justified: fail-open, nudge injection must not block session start
+            logger.debug("session_nudge_injection_failed", exc_info=True)
 
         run_info: RunStatusDict | None = results.get("run")
         _active_run_id = str(run_info.get("active_run", "")) if run_info else ""

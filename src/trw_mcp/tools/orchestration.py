@@ -306,6 +306,16 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
 
+        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
+            ctx = NudgeContext(tool_name=ToolName.INIT)
+            append_ceremony_nudge(cast("dict[str, object]", result), trw_dir, context=ctx)
+        except Exception:  # justified: fail-open — ceremony nudge must not break init
+            logger.debug("init_nudge_injection_skipped", exc_info=True)
+
         return result
 
     @server.tool(output_schema=None)
@@ -406,6 +416,17 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         )
         logger.info("trw_status_read", run_id=result["run_id"])
 
+        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
+            ctx = NudgeContext(tool_name=ToolName.STATUS)
+            append_ceremony_nudge(cast("dict[str, object]", result), resolve_trw_dir(), context=ctx)
+        except Exception:  # justified: fail-open — ceremony nudge must not break status
+            logger.debug("status_nudge_injection_skipped", exc_info=True)
+
         return result
 
     @server.tool(output_schema=None)
@@ -478,5 +499,19 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         }
         if wave_id:
             result["wave_id"] = wave_id
+
+        # Mark checkpoint in ceremony state + inject nudge (PRD-CORE-074 FR04, PRD-CORE-084 FR02)
+        try:
+            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.state.ceremony_nudge import mark_checkpoint
+            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+
+            _trw_dir = resolve_trw_dir()
+            mark_checkpoint(_trw_dir)
+            ctx = NudgeContext(tool_name=ToolName.CHECKPOINT)
+            append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
+        except Exception:  # justified: fail-open — ceremony nudge must not break checkpoint
+            logger.debug("checkpoint_nudge_injection_skipped", exc_info=True)
 
         return result
