@@ -308,7 +308,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
         # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
-            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
 
             ctx = NudgeContext(tool_name=ToolName.INIT)
@@ -418,7 +418,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
         # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
-            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.state._paths import resolve_trw_dir
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
 
@@ -502,7 +502,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
         # Mark checkpoint in ceremony state + inject nudge (PRD-CORE-074 FR04, PRD-CORE-084 FR02)
         try:
-            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.state._paths import resolve_trw_dir
             from trw_mcp.state.ceremony_nudge import mark_checkpoint
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge

@@ -267,7 +267,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
-            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.state._paths import resolve_trw_dir
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
 
@@ -409,7 +409,7 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
         try:
-            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
 

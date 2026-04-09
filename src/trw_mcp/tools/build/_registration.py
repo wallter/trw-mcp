@@ -159,7 +159,7 @@ def register_build_tools(server: FastMCP) -> None:
 
         # Ceremony nudge injection
         try:
-            from trw_mcp.state._nudge_state import NudgeContext, ToolName
+            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
 
             ctx = NudgeContext(

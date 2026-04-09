@@ -303,6 +303,9 @@ def _context_reactive_message(
     if tool == ToolName.RECALL:
         return "Learnings recalled. Review them for relevant patterns before proceeding."
 
+    if tool == ToolName.STATUS:
+        return "Run status loaded. Resume from last checkpoint rather than re-implementing."
+
     if tool == ToolName.PRD_CREATE:
         return "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before implementation."
 
