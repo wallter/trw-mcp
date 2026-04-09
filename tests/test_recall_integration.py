@@ -300,3 +300,130 @@ def test_build_recall_context_no_active_run_empty_prd_ids(tmp_path: Path) -> Non
 
     assert ctx is not None
     assert ctx.prd_knowledge_ids == set()
+
+
+# ---------------------------------------------------------------------------
+# Token budget integration tests (PRD-CORE-123 FR06)
+# ---------------------------------------------------------------------------
+
+
+def _make_sized_entry(entry_id: str, word_count: int) -> dict[str, object]:
+    """Entry with known content size for budget testing."""
+    return {
+        "id": entry_id,
+        "summary": f"Learning {entry_id}",
+        "content": " ".join(f"word{i}" for i in range(word_count)),
+        "detail": "",
+        "tags": [],
+        "impact": 0.5,
+        "created": "2026-01-01T00:00:00Z",
+    }
+
+
+def test_trw_recall_token_budget_metadata(tmp_path: Path) -> None:
+    """execute_recall with token_budget returns token metadata."""
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    config = _make_config()
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    (trw_dir / "context").mkdir()
+
+    entries = [_make_sized_entry("L-1", 10)]
+
+    with (
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
+        patch("trw_mcp.tools._recall_impl.log_surface_event"),
+    ):
+        result = execute_recall(
+            query="test", trw_dir=trw_dir, config=config,
+            token_budget=4000,
+            _adapter_recall=lambda *a, **kw: entries,
+            _adapter_update_access=lambda *a, **kw: None,
+            _search_patterns=lambda *a, **kw: [],
+            _rank_by_utility=lambda learnings, *a, **kw: learnings,
+            _collect_context=lambda *a, **kw: {},
+        )
+
+    assert "tokens_used" in result
+    assert "tokens_budget" in result
+    assert result["tokens_budget"] == 4000
+    assert isinstance(result["tokens_used"], int)
+    assert isinstance(result["tokens_truncated"], bool)
+
+
+def test_trw_recall_token_budget_truncates(tmp_path: Path) -> None:
+    """execute_recall truncates results exceeding token_budget."""
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    config = _make_config()
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    (trw_dir / "context").mkdir()
+
+    entries = [_make_sized_entry(f"L-{i}", 75) for i in range(10)]
+
+    with (
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
+        patch("trw_mcp.tools._recall_impl.log_surface_event"),
+    ):
+        result = execute_recall(
+            query="test", trw_dir=trw_dir, config=config,
+            token_budget=250,
+            _adapter_recall=lambda *a, **kw: entries,
+            _adapter_update_access=lambda *a, **kw: None,
+            _search_patterns=lambda *a, **kw: [],
+            _rank_by_utility=lambda learnings, *a, **kw: learnings,
+            _collect_context=lambda *a, **kw: {},
+        )
+
+    assert result["tokens_truncated"] is True
+    assert len(result["learnings"]) < 10
+
+
+def test_trw_recall_token_budget_none_informational(tmp_path: Path) -> None:
+    """token_budget=None still computes tokens_used."""
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    config = _make_config()
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    (trw_dir / "context").mkdir()
+
+    with (
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
+        patch("trw_mcp.tools._recall_impl.log_surface_event"),
+    ):
+        result = execute_recall(
+            query="test", trw_dir=trw_dir, config=config,
+            token_budget=None,
+            _adapter_recall=lambda *a, **kw: [_make_sized_entry("L-1", 10)],
+            _adapter_update_access=lambda *a, **kw: None,
+            _search_patterns=lambda *a, **kw: [],
+            _rank_by_utility=lambda learnings, *a, **kw: learnings,
+            _collect_context=lambda *a, **kw: {},
+        )
+
+    assert result["tokens_budget"] is None
+    assert result["tokens_truncated"] is False
+    assert result["tokens_used"] > 0
+
+
+def test_trw_recall_token_budget_invalid_raises(tmp_path: Path) -> None:
+    """token_budget <= 0 raises ValueError."""
+    import pytest
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    config = _make_config()
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+
+    with pytest.raises(ValueError, match="token_budget must be positive"):
+        execute_recall(
+            query="test", trw_dir=trw_dir, config=config, token_budget=0,
+            _adapter_recall=lambda *a, **kw: [],
+            _adapter_update_access=lambda *a, **kw: None,
+            _search_patterns=lambda *a, **kw: [],
+            _rank_by_utility=lambda learnings, *a, **kw: learnings,
+            _collect_context=lambda *a, **kw: {},
+        )
