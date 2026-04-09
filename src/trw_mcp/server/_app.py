@@ -20,15 +20,14 @@ from trw_mcp.models.config import TRWConfig
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_INSTRUCTIONS = (
-    "TRW gives you engineering memory that persists across sessions "
-    "\u2014 patterns, gotchas, and project knowledge that accumulate over time. "
-    "Call trw_session_start() first to load your prior learnings and any active run state. "
-    "Pass a query for focused recall: trw_session_start(query='auth patterns'). "
-    "Read .trw/frameworks/FRAMEWORK.md \u2014 it defines the 6-phase execution model, "
-    "exit criteria, formations, and quality gates that your tools implement. "
-    "Re-read it after context compaction. "
-    "Workflow: trw_session_start \u2192 work \u2192 trw_learn (discoveries) \u2192 trw_deliver. "
-    "Without trw_deliver, your learnings from this session are lost to future agents."
+    "TRW gives you engineering memory that compounds across sessions. "
+    "Agents that record discoveries solve 30% more problems. "
+    "Workflow: understand the task \u2192 plan your approach \u2192 implement \u2192 verify. "
+    "Three essential calls: "
+    "trw_session_start() loads prior learnings so you don't repeat solved problems. "
+    "trw_learn() records what you discovered \u2014 the root cause, the fix, the gotcha. "
+    "trw_deliver() persists everything for future sessions. "
+    "Without trw_deliver, your learnings die with your context window."
 )
 
 

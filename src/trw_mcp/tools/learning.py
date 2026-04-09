@@ -168,42 +168,35 @@ def register_learning_tools(server: FastMCP) -> None:
     ) -> LearnResultDict:
         """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
-        Writes a learning entry to the knowledge store with utility scoring.
-        High-impact learnings surface automatically via trw_session_start()
-        and trw_recall(), becoming part of every future session's context.
+        When to call: the moment you identify a root cause — before writing the fix.
+        Also call after your approach works, recording what changed and why.
 
         Most learnings need only summary and optionally detail + tags.
         All other fields are auto-detected when omitted.
 
-        Only record learnings that prevent repeated mistakes, document
-        non-obvious gotchas, or capture architecture decisions not obvious
-        from code.
-
         Args:
             summary: One-line summary of the discovery.
-            detail: Full context including what you tried, what failed, and what worked.
-            tags: Categorization tags (e.g., ["testing", "gotcha"]) for filtered recall.
-            evidence: Supporting evidence (file paths, error messages) that validates the learning.
-            impact: Impact score 0.0-1.0 — learnings at 0.7+ get promoted to CLAUDE.md.
-            shard_id: Optional shard identifier for sub-agent attribution.
-            source_type: Learning provenance — "human", "agent", "tool", or "consolidated".
-            source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
-            client_profile: IDE/client override (e.g., "claude-code"). Auto-detected when None.
-            model_id: Model override (e.g., "claude-opus-4-6"). Auto-detected when None.
-            consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
-            assertions: Machine-verifiable assertions (PRD-CORE-086). Each dict has type, pattern, target.
-            type: Learning type — "incident", "pattern", "convention", "hypothesis", or "workaround".
-            nudge_line: Compact text for ceremony nudge display (max 80 chars, auto-truncated).
-            expires: Expiration date/condition (ISO 8601 or free text like "when v2 ships").
-            confidence: Validation confidence — "unverified", "low", "medium", "high", or "verified".
-            task_type: Task type identifier (e.g., "bug-fix", "feature", "refactor").
-            domain: Domain tags (e.g., ["testing", "security"]) for contextual recall boosting.
-            phase_origin: Framework phase when created (auto-detected when empty).
-            phase_affinity: Phases where most relevant (e.g., ["implement", "validate"]).
-            team_origin: Team identifier for team-aware recall boosting.
-            protection_tier: Protection level — "critical", "high", "normal", "low".
-
-        See Also: trw_recall, trw_learn_update
+            detail: Full context: what you tried, what failed, what worked.
+            tags: Categorization tags for filtered recall.
+            evidence: Supporting evidence (file paths, error messages).
+            impact: Impact score 0.0-1.0.
+            shard_id: Shard identifier for sub-agent attribution.
+            source_type: Provenance: "human", "agent", "tool", or "consolidated".
+            source_identity: Source name.
+            client_profile: IDE/client override. Auto-detected when None.
+            model_id: Model override. Auto-detected when None.
+            consolidated_from: IDs of superseded entries to mark obsolete.
+            assertions: Machine-verifiable assertions.
+            type: Type: "incident", "pattern", "convention", "hypothesis", or "workaround".
+            nudge_line: Compact nudge text (max 80 chars).
+            expires: Expiration date/condition.
+            confidence: "unverified", "low", "medium", "high", or "verified".
+            task_type: Task type (e.g., "bug-fix", "feature").
+            domain: Domain tags for recall boosting.
+            phase_origin: Framework phase when created.
+            phase_affinity: Phases where most relevant.
+            team_origin: Team identifier for recall boosting.
+            protection_tier: "critical", "high", "normal", or "low".
         """
         # PRD-CORE-099: Auto-detect client and model when not explicitly provided.
         # None = "not provided" → auto-detect. Empty string = explicit blank.

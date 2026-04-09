@@ -41,6 +41,12 @@ from trw_mcp.state._nudge_messages import (
     _assemble_nudge as _assemble_nudge,
 )
 from trw_mcp.state._nudge_messages import (
+    _build_done_next_then_status as _build_done_next_then_status,
+)
+from trw_mcp.state._nudge_messages import (
+    _build_done_next_then_status_light as _build_done_next_then_status_light,
+)
+from trw_mcp.state._nudge_messages import (
     _build_minimal_status_line as _build_minimal_status_line,
 )
 from trw_mcp.state._nudge_messages import (

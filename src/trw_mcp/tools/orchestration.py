@@ -439,6 +439,9 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
     ) -> dict[str, str]:
         """Save your implementation progress — if context compacts, you resume here instead of re-implementing from scratch.
 
+        When to call: after each working milestone (file saved, test passing, feature wired).
+        If your context compacts, you resume from your last checkpoint instead of starting over.
+
         Appends an atomic snapshot to checkpoints.jsonl with timestamp. The checkpoint
         message becomes your resumption point: the next session reads it to understand
         exactly where you left off and what to work on next.
