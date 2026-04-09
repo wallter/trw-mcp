@@ -416,6 +416,7 @@ def register_learning_tools(server: FastMCP) -> None:
         max_results: int | None = None,
         compact: bool | None = None,
         topic: str | None = None,
+        token_budget: int | None = None,
     ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
 
@@ -438,6 +439,9 @@ def register_learning_tools(server: FastMCP) -> None:
                 When None (default), auto-enables for wildcard queries.
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
+            token_budget: Optional maximum token budget for recall results.
+                When provided, results are truncated to fit within the budget.
+                Must be a positive integer. None means no budget constraint.
 
         See Also: trw_learn, trw_knowledge_sync
         """
@@ -456,6 +460,7 @@ def register_learning_tools(server: FastMCP) -> None:
             max_results=max_results,
             compact=compact,
             topic=topic,
+            token_budget=token_budget,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
             _adapter_update_access=adapter_update_access,

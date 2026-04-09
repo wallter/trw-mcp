@@ -83,6 +83,29 @@ def _redact_secrets(
     return event_dict
 
 
+def _add_otel_context(
+    logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
+    """Inject OpenTelemetry trace/span IDs into log events when available.
+
+    Fail-open: if opentelemetry is not installed or the current span is not
+    recording, the event dict is returned unchanged.
+    """
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        if span and span.is_recording():
+            ctx = span.get_span_context()
+            event_dict["trace_id"] = format(ctx.trace_id, "032x")
+            event_dict["span_id"] = format(ctx.span_id, "016x")
+    except (ImportError, AttributeError):
+        pass
+    return event_dict
+
+
 def _add_component(
     logger: Any,
     method_name: str,
@@ -176,6 +199,7 @@ def configure_logging(
     # Build processor pipeline
     processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
+        _add_otel_context,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         _add_component,

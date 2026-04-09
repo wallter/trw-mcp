@@ -133,6 +133,7 @@ def execute_recall(
     max_results: int | None = None,
     compact: bool | None = None,
     topic: str | None = None,
+    token_budget: int | None = None,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_recall: Any = None,
     _adapter_update_access: Any = None,
@@ -232,6 +233,20 @@ def execute_recall(
     # Capture pre-cap counts for the total_available response field
     total_available = len(ranked_learnings) + len(matching_patterns)
 
+    # --- Token budget filtering (PRD-CORE-123 Phase 2) ---
+    from trw_memory.retrieval.token_budget import apply_token_budget, estimate_entry_tokens
+
+    tokens_used = 0
+    tokens_truncated = False
+    if token_budget is not None:
+        if token_budget <= 0:
+            raise ValueError(f"token_budget must be positive, got {token_budget}")
+        ranked_learnings, tokens_used, tokens_truncated = apply_token_budget(
+            ranked_learnings, token_budget
+        )
+    else:
+        tokens_used = sum(estimate_entry_tokens(e) for e in ranked_learnings)
+
     # Apply result cap
     if max_results > 0:
         ranked_learnings = ranked_learnings[:max_results]
@@ -292,6 +307,9 @@ def execute_recall(
         "compact": use_compact,
         "max_results": max_results,
         "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
+        "tokens_used": tokens_used,
+        "tokens_budget": token_budget,
+        "tokens_truncated": tokens_truncated,
     }
 
     # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
