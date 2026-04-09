@@ -510,3 +510,79 @@ class TestTrwInitComplexity:
         assert run_yaml["complexity_override"] is not None
         assert "hard override" in run_yaml["complexity_override"]["reason"]
         assert "security_change" in run_yaml["complexity_override"]["signals"]
+
+
+# -------------------------------------------------------------------------
+# Ceremony nudge wiring tests (PRD-CORE-124)
+# -------------------------------------------------------------------------
+
+
+class TestCeremonyNudgeWiring:
+    """Verify ceremony_status is injected into orchestration tool responses."""
+
+    def test_trw_init_includes_ceremony_status(
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
+    ) -> None:
+        """trw_init response must contain 'ceremony_status' key after nudge injection."""
+        result = orch_tools["trw_init"].fn(task_name="nudge-init-task")
+        assert "ceremony_status" in result, (
+            "trw_init did not inject ceremony_status — nudge wiring is broken"
+        )
+        assert isinstance(result["ceremony_status"], str)
+
+    def test_trw_status_includes_ceremony_status(
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
+    ) -> None:
+        """trw_status response must contain 'ceremony_status' key after nudge injection."""
+        # Must initialise first so there is a run to query.
+        init_result = orch_tools["trw_init"].fn(task_name="nudge-status-task")
+        status_result = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
+        assert "ceremony_status" in status_result, (
+            "trw_status did not inject ceremony_status — nudge wiring is broken"
+        )
+        assert isinstance(status_result["ceremony_status"], str)
+
+    def test_trw_checkpoint_includes_ceremony_status(
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
+    ) -> None:
+        """trw_checkpoint response must contain 'ceremony_status' key after nudge injection."""
+        init_result = orch_tools["trw_init"].fn(task_name="nudge-cp-task")
+        cp_result = orch_tools["trw_checkpoint"].fn(
+            run_path=init_result["run_path"],
+            message="nudge checkpoint test",
+        )
+        assert "ceremony_status" in cp_result, (
+            "trw_checkpoint did not inject ceremony_status — nudge wiring is broken"
+        )
+        assert isinstance(cp_result["ceremony_status"], str)
+
+    def test_trw_checkpoint_calls_mark_checkpoint(
+        self,
+        tmp_path: Path,
+        orch_tools: dict[str, Any],
+    ) -> None:
+        """trw_checkpoint must call mark_checkpoint so ceremony state is updated."""
+        from trw_mcp.state.ceremony_nudge import read_ceremony_state
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        init_result = orch_tools["trw_init"].fn(task_name="mark-cp-task")
+        trw_dir = tmp_path / ".trw"
+
+        state_before = read_ceremony_state(trw_dir)
+        count_before = state_before.checkpoint_count
+
+        orch_tools["trw_checkpoint"].fn(
+            run_path=init_result["run_path"],
+            message="mark checkpoint test",
+        )
+
+        state_after = read_ceremony_state(trw_dir)
+        assert state_after.checkpoint_count == count_before + 1, (
+            "mark_checkpoint was not called — checkpoint_count did not increment"
+        )

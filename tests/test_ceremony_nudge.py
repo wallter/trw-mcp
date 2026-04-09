@@ -1171,6 +1171,30 @@ class TestFR03ContextReactiveMessages:
         msg = _context_reactive_message(ctx, state)
         assert msg is None
 
+    def test_fr03_prd_create_message(self) -> None:
+        """prd_create tool context returns message mentioning trw_prd_validate."""
+        ctx = NudgeContext(tool_name=ToolName.PRD_CREATE)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "trw_prd_validate" in msg
+
+    def test_fr03_prd_validate_message(self) -> None:
+        """prd_validate tool context returns message mentioning trw_init."""
+        ctx = NudgeContext(tool_name=ToolName.PRD_VALIDATE)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "trw_init" in msg
+
+    def test_fr03_status_message(self) -> None:
+        """status tool context returns message mentioning Resume."""
+        ctx = NudgeContext(tool_name=ToolName.STATUS)
+        state = CeremonyState()
+        msg = _context_reactive_message(ctx, state)
+        assert msg is not None
+        assert "Resume" in msg
+
     def test_fr03_compute_nudge_uses_context(self) -> None:
         """compute_nudge with context uses context-reactive message."""
         state = CeremonyState(session_started=True, checkpoint_count=1)
@@ -1607,3 +1631,146 @@ class TestBackwardsCompatibility:
         result = compute_nudge(state, available_learnings=5)
         # Should use the existing static message with lightning bolt
         assert "\u26a1" in result
+
+
+# -------------------------------------------------------------------------
+# _hydrate_files_modified tests (PRD-CORE-124)
+# -------------------------------------------------------------------------
+
+
+class TestHydrateFilesModified:
+    """Tests for _hydrate_files_modified from _session_recall_helpers.py."""
+
+    def test_hydrate_files_modified_counts_events(self, tmp_path: Path) -> None:
+        """Events of type 'file_modified' are counted and stored in state."""
+        import json
+
+        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+
+        trw = _trw_dir(tmp_path)
+
+        # Create run directory with events.jsonl containing file_modified events
+        run_dir = tmp_path / ".trw" / "runs" / "task" / "20260101T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        events_path = run_dir / "meta" / "events.jsonl"
+        events = [
+            {"type": "file_modified", "ts": "2026-01-01T01:00:00Z", "path": "foo.py"},
+            {"type": "file_modified", "ts": "2026-01-01T02:00:00Z", "path": "bar.py"},
+            {"type": "checkpoint",    "ts": "2026-01-01T03:00:00Z"},
+            {"type": "file_modified", "ts": "2026-01-01T04:00:00Z", "path": "baz.py"},
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        state = CeremonyState()
+
+        from unittest.mock import patch
+
+        # _hydrate_files_modified uses a function-local import of find_active_run.
+        # Patch at the source module (trw_mcp.state._paths) so the local import picks it up.
+        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+            _hydrate_files_modified(state, trw)
+
+        # All 3 file_modified events have ts > threshold (threshold is "")
+        assert state.files_modified_since_checkpoint == 3
+
+    def test_hydrate_files_modified_respects_checkpoint_ts(self, tmp_path: Path) -> None:
+        """Only file_modified events AFTER last_checkpoint_ts are counted."""
+        import json
+
+        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from unittest.mock import patch
+
+        trw = _trw_dir(tmp_path)
+        run_dir = tmp_path / ".trw" / "runs" / "task" / "20260201T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        events_path = run_dir / "meta" / "events.jsonl"
+
+        events = [
+            {"type": "file_modified", "ts": "2026-01-01T01:00:00Z", "path": "old.py"},
+            {"type": "file_modified", "ts": "2026-01-01T02:00:00Z", "path": "old2.py"},
+            {"type": "file_modified", "ts": "2026-01-01T04:00:00Z", "path": "new.py"},
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        # Checkpoint timestamp is between the 2nd and 3rd event
+        state = CeremonyState(last_checkpoint_ts="2026-01-01T03:00:00Z")
+
+        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+            _hydrate_files_modified(state, trw)
+
+        # Only the event after the checkpoint timestamp should be counted
+        assert state.files_modified_since_checkpoint == 1
+
+    def test_hydrate_files_modified_failopen_no_run(self, tmp_path: Path) -> None:
+        """No exception when find_active_run returns None (no active run)."""
+        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from unittest.mock import patch
+
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState()
+
+        # Should not raise even without an active run
+        with patch("trw_mcp.state._paths.find_active_run", return_value=None):
+            _hydrate_files_modified(state, trw)
+
+        # State unchanged — files_modified stays at default 0
+        assert state.files_modified_since_checkpoint == 0
+
+    def test_hydrate_files_modified_failopen_missing_events(self, tmp_path: Path) -> None:
+        """No exception when events.jsonl does not exist."""
+        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from unittest.mock import patch
+
+        trw = _trw_dir(tmp_path)
+        run_dir = tmp_path / ".trw" / "runs" / "task" / "20260301T000000Z-noevents"
+        (run_dir / "meta").mkdir(parents=True)
+        # events.jsonl intentionally NOT created
+
+        state = CeremonyState()
+
+        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+            _hydrate_files_modified(state, trw)
+
+        # State unchanged — fail-open
+        assert state.files_modified_since_checkpoint == 0
+
+    def test_hydrate_files_modified_only_counts_file_modified_type(self, tmp_path: Path) -> None:
+        """Events with other types are not counted."""
+        import json
+
+        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from unittest.mock import patch
+
+        trw = _trw_dir(tmp_path)
+        run_dir = tmp_path / ".trw" / "runs" / "task" / "20260401T000000Z-mixed"
+        (run_dir / "meta").mkdir(parents=True)
+        events_path = run_dir / "meta" / "events.jsonl"
+
+        events = [
+            {"type": "checkpoint",    "ts": "2026-01-01T01:00:00Z"},
+            {"type": "tool_invocation", "ts": "2026-01-01T02:00:00Z"},
+            {"type": "session_start", "ts": "2026-01-01T03:00:00Z"},
+            # No file_modified events
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        state = CeremonyState()
+
+        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+            _hydrate_files_modified(state, trw)
+
+        assert state.files_modified_since_checkpoint == 0
