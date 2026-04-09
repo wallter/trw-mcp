@@ -185,6 +185,24 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
             ),
         )
 
+    if step == "review":
+        return _select_message_by_urgency(
+            urgency,
+            low=(
+                "\u26a1 Independent review not yet called — "
+                "trw_review() catches spec drift that passing tests miss."
+            ),
+            medium=(
+                "\u26a1 Review skipped — delivering without review ships unverified changes. "
+                "trw_review() takes under 1 minute."
+            ),
+            high=(
+                "\u26a1 Independent review has not been called — "
+                "spec drift and architectural issues go undetected. "
+                "trw_review() is required before trw_deliver()."
+            ),
+        )
+
     if step == "deliver":
         n = state.learnings_this_session
         if n > 0:
