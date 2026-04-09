@@ -126,6 +126,12 @@ from trw_mcp.state._nudge_state import (
 from trw_mcp.state._nudge_state import (
     write_ceremony_state as write_ceremony_state,
 )
+from trw_mcp.state._nudge_state import (
+    is_nudge_eligible as is_nudge_eligible,
+)
+from trw_mcp.state._nudge_state import (
+    record_nudge_shown as record_nudge_shown,
+)
 
 # ---------------------------------------------------------------------------
 # Main nudge computation (orchestrates rules + messages)

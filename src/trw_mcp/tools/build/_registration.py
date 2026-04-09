@@ -168,7 +168,7 @@ def register_build_tools(server: FastMCP) -> None:
             )
             append_ceremony_nudge(result, trw_dir, context=ctx)
         except Exception:  # justified: fail-open — ceremony nudge must not break build check
-            logger.debug("ceremony_nudge_failed_in_build_check")
+            logger.debug("ceremony_nudge_failed_in_build_check", exc_info=True)
 
         return result
 

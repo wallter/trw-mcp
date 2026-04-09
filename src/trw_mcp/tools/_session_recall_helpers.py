@@ -50,7 +50,6 @@ def _hydrate_files_modified(state: CeremonyState, trw_dir: Path) -> None:
     """
     try:
         from trw_mcp.state._paths import find_active_run
-        from trw_mcp.state.persistence import FileStateReader
 
         run_dir = find_active_run()
         if run_dir is None:
@@ -198,7 +197,7 @@ def append_ceremony_nudge(
                     if sel_id:
                         # Record in nudge history for dedup
                         try:
-                            from trw_mcp.state._nudge_state import record_nudge_shown
+                            from trw_mcp.state.ceremony_nudge import record_nudge_shown
 
                             record_nudge_shown(effective_dir, sel_id, state.phase)
                         except Exception:  # justified: fail-open
