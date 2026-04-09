@@ -254,6 +254,8 @@ class DeliverResultDict(TypedDict, total=False):
     success: bool
     critical_steps_completed: int
     deferred_steps: int
+    # PRD-CORE-125 FR05: Self-reflection message about learnings
+    learning_reflection: str
 
 
 class ToolEventDataDict(TypedDict, total=False):

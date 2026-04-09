@@ -250,11 +250,19 @@ def _context_reactive_message(
     context: NudgeContext,
     state: CeremonyState,
     urgency: str = "low",
+    ceremony_mode: str = "full",
 ) -> str | None:
     """Select context-reactive nudge message based on tool result.
 
     Returns None for unknown tool_name (triggers fallback to static messages).
     FR06: urgency scales language from informational to directive.
+
+    Args:
+        context: Tool call context with tool_name and result info.
+        state: Current ceremony state.
+        urgency: Urgency level ('low', 'medium', 'high').
+        ceremony_mode: Client ceremony mode ('full' or 'light').
+            Light-mode clients get shorter messages without FRAMEWORK.md references.
 
     Note: Unlike static urgency-tier messages (PRD-CORE-074), context-reactive
     messages MAY use prescriptive language (MUST, SHALL, SHOULD) at medium
@@ -296,24 +304,38 @@ def _context_reactive_message(
 
     if tool == ToolName.CHECKPOINT:
         return (
-            "Progress saved. Has anything invalidated your current approach? "
-            "Reverting to PLAN is cheaper than pushing through a flawed design."
+            "Progress saved. Quick check: have you recorded what you discovered so far? "
+            "trw_learn() persists your insights across sessions \u2014 "
+            "even a one-line root cause compounds for future agents."
         )
 
     if tool == ToolName.LEARN:
+        if ceremony_mode == "light":
+            return (
+                "Learning persisted. Continue implementing, then call trw_deliver() when done."
+            )
         return (
             "Learning persisted. NEXT: trw_checkpoint() at next milestone. "
             "THEN: trw_build_check() when implementation complete."
         )
 
     if tool == ToolName.SESSION_START:
+        if ceremony_mode == "light":
+            return (
+                "What's your approach? State it before editing files. "
+                "THEN: trw_init() for new work or trw_status() to resume."
+            )
         return (
             "NEXT: Read FRAMEWORK.md (phases, gates, reversion rules). "
+            "What's your approach? State it before editing files. "
             "THEN: trw_init() for new work or trw_status() to resume."
         )
 
     if tool == ToolName.DELIVER:
-        return "Session complete. Learnings persisted for future sessions."
+        n = state.learnings_this_session
+        if n > 0:
+            return f"Session complete. {n} discovery/discoveries persisted for future sessions."
+        return "Session complete. 0 learnings recorded \u2014 future agents start without your insights."
 
     if tool == ToolName.INIT:
         return "Run bootstrapped. NEXT: Begin implementation. THEN: trw_checkpoint() at first milestone."
@@ -373,6 +395,112 @@ def _build_minimal_status_line(state: CeremonyState) -> str:
     start_mark = "\u2713" if state.session_started else "\u2717"
     deliver_mark = "\u2713" if state.deliver_called else "\u2717"
     return f"{start_mark} start | {deliver_mark} deliver"
+
+
+# ---------------------------------------------------------------------------
+# Done/Next/Then status line (PRD-CORE-125 FR04)
+# ---------------------------------------------------------------------------
+
+# WHY rationale for Next/Then lines (short, consequence-oriented)
+_DONE_NEXT_RATIONALE: dict[str, str] = {
+    "session_start": "loads prior learnings",
+    "checkpoint": "saves progress against context loss",
+    "build_check": "catches integration issues before delivery",
+    "review": "independent verification catches spec drift",
+    "deliver": "persists your learnings for future agents",
+}
+
+
+def _build_done_next_then_status(state: CeremonyState) -> str:
+    """Build a Done/Next/Then status line for full-mode clients.
+
+    PRD-CORE-125 FR04: Replaces checkmark format with a more parseable format.
+    Format:
+        Done: session_start, learn(1)
+        Next: checkpoint \u2014 saves progress against context loss
+        Then: deliver \u2014 persists your learnings for future agents
+
+    Returns a string under 200 characters.
+    """
+    # Build "Done" items
+    done_items: list[str] = []
+    if _step_complete("session_start", state):
+        done_items.append("session_start")
+    if _step_complete("checkpoint", state):
+        done_items.append("checkpoint")
+    if state.learnings_this_session > 0:
+        done_items.append(f"learn({state.learnings_this_session})")
+    if _step_complete("build_check", state):
+        done_items.append("build_check")
+    if _step_complete("review", state):
+        done_items.append("review")
+    if _step_complete("deliver", state):
+        done_items.append("deliver")
+
+    # Find next two incomplete steps in order
+    pending: list[str] = []
+    for step in _STEPS:
+        if not _step_complete(step, state):
+            pending.append(step)
+        if len(pending) >= 2:
+            break
+
+    lines: list[str] = []
+    if done_items:
+        lines.append(f"Done: {', '.join(done_items)}")
+    if len(pending) >= 1:
+        rationale = _DONE_NEXT_RATIONALE.get(pending[0], "")
+        lines.append(f"Next: {pending[0]} \u2014 {rationale}")
+    if len(pending) >= 2:
+        rationale = _DONE_NEXT_RATIONALE.get(pending[1], "")
+        lines.append(f"Then: {pending[1]} \u2014 {rationale}")
+
+    result = "\n".join(lines)
+    # Enforce 200-char budget
+    if len(result) > 200:
+        result = result[:197] + "..."
+    return result
+
+
+def _build_done_next_then_status_light(state: CeremonyState) -> str:
+    """Build a compact Done/Next/Then status line for light-mode clients.
+
+    PRD-CORE-125 FR04: Single pipe-separated line under 100 characters.
+    Format: Done: session_start | Next: learn \u2014 record what you found | Then: deliver
+    """
+    # Build "Done" items (abbreviated)
+    done_items: list[str] = []
+    if _step_complete("session_start", state):
+        done_items.append("session_start")
+    if state.learnings_this_session > 0:
+        done_items.append(f"learn({state.learnings_this_session})")
+    if _step_complete("deliver", state):
+        done_items.append("deliver")
+
+    # Light mode only tracks: session_start, learn, deliver
+    pending: list[str] = []
+    if not state.session_started:
+        pending.append("session_start")
+    if state.learnings_this_session == 0:
+        pending.append("learn")
+    if not state.deliver_called:
+        pending.append("deliver")
+
+    parts: list[str] = []
+    if done_items:
+        parts.append(f"Done: {', '.join(done_items)}")
+    if len(pending) >= 1:
+        rationale = _DONE_NEXT_RATIONALE.get(pending[0], "")
+        short_rationale = rationale[:30] if len(rationale) > 30 else rationale
+        parts.append(f"Next: {pending[0]} \u2014 {short_rationale}")
+    if len(pending) >= 2:
+        parts.append(f"Then: {pending[1]}")
+
+    result = " | ".join(parts)
+    # Enforce 100-char budget
+    if len(result) > 100:
+        result = result[:97] + "..."
+    return result
 
 
 # ---------------------------------------------------------------------------

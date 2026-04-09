@@ -230,6 +230,27 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     return cast("ClaudeMdSyncResultDict", raw)
 
 
+# ── Self-reflection helpers (PRD-CORE-125 FR05) ──────────────────────
+
+
+def _learning_reflection_message(learnings_count: int) -> str:
+    """Return a self-reflection message based on session learning count.
+
+    PRD-CORE-125 FR05: Informational reminder (never blocks delivery).
+    - 0 learnings: reminder to record what was discovered
+    - >0 learnings: positive reinforcement with count
+    """
+    if learnings_count > 0:
+        return (
+            f"{learnings_count} discovery/discoveries persisted for future sessions."
+        )
+    return (
+        "Note: No discoveries were recorded this session. "
+        "Consider what you learned \u2014 even a one-line root cause "
+        "helps the next agent avoid re-discovery."
+    )
+
+
 # ── Tool registration ─────────────────────────────────────────────────
 
 
@@ -459,6 +480,11 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
     ) -> DeliverResultDict:
         """Persist your learnings and progress for future sessions — without this, your work is invisible to the next agent.
 
+        When to call: as your last action before the session ends. Before calling,
+        check: did you record at least one discovery with trw_learn()? If not,
+        record the root cause or approach that worked — even a one-line learning
+        helps the next agent avoid re-discovery.
+
         Runs critical steps synchronously (reflect, checkpoint, CLAUDE.md sync),
         then launches housekeeping steps in the background (consolidation, publish,
         telemetry, tier sweep, etc.). Background steps are concurrency-safe — if
@@ -604,6 +630,16 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             mark_deliver(trw_dir)
         except Exception:  # justified: fail-open — state mutation must not block deliver
             logger.debug("mark_deliver_failed", exc_info=True)
+
+        # PRD-CORE-125 FR05: Self-reflection gate — learning count feedback
+        try:
+            from trw_mcp.state.ceremony_nudge import read_ceremony_state as _read_cs_fr05
+
+            _cs_fr05 = _read_cs_fr05(trw_dir)
+            _learnings_count_fr05 = _cs_fr05.learnings_this_session
+            results["learning_reflection"] = _learning_reflection_message(_learnings_count_fr05)
+        except Exception:  # justified: fail-open — reflection must not block deliver
+            logger.debug("learning_reflection_failed", exc_info=True)
 
         # PRD-QUAL-058-FR05: Read nudge_counts from CeremonyState for deliver event
         _nudge_summary: dict[str, int] = {}

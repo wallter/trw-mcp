@@ -119,6 +119,9 @@ def register_requirements_tools(server: FastMCP) -> None:
     ) -> PrdCreateResultDict:
         """Turn a feature request into a structured PRD --- ensures requirements are traceable, testable, and complete.
 
+        When to call: before writing code, to define what needs to change. Even a
+        2-sentence requirements doc catches wrong assumptions before they become wrong code.
+
         Generates an AARE-F compliant PRD with YAML frontmatter, 12 standard sections,
         confidence scores, and traceability links. Auto-increments the PRD ID from
         the existing catalogue and updates INDEX.md after creation.
