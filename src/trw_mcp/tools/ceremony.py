@@ -608,7 +608,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # PRD-QUAL-058-FR05: Read nudge_counts from CeremonyState for deliver event
         _nudge_summary: dict[str, int] = {}
         try:
-            from trw_mcp.state._nudge_state import read_ceremony_state as _read_cs
+            from trw_mcp.state.ceremony_nudge import read_ceremony_state as _read_cs
 
             _cs = _read_cs(trw_dir)
             _nudge_summary = dict(_cs.nudge_counts)

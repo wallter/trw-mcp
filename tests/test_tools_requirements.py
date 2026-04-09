@@ -638,3 +638,93 @@ class TestIntegration:
         )
         content = result["content"]
         assert "slos" in content
+
+
+# -------------------------------------------------------------------------
+# Ceremony nudge wiring tests (PRD-CORE-124)
+# -------------------------------------------------------------------------
+
+
+class TestCeremonyNudgeWiringRequirements:
+    """Verify ceremony_status is injected into PRD tool responses."""
+
+    def test_trw_prd_create_includes_ceremony_status(self, tmp_path: Path) -> None:
+        """trw_prd_create response must contain 'ceremony_status' after nudge injection."""
+        tools = _get_tools()
+        result = tools["trw_prd_create"].fn(
+            input_text="Test feature for nudge wiring verification",
+            category="CORE",
+            title="Nudge Wiring PRD",
+        )
+        assert "ceremony_status" in result, (
+            "trw_prd_create did not inject ceremony_status — nudge wiring is broken"
+        )
+        assert isinstance(result["ceremony_status"], str)
+
+    def test_trw_prd_validate_includes_ceremony_status(self, tmp_path: Path) -> None:
+        """trw_prd_validate response must contain 'ceremony_status' after nudge injection."""
+        prd_content = """---
+prd:
+  id: PRD-CORE-099
+  title: "Nudge Wiring Test"
+  version: "1.0"
+  status: draft
+  priority: P1
+
+confidence:
+  implementation_feasibility: 0.8
+  requirement_clarity: 0.8
+  estimate_confidence: 0.7
+
+traceability:
+  implements: [KE-FRAME-001]
+  depends_on: []
+---
+
+# PRD-CORE-099: Nudge Wiring Test
+
+## 1. Problem Statement
+We need to verify nudge wiring.
+
+## 2. Goals & Non-Goals
+Goals and non-goals.
+
+## 3. User Stories
+User stories here.
+
+## 4. Functional Requirements
+Requirements.
+
+## 5. Non-Functional Requirements
+NFRs.
+
+## 6. Technical Approach
+Approach.
+
+## 7. Test Strategy
+Testing.
+
+## 8. Rollout Plan
+Rollout.
+
+## 9. Success Metrics
+Metrics.
+
+## 10. Dependencies & Risks
+Risks.
+
+## 11. Open Questions
+Questions.
+
+## 12. Traceability Matrix
+Matrix.
+"""
+        prd_path = tmp_path / "nudge-test.md"
+        prd_path.write_text(prd_content, encoding="utf-8")
+
+        tools = _get_tools()
+        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        assert "ceremony_status" in result, (
+            "trw_prd_validate did not inject ceremony_status — nudge wiring is broken"
+        )
+        assert isinstance(result["ceremony_status"], str)
