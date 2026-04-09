@@ -28,11 +28,53 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.state.ceremony_nudge import NudgeContext, compute_nudge, read_ceremony_state
+from trw_mcp.state.ceremony_nudge import CeremonyState, NudgeContext, compute_nudge, read_ceremony_state
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.receipts import log_recall_receipt
 
 logger = structlog.get_logger(__name__)
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+
+def _hydrate_files_modified(state: CeremonyState, trw_dir: Path) -> None:
+    """Count file_modified events since last checkpoint and update state in-memory.
+
+    The PostToolUse shell hook logs ``file_modified`` events to events.jsonl
+    but cannot call Python to update ceremony-state.json.  This function
+    bridges the gap by counting those events at nudge computation time.
+
+    Mutates *state* in-place (memory only — does NOT write ceremony-state.json).
+    Fail-open: on any error, state is left unchanged.
+    """
+    try:
+        from trw_mcp.state._paths import find_active_run
+        from trw_mcp.state.persistence import FileStateReader
+
+        run_dir = find_active_run()
+        if run_dir is None:
+            return
+
+        events_path = Path(run_dir) / "meta" / "events.jsonl"
+        if not events_path.exists():
+            return
+
+        reader = FileStateReader()
+        events = reader.read_jsonl(events_path)
+
+        # Count file_modified events after the last checkpoint timestamp
+        threshold = state.last_checkpoint_ts or ""
+        count = 0
+        for event in events:
+            if str(event.get("type", "")) == "file_modified":
+                event_ts = str(event.get("ts", ""))
+                if event_ts > threshold:
+                    count += 1
+
+        state.files_modified_since_checkpoint = count
+    except Exception:  # justified: fail-open — hydration must never break nudge
+        logger.debug("hydrate_files_modified_failed", exc_info=True)
 
 
 # ── FR01: Ceremony nudge injection ──────────────────────────────────────
@@ -71,6 +113,12 @@ def append_ceremony_nudge(
 
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
         state = read_ceremony_state(effective_dir)
+
+        # Hydrate files_modified_since_checkpoint from events.jsonl (PRD-CORE-124).
+        # The PostToolUse hook logs file_modified events but cannot call Python
+        # to update ceremony-state.json. We count them here at nudge time.
+        _hydrate_files_modified(state, effective_dir)
+
         config = get_config()
         if config.effective_ceremony_mode == "light":
             nudge = compute_nudge_minimal(state, available_learnings=available_learnings)
