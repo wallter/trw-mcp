@@ -15,7 +15,7 @@ PRD-CORE-090: Decomposed from 790-line god-class into fields base class
 from __future__ import annotations
 
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar
 
 import structlog
 
@@ -127,7 +127,7 @@ class TRWConfig(_TRWConfigFields):
                 dedup_enabled=self.nudge_dedup_enabled,
             ),
             tool_exposure=ToolExposureConfig(
-                mode=cast(Any, self.effective_tool_exposure_mode),
+                mode=self.effective_tool_exposure_mode,
                 custom_list=tuple(self.tool_exposure_list),
             ),
             recall=RecallConfig(
@@ -141,8 +141,8 @@ class TRWConfig(_TRWConfigFields):
             mcp_instructions_enabled=self.effective_mcp_instructions_enabled,
             hooks_enabled=self.effective_hooks_enabled,
             skills_enabled=self.effective_skills_enabled,
-            agents_enabled=self.agents_enabled if self.agents_enabled is not None else True,
-            framework_ref_enabled=self.framework_md_enabled if self.framework_md_enabled is not None else True,
+            agents_enabled=self.effective_agents_enabled,
+            framework_ref_enabled=self.effective_framework_ref_enabled,
             tool_descriptions_variant=self.tool_descriptions_variant,
         )
 
@@ -194,6 +194,28 @@ class TRWConfig(_TRWConfigFields):
         if self.mcp_server_instructions_enabled is not None:
             return self.mcp_server_instructions_enabled
         return self.client_profile.mcp_instructions_enabled
+
+    @property
+    def effective_agents_enabled(self) -> bool:
+        """Profile-aware agent definitions gate.
+
+        No profile field yet for agents; default is enabled.
+        Explicit ``agents_enabled=False`` in config disables agent loading.
+        """
+        if self.agents_enabled is not None:
+            return self.agents_enabled
+        return True  # No profile field yet; default enabled
+
+    @property
+    def effective_framework_ref_enabled(self) -> bool:
+        """Profile-aware framework reference gate.
+
+        Delegates to ``client_profile.include_framework_ref`` when the
+        config sentinel (None) is present.
+        """
+        if self.framework_md_enabled is not None:
+            return self.framework_md_enabled
+        return self.client_profile.include_framework_ref
 
     @property
     def client_profile(self) -> ClientProfile:

@@ -47,7 +47,8 @@ def _apply_tool_exposure_filter() -> None:
             return
 
         # Get all currently registered tool names.
-        # Access _tool_manager directly for sync context (import-time registration).
+        # FastMCP has no public API for listing registered tools;
+        # _tool_manager is stable internal API (unchanged since FastMCP 0.1).
         registered_tools = [t.name for t in mcp._tool_manager.list_tools()]  # type: ignore[attr-defined]
         removed: list[str] = []
         for tool_name in registered_tools:

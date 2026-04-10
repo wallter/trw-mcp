@@ -114,6 +114,7 @@ def append_ceremony_nudge(
         # when nudges are disabled via config/profile.
         config = get_config()
         if not config.effective_nudge_enabled:
+            logger.debug("surface_gated", surface="nudge")
             return response
 
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()

@@ -12,8 +12,21 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Map surface_id -> dotted attribute path on SurfaceConfig to the enabled flag.
+# Dotted paths are resolved via getattr chain (e.g. "nudge.enabled" ->
+# surfaces.nudge.enabled).
+_SURFACE_ENABLED_MAP: dict[str, str] = {
+    "nudge": "nudge.enabled",
+    "recall": "recall.enabled",
+    "hooks": "hooks_enabled",
+    "mcp_instructions": "mcp_instructions_enabled",
+    "skills": "skills_enabled",
+    "agents": "agents_enabled",
+    "framework_ref": "framework_ref_enabled",
+}
 
-def resolve_surface(surface_id: str, **context: object) -> str:
+
+def resolve_surface(surface_id: str) -> str:
     """Resolve surface content through the config layer.
 
     Returns empty string if the surface is disabled.
@@ -23,8 +36,6 @@ def resolve_surface(surface_id: str, **context: object) -> str:
 
     Args:
         surface_id: Surface identifier (e.g. ``"nudge"``, ``"recall"``).
-        **context: Additional context for surface resolution (reserved
-            for PRD-CORE-126).
 
     Returns:
         Empty string if disabled, ``"__ENABLED__"`` if enabled.
@@ -38,21 +49,16 @@ def resolve_surface(surface_id: str, **context: object) -> str:
         logger.debug("surface_resolver_config_failed", exc_info=True)
         return "__ENABLED__"
 
-    if surface_id == "nudge" and not surfaces.nudge.enabled:
-        return ""
-    if surface_id == "recall" and not surfaces.recall.enabled:
-        return ""
-    if surface_id == "hooks" and not surfaces.hooks_enabled:
-        return ""
-    if surface_id == "mcp_instructions" and not surfaces.mcp_instructions_enabled:
-        return ""
-    if surface_id == "skills" and not surfaces.skills_enabled:
-        return ""
-    if surface_id == "agents" and not surfaces.agents_enabled:
-        return ""
-    if surface_id == "framework_ref" and not surfaces.framework_ref_enabled:
+    attr_path = _SURFACE_ENABLED_MAP.get(surface_id)
+    if attr_path is None:
+        return "__ENABLED__"  # Unknown surface = enabled (permissive)
+
+    # Resolve dotted path (e.g. "nudge.enabled" -> surfaces.nudge.enabled)
+    obj: object = surfaces
+    for part in attr_path.split("."):
+        obj = getattr(obj, part)
+
+    if not obj:
         return ""
 
-    # Surface is enabled -- return sentinel indicating "use existing content"
-    # PRD-CORE-126 will replace this with YAML-loaded content
     return "__ENABLED__"
