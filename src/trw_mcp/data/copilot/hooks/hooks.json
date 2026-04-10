@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c \"echo '{\\\"level\\\":\\\"info\\\",\\\"event\\\":\\\"session_start\\\",\\\"framework\\\":\\\"trw\\\"}' >> .trw/logs/hooks.jsonl 2>/dev/null || true\""
+          }
+        ]
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c \"echo '{\\\"level\\\":\\\"info\\\",\\\"event\\\":\\\"prompt_submitted\\\",\\\"framework\\\":\\\"trw\\\"}' >> .trw/logs/hooks.jsonl 2>/dev/null || true\""
+          }
+        ]
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "edit|write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c \"echo '{\\\"level\\\":\\\"info\\\",\\\"event\\\":\\\"pre_tool_write\\\",\\\"framework\\\":\\\"trw\\\"}' >> .trw/logs/hooks.jsonl 2>/dev/null || true\""
+          }
+        ]
+      }
+    ],
+    "postToolUse": [
+      {
+        "matcher": "edit|write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c \"echo '{\\\"level\\\":\\\"info\\\",\\\"event\\\":\\\"post_tool_write\\\",\\\"framework\\\":\\\"trw\\\"}' >> .trw/logs/hooks.jsonl 2>/dev/null || true\""
+          }
+        ]
+      }
+    ],
+    "sessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c \"echo '{\\\"level\\\":\\\"info\\\",\\\"event\\\":\\\"session_end\\\",\\\"framework\\\":\\\"trw\\\"}' >> .trw/logs/hooks.jsonl 2>/dev/null || true\""
+          }
+        ]
+      }
+    ]
+  }
+}
