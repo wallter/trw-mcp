@@ -25,3 +25,57 @@ LIGHT_MODE_RECALL_CAP: int = 10
 
 # -- Compact mode limits --
 COMPACT_TAGS_CAP: int = 10  # Max tags per learning in compact mode
+
+# -- Surface area defaults (PRD-CORE-125) --
+DEFAULT_NUDGE_BUDGET_CHARS: int = 600
+DEFAULT_LEARNING_PREVIEW_CHARS: int = 500
+
+# -- Tool exposure groups (single source of truth) --
+TOOL_GROUP_CORE: tuple[str, ...] = (
+    "trw_session_start",
+    "trw_checkpoint",
+    "trw_learn",
+    "trw_deliver",
+)
+TOOL_GROUP_MEMORY: tuple[str, ...] = (
+    "trw_recall",
+    "trw_learn_update",
+    "trw_knowledge_sync",
+)
+TOOL_GROUP_QUALITY: tuple[str, ...] = (
+    "trw_build_check",
+    "trw_review",
+    "trw_prd_create",
+    "trw_prd_validate",
+)
+TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = (
+    "trw_status",
+    "trw_run_report",
+    "trw_usage_report",
+    "trw_analytics_report",
+    "trw_quality_dashboard",
+    "trw_ceremony_status",
+)
+TOOL_GROUP_ADMIN: tuple[str, ...] = (
+    "trw_ceremony_approve",
+    "trw_ceremony_revert",
+    "trw_trust_level",
+    "trw_progressive_expand",
+    "trw_pre_compact_checkpoint",
+    "trw_init",
+    "trw_claude_md_sync",
+    "trw_meta_tune",
+)
+
+TOOL_PRESETS: dict[str, tuple[str, ...]] = {
+    "core": TOOL_GROUP_CORE,
+    "minimal": TOOL_GROUP_CORE + TOOL_GROUP_MEMORY,
+    "standard": TOOL_GROUP_CORE + TOOL_GROUP_MEMORY + TOOL_GROUP_QUALITY + ("trw_status", "trw_init"),
+    "all": (
+        TOOL_GROUP_CORE
+        + TOOL_GROUP_MEMORY
+        + TOOL_GROUP_QUALITY
+        + TOOL_GROUP_OBSERVABILITY
+        + TOOL_GROUP_ADMIN
+    ),
+}

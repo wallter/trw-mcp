@@ -16,6 +16,11 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
+# PRD-CORE-125-FR05: Hooks gating -- exit early when hooks are disabled.
+if [ "${TRW_HOOKS_ENABLED:-true}" = "false" ]; then
+  exit 0
+fi
+
 # Read stdin payload to determine source
 _payload=$(cat) || exit 0
 _source=""
@@ -75,6 +80,12 @@ _emit_tier_guidance() {
   esac
 }
 
+# --- PRD-CORE-125-FR06: Framework reference gating ---
+_framework_ref_enabled() {
+  # Returns 0 (true) when framework reference is enabled, 1 (false) when disabled.
+  [ "${TRW_FRAMEWORK_MD_ENABLED:-true}" != "false" ]
+}
+
 # --- Value-oriented protocol summary ---
 _emit_protocol() {
   echo "## TRW Behavioral Protocol"
@@ -103,13 +114,15 @@ case "$_source" in
     # It IS called for compact/clear/resume where CLAUDE.md context may be lost.
     _emit_tier_guidance
     echo ""
-    echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
-    echo "WHY: It defines the 6-phase execution model (RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER),"
-    echo "  exit criteria for each phase, formation selection for parallel work, quality gates with rubric scoring,"
-    echo "  phase reversion rules, and the rationalization watchlist. Your tools implement this methodology —"
-    echo "  without reading it, you will pass tool checks while missing the process that prevents rework."
-    echo "  The framework is ~500 lines. Read it once at session start; re-read relevant sections at phase transitions."
-    echo ""
+    if _framework_ref_enabled; then
+      echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
+      echo "WHY: It defines the 6-phase execution model (RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER),"
+      echo "  exit criteria for each phase, formation selection for parallel work, quality gates with rubric scoring,"
+      echo "  phase reversion rules, and the rationalization watchlist. Your tools implement this methodology —"
+      echo "  without reading it, you will pass tool checks while missing the process that prevents rework."
+      echo "  The framework is ~500 lines. Read it once at session start; re-read relevant sections at phase transitions."
+      echo ""
+    fi
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
     echo ""
@@ -125,7 +138,9 @@ case "$_source" in
     _emit_tier_guidance
     echo ""
     echo "SESSION RESUMED — your run state and learnings are preserved."
-    echo "FRAMEWORK: If you haven't read .trw/frameworks/FRAMEWORK.md this session, read it now — it defines exit criteria and phase gates that govern your work."
+    if _framework_ref_enabled; then
+      echo "FRAMEWORK: If you haven't read .trw/frameworks/FRAMEWORK.md this session, read it now — it defines exit criteria and phase gates that govern your work."
+    fi
     echo "Call trw_status() to see where you left off and what to work on next."
     ;;
 
@@ -133,12 +148,14 @@ case "$_source" in
     # FR03: Compaction recovery — emphasize progress is safe, show recovered state
     echo "CONTEXT COMPACTED — your conversation was compressed but your implementation progress is safe."
     echo ""
-    echo "FRAMEWORK RE-READ REQUIRED: Read .trw/frameworks/FRAMEWORK.md now, before resuming work."
-    echo "WHY: Context compaction erased your understanding of the methodology. The framework itself mandates"
-    echo "  re-reading after compaction (§ FRAMEWORK ADHERENCE). This costs ~500 tokens but prevents systematic"
-    echo "  errors from working without phase gates, exit criteria, formation guidance, and quality rubrics."
-    echo "  Agents who skip this produce work that drifts from the methodology and requires rework."
-    echo ""
+    if _framework_ref_enabled; then
+      echo "FRAMEWORK RE-READ REQUIRED: Read .trw/frameworks/FRAMEWORK.md now, before resuming work."
+      echo "WHY: Context compaction erased your understanding of the methodology. The framework itself mandates"
+      echo "  re-reading after compaction (§ FRAMEWORK ADHERENCE). This costs ~500 tokens but prevents systematic"
+      echo "  errors from working without phase gates, exit criteria, formation guidance, and quality rubrics."
+      echo "  Agents who skip this produce work that drifts from the methodology and requires rework."
+      echo ""
+    fi
     _emit_protocol
     echo ""
     # Recover pre-compaction state if available
@@ -155,7 +172,11 @@ case "$_source" in
       fi
     fi
     echo ""
-    echo "CONTINUE: Read .trw/frameworks/FRAMEWORK.md first, then call trw_status() to see your current state."
+    if _framework_ref_enabled; then
+      echo "CONTINUE: Read .trw/frameworks/FRAMEWORK.md first, then call trw_status() to see your current state."
+    else
+      echo "CONTINUE: Call trw_status() to see your current state."
+    fi
     echo "Your checkpoint has your progress — pick up where you left off rather than re-planning."
     ;;
 
@@ -163,11 +184,13 @@ case "$_source" in
     # FR01: Clear — full protocol injection (same as startup)
     _emit_protocol
     echo ""
-    echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
-    echo "WHY: It defines the 6-phase execution model, exit criteria, formations, quality gates, and phase reversion"
-    echo "  rules that structure your work. Your tools implement this methodology — without reading it, you will pass"
-    echo "  tool checks while missing the process that prevents rework."
-    echo ""
+    if _framework_ref_enabled; then
+      echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
+      echo "WHY: It defines the 6-phase execution model, exit criteria, formations, quality gates, and phase reversion"
+      echo "  rules that structure your work. Your tools implement this methodology — without reading it, you will pass"
+      echo "  tool checks while missing the process that prevents rework."
+      echo ""
+    fi
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
     echo ""

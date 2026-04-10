@@ -27,7 +27,14 @@ from trw_mcp.models.config._sub_models import (
     PhaseTimeCaps,
     ScoringConfig,
     TelemetryConfig,
+    ToolsConfig,
     TrustConfig,
+)
+from trw_mcp.models.config._surface_config import (
+    NudgeConfig,
+    RecallConfig,
+    SurfaceConfig,
+    ToolExposureConfig,
 )
 
 __all__ = [
@@ -37,13 +44,18 @@ __all__ = [
     "ClientProfile",
     "MemoryConfig",
     "ModelTier",
+    "NudgeConfig",
     "OrchestrationConfig",
     "PathsConfig",
     "PhaseTimeCaps",
+    "RecallConfig",
     "ScoringConfig",
     "ScoringDimensionWeights",
+    "SurfaceConfig",
     "TRWConfig",
     "TelemetryConfig",
+    "ToolExposureConfig",
+    "ToolsConfig",
     "TrustConfig",
     "WriteTargets",
     "_reset_config",

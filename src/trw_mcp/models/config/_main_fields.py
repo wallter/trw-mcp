@@ -24,6 +24,7 @@ from trw_mcp.models.config._fields_paths import _PathsFields
 from trw_mcp.models.config._fields_scoring import _ScoringFields
 from trw_mcp.models.config._fields_sync import _SyncFields
 from trw_mcp.models.config._fields_telemetry import _TelemetryFields
+from trw_mcp.models.config._fields_tools import _ToolsFields
 from trw_mcp.models.config._fields_trust import _TrustFields
 
 
@@ -34,6 +35,7 @@ class _TRWConfigFields(
     _TelemetryFields,
     _CeremonyFields,
     _BuildFields,
+    _ToolsFields,
     _TrustFields,
     _SyncFields,
     _PathsFields,

@@ -160,6 +160,24 @@ def execute_recall(
         _rank_by_utility: Injected ranking function.
         _collect_context: Injected context collector.
     """
+    # PRD-CORE-125-FR03: Learning recall gating -- early return when
+    # recall is disabled via config/profile.
+    if not config.effective_learning_recall_enabled:
+        return {
+            "query": query,
+            "learnings": [],
+            "patterns": [],
+            "context": {},
+            "total_matches": 0,
+            "total_available": 0,
+            "compact": compact if compact is not None else (query.strip() in ("*", "")),
+            "max_results": max_results if max_results is not None else config.recall_max_results,
+            "topic_filter_ignored": False,
+            "tokens_used": 0,
+            "tokens_budget": token_budget,
+            "tokens_truncated": False,
+        }
+
     # Resolve injected deps with fallbacks
     from trw_mcp.scoring import rank_by_utility as _default_rank
     from trw_mcp.state.memory_adapter import recall_learnings as _default_recall

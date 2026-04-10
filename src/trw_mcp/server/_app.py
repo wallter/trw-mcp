@@ -131,6 +131,26 @@ def _build_middleware() -> list[object]:
     return middleware
 
 
+def _resolve_instructions(instructions: str | None) -> str:
+    """Resolve server instructions, respecting the MCP instructions gate.
+
+    PRD-CORE-125-FR04: When ``effective_mcp_instructions_enabled`` is False,
+    return an empty string so no instructions are injected into the MCP server
+    response.  Fail-open: if config loading fails, use the default instructions.
+    """
+    if instructions is not None:
+        return instructions
+    try:
+        from trw_mcp.models.config import get_config
+
+        config = get_config()
+        if not config.effective_mcp_instructions_enabled:
+            return ""
+    except Exception:  # justified: fail-open, config failure uses default instructions
+        pass
+    return _load_server_instructions()
+
+
 def create_app(
     *,
     instructions: str | None = None,
@@ -147,7 +167,7 @@ def create_app(
     """
     return FastMCP(
         "trw",
-        instructions=instructions or _load_server_instructions(),
+        instructions=_resolve_instructions(instructions),
         middleware=middleware if middleware is not None else _build_middleware(),  # type: ignore[arg-type]
     )
 

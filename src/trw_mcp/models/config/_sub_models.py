@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from trw_mcp.models.config._defaults import (
     DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
@@ -120,6 +120,17 @@ class TrustConfig(BaseModel):
         "jwt",
     )
     trust_locked: bool = False
+
+
+class ToolsConfig(BaseModel):
+    """Tool exposure and MCP server instruction configuration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tool_exposure_mode: str = "all"
+    tool_exposure_list: list[str] = Field(default_factory=list)
+    tool_descriptions_variant: str = "default"
+    mcp_server_instructions_enabled: bool | None = None
 
 
 class CeremonyFeedbackConfig(BaseModel):

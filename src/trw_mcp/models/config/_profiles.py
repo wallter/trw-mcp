@@ -65,6 +65,12 @@ def _light_profile(client_id: str, display_name: str, instruction_path: str) -> 
         include_framework_ref=False,
         include_agent_teams=False,
         include_delegation=False,
+        # Surface control (PRD-CORE-125)
+        nudge_enabled=False,
+        tool_exposure_mode="standard",
+        learning_recall_enabled=True,
+        mcp_instructions_enabled=False,
+        skills_enabled=False,
     )
 
 
@@ -79,6 +85,12 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=True,
         include_agent_teams=True,
         include_delegation=True,
+        # Surface control (PRD-CORE-125)
+        nudge_enabled=True,
+        tool_exposure_mode="all",
+        learning_recall_enabled=True,
+        mcp_instructions_enabled=True,
+        skills_enabled=True,
     ),
     "opencode": _light_profile("opencode", "OpenCode", ".opencode/INSTRUCTIONS.md"),
     "cursor": ClientProfile(

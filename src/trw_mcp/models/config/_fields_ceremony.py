@@ -183,3 +183,23 @@ class _CeremonyFields:
     audit_pattern_promotion_threshold: int = Field(
         default=3, ge=1, le=20, description="Minimum distinct PRDs for audit pattern promotion"
     )
+
+    # -- Nudge control (S4, PRD-CORE-125) --
+
+    nudge_enabled: bool | None = None
+    nudge_urgency_mode: Literal["adaptive", "always_low", "always_high", "off"] = "adaptive"
+    nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
+    nudge_dedup_enabled: bool = True
+
+    # -- Hook control (S9, PRD-CORE-125) --
+
+    hooks_enabled: bool | None = None
+
+    # -- Framework reference (S12, PRD-CORE-125) --
+
+    framework_md_enabled: bool | None = None
+
+    # -- Skills & Agents (S10, S11, PRD-CORE-125) --
+
+    skills_enabled: bool | None = None
+    agents_enabled: bool | None = None

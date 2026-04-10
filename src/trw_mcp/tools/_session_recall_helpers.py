@@ -110,6 +110,12 @@ def append_ceremony_nudge(
             increment_nudge_count,
         )
 
+        # PRD-CORE-125-FR01: Nudge gating -- skip entire nudge assembly
+        # when nudges are disabled via config/profile.
+        config = get_config()
+        if not config.effective_nudge_enabled:
+            return response
+
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
         state = read_ceremony_state(effective_dir)
 
@@ -118,7 +124,6 @@ def append_ceremony_nudge(
         # to update ceremony-state.json. We count them here at nudge time.
         _hydrate_files_modified(state, effective_dir)
 
-        config = get_config()
         if config.effective_ceremony_mode == "light":
             nudge = compute_nudge_minimal(state, available_learnings=available_learnings)
         else:
@@ -414,6 +419,12 @@ def perform_session_recalls(
           - auto_recalled: always empty list (reserved for future use)
           - extra_fields: dict with query_matched, total_available, etc.
     """
+    # PRD-CORE-125-FR03: Session-start recall gating -- skip recall when
+    # session_start_recall_enabled is explicitly set to False.
+    if config.session_start_recall_enabled is not None and not config.session_start_recall_enabled:
+        logger.debug("session_recall_gated", reason="session_start_recall_enabled=False")
+        return [], [], {}
+
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
     from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
 
