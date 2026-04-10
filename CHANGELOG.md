@@ -2,6 +2,33 @@
 
 All notable changes to the TRW MCP server package.
 
+## [Unreleased]
+
+### Added
+
+- **GitHub Copilot CLI integration (PRD-CORE-127)**
+  - `copilot` ClientProfile with 200k context, hooks/skills/agent-teams enabled
+  - `WriteTargets.copilot_instructions` boolean field for Copilot instruction sync
+  - `bootstrap/_copilot.py` — 5 public functions for Copilot artifact generation
+  - 6 Copilot-format agents in `data/copilot/agents/*.agent.md`
+  - 10 bundled skills in `data/copilot/skills/*/SKILL.md`
+  - `data/copilot/hooks/hooks.json` — v1 format hook templates
+  - `data/copilot/plugin.json` — plugin manifest for `copilot plugin install`
+  - Plugin distribution: `data/copilot/plugin/` with agents, skills, hooks, MCP config
+  - Copilot detection in `_utils.py` (`detect_ide`, `detect_installed_clis`, `SUPPORTED_IDES`)
+  - `_update_copilot_artifacts()` in `_ide_targets.py` for update pipeline
+  - 80 copilot-specific tests in `tests/test_copilot.py`
+
+- **DRY bootstrap helpers**
+  - `_new_result()` and `_record_write()` extracted to `_file_ops.py`
+  - `_absorb_sub_result()` in `_ide_targets.py` replaces repetitive extend patterns
+  - `_codex.py` and `_opencode.py` refactored to use shared helpers
+
+### Fixed
+
+- `result["warnings"]` KeyError in `_init_project.py` and `_ide_targets.py` — replaced with `setdefault()`
+- mypy `BootstrapFileResult` type mismatch in `_codex.py` — added `cast()` for dict→TypedDict
+
 ## [0.40.0] - 2026-04-07
 
 ### Added
