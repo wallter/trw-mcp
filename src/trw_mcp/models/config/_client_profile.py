@@ -145,3 +145,10 @@ class ClientProfile(BaseModel):
     include_framework_ref: bool = True
     include_agent_teams: bool = True
     include_delegation: bool = True
+
+    # -- Surface control flags (PRD-CORE-125) --
+    nudge_enabled: bool = True
+    tool_exposure_mode: Literal["all", "core", "minimal", "standard", "custom"] = "all"
+    learning_recall_enabled: bool = True
+    mcp_instructions_enabled: bool = True
+    skills_enabled: bool = True

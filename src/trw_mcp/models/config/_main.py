@@ -15,7 +15,7 @@ PRD-CORE-090: Decomposed from 790-line god-class into fields base class
 from __future__ import annotations
 
 from functools import cached_property
-from typing import TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import structlog
 
@@ -30,8 +30,12 @@ from trw_mcp.models.config._sub_models import (
     PathsConfig,
     ScoringConfig,
     TelemetryConfig,
+    ToolsConfig,
     TrustConfig,
 )
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config._surface_config import SurfaceConfig
 
 _SubT = TypeVar("_SubT")
 
@@ -96,12 +100,100 @@ class TRWConfig(_TRWConfigFields):
         """Directory structure and path defaults sub-config."""
         return self._sub_config(PathsConfig)
 
+    @cached_property
+    def tools(self) -> ToolsConfig:
+        """Tool exposure and MCP server instruction sub-config."""
+        return self._sub_config(ToolsConfig)
+
+    @cached_property
+    def surfaces(self) -> SurfaceConfig:
+        """Unified surface configuration resolved from profile + flat fields.
+
+        PRD-CORE-125 Phase 3 (FR13): Single frozen model for all surface
+        control flags, eliminating scattered getattr calls at gate sites.
+        """
+        from trw_mcp.models.config._surface_config import (
+            NudgeConfig,
+            RecallConfig,
+            SurfaceConfig,
+            ToolExposureConfig,
+        )
+
+        return SurfaceConfig(
+            nudge=NudgeConfig(
+                enabled=self.effective_nudge_enabled,
+                urgency_mode=self.nudge_urgency_mode,
+                budget_chars=self.nudge_budget_chars,
+                dedup_enabled=self.nudge_dedup_enabled,
+            ),
+            tool_exposure=ToolExposureConfig(
+                mode=cast(Any, self.effective_tool_exposure_mode),
+                custom_list=tuple(self.tool_exposure_list),
+            ),
+            recall=RecallConfig(
+                enabled=self.effective_learning_recall_enabled,
+                max_results=self.recall_max_results,
+                injection_preview_chars=self.learning_injection_preview_chars,
+                session_start_recall=self.session_start_recall_enabled
+                if self.session_start_recall_enabled is not None
+                else True,
+            ),
+            mcp_instructions_enabled=self.effective_mcp_instructions_enabled,
+            hooks_enabled=self.effective_hooks_enabled,
+            skills_enabled=self.effective_skills_enabled,
+            agents_enabled=self.agents_enabled if self.agents_enabled is not None else True,
+            framework_ref_enabled=self.framework_md_enabled if self.framework_md_enabled is not None else True,
+            tool_descriptions_variant=self.tool_descriptions_variant,
+        )
+
     @property
     def effective_ceremony_mode(self) -> str:
         """Profile-aware ceremony mode. Explicit config wins over profile default."""
         if self.ceremony_mode != "full":
             return self.ceremony_mode
         return self.client_profile.ceremony_mode
+
+    @property
+    def effective_nudge_enabled(self) -> bool:
+        """Profile-aware nudge gate. Explicit config=False wins."""
+        if self.nudge_enabled is not None:
+            return self.nudge_enabled
+        return self.client_profile.nudge_enabled
+
+    @property
+    def effective_hooks_enabled(self) -> bool:
+        """Profile-aware hook gate. Explicit config=False wins."""
+        if self.hooks_enabled is not None:
+            return self.hooks_enabled
+        return self.client_profile.hooks_enabled
+
+    @property
+    def effective_tool_exposure_mode(self) -> str:
+        """Profile-aware tool exposure. Non-default config wins."""
+        if self.tool_exposure_mode != "all":
+            return self.tool_exposure_mode
+        return self.client_profile.tool_exposure_mode
+
+    @property
+    def effective_skills_enabled(self) -> bool:
+        """Profile-aware skill loading. Explicit config=False wins."""
+        if self.skills_enabled is not None:
+            return self.skills_enabled
+        return self.client_profile.skills_enabled
+
+    @property
+    def effective_learning_recall_enabled(self) -> bool:
+        """Profile-aware recall gate. Explicit config=False wins."""
+        if self.learning_recall_enabled is not None:
+            return self.learning_recall_enabled
+        return self.client_profile.learning_recall_enabled
+
+    @property
+    def effective_mcp_instructions_enabled(self) -> bool:
+        """Profile-aware MCP instructions gate. Explicit config=False wins."""
+        if self.mcp_server_instructions_enabled is not None:
+            return self.mcp_server_instructions_enabled
+        return self.client_profile.mcp_instructions_enabled
 
     @property
     def client_profile(self) -> ClientProfile:

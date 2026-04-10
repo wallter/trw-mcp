@@ -155,6 +155,18 @@ def _install_skills(
     Each skill directory is validated via :func:`_validate_skill` before
     installation.  Invalid skills are skipped with a warning.
     """
+    # PRD-CORE-125-FR07: Skills gating -- skip skill installation when
+    # skills are disabled via config/profile.
+    try:
+        from trw_mcp.models.config import get_config
+
+        config = get_config()
+        if not config.effective_skills_enabled:
+            logger.debug("skills_install_gated", reason="skills_enabled=False")
+            return
+    except Exception:  # justified: fail-open, config failure installs skills normally
+        pass
+
     skills_source = _DATA_DIR / "skills"
     if skills_source.is_dir():
         for skill_dir in sorted(skills_source.iterdir()):
@@ -181,6 +193,18 @@ def _install_agents(
     on_progress: ProgressCallback = None,
 ) -> None:
     """Copy bundled agent markdown files to ``.claude/agents/``."""
+    # PRD-CORE-125-FR08: Agents gating -- skip agent installation when
+    # agents are disabled via config/profile.
+    try:
+        from trw_mcp.models.config import get_config
+
+        config = get_config()
+        if config.agents_enabled is not None and not config.agents_enabled:
+            logger.debug("agents_install_gated", reason="agents_enabled=False")
+            return
+    except Exception:  # justified: fail-open, config failure installs agents normally
+        pass
+
     agents_source = _DATA_DIR / "agents"
     if agents_source.is_dir():
         for agent_file in sorted(agents_source.iterdir()):

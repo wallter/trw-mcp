@@ -175,14 +175,20 @@ def render_ceremony_flows() -> str:
 def render_delegation_protocol() -> str:
     """Render delegation discipline section for CLAUDE.md auto-generation.
 
+    PRD-CORE-125-FR10: Gated by ``include_delegation`` on client profile.
+
     Provides a compact delegation decision tree and mode comparison so
     agents default to delegation for non-trivial tasks. Uses value-oriented
     framing (why delegation produces better results) rather than prescriptive
     mandates (MUST/NEVER).
 
     Returns:
-        Markdown string with delegation guidance.
+        Markdown string with delegation guidance, or empty string if disabled.
     """
+    config = get_config()
+    if not config.client_profile.include_delegation:
+        return ""
+
     return (
         "## TRW Delegation & Orchestration (Auto-Generated)\n"
         "\n"
@@ -264,13 +270,20 @@ def render_rationalization_watchlist() -> str:
 def render_framework_reference() -> str:
     """Render framework reference directive for CLAUDE.md.
 
+    PRD-CORE-125-FR10: Gated by ``include_framework_ref`` on client profile.
+
     Points agents to the methodology document. Compact per PRD-CORE-061
     progressive disclosure \u2014 the framework itself explains why, this
     section just says where and when to read it.
 
     Returns:
-        Markdown string with framework pointer and reading schedule.
+        Markdown string with framework pointer and reading schedule,
+        or empty string if disabled.
     """
+    config = get_config()
+    if not config.client_profile.include_framework_ref:
+        return ""
+
     return (
         "### Framework Reference\n"
         "\n"
@@ -457,6 +470,8 @@ def render_codex_trw_section() -> str:
 def render_agent_teams_protocol() -> str:
     """Render Agent Teams protocol section for CLAUDE.md auto-generation.
 
+    PRD-CORE-125-FR10: Also gated by ``include_agent_teams`` on client profile.
+
     Provides teammates with dual-mode orchestration guidance, lifecycle
     expectations, and hook-based quality gates (PRD-INFRA-010).
 
@@ -467,6 +482,9 @@ def render_agent_teams_protocol() -> str:
     config = get_config()
 
     if not config.agent_teams_enabled:
+        return ""
+
+    if not config.client_profile.include_agent_teams:
         return ""
 
     return (

@@ -68,3 +68,9 @@ class _MemoryFields:
     memory_score_w1: float = 0.4
     memory_score_w2: float = 0.3
     memory_score_w3: float = 0.3
+
+    # -- Learning recall control (S7, PRD-CORE-125) --
+
+    learning_recall_enabled: bool | None = None
+    learning_injection_preview_chars: int = Field(default=500, ge=50, le=2000)
+    session_start_recall_enabled: bool | None = None
