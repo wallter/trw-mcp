@@ -1,6 +1,6 @@
 """Built-in client profile registry and resolution.
 
-Five profiles (claude-code, opencode, cursor, codex, aider) with
+Six profiles (claude-code, opencode, cursor, codex, copilot, aider) with
 eval-data-calibrated ceremony and scoring weights. Unknown client IDs
 fall back to claude-code with a structured warning.
 """
@@ -106,6 +106,27 @@ _PROFILES: dict[str, ClientProfile] = {
         include_agent_teams=False,
     ),
     "codex": _light_profile("codex", "Codex CLI", ".codex/INSTRUCTIONS.md"),
+    "copilot": ClientProfile(
+        client_id="copilot",
+        display_name="GitHub Copilot CLI",
+        write_targets=WriteTargets(
+            claude_md=False,
+            agents_md=True,
+            instruction_path=".github/copilot-instructions.md",
+        ),
+        instruction_max_lines=400,
+        context_window_tokens=200_000,
+        ceremony_mode="full",
+        ceremony_weights=CeremonyWeights(),
+        scoring_weights=ScoringDimensionWeights(),
+        response_format="json",
+        hooks_enabled=True,
+        include_agent_teams=True,
+        tool_exposure_mode="all",
+        learning_recall_enabled=True,
+        mcp_instructions_enabled=True,
+        skills_enabled=True,
+    ),
     "aider": _light_profile("aider", "Aider", ".aider/instructions.md"),
 }
 
