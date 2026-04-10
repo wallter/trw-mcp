@@ -10,8 +10,15 @@ decisions (step names, booleans, tuples). They never read or write the filesyste
 
 from __future__ import annotations
 
+import random
+
+import structlog
+
+from trw_mcp.models.config._client_profile import NudgePoolWeights
 from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext
 from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-export
+
+logger = structlog.get_logger(__name__)
 
 # Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
 #
@@ -54,10 +61,15 @@ def _highest_priority_pending_step(state: CeremonyState) -> str | None:
     if not state.session_started:
         return "session_start"
 
-    # Priority 2: checkpoint (if files modified > 3 OR no checkpoint in session)
-    needs_checkpoint = state.files_modified_since_checkpoint > 3 or state.checkpoint_count == 0
-    if needs_checkpoint:
-        return "checkpoint"
+    # Priority 2: checkpoint (if files modified > 10 OR no checkpoint in session)
+    # PRD-CORE-129: Raised threshold from 3 to 10 to reduce checkpoint dominance.
+    # Suppress checkpoint nudges in validate/review/deliver phases where the agent
+    # should focus on verification and delivery, not mid-work saving.
+    _checkpoint_suppressed_phases = ("validate", "review", "deliver", "done")
+    if state.phase not in _checkpoint_suppressed_phases:
+        needs_checkpoint = state.files_modified_since_checkpoint > 10 or state.checkpoint_count == 0
+        if needs_checkpoint:
+            return "checkpoint"
 
     # Priority 3: build_check (if phase >= validate and not run)
     if state.phase in ("validate", "review", "deliver", "done") and state.build_check_result != "passed":
@@ -214,6 +226,96 @@ def select_nudge_learning(
 # ---------------------------------------------------------------------------
 # FR12: Local model detection (PRD-CORE-074)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-129: Pool-based nudge selection
+# ---------------------------------------------------------------------------
+
+
+def is_pool_in_cooldown(state: CeremonyState, pool: str) -> bool:
+    """Check if a pool is currently in cooldown.
+
+    A pool is in cooldown when the tool_call_counter has not yet reached
+    the cooldown_until value for that pool.
+    """
+    cooldown_until = state.pool_cooldown_until.get(pool, 0)
+    return state.tool_call_counter < cooldown_until
+
+
+def apply_pool_cooldown(
+    state: CeremonyState,
+    pool: str,
+    cooldown_after: int,
+    cooldown_calls: int,
+) -> bool:
+    """Check if pool should enter cooldown, apply if so.
+
+    Returns True if cooldown was activated. Resets the ignore count
+    for the pool when cooldown is applied.
+    """
+    ignores = state.pool_ignore_counts.get(pool, 0)
+    if cooldown_after > 0 and ignores >= cooldown_after:
+        state.pool_cooldown_until[pool] = state.tool_call_counter + cooldown_calls
+        state.pool_ignore_counts[pool] = 0
+        return True
+    return False
+
+
+def _select_nudge_pool(
+    state: CeremonyState,
+    weights: NudgePoolWeights,
+    context: NudgeContext | None = None,
+    cooldown_after: int = 3,
+    cooldown_calls: int = 10,
+) -> str | None:
+    """Select nudge pool via weighted random with cooldown filtering.
+
+    Returns pool name ("workflow", "learnings", "ceremony", "context")
+    or None if no eligible pool exists.
+
+    Context pool bypasses weighted selection on build failure or P0.
+    """
+    # Context pool always wins on build failure or P0
+    if context is not None and (context.build_passed is False or context.review_p0_count > 0):
+        return "context"
+
+    # Build eligible pool list (not in cooldown, weight > 0)
+    pool_weights: dict[str, int] = {
+        "workflow": weights.workflow,
+        "learnings": weights.learnings,
+        "ceremony": weights.ceremony,
+        "context": weights.context,
+    }
+    eligible: dict[str, int] = {}
+    for pool, weight in pool_weights.items():
+        if weight <= 0:
+            continue
+        if is_pool_in_cooldown(state, pool):
+            logger.debug(
+                "nudge_pool_suppressed",
+                pool=pool,
+                reason="cooldown",
+                until=state.pool_cooldown_until.get(pool, 0),
+            )
+            continue
+        eligible[pool] = weight
+
+    if not eligible:
+        return None
+
+    # Weighted random selection
+    pools = list(eligible.keys())
+    w = [eligible[p] for p in pools]
+    selected: str = random.choices(pools, weights=w, k=1)[0]
+
+    logger.debug(
+        "nudge_pool_selected",
+        pool=selected,
+        eligible=list(eligible.keys()),
+    )
+
+    return selected
 
 
 def is_local_model(model_id: str) -> bool:

@@ -191,6 +191,14 @@ class _CeremonyFields:
     nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
     nudge_dedup_enabled: bool = True
 
+    # -- Nudge pool tuning (PRD-CORE-129) --
+    nudge_pool_weight_workflow: int = 40
+    nudge_pool_weight_learnings: int = 30
+    nudge_pool_weight_ceremony: int = 20
+    nudge_pool_weight_context: int = 10
+    nudge_pool_cooldown_after: int = Field(default=3, ge=1, le=20)
+    nudge_pool_cooldown_calls: int = Field(default=10, ge=1, le=100)
+
     # -- Hook control (S9, PRD-CORE-125) --
 
     hooks_enabled: bool | None = None

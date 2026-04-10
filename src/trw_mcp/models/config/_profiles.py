@@ -13,6 +13,7 @@ from trw_mcp.models.config._client_profile import (
     CeremonyWeights,
     ClientProfile,
     ModelTier,
+    NudgePoolWeights,
     ScoringDimensionWeights,
     WriteTargets,
 )
@@ -57,6 +58,7 @@ def _light_profile(client_id: str, display_name: str, instruction_path: str) -> 
         context_window_tokens=32_000,
         ceremony_mode="light",
         ceremony_weights=_LIGHT_CEREMONY,
+        nudge_pool_weights=NudgePoolWeights(workflow=60, learnings=30, ceremony=0, context=10),
         mandatory_phases=_LIGHT_PHASES,
         scoring_weights=_LIGHT_SCORING,
         default_model_tier="local-8b",
@@ -80,6 +82,7 @@ _PROFILES: dict[str, ClientProfile] = {
         display_name="Claude Code",
         write_targets=WriteTargets(claude_md=True, instruction_path=".claude/INSTRUCTIONS.md"),
         ceremony_weights=CeremonyWeights(),  # defaults = claude-code
+        nudge_pool_weights=NudgePoolWeights(),  # defaults: 40/30/20/10
         scoring_weights=ScoringDimensionWeights(),  # defaults = claude-code
         hooks_enabled=True,
         include_framework_ref=True,
@@ -100,6 +103,7 @@ _PROFILES: dict[str, ClientProfile] = {
         instruction_max_lines=400,
         context_window_tokens=128_000,
         ceremony_weights=CeremonyWeights(),
+        nudge_pool_weights=NudgePoolWeights(workflow=50, learnings=30, ceremony=10, context=10),
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
         hooks_enabled=False,
@@ -119,6 +123,7 @@ _PROFILES: dict[str, ClientProfile] = {
         context_window_tokens=200_000,
         ceremony_mode="full",
         ceremony_weights=CeremonyWeights(),
+        nudge_pool_weights=NudgePoolWeights(),  # defaults: 40/30/20/10
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
         hooks_enabled=True,

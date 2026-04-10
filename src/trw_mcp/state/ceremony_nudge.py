@@ -22,6 +22,10 @@ This facade re-exports every public and private symbol so that all existing
 
 from __future__ import annotations
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 # ---------------------------------------------------------------------------
 # Re-exports from _nudge_messages (templates, formatting, assembly)
 # ---------------------------------------------------------------------------
@@ -75,10 +79,19 @@ from trw_mcp.state._nudge_rules import (
     _reversion_prompt as _reversion_prompt,
 )
 from trw_mcp.state._nudge_rules import (
+    _select_nudge_pool as _select_nudge_pool,
+)
+from trw_mcp.state._nudge_rules import (
     _step_complete as _step_complete,
 )
 from trw_mcp.state._nudge_rules import (
+    apply_pool_cooldown as apply_pool_cooldown,
+)
+from trw_mcp.state._nudge_rules import (
     is_local_model as is_local_model,
+)
+from trw_mcp.state._nudge_rules import (
+    is_pool_in_cooldown as is_pool_in_cooldown,
 )
 
 # ---------------------------------------------------------------------------
@@ -133,10 +146,19 @@ from trw_mcp.state._nudge_state import (
     write_ceremony_state as write_ceremony_state,
 )
 from trw_mcp.state._nudge_state import (
+    increment_tool_call_counter as increment_tool_call_counter,
+)
+from trw_mcp.state._nudge_state import (
     is_nudge_eligible as is_nudge_eligible,
 )
 from trw_mcp.state._nudge_state import (
     record_nudge_shown as record_nudge_shown,
+)
+from trw_mcp.state._nudge_state import (
+    record_pool_ignore as record_pool_ignore,
+)
+from trw_mcp.state._nudge_state import (
+    record_pool_nudge as record_pool_nudge,
 )
 
 # ---------------------------------------------------------------------------
@@ -151,83 +173,80 @@ def compute_nudge(
 ) -> str:
     """Compute the ceremony nudge message based on current state.
 
-    When context is provided (PRD-CORE-084), uses context-reactive messages.
-    When context is None, falls back to static urgency-tier messages (PRD-CORE-074).
+    PRD-CORE-129: Uses pool-based selection with weighted random.
+    Falls back to existing context-reactive and static paths when
+    pool selection yields no content.
 
-    Priority order for pending step detection:
-    1. session_start (if not called)
-    2. checkpoint (if files_modified > 3 or no checkpoint in session)
-    3. build_check (if phase >= validate and not run)
-    4. review (if phase >= review and not called)
-    5. deliver (if phase >= deliver)
-    6. None (all complete — minimal status line)
+    Pool selection order:
+    1. Context pool (bypasses weights on build failure or P0)
+    2. Weighted random across eligible pools (workflow, learnings, ceremony, context)
+    3. Status-only fallback when no pool selected or no content
 
     Returns:
         Nudge string to append to tool responses. Empty string if any error occurs.
-        Budget: 600 chars with context, 400 chars without. Never blocks or refuses.
+        Budget: 600 chars. Never blocks or refuses.
     """
     try:
-        status_line = _build_status_line(state)
-        header_and_status = f"{_HEADER}\n{status_line}"
-        pending = _highest_priority_pending_step(state)
+        from trw_mcp.models.config._loader import get_config
 
-        if context is not None:
-            # PRD-CORE-084: Context-reactive path
-            urgency = _compute_urgency(state, pending) if pending else "low"
-            reactive_msg = _context_reactive_message(context, state, urgency=urgency)
+        config = get_config()
 
-            if reactive_msg is None:
-                # Unknown tool — fall back to static messages
-                if pending is None:
-                    return header_and_status
-                nudge_msg = _select_nudge_message(pending, state, available_learnings)
-                return _assemble_nudge(header_and_status, nudge_msg, budget=600)
+        if not config.effective_nudge_enabled:
+            return ""
 
-            # Suppress reversion prompt when context-reactive message already
-            # includes reversion guidance (DRY: build_check failure and review P0
-            # reactive messages already contain reversion text).
-            reversion: str | None = None
-            _tools_with_reversion_in_reactive = (ToolName.BUILD_CHECK, ToolName.REVIEW)
-            if context.tool_name in _tools_with_reversion_in_reactive:
-                reversion = None  # reactive message already covers reversion
+        budget = config.nudge_budget_chars
+        weights = config.client_profile.nudge_pool_weights
+        cooldown_after = config.nudge_pool_cooldown_after
+        cooldown_calls = config.nudge_pool_cooldown_calls
+
+        # Select pool
+        pool = _select_nudge_pool(state, weights, context, cooldown_after, cooldown_calls)
+        status = _build_minimal_status_line(state)
+        header_status = f"{_MINIMAL_HEADER}\n{status}"
+
+        if pool is None:
+            return header_status
+
+        # Get content from selected pool
+        content: str = ""
+
+        if pool == "workflow":
+            from trw_mcp.state._nudge_content import load_pool_message
+
+            content = load_pool_message("workflow", phase_hint=state.phase)
+        elif pool == "learnings":
+            # Use existing learning nudge selection for session_start
+            if available_learnings > 0:
+                content = _select_nudge_message("session_start", state, available_learnings)
             else:
-                reversion = _reversion_prompt(context, state)
+                # No learnings available — yield to static message for pending step
+                pending = _highest_priority_pending_step(state)
+                if pending:
+                    content = _select_nudge_message(pending, state, available_learnings)
+        elif pool == "ceremony":
+            pending = _highest_priority_pending_step(state)
+            if pending:
+                from trw_mcp.state._nudge_content import load_pool_message
 
-            # Next-two-steps projection (only when no reactive message already
-            # provides NEXT/THEN guidance)
-            next_then_str: str | None = None
-            # reactive_msg already contains NEXT/THEN for most tools, so skip
-
-            return _assemble_nudge(
-                header_and_status,
-                reactive_msg,
-                next_then=next_then_str,
-                reversion=reversion,
-                budget=600,
+                content = load_pool_message("ceremony", phase_hint=pending)
+            if not content and pending:
+                # Fallback to existing static messages
+                content = _select_nudge_message(pending, state, available_learnings)
+        elif pool == "context":
+            urgency = _compute_urgency(
+                state,
+                _highest_priority_pending_step(state) or "session_start",
             )
+            reactive = _context_reactive_message(context, state, urgency=urgency) if context else None
+            content = reactive or ""
 
-        # PRD-CORE-074: Static urgency-tier path (no context)
-        if pending is None:
-            # All complete — single line
-            return header_and_status
+        if not content:
+            return header_status
 
-        # Try next-two-steps projection as a supplement
-        nxt, then = _next_two_steps(state)
-        next_then_str = None
-        if nxt and then:
-            rationale_nxt = _STEP_RATIONALE.get(nxt, "")
-            rationale_then = _STEP_RATIONALE.get(then, "")
-            next_then_str = f"NEXT: {nxt} ({rationale_nxt}). THEN: {then} ({rationale_then})."
-
-        nudge_msg = _select_nudge_message(pending, state, available_learnings)
-        full = f"{header_and_status}\n{nudge_msg}"
-
-        # Enforce token limit (~400 chars) for static path
-        if len(full) > 400:
-            full = full[:397] + "..."
-
-        return full
+        logger.debug("nudge_pool_selected", pool=pool)
+        return _assemble_nudge(header_status, content, budget=budget)
     except Exception:  # justified: fail-open — nudge must never raise or block tool responses
+        logger.debug("compute_nudge_failed", exc_info=True)
         return ""
 
 

@@ -8,6 +8,7 @@ from trw_mcp.models.config._client_profile import (
     CeremonyWeights,
     ClientProfile,
     ModelTier,
+    NudgePoolWeights,
     ScoringDimensionWeights,
     WriteTargets,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "MemoryConfig",
     "ModelTier",
     "NudgeConfig",
+    "NudgePoolWeights",
     "OrchestrationConfig",
     "PathsConfig",
     "PhaseTimeCaps",
