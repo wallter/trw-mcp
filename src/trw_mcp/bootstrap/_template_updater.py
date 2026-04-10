@@ -25,6 +25,7 @@ from ._ide_targets import _extract_trw_section_content as _extract_trw_section_c
 from ._ide_targets import _run_claude_md_sync as _run_claude_md_sync
 from ._ide_targets import _update_codex_artifacts as _update_codex_artifacts
 from ._ide_targets import _update_config_target_platforms as _update_config_target_platforms
+from ._ide_targets import _update_copilot_artifacts as _update_copilot_artifacts
 from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
 from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
 from ._utils import (

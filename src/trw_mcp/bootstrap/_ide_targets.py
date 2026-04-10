@@ -32,6 +32,20 @@ _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
+_SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors")
+
+
+def _absorb_sub_result(
+    parent: dict[str, list[str]],
+    child: dict[str, list[str]],
+) -> None:
+    """Merge a sub-result payload into *parent* for all standard keys."""
+    raw = dict(child)
+    for key in _SUB_RESULT_KEYS:
+        items = raw.get(key)
+        if items:
+            parent.setdefault(key, []).extend(items)
+
 
 # ---------------------------------------------------------------------------
 # OpenCode update helper (FR15)
@@ -73,7 +87,7 @@ def _update_opencode_artifacts(
         result["updated"].extend(oc_result.get("updated", []))
         result["errors"].extend(oc_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, opencode update is best-effort
-        result["warnings"].append(f"opencode.json update skipped: {exc}")
+        result.setdefault("warnings", []).append(f"opencode.json update skipped: {exc}")
         return
 
     # Update AGENTS.md with platform-generic TRW section
@@ -94,7 +108,7 @@ def _update_opencode_artifacts(
         result["updated"].extend(agents_result.get("updated", []))
         result["errors"].extend(agents_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
-        result["warnings"].append(f"AGENTS.md update skipped: {exc}")
+        result.setdefault("warnings", []).append(f"AGENTS.md update skipped: {exc}")
 
     # Update .opencode/INSTRUCTIONS.md with model-specific content (FR01)
     try:
@@ -114,7 +128,7 @@ def _update_opencode_artifacts(
         result["updated"].extend(instructions_result.get("updated", []))
         result["errors"].extend(instructions_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-        result["warnings"].append(f".opencode/INSTRUCTIONS.md update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md update skipped: {exc}")
 
     try:
         commands_result = install_opencode_commands(target_dir, manifest_hashes=manifest_hashes)
@@ -123,7 +137,7 @@ def _update_opencode_artifacts(
         result["preserved"].extend(commands_result.get("preserved", []))
         result["errors"].extend(commands_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, command update is best-effort
-        result["warnings"].append(f".opencode/commands update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".opencode/commands update skipped: {exc}")
 
     try:
         agents_result = install_opencode_agents(target_dir, manifest_hashes=manifest_hashes)
@@ -132,7 +146,7 @@ def _update_opencode_artifacts(
         result["preserved"].extend(agents_result.get("preserved", []))
         result["errors"].extend(agents_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, agent update is best-effort
-        result["warnings"].append(f".opencode/agents update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".opencode/agents update skipped: {exc}")
 
     try:
         skills_result = install_opencode_skills(target_dir, manifest_hashes=manifest_hashes)
@@ -141,7 +155,7 @@ def _update_opencode_artifacts(
         result["preserved"].extend(skills_result.get("preserved", []))
         result["errors"].extend(skills_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, skill update is best-effort
-        result["warnings"].append(f".opencode/skills update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".opencode/skills update skipped: {exc}")
 
 
 def _update_codex_artifacts(
@@ -170,7 +184,7 @@ def _update_codex_artifacts(
         result["updated"].extend(codex_result.get("updated", []))
         result["errors"].extend(codex_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, codex update is best-effort
-        result["warnings"].append(f".codex/config.toml update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".codex/config.toml update skipped: {exc}")
 
     try:
         hooks_result = generate_codex_hooks(target_dir)
@@ -178,7 +192,7 @@ def _update_codex_artifacts(
         result["updated"].extend(hooks_result.get("updated", []))
         result["errors"].extend(hooks_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, codex update is best-effort
-        result["warnings"].append(f".codex/hooks.json update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".codex/hooks.json update skipped: {exc}")
 
     try:
         agents_result = generate_codex_agents(target_dir)
@@ -186,7 +200,7 @@ def _update_codex_artifacts(
         result["updated"].extend(agents_result.get("updated", []))
         result["errors"].extend(agents_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, codex update is best-effort
-        result["warnings"].append(f".codex/agents update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".codex/agents update skipped: {exc}")
 
     try:
         skills_result = install_codex_skills(target_dir)
@@ -194,7 +208,7 @@ def _update_codex_artifacts(
         result["updated"].extend(skills_result.get("updated", []))
         result["errors"].extend(skills_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, codex update is best-effort
-        result["warnings"].append(f".agents/skills update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".agents/skills update skipped: {exc}")
 
     try:
         from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
@@ -204,7 +218,7 @@ def _update_codex_artifacts(
         result["updated"].extend(agents_md_result.get("updated", []))
         result["errors"].extend(agents_md_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, AGENTS update is best-effort
-        result["warnings"].append(f"Codex AGENTS.md update skipped: {exc}")
+        result.setdefault("warnings", []).append(f"Codex AGENTS.md update skipped: {exc}")
 
     try:
         from ._opencode import generate_codex_instructions
@@ -214,7 +228,69 @@ def _update_codex_artifacts(
         result["updated"].extend(codex_instructions_result.get("updated", []))
         result["errors"].extend(codex_instructions_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-        result["warnings"].append(f".codex/INSTRUCTIONS.md update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md update skipped: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Copilot update helper (PRD-CORE-127)
+# ---------------------------------------------------------------------------
+
+
+def _update_copilot_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    ide_override: str | None = None,
+    manifest_hashes: dict[str, str] | None = None,
+) -> None:
+    """Update GitHub Copilot artifacts when Copilot is detected.
+
+    Generates ``copilot-instructions.md``, path-scoped instructions,
+    ``hooks.json``, agents, and skills under ``.github/``.
+
+    Fail-open: errors are captured in ``result["warnings"]`` so they never
+    break the overall update flow.
+    """
+    from ._copilot import (
+        generate_copilot_agents,
+        generate_copilot_hooks,
+        generate_copilot_instructions,
+        generate_copilot_path_instructions,
+        install_copilot_skills,
+    )
+
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    if "copilot" not in ide_targets:
+        return
+
+    try:
+        instr_result = generate_copilot_instructions(target_dir)
+        _absorb_sub_result(result, instr_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"copilot-instructions.md update skipped: {exc}")
+
+    try:
+        path_result = generate_copilot_path_instructions(target_dir)
+        _absorb_sub_result(result, path_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"copilot path instructions update skipped: {exc}")
+
+    try:
+        hooks_result = generate_copilot_hooks(target_dir)
+        _absorb_sub_result(result, hooks_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"copilot hooks.json update skipped: {exc}")
+
+    try:
+        agents_result = generate_copilot_agents(target_dir)
+        _absorb_sub_result(result, agents_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"copilot agents update skipped: {exc}")
+
+    try:
+        skills_result = install_copilot_skills(target_dir)
+        _absorb_sub_result(result, skills_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"copilot skills update skipped: {exc}")
 
 
 def _extract_trw_section_content() -> str:
@@ -266,7 +342,7 @@ def _update_cursor_artifacts(
         result["updated"].extend(hooks_result.get("updated", []))
         result["errors"].extend(hooks_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, cursor update is best-effort
-        result["warnings"].append(f".cursor/hooks.json update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".cursor/hooks.json update skipped: {exc}")
 
     # FR06: Update .cursor/rules/trw-ceremony.mdc
     try:
@@ -276,7 +352,7 @@ def _update_cursor_artifacts(
         result["updated"].extend(rules_result.get("updated", []))
         result["errors"].extend(rules_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, cursor rules update is best-effort
-        result["warnings"].append(f".cursor/rules/trw-ceremony.mdc update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".cursor/rules/trw-ceremony.mdc update skipped: {exc}")
 
     # FR07: Update .cursor/mcp.json (smart merge)
     try:
@@ -285,7 +361,7 @@ def _update_cursor_artifacts(
         result["updated"].extend(mcp_result.get("updated", []))
         result["errors"].extend(mcp_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, cursor mcp update is best-effort
-        result["warnings"].append(f".cursor/mcp.json update skipped: {exc}")
+        result.setdefault("warnings", []).append(f".cursor/mcp.json update skipped: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +398,7 @@ def _update_config_target_platforms(
         )
         result["updated"].append(str(config_path))
     except Exception as exc:  # justified: fail-open, config update is best-effort
-        result["warnings"].append(f"target_platforms config update skipped: {exc}")
+        result.setdefault("warnings", []).append(f"target_platforms config update skipped: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +444,7 @@ def _run_claude_md_sync(
         # Skip LLM-dependent sync when no Anthropic API key is available
         # (installer runs outside Claude Code sessions -- no auth)
         if not os.environ.get("ANTHROPIC_API_KEY"):
-            result["warnings"].append(
+            result.setdefault("warnings", []).append(
                 "CLAUDE.md LLM sync skipped (no ANTHROPIC_API_KEY) \u2014 will complete on next trw_session_start()"
             )
             return
@@ -413,7 +489,7 @@ def _run_claude_md_sync(
             timeout_seconds=timeout,
             target_dir=str(target_dir),
         )
-        result["warnings"].append(
+        result.setdefault("warnings", []).append(
             f"CLAUDE.md sync timed out ({timeout}s) \u2014 will complete on next trw_session_start()"
         )
     except Exception as exc:  # justified: fail-open, CLAUDE.md sync is best-effort
@@ -422,7 +498,7 @@ def _run_claude_md_sync(
             error=str(exc),
             target_dir=str(target_dir),
         )
-        result["warnings"].append(f"CLAUDE.md sync skipped: {exc}")
+        result.setdefault("warnings", []).append(f"CLAUDE.md sync skipped: {exc}")
     finally:
         os.chdir(original_cwd)
         # Reset config back to original project

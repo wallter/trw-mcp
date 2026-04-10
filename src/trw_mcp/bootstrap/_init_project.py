@@ -344,7 +344,7 @@ def init_project(
             result["skipped"].extend(instructions_result.get("preserved", []))
             result["errors"].extend(instructions_result.get("errors", []))
         except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-            result["warnings"].append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
+            result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
 
         commands_result = install_opencode_commands(target_dir, force=force)
         result["created"].extend(commands_result.get("created", []))
@@ -416,7 +416,57 @@ def init_project(
             result["skipped"].extend(instructions_result.get("preserved", []))
             result["errors"].extend(instructions_result.get("errors", []))
         except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-            result["warnings"].append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
+            result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
+
+    # 7e. Copilot artifacts (PRD-CORE-127)
+    if "copilot" in ide_targets:
+        from ._copilot import (
+            generate_copilot_agents,
+            generate_copilot_hooks,
+            generate_copilot_instructions,
+            generate_copilot_path_instructions,
+            install_copilot_skills,
+        )
+
+        try:
+            instr_result = generate_copilot_instructions(target_dir, force=force)
+            result["created"].extend(instr_result.get("created", []))
+            result["skipped"].extend(instr_result.get("preserved", []))
+            result["errors"].extend(instr_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f"copilot-instructions.md generation skipped: {exc}")
+
+        try:
+            path_result = generate_copilot_path_instructions(target_dir, force=force)
+            result["created"].extend(path_result.get("created", []))
+            result["skipped"].extend(path_result.get("preserved", []))
+            result["errors"].extend(path_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f"copilot path instructions generation skipped: {exc}")
+
+        try:
+            hooks_result = generate_copilot_hooks(target_dir, force=force)
+            result["created"].extend(hooks_result.get("created", []))
+            result["skipped"].extend(hooks_result.get("preserved", []))
+            result["errors"].extend(hooks_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f"copilot hooks generation skipped: {exc}")
+
+        try:
+            agents_result = generate_copilot_agents(target_dir, force=force)
+            result["created"].extend(agents_result.get("created", []))
+            result["skipped"].extend(agents_result.get("preserved", []))
+            result["errors"].extend(agents_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f"copilot agents generation skipped: {exc}")
+
+        try:
+            skills_result = install_copilot_skills(target_dir, force=force)
+            result["created"].extend(skills_result.get("created", []))
+            result["skipped"].extend(skills_result.get("preserved", []))
+            result["errors"].extend(skills_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f"copilot skills generation skipped: {exc}")
 
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)

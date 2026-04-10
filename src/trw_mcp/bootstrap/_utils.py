@@ -32,6 +32,8 @@ from ._file_ops import ProgressCallback as ProgressCallback
 from ._file_ops import _copy_file as _copy_file
 from ._file_ops import _ensure_dir as _ensure_dir
 from ._file_ops import _files_identical as _files_identical
+from ._file_ops import _new_result as _new_result
+from ._file_ops import _record_write as _record_write
 from ._file_ops import _result_action_key as _result_action_key
 from ._file_ops import _write_if_missing as _write_if_missing
 from ._mcp_json import _generate_mcp_json as _generate_mcp_json
@@ -318,14 +320,15 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 # ---------------------------------------------------------------------------
 
 # Supported IDEs - DRY constant for all IDE target operations
-SUPPORTED_IDES = ["claude-code", "cursor", "opencode", "codex"]
+SUPPORTED_IDES = ["claude-code", "cursor", "opencode", "codex", "copilot"]
 
 
 def detect_ide(target_dir: Path) -> list[str]:
     """Detect which AI coding CLIs have configuration in the target directory.
 
-    Returns a list of IDE identifiers: "claude-code", "cursor", "opencode", "codex".
-    Detection is based on directory/file existence, not process detection.
+    Returns a list of IDE identifiers: "claude-code", "cursor", "opencode",
+    "codex", "copilot".  Detection is based on directory/file existence, not
+    process detection.
     """
     detected: list[str] = []
     if (target_dir / ".claude").is_dir():
@@ -336,6 +339,12 @@ def detect_ide(target_dir: Path) -> list[str]:
         detected.append("opencode")
     if (target_dir / ".codex").is_dir() or (target_dir / ".codex" / "config.toml").is_file():
         detected.append("codex")
+    agents_dir = target_dir / ".github" / "agents"
+    has_copilot_agents = agents_dir.is_dir() and any(
+        f.name.endswith(".agent.md") for f in agents_dir.iterdir()
+    )
+    if (target_dir / ".github" / "copilot-instructions.md").is_file() or has_copilot_agents:
+        detected.append("copilot")
     return detected
 
 
@@ -353,6 +362,8 @@ def detect_installed_clis() -> list[str]:
         detected.append("opencode")
     if shutil.which("codex"):
         detected.append("codex")
+    if shutil.which("github-copilot") or shutil.which("copilot"):
+        detected.append("copilot")
     return detected
 
 

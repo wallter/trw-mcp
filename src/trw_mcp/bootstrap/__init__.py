@@ -26,6 +26,21 @@ from ._codex import (
 from ._codex import (
     install_codex_skills as install_codex_skills,
 )
+from ._copilot import (
+    generate_copilot_agents as generate_copilot_agents,
+)
+from ._copilot import (
+    generate_copilot_hooks as generate_copilot_hooks,
+)
+from ._copilot import (
+    generate_copilot_instructions as generate_copilot_instructions,
+)
+from ._copilot import (
+    generate_copilot_path_instructions as generate_copilot_path_instructions,
+)
+from ._copilot import (
+    install_copilot_skills as install_copilot_skills,
+)
 from ._cursor import (
     _get_trw_mcp_entry_cursor as _get_trw_mcp_entry_cursor,
 )
@@ -154,6 +169,9 @@ from ._update_project import (
 )
 from ._update_project import (
     _update_codex_artifacts as _update_codex_artifacts,
+)
+from ._update_project import (
+    _update_copilot_artifacts as _update_copilot_artifacts,
 )
 from ._update_project import (
     _update_cursor_artifacts as _update_cursor_artifacts,
@@ -322,6 +340,8 @@ __all__ = [
     "_update_agents",
     "_update_always_overwrite_files",
     "_update_claude_md_trw_section",
+    "_update_codex_artifacts",
+    "_update_copilot_artifacts",
     "_update_cursor_artifacts",
     "_update_framework_files",
     "_update_hooks",
@@ -340,11 +360,20 @@ __all__ = [
     "detect_ide",
     "detect_installed_clis",
     "generate_agents_md",
+    "generate_codex_agents",
+    "generate_codex_config",
+    "generate_codex_hooks",
+    "generate_copilot_agents",
+    "generate_copilot_hooks",
+    "generate_copilot_instructions",
+    "generate_copilot_path_instructions",
     "generate_cursor_hooks",
     "generate_cursor_mcp_config",
     "generate_cursor_rules",
     "generate_opencode_config",
     "init_project",
+    "install_codex_skills",
+    "install_copilot_skills",
     "merge_opencode_json",
     "resolve_ide_targets",
     "update_project",

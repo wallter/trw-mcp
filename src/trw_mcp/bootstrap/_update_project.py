@@ -116,6 +116,9 @@ from ._template_updater import (
 from ._template_updater import (
     _update_config_target_platforms as _update_config_target_platforms,
 )
+from ._template_updater import (
+    _update_copilot_artifacts as _update_copilot_artifacts,
+)
 from ._template_updater import _update_cursor_artifacts as _update_cursor_artifacts
 from ._template_updater import _update_framework_files as _update_framework_files
 from ._template_updater import _update_hooks as _update_hooks
@@ -287,6 +290,7 @@ def _run_post_update_phases(
     _update_opencode_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_cursor_artifacts(target_dir, result, ide_override=ide)
     _update_codex_artifacts(target_dir, result, ide_override=ide)
+    _update_copilot_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _write_manifest(target_dir, result, data_dir)
 
     if on_progress:

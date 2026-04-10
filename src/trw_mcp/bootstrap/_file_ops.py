@@ -26,6 +26,24 @@ ProgressCallback = Callable[[str, str], None] | None
 
 
 # ---------------------------------------------------------------------------
+# Bootstrap result helpers (shared across _copilot.py, _codex.py, _opencode.py)
+# ---------------------------------------------------------------------------
+
+
+def _new_result() -> dict[str, list[str]]:
+    """Return a standard bootstrap result payload with all four keys."""
+    return {"created": [], "updated": [], "preserved": [], "errors": []}
+
+
+def _record_write(result: dict[str, list[str]], rel_path: str, *, existed: bool) -> None:
+    """Record a create/update action for a generated artifact."""
+    if existed:
+        result.setdefault("updated", []).append(rel_path)
+    else:
+        result.setdefault("created", []).append(rel_path)
+
+
+# ---------------------------------------------------------------------------
 # File-level helpers
 # ---------------------------------------------------------------------------
 
