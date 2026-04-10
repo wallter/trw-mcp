@@ -22,6 +22,7 @@ __all__ = [
     "CeremonyWeights",
     "ClientProfile",
     "ModelTier",
+    "NudgePoolWeights",
     "ScoringDimensionWeights",
     "WriteTargets",
 ]
@@ -50,6 +51,30 @@ class CeremonyWeights(BaseModel):
     def as_dict(self) -> dict[str, int]:
         """Dict form for backward compat with _CEREMONY_WEIGHTS consumers."""
         return self.model_dump()
+
+
+class NudgePoolWeights(BaseModel):
+    """Per-pool weights for nudge selection (must sum to 100).
+
+    PRD-CORE-129: Controls relative probability of each nudge pool
+    being selected via weighted random. Pools with weight=0 are
+    never selected (e.g., light profiles disable ceremony nudges).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    workflow: int = Field(default=40, ge=0)
+    learnings: int = Field(default=30, ge=0)
+    ceremony: int = Field(default=20, ge=0)
+    context: int = Field(default=10, ge=0)
+
+    @model_validator(mode="after")
+    def _check_sum(self) -> NudgePoolWeights:
+        total = self.workflow + self.learnings + self.ceremony + self.context
+        if total != 100:
+            msg = f"NudgePoolWeights must sum to 100, got {total}"
+            raise ValueError(msg)
+        return self
 
 
 class ScoringDimensionWeights(BaseModel):
@@ -108,6 +133,7 @@ class ClientProfile(BaseModel):
     # Ceremony tuning
     ceremony_mode: Literal["full", "light"] = "full"
     ceremony_weights: CeremonyWeights = Field(default_factory=CeremonyWeights)
+    nudge_pool_weights: NudgePoolWeights = Field(default_factory=NudgePoolWeights)
     mandatory_phases: list[str] = Field(
         default_factory=lambda: [
             "RESEARCH",

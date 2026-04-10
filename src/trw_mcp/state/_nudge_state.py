@@ -68,6 +68,12 @@ class CeremonyState:
     review_p0_count: int = 0
     # PRD-CORE-103-FR02: Nudge history for deduplication
     nudge_history: dict[str, NudgeHistoryEntry] = field(default_factory=dict)
+    # PRD-CORE-129: Pool-based nudge tracking
+    pool_nudge_counts: dict[str, int] = field(default_factory=dict)
+    pool_ignore_counts: dict[str, int] = field(default_factory=dict)
+    pool_cooldown_until: dict[str, int] = field(default_factory=dict)
+    tool_call_counter: int = 0
+    last_nudge_pool: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +175,12 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         val = data.get(key, default)
         return str(val) if isinstance(val, str) else default
 
+    def _dict_str_int(key: str) -> dict[str, int]:
+        raw = data.get(key, {})
+        if not isinstance(raw, dict):
+            return {}
+        return {k: int(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, (int, float))}
+
     return CeremonyState(
         session_started=_bool("session_started"),
         checkpoint_count=_int("checkpoint_count"),
@@ -187,6 +199,12 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         review_p0_count=_int("review_p0_count"),
         # PRD-CORE-103-FR02: nudge_history with fail-open empty dict
         nudge_history=_parse_nudge_history(data.get("nudge_history", {})),
+        # PRD-CORE-129: Pool-based nudge tracking
+        pool_nudge_counts=_dict_str_int("pool_nudge_counts"),
+        pool_ignore_counts=_dict_str_int("pool_ignore_counts"),
+        pool_cooldown_until=_dict_str_int("pool_cooldown_until"),
+        tool_call_counter=_int("tool_call_counter"),
+        last_nudge_pool=_str("last_nudge_pool", ""),
     )
 
 
@@ -391,6 +409,33 @@ def is_nudge_eligible(
         return True
     entry = state.nudge_history[learning_id]
     return current_phase not in entry["phases_shown"]
+
+
+# ---------------------------------------------------------------------------
+# Pool-based nudge mutation helpers (PRD-CORE-129)
+# ---------------------------------------------------------------------------
+
+
+def increment_tool_call_counter(trw_dir: Path) -> None:
+    """Increment the monotonic tool call counter by 1."""
+    state = read_ceremony_state(trw_dir)
+    state.tool_call_counter += 1
+    write_ceremony_state(trw_dir, state)
+
+
+def record_pool_nudge(trw_dir: Path, pool: str) -> None:
+    """Record that a nudge was fired from the given pool."""
+    state = read_ceremony_state(trw_dir)
+    state.pool_nudge_counts[pool] = state.pool_nudge_counts.get(pool, 0) + 1
+    state.last_nudge_pool = pool
+    write_ceremony_state(trw_dir, state)
+
+
+def record_pool_ignore(trw_dir: Path, pool: str) -> None:
+    """Record that a nudge from the given pool was ignored."""
+    state = read_ceremony_state(trw_dir)
+    state.pool_ignore_counts[pool] = state.pool_ignore_counts.get(pool, 0) + 1
+    write_ceremony_state(trw_dir, state)
 
 
 # ---------------------------------------------------------------------------
