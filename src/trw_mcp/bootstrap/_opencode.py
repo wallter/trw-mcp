@@ -111,8 +111,7 @@ def _parse_jsonc(content: str) -> OpencodeConfig:
     return result
 
 
-def _new_result() -> dict[str, list[str]]:
-    return {"created": [], "updated": [], "preserved": [], "errors": []}
+from ._file_ops import _new_result
 
 
 def _is_user_modified(dest: Path, key: str, manifest_hashes: dict[str, str] | None) -> bool:
