@@ -163,6 +163,7 @@ def execute_recall(
     # PRD-CORE-125-FR03: Learning recall gating -- early return when
     # recall is disabled via config/profile.
     if not config.effective_learning_recall_enabled:
+        logger.debug("surface_gated", surface="recall")
         return {
             "query": query,
             "learnings": [],

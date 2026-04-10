@@ -203,6 +203,61 @@ def test_effective_mcp_instructions_enabled_opencode_profile() -> None:
 
 
 # ---------------------------------------------------------------------------
+# effective_agents_enabled
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_effective_agents_enabled_default() -> None:
+    """Default config (None) -> True (no profile field yet, default enabled)."""
+    cfg = TRWConfig()
+    assert cfg.agents_enabled is None
+    assert cfg.effective_agents_enabled is True
+
+
+@pytest.mark.unit
+def test_effective_agents_enabled_explicit_false() -> None:
+    """Explicit agents_enabled=False overrides the default."""
+    cfg = TRWConfig(agents_enabled=False)
+    assert cfg.effective_agents_enabled is False
+
+
+@pytest.mark.unit
+def test_effective_agents_enabled_explicit_true() -> None:
+    """Explicit agents_enabled=True with any profile -> True."""
+    cfg = TRWConfig(agents_enabled=True, target_platforms=["opencode"])
+    assert cfg.effective_agents_enabled is True
+
+
+# ---------------------------------------------------------------------------
+# effective_framework_ref_enabled
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_effective_framework_ref_enabled_default() -> None:
+    """Default config (None) with claude-code profile -> True (profile default)."""
+    cfg = TRWConfig()
+    assert cfg.framework_md_enabled is None
+    assert cfg.client_profile.include_framework_ref is True
+    assert cfg.effective_framework_ref_enabled is True
+
+
+@pytest.mark.unit
+def test_effective_framework_ref_enabled_explicit_false() -> None:
+    """Explicit framework_md_enabled=False overrides profile default."""
+    cfg = TRWConfig(framework_md_enabled=False)
+    assert cfg.effective_framework_ref_enabled is False
+
+
+@pytest.mark.unit
+def test_effective_framework_ref_enabled_explicit_true() -> None:
+    """Explicit framework_md_enabled=True overrides any profile."""
+    cfg = TRWConfig(framework_md_enabled=True)
+    assert cfg.effective_framework_ref_enabled is True
+
+
+# ---------------------------------------------------------------------------
 # ToolsConfig sub-config
 # ---------------------------------------------------------------------------
 

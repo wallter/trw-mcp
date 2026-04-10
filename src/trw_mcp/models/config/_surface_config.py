@@ -11,6 +11,13 @@ from __future__ import annotations
 
 from typing import Literal
 
+# Note: ToolExposureConfig.mode is typed as ``str`` rather than
+# ``Literal["all", "core", "minimal", "standard", "custom"]`` because
+# the Literal validation already happens at the input boundary
+# (_fields_tools.py).  SurfaceConfig is a resolved snapshot, not an
+# input model, so repeating the Literal constraint here would require
+# a ``cast(Any, ...)`` in _main.py to satisfy mypy.
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -30,7 +37,7 @@ class ToolExposureConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    mode: Literal["all", "core", "minimal", "standard", "custom"] = "all"
+    mode: str = "all"
     custom_list: tuple[str, ...] = ()
 
 
