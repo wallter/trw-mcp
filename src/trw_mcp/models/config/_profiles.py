@@ -112,6 +112,7 @@ _PROFILES: dict[str, ClientProfile] = {
         write_targets=WriteTargets(
             claude_md=False,
             agents_md=True,
+            copilot_instructions=True,
             instruction_path=".github/copilot-instructions.md",
         ),
         instruction_max_lines=400,

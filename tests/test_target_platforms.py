@@ -82,7 +82,7 @@ class TestInitTargetPlatforms:
         result = init_project(fake_git_repo, ide="all")
         assert not result["errors"]
         platforms = _read_target_platforms(fake_git_repo)
-        assert sorted(platforms) == sorted(["claude-code", "cursor", "opencode", "codex"])
+        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor", "opencode", "codex"])
 
     def test_init_detects_opencode_dir(self, fake_git_repo: Path) -> None:
         """When .opencode/ exists, auto-detection includes 'opencode'."""
@@ -205,7 +205,7 @@ class TestUpdateTargetPlatforms:
         assert not result["errors"]
 
         platforms = _read_target_platforms(initialized_repo)
-        assert sorted(platforms) == sorted(["claude-code", "cursor", "opencode", "codex"])
+        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor", "opencode", "codex"])
 
 
 # ---------------------------------------------------------------------------

@@ -80,6 +80,7 @@ class WriteTargets(BaseModel):
     claude_md: bool = False
     agents_md: bool = False
     cursor_rules: bool = False
+    copilot_instructions: bool = False
     instruction_path: str = ""
 
 
