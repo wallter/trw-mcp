@@ -69,17 +69,7 @@ class _NamedTool(Protocol):
     name: str
 
 
-def _new_result() -> BootstrapFileResult:
-    """Return a standard bootstrap result payload."""
-    return {"created": [], "updated": [], "preserved": [], "errors": []}
-
-
-def _record_write(result: BootstrapFileResult, rel_path: str, *, existed: bool) -> None:
-    """Record a create/update action for a generated artifact."""
-    if existed:
-        result["updated"].append(rel_path)
-    else:
-        result["created"].append(rel_path)
+from ._file_ops import _new_result, _record_write
 
 
 def _trw_mcp_server_entry() -> CodexMcpServerEntry:
