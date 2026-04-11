@@ -65,10 +65,7 @@ def _extract_markdown_table_rows(doc_text: str, heading: str) -> list[list[str]]
 
 def _extract_profile_config_table(doc_text: str, section_heading: str) -> dict[str, str]:
     section = _extract_section(doc_text, section_heading)
-    return {
-        row[0]: row[1]
-        for row in _extract_markdown_table_rows(section, "### Profile Configuration")
-    }
+    return {row[0]: row[1] for row in _extract_markdown_table_rows(section, "### Profile Configuration")}
 
 
 def _format_context_window_tokens(tokens: int) -> str:
@@ -88,9 +85,11 @@ def _format_ceremony_weights(weights: CeremonyWeights) -> str:
         )
     )
 
+
 # ---------------------------------------------------------------------------
 # Test 1: All 5 profiles construct via resolve_client_profile
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.parametrize("client_id", ["claude-code", "opencode", "cursor", "codex", "aider"])
@@ -103,6 +102,7 @@ def test_all_profiles_construct(client_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Test 2: CeremonyWeights sum=100 — valid construction
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_ceremony_weights_valid_sum_100() -> None:
@@ -121,6 +121,7 @@ def test_ceremony_weights_valid_sum_100() -> None:
 # ---------------------------------------------------------------------------
 # Test 3: CeremonyWeights sum!=100 raises ValueError
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_ceremony_weights_invalid_sum_raises() -> None:
@@ -153,6 +154,7 @@ def test_ceremony_weights_sum_off_by_one_raises() -> None:
 # ---------------------------------------------------------------------------
 # Test 4: ScoringDimensionWeights sum~=1.0 — valid construction
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_scoring_dimension_weights_valid_sum() -> None:
@@ -187,6 +189,7 @@ def test_scoring_dimension_weights_tolerance_boundary() -> None:
 # Test 5: ScoringDimensionWeights sum>1.01 raises ValueError
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_scoring_dimension_weights_over_limit_raises() -> None:
     """ScoringDimensionWeights with sum > 1.01 raises ValidationError."""
@@ -204,6 +207,7 @@ def test_scoring_dimension_weights_over_limit_raises() -> None:
 # Test 6: Unknown client_id falls back to claude-code (structlog warning)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_unknown_client_id_falls_back_to_claude_code(capsys: pytest.CaptureFixture[str]) -> None:
     """resolve_client_profile('windsurf') falls back to claude-code."""
@@ -216,6 +220,7 @@ def test_unknown_client_id_falls_back_to_claude_code(capsys: pytest.CaptureFixtu
 # ---------------------------------------------------------------------------
 # Test 7: Model tier override returns adjusted context/lines via model_copy
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_model_tier_override_local_30b_adjusts_context() -> None:
@@ -239,6 +244,7 @@ def test_model_tier_override_does_not_mutate_registry() -> None:
 # Test 8: TRWConfig(target_platforms=["opencode"]).client_profile.client_id == "opencode"
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_trwconfig_single_opencode_platform_resolves_profile() -> None:
     """TRWConfig with target_platforms=['opencode'] resolves opencode client_profile."""
@@ -249,6 +255,7 @@ def test_trwconfig_single_opencode_platform_resolves_profile() -> None:
 # ---------------------------------------------------------------------------
 # Test 9: Empty target_platforms defaults to claude-code
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 def test_empty_target_platforms_defaults_to_claude_code() -> None:
@@ -261,6 +268,7 @@ def test_empty_target_platforms_defaults_to_claude_code() -> None:
 # Test 10: Multi-platform target_platforms uses first
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_multi_platform_uses_first() -> None:
     """TRWConfig with multiple target_platforms uses the first one."""
@@ -271,6 +279,7 @@ def test_multi_platform_uses_first() -> None:
 # ---------------------------------------------------------------------------
 # Test 11: Frozen immutability — assignment raises ValidationError
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_client_profile_frozen_raises_on_assignment() -> None:
@@ -299,6 +308,7 @@ def test_write_targets_frozen_raises_on_assignment() -> None:
 # ---------------------------------------------------------------------------
 # Test 12: WriteTargets per profile
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_claude_code_profile_writes_claude_md() -> None:
@@ -330,6 +340,7 @@ def test_cursor_profile_writes_cursor_rules() -> None:
 # ---------------------------------------------------------------------------
 # Additional: compute_ceremony_score with custom weights
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_compute_ceremony_score_with_custom_weights() -> None:
@@ -371,6 +382,7 @@ def test_compute_ceremony_score_without_weights_backward_compat() -> None:
 # Test: CeremonyWeights.as_dict() returns correct type and keys
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_ceremony_weights_as_dict_returns_correct_keys() -> None:
     """as_dict() returns a dict with all 6 ceremony component keys."""
@@ -384,6 +396,7 @@ def test_ceremony_weights_as_dict_returns_correct_keys() -> None:
 # ---------------------------------------------------------------------------
 # Test: All 5 profiles have valid ceremony weights (sum=100) and scoring weights (sum~=1.0)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.parametrize("client_id", ["claude-code", "opencode", "cursor", "codex", "aider"])
@@ -519,7 +532,7 @@ def test_codex_quick_reference_row_matches_profile_contract() -> None:
 
 @pytest.mark.unit
 def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
-    """CLIENT-PROFILES Codex section documents the current profile-layer truth."""
+    """CLIENT-PROFILES Codex section documents the profile contract and runtime notes."""
     profile = resolve_client_profile("codex")
     doc_text = _read_client_profiles_doc()
     codex_section = _extract_section(doc_text, "## Codex Support Surface")
@@ -540,7 +553,7 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
         "MCP instructions": "Disabled",
         "Tool exposure": f"`{profile.tool_exposure_mode}`",
     }
-    assert re.search(r"profile-layer truth only", codex_section) is not None
+    assert "current Codex runtime surfaces" in codex_section
     assert "shared `_light_profile(...)` contract" in codex_section
     assert (
         "The Codex profile models `.codex/INSTRUCTIONS.md` as its `instruction_path` "
@@ -550,6 +563,9 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
         "Hooks, framework reference content, delegation content, and skills are "
         "intentionally disabled in the profile contract."
     ) in codex_section
+    assert "model_instructions_file" in codex_section
+    assert ".codex/agents/*.toml" in codex_section
+    assert "features.codex_hooks = true" in codex_section
 
 
 @pytest.mark.integration

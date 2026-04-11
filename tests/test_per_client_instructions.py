@@ -21,7 +21,11 @@ from trw_mcp.state.claude_md._agents_md import (
     TRW_MARKER_START,
     _migrate_trw_content_from_agents_md,
 )
-from trw_mcp.state.claude_md._static_sections import render_codex_instructions, render_opencode_instructions
+from trw_mcp.state.claude_md._static_sections import (
+    render_codex_instructions,
+    render_codex_trw_section,
+    render_opencode_instructions,
+)
 
 # ── Render Tests ──────────────────────────────────────────────────────────
 
@@ -52,6 +56,39 @@ class TestRenderCodexInstructions:
 
         for step in steps:
             assert f"**{step}**" in result or f"**{step}**" in result or f"**{step.lower().capitalize()}**" in result
+
+    def test_codex_guidance_avoids_stale_budget_and_framework_claims(self) -> None:
+        """Codex instructions should not claim a fixed 200K budget or require FRAMEWORK.md."""
+        result = render_codex_instructions()
+
+        assert "200K" not in result
+        assert "Read `.trw/frameworks/FRAMEWORK.md`" not in result
+        assert "features.codex_hooks = true" not in result
+
+    def test_codex_guidance_matches_current_docs(self) -> None:
+        """Codex docs and renderer both describe the same supported runtime surfaces."""
+        docs_text = (Path(__file__).resolve().parents[2] / "docs" / "CLIENT-PROFILES.md").read_text(encoding="utf-8")
+        result = render_codex_instructions()
+
+        assert "## Codex Support Surface" in docs_text
+        assert ".codex/INSTRUCTIONS.md" in docs_text
+        assert ".codex/agents/*.toml" in docs_text
+        assert "experimental and optional" in docs_text.lower()
+        assert "AGENTS.md" in docs_text
+
+        assert ".codex/INSTRUCTIONS.md" in result
+        assert ".codex/agents/*.toml" in result
+        assert "experimental and optional" in result.lower()
+        assert "AGENTS.md" in result
+
+    def test_codex_agents_section_avoids_stale_guidance(self) -> None:
+        """Codex AGENTS.md guidance should stay portable and fail open on hooks."""
+        result = render_codex_trw_section()
+
+        assert "200K" not in result
+        assert "Read `.trw/frameworks/FRAMEWORK.md`" not in result
+        assert ".codex/agents/*.toml" in result
+        assert "experimental and optional" in result.lower()
 
 
 @pytest.mark.unit

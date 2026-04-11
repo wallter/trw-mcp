@@ -438,8 +438,8 @@ def render_codex_trw_section() -> str:
         "## Start Here\n"
         "\n"
         "- Call `trw_session_start()` first to load prior learnings and recover any active run\n"
-        "- Read `.trw/frameworks/FRAMEWORK.md` early for the current project methodology\n"
-        "- Use Codex subagents for bounded research, implementation, and review work\n"
+        "- Treat `AGENTS.md` and `.codex/INSTRUCTIONS.md` as the main Codex instruction surfaces for this repo\n"
+        "- If the task depends on current Codex behavior, check the OpenAI developer docs MCP server before relying on memory\n"
         "\n"
         "## Core TRW Tools\n"
         "\n"
@@ -453,10 +453,16 @@ def render_codex_trw_section() -> str:
         "## Codex Workflow\n"
         "\n"
         "1. Start with `trw_session_start()`\n"
-        "2. Delegate bounded work to Codex subagents when it improves focus\n"
+        "2. Keep the working set small and call `trw_checkpoint()` before context-heavy turns or major pivots\n"
         "3. Run tests and review the diff before completion\n"
-        "4. Call `trw_learn()` for reusable gotchas or patterns\n"
+        "4. Use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
         "5. Finish with `trw_deliver()` so future sessions inherit the result\n"
+        "\n"
+        "## Runtime Notes\n"
+        "\n"
+        "- Codex reads `AGENTS.md` files from global/project/current-directory scope in precedence order, subject to runtime size limits\n"
+        "- `.codex/agents/*.toml` custom agents are explicit helpers; do not assume hidden background delegation\n"
+        "- Hooks are experimental and optional; core ceremony guarantees come from TRW tools and middleware rather than hook interception\n"
         "\n"
         "## OpenAI Docs\n"
         "\n"
@@ -540,43 +546,40 @@ def render_codex_instructions() -> str:
     return (
         "# Codex TRW Instructions\n"
         "\n"
-        "## Framework Reference\n"
+        "## Instruction Sources\n"
         "\n"
-        "Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines the "
-        "methodology your tools implement.\n"
+        "- Codex reads `AGENTS.md` files before work, layering global and project guidance by directory precedence\n"
+        "- TRW uses `.codex/INSTRUCTIONS.md` as the repo-local Codex instruction file\n"
+        "- `.codex/agents/*.toml` custom agents are optional explicit helpers, not assumed background workers\n"
+        "- Codex hooks are experimental and optional; core TRW correctness lives in the tools and middleware\n"
         "\n"
         "## Codex Workflow\n"
         "\n"
-        "1. **Start**: call `trw_session_start()` - loads all prior learnings\n"
-        "2. **Delegate**: Use Codex subagents for bounded research, implementation, and review work\n"
-        "3. **Verify**: Run tests after each change — fix failures before moving on\n"
+        "1. **Start**: call `trw_session_start()` — loads prior learnings and any active run\n"
+        "2. **Delegate**: use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
+        "3. **Verify**: keep prompts and working set bounded, and run tests after each change before moving on\n"
         "4. **Learn**: Call `trw_learn()` for reusable gotchas or patterns\n"
-        "5. **Finish**: call `trw_deliver()` - persists work for future sessions\n"
+        "5. **Finish**: call `trw_deliver()` — persists work for future sessions\n"
         "\n"
         "## Ceremony Protocol\n"
         "\n"
-        "- `trw_checkpoint(message)` - saves progress so you can resume after context compaction\n"
-        "- `trw_learn(summary, detail)` - records discoveries for all future sessions\n"
-        "- `trw_deliver()` - persists everything in one call when done\n"
+        "- `trw_checkpoint(message)` — saves progress so you can resume after context compaction\n"
+        "- `trw_learn(summary, detail)` — records discoveries for all future sessions\n"
+        "- `trw_deliver()` — persists everything in one call when done\n"
         "\n"
-        "## Structured Output Conventions\n"
+        "## Runtime Guardrails\n"
         "\n"
-        "- Use structured output with typed Pydantic models when supported\n"
-        "- Prefer typed tool arguments over freeform JSON\n"
-        "- Validate outputs against schema before processing\n"
-        "\n"
-        "## Context Budget Guidance\n"
-        "\n"
-        "- Codex has 200K context budget\n"
-        "- Use `trw_checkpoint()` to compact context before major changes\n"
-        "- Leverage learnings store to reduce context for known patterns\n"
+        "- Prefer explicit file paths, concrete verification steps, and small diffs\n"
+        "- Use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
+        "- Follow TRW tool and middleware guidance even when no hook fires\n"
+        "- If current Codex behavior matters, check the OpenAI developer docs before assuming runtime details\n"
         "\n"
         "## Key Gotchas\n"
         "\n"
-        "- **Context compaction**: Always checkpoint before context-heavy operations\n"
-        "- **Test coverage**: Codex responds better to test-first instructions\n"
-        "- **File navigation**: Be explicit about file paths\n"
-        "- **Delegation**: Use subagents for better outcomes than direct implementation\n"
+        "- **Context limits vary**: avoid hardcoding a fixed Codex context budget in plans or prompts\n"
+        "- **Hooks are optional**: treat them as additive hints, not correctness gates\n"
+        "- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
+        "- **File navigation**: be explicit about file paths and the repo root you are changing\n"
         "\n"
     )
 
@@ -645,9 +648,7 @@ def render_opencode_instructions(model_family: str) -> str:
     Returns:
         Markdown string for OpenCode-specific instructions.
     """
-    family_name, workflow_title = _FAMILY_META.get(
-        model_family, _FAMILY_META["generic"]
-    )
+    family_name, workflow_title = _FAMILY_META.get(model_family, _FAMILY_META["generic"])
     prompting_content = _load_prompting_guide(model_family)
     include_checkpoint = model_family != "generic"
 
@@ -656,8 +657,7 @@ def render_opencode_instructions(model_family: str) -> str:
         "\n",
         "## Framework Reference\n",
         "\n",
-        "Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines the "
-        "methodology your tools implement.\n",
+        "Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines the methodology your tools implement.\n",
         "\n",
         f"## {workflow_title}\n",
         "\n",
@@ -671,28 +671,32 @@ def render_opencode_instructions(model_family: str) -> str:
 
     # Ceremony tools — checkpoint only for non-generic families.
     if include_checkpoint:
-        parts.extend([
-            "## Ceremony Protocol\n",
-            "\n",
-            "- `trw_checkpoint(message)` — saves progress so you can resume after context compaction\n",
-            "- `trw_learn(summary, detail)` — records discoveries for all future sessions\n",
-            "- `trw_deliver()` — persists everything in one call when done\n",
-            "\n",
-        ])
+        parts.extend(
+            [
+                "## Ceremony Protocol\n",
+                "\n",
+                "- `trw_checkpoint(message)` — saves progress so you can resume after context compaction\n",
+                "- `trw_learn(summary, detail)` — records discoveries for all future sessions\n",
+                "- `trw_deliver()` — persists everything in one call when done\n",
+                "\n",
+            ]
+        )
 
-    parts.extend([
-        "## Structured Output Conventions\n",
-        "\n",
-        "- Use structured output with typed Pydantic models\n",
-        "- Prefer typed tool arguments over freeform JSON\n",
-        "- Validate outputs against schema before processing\n",
-        "\n",
-        "## Context Budget Guidance\n",
-        "\n",
-        "- OpenCode has 200K context budget for cloud models, 128K for local models\n",
-        "- Leverage learnings store to reduce context for known patterns\n",
-        "\n",
-    ])
+    parts.extend(
+        [
+            "## Structured Output Conventions\n",
+            "\n",
+            "- Use structured output with typed Pydantic models\n",
+            "- Prefer typed tool arguments over freeform JSON\n",
+            "- Validate outputs against schema before processing\n",
+            "\n",
+            "## Context Budget Guidance\n",
+            "\n",
+            "- OpenCode has 200K context budget for cloud models, 128K for local models\n",
+            "- Leverage learnings store to reduce context for known patterns\n",
+            "\n",
+        ]
+    )
 
     # Model-specific notes section (non-generic only).
     if model_family in _FAMILY_NOTES:
@@ -700,11 +704,13 @@ def render_opencode_instructions(model_family: str) -> str:
 
     # Embedded prompting guide from bundled data.
     if prompting_content:
-        parts.extend([
-            "## Model-Specific Prompting Guide\n",
-            "\n",
-            prompting_content,
-            "\n",
-        ])
+        parts.extend(
+            [
+                "## Model-Specific Prompting Guide\n",
+                "\n",
+                prompting_content,
+                "\n",
+            ]
+        )
 
     return "".join(parts)
