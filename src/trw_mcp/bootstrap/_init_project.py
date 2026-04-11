@@ -7,8 +7,11 @@ required framework files into a target git repository.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 import structlog
+
+from trw_mcp.models.typed_dicts import BootstrapFileResult
 
 from ._utils import (
     _DATA_DIR,
@@ -26,6 +29,171 @@ from ._utils import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class _CopilotInstaller(Protocol):
+    """Callable protocol for Copilot artifact installers."""
+
+    def __call__(
+        self,
+        target_dir: Path,
+        *,
+        force: bool = False,
+    ) -> BootstrapFileResult | dict[str, list[str]]: ...
+
+
+def _extend_result(
+    result: dict[str, list[str]],
+    update: BootstrapFileResult | dict[str, list[str]],
+    *,
+    include_updated: bool = False,
+) -> None:
+    """Merge a bootstrap sub-result into the main init payload."""
+    result["created"].extend(update.get("created", []))
+    if include_updated:
+        result["created"].extend(update.get("updated", []))
+    result["skipped"].extend(update.get("preserved", []))
+    result["errors"].extend(update.get("errors", []))
+
+
+def _load_model_family(opencode_path: Path) -> str:
+    """Best-effort model-family detection for OpenCode instructions."""
+    from ._opencode import detect_model_family
+
+    if not opencode_path.exists():
+        return "generic"
+
+    import json
+
+    try:
+        opencode_data = json.loads(opencode_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return "generic"
+    return detect_model_family(opencode_data)
+
+
+def _install_opencode_artifacts(
+    target_dir: Path,
+    *,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Install OpenCode-specific bootstrap artifacts."""
+    from ._opencode import generate_agents_md, generate_opencode_config
+    oc_result = generate_opencode_config(target_dir, force=force)
+    _extend_result(result, oc_result, include_updated=True)
+
+    from ._opencode import (
+        generate_opencode_instructions,
+        install_opencode_agents,
+        install_opencode_commands,
+        install_opencode_skills,
+    )
+
+    try:
+        instructions_result = generate_opencode_instructions(
+            target_dir,
+            _load_model_family(target_dir / "opencode.json"),
+            force=force,
+        )
+        _extend_result(result, instructions_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
+        result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
+
+    try:
+        from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
+
+        agents_result = generate_agents_md(target_dir, render_minimal_protocol(), force=force)
+        _extend_result(result, agents_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
+        result.setdefault("warnings", []).append(f"AGENTS.md generation skipped: {exc}")
+
+    _extend_result(result, install_opencode_commands(target_dir, force=force))
+    _extend_result(result, install_opencode_agents(target_dir, force=force))
+    _extend_result(result, install_opencode_skills(target_dir, force=force))
+
+
+def _install_cursor_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
+    """Install Cursor-specific bootstrap artifacts."""
+    from ._cursor import generate_cursor_hooks, generate_cursor_mcp_config, generate_cursor_rules
+    from ._update_project import _extract_trw_section_content
+
+    _extend_result(result, generate_cursor_hooks(target_dir, force=force))
+    _extend_result(
+        result,
+        generate_cursor_rules(target_dir, _extract_trw_section_content(), force=force),
+    )
+    _extend_result(result, generate_cursor_mcp_config(target_dir, force=force))
+
+
+def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
+    """Install Codex-specific bootstrap artifacts."""
+    from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
+
+    from ._codex import (
+        codex_hooks_enabled,
+        generate_codex_agents,
+        generate_codex_config,
+        generate_codex_hooks,
+        install_codex_skills,
+    )
+    from ._opencode import generate_agents_md, generate_codex_instructions
+
+    _extend_result(result, generate_codex_config(target_dir, force=force), include_updated=True)
+
+    if codex_hooks_enabled(target_dir):
+        _extend_result(result, generate_codex_hooks(target_dir, force=force), include_updated=True)
+
+    _extend_result(result, generate_codex_agents(target_dir, force=force), include_updated=True)
+    _extend_result(result, install_codex_skills(target_dir, force=force), include_updated=True)
+
+    try:
+        instructions_result = generate_codex_instructions(target_dir, force=force)
+        _extend_result(result, instructions_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
+        result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
+
+    try:
+        agents_result = generate_agents_md(target_dir, render_codex_trw_section(), force=force)
+        _extend_result(result, agents_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
+        result.setdefault("warnings", []).append(f"Codex AGENTS.md generation skipped: {exc}")
+
+
+def _run_copilot_installer(
+    result: dict[str, list[str]],
+    label: str,
+    installer: _CopilotInstaller,
+    target_dir: Path,
+    *,
+    force: bool,
+) -> None:
+    """Run a single Copilot installer with best-effort warning capture."""
+    try:
+        _extend_result(result, installer(target_dir, force=force))
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"{label} generation skipped: {exc}")
+
+
+def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
+    """Install Copilot-specific bootstrap artifacts."""
+    from ._copilot import (
+        generate_copilot_agents,
+        generate_copilot_hooks,
+        generate_copilot_instructions,
+        generate_copilot_path_instructions,
+        install_copilot_skills,
+    )
+
+    installers = (
+        ("copilot-instructions.md", generate_copilot_instructions),
+        ("copilot path instructions", generate_copilot_path_instructions),
+        ("copilot hooks", generate_copilot_hooks),
+        ("copilot agents", generate_copilot_agents),
+        ("copilot skills", install_copilot_skills),
+    )
+    for label, installer in installers:
+        _run_copilot_installer(result, label, installer, target_dir, force=force)
 
 
 def _create_directory_structure(
@@ -165,7 +333,7 @@ def _install_skills(
             logger.debug("skills_install_gated", reason="skills_enabled=False")
             return
     except Exception:  # justified: fail-open, config failure installs skills normally
-        pass
+        logger.debug("skills_install_gate_unavailable", exc_info=True)
 
     skills_source = _DATA_DIR / "skills"
     if skills_source.is_dir():
@@ -203,7 +371,7 @@ def _install_agents(
             logger.debug("agents_install_gated", reason="agents_enabled=False")
             return
     except Exception:  # justified: fail-open, config failure installs agents normally
-        pass
+        logger.debug("agents_install_gate_unavailable", exc_info=True)
 
     agents_source = _DATA_DIR / "agents"
     if agents_source.is_dir():
@@ -255,15 +423,7 @@ def init_project(
     Returns:
         Dict with ``created``, ``skipped``, ``errors`` lists.
     """
-    from ._codex import (
-        codex_hooks_enabled,
-        generate_codex_agents,
-        generate_codex_config,
-        generate_codex_hooks,
-        install_codex_skills,
-    )
-    from ._opencode import generate_agents_md, generate_opencode_config
-    from ._update_project import _extract_trw_section_content, _write_manifest
+    from ._update_project import _write_manifest
 
     result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
 
@@ -315,189 +475,19 @@ def init_project(
 
     # 7b. OpenCode artifacts (FR15: multi-IDE support)
     if "opencode" in ide_targets:
-        oc_result = generate_opencode_config(target_dir, force=force)
-        result["created"].extend(oc_result.get("created", []))
-        result["created"].extend(oc_result.get("updated", []))
-        result["skipped"].extend(oc_result.get("preserved", []))
-        result["errors"].extend(oc_result.get("errors", []))
-
-        # 7b-i. Generate INSTRUCTIONS.md with model-family content (FR01)
-        from ._opencode import (
-            detect_model_family,
-            generate_opencode_instructions,
-            install_opencode_agents,
-            install_opencode_commands,
-            install_opencode_skills,
-        )
-
-        try:
-            opencode_path = target_dir / "opencode.json"
-            model_family = "generic"
-            if opencode_path.exists():
-                import json
-
-                try:
-                    opencode_data = json.loads(opencode_path.read_text(encoding="utf-8"))
-                    model_family = detect_model_family(opencode_data)
-                except (json.JSONDecodeError, OSError):
-                    pass
-            instructions_result = generate_opencode_instructions(target_dir, model_family, force=force)
-            result["created"].extend(instructions_result.get("created", []))
-            result["created"].extend(instructions_result.get("updated", []))
-            result["skipped"].extend(instructions_result.get("preserved", []))
-            result["errors"].extend(instructions_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-            result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
-
-        try:
-            from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
-
-            agents_result = generate_agents_md(target_dir, render_minimal_protocol(), force=force)
-            result["created"].extend(agents_result.get("created", []))
-            result["created"].extend(agents_result.get("updated", []))
-            result["skipped"].extend(agents_result.get("preserved", []))
-            result["errors"].extend(agents_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
-            result.setdefault("warnings", []).append(f"AGENTS.md generation skipped: {exc}")
-
-        commands_result = install_opencode_commands(target_dir, force=force)
-        result["created"].extend(commands_result.get("created", []))
-        result["skipped"].extend(commands_result.get("preserved", []))
-        result["errors"].extend(commands_result.get("errors", []))
-
-        agents_result = install_opencode_agents(target_dir, force=force)
-        result["created"].extend(agents_result.get("created", []))
-        result["skipped"].extend(agents_result.get("preserved", []))
-        result["errors"].extend(agents_result.get("errors", []))
-
-        skills_result = install_opencode_skills(target_dir, force=force)
-        result["created"].extend(skills_result.get("created", []))
-        result["skipped"].extend(skills_result.get("preserved", []))
-        result["errors"].extend(skills_result.get("errors", []))
+        _install_opencode_artifacts(target_dir, force=force, result=result)
 
     # 7c. Cursor artifacts (FR05, FR06, FR07: Cursor IDE support)
     if "cursor" in ide_targets:
-        from ._cursor import (
-            generate_cursor_hooks,
-            generate_cursor_mcp_config,
-            generate_cursor_rules,
-        )
-        from ._update_project import _extract_trw_section_content
-
-        cursor_hooks = generate_cursor_hooks(target_dir, force=force)
-        result["created"].extend(cursor_hooks.get("created", []))
-        result["skipped"].extend(cursor_hooks.get("preserved", []))
-
-        trw_section = _extract_trw_section_content()
-        cursor_rules = generate_cursor_rules(target_dir, trw_section, force=force)
-        result["created"].extend(cursor_rules.get("created", []))
-        result["skipped"].extend(cursor_rules.get("preserved", []))
-
-        cursor_mcp = generate_cursor_mcp_config(target_dir, force=force)
-        result["created"].extend(cursor_mcp.get("created", []))
-        result["skipped"].extend(cursor_mcp.get("preserved", []))
+        _install_cursor_artifacts(target_dir, force=force, result=result)
 
     # 7d. Codex artifacts
     if "codex" in ide_targets:
-
-        codex_config = generate_codex_config(target_dir, force=force)
-        result["created"].extend(codex_config.get("created", []))
-        result["created"].extend(codex_config.get("updated", []))
-        result["skipped"].extend(codex_config.get("preserved", []))
-        result["errors"].extend(codex_config.get("errors", []))
-
-        if codex_hooks_enabled(target_dir):
-            codex_hooks = generate_codex_hooks(target_dir, force=force)
-            result["created"].extend(codex_hooks.get("created", []))
-            result["created"].extend(codex_hooks.get("updated", []))
-            result["skipped"].extend(codex_hooks.get("preserved", []))
-            result["errors"].extend(codex_hooks.get("errors", []))
-
-        codex_agents = generate_codex_agents(target_dir, force=force)
-        result["created"].extend(codex_agents.get("created", []))
-        result["created"].extend(codex_agents.get("updated", []))
-        result["skipped"].extend(codex_agents.get("preserved", []))
-        result["errors"].extend(codex_agents.get("errors", []))
-
-        codex_skills = install_codex_skills(target_dir, force=force)
-        result["created"].extend(codex_skills.get("created", []))
-        result["created"].extend(codex_skills.get("updated", []))
-        result["skipped"].extend(codex_skills.get("preserved", []))
-        result["errors"].extend(codex_skills.get("errors", []))
-
-    # 7d-i. Codex INSTRUCTIONS.md (FR01)
-    if "codex" in ide_targets:
-        from ._opencode import generate_codex_instructions
-
-        try:
-            instructions_result = generate_codex_instructions(target_dir, force=force)
-            result["created"].extend(instructions_result.get("created", []))
-            result["created"].extend(instructions_result.get("updated", []))
-            result["skipped"].extend(instructions_result.get("preserved", []))
-            result["errors"].extend(instructions_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-            result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
-
-        try:
-            from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
-
-            agents_result = generate_agents_md(target_dir, render_codex_trw_section(), force=force)
-            result["created"].extend(agents_result.get("created", []))
-            result["created"].extend(agents_result.get("updated", []))
-            result["skipped"].extend(agents_result.get("preserved", []))
-            result["errors"].extend(agents_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
-            result.setdefault("warnings", []).append(f"Codex AGENTS.md generation skipped: {exc}")
+        _install_codex_artifacts(target_dir, force=force, result=result)
 
     # 7e. Copilot artifacts (PRD-CORE-127)
     if "copilot" in ide_targets:
-        from ._copilot import (
-            generate_copilot_agents,
-            generate_copilot_hooks,
-            generate_copilot_instructions,
-            generate_copilot_path_instructions,
-            install_copilot_skills,
-        )
-
-        try:
-            instr_result = generate_copilot_instructions(target_dir, force=force)
-            result["created"].extend(instr_result.get("created", []))
-            result["skipped"].extend(instr_result.get("preserved", []))
-            result["errors"].extend(instr_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f"copilot-instructions.md generation skipped: {exc}")
-
-        try:
-            path_result = generate_copilot_path_instructions(target_dir, force=force)
-            result["created"].extend(path_result.get("created", []))
-            result["skipped"].extend(path_result.get("preserved", []))
-            result["errors"].extend(path_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f"copilot path instructions generation skipped: {exc}")
-
-        try:
-            hooks_result = generate_copilot_hooks(target_dir, force=force)
-            result["created"].extend(hooks_result.get("created", []))
-            result["skipped"].extend(hooks_result.get("preserved", []))
-            result["errors"].extend(hooks_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f"copilot hooks generation skipped: {exc}")
-
-        try:
-            agents_result = generate_copilot_agents(target_dir, force=force)
-            result["created"].extend(agents_result.get("created", []))
-            result["skipped"].extend(agents_result.get("preserved", []))
-            result["errors"].extend(agents_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f"copilot agents generation skipped: {exc}")
-
-        try:
-            skills_result = install_copilot_skills(target_dir, force=force)
-            result["created"].extend(skills_result.get("created", []))
-            result["skipped"].extend(skills_result.get("preserved", []))
-            result["errors"].extend(skills_result.get("errors", []))
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f"copilot skills generation skipped: {exc}")
+        _install_copilot_artifacts(target_dir, force=force, result=result)
 
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)

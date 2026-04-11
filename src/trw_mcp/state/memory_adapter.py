@@ -619,7 +619,7 @@ def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
             if entry is not None:
                 current_count = entry.session_count or 0
                 backend.update(lid, session_count=current_count + 1)
-        except Exception:  # per-item error handling: session tracking is best-effort, one failure must not break recall results  # noqa: PERF203
+        except Exception:  # per-item error handling: session tracking is best-effort, one failure must not break recall results
             logger.warning(
                 "session_count_update_failed",
                 exc_info=True,

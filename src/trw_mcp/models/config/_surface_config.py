@@ -17,7 +17,6 @@ from typing import Literal
 # (_fields_tools.py).  SurfaceConfig is a resolved snapshot, not an
 # input model, so repeating the Literal constraint here would require
 # a ``cast(Any, ...)`` in _main.py to satisfy mypy.
-
 from pydantic import BaseModel, ConfigDict, Field
 
 

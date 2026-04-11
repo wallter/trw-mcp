@@ -23,6 +23,7 @@ from trw_mcp.models.typed_dicts._opencode import (
     OpencodeTemplateDict,
 )
 
+from ._file_ops import _new_result
 from ._utils import _DATA_DIR
 
 logger = structlog.get_logger(__name__)
@@ -109,10 +110,6 @@ def _parse_jsonc(content: str) -> OpencodeConfig:
     stripped = "".join(result_parts)
     result: OpencodeConfig = json.loads(stripped)
     return result
-
-
-from ._file_ops import _new_result
-
 
 def _is_user_modified(dest: Path, key: str, manifest_hashes: dict[str, str] | None) -> bool:
     if not manifest_hashes or key not in manifest_hashes or not dest.is_file():

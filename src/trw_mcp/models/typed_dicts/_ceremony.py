@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing_extensions import Literal, TypedDict
+from typing import Literal
+
+from typing_extensions import TypedDict
 
 
 class AutoMaintenanceDict(TypedDict, total=False):

@@ -101,11 +101,13 @@ _PRIORITY_CONFIDENCE: dict[str, float] = {
 
 
 def register_requirements_tools(server: FastMCP) -> None:
-    """Register AARE-F requirements tools on the MCP server.
+    """Register AARE-F requirements tools on the MCP server."""
+    _register_prd_create_tool(server)
+    _register_prd_validate_tool(server)
 
-    Args:
-        server: FastMCP server instance to register tools on.
-    """
+
+def _register_prd_create_tool(server: FastMCP) -> None:
+    """Register the PRD creation tool."""
 
     @server.tool(output_schema=None)
     @log_tool_call
@@ -279,11 +281,12 @@ def register_requirements_tools(server: FastMCP) -> None:
 
         return prd_result
 
+def _register_prd_validate_tool(server: FastMCP) -> None:
+    """Register the PRD validation tool."""
+
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_prd_validate(
-        prd_path: str,
-    ) -> ValidateResultDict:
+    def trw_prd_validate(prd_path: str) -> ValidateResultDict:
         """Check your PRD quality before implementation --- catches ambiguity, missing sections, and weak requirements early.
 
         Runs the full V2 validation suite: structure compliance, content quality,

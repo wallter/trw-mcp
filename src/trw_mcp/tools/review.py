@@ -58,6 +58,12 @@ logger = structlog.get_logger(__name__)
 
 def register_review_tools(server: FastMCP) -> None:
     """Register review tools on the MCP server."""
+    _register_preflight_tool(server)
+    _register_review_tool(server)
+
+
+def _register_preflight_tool(server: FastMCP) -> None:
+    """Register the preflight logging tool."""
 
     @server.tool(output_schema=None)
     @log_tool_call
@@ -112,6 +118,9 @@ def register_review_tools(server: FastMCP) -> None:
                 PRE_AUDIT_SELF_REVIEW_EVENT,
             ],
         }
+
+def _register_review_tool(server: FastMCP) -> None:
+    """Register the structured review tool."""
 
     @server.tool(output_schema=None)
     @log_tool_call

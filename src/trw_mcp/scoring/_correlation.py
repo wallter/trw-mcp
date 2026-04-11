@@ -431,6 +431,19 @@ def process_outcome(
     best_discount = _deduplicate_recalls(correlated)
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
 
+    # Cap the number of entries to process.  With 1,200+ YAML files and a
+    # corrupted SQLite, each lookup is O(N).  526 lookups x 1,217 files
+    # caused 13-minute build_check calls.  Cap at 50 (highest-discount first).
+    _MAX_CORRELATIONS = 50
+    if len(best_discount) > _MAX_CORRELATIONS:
+        top_items = sorted(best_discount.items(), key=lambda x: x[1], reverse=True)[:_MAX_CORRELATIONS]
+        best_discount = dict(top_items)
+        logger.info(
+            "outcome_correlation_capped",
+            original=len(correlated),
+            capped=_MAX_CORRELATIONS,
+        )
+
     # Phase 1: Compute all Q-values (no I/O writes) -- PRD-FIX-070-FR04
     pending_updates: list[_PendingUpdate] = []
     for lid, discount in best_discount.items():

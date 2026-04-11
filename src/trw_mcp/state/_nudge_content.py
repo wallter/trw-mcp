@@ -18,6 +18,7 @@ import structlog
 from ruamel.yaml import YAML
 
 logger = structlog.get_logger(__name__)
+_RNG = random.SystemRandom()
 
 _yaml = YAML(typ="safe")
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "surfaces"
@@ -73,9 +74,9 @@ def load_pool_message(pool: str, phase_hint: str = "") -> str:
     if phase_hint:
         relevant = [m for m in messages if isinstance(m, dict) and m.get("phase_hint", "") == phase_hint]
         if relevant:
-            chosen = random.choice(relevant)
+            chosen = _RNG.choice(relevant)
             return str(chosen.get("text", "")) if isinstance(chosen, dict) else ""
 
     # Fallback: random from all messages
-    chosen = random.choice(messages)
+    chosen = _RNG.choice(messages)
     return str(chosen.get("text", "")) if isinstance(chosen, dict) else ""

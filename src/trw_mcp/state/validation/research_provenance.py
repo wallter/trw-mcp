@@ -75,7 +75,7 @@ def _scope_lines(body: str, scope_name: str) -> list[tuple[int, str]]:
 
 
 def _skip_line(line: str) -> bool:
-    return not line or line.startswith("#") or line.startswith("|") or line.startswith("```")
+    return not line or line.startswith(("#", "|", "```"))
 
 
 def _looks_quantitative_claim(line: str) -> bool:

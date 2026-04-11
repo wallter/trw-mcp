@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 import structlog
 
@@ -155,8 +155,7 @@ def _normalize_repo_path(raw: str) -> str | None:
         prefix, _, _suffix = candidate.partition(":")
         if _looks_like_repo_path(prefix):
             candidate = prefix
-    if candidate.startswith("./"):
-        candidate = candidate[2:]
+    candidate = candidate.removeprefix("./")
     if candidate.startswith("/"):
         return None
     if ".." in Path(candidate).parts:

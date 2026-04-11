@@ -148,7 +148,7 @@ def _resolve_instructions(instructions: str | None) -> str:
             logger.debug("surface_gated", surface="mcp_instructions")
             return ""
     except Exception:  # justified: fail-open, config failure uses default instructions
-        pass
+        logger.debug("mcp_instructions_gate_unavailable", exc_info=True)
     return _load_server_instructions()
 
 
