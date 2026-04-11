@@ -366,6 +366,14 @@ class TestAgentDefinitions:
         """Return path to bundled agent definitions."""
         return _resolve_data_path("agents", "agents")
 
+    @pytest.fixture()
+    def root_agents_dir(self) -> Path:
+        """Return path to monorepo root agent definitions when available."""
+        agents_dir = _MONOREPO_CLAUDE / "agents"
+        if not agents_dir.exists():
+            pytest.skip("root .claude/agents not available in this environment")
+        return agents_dir
+
     @pytest.mark.parametrize(
         "agent_name",
         [
@@ -411,6 +419,92 @@ class TestAgentDefinitions:
         bundled_content = (agents_dir / agent_name).read_text(encoding="utf-8")
         for snippet in required_snippets:
             assert snippet in bundled_content
+
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    def test_audit_agent_prompt_pairs_match_root_sources(
+        self,
+        agents_dir: Path,
+        root_agents_dir: Path,
+        agent_name: str,
+    ) -> None:
+        """Bundled audit prompts stay byte-for-byte aligned with root prompt sources."""
+        bundled_content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        root_content = (root_agents_dir / agent_name).read_text(encoding="utf-8")
+
+        assert bundled_content == root_content
+
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    def test_audit_agent_variants_include_finding_taxonomy_contract(
+        self,
+        agents_dir: Path,
+        root_agents_dir: Path,
+        agent_name: str,
+    ) -> None:
+        """Root and bundled audit agents retain the FR07 finding taxonomy contract."""
+        variants = {
+            "bundled": agents_dir / agent_name,
+            "root": root_agents_dir / agent_name,
+        }
+
+        required_snippets = [
+            "category: spec_gap",
+            "category: spec_gap|impl_gap|test_gap|integration_gap|traceability_gap",
+            "legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null",
+        ]
+
+        for variant_name, path in variants.items():
+            content = path.read_text(encoding="utf-8")
+            for snippet in required_snippets:
+                assert snippet in content, f"{variant_name} {agent_name} missing snippet: {snippet}"
+
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    def test_audit_agent_variants_include_prior_learning_verification_contract(
+        self,
+        agents_dir: Path,
+        root_agents_dir: Path,
+        agent_name: str,
+    ) -> None:
+        """Root and bundled audit agents retain the FR08 prior learning contract."""
+        variants = {
+            "bundled": agents_dir / agent_name,
+            "root": root_agents_dir / agent_name,
+        }
+
+        required_snippets = [
+            "prior_learning_verification:",
+            "known_patterns: []",
+            "verified_patterns: []",
+            "missed_patterns: []",
+        ]
+
+        for variant_name, path in variants.items():
+            content = path.read_text(encoding="utf-8")
+            for snippet in required_snippets:
+                assert snippet in content, f"{variant_name} {agent_name} missing snippet: {snippet}"
+
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    def test_audit_agent_variants_include_verdict_exit_criteria_contract(
+        self,
+        agents_dir: Path,
+        root_agents_dir: Path,
+        agent_name: str,
+    ) -> None:
+        """Root and bundled audit agents retain the FR11 verdict exit criteria contract."""
+        variants = {
+            "bundled": agents_dir / agent_name,
+            "root": root_agents_dir / agent_name,
+        }
+
+        required_snippets = [
+            "# PASS: zero P0, zero P1, and every FR is PASS or PARTIAL-with-justification",
+            "# CONDITIONAL: zero P0 and 1-2 P1 findings fixable without architectural change",
+            "# FAIL: any P0, 3+ P1 findings, or any FR verdict MISSING",
+        ]
+
+        for variant_name, path in variants.items():
+            content = path.read_text(encoding="utf-8")
+            for snippet in required_snippets:
+                assert snippet in content, f"{variant_name} {agent_name} missing snippet: {snippet}"
 
     @pytest.mark.parametrize(
         ("agent_name", "expected_model"),

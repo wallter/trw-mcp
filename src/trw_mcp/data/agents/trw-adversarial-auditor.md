@@ -394,6 +394,11 @@ integration:
   missing_migrations: []
   unresolved_todos: []
 
+prior_learning_verification:
+  known_patterns: []
+  verified_patterns: []
+  missed_patterns: []
+
 summary:
   total_frs: 5
   pass: 2
@@ -405,9 +410,9 @@ summary:
   p2_count: 0
   audit_angles_completed: [spec, vision, types, dry, errors, observability, integration, tests]
   overall_verdict: PASS|CONDITIONAL|FAIL
-  # PASS: all FRs pass, no P0/P1, all quality checks pass
-  # CONDITIONAL: no P0, <=2 P1 (fixable without replan)
-  # FAIL: any P0 OR >2 P1 findings
+  # PASS: zero P0, zero P1, and every FR is PASS or PARTIAL-with-justification
+  # CONDITIONAL: zero P0 and 1-2 P1 findings fixable without architectural change
+  # FAIL: any P0, 3+ P1 findings, or any FR verdict MISSING
   status_recommendation: "advance|hold|revert"  # Should the PRD status advance?
 ```
 </output-contract>
