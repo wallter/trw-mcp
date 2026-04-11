@@ -212,7 +212,7 @@ def _log_preflight_events(
         event_logger.log_event(
             events_path,
             PRE_AUDIT_SELF_REVIEW_EVENT,
-            _normalize_self_review_payload(prd_id, self_review),
+            _normalize_self_review_payload(prd_id, self_review if isinstance(self_review, dict) else {}),
         )
         logged_events.append(PRE_AUDIT_SELF_REVIEW_EVENT)
 
