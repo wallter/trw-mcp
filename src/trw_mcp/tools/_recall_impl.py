@@ -28,6 +28,9 @@ if TYPE_CHECKING:
 
     from trw_memory.models.memory import Assertion, AssertionResult
 
+_ULTRA_COMPACT_SUMMARY_TOKEN_LIMIT = 32
+_ULTRA_COMPACT_SUMMARY_CHAR_LIMIT = 180
+
 
 def _detect_surface_phase() -> str:
     """Best-effort detection of the current ceremony phase.
@@ -261,6 +264,42 @@ def _build_ultra_compact_ceremony_hint(trw_dir: Path) -> str:
     return hints.get(pending or "", "")
 
 
+def _compact_ultra_summary(summary: object) -> str:
+    """Return a bounded summary for ultra-compact recall payloads.
+
+    Keeps the payload shape stable while ensuring each learning stays concise
+    enough for constrained-context callers.
+    """
+    from trw_memory.retrieval.token_budget import estimate_tokens
+
+    normalized = " ".join(str(summary or "").split())
+    if not normalized:
+        return ""
+    if (
+        estimate_tokens(normalized) <= _ULTRA_COMPACT_SUMMARY_TOKEN_LIMIT
+        and len(normalized) <= _ULTRA_COMPACT_SUMMARY_CHAR_LIMIT
+    ):
+        return normalized
+
+    words = normalized.split()
+    compact_words: list[str] = []
+    for word in words:
+        candidate_words = [*compact_words, word]
+        candidate = " ".join(candidate_words)
+        if (
+            estimate_tokens(f"{candidate}…") > _ULTRA_COMPACT_SUMMARY_TOKEN_LIMIT
+            or len(candidate) + 1 > _ULTRA_COMPACT_SUMMARY_CHAR_LIMIT
+        ):
+            break
+        compact_words = candidate_words
+
+    if compact_words:
+        compact = " ".join(compact_words).rstrip(" ,;:.!?-")
+        return f"{compact}…"
+
+    return f"{normalized[:_ULTRA_COMPACT_SUMMARY_CHAR_LIMIT - 1].rstrip()}…"
+
+
 def _build_recall_result(
     *,
     query: str,
@@ -467,7 +506,13 @@ def execute_recall(
 
     # Strip to compact fields when requested
     if ultra_compact:
-        ranked_learnings = [{"id": entry.get("id", ""), "summary": entry.get("summary", "")} for entry in ranked_learnings]
+        ranked_learnings = [
+            {
+                "id": entry.get("id", ""),
+                "summary": _compact_ultra_summary(entry.get("summary", "")),
+            }
+            for entry in ranked_learnings
+        ]
     elif use_compact:
         allowed = config.recall_compact_fields
         ranked_learnings = [{k: v for k, v in entry.items() if k in allowed} for entry in ranked_learnings]

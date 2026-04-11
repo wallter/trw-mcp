@@ -32,6 +32,7 @@ from trw_mcp.state.claude_md._promotion import (
 )
 from trw_mcp.state.claude_md._static_sections import (
     render_agent_teams_protocol,
+    render_agents_trw_section,
     render_behavioral_protocol,
     render_ceremony_flows,
     render_ceremony_quick_ref,
@@ -83,6 +84,7 @@ __all__ = [
     "merge_trw_section",
     "render_adherence",
     "render_agent_teams_protocol",
+    "render_agents_trw_section",
     "render_architecture",
     "render_behavioral_protocol",
     "render_categorized_learnings",

@@ -476,11 +476,13 @@ def register_learning_tools(server: FastMCP) -> None:
             _collect_context=collect_context,
         )
 
-        # PRD-CORE-095 FR15: Annotate already-injected learnings
-        _annotate_injected_learnings(
-            result,  # type: ignore[arg-type]  # RecallResultDict is a dict subclass
-            trw_dir,
-        )
+        # PRD-CORE-095 FR15: Annotate already-injected learnings.
+        # Preserve the strict FR09 ultra-compact payload contract.
+        if not ultra_compact:
+            _annotate_injected_learnings(
+                result,  # type: ignore[arg-type]  # RecallResultDict is a dict subclass
+                trw_dir,
+            )
 
         return result
 
