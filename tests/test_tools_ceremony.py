@@ -460,6 +460,36 @@ class TestSessionStartPartialFailure:
         assert result["errors"] == []
         assert "timestamp" in result
 
+    def test_session_start_repopulates_injected_learning_ids(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """surfaced session_start learnings must seed the injected-ID state file."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        injected_file = trw_dir / "context" / "injected_learning_ids.txt"
+
+        surfaced = [
+            {"id": "L-session-1", "summary": "First surfaced learning"},
+            {"id": "L-session-2", "summary": "Second surfaced learning"},
+        ]
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.tools._ceremony_helpers.perform_session_recalls", return_value=(surfaced, False, {})),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert result["success"] is True
+        assert injected_file.read_text(encoding="utf-8").splitlines() == [
+            "L-session-1",
+            "L-session-2",
+        ]
+
     def test_session_start_returns_assertion_health(
         self,
         tmp_path: Path,
