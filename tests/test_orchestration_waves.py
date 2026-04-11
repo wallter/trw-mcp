@@ -18,12 +18,11 @@ import trw_mcp.tools.orchestration as orch_mod
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.tools._orchestration_helpers import (
+from trw_mcp.tools._orchestration_helpers import _get_bundled_file, _get_package_version
+from trw_mcp.tools._orchestration_phase import (
     _check_framework_version_staleness,
     _compute_reversion_metrics,
     _compute_wave_progress,
-    _get_bundled_file,
-    _get_package_version,
 )
 from trw_mcp.tools.orchestration import register_orchestration_tools
 
@@ -524,7 +523,7 @@ class TestComputeReversionMetrics:
         """Moderate reversion rate classified as 'elevated'."""
         # concerning > 0.5, elevated > 0.1 — give a rate in between
         cfg = TRWConfig(reversion_rate_concerning=0.9, reversion_rate_elevated=0.1)
-        monkeypatch.setattr("trw_mcp.tools._orchestration_helpers.get_config", lambda: cfg)
+        monkeypatch.setattr("trw_mcp.tools._orchestration_phase.get_config", lambda: cfg)
 
         # 1 revert + 1 phase_enter = rate 0.5 (between 0.1 and 0.9)
         events: list[dict[str, object]] = [
