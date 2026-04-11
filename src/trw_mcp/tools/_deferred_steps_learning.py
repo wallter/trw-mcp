@@ -439,9 +439,7 @@ def _step_collect_rework_metrics(
         if ev_type != "audit_cycle_complete":
             continue
 
-        ev_data = ev.get("data", {})
-        if not isinstance(ev_data, dict):
-            continue
+        ev_data = _extract_event_data(ev)
 
         prd_id = str(ev_data.get("prd_id", ""))
         if not prd_id:
@@ -480,6 +478,14 @@ def _step_collect_rework_metrics(
         "sprint_avg_audit_cycles": sprint_avg,
         "sprint_first_pass_compliance_rate": compliance_rate,
     }
+
+
+def _extract_event_data(event: dict[str, object]) -> dict[str, object]:
+    """Return normalized event payload for flat or nested event records."""
+    nested = event.get("data")
+    if isinstance(nested, dict):
+        return nested
+    return event
 
 
 def _extract_finding_categories(event_data: dict[str, object]) -> list[str]:

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -140,6 +140,7 @@ def _persist_review_artifact(
         return ""
 
     writer = FileStateWriter()
+    reader = FileStateReader()
     events = FileEventLogger(writer)
 
     review_path = resolved_run / "meta" / "review.yaml"
@@ -147,9 +148,57 @@ def _persist_review_artifact(
 
     events_path = resolved_run / "meta" / "events.jsonl"
     if events_path.parent.exists():
+        prd_ids = _resolve_review_prd_ids(resolved_run, reader, event_fields)
+        verdict = str(review_data.get("verdict", event_fields.get("verdict", ""))).upper()
+        finding_categories = _extract_review_finding_categories(review_data)
+        for prd_id in prd_ids:
+            events.log_event(
+                events_path,
+                "audit_cycle_complete",
+                {
+                    "prd_id": prd_id,
+                    "verdict": verdict,
+                    "finding_categories": finding_categories,
+                },
+            )
         events.log_event(events_path, "review_complete", event_fields)
 
     return str(review_path)
+
+
+def _resolve_review_prd_ids(
+    resolved_run: Path,
+    reader: FileStateReader,
+    event_fields: dict[str, object],
+) -> list[str]:
+    """Resolve PRD IDs for a review event from explicit fields or run scope."""
+    raw_prd_ids = event_fields.get("prd_ids")
+    if isinstance(raw_prd_ids, list):
+        prd_ids = [str(prd_id) for prd_id in raw_prd_ids if str(prd_id)]
+        if prd_ids:
+            return prd_ids
+
+    run_yaml_path = resolved_run / "meta" / "run.yaml"
+    if not run_yaml_path.exists():
+        return []
+
+    run_data = reader.read_yaml(run_yaml_path)
+    raw_scope = run_data.get("prd_scope", []) if isinstance(run_data, dict) else []
+    if not isinstance(raw_scope, list):
+        return []
+    return [str(prd_id) for prd_id in raw_scope if str(prd_id)]
+
+
+def _extract_review_finding_categories(review_data: dict[str, object]) -> list[str]:
+    """Extract finding categories from persisted review data."""
+    findings = review_data.get("findings", review_data.get("cross_model_findings"))
+    if not isinstance(findings, list):
+        return []
+    return [
+        str(finding.get("category", ""))
+        for finding in findings
+        if isinstance(finding, dict) and str(finding.get("category", ""))
+    ]
 
 
 # ---------------------------------------------------------------------------

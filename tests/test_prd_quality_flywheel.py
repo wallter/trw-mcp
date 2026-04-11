@@ -30,6 +30,7 @@ from trw_mcp.state.validation._prd_scoring import (
     _score_file_path_coverage,
     score_traceability_v2,
 )
+from trw_mcp.tools._review_helpers import _persist_review_artifact
 from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 
 
@@ -334,36 +335,67 @@ def test_delivery_report_rework_metrics(tmp_path: Path, monkeypatch: pytest.Monk
             "task": "task-a",
             "status": "active",
             "phase": "deliver",
+            "prd_scope": ["PRD-QUAL-056"],
         },
     )
-    events_path = meta_dir / "events.jsonl"
-    for event in [
+    _persist_review_artifact(
+        run_dir,
         {
-            "event": "audit_cycle_complete",
-            "data": {
-                "prd_id": "PRD-QUAL-056",
-                "verdict": "FAIL",
-                "finding_categories": ["impl_gap", "test_gap"],
-            },
+            "review_id": "rev-001",
+            "timestamp": "2026-04-08T12:00:00Z",
+            "verdict": "block",
+            "findings": [
+                {"category": "impl_gap", "severity": "critical", "description": "Missing wire-up"},
+                {"category": "test_gap", "severity": "warning", "description": "Missing regression test"},
+            ],
         },
         {
-            "event": "audit_cycle_complete",
-            "data": {
-                "prd_id": "PRD-QUAL-056",
-                "verdict": "PASS",
-                "finding_categories": ["impl_gap"],
-            },
+            "review_id": "rev-001",
+            "verdict": "block",
+        },
+    )
+    _persist_review_artifact(
+        run_dir,
+        {
+            "review_id": "rev-002",
+            "timestamp": "2026-04-08T12:05:00Z",
+            "verdict": "pass",
+            "findings": [
+                {"category": "impl_gap", "severity": "info", "description": "Wire-up verified"},
+            ],
         },
         {
-            "event": "audit_cycle_complete",
-            "data": {
-                "prd_id": "PRD-CORE-104",
-                "verdict": "PASS",
-                "finding_categories": ["spec_gap"],
-            },
+            "review_id": "rev-002",
+            "verdict": "pass",
         },
-    ]:
-        writer.append_jsonl(events_path, event)
+    )
+    _persist_review_artifact(
+        run_dir,
+        {
+            "review_id": "rev-003",
+            "timestamp": "2026-04-08T12:10:00Z",
+            "verdict": "pass",
+            "findings": [
+                {"category": "spec_gap", "severity": "info", "description": "Spec clarified"},
+            ],
+        },
+        {
+            "review_id": "rev-003",
+            "verdict": "pass",
+            "prd_ids": ["PRD-CORE-104"],
+        },
+    )
+    events = reader.read_jsonl(meta_dir / "events.jsonl")
+    assert [event["event"] for event in events if event["event"] == "audit_cycle_complete"] == [
+        "audit_cycle_complete",
+        "audit_cycle_complete",
+        "audit_cycle_complete",
+    ]
+    assert [event["prd_id"] for event in events if event["event"] == "audit_cycle_complete"] == [
+        "PRD-QUAL-056",
+        "PRD-QUAL-056",
+        "PRD-CORE-104",
+    ]
 
     noop = {"status": "skipped"}
     with (
