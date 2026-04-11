@@ -2333,6 +2333,31 @@ class TestRemoteRecallWiring:
         assert "learnings" in result
         assert "total_matches" in result
 
+    def test_remote_recall_unexpected_failure_logs_warning_with_query_context(self, tmp_path: Path) -> None:
+        """Unexpected remote failures stay fail-open and emit observability context."""
+        tools = _get_tools()
+        entries_dir = _entries_dir(tmp_path)
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        with (
+            patch(
+                "trw_mcp.telemetry.remote_recall.fetch_shared_learnings",
+                side_effect=Exception("network boom"),
+            ),
+            patch("trw_mcp.tools._recall_impl.logger.warning") as mock_warning,
+        ):
+            result = tools["trw_recall"].fn(query="testing observability query")
+
+        assert "learnings" in result
+        mock_warning.assert_called_once()
+        args, kwargs = mock_warning.call_args
+        assert args == ("remote_recall_failed_unexpected",)
+        assert kwargs["component"] == "recall"
+        assert kwargs["op"] == "augment_with_remote"
+        assert kwargs["outcome"] == "fail_open"
+        assert kwargs["query_excerpt"] == "testing observability query"
+        assert kwargs["exc_info"] is True
+
 
 # --- record_recall wiring in trw_recall (PRD-CORE-034) ---
 

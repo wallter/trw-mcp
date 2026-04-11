@@ -138,6 +138,44 @@ class TestAutoRecallEnabled:
         assert "auto_recalled" in result
         assert increment_calls == [["L-auto-1", "L-auto-2"]]
 
+    def test_auto_recalled_duplicates_primary_ids_are_not_double_counted(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only auto-recall IDs not already surfaced by primary recall are counted."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = _setup_trw_dir(tmp_path)
+        surface_calls: list[list[str]] = []
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch(
+                "trw_mcp.tools._ceremony_helpers.perform_session_recalls",
+                return_value=(
+                    [{"id": "L-shared", "summary": "Shared learning", "impact": 0.9}],
+                    [],
+                    {},
+                ),
+            ),
+            patch(
+                "trw_mcp.tools._ceremony_helpers._phase_contextual_recall",
+                return_value=[
+                    {"id": "L-shared", "summary": "Shared learning", "impact": 0.9},
+                    {"id": "L-auto-new", "summary": "New auto learning", "impact": 0.8},
+                ],
+            ),
+            patch(
+                "trw_mcp.tools._ceremony_helpers.record_session_start_surfaces",
+                side_effect=lambda _trw_dir, learning_ids: surface_calls.append(list(learning_ids)) or list(learning_ids),
+            ),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert result["auto_recall_count"] == 2
+        assert surface_calls == [["L-auto-new"]]
+
     def test_auto_recall_no_results_no_key(
         self,
         tmp_path: Path,
