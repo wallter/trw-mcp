@@ -16,7 +16,6 @@ from typing import cast
 
 import structlog
 
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import DeployFrameworksVersionDataDict
 from trw_mcp.state.persistence import (
@@ -26,7 +25,11 @@ from trw_mcp.state.persistence import (
 )
 from trw_mcp.tools._orchestration_phase import (
     _check_framework_version_staleness as _check_framework_version_staleness,
+)
+from trw_mcp.tools._orchestration_phase import (
     _compute_reversion_metrics as _compute_reversion_metrics,
+)
+from trw_mcp.tools._orchestration_phase import (
     _compute_wave_progress as _compute_wave_progress,
 )
 
