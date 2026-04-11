@@ -402,7 +402,7 @@ class TestAutoRecallConfigFields:
         from trw_mcp.models.config import TRWConfig
 
         config = TRWConfig()
-        assert config.auto_recall_max_results == 5
+        assert config.auto_recall_max_results == 3
 
     def test_auto_recall_max_tokens_default(self) -> None:
         from trw_mcp.models.config import TRWConfig
