@@ -269,5 +269,5 @@ def configure_logging(
         structlog.contextvars.bind_contextvars(
             service_version=_get_version("trw-mcp"),
         )
-    except Exception:  # justified: best-effort — version binding is non-critical
-        pass
+    except Exception:  # justified: fail-open, version binding is non-critical logging metadata
+        structlog.get_logger(__name__).debug("logging_service_version_bind_failed", exc_info=True)

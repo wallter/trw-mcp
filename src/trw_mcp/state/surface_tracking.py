@@ -122,8 +122,8 @@ def log_surface_event(
                     )
                 if not trw_version:
                     trw_version = cfg.framework_version or ""
-            except Exception:  # noqa: S110 — justified: fail-open, auto-detection is best-effort
-                pass
+            except Exception:  # justified: fail-open, auto-detection is best-effort  # noqa: S110
+                logger.debug("surface_tracking_autodetect_failed", exc_info=True)
 
         event: SurfaceEvent = {
             "learning_id": learning_id,

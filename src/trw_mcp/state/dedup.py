@@ -113,7 +113,7 @@ def _check_duplicate_via_backend(
 
         return DedupResult("store", None, best_similarity)
 
-    except Exception:
+    except Exception:  # justified: fail-open, backend dedup availability falls back to YAML heuristics
         logger.debug("dedup_backend_unavailable_fallback_to_yaml", exc_info=True)
         return None
 

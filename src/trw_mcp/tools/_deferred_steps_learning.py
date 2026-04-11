@@ -377,8 +377,8 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
             else ""
         )
         result["model_family"] = getattr(cfg, "model_family", "") or ""
-    except Exception:  # noqa: S110 — justified: fail-open, metadata enrichment is best-effort
-        pass
+    except Exception:  # justified: fail-open, metadata enrichment is best-effort  # noqa: S110
+        logger.debug("delivery_metadata_enrichment_failed", exc_info=True)
 
     logger.info(
         "delivery_metrics_computed",

@@ -277,7 +277,8 @@ def _resolve_dedup_trw_dir(entries_dir: Path) -> Path:
         from trw_mcp.state._paths import resolve_trw_dir
 
         return resolve_trw_dir()
-    except Exception:
+    except Exception:  # justified: fail-open, dedup backend resolution falls back to the entries parent
+        logger.debug("dedup_trw_dir_resolve_failed", exc_info=True)
         if entries_dir.name == "entries" and entries_dir.parent.name == "learnings":
             return entries_dir.parent.parent
         return entries_dir.parent
@@ -306,7 +307,7 @@ def _sync_merged_entry_to_backend(entries_dir: Path, merged_entry: dict[str, obj
                 if isinstance(item, dict)
             ],
         )
-    except Exception:
+    except Exception:  # justified: fail-open, merged-entry backend sync is best-effort after YAML updates
         logger.debug("dedup_backend_sync_failed", exc_info=True)
 
 

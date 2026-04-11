@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import structlog
@@ -87,9 +87,10 @@ class TestRedactSecrets:
         assert "abc123xyz" not in result["header"]
         assert "***REDACTED***" in result["header"]
 
-    def test_redacts_token_in_key_name(self) -> None:
-        result = self._call({"refresh_token": "tok-abc"})
-        assert result["refresh_token"] == "***REDACTED***"
+    @pytest.mark.parametrize("key", ["client_secret", "refresh_token", "jwt", "id_token"])
+    def test_redacts_oauth_oidc_keys(self, key: str) -> None:
+        result = self._call({key: "tok-abc"})
+        assert result[key] == "***REDACTED***"
 
     def test_preserves_non_sensitive_values(self) -> None:
         result = self._call({"user": "alice", "action": "login"})
@@ -128,6 +129,19 @@ class TestAddComponent:
 
 @pytest.mark.unit
 class TestConfigureLogging:
+    def test_version_bind_failure_logs_debug(self) -> None:
+        mock_logger = MagicMock()
+        with (
+            patch("importlib.metadata.version", side_effect=RuntimeError("boom")),
+            patch("structlog.get_logger", return_value=mock_logger),
+        ):
+            configure_logging(json_output=True)
+
+        mock_logger.debug.assert_called_once_with(
+            "logging_service_version_bind_failed",
+            exc_info=True,
+        )
+
     def test_json_output_forced(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=True)

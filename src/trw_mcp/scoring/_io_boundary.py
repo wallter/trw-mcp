@@ -212,7 +212,7 @@ def _batch_sync_to_sqlite(
                     outcome_history=history,
                 )
                 synced += 1
-            except Exception:  # noqa: PERF203 — justified: fail-open, individual entry failures don't abort batch
+            except Exception:  # justified: fail-open, individual entry failures don't abort batch  # noqa: PERF203
                 logger.debug("q_value_sqlite_sync_skipped", learning_id=lid, exc_info=True)
         logger.debug("batch_sqlite_sync_complete", synced=synced, total=len(updates))
     except Exception:  # justified: fail-open, SQLite batch sync is best-effort
