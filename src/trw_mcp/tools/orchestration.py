@@ -1,8 +1,4 @@
-"""TRW orchestration tools — init, status, checkpoint.
-
-These 3 tools codify the FRAMEWORK.md execution flow:
-RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
-"""
+"""TRW orchestration tools — init, status, checkpoint."""
 
 from __future__ import annotations
 
@@ -47,6 +43,7 @@ from trw_mcp.tools._orchestration_helpers import (
     _get_bundled_file,
 )
 from trw_mcp.tools._orchestration_lifecycle import (
+    _apply_ceremony_nudge,
     _compute_last_activity_ts,
     _compute_reflection_metrics,
     _update_wave_status,
@@ -259,11 +256,8 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             {"task": task_name, "framework": config.framework_version},
         )
 
-        # PRD-QUAL-050-FR03: Write session_start boundary so delivery gates
-        # always have a session marker, even when trw_session_start is not
-        # called separately.  If trw_session_start IS called later, its
-        # session_start event supersedes this one (FR04 — the helper
-        # _events_since_last_session_start uses the LAST session_start).
+        # PRD-QUAL-050-FR03: always record a session_start boundary here;
+        # a later explicit trw_session_start supersedes it.
         try:
             _events.log_event(
                 events_jsonl_path,
@@ -273,8 +267,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         except Exception:  # justified: fail-open, session boundary must not block run init
             logger.debug("init_session_start_event_skipped", exc_info=True)
 
-        # Framework version captured in run.yaml `framework` field.
-        # Full snapshot removed — saves ~20 KB per run, reconstruct from git if needed.
+        # Framework version is captured in run.yaml; full snapshot removed to save ~20 KB per run.
 
         logger.info(
             "run_init_ok",
@@ -306,15 +299,12 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
 
-        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-            ctx = NudgeContext(tool_name=ToolName.INIT)
-            append_ceremony_nudge(cast("dict[str, object]", result), trw_dir, context=ctx)
-        except Exception:  # justified: fail-open — ceremony nudge must not break init
-            logger.debug("init_nudge_injection_skipped", exc_info=True)
+        _apply_ceremony_nudge(
+            cast("dict[str, object]", result),
+            tool_name="INIT",
+            debug_event="init_nudge_injection_skipped",
+            trw_dir=trw_dir,
+        )
 
         return result
 
@@ -416,16 +406,11 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         )
         logger.info("trw_status_read", run_id=result["run_id"])
 
-        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.state._paths import resolve_trw_dir
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-            ctx = NudgeContext(tool_name=ToolName.STATUS)
-            append_ceremony_nudge(cast("dict[str, object]", result), resolve_trw_dir(), context=ctx)
-        except Exception:  # justified: fail-open — ceremony nudge must not break status
-            logger.debug("status_nudge_injection_skipped", exc_info=True)
+        _apply_ceremony_nudge(
+            cast("dict[str, object]", result),
+            tool_name="STATUS",
+            debug_event="status_nudge_injection_skipped",
+        )
 
         return result
 
@@ -503,18 +488,11 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         if wave_id:
             result["wave_id"] = wave_id
 
-        # Mark checkpoint in ceremony state + inject nudge (PRD-CORE-074 FR04, PRD-CORE-084 FR02)
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.state._paths import resolve_trw_dir
-            from trw_mcp.state.ceremony_nudge import mark_checkpoint
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-            _trw_dir = resolve_trw_dir()
-            mark_checkpoint(_trw_dir)
-            ctx = NudgeContext(tool_name=ToolName.CHECKPOINT)
-            append_ceremony_nudge(cast("dict[str, object]", result), _trw_dir, context=ctx)
-        except Exception:  # justified: fail-open — ceremony nudge must not break checkpoint
-            logger.debug("checkpoint_nudge_injection_skipped", exc_info=True)
+        _apply_ceremony_nudge(
+            cast("dict[str, object]", result),
+            tool_name="CHECKPOINT",
+            debug_event="checkpoint_nudge_injection_skipped",
+            mark_checkpoint_first=True,
+        )
 
         return result
