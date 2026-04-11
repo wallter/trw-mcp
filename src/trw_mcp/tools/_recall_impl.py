@@ -127,6 +127,25 @@ def build_recall_context(
     )
 
 
+def _deprioritize_ranked_learnings(
+    ranked_learnings: list[dict[str, object]],
+    deprioritized_ids: set[str],
+) -> list[dict[str, object]]:
+    """Move already-in-context learnings behind fresh results while preserving order."""
+    if not deprioritized_ids:
+        return ranked_learnings
+
+    fresh: list[dict[str, object]] = []
+    already_in_context: list[dict[str, object]] = []
+    for entry in ranked_learnings:
+        if str(entry.get("id", "")) in deprioritized_ids:
+            entry["already_in_context"] = True
+            already_in_context.append(entry)
+        else:
+            fresh.append(entry)
+    return fresh + already_in_context
+
+
 def execute_recall(
     query: str,
     trw_dir: Path,
@@ -140,6 +159,7 @@ def execute_recall(
     compact: bool | None = None,
     topic: str | None = None,
     token_budget: int | None = None,
+    deprioritized_ids: set[str] | None = None,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_recall: Any = None,
     _adapter_update_access: Any = None,
@@ -160,6 +180,7 @@ def execute_recall(
         max_results: Maximum learnings to return (default from config, 0 = unlimited).
         compact: When True, return only essential fields per learning.
         topic: Optional topic slug from knowledge topology.
+        deprioritized_ids: Learning IDs to push behind fresh results before final caps.
         _adapter_recall: Injected recall function.
         _adapter_update_access: Injected access tracking function.
         _search_patterns: Injected pattern search function.
@@ -258,6 +279,15 @@ def execute_recall(
     # Capture pre-cap counts for the total_available response field
     total_available = len(ranked_learnings) + len(matching_patterns)
 
+    # --- Assertion verification (PRD-CORE-086 FR06) ---
+    if not use_compact:
+        ranked_learnings = _verify_assertions(
+            ranked_learnings, query_tokens, config, rank_fn, context=recall_context
+        )
+
+    if deprioritized_ids:
+        ranked_learnings = _deprioritize_ranked_learnings(ranked_learnings, deprioritized_ids)
+
     # --- Token budget filtering (PRD-CORE-123 Phase 2) ---
     from trw_memory.retrieval.token_budget import apply_token_budget, estimate_entry_tokens
 
@@ -272,10 +302,9 @@ def execute_recall(
     else:
         tokens_used = sum(estimate_entry_tokens(e) for e in ranked_learnings)
 
-    # Apply result cap (after token budget so budget sees full corpus)
+    # Apply result cap after assertion reranking and already-in-context deprioritization.
     if max_results > 0 and len(ranked_learnings) > max_results:
         ranked_learnings = ranked_learnings[:max_results]
-        # Recompute tokens_used to reflect actual returned set
         tokens_used = sum(estimate_entry_tokens(e) for e in ranked_learnings)
 
     # --- Surface event logging (PRD-CORE-103-FR01) ---
@@ -296,12 +325,6 @@ def execute_recall(
                     )
         except Exception:  # justified: fail-open, surface logging must not block recall
             logger.debug("surface_logging_failed", exc_info=True)
-
-    # --- Assertion verification (PRD-CORE-086 FR06) ---
-    if not use_compact:
-        ranked_learnings = _verify_assertions(
-            ranked_learnings, query_tokens, config, rank_fn, context=recall_context
-        )
 
     # Strip to compact fields when requested
     if use_compact:

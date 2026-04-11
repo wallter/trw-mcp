@@ -28,9 +28,15 @@ if [ -z "$_prompt" ]; then
 fi
 
 _phase=$(infer_phase)
+_project_root="$(get_repo_root)" || exit 0
+
+# FR07: malformed or missing prompt input must stay fully silent.
+if [ -z "$_prompt" ]; then
+  log_hook_execution "UserPromptSubmit" "$_phase" "skipped"
+  exit 0
+fi
 
 # --- PRD-CORE-095 FR01-FR06: Phase-change suppression ---
-_project_root="$(get_repo_root)" || exit 0
 _phase_cache="$_project_root/.trw/context/last_ups_phase"
 _injected_file="$_project_root/.trw/context/injected_learning_ids.txt"
 
@@ -104,8 +110,8 @@ fi
 [ -n "$TRW_AUTO_RECALL_MAX_TOKENS" ] && _auto_recall_max_tokens="$TRW_AUTO_RECALL_MAX_TOKENS"
 [ -n "$TRW_AUTO_RECALL_MIN_SCORE" ] && _auto_recall_min_score="$TRW_AUTO_RECALL_MIN_SCORE"
 
-# Early exit if disabled or no prompt
-if [ "$_auto_recall_enabled" = "false" ] || [ -z "$_prompt" ]; then
+# Early exit if disabled
+if [ "$_auto_recall_enabled" = "false" ]; then
   log_hook_execution "UserPromptSubmit" "$_phase" "skipped"
   exit 0
 fi

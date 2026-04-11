@@ -228,13 +228,13 @@ class TestFatigueInDeliverResponse:
 
         assert callable(_chk)
 
-    def test_ceremony_has_fatigue_check_wired(self) -> None:
-        """Verify ceremony.py source contains the fatigue check integration."""
+    def test_delivery_metrics_has_learning_exposure_wired(self) -> None:
+        """Verify deferred delivery metrics still compute learning exposure."""
         import inspect
 
-        from trw_mcp.tools import ceremony
+        from trw_mcp.tools import _deferred_steps_learning
 
-        source = inspect.getsource(ceremony)
-        assert "check_nudge_fatigue" in source
-        assert "nudge_fatigue_warning" in source
+        source = inspect.getsource(_deferred_steps_learning)
+        assert "compute_recall_pull_rate" in source
+        assert "learning_exposure" in source
         assert "recall_pull_rate" in source

@@ -272,6 +272,10 @@ class TestMemoryToLearningDict:
             "team_origin",
             "protection_tier",
             "anchor_validity",
+            "sessions_surfaced",
+            "avg_rework_delta",
+            "outcome_correlation",
+            "session_count",
         }
         assert expected_keys == set(result.keys())
 

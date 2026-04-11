@@ -196,6 +196,8 @@ def register_learning_tools(server: FastMCP) -> None:
             phase_affinity: Phases where most relevant.
             team_origin: Team identifier for recall boosting.
             protection_tier: "critical", "high", "normal", or "low".
+
+        See Also: trw_recall, trw_learn_update
         """
         # PRD-CORE-099: Auto-detect client and model when not explicitly provided.
         # None = "not provided" → auto-detect. Empty string = explicit blank.
@@ -451,6 +453,7 @@ def register_learning_tools(server: FastMCP) -> None:
         from trw_mcp.tools._recall_impl import execute_recall
 
         trw_dir = resolve_trw_dir()
+        injected_ids = _read_injected_ids(trw_dir)
         # Resolve from this module's namespace so test patches work
         result = execute_recall(
             query=query,
@@ -464,6 +467,7 @@ def register_learning_tools(server: FastMCP) -> None:
             compact=compact,
             topic=topic,
             token_budget=token_budget,
+            deprioritized_ids=injected_ids,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
             _adapter_update_access=adapter_update_access,
