@@ -257,10 +257,6 @@ check_ceremony_status() {
   if ! has_event "$_cs_events" "checkpoint"; then
     _cs_missing="${_cs_missing}, trw_checkpoint"
   fi
-  if ! has_event "$_cs_events" "claude_md_synced"; then
-    _cs_missing="${_cs_missing}, trw_claude_md_sync"
-  fi
-
   if [ -n "$_cs_missing" ]; then
     # Strip leading ", "
     _cs_missing="${_cs_missing#, }"

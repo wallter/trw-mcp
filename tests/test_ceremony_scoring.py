@@ -17,9 +17,9 @@ class TestFR04ClaudeMdSyncedRemoval:
     """FR04: Verify claude_md_synced tracking is fully removed."""
 
     def test_no_claude_md_synced_references(self) -> None:
-        """Verify grep for 'claude_md_synced' returns zero .py matches."""
+        """Verify grep for 'claude_md_synced' returns zero source matches."""
         result = subprocess.run(
-            ["grep", "-rn", "claude_md_synced", str(SRC_DIR), "--include=*.py"],
+            ["grep", "-rn", "--binary-files=without-match", "claude_md_synced", str(SRC_DIR)],
             capture_output=True,
             text=True,
         )
