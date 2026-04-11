@@ -11,6 +11,28 @@ from trw_mcp.state.claude_md._templates import (
 )
 from trw_mcp.state.persistence import FileStateReader
 
+
+def _load_analytics_counts() -> tuple[int, int]:
+    """Return tracked session and learning counts from analytics.yaml."""
+    config = get_config()
+    analytics_path = resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
+    if not analytics_path.exists():
+        return 0, 0
+
+    try:
+        data = FileStateReader().read_yaml(analytics_path)
+        return int(str(data.get("sessions_tracked", 0) or 0)), int(str(data.get("total_learnings", 0) or 0))
+    except Exception:  # justified: prompt rendering must fail open when analytics are unavailable
+        return 0, 0
+
+
+def _format_learning_session_claim() -> str:
+    """Render a truthful analytics-backed learning/session claim."""
+    sessions_tracked, total_learnings = _load_analytics_counts()
+    session_label = "session" if sessions_tracked == 1 else "sessions"
+    learning_label = "learning" if total_learnings == 1 else "learnings"
+    return f"{total_learnings} {learning_label} from {sessions_tracked} prior {session_label}"
+
 _SESSION_BOUNDARY_TEXT = (
     "Every session that loads learnings via `trw_session_start()` should persist "
     "them at session end \u2014 this is how your work compounds across sessions "
@@ -36,6 +58,7 @@ def render_imperative_opener() -> str:
     Returns:
         Markdown string with role framing and session_start trigger.
     """
+    analytics_claim = _format_learning_session_claim()
     return (
         "Your primary role is **orchestration** \u2014 delegate to focused agents "
         "for better outcomes than direct implementation. Focused subagents produce "
@@ -44,8 +67,8 @@ def render_imperative_opener() -> str:
         "\n"
         "**Your first action in every session must be `trw_session_start()`.**\n"
         "\n"
-        "This single call loads everything you need: prior learnings from "
-        "past sessions, any active run state you can resume, "
+        f"This single call loads everything you need: {analytics_claim}, "
+        "any active run state you can resume, "
         "and the full operational protocol (delegation guidance, phase gates, "
         "quality rubrics). Without it, you start from zero \u2014 with it, you "
         "start from the team\u2019s accumulated experience.\n"
@@ -314,6 +337,8 @@ def render_memory_harmonization() -> str:
     Returns:
         Markdown string with memory routing guidance.
     """
+    sessions_tracked, total_learnings = _load_analytics_counts()
+    scale_claim = f"{total_learnings} learnings across {sessions_tracked} sessions"
     return (
         "### Memory Routing\n"
         "\n"
@@ -325,7 +350,7 @@ def render_memory_harmonization() -> str:
         "| Search | `trw_recall(query)` \u2014 semantic + keyword | Filename scan only |\n"
         "| Visibility | All agents, subagents, teammates | Primary session only |\n"
         "| Lifecycle | Impact-scored, recalled at session start | Static until manually edited |\n"
-        "| Scale | Hundreds of entries, auto-pruned by staleness | 200-line index cap |\n"
+        f"| Scale | {scale_claim}, auto-pruned by staleness | 200-line index cap |\n"
         "\n"
         "Gotcha or error pattern \u2192 `trw_learn()`. "
         "User\u2019s preferred commit style \u2192 native memory. "
@@ -401,6 +426,9 @@ def render_agents_trw_section() -> str:
     Returns:
         Complete markdown string for the TRW auto-generated section.
     """
+    analytics_claim = _format_learning_session_claim()
+    sessions_tracked, _ = _load_analytics_counts()
+    session_label = "session" if sessions_tracked == 1 else "sessions"
     return (
         "TRW (The Real Work) is an engineering memory framework that persists "
         "patterns, gotchas, and project knowledge across sessions. It works "
@@ -410,7 +438,7 @@ def render_agents_trw_section() -> str:
         "\n"
         "These MCP tools are available when the TRW server is configured:\n"
         "\n"
-        "- `trw_session_start()` \u2014 loads prior learnings and recovers any active run\n"
+        f"- `trw_session_start()` \u2014 loads {analytics_claim} and recovers any active run\n"
         "- `trw_checkpoint(message)` \u2014 saves progress so you can resume after interruptions\n"
         "- `trw_learn(summary, detail)` \u2014 records discoveries for all future sessions\n"
         "- `trw_deliver()` \u2014 persists everything when done "
@@ -420,7 +448,7 @@ def render_agents_trw_section() -> str:
         "\n"
         "## Workflow\n"
         "\n"
-        "1. **Start**: call `trw_session_start()` to load context from prior sessions\n"
+        f"1. **Start**: call `trw_session_start()` to load context from {sessions_tracked} prior {session_label}\n"
         "2. **During**: call `trw_learn()` when you discover gotchas, patterns, or errors\n"
         "3. **During**: call `trw_checkpoint()` after milestones to save progress\n"
         "4. **Finish**: call `trw_deliver()` to persist your work for future sessions\n"

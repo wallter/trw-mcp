@@ -100,6 +100,8 @@ class RecallResultDict(TypedDict, total=False):
     compact: bool
     max_results: int
     topic_filter_ignored: bool
+    count: int
+    ceremony_hint: str
     # Token budget fields (PRD-CORE-123 Phase 2)
     tokens_used: int
     tokens_budget: int | None

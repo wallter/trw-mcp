@@ -169,18 +169,18 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
         return _select_message_by_urgency(
             urgency,
             low=(
-                "\u26a1 Build check not run yet — "
+                "\u26a1 Verification not run yet — "
                 "tests + type-check catches integration issues before delivery. "
                 "trw_build_check() runs the full gate."
             ),
             medium=(
-                "\u26a1 Build check not run — "
+                "\u26a1 Verification not run — "
                 "type errors and test failures are undetected; delivery ships them as-is. "
                 "trw_build_check() runs the full gate."
             ),
             high=(
-                "\u26a1 Build check not run — "
-                "integration issues delivered without verification stay broken in production. "
+                "\u26a1 Verification not run — "
+                "integration issues delivered without verification stay embedded in the result. "
                 "trw_build_check() catches them in under 2 minutes."
             ),
         )
@@ -282,15 +282,15 @@ def _context_reactive_message(
     if tool == ToolName.DELIVER:
         return _deliver_message(state)
     if tool == ToolName.INIT:
-        return "Run bootstrapped. NEXT: Begin implementation. THEN: trw_checkpoint() at first milestone."
+        return "Run bootstrapped. NEXT: Begin the work. THEN: trw_checkpoint() at first milestone."
     if tool == ToolName.RECALL:
         return "Learnings recalled. Review them for relevant patterns before proceeding."
     if tool == ToolName.STATUS:
         return "Run status loaded. Resume from last checkpoint rather than re-implementing."
     if tool == ToolName.PRD_CREATE:
-        return "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before implementation."
+        return "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before the work starts."
     if tool == ToolName.PRD_VALIDATE:
-        return "PRD validated. NEXT: trw_init() to bootstrap the run. THEN: begin implementation."
+        return "PRD validated. NEXT: trw_init() to bootstrap the run. THEN: begin the work."
     return None
 
 
@@ -300,7 +300,7 @@ def _build_check_message(context: NudgeContext, urgency: str) -> str | None:
         return (
             "Build failed. If failures reveal a design flaw, revert to PLAN "
             "— fixing a plan costs less than patching broken code. "
-            "If implementation bugs, fix in-phase and re-run."
+            "If the work has execution bugs, fix them in-phase and re-run."
         )
     if context.build_passed is not True:
         return None
@@ -336,10 +336,10 @@ def _checkpoint_message() -> str:
 def _learn_message(ceremony_mode: str) -> str:
     """Return the learning follow-up message."""
     if ceremony_mode == "light":
-        return "Learning persisted. Continue implementing, then call trw_deliver() when done."
+        return "Learning persisted. Continue the work, then call trw_deliver() when done."
     return (
         "Learning persisted. NEXT: trw_checkpoint() at next milestone. "
-        "THEN: trw_build_check() when implementation complete."
+        "THEN: trw_build_check() when the work is complete."
     )
 
 

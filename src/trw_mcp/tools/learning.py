@@ -416,6 +416,7 @@ def register_learning_tools(server: FastMCP) -> None:
         shard_id: str | None = None,
         max_results: int | None = None,
         compact: bool | None = None,
+        ultra_compact: bool = False,
         topic: str | None = None,
         token_budget: int | None = None,
     ) -> RecallResultDict:
@@ -438,6 +439,8 @@ def register_learning_tools(server: FastMCP) -> None:
             max_results: Maximum learnings to return (default 25, 0 = unlimited).
             compact: When True, return only essential fields per learning.
                 When None (default), auto-enables for wildcard queries.
+            ultra_compact: When True, return only ``id`` and ``summary`` per learning,
+                plus top-level ``count`` and ``ceremony_hint`` fields for constrained contexts.
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
             token_budget: Optional maximum token budget for recall results.
@@ -461,6 +464,7 @@ def register_learning_tools(server: FastMCP) -> None:
             shard_id=shard_id,
             max_results=max_results,
             compact=compact,
+            ultra_compact=ultra_compact,
             topic=topic,
             token_budget=token_budget,
             deprioritized_ids=injected_ids,

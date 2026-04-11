@@ -71,6 +71,17 @@ def _entries_dir(root: Path) -> Path:
     return root / _CFG.trw_dir / _CFG.learnings_dir / _CFG.entries_dir
 
 
+def _write_analytics(root: Path, *, sessions_tracked: int, total_learnings: int) -> None:
+    """Write a minimal analytics.yaml for render tests."""
+    analytics_path = root / _CFG.trw_dir / _CFG.context_dir / "analytics.yaml"
+    analytics_path.parent.mkdir(parents=True, exist_ok=True)
+    analytics_path.write_text(
+        f"sessions_tracked: {sessions_tracked}\n"
+        f"total_learnings: {total_learnings}\n",
+        encoding="utf-8",
+    )
+
+
 class TestToolDocstrings:
     """PRD-CORE-119: learning tool schema guidance stays accurate and high-signal."""
 
@@ -665,6 +676,14 @@ class TestCeremonyRendering:
         assert "trw_checkpoint()" in result
         assert "trw_deliver()" in result
 
+    def test_render_imperative_opener_uses_analytics_counts(self, tmp_path: Path) -> None:
+        """FR06: opener claims use analytics-driven learning/session counts."""
+        _write_analytics(tmp_path, sessions_tracked=0, total_learnings=0)
+
+        result = render_imperative_opener()
+
+        assert "0 learnings from 0 prior sessions" in result
+
     def test_render_closing_reminder(self) -> None:
         """Closing reminder bookends with session boundaries."""
         result = render_closing_reminder()
@@ -899,6 +918,14 @@ class TestProgressiveDisclosure:
         assert "trw_learn(summary, detail)" in result
         assert "trw_deliver()" in result
         assert "/trw-ceremony-guide" in result
+
+    def test_render_memory_harmonization_uses_analytics_counts(self, tmp_path: Path) -> None:
+        """FR06: memory routing scale claim reflects tracked analytics."""
+        _write_analytics(tmp_path, sessions_tracked=12, total_learnings=34)
+
+        result = render_memory_harmonization()
+
+        assert "34 learnings across 12 sessions" in result
 
     def test_closing_reminder_no_trw_deliver(self) -> None:
         """PRD-CORE-062-FR01: render_closing_reminder has no trw_deliver."""
@@ -1429,6 +1456,24 @@ class TestRecallCompactMode:
         result_keyword = tools["trw_recall"].fn(query="context omit test")
         assert result_keyword["context"] != {}
         assert "architecture" in result_keyword["context"]
+
+    def test_recall_ultra_compact_returns_only_minimal_payload(self, tmp_path: Path) -> None:
+        """FR09: ultra_compact returns only learnings, count, and ceremony_hint."""
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Ultra compact recall learning",
+            detail="Verbose detail should be stripped",
+            tags=["testing"],
+            impact=0.8,
+        )
+
+        result = tools["trw_recall"].fn(query="ultra compact", ultra_compact=True)
+
+        assert set(result.keys()) == {"learnings", "count", "ceremony_hint"}
+        assert result["count"] == len(result["learnings"])
+        assert "trw_session_start" in result["ceremony_hint"]
+        assert result["learnings"]
+        assert set(result["learnings"][0].keys()) == {"id", "summary"}
 
 
 class TestOutcomeCorrelation:
