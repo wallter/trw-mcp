@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -103,3 +103,52 @@ def test_push_outcomes_unreachable_returns_failed() -> None:
     )
     result = pusher.push_outcomes([{"session_id": "s1", "learning_ids": ["L-1"]}])
     assert result.failed > 0
+
+
+def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None:
+    """Learning push boundary failures log warning + traceback and stay fail-open."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://example.com", api_key="key")
+    entries = [_make_mock_entry("L-1"), _make_mock_entry("L-2")]
+
+    with (
+        patch("httpx.Client") as mock_client_cls,
+        patch("trw_mcp.sync.push.logger.warning") as mock_warning,
+    ):
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        mock_client.post.side_effect = RuntimeError("boom")
+
+        result = pusher.push_learnings(entries)
+
+    assert result.failed == 2
+    mock_warning.assert_called_once_with(
+        "sync_push_failed",
+        batch_index=0,
+        count=2,
+        exc_info=True,
+    )
+
+
+def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> None:
+    """Outcome push boundary failures log warning + traceback and stay fail-open."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://example.com", api_key="key")
+    outcomes = [{"session_id": "s1", "learning_ids": ["L-1"]}]
+
+    with (
+        patch("httpx.Client") as mock_client_cls,
+        patch("trw_mcp.sync.push.logger.warning") as mock_warning,
+    ):
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        mock_client.post.side_effect = RuntimeError("boom")
+
+        result = pusher.push_outcomes(outcomes)
+
+    assert result.failed == 1
+    mock_warning.assert_called_once_with(
+        "sync_push_outcomes_failed",
+        count=1,
+        exc_info=True,
+    )

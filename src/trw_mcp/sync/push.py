@@ -70,7 +70,7 @@ class SyncPusher:
                     total_pushed += result.get("inserted", 0) + result.get("updated", 0)
                     total_skipped += result.get("skipped", 0)
             except Exception:  # justified: boundary, remote sync push failures are isolated per batch
-                logger.debug("sync_push_failed", batch_index=i // self._batch_size, count=len(batch), exc_info=True)
+                logger.warning("sync_push_failed", batch_index=i // self._batch_size, count=len(batch), exc_info=True)
                 total_failed += len(batch)
 
         logger.info(
@@ -103,7 +103,7 @@ class SyncPusher:
                 result = resp.json()
                 return PushResult(pushed=result.get("inserted", 0))
         except Exception:  # justified: boundary, outcome push failures must not block local completion
-            logger.debug("sync_push_outcomes_failed", count=len(outcomes), exc_info=True)
+            logger.warning("sync_push_outcomes_failed", count=len(outcomes), exc_info=True)
             return PushResult(failed=len(outcomes))
 
     def _serialize_entry(self, entry: MemoryEntry) -> dict[str, object]:
