@@ -812,3 +812,18 @@ class TestNoiseFilter:
     def test_accepts_completion_learning(self) -> None:
         """A learning that mentions completion in a substantive way."""
         assert is_noise_summary("Completion handler must flush before process exit") is False
+
+    @pytest.mark.unit
+    def test_rejects_checked_prefix(self) -> None:
+        """Action-report summaries starting with 'I checked' are rejected."""
+        assert is_noise_summary("I checked the API docs") is True
+
+    @pytest.mark.unit
+    def test_rejects_vague_fixed_issue_summary(self) -> None:
+        """Vague 'Fixed the issue' summaries are rejected as low-value noise."""
+        assert is_noise_summary("Fixed the issue") is True
+
+    @pytest.mark.unit
+    def test_accepts_substantive_fixed_summary(self) -> None:
+        """Detailed fix summaries remain valid despite starting with 'Fixed the'."""
+        assert is_noise_summary("Fixed the OAuth callback vulnerability by adding state parameter validation") is False

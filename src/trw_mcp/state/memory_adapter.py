@@ -594,6 +594,23 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
             continue
 
 
+def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
+    """Increment session_count once for each learning surfaced during session start."""
+    backend = get_backend(trw_dir)
+    for lid in learning_ids:
+        try:
+            entry = backend.get(lid)
+            if entry is not None:
+                backend.update(lid, session_count=entry.session_count + 1)
+        except Exception:  # per-item error handling: session tracking is best-effort, one failure must not break recall results  # noqa: PERF203
+            logger.warning(
+                "session_count_update_failed",
+                exc_info=True,
+                entry_id=lid,
+            )
+            continue
+
+
 # ---------------------------------------------------------------------------
 # WAL checkpoint management (PRD-QUAL-050-FR05)
 # ---------------------------------------------------------------------------

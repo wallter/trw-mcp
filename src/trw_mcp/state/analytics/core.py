@@ -149,22 +149,28 @@ _NOISE_PREFIXES = (
     "Confirmed:",
     "Done:",
     "Completed:",
+    "I read the file",
+    "I successfully",
+    "The test passed",
+    "Updated the code",
+    "Made the change",
+    "Fixed the issue",
+    "The file was",
+    "I found the",
+    "I checked the",
 )
 
-# PRD-CORE-119 M-2: Regex patterns for common low-value agent outputs.
-# These catch file-read confirmations, test-pass notifications, simple edit
-# confirmations, and status acknowledgments that add no institutional value.
-# Patterns are deliberately specific to avoid rejecting valid learnings
-# (e.g., "File reads fail silently..." should NOT match).
-_NOISE_REGEX = re.compile(
-    r"^(?:"
-    r"i read the \w+"  # "I read the file", "I read the configuration"
-    r"|(?:the |all )?tests? (?:passed|are passing)"  # "The test passed", "All tests passed"
-    r"|i made the (?:edit|change)"  # "I made the edit", "I made the change"
-    r"|updated the (?:file|code)\b"  # "Updated the file", "Updated the code"
-    r"|the build (?:completed|passed|succeeded)"  # "The build completed successfully"
-    r")",
-    flags=re.IGNORECASE,
+# PRD-CORE-119 FR03: conservative regex checks for common action-report noise.
+_NOISE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"^(I |The |It |We )(read|wrote|opened|closed|ran|executed|checked|verified|confirmed|updated|modified|created|deleted|removed)\b",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(r"^(Successfully|Done|Finished|Completed)\b", flags=re.IGNORECASE),
+    re.compile(r"^(?:the |all )?tests? (?:passed|are passing)\b", flags=re.IGNORECASE),
+    re.compile(r"^i made the (?:edit|change)\b", flags=re.IGNORECASE),
+    re.compile(r"^updated the (?:file|code)\b", flags=re.IGNORECASE),
+    re.compile(r"^the build (?:completed|passed|succeeded)\b", flags=re.IGNORECASE),
 )
 
 
@@ -174,9 +180,9 @@ def is_noise_summary(summary: str) -> bool:
     PRD-QUAL-032-FR09: Reject entries whose summary starts with known
     noise prefixes before they are persisted.
 
-    PRD-CORE-119-M2: Also rejects regex-matched low-value agent outputs
-    such as file-read confirmations, test-pass notifications, simple edit
-    confirmations, and status acknowledgments.
+    PRD-CORE-119-FR03: Also rejects conservative low-value action reports
+    and completion announcements that describe what the agent did rather
+    than what it learned.
 
     PRD-FIX-061-FR01: Canonical location moved from tools/_learning_helpers.py
     to state/analytics/core.py to resolve tools/ -> state/ layer violation.
@@ -190,7 +196,7 @@ def is_noise_summary(summary: str) -> bool:
     lower = summary.lower()
     if any(lower.startswith(prefix.lower()) for prefix in _NOISE_PREFIXES):
         return True
-    return bool(_NOISE_REGEX.search(lower))
+    return any(pattern.search(summary) is not None for pattern in _NOISE_PATTERNS)
 
 
 # ---------------------------------------------------------------------------

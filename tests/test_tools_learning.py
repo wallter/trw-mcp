@@ -71,6 +71,30 @@ def _entries_dir(root: Path) -> Path:
     return root / _CFG.trw_dir / _CFG.learnings_dir / _CFG.entries_dir
 
 
+class TestToolDocstrings:
+    """PRD-CORE-119: learning tool schema guidance stays accurate and high-signal."""
+
+    def test_trw_learn_docstring_includes_quality_gate_and_tiers(self) -> None:
+        tools = _get_tools()
+        doc = tools["trw_learn"].fn.__doc__ or ""
+
+        assert "Only record learnings that:" in doc
+        assert "prevent repeated mistakes" in doc
+        assert "Routine observations" in doc
+        assert "Required:" in doc
+        assert "Recommended:" in doc
+        assert "Advanced (auto-detected if omitted):" in doc
+        assert "Most learnings need only summary and detail." in doc
+
+    def test_trw_claude_md_sync_docstring_matches_post_093_behavior(self) -> None:
+        tools = _get_tools()
+        doc = tools["trw_claude_md_sync"].fn.__doc__ or ""
+
+        assert "Sync TRW protocol and ceremony guidance into CLAUDE.md" in doc
+        assert "Learnings are not promoted into CLAUDE.md" in doc
+        assert "trw_session_start() recall instead" in doc
+
+
 class TestTrwLearn:
     """Tests for trw_learn tool."""
 

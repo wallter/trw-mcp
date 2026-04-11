@@ -291,6 +291,13 @@ class TestMemoryToLearningDict:
         result = _memory_to_learning_dict(entry)
         assert result["impact"] == 0.95
 
+    def test_session_count_uses_distinct_field_not_access_count(self) -> None:
+        """session_count maps from the dedicated MemoryEntry field."""
+        entry = self._make_entry(access_count=7, session_count=3)
+        result = _memory_to_learning_dict(entry)
+        assert result["access_count"] == 7
+        assert result["session_count"] == 3
+
     def test_maps_source_to_source_type(self) -> None:
         """MemoryEntry.source maps to learning dict 'source_type'."""
         entry = self._make_entry(source="human")
