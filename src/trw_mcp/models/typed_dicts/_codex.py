@@ -52,6 +52,7 @@ class CodexConfigDict(TypedDict, total=False):
     features: CodexFeaturesConfig
     mcp_servers: dict[str, CodexMcpServerEntry]
     project_doc_fallback_filenames: list[str]
+    model_instructions_file: str
     skills: CodexSkillsConfig
     model: str
     model_reasoning_effort: str

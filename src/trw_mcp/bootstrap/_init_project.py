@@ -256,6 +256,7 @@ def init_project(
         Dict with ``created``, ``skipped``, ``errors`` lists.
     """
     from ._codex import (
+        codex_hooks_enabled,
         generate_codex_agents,
         generate_codex_config,
         generate_codex_hooks,
@@ -391,10 +392,11 @@ def init_project(
         result["skipped"].extend(codex_config.get("preserved", []))
         result["errors"].extend(codex_config.get("errors", []))
 
-        codex_hooks = generate_codex_hooks(target_dir, force=force)
-        result["created"].extend(codex_hooks.get("created", []))
-        result["skipped"].extend(codex_hooks.get("preserved", []))
-        result["errors"].extend(codex_hooks.get("errors", []))
+        if codex_hooks_enabled(target_dir):
+            codex_hooks = generate_codex_hooks(target_dir, force=force)
+            result["created"].extend(codex_hooks.get("created", []))
+            result["skipped"].extend(codex_hooks.get("preserved", []))
+            result["errors"].extend(codex_hooks.get("errors", []))
 
         codex_agents = generate_codex_agents(target_dir, force=force)
         result["created"].extend(codex_agents.get("created", []))
