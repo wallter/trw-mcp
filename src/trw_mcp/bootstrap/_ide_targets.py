@@ -124,9 +124,14 @@ def _update_opencode_artifacts(
             except (json.JSONDecodeError, OSError):
                 pass
 
-        instructions_result = generate_opencode_instructions(target_dir, model_family)
+        instructions_result = generate_opencode_instructions(
+            target_dir,
+            model_family,
+            manifest_hashes=manifest_hashes,
+        )
         result["created"].extend(instructions_result.get("created", []))
         result["updated"].extend(instructions_result.get("updated", []))
+        result["preserved"].extend(instructions_result.get("preserved", []))
         result["errors"].extend(instructions_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
         result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md update skipped: {exc}")
@@ -163,6 +168,7 @@ def _update_codex_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
     ide_override: str | None = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Update Codex artifacts when Codex is detected."""
     from ._codex import (
@@ -229,9 +235,13 @@ def _update_codex_artifacts(
     try:
         from ._opencode import generate_codex_instructions
 
-        codex_instructions_result = generate_codex_instructions(target_dir)
+        codex_instructions_result = generate_codex_instructions(
+            target_dir,
+            manifest_hashes=manifest_hashes,
+        )
         result["created"].extend(codex_instructions_result.get("created", []))
         result["updated"].extend(codex_instructions_result.get("updated", []))
+        result["preserved"].extend(codex_instructions_result.get("preserved", []))
         result["errors"].extend(codex_instructions_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
         result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md update skipped: {exc}")

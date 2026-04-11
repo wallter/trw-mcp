@@ -289,7 +289,7 @@ def _run_post_update_phases(
         on_progress("Phase", "Updating IDE configs...")
     _update_opencode_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_cursor_artifacts(target_dir, result, ide_override=ide)
-    _update_codex_artifacts(target_dir, result, ide_override=ide)
+    _update_codex_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_copilot_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _write_manifest(target_dir, result, data_dir)
 

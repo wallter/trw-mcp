@@ -174,6 +174,9 @@ def _compute_content_hashes(
         _record_hash(target_dir / ".opencode" / "agents" / name, f".opencode/agents/{name}")
     for name in bundled.get("opencode_skills", []):
         _record_hash(target_dir / ".opencode" / "skills" / name / "SKILL.md", f".opencode/skills/{name}/SKILL.md")
+    _record_hash(target_dir / ".opencode" / "INSTRUCTIONS.md", ".opencode/INSTRUCTIONS.md")
+    _record_hash(target_dir / ".codex" / "INSTRUCTIONS.md", ".codex/INSTRUCTIONS.md")
+    _record_hash(target_dir / "AGENTS.md", "AGENTS.md")
     return hashes
 
 

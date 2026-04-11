@@ -2468,7 +2468,7 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / "opencode.json").exists()
 
     def test_fr15_init_with_ide_opencode(self, tmp_path: Path) -> None:
-        """init_project(ide='opencode') creates opencode.json and per-client instructions."""
+        """init_project(ide='opencode') creates OpenCode config, instructions, and AGENTS.md."""
         (tmp_path / ".git").mkdir()
 
         result = init_project(tmp_path, ide="opencode")
@@ -2484,6 +2484,7 @@ class TestUpdateProjectMultiIDE:
         instructions = (tmp_path / ".opencode" / "INSTRUCTIONS.md").read_text()
         assert "trw_session_start" in instructions
         assert "trw_deliver" in instructions
+        assert (tmp_path / "AGENTS.md").exists()
         assert (tmp_path / ".opencode" / "commands" / "trw-deliver.md").exists()
         assert (tmp_path / ".opencode" / "agents" / "trw-implementer.md").exists()
         assert (tmp_path / ".opencode" / "skills" / "trw-deliver" / "SKILL.md").exists()
@@ -2509,6 +2510,7 @@ class TestUpdateProjectMultiIDE:
         # Per-client instruction files (PRD-CORE-115)
         assert (tmp_path / ".opencode" / "INSTRUCTIONS.md").exists()
         assert (tmp_path / ".codex" / "INSTRUCTIONS.md").exists()
+        assert (tmp_path / "AGENTS.md").exists()
 
     def test_fr15_init_default_no_opencode_artifacts(self, tmp_path: Path) -> None:
         """init_project() without --ide does not create opencode artifacts by default."""
@@ -2534,7 +2536,7 @@ class TestUpdateProjectMultiIDE:
         assert "trw_session_start" in instructions_content or "TRW" in instructions_content
 
     def test_fr15_init_with_ide_codex(self, tmp_path: Path) -> None:
-        """init_project(ide='codex') creates Codex config, agents, skills, and per-client instructions."""
+        """init_project(ide='codex') creates Codex config, AGENTS.md, and per-client instructions."""
         (tmp_path / ".git").mkdir()
 
         result = init_project(tmp_path, ide="codex")
@@ -2551,6 +2553,7 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / ".codex" / "INSTRUCTIONS.md").exists()
         instructions_content = (tmp_path / ".codex" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         assert "trw_deliver" in instructions_content
+        assert (tmp_path / "AGENTS.md").exists()
 
     def test_fr15_update_opencode_also_creates_agents_md(self, tmp_path: Path) -> None:
         """update_project with opencode detected also creates/updates AGENTS.md."""
@@ -2590,6 +2593,20 @@ class TestUpdateProjectMultiIDE:
         assert not result["errors"], result["errors"]
         assert command_path.read_text(encoding="utf-8") == "user-modified-command\n"
         assert ".opencode/commands/trw-deliver.md" in result["preserved"]
+
+    def test_fr15_update_opencode_preserves_user_modified_instructions(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="opencode")
+        assert not init_result["errors"], init_result["errors"]
+
+        instructions_path = tmp_path / ".opencode" / "INSTRUCTIONS.md"
+        instructions_path.write_text("user-modified-instructions\n", encoding="utf-8")
+
+        result = update_project(tmp_path, ide="opencode")
+
+        assert not result["errors"], result["errors"]
+        assert instructions_path.read_text(encoding="utf-8") == "user-modified-instructions\n"
+        assert ".opencode/INSTRUCTIONS.md" in result["preserved"]
 
     def test_fr15_update_opencode_removes_stale_managed_command(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
@@ -2684,6 +2701,20 @@ class TestUpdateProjectMultiIDE:
         assert not result["errors"], result["errors"]
         assert not stale_path.parent.exists()
         assert any("removed:" in item and "trw-stale-skill" in item for item in result["updated"])
+
+    def test_fr15_update_codex_preserves_user_modified_instructions(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        init_result = init_project(tmp_path, ide="codex")
+        assert not init_result["errors"], init_result["errors"]
+
+        instructions_path = tmp_path / ".codex" / "INSTRUCTIONS.md"
+        instructions_path.write_text("user-modified-codex-instructions\n", encoding="utf-8")
+
+        result = update_project(tmp_path, ide="codex")
+
+        assert not result["errors"], result["errors"]
+        assert instructions_path.read_text(encoding="utf-8") == "user-modified-codex-instructions\n"
+        assert ".codex/INSTRUCTIONS.md" in result["preserved"]
 
 
 # ── FR09: A/B Test Infrastructure (CORE-074) ─────────────────────────────

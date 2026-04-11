@@ -475,6 +475,7 @@ def generate_opencode_instructions(
     model_family: str,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Generate or update .opencode/INSTRUCTIONS.md with model-specific content.
 
@@ -494,6 +495,7 @@ def generate_opencode_instructions(
     result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
 
     instructions_path = target_dir / ".opencode" / "INSTRUCTIONS.md"
+    rel_path = str(instructions_path.relative_to(target_dir))
 
     try:
         instructions_path.parent.mkdir(parents=True, exist_ok=True)
@@ -502,19 +504,21 @@ def generate_opencode_instructions(
         return result
 
     content = render_opencode_instructions(model_family)
+    existed = instructions_path.exists()
 
-    if instructions_path.exists() and not force:
+    if not force and _is_user_modified(instructions_path, rel_path, manifest_hashes):
+        result["preserved"].append(rel_path)
+        return result
+
+    if existed and not force:
         existing = instructions_path.read_text(encoding="utf-8")
         if existing.strip() == content.strip():
-            result["preserved"].append(str(instructions_path.relative_to(target_dir)))
+            result["preserved"].append(rel_path)
             return result
 
     try:
         instructions_path.write_text(content, encoding="utf-8")
-        if instructions_path.exists() and not force:
-            result["updated"].append(str(instructions_path.relative_to(target_dir)))
-        else:
-            result["created"].append(str(instructions_path.relative_to(target_dir)))
+        result["updated" if existed else "created"].append(rel_path)
     except OSError as exc:
         result["errors"].append(f"Failed to write {instructions_path}: {exc}")
 
@@ -530,6 +534,7 @@ def generate_codex_instructions(
     target_dir: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Generate or update .codex/INSTRUCTIONS.md with Codex-specific content.
 
@@ -547,6 +552,7 @@ def generate_codex_instructions(
     result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
 
     instructions_path = target_dir / ".codex" / "INSTRUCTIONS.md"
+    rel_path = str(instructions_path.relative_to(target_dir))
 
     try:
         instructions_path.parent.mkdir(parents=True, exist_ok=True)
@@ -555,19 +561,21 @@ def generate_codex_instructions(
         return result
 
     content = render_codex_instructions()
+    existed = instructions_path.exists()
 
-    if instructions_path.exists() and not force:
+    if not force and _is_user_modified(instructions_path, rel_path, manifest_hashes):
+        result["preserved"].append(rel_path)
+        return result
+
+    if existed and not force:
         existing = instructions_path.read_text(encoding="utf-8")
         if existing.strip() == content.strip():
-            result["preserved"].append(str(instructions_path.relative_to(target_dir)))
+            result["preserved"].append(rel_path)
             return result
 
     try:
         instructions_path.write_text(content, encoding="utf-8")
-        if instructions_path.exists() and not force:
-            result["updated"].append(str(instructions_path.relative_to(target_dir)))
-        else:
-            result["created"].append(str(instructions_path.relative_to(target_dir)))
+        result["updated" if existed else "created"].append(rel_path)
     except OSError as exc:
         result["errors"].append(f"Failed to write {instructions_path}: {exc}")
 

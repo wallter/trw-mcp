@@ -6,6 +6,7 @@ Tests for model-family-specific instruction generation, per-client instruction f
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -200,6 +201,24 @@ class TestGenerateOpencodeInstructions:
         assert result["updated"] or result["created"]
         assert "old content" not in instructions_path.read_text(encoding="utf-8")
 
+    def test_preserves_user_modified_content_with_manifest_hash(self, tmp_path: Path) -> None:
+        """Manifest hash mismatch preserves user-edited OpenCode instructions."""
+        instructions_path = tmp_path / ".opencode" / "INSTRUCTIONS.md"
+        instructions_path.parent.mkdir(parents=True)
+        original = render_opencode_instructions("qwen")
+        instructions_path.write_text("customized instructions", encoding="utf-8")
+
+        result = generate_opencode_instructions(
+            tmp_path,
+            "qwen",
+            manifest_hashes={
+                ".opencode/INSTRUCTIONS.md": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+            },
+        )
+
+        assert result["preserved"] == [".opencode/INSTRUCTIONS.md"]
+        assert instructions_path.read_text(encoding="utf-8") == "customized instructions"
+
     def test_returns_errors_on_directory_creation_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -267,6 +286,23 @@ class TestGenerateCodexInstructions:
 
         assert result["updated"] or result["created"]
         assert "old content" not in instructions_path.read_text(encoding="utf-8")
+
+    def test_preserves_user_modified_content_with_manifest_hash(self, tmp_path: Path) -> None:
+        """Manifest hash mismatch preserves user-edited Codex instructions."""
+        instructions_path = tmp_path / ".codex" / "INSTRUCTIONS.md"
+        instructions_path.parent.mkdir(parents=True)
+        original = render_codex_instructions()
+        instructions_path.write_text("customized codex instructions", encoding="utf-8")
+
+        result = generate_codex_instructions(
+            tmp_path,
+            manifest_hashes={
+                ".codex/INSTRUCTIONS.md": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+            },
+        )
+
+        assert result["preserved"] == [".codex/INSTRUCTIONS.md"]
+        assert instructions_path.read_text(encoding="utf-8") == "customized codex instructions"
 
 
 # ── Model Family Detection Tests ──────────────────────────────────────────
