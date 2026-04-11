@@ -523,6 +523,15 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     return False
 
 
+def validate_pip_target(target_dir: str) -> str:
+    """Validate --pip-target to reject shell metacharacters and malformed paths."""
+    if not target_dir:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9_./-]+", target_dir):
+        raise ValueError(f"Invalid --pip-target: {target_dir!r}")
+    return target_dir
+
+
 # ── Run command with live progress ───────────────────────────────────
 
 
@@ -1183,9 +1192,10 @@ def phase_install_packages(
     ``/usr/local/bin/trw-mcp`` so the CLI finds the packages at runtime.
     """
     ui.step_header(step, total, "Installing packages")
+    validated_target = validate_pip_target(pip_target)
 
     ui.start_spinner("Installing trw-memory...")
-    if not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=pip_target):
+    if not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=validated_target):
         ui.stop_spinner(False, "", "pip install failed for trw-memory")
         ui.error("Try installing in a virtual environment:")
         ui.error("  python3 -m venv .venv && source .venv/bin/activate")
@@ -1194,7 +1204,7 @@ def phase_install_packages(
     ui.stop_spinner(True, "Installed trw-memory")
 
     ui.start_spinner(f"Installing trw-mcp v{TRW_VERSION}...")
-    if not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=pip_target):
+    if not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target):
         ui.stop_spinner(False, "", "pip install failed for trw-mcp")
         ui.error("Try installing in a virtual environment:")
         ui.error("  python3 -m venv .venv && source .venv/bin/activate")
@@ -1203,22 +1213,25 @@ def phase_install_packages(
     ui.stop_spinner(True, f"Installed trw-mcp v{TRW_VERSION}")
 
     # When using --pip-target, generate a PYTHONPATH wrapper (FR04)
-    if pip_target:
+    if validated_target:
         wrapper = Path("/usr/local/bin/trw-mcp")
         wrapper.write_text(
             f"#!/bin/bash\n"
-            f"export PYTHONPATH={pip_target}:$PYTHONPATH\n"
+            f"export PYTHONPATH={validated_target}:$PYTHONPATH\n"
             f'exec {python} -c "from trw_mcp.server import main; main()" "$@"\n'
         )
         wrapper.chmod(0o755)
-        ui.info(f"PYTHONPATH wrapper: {wrapper} -> {pip_target}")
+        ui.info(f"PYTHONPATH wrapper: {wrapper} -> {validated_target}")
 
     # Verify imports (set PYTHONPATH for --pip-target case)
-    env_prefix = f"PYTHONPATH={pip_target}:$PYTHONPATH " if pip_target else ""
+    env = dict(os.environ)
+    if validated_target:
+        current_path = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{validated_target}:{current_path}" if current_path else validated_target
     for mod in ("trw_memory", "trw_mcp"):
         rc = subprocess.run(
-            f"{env_prefix}{python} -c 'import {mod}'",
-            shell=True,
+            [python, "-c", f"import {mod}"],
+            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         ).returncode
