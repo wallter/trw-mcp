@@ -350,6 +350,35 @@ class TestPreflightLogging:
         assert events[-1]["nfr_issues"] == ["missing structured logging"]
         assert events[-1]["test_issues"] == []
 
+    def test_preflight_log_fail_open_on_non_mapping_self_review(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Non-dict self-review payloads degrade to an empty event instead of crashing."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+
+        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
+            result = tools["trw_preflight_log"].fn(
+                prd_id="PRD-QUAL-056",
+                self_review=["oops"],
+            )
+
+        assert result["status"] == "logged"
+        events = [
+            json.loads(line)
+            for line in (run_dir / "meta" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        assert events[-1]["event"] == "pre_audit_self_review"
+        assert events[-1]["passed"] == 0
+        assert events[-1]["failed"] == 0
+        assert events[-1]["skipped"] == 0
+        assert events[-1]["wiring_issues"] == []
+        assert events[-1]["nfr_issues"] == []
+        assert events[-1]["test_issues"] == []
+
     def test_review_artifact_includes_latest_preflight_checks(
         self,
         tmp_path: Path,
