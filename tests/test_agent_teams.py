@@ -374,6 +374,22 @@ class TestAgentDefinitions:
             pytest.skip("root .claude/agents not available in this environment")
         return agents_dir
 
+    @staticmethod
+    def _variant_paths(agents_dir: Path, root_agents_dir: Path, agent_name: str) -> dict[str, Path]:
+        """Return bundled/root paths for an audit agent pair."""
+        return {
+            "bundled": agents_dir / agent_name,
+            "root": root_agents_dir / agent_name,
+        }
+
+    @staticmethod
+    def _assert_variants_include_snippets(variant_paths: dict[str, Path], required_snippets: list[str]) -> None:
+        """Assert every variant contains each required snippet."""
+        for variant_name, path in variant_paths.items():
+            content = path.read_text(encoding="utf-8")
+            for snippet in required_snippets:
+                assert snippet in content, f"{variant_name} {path.name} missing snippet: {snippet}"
+
     @pytest.mark.parametrize(
         "agent_name",
         [
@@ -441,70 +457,63 @@ class TestAgentDefinitions:
         agent_name: str,
     ) -> None:
         """Root and bundled audit agents retain the FR07 finding taxonomy contract."""
-        variants = {
-            "bundled": agents_dir / agent_name,
-            "root": root_agents_dir / agent_name,
-        }
-
         required_snippets = [
             "category: spec_gap",
             "category: spec_gap|impl_gap|test_gap|integration_gap|traceability_gap",
             "legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null",
         ]
 
-        for variant_name, path in variants.items():
-            content = path.read_text(encoding="utf-8")
-            for snippet in required_snippets:
-                assert snippet in content, f"{variant_name} {agent_name} missing snippet: {snippet}"
+        self._assert_variants_include_snippets(
+            self._variant_paths(agents_dir, root_agents_dir, agent_name),
+            required_snippets,
+        )
 
     @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
-    def test_audit_agent_variants_include_prior_learning_verification_contract(
+    def test_audit_agent_variants_include_prior_learning_recall_contract(
         self,
         agents_dir: Path,
         root_agents_dir: Path,
         agent_name: str,
     ) -> None:
-        """Root and bundled audit agents retain the FR08 prior learning contract."""
-        variants = {
-            "bundled": agents_dir / agent_name,
-            "root": root_agents_dir / agent_name,
-        }
+        """Root and bundled audit agents retain the FR08 prior learning recall contract."""
 
         required_snippets = [
+            "**Check for prior domain learnings (PRD-QUAL-056-FR08):**",
+            "Call `trw_recall(query='<prd-domain> audit-finding')`",
+            'Note them in audit context as "known patterns to watch for"',
             "prior_learning_verification:",
             "known_patterns: []",
             "verified_patterns: []",
             "missed_patterns: []",
         ]
 
-        for variant_name, path in variants.items():
-            content = path.read_text(encoding="utf-8")
-            for snippet in required_snippets:
-                assert snippet in content, f"{variant_name} {agent_name} missing snippet: {snippet}"
+        self._assert_variants_include_snippets(
+            self._variant_paths(agents_dir, root_agents_dir, agent_name),
+            required_snippets,
+        )
 
     @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
-    def test_audit_agent_variants_include_verdict_exit_criteria_contract(
+    def test_audit_agent_variants_include_verdict_exit_criteria_and_escalation_contract(
         self,
         agents_dir: Path,
         root_agents_dir: Path,
         agent_name: str,
     ) -> None:
         """Root and bundled audit agents retain the FR11 verdict exit criteria contract."""
-        variants = {
-            "bundled": agents_dir / agent_name,
-            "root": root_agents_dir / agent_name,
-        }
-
         required_snippets = [
+            "| **PASS** | Zero P0 findings AND zero P1 findings AND all FRs have verdict PASS or PARTIAL-with-justification |",
+            "| **CONDITIONAL** | Zero P0 findings AND 1-2 P1 findings that are fixable without architectural change |",
+            "| **FAIL** | Any P0 finding OR 3+ P1 findings OR any FR with verdict MISSING |",
+            "Maximum audit cycles before escalation: 3 (configurable via `.trw/config.yaml` field `max_audit_cycles`, default 3).",
             "# PASS: zero P0, zero P1, and every FR is PASS or PARTIAL-with-justification",
             "# CONDITIONAL: zero P0 and 1-2 P1 findings fixable without architectural change",
             "# FAIL: any P0, 3+ P1 findings, or any FR verdict MISSING",
         ]
 
-        for variant_name, path in variants.items():
-            content = path.read_text(encoding="utf-8")
-            for snippet in required_snippets:
-                assert snippet in content, f"{variant_name} {agent_name} missing snippet: {snippet}"
+        self._assert_variants_include_snippets(
+            self._variant_paths(agents_dir, root_agents_dir, agent_name),
+            required_snippets,
+        )
 
     @pytest.mark.parametrize(
         ("agent_name", "expected_model"),
