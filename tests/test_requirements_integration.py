@@ -186,6 +186,35 @@ class TestPrdValidateV2:
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
         assert result["total_score"] < 50  # Skeleton should score low
 
+    def test_traceability_dimension_exposes_quality_flywheel_details(self, tmp_path: Path) -> None:
+        """Traceability dimension includes PRD-QUAL-056 coverage details in tool output."""
+        body = """# PRD-CORE-001: Test PRD
+
+## 4. Functional Requirements
+
+### PRD-CORE-001-FR01: Toggle persistence
+Implementation: src/service.py
+Test: test_service.py::test_toggle_persists
+```assertions
+grep_present: "toggle"
+```
+
+## 12. Traceability Matrix
+
+| Requirement | Source | Implementation | Test | Status |
+|-------------|--------|----------------|------|--------|
+| FR01 | US-001 | `src/service.py` | `test_service.py::test_toggle_persists` | Impl |
+"""
+        prd_path = _create_prd_file(tmp_path, prd_id="PRD-CORE-001", content_body=body)
+
+        tools = _get_tools()
+        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        traceability = next(d for d in result["dimensions"] if d["name"] == "traceability")
+
+        assert "details" in traceability
+        assert traceability["details"]["file_path_coverage"] == 1.0
+        assert traceability["details"]["assertion_coverage"] == 1.0
+
 
 # ---------------------------------------------------------------------------
 # _extract_prefill — edge cases

@@ -11,6 +11,7 @@ class DimensionScoreDict(TypedDict):
     name: str
     score: float
     max_score: float
+    details: dict[str, object]
 
 
 class ImprovementSuggestionDict(TypedDict):
