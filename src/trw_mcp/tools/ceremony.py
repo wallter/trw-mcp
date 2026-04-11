@@ -279,7 +279,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         from trw_mcp.tools._ceremony_helpers import (
             _phase_contextual_recall,
             perform_session_recalls,
-            step_ceremony_nudge,
+            step_ceremony_status,
             step_embed_health,
             step_increment_session_counter,
             step_log_session_event,
@@ -446,12 +446,11 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         except Exception:  # justified: fail-open, state mutation must not block session start
             logger.debug("session_mark_started_failed", exc_info=True)
 
-        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        # Inject ceremony progress summary when full ceremony mode is active.
         try:
-            _learnings_count_nudge = int(str(results.get("learnings_count", 0)))
-            step_ceremony_nudge(cast("dict[str, object]", results), _learnings_count_nudge)
-        except Exception:  # justified: fail-open, nudge injection must not block session start
-            logger.debug("session_nudge_injection_failed", exc_info=True)
+            step_ceremony_status(cast("dict[str, object]", results))
+        except Exception:  # justified: fail-open, status decoration must not block session start
+            logger.debug("session_ceremony_status_failed", exc_info=True)
 
         run_info: RunStatusDict | None = results.get("run")
         _active_run_id = str(run_info.get("active_run", "")) if run_info else ""
@@ -625,7 +624,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # Mark deliver in ceremony state (PRD-CORE-124 FR-deliver)
         try:
-            from trw_mcp.state.ceremony_nudge import mark_deliver
+            from trw_mcp.state.ceremony_progress import mark_deliver
 
             mark_deliver(trw_dir)
         except Exception:  # justified: fail-open — state mutation must not block deliver
@@ -633,7 +632,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # PRD-CORE-125 FR05: Self-reflection gate — learning count feedback
         try:
-            from trw_mcp.state.ceremony_nudge import read_ceremony_state as _read_cs_fr05
+            from trw_mcp.state.ceremony_progress import read_ceremony_state as _read_cs_fr05
 
             _cs_fr05 = _read_cs_fr05(trw_dir)
             _learnings_count_fr05 = _cs_fr05.learnings_this_session
@@ -644,12 +643,12 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # PRD-QUAL-058-FR05: Read nudge_counts from CeremonyState for deliver event
         _nudge_summary: dict[str, int] = {}
         try:
-            from trw_mcp.state.ceremony_nudge import read_ceremony_state as _read_cs
+            from trw_mcp.state.ceremony_progress import read_ceremony_state as _read_cs
 
             _cs = _read_cs(trw_dir)
             _nudge_summary = dict(_cs.nudge_counts)
         except Exception:  # justified: fail-open
-            pass
+            logger.debug("deliver_nudge_summary_unavailable", exc_info=True)
 
         # Log trw_deliver_complete to events.jsonl so hooks can detect it
         if resolved_run is not None and (resolved_run / "meta").exists():

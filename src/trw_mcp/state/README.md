@@ -48,7 +48,8 @@
 | Module | Lines | Owner | Purpose |
 |--------|-------|-------|---------|
 | `ceremony_feedback.py` | 686 | Primary | Self-improving ceremony feedback loop (CORE-069) |
-| `ceremony_nudge.py` | — | Facade | Nudge orchestration (delegates to rules/messages) |
+| `ceremony_progress.py` | — | Public | Live ceremony progress API for tool state reads/writes |
+| `ceremony_nudge.py` | — | Legacy facade | Archived nudge orchestration (kept for backward compatibility/tests) |
 | `_nudge_state.py` | — | Internal | CeremonyState, NudgeContext data models |
 | `_nudge_messages.py` | 401 | Internal | Nudge message templates and formatting |
 | `_nudge_rules.py` | — | Internal | Nudge decision logic (when to show which nudge) |

@@ -177,11 +177,11 @@ def register_review_tools(server: FastMCP) -> None:
             run_dir=str(resolved_run) if resolved_run else "",
         )
 
-        # Mark review in ceremony state and inject nudge (PRD-CORE-084 FR02)
+        # Mark review in ceremony state and attach status summary.
         try:
             from trw_mcp.state._paths import resolve_trw_dir
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName, mark_review
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            from trw_mcp.state.ceremony_progress import mark_review
+            from trw_mcp.tools._ceremony_status import append_ceremony_status
 
             trw_dir = resolve_trw_dir()
             verdict = str(response.get("verdict", ""))
@@ -197,9 +197,8 @@ def register_review_tools(server: FastMCP) -> None:
                 verdict = "pass"
 
             mark_review(trw_dir, verdict=verdict, p0_count=p0_count)
-            ctx = NudgeContext(tool_name=ToolName.REVIEW, review_verdict=verdict, review_p0_count=p0_count)
-            append_ceremony_nudge(response, trw_dir, context=ctx)
-        except Exception:  # justified: fail-open, nudge injection must not block review
-            logger.debug("review_nudge_injection_skipped", exc_info=True)  # justified: fail-open
+            append_ceremony_status(response, trw_dir)
+        except Exception:  # justified: fail-open, status decoration must not block review
+            logger.debug("review_ceremony_status_skipped", exc_info=True)  # justified: fail-open
 
         return response

@@ -2,13 +2,16 @@
 
 Extracted from _ceremony_helpers.py to keep modules under the 500-line gate.
 
-Public API (re-exported by _ceremony_helpers.py):
-- append_ceremony_nudge: inject ceremony nudge into a tool response
+Public API:
 - perform_session_recalls: execute focused + baseline recalls, return merged results
-- log_nudge_event: log a nudge_shown event to events.jsonl
 - _phase_contextual_recall: phase-tag-aware recall for auto-recall feature
 - _phase_to_tags: map framework phase to relevant learning tags
 - _apply_antipattern_alerts: prepend alert prefix to matching learning summaries
+
+Legacy compatibility:
+- append_ceremony_nudge: retained only for legacy/offline nudge paths; live tool
+  wiring now goes through ``trw_mcp.tools._ceremony_status``.
+- log_nudge_event: support helper for the legacy nudge path above.
 """
 
 from __future__ import annotations

@@ -40,7 +40,7 @@ from trw_mcp.tools._orchestration_helpers import (
     _get_bundled_file,
 )
 from trw_mcp.tools._orchestration_lifecycle import (
-    _apply_ceremony_nudge,
+    _apply_ceremony_status,
     _compute_last_activity_ts,
     _compute_reflection_metrics,
     _update_wave_status,
@@ -301,7 +301,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
 
-        _apply_ceremony_nudge(
+        _apply_ceremony_status(
             cast("dict[str, object]", result),
             tool_name="INIT",
             debug_event="init_nudge_injection_skipped",
@@ -408,7 +408,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         )
         logger.info("trw_status_read", run_id=result["run_id"])
 
-        _apply_ceremony_nudge(
+        _apply_ceremony_status(
             cast("dict[str, object]", result),
             tool_name="STATUS",
             debug_event="status_nudge_injection_skipped",
@@ -490,7 +490,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         if wave_id:
             result["wave_id"] = wave_id
 
-        _apply_ceremony_nudge(
+        _apply_ceremony_status(
             cast("dict[str, object]", result),
             tool_name="CHECKPOINT",
             debug_event="checkpoint_nudge_injection_skipped",
