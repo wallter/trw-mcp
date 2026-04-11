@@ -79,5 +79,5 @@ class SyncPuller:
                     status_code=resp.status_code,
                 )
         except Exception:  # justified: boundary, remote sync pull failures must not break local workflows
-            logger.debug("sync_pull_error", exc_info=True)
+            logger.warning("sync_pull_error", exc_info=True)
             return None

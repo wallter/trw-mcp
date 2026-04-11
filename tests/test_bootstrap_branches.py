@@ -248,6 +248,28 @@ class TestUpdateOSErrorPaths:
 
 @pytest.mark.unit
 class TestRunAutoMaintenance:
+    def test_auto_maintenance_failure_logs_warning_with_traceback(self, tmp_path: Path) -> None:
+        result = {"updated": [], "warnings": []}
+        mock_logger = MagicMock()
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._logger", mock_logger),
+            patch("trw_mcp.models.config._reset_config", side_effect=[None, None]),
+            patch(
+                "trw_mcp.models.config.get_config",
+                side_effect=RuntimeError("maintenance failed"),
+            ),
+        ):
+            _run_auto_maintenance(tmp_path, result)
+
+        mock_logger.warning.assert_called_once_with(
+            "auto_maintenance_failed",
+            error="maintenance failed",
+            target_dir=str(tmp_path),
+            exc_info=True,
+        )
+        assert result["warnings"] == ["Auto-maintenance skipped: maintenance failed"]
+
     def test_config_reset_failure_logs_debug(self, tmp_path: Path) -> None:
         result = {"updated": [], "warnings": []}
         mock_logger = MagicMock()

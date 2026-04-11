@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 
@@ -74,3 +76,21 @@ def test_puller_default_timeout() -> None:
 
     puller = SyncPuller(backend_url="http://example.com", api_key="key")
     assert puller._timeout == 5.0
+
+
+def test_pull_boundary_failure_logs_warning_with_traceback() -> None:
+    """Boundary failures log warning + traceback and still fail open."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    puller = SyncPuller(backend_url="http://example.com", api_key="key")
+
+    with (
+        patch("httpx.Client") as mock_client_cls,
+        patch("trw_mcp.sync.pull.logger.warning") as mock_warning,
+    ):
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        mock_client.get.side_effect = RuntimeError("boom")
+
+        assert puller.pull_intel_state() is None
+
+    mock_warning.assert_called_once_with("sync_pull_error", exc_info=True)

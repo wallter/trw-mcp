@@ -94,7 +94,7 @@ def _run_auto_maintenance(
             f"Embeddings backfill timed out ({timeout}s) \u2014 will complete on next trw_session_start()"
         )
     except Exception as exc:  # justified: boundary — auto-maintenance failure must not block update
-        _logger.warning("auto_maintenance_failed", error=str(exc), target_dir=str(target_dir))
+        _logger.warning("auto_maintenance_failed", error=str(exc), target_dir=str(target_dir), exc_info=True)
         result["warnings"].append(f"Auto-maintenance skipped: {exc}")
     finally:
         os.chdir(original_cwd)
