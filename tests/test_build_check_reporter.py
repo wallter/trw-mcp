@@ -7,11 +7,13 @@ of the tool running subprocesses itself.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 from tests.conftest import get_tools_sync, make_test_server
 from trw_mcp.models.config import TRWConfig
@@ -92,6 +94,37 @@ class TestBuildCheckReporterAPI:
         assert result["tests_passed"] is False
         assert result["failure_count"] == 3
         assert len(result["failures"]) == 3
+
+    def test_build_check_missing_tests_passed_returns_guidance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FR01: Missing tests_passed returns usage guidance, not generic validation."""
+        (tmp_path / ".trw" / "context").mkdir(parents=True)
+
+        config = TRWConfig(build_check_enabled=True)
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
+
+        server = make_test_server("build")
+
+        with (
+            patch(
+                "trw_mcp.tools.build._registration.resolve_trw_dir",
+                return_value=tmp_path / ".trw",
+            ),
+            patch(
+                "trw_mcp.tools.build._registration.find_active_run",
+                return_value=None,
+            ),
+        ):
+            with pytest.raises(
+                ToolError,
+                match=(
+                    r"tests_passed is required.*"
+                    r"trw_build_check\(tests_passed=True, test_count=47, "
+                    r"coverage_pct=92.3, mypy_clean=True, scope='full'\)"
+                ),
+            ):
+                asyncio.run(server.call_tool("trw_build_check", {}))
 
     def test_build_check_logs_event(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

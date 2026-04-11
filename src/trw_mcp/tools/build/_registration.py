@@ -28,6 +28,11 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
+_BUILD_CHECK_USAGE = (
+    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, "
+    "mypy_clean=True, scope='full')"
+)
+
 
 def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
@@ -35,7 +40,7 @@ def register_build_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_build_check(
-        tests_passed: bool,
+        tests_passed: bool | None = None,
         test_count: int = 0,
         failure_count: int = 0,
         coverage_pct: float = 0.0,
@@ -52,7 +57,10 @@ def register_build_tools(server: FastMCP) -> None:
         feedback. It does NOT execute subprocesses itself.
 
         Args:
-            tests_passed: Whether all tests passed. **Required.**
+            tests_passed: Whether all tests passed. Required — pass True or
+                False explicitly. Example: ``trw_build_check(tests_passed=True,
+                test_count=47, coverage_pct=92.3, mypy_clean=True,
+                scope='full')``.
             test_count: Total number of tests that ran.
             failure_count: Number of failed tests.
             coverage_pct: Coverage percentage (0.0-100.0).
@@ -65,6 +73,7 @@ def register_build_tools(server: FastMCP) -> None:
                 coverage falls below this threshold, tests_passed is set to
                 False and a coverage_threshold_failed flag is added to the result.
         """
+        reported_tests_passed = _require_tests_passed(tests_passed)
         config = get_config()
         if not config.build_check_enabled:
             return {
@@ -81,7 +90,7 @@ def register_build_tools(server: FastMCP) -> None:
         effective_failures = (failures or [])[:10]
 
         status = BuildStatus(
-            tests_passed=tests_passed,
+            tests_passed=reported_tests_passed,
             mypy_clean=mypy_clean,
             timed_out=False,
             coverage_pct=coverage_pct,
@@ -314,3 +323,14 @@ def _finalize_build_result(
         result["coverage_threshold_message"] = (
             f"Coverage {coverage_pct:.1f}% is below required threshold {min_coverage:.1f}%"
         )
+
+
+def _require_tests_passed(tests_passed: bool | None) -> bool:
+    """Require explicit tests_passed reporting with a usage example."""
+    if tests_passed is None:
+        raise ValueError(
+            "tests_passed is required. "
+            "Report the outcome after running tests via Bash. "
+            f"Example: {_BUILD_CHECK_USAGE}"
+        )
+    return tests_passed
