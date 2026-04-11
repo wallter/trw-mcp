@@ -79,6 +79,57 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_phase_install_packages_keeps_default_install_behavior_without_pip_target(
+    installer_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
+    ui = MagicMock()
+    wrapper_path = tmp_path / "trw-mcp"
+    memory_whl = tmp_path / "trw-memory.whl"
+    mcp_whl = tmp_path / "trw-mcp.whl"
+    pip_calls: list[tuple[str, str]] = []
+    run_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "pip_install",
+        lambda python, package, label, ui, target_dir="": pip_calls.append((package, target_dir)) or True,
+    )
+    monkeypatch.setattr(
+        module,
+        "Path",
+        lambda value: wrapper_path if value == "/usr/local/bin/trw-mcp" else Path(value),
+    )
+    monkeypatch.setenv("PYTHONPATH", "preexisting-path")
+
+    def fake_run(cmd, env=None, stdout=None, stderr=None):
+        run_calls.append({"cmd": cmd, "env": dict(env or {})})
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.phase_install_packages(
+        ui,
+        2,
+        4,
+        sys.executable,
+        memory_whl,
+        mcp_whl,
+    )
+
+    assert pip_calls == [
+        (str(memory_whl), ""),
+        (str(mcp_whl), ""),
+    ]
+    assert not wrapper_path.exists()
+    assert [call["cmd"] for call in run_calls] == [
+        [sys.executable, "-c", "import trw_memory"],
+        [sys.executable, "-c", "import trw_mcp"],
+    ]
+    assert all(call["env"]["PYTHONPATH"] == "preexisting-path" for call in run_calls)
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
 def test_phase_install_extras_passes_pip_target_to_all_optional_installs(
     installer_path: Path, monkeypatch
 ) -> None:
