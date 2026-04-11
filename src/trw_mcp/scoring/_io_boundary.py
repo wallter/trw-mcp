@@ -11,6 +11,8 @@ to eliminate layer violations (scoring -> state).
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -24,6 +26,66 @@ _PendingUpdate = tuple[str, Path | None, dict[str, object], float, int, list[obj
 
 
 # ---------------------------------------------------------------------------
+# In-memory YAML path index — maps learning_id -> yaml_path.
+# Built once on first access, refreshed after TTL expiry.
+# Replaces O(N) full-directory scans with O(1) dict lookups while
+# preserving the dual-read/dual-write contract (YAML is authoritative).
+# ---------------------------------------------------------------------------
+
+_yaml_path_index: dict[str, Path] = {}
+_yaml_path_index_ts: float = 0.0
+_yaml_path_index_lock = threading.Lock()
+_YAML_INDEX_TTL: float = 30.0  # Rebuild at most every 30s
+
+
+def _build_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
+    """Scan entries_dir once and build {learning_id -> yaml_path} map.
+
+    Reads the ``id`` field from each YAML file. Skips files that fail
+    to parse. This is O(N) but runs once per TTL window instead of
+    once per lookup (which was O(M*N) total).
+    """
+    from trw_mcp.state._helpers import iter_yaml_entry_files
+    from trw_mcp.state.persistence import FileStateReader
+
+    index: dict[str, Path] = {}
+    reader = FileStateReader()
+    for yaml_file in iter_yaml_entry_files(entries_dir):
+        try:
+            data = reader.read_yaml(yaml_file)
+            lid = data.get("id")
+            if isinstance(lid, str) and lid:
+                index[lid] = yaml_file
+        except Exception:  # justified: fail-open, skip unreadable entries during index build
+            continue
+    return index
+
+
+def _get_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
+    """Return the cached YAML path index, rebuilding if stale."""
+    global _yaml_path_index, _yaml_path_index_ts
+    now = time.monotonic()
+    if now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
+        return _yaml_path_index
+    with _yaml_path_index_lock:
+        # Double-check after acquiring lock
+        if now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
+            return _yaml_path_index
+        _yaml_path_index = _build_yaml_path_index(entries_dir)
+        _yaml_path_index_ts = now
+        logger.debug("yaml_path_index_built", entries=len(_yaml_path_index))
+        return _yaml_path_index
+
+
+def _reset_yaml_path_index() -> None:
+    """Clear the cached index — for testing only."""
+    global _yaml_path_index, _yaml_path_index_ts
+    with _yaml_path_index_lock:
+        _yaml_path_index = {}
+        _yaml_path_index_ts = 0.0
+
+
+# ---------------------------------------------------------------------------
 # Extracted from _correlation.py
 # ---------------------------------------------------------------------------
 
@@ -33,13 +95,16 @@ def _default_lookup_entry(
     trw_dir: Path,
     entries_dir: Path,
 ) -> tuple[Path | None, dict[str, object] | None]:
-    """Default entry lookup: SQLite primary, YAML fallback.
+    """Default entry lookup: SQLite data + indexed YAML path.
+
+    Preserves the dual-read/dual-write contract: SQLite provides data
+    (O(1)), the YAML path index provides the write-back path (O(1)
+    amortized).  When SQLite misses, falls back to the YAML index
+    for both data and path.
 
     PRD-FIX-061-FR05: This is the default backend selector, extracted so
     that ``process_outcome`` can accept an alternative lookup callable
-    for testing or alternative storage backends.  Backend selection
-    (state-layer I/O) happens here at the call boundary, not inside the
-    pure scoring logic.
+    for testing or alternative storage backends.
 
     Args:
         lid: Learning entry ID to look up.
@@ -49,29 +114,44 @@ def _default_lookup_entry(
     Returns:
         Tuple of (yaml_path_or_None, entry_data_or_None).
     """
-    from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
     from trw_mcp.state.memory_adapter import (
         find_entry_by_id as sqlite_find_entry_by_id,
     )
-    from trw_mcp.state.memory_adapter import (
-        find_yaml_path_for_entry,
-    )
 
-    entry_path: Path | None = None
-    data: dict[str, object] | None = None
+    # O(1) path lookup via cached index (replaces O(N) glob per call)
+    yaml_index = _get_yaml_path_index(entries_dir) if entries_dir.exists() else {}
+    entry_path = yaml_index.get(lid)
 
-    sqlite_data = sqlite_find_entry_by_id(trw_dir, lid)
-    yaml_found: tuple[Path, dict[str, object]] | None = None
-    if entries_dir.exists():
-        yaml_found = yaml_find_entry_by_id(entries_dir, lid)
+    # SQLite-primary for data, YAML-fallback
+    data: dict[str, object] | None = sqlite_find_entry_by_id(trw_dir, lid)
 
-    if sqlite_data is not None:
-        data = sqlite_data
-        entry_path = find_yaml_path_for_entry(trw_dir, lid)
-        if entry_path is None and yaml_found is not None:
-            entry_path, _yaml_data = yaml_found
-    elif yaml_found is not None:
-        entry_path, data = yaml_found
+    if data is not None:
+        return entry_path, data
+
+    # SQLite miss — read data from YAML directly
+    if entry_path is not None:
+        try:
+            from trw_mcp.state.persistence import FileStateReader
+
+            data = FileStateReader().read_yaml(entry_path)
+        except Exception:  # justified: fail-open, YAML read failure returns None
+            logger.debug("yaml_entry_read_failed", learning_id=lid)
+        if data is not None:
+            return entry_path, data
+
+    # Compatibility fallback: if the O(1) YAML-path index does not know about
+    # the entry yet (or the direct read failed), fall back to the canonical
+    # state-layer YAML scan helper. This preserves pre-FIX-061 call patterns
+    # used by tests and pre-migration entries without re-introducing scoring ->
+    # state imports in _correlation.py.
+    try:
+        from trw_mcp.state.analytics import find_entry_by_id as yaml_find_entry_by_id
+
+        result = yaml_find_entry_by_id(entries_dir, lid)
+        if result is not None:
+            return result
+    except Exception:  # justified: fail-open, fallback scan is best-effort
+        logger.debug("yaml_entry_lookup_failed", learning_id=lid, exc_info=True)
 
     return entry_path, data
 
@@ -194,20 +274,23 @@ def _load_entries_from_dir(entries_dir: Path) -> Iterator[dict[str, object]]:
 
 def _read_recall_tracking_jsonl(
     receipt_path: Path,
+    *,
+    max_lines: int = 5000,
 ) -> list[dict[str, object]]:
-    """Read recall-tracking JSONL file, skipping malformed lines.
+    """Read the TAIL of the recall-tracking JSONL file, skipping malformed lines.
+
+    Reads from the end of the file to avoid scanning 100K+ old records
+    that will be filtered out by the correlation window anyway.  The
+    ``max_lines`` cap keeps memory and CPU bounded even for very large
+    files (the old implementation read all 172K+ lines).
 
     PRD-FIX-061-FR05: Extracted from ``correlate_recalls`` so that
     ``_correlation.py`` does not need to import ``FileStateReader``
     from the state layer.
 
-    Unlike ``FileStateReader.read_jsonl()`` which raises on the first
-    malformed line, this function is lenient: bad lines are silently
-    skipped so that one corrupt receipt does not abort the entire
-    correlation pass.
-
     Args:
         receipt_path: Path to recall_tracking.jsonl.
+        max_lines: Maximum number of recent lines to read (default 5000).
 
     Returns:
         List of record dicts; empty list if file missing or unreadable.
@@ -216,23 +299,63 @@ def _read_recall_tracking_jsonl(
 
     if not receipt_path.exists():
         return []
+
     records: list[dict[str, object]] = []
     try:
-        with receipt_path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    record = json.loads(stripped)
-                except json.JSONDecodeError:
-                    logger.debug("recall_tracking_bad_json_skipped", path=str(receipt_path))
-                    continue
-                if isinstance(record, dict):
-                    records.append(record)
+        # Read the tail of the file efficiently: seek backwards from EOF
+        # to find the last ``max_lines`` newline-delimited records.
+        raw_lines = _tail_lines(receipt_path, max_lines)
+        for line in raw_lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                logger.debug("recall_tracking_bad_json_skipped", path=str(receipt_path))
+                continue
+            if isinstance(record, dict):
+                records.append(record)
     except OSError:  # justified: fail-open, can't read the tracking file
         logger.debug("recall_tracking_read_failed", path=str(receipt_path))
     return records
+
+
+def _tail_lines(path: Path, max_lines: int) -> list[str]:
+    """Read the last ``max_lines`` lines from a file efficiently.
+
+    Uses backward seeking from EOF to avoid reading the entire file
+    when only the tail is needed.  Falls back to reading the whole
+    file when it is small enough (< 64 KB).
+    """
+    import os
+
+    file_size = path.stat().st_size
+    if file_size == 0:
+        return []
+
+    # For small files, just read the whole thing
+    if file_size < 65_536:
+        with path.open("r", encoding="utf-8") as fh:
+            return fh.readlines()[-max_lines:]
+
+    # For large files, seek backwards in chunks to find enough newlines
+    chunk_size = min(file_size, max(4096, max_lines * 256))  # ~256 bytes/line estimate
+    raw_lines: list[bytes] = []
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        remaining = file_size
+        buf = b""
+        while remaining > 0 and len(raw_lines) < max_lines + 1:
+            read_size = min(chunk_size, remaining)
+            remaining -= read_size
+            fh.seek(remaining)
+            chunk = fh.read(read_size)
+            buf = chunk + buf
+            raw_lines = buf.split(b"\n")
+        # Decode only the tail we need
+        tail = raw_lines[-max_lines:] if len(raw_lines) > max_lines else raw_lines
+        return [ln.decode("utf-8", errors="replace") for ln in tail if ln]
 
 
 __all__ = [
