@@ -1,20 +1,4 @@
-"""Ceremony, compliance, documentation generation, and enforcement fields.
-
-Covers sections 11, 14-19, 21-24, 46-50, 51 (ceremony feedback) of
-the original _main_fields.py:
-  - Documentation generation
-  - Framework version & AARE-F
-  - PRD quality gates & semantic validation
-  - Risk-based validation & phase gates
-  - PRD grooming
-  - Research findings
-  - Reflection & patterns
-  - Phase reversion
-  - Technical debt
-  - Compliance
-  - ATDD, hooks, enforcement, validation, compaction, progressive
-  - Ceremony feedback
-"""
+"""Ceremony, compliance, documentation generation, and enforcement fields."""
 
 from __future__ import annotations
 
@@ -54,9 +38,10 @@ class _CeremonyFields:
     completeness_min: float = 0.85
     traceability_coverage_min: float = 0.90
     consistency_validation_min: float = 0.95
-    validation_density_weight: float = 42.0
-    validation_structure_weight: float = 25.0
-    validation_traceability_weight: float = 33.0
+    validation_density_weight: float = 20.0
+    validation_structure_weight: float = 20.0
+    validation_implementation_readiness_weight: float = 25.0
+    validation_traceability_weight: float = 35.0
     validation_smell_weight: float = 0.0
     validation_readability_weight: float = 0.0
     validation_ears_weight: float = 0.0
