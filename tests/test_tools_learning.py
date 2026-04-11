@@ -31,6 +31,7 @@ from trw_mcp.state.claude_md import (
     collect_promotable_learnings,
     load_claude_md_template,
     render_adherence,
+    render_agents_trw_section,
     render_behavioral_protocol,
     render_ceremony_flows,
     render_ceremony_quick_ref,
@@ -44,6 +45,7 @@ from trw_mcp.state.claude_md import (
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import search_patterns
+from trw_memory.retrieval.token_budget import estimate_tokens
 
 _CFG = TRWConfig()
 
@@ -927,6 +929,15 @@ class TestProgressiveDisclosure:
 
         assert "34 learnings across 12 sessions" in result
 
+    def test_render_agents_trw_section_uses_analytics_counts(self, tmp_path: Path) -> None:
+        """FR06: AGENTS-facing TRW section uses analytics-backed counts."""
+        _write_analytics(tmp_path, sessions_tracked=7, total_learnings=19)
+
+        result = render_agents_trw_section()
+
+        assert "loads 19 learnings from 7 prior sessions and recovers any active run" in result
+        assert "load context from 7 prior sessions" in result
+
     def test_closing_reminder_no_trw_deliver(self) -> None:
         """PRD-CORE-062-FR01: render_closing_reminder has no trw_deliver."""
         result = render_closing_reminder()
@@ -1460,12 +1471,15 @@ class TestRecallCompactMode:
     def test_recall_ultra_compact_returns_only_minimal_payload(self, tmp_path: Path) -> None:
         """FR09: ultra_compact returns only learnings, count, and ceremony_hint."""
         tools = _get_tools()
-        tools["trw_learn"].fn(
+        created = tools["trw_learn"].fn(
             summary="Ultra compact recall learning",
             detail="Verbose detail should be stripped",
             tags=["testing"],
             impact=0.8,
         )
+        injected_ids = tmp_path / _CFG.trw_dir / _CFG.context_dir / "injected_learning_ids.txt"
+        injected_ids.parent.mkdir(parents=True, exist_ok=True)
+        injected_ids.write_text(f"{created['learning_id']}\n", encoding="utf-8")
 
         result = tools["trw_recall"].fn(query="ultra compact", ultra_compact=True)
 
@@ -1474,6 +1488,23 @@ class TestRecallCompactMode:
         assert "trw_session_start" in result["ceremony_hint"]
         assert result["learnings"]
         assert set(result["learnings"][0].keys()) == {"id", "summary"}
+
+    def test_recall_ultra_compact_truncates_oversized_summaries(self, tmp_path: Path) -> None:
+        """FR09: ultra_compact compacts long summaries to stay within the token budget."""
+        tools = _get_tools()
+        long_summary = " ".join(f"summaryword{i}" for i in range(80))
+        tools["trw_learn"].fn(
+            summary=long_summary,
+            detail="Long summary should be compacted in ultra compact mode",
+            impact=0.8,
+        )
+
+        result = tools["trw_recall"].fn(query="summaryword1", ultra_compact=True)
+
+        compact_summary = result["learnings"][0]["summary"]
+        assert compact_summary != long_summary
+        assert compact_summary.endswith("…")
+        assert estimate_tokens(compact_summary) <= 32
 
 
 class TestOutcomeCorrelation:
