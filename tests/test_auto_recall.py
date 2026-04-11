@@ -404,6 +404,18 @@ class TestAutoRecallConfigFields:
         config = TRWConfig()
         assert config.auto_recall_max_results == 5
 
+    def test_auto_recall_max_tokens_default(self) -> None:
+        from trw_mcp.models.config import TRWConfig
+
+        config = TRWConfig()
+        assert config.auto_recall_max_tokens == 100
+
+    def test_auto_recall_min_score_default(self) -> None:
+        from trw_mcp.models.config import TRWConfig
+
+        config = TRWConfig()
+        assert config.auto_recall_min_score == 0.7
+
     def test_auto_recall_enabled_env_override(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -425,3 +437,25 @@ class TestAutoRecallConfigFields:
         monkeypatch.setenv("TRW_AUTO_RECALL_MAX_RESULTS", "10")
         config = TRWConfig()
         assert config.auto_recall_max_results == 10
+
+    def test_auto_recall_max_tokens_env_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """TRW_AUTO_RECALL_MAX_TOKENS env var overrides default."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setenv("TRW_AUTO_RECALL_MAX_TOKENS", "42")
+        config = TRWConfig()
+        assert config.auto_recall_max_tokens == 42
+
+    def test_auto_recall_min_score_env_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """TRW_AUTO_RECALL_MIN_SCORE env var overrides default."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setenv("TRW_AUTO_RECALL_MIN_SCORE", "0.9")
+        config = TRWConfig()
+        assert config.auto_recall_min_score == 0.9

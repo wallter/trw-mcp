@@ -314,6 +314,8 @@ mcp_port: 8100
 | `auto_checkpoint_pre_compact` | `bool` | `true` | Checkpoint before context compaction |
 | `auto_recall_enabled` | `bool` | `true` | Enable phase-contextual auto-recall |
 | `auto_recall_max_results` | `int` | `5` | Maximum auto-recall results |
+| `auto_recall_max_tokens` | `int` | `100` | Maximum UserPromptSubmit auto-recall output in tokens |
+| `auto_recall_min_score` | `float` | `0.7` | Minimum keyword-match score required for hook injection |
 
 ### Learning Auto-Prune
 

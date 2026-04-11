@@ -85,8 +85,8 @@ fi
 
 # FR14: Config gate — check auto_recall_enabled
 _auto_recall_enabled="true"
-_auto_recall_max_results=3
-_auto_recall_max_chars=400
+_auto_recall_max_results=5
+_auto_recall_max_tokens=100
 _auto_recall_min_score="0.7"
 _config_file="$_project_root/.trw/config.yaml"
 if [ -f "$_config_file" ]; then
@@ -95,129 +95,187 @@ if [ -f "$_config_file" ]; then
   _val=$(grep -m1 'auto_recall_max_results:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
   [ -n "$_val" ] && _auto_recall_max_results="$_val"
   _val=$(grep -m1 'auto_recall_max_tokens:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-  [ -n "$_val" ] && _auto_recall_max_chars=$(( _val * 4 ))
+  [ -n "$_val" ] && _auto_recall_max_tokens="$_val"
   _val=$(grep -m1 'auto_recall_min_score:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
   [ -n "$_val" ] && _auto_recall_min_score="$_val"
 fi
 # Env var overrides
 [ -n "$TRW_AUTO_RECALL_ENABLED" ] && _auto_recall_enabled="$TRW_AUTO_RECALL_ENABLED"
+[ -n "$TRW_AUTO_RECALL_MAX_RESULTS" ] && _auto_recall_max_results="$TRW_AUTO_RECALL_MAX_RESULTS"
+[ -n "$TRW_AUTO_RECALL_MAX_TOKENS" ] && _auto_recall_max_tokens="$TRW_AUTO_RECALL_MAX_TOKENS"
+[ -n "$TRW_AUTO_RECALL_MIN_SCORE" ] && _auto_recall_min_score="$TRW_AUTO_RECALL_MIN_SCORE"
 
 # Early exit if disabled or no prompt
 if [ "$_auto_recall_enabled" = "false" ] || [ -z "$_prompt" ]; then
-  log_hook_execution "UserPromptSubmit" "$_phase" "0"
+  log_hook_execution "UserPromptSubmit" "$_phase" "skipped"
   exit 0
 fi
 
-# FR08: Extract significant keywords from prompt (length >= 4, exclude stop words)
-_stop_words="the this that with from have will your been they them their what when which where into more some then than also just like only even make take call each"
-_keywords=""
-for _word in $(printf '%s' "$_prompt" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' '); do
-  [ ${#_word} -lt 4 ] && continue
-  _is_stop=0
-  for _sw in $_stop_words; do
-    if [ "$_word" = "$_sw" ]; then
-      _is_stop=1
-      break
-    fi
-  done
-  [ "$_is_stop" = "1" ] && continue
-  case " $_keywords " in
-    *" $_word "*) ;;  # dedup
-    *) _keywords="$_keywords $_word" ;;
-  esac
-done
-_keywords=$(echo "$_keywords" | sed 's/^ *//')
-
-# No significant keywords — skip injection
-if [ -z "$_keywords" ]; then
-  log_hook_execution "UserPromptSubmit" "$_phase" "0"
+# FR06: done phase must be fully silent, including learning injection
+if [ "$_phase" = "done" ]; then
+  log_hook_execution "UserPromptSubmit" "$_phase" "silent"
   exit 0
 fi
 
 # FR08: Keyword search against learning summaries with timeout (FR13: 500ms guard)
 _entries_dir="$_project_root/.trw/learnings/entries"
 if [ ! -d "$_entries_dir" ]; then
-  log_hook_execution "UserPromptSubmit" "$_phase" "0"
+  log_hook_execution "UserPromptSubmit" "$_phase" "skipped"
   exit 0
 fi
 
-# FR11: Read already-injected IDs for dedup
-_injected_ids=""
-if [ -f "$_injected_file" ]; then
-  _injected_ids=$(cat "$_injected_file" 2>/dev/null) || true
+if [ "$_phase_suppressed" = "1" ]; then
+  _phase_status="cached"
+else
+  _phase_status="emitted"
 fi
 
-# Count total keywords for scoring
-_total_kw=0
-for _kw in $_keywords; do
-  _total_kw=$(( _total_kw + 1 ))
-done
+_recall_output=$(
+  python3 - "$_entries_dir" "$_prompt" "$_injected_file" "$_auto_recall_max_results" "$_auto_recall_max_tokens" "$_auto_recall_min_score" <<'PY'
+from __future__ import annotations
 
-# Search: for each entry, count keyword matches in summary field
-_results=""
-_result_count=0
-for _entry in "$_entries_dir"/*.yaml; do
-  [ -f "$_entry" ] || continue
-  _summary=$(grep -m1 '^summary:' "$_entry" 2>/dev/null | sed 's/^summary: *//;s/^"//;s/"$//' | tr '[:upper:]' '[:lower:]') || continue
-  [ -z "$_summary" ] && continue
+import re
+import sys
+import time
+from pathlib import Path
 
-  # Extract ID from filename (entries are named by ID)
-  _id=$(basename "$_entry" .yaml)
+TIMEOUT_NS = 500_000_000
+STOP_WORDS = {
+    "also",
+    "been",
+    "call",
+    "each",
+    "even",
+    "from",
+    "have",
+    "into",
+    "just",
+    "like",
+    "make",
+    "more",
+    "only",
+    "some",
+    "take",
+    "than",
+    "that",
+    "their",
+    "them",
+    "then",
+    "they",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "will",
+    "with",
+    "your",
+}
 
-  # FR11: Skip already-injected
-  case "$_injected_ids" in
-    *"$_id"*) continue ;;
-  esac
 
-  # Count keyword matches
-  _matches=0
-  for _kw in $_keywords; do
-    case "$_summary" in
-      *"$_kw"*) _matches=$(( _matches + 1 )) ;;
-    esac
-  done
-  [ "$_matches" -eq 0 ] && continue
+def _read_yaml_field(path: Path, field_name: str) -> str:
+    prefix = f"{field_name}:"
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.startswith(prefix):
+                continue
+            value = line.split(":", 1)[1].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            return value
+    except OSError:
+        return ""
+    return ""
 
-  # FR09: Score = matches / total keywords (integer math: multiply by 100)
-  _score_100=$(( _matches * 100 / _total_kw ))
-  # Compare against min_score (also multiplied by 100)
-  _min_100=$(printf '%s' "$_auto_recall_min_score" | awk '{printf "%d", $1 * 100}')
-  [ "$_score_100" -lt "$_min_100" ] && continue
 
-  # Store result: score|id|summary (original case)
-  _orig_summary=$(grep -m1 '^summary:' "$_entry" 2>/dev/null | sed 's/^summary: *//;s/^"//;s/"$//')
-  _results="$_results
-$_score_100|$_id|$_orig_summary"
-  _result_count=$(( _result_count + 1 ))
-done
+entries_dir = Path(sys.argv[1])
+prompt = sys.argv[2]
+injected_file = Path(sys.argv[3])
+max_results = max(0, int(sys.argv[4]))
+max_tokens = max(0, int(sys.argv[5]))
+min_score = float(sys.argv[6])
+max_chars = max_tokens * 4
+deadline_ns = time.monotonic_ns() + TIMEOUT_NS
 
-# No results
-if [ "$_result_count" -eq 0 ]; then
-  log_hook_execution "UserPromptSubmit" "$_phase" "0"
-  exit 0
+keywords: list[str] = []
+for word in re.findall(r"[A-Za-z0-9]+", prompt.lower()):
+    if len(word) < 4 or word in STOP_WORDS or word in keywords:
+        continue
+    keywords.append(word)
+
+if not keywords or not entries_dir.is_dir():
+    raise SystemExit(0)
+
+injected_ids: set[str] = set()
+if injected_file.is_file():
+    injected_ids = {
+        line.strip()
+        for line in injected_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    }
+
+results: list[tuple[float, str, str]] = []
+for entry in sorted(entries_dir.glob("*.yaml")):
+    if time.monotonic_ns() >= deadline_ns:
+        raise SystemExit(0)
+
+    if _read_yaml_field(entry, "status").lower() != "active":
+        continue
+
+    entry_id = entry.stem
+    if entry_id in injected_ids:
+        continue
+
+    summary = _read_yaml_field(entry, "summary")
+    if not summary:
+        continue
+
+    lower_summary = summary.lower()
+    matches = sum(1 for keyword in keywords if keyword in lower_summary)
+    if matches == 0:
+        continue
+
+    score = matches / len(keywords)
+    if score < min_score:
+        continue
+    results.append((score, entry_id, summary))
+
+if time.monotonic_ns() >= deadline_ns:
+    raise SystemExit(0)
+
+results.sort(key=lambda item: (-item[0], item[1]))
+selected = results[:max_results]
+if not selected:
+    raise SystemExit(0)
+
+lines: list[str] = []
+emitted_ids: list[str] = []
+total_chars = 0
+for _score, entry_id, summary in selected:
+    line = f"TRW RECALL: [L-{entry_id}] {summary}"
+    next_total = total_chars + len(line)
+    if next_total > max_chars:
+        break
+    lines.append(line)
+    emitted_ids.append(entry_id)
+    total_chars = next_total
+
+if not lines:
+    raise SystemExit(0)
+
+injected_file.parent.mkdir(parents=True, exist_ok=True)
+with injected_file.open("a", encoding="utf-8") as handle:
+    for entry_id in emitted_ids:
+        handle.write(f"{entry_id}\n")
+
+sys.stdout.write("\n".join(lines))
+PY
+) || true
+
+if [ -n "$_recall_output" ]; then
+  printf '%s\n' "$_recall_output"
+  _phase_status="emitted"
 fi
 
-# FR09: Sort by score descending, cap at max_results
-_sorted=$(printf '%s' "$_results" | sort -t'|' -k1 -rn | head -n "$_auto_recall_max_results")
-
-# FR10: Emit compact injection format with token cap (FR09)
-# NOTE: Use redirect (not pipeline) so _total_chars stays in parent shell scope.
-_total_chars=0
-while IFS='|' read -r _sc _lid _lsummary; do
-  [ -z "$_lid" ] && continue
-  _line="TRW RECALL: [L-${_lid}] $_lsummary"
-  _line_len=${#_line}
-  _new_total=$(( _total_chars + _line_len ))
-  if [ "$_new_total" -gt "$_auto_recall_max_chars" ]; then
-    break
-  fi
-  echo "$_line"
-  _total_chars="$_new_total"
-  # FR11: Append injected ID to state file
-  printf '%s\n' "$_lid" >> "$_injected_file" 2>/dev/null || true
-done <<EOF
-$(printf '%s\n' "$_sorted")
-EOF
-
-log_hook_execution "UserPromptSubmit" "$_phase" "0"
+log_hook_execution "UserPromptSubmit" "$_phase" "$_phase_status"
 exit 0
