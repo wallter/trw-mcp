@@ -320,6 +320,8 @@ class TestDetectModelFamily:
             ("Qwen3-Coder-Next", "qwen"),
             ("gpt-4o", "gpt"),
             ("GPT-5.4", "gpt"),
+            ("o3-mini", "gpt"),
+            ("o1-preview", "gpt"),
             ("claude-3-5-sonnet", "claude"),
             ("claude-3-7-sonnet", "claude"),
             ("some-other-model", "generic"),
