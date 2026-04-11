@@ -68,8 +68,9 @@ def validate_prd_quality(
 
     .. deprecated::
         Prefer ``validate_prd_quality_v2()`` which provides the full
-        3-dimension semantic scorer (content density, structural completeness,
-        traceability) and a ``total_score`` on a 0-100 scale. This V1
+        multi-dimension semantic scorer (content density, structural
+        completeness, implementation readiness, traceability) and a
+        ``total_score`` on a 0-100 scale. This V1
         function is retained for backward compatibility and returns a
         ``completeness_score`` (0.0-1.0) based on frontmatter field presence
         and section count only.
@@ -241,23 +242,39 @@ def generate_improvement_suggestions(
     # Stub dimensions (smell_score, readability, ears_coverage) are excluded --
     # they have no scorer and will never appear in the dimensions list.
     _messages: dict[str, str] = {
-        "content_density": "Add substantive content to sections -- replace template placeholders with actual requirements and details.",
-        "structural_completeness": "Complete missing sections, frontmatter fields, and implementation-readiness subsections -- name control points, behavior-switch coverage, and completion evidence.",
+        "content_density": "Add substantive content only where execution evidence is thin -- clarify rationale, proof, or acceptance details instead of inflating prose.",
+        "structural_completeness": "Complete missing sections, frontmatter fields, and required subsections so the PRD matches its category contract.",
+        "implementation_readiness": "Add executable planning evidence -- primary control points, behavior switches, key files, proof tests, and completion evidence.",
         "traceability": "Add traceability links (implements, depends_on, enables), prove each behavior switch with executable tests, and populate the Traceability Matrix with implementation plus test references.",
     }
 
     # AI/LLM/agentic operational gates suggestions (PRD-QUAL-055)
     _ai_operational_messages: dict[str, str] = {
         "structural_completeness": "Add AI/LLM/agentic operational sections (Data/Context Provenance, Failure Modes, Human Oversight, Evaluation Plan, Release Gate, Monitoring Plan, Risk Register By Failure Class) when AI/agentic behavior is involved.",
+        "implementation_readiness": "Add operational proof for AI/LLM/agentic behavior -- evaluation baselines, release gates, monitoring thresholds, and rollback triggers.",
         "traceability": "Add AI/LLM/agentic operational evidence: evaluation plan with baseline criteria, release gate with rollback triggers, and monitoring plan with signal thresholds when AI/agentic behavior is involved.",
+    }
+
+    _thresholds: dict[str, float] = {
+        "content_density": 0.50,
+        "structural_completeness": 0.70,
+        "implementation_readiness": 0.75,
+        "traceability": 0.75,
+    }
+    _dimension_order: dict[str, int] = {
+        "implementation_readiness": 0,
+        "traceability": 1,
+        "structural_completeness": 2,
+        "content_density": 3,
     }
 
     suggestions: list[ImprovementSuggestion] = []
     for dim in dimensions:
         ratio = dim.score / dim.max_score if dim.max_score > 0 else 1.0
-        if ratio < 0.7:
+        threshold = _thresholds.get(dim.name, 0.7)
+        if ratio < threshold:
             potential_gain = dim.max_score - dim.score
-            priority = "high" if ratio < 0.3 else "medium"
+            priority = "high" if ratio < max(threshold * 0.5, 0.3) else "medium"
 
             # Check if AI operational evidence is detected in dimension details
             ai_detected = dim.details.get("ai_operational_evidence_detected", False) or dim.details.get(
@@ -279,7 +296,13 @@ def generate_improvement_suggestions(
                 )
             )
 
-    suggestions.sort(key=lambda s: s.potential_gain, reverse=True)
+    suggestions.sort(
+        key=lambda s: (
+            0 if s.priority == "high" else 1,
+            _dimension_order.get(s.dimension, 99),
+            -s.potential_gain,
+        )
+    )
     return suggestions[:max_suggestions]
 
 

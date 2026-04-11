@@ -77,13 +77,14 @@ class ReviewMdResultDict(_ReviewMdResultRequired, total=False):
 class _ClaudeMdSyncResultRequired(TypedDict):
     """Return shape of ``_do_instruction_sync()`` / ``execute_claude_md_sync()``.
 
-    All keys are present on both the ``"synced"`` and ``"unchanged"`` paths.
-    ``hash`` is only present on the ``"unchanged"`` (cache-hit) path.
+    All keys are present on the ``"synced"``, ``"unchanged"``, and wrapped
+    ``"success"`` paths. ``hash`` is only present on the ``"unchanged"``
+    (cache-hit) path.
     """
 
     path: str
     scope: str
-    status: Literal["synced", "unchanged"]
+    status: Literal["synced", "unchanged", "success"]
     learnings_promoted: int
     patterns_included: int
     total_lines: int

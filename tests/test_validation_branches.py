@@ -1093,6 +1093,7 @@ class TestValidatePrdQualityV2ExceptionBranches:
         config = TRWConfig(
             validation_density_weight=0.0,
             validation_structure_weight=0.0,
+            validation_implementation_readiness_weight=0.0,
             validation_traceability_weight=0.0,
             validation_smell_weight=0.0,
             validation_readability_weight=0.0,
