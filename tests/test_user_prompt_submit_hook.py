@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -72,6 +73,16 @@ def _write_learning(
     )
 
 
+def _make_path_without_jq(tmp_path: Path) -> str:
+    bin_dir = tmp_path / "bin-no-jq"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for tool_name in ("python3", "grep", "head", "sed", "tr", "cat", "dirname"):
+        tool_path = shutil.which(tool_name)
+        assert tool_path is not None, f"Required tool missing in test environment: {tool_name}"
+        (bin_dir / tool_name).symlink_to(tool_path)
+    return str(bin_dir)
+
+
 def _run_hook(
     tmp_path: Path,
     source_hook: Path,
@@ -129,7 +140,7 @@ def test_user_prompt_submit_hook_done_phase_is_silent(tmp_path: Path) -> None:
         _write_learning(entries_dir, "active-1", status="active", summary="Structlog event keyword gotcha")
 
         result = subprocess.run(
-            ["sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
+            ["/bin/sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
             input=json.dumps({"prompt": "structlog event keyword"}),
             text=True,
             capture_output=True,
@@ -154,7 +165,7 @@ def test_user_prompt_submit_hook_filters_to_active_learnings(tmp_path: Path) -> 
         (project_root / ".trw" / "context" / "last_ups_phase").write_text("plan", encoding="utf-8")
 
         result = subprocess.run(
-            ["sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
+            ["/bin/sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
             input=json.dumps({"prompt": "structlog event keyword"}),
             text=True,
             capture_output=True,
@@ -344,3 +355,53 @@ def test_user_prompt_submit_hook_matches_wrapped_summary_text(tmp_path: Path) ->
 
         assert "[L-wrapped]" in result.stdout
         assert "clear .mypy_cache before trusting results" in result.stdout
+
+
+def test_user_prompt_submit_hook_reads_config_yaml_runtime(tmp_path: Path) -> None:
+    for hook_path in _HOOK_PATHS:
+        project_root, _, entries_dir = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "config-yaml", hook_path)
+        _write_learning(entries_dir, "L-active-1", status="active", summary="Structlog event keyword gotcha")
+        (project_root / ".trw" / "config.yaml").write_text("auto_recall_enabled: false\n", encoding="utf-8")
+
+        result = subprocess.run(
+            ["sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
+            input=json.dumps({"prompt": "structlog event keyword"}),
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={
+                **os.environ,
+                "TRW_PROJECT_ROOT": str(project_root),
+                "TRW_TEST_PHASE": "implement",
+                "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            },
+            check=False,
+        )
+
+        assert "[L-active-1]" not in result.stdout
+
+
+def test_user_prompt_submit_hook_without_jq_uses_python_fallback(tmp_path: Path) -> None:
+    path_without_jq = _make_path_without_jq(tmp_path)
+    for hook_path in _HOOK_PATHS:
+        project_root, _, entries_dir = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "no-jq", hook_path)
+        _write_learning(entries_dir, "L-active-1", status="active", summary="Structlog event keyword gotcha")
+        (project_root / ".trw" / "context" / "last_ups_phase").write_text("plan", encoding="utf-8")
+
+        result = subprocess.run(
+            ["/bin/sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
+            input=json.dumps({"prompt": "structlog event keyword"}),
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={
+                **os.environ,
+                "PATH": path_without_jq,
+                "TRW_PROJECT_ROOT": str(project_root),
+                "TRW_TEST_PHASE": "implement",
+                "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            },
+            check=False,
+        )
+
+        assert "[L-active-1]" in result.stdout
