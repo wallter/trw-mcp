@@ -233,6 +233,34 @@ def _append_recall_ceremony_status(
     return recall_result
 
 
+def _build_ultra_compact_ceremony_hint(trw_dir: Path) -> str:
+    """Return a minimal next-step hint for ultra-compact recall responses."""
+    try:
+        from trw_mcp.state._nudge_rules import _highest_priority_pending_step
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+
+        state = read_ceremony_state(trw_dir)
+        pending = _highest_priority_pending_step(state)
+    except Exception:  # justified: ultra-compact decoration must fail open
+        logger.debug(
+            "ultra_compact_ceremony_hint_failed",
+            component="recall",
+            op="build_ultra_compact_ceremony_hint",
+            outcome="fail_open",
+            exc_info=True,
+        )
+        pending = None
+
+    hints = {
+        "session_start": "Call trw_session_start() first.",
+        "checkpoint": "Call trw_checkpoint() at the next milestone.",
+        "build_check": "Run trw_build_check() before delivery.",
+        "review": "Run trw_review() before delivery.",
+        "deliver": "Call trw_deliver() when the work is complete.",
+    }
+    return hints.get(pending or "", "")
+
+
 def _build_recall_result(
     *,
     query: str,
@@ -276,6 +304,7 @@ def execute_recall(
     shard_id: str | None = None,
     max_results: int | None = None,
     compact: bool | None = None,
+    ultra_compact: bool = False,
     topic: str | None = None,
     token_budget: int | None = None,
     deprioritized_ids: set[str] | None = None,
@@ -298,6 +327,8 @@ def execute_recall(
         shard_id: Optional shard identifier.
         max_results: Maximum learnings to return (default from config, 0 = unlimited).
         compact: When True, return only essential fields per learning.
+        ultra_compact: When True, return only ``id`` and ``summary`` per learning,
+            plus top-level ``count`` and ``ceremony_hint`` fields.
         topic: Optional topic slug from knowledge topology.
         deprioritized_ids: Learning IDs to push behind fresh results before final caps.
         _adapter_recall: Injected recall function.
@@ -310,6 +341,12 @@ def execute_recall(
     # recall is disabled via config/profile.
     if not config.effective_learning_recall_enabled:
         logger.debug("surface_gated", surface="recall")
+        if ultra_compact:
+            return {
+                "learnings": [],
+                "count": 0,
+                "ceremony_hint": _build_ultra_compact_ceremony_hint(trw_dir),
+            }
         return {
             "query": query,
             "learnings": [],
@@ -346,7 +383,7 @@ def execute_recall(
         max_results = config.recall_max_results
     is_wildcard = query.strip() in ("*", "")
     query_tokens = [] if is_wildcard else query.lower().split()
-    use_compact = compact if compact is not None else is_wildcard
+    use_compact = ultra_compact or (compact if compact is not None else is_wildcard)
 
     # Build recall context for contextual boosting (PRD-CORE-102)
     recall_context = _build_recall_context_safe(trw_dir, query)
@@ -429,7 +466,9 @@ def execute_recall(
         _log_recall_surfaces(trw_dir, ranked_learnings)
 
     # Strip to compact fields when requested
-    if use_compact:
+    if ultra_compact:
+        ranked_learnings = [{"id": entry.get("id", ""), "summary": entry.get("summary", "")} for entry in ranked_learnings]
+    elif use_compact:
         allowed = config.recall_compact_fields
         ranked_learnings = [{k: v for k, v in entry.items() if k in allowed} for entry in ranked_learnings]
 
@@ -448,6 +487,13 @@ def execute_recall(
         patterns_found=len(matching_patterns),
         compact=use_compact,
     )
+
+    if ultra_compact:
+        return {
+            "learnings": ranked_learnings,
+            "count": len(ranked_learnings),
+            "ceremony_hint": _build_ultra_compact_ceremony_hint(trw_dir),
+        }
 
     recall_result = _build_recall_result(
         query=query,

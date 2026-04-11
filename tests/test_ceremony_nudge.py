@@ -650,6 +650,33 @@ class TestNudgeValueExpression:
         # Value/consequence: issues before delivery
         assert any(word in result.lower() for word in ("delivery", "integration", "test", "type"))
 
+    def test_fr07_build_check_nudge_prefers_verification_wording(self, tmp_path: Path) -> None:
+        """FR07: generic build-check nudges use verification language."""
+        state = CeremonyState(
+            session_started=True,
+            checkpoint_count=1,
+            build_check_result=None,
+            phase="validate",
+        )
+
+        result = _select_nudge_message("build_check", state, available_learnings=0)
+
+        assert "verification" in result.lower()
+        assert "production" not in result.lower()
+
+    def test_fr07_context_reactive_messages_prefer_work_over_implementation(self) -> None:
+        """FR07: generic nudges avoid software-specific 'implementation' wording."""
+        state = CeremonyState(session_started=True)
+
+        result = _context_reactive_message(
+            NudgeContext(tool_name=ToolName.INIT),
+            state,
+        )
+
+        assert result is not None
+        assert "implementation" not in result.lower()
+        assert "work" in result.lower()
+
 
 # -------------------------------------------------------------------------
 # FR03 tests: Progressive Urgency (PRD-CORE-074)
