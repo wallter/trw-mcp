@@ -507,6 +507,7 @@ def _augment_with_remote(
     matching_learnings: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     """Augment local results with remote shared learnings (PRD-CORE-033)."""
+    query_excerpt = query[:80]
     try:
         from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
 
@@ -519,6 +520,7 @@ def _augment_with_remote(
             component="recall",
             op="augment_with_remote",
             outcome="fail_open",
+            query_excerpt=query_excerpt,
             exc_info=True,
         )
     except Exception:  # justified: fail-open, unexpected remote provider failures must not break local recall
@@ -527,6 +529,7 @@ def _augment_with_remote(
             component="recall",
             op="augment_with_remote",
             outcome="fail_open",
+            query_excerpt=query_excerpt,
             exc_info=True,
         )
     return list(matching_learnings)

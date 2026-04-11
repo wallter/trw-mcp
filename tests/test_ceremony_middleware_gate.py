@@ -143,6 +143,33 @@ class TestCompactionGate:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_compaction_gate_reads_real_marker_file(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
+    ) -> None:
+        """The hard gate is driven by the pre_compact_state.json marker on disk."""
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
+        trw_dir = _seed_compaction_marker(tmp_path)
+        call_count = 0
+
+        async def call_next(_ctx: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            return tool_result
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_checkpoint"),
+            fastmcp_context=session_ctx,
+        )
+        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
+            out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert call_count == 0
+        assert out.structured_content is not None
+        assert out.structured_content["error"] == "session_start_required"
+        assert (trw_dir / "context" / "pre_compact_state.json").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_compaction_gate_allows_session_start(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:
@@ -168,6 +195,41 @@ class TestCompactionGate:
         assert _text(out.content[0]) == "session started"
         # And session should now be active
         assert is_session_active("test-session-gate")
+        assert not (trw_dir / "context" / "pre_compact_state.json").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_only_session_start_clears_real_compaction_marker(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
+    ) -> None:
+        """Blocked or non-ceremony calls do not clear the marker; session_start does."""
+        trw_dir = _seed_compaction_marker(tmp_path)
+        read_result = FakeToolResult(content=[TextContent(type="text", text="read ok")])
+        start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        call_names: list[str] = []
+
+        async def call_next(ctx: Any) -> Any:
+            call_names.append(ctx.message.name)
+            if ctx.message.name == "trw_session_start":
+                return start_result
+            return read_result
+
+        read_ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="Read"),
+            fastmcp_context=session_ctx,
+        )
+        start_ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=session_ctx,
+        )
+
+        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
+            await middleware.on_call_tool(read_ctx, call_next)  # type: ignore[arg-type]
+            assert (trw_dir / "context" / "pre_compact_state.json").exists()
+
+            await middleware.on_call_tool(start_ctx, call_next)  # type: ignore[arg-type]
+
+        assert call_names == ["Read", "trw_session_start"]
         assert not (trw_dir / "context" / "pre_compact_state.json").exists()
 
     @pytest.mark.asyncio
