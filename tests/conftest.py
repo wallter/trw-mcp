@@ -207,6 +207,7 @@ _UNIT_FILES: frozenset[str] = frozenset(
         # PRD-QUAL-056: PRD scoring dimensions — pure scoring, no I/O
         "test_prd_quality_flywheel.py",
         "test_prd_file_path_coverage.py",
+        "test_user_prompt_submit_hook.py",
         # PRD-CORE-125: Surface area control — pure config/model, no I/O
         "test_tool_presets.py",
         "test_surface_area_flags.py",
