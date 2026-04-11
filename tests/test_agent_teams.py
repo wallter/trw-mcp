@@ -563,6 +563,7 @@ class TestAgentDefinitions:
             "| **CONDITIONAL** | Zero P0 findings AND 1-2 P1 findings that are fixable without architectural change |",
             "| **FAIL** | Any P0 finding OR 3+ P1 findings OR any FR with verdict MISSING |",
             "Maximum audit cycles before escalation: 3 (configurable via `.trw/config.yaml` field `max_audit_cycles`, default 3).",
+            "audit_angles_completed: [spec, vision, types, dry, errors, observability, integration, tests, traceability]",
             "# PASS: zero P0, zero P1, and every FR is PASS or PARTIAL-with-justification",
             "# CONDITIONAL: zero P0 and 1-2 P1 findings fixable without architectural change",
             "# FAIL: any P0, 3+ P1 findings, or any FR verdict MISSING",

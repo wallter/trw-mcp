@@ -420,7 +420,7 @@ summary:
   p0_count: 1
   p1_count: 2
   p2_count: 0
-  audit_angles_completed: [spec, vision, types, dry, errors, observability, integration, tests]
+  audit_angles_completed: [spec, vision, types, dry, errors, observability, integration, tests, traceability]
   overall_verdict: PASS|CONDITIONAL|FAIL
   # PASS: zero P0, zero P1, and every FR is PASS or PARTIAL-with-justification
   # CONDITIONAL: zero P0 and 1-2 P1 findings fixable without architectural change
