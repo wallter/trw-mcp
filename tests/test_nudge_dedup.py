@@ -266,21 +266,17 @@ class TestNudgeEventLogging:
 
 
 class TestAppendCeremonyNudgeDedup:
-    def test_nudge_records_shown_learning(self, tmp_path: Path) -> None:
-        """When append_ceremony_nudge shows a nudge with learnings, it
-        records the shown learning in nudge_history via record_nudge_shown."""
+    def test_compat_wrapper_still_adds_ceremony_status(self, tmp_path: Path) -> None:
+        """append_ceremony_nudge remains a backwards-compatible status wrapper."""
         trw_dir = _setup_trw_dir(tmp_path)
         state = CeremonyState(session_started=True, phase="implement")
         write_ceremony_state(trw_dir, state)
 
-        # Provide learning candidates via available_learnings_for_nudge
         from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         response: dict[str, object] = {"status": "ok"}
 
-        # Patch get_config to return a default config
         with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
             result = append_ceremony_nudge(response.copy(), trw_dir=trw_dir)
 
-        # ceremony_status should be present (basic ceremony nudge functionality)
         assert "ceremony_status" in result

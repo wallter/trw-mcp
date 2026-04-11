@@ -333,7 +333,7 @@ class TestCeremonyMiddleware:
 
     @pytest.mark.asyncio
     async def test_trw_init_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
-        """trw_init is blocked until session_start clears the gate."""
+        """Without a compaction marker, trw_init still executes."""
         result = FakeToolResult(content=[TextContent(type="text", text="init")])
 
         async def call_next(_ctx: Any) -> Any:
@@ -346,12 +346,12 @@ class TestCeremonyMiddleware:
         )
         out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
         assert not is_session_active("sess-init")
-        assert out.structured_content is not None
-        assert out.structured_content["tool_attempted"] == "trw_init"
+        texts = [block.text for block in out.content if hasattr(block, "text")]
+        assert "init" in texts
 
     @pytest.mark.asyncio
     async def test_trw_recall_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
-        """trw_recall is blocked until session_start clears the gate."""
+        """Without a compaction marker, trw_recall still executes."""
         result = FakeToolResult(content=[TextContent(type="text", text="recall")])
 
         async def call_next(_ctx: Any) -> Any:
@@ -364,8 +364,8 @@ class TestCeremonyMiddleware:
         )
         out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
         assert not is_session_active("sess-recall")
-        assert out.structured_content is not None
-        assert out.structured_content["tool_attempted"] == "trw_recall"
+        texts = [block.text for block in out.content if hasattr(block, "text")]
+        assert "recall" in texts
 
     @pytest.mark.asyncio
     async def test_heartbeat_exception_inside_safe_does_not_block_tool(
