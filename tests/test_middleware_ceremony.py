@@ -17,6 +17,7 @@ from trw_mcp.middleware.ceremony import (
     CEREMONY_TOOLS,
     CEREMONY_WARNING,
     CeremonyMiddleware,
+    _compaction_gate_sessions,
     _extract_session_start_payload,
     _session_start_succeeded,
     _known_sessions,
@@ -405,6 +406,64 @@ class TestCeremonyMiddleware:
         assert "result" in texts
 
     @pytest.mark.asyncio
+    async def test_successful_tool_execution_touches_heartbeat(
+        self,
+        middleware: CeremonyMiddleware,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        heartbeat_calls: list[str] = []
+
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.touch_heartbeat",
+            lambda: heartbeat_calls.append("touched"),
+        )
+
+        async def call_next(_ctx: Any) -> Any:
+            return FakeToolResult(content=[TextContent(type="text", text="result")])
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="Read"),
+            fastmcp_context=FakeContext(
+                request_context=FakeRequestContext(session_id="sess-hb-success"),
+            ),
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        texts = [b.text for b in out.content if hasattr(b, "text")]
+        assert "result" in texts
+        assert heartbeat_calls == ["touched"]
+
+    @pytest.mark.asyncio
+    async def test_successful_session_start_touches_heartbeat(
+        self,
+        middleware: CeremonyMiddleware,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        heartbeat_calls: list[str] = []
+
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.touch_heartbeat",
+            lambda: heartbeat_calls.append("touched"),
+        )
+
+        async def call_next(_ctx: Any) -> Any:
+            return FakeToolResult(
+                content=[TextContent(type="text", text='{"success": true}')],
+            )
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=FakeContext(
+                request_context=FakeRequestContext(session_id="sess-start-hb"),
+            ),
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert is_session_active("sess-start-hb")
+        assert out.content[0].text == '{"success": true}'
+        assert heartbeat_calls == ["touched"]
+
+    @pytest.mark.asyncio
     async def test_unsuccessful_session_start_does_not_activate_session(
         self,
         middleware: CeremonyMiddleware,
@@ -476,7 +535,7 @@ class TestSessionStartPayloadHelpers:
         assert _session_start_succeeded(success_result) is True
         assert _session_start_succeeded(failure_result) is False
 
-    def test_compaction_gate_marks_known_sessions_pending(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_compaction_gate_marks_all_known_sessions_pending(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             "trw_mcp.middleware.ceremony._is_compaction_gate_required",
             lambda: True,
@@ -486,6 +545,8 @@ class TestSessionStartPayloadHelpers:
         from trw_mcp.middleware.ceremony import _is_compaction_gate_required_for_session
 
         assert _is_compaction_gate_required_for_session("sess-a") is True
+        assert _compaction_gate_sessions["sess-b"] is True
+        assert _is_compaction_gate_required_for_session("sess-b") is True
 
 
 class TestCeremonyWarningText:
