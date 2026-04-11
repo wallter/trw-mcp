@@ -202,7 +202,7 @@ class TestFailOpen:
 class TestNudgeEventLogging:
     def test_nudge_logs_learning_id_to_events_jsonl(self, tmp_path: Path) -> None:
         """Verify events.jsonl gets a nudge_shown event with learning_id."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         trw_dir = _setup_trw_dir(tmp_path)
         # Create a session-events path
@@ -228,7 +228,7 @@ class TestNudgeEventLogging:
 
     def test_nudge_event_with_fallback_flag(self, tmp_path: Path) -> None:
         """Verify fallback flag is correctly logged."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         trw_dir = _setup_trw_dir(tmp_path)
         events_path = trw_dir / "context" / "session-events.jsonl"
@@ -246,7 +246,7 @@ class TestNudgeEventLogging:
 
     def test_nudge_event_failopen_on_write_error(self, tmp_path: Path) -> None:
         """log_nudge_event fails open if the events path is not writable."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         # Use a non-existent directory that will fail on write
         bad_path = tmp_path / "nonexistent" / "deep" / "events.jsonl"
@@ -274,12 +274,12 @@ class TestAppendCeremonyNudgeDedup:
         write_ceremony_state(trw_dir, state)
 
         # Provide learning candidates via available_learnings_for_nudge
-        from trw_mcp.tools._session_recall_helpers import append_ceremony_nudge
+        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         response: dict[str, object] = {"status": "ok"}
 
         # Patch get_config to return a default config
-        with patch("trw_mcp.tools._session_recall_helpers.resolve_trw_dir", return_value=trw_dir):
+        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
             result = append_ceremony_nudge(response.copy(), trw_dir=trw_dir)
 
         # ceremony_status should be present (basic ceremony nudge functionality)

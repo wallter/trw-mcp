@@ -120,13 +120,14 @@ class TestCompactionGate:
         # The gate should block execution — call_next should NOT be called
         assert call_count == 0, "call_next should not be invoked when gate blocks"
 
-        # Result should contain exactly one TextContent with the error JSON
+        # Result should contain exactly one TextContent plus structured dict payload.
         assert len(out.content) == 1
         first = out.content[0]
         assert isinstance(first, TextContent)
-        text = first.text
-        assert "session_start_required" in text
-        assert "trw_checkpoint" in text
+        assert "trw_session_start()" in first.text
+        assert out.structured_content is not None
+        assert out.structured_content["error"] == "session_start_required"
+        assert out.structured_content["tool_attempted"] == "trw_checkpoint"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -268,8 +269,17 @@ class TestCompactionGate:
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext
     ) -> None:
         """Various trw_* tools should all be blocked when session not started."""
-        blocked_tools = ["trw_checkpoint", "trw_learn", "trw_deliver", "trw_build_check",
-                         "trw_status", "trw_prd_create", "trw_prd_validate"]
+        blocked_tools = [
+            "trw_checkpoint",
+            "trw_learn",
+            "trw_deliver",
+            "trw_build_check",
+            "trw_status",
+            "trw_prd_create",
+            "trw_prd_validate",
+            "trw_init",
+            "trw_recall",
+        ]
 
         for tool_name in blocked_tools:
             call_count = 0
@@ -287,7 +297,8 @@ class TestCompactionGate:
             out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
             assert call_count == 0, f"{tool_name} should be blocked"
-            assert "session_start_required" in _text(out.content[0]), (
+            assert out.structured_content is not None
+            assert out.structured_content["error"] == "session_start_required", (
                 f"{tool_name} should return session_start_required error"
             )
 
@@ -296,8 +307,8 @@ class TestCompactionGate:
     async def test_gate_allows_ceremony_tools_without_session(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext
     ) -> None:
-        """All ceremony tools (trw_session_start, trw_init, trw_recall) pass through."""
-        ceremony_tools = ["trw_session_start", "trw_init", "trw_recall"]
+        """Only trw_session_start passes through before the gate is cleared."""
+        ceremony_tools = ["trw_session_start"]
 
         for tool_name in ceremony_tools:
             reset_state()  # Clean between iterations
@@ -321,8 +332,7 @@ class TestCompactionGate:
     async def test_gate_error_response_structure(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext
     ) -> None:
-        """The error response contains expected fields: error, message, tool_attempted."""
-        import json
+        """The error response contains expected structured fields."""
 
         tool_result = FakeToolResult(content=[TextContent(type="text", text="ok")])
 
@@ -335,8 +345,8 @@ class TestCompactionGate:
         )
         out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
-        # Parse the error JSON from the text content
-        error_data = json.loads(_text(out.content[0]))
+        assert out.structured_content is not None
+        error_data = out.structured_content
         assert error_data["error"] == "session_start_required"
         assert "trw_session_start()" in error_data["message"]
         assert error_data["tool_attempted"] == "trw_learn"

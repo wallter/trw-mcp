@@ -1,8 +1,8 @@
 """Server-side ceremony enforcement middleware.
 
 PRD-INFRA-007 + PRD-CORE-098-FR06: Tracks per-session ceremony state.
-Ceremony tools (trw_session_start, trw_init, trw_recall) mark the session
-as active. Until the session is active:
+Only ``trw_session_start`` clears the post-compaction gate. Until the session
+is active:
 - trw_* tools (non-ceremony) are BLOCKED with an error response.
 - Non-trw_* tools get a warning prepended but still execute.
 
@@ -14,8 +14,6 @@ connection, so parallel sessions are tracked independently.
 from __future__ import annotations
 
 __all__ = ["CeremonyMiddleware"]
-
-import json
 
 import structlog
 from fastmcp.server.middleware.middleware import (
@@ -31,14 +29,8 @@ from mcp.types import CallToolRequestParams, TextContent
 # dict stays small (1-3 entries max). No cleanup needed.
 _session_state: dict[str, bool] = {}
 
-# Tools that ARE the ceremony — calling them marks the session as active.
-CEREMONY_TOOLS: frozenset[str] = frozenset(
-    {
-        "trw_session_start",
-        "trw_init",
-        "trw_recall",
-    }
-)
+# Tools that clear the ceremony gate.
+CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
 
 # Warning prepended to every non-exempt tool response when ceremony
 # has not been run. Value-oriented framing — explains what the agent gains
@@ -134,7 +126,7 @@ class CeremonyMiddleware(Middleware):
         # until session_start is called. This prevents agents from using
         # tools without prior learnings after context compaction.
         if not is_session_active(session_id) and tool_name.startswith("trw_"):
-            error_payload = json.dumps({
+            error_payload = {
                 "error": "session_start_required",
                 "message": (
                     "Call trw_session_start() to load your prior learnings"
@@ -142,14 +134,17 @@ class CeremonyMiddleware(Middleware):
                     " solved problems or miss known gotchas."
                 ),
                 "tool_attempted": tool_name,
-            })
+            }
             logger.info(
                 "ceremony_gate_blocked",
                 op="ceremony",
                 session_id=session_id,
                 tool=tool_name,
             )
-            return ToolResult(content=[TextContent(type="text", text=error_payload)])
+            return ToolResult(
+                content=[TextContent(type="text", text=error_payload["message"])],
+                structured_content=error_payload,
+            )
 
         # Execute the tool
         result: ToolResult = await call_next(context)
