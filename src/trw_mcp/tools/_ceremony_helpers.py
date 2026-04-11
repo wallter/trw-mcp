@@ -113,6 +113,9 @@ from trw_mcp.tools._session_recall_helpers import (
 from trw_mcp.tools._session_recall_helpers import (
     perform_session_recalls as perform_session_recalls,
 )
+from trw_mcp.tools._session_recall_helpers import (
+    record_session_start_surfaces as record_session_start_surfaces,
+)
 
 # fmt: on
 

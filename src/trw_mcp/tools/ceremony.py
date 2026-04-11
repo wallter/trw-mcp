@@ -279,6 +279,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         from trw_mcp.tools._ceremony_helpers import (
             _phase_contextual_recall,
             perform_session_recalls,
+            record_session_start_surfaces,
             step_ceremony_status,
             step_embed_health,
             step_increment_session_counter,
@@ -379,6 +380,17 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                     run_status_obj,
                 )
                 if phase_recalled:
+                    primary_ids = {
+                        str(entry.get("id", ""))
+                        for entry in results.get("learnings", [])
+                        if entry.get("id")
+                    }
+                    auto_ids = [
+                        str(entry.get("id", ""))
+                        for entry in phase_recalled
+                        if entry.get("id") and str(entry.get("id", "")) not in primary_ids
+                    ]
+                    record_session_start_surfaces(trw_dir_ar, auto_ids)
                     results["auto_recalled"] = phase_recalled
                     results["auto_recall_count"] = len(phase_recalled)
         except Exception:  # justified: fail-open, auto-recall must not block session start

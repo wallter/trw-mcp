@@ -1,10 +1,10 @@
 """Server-side ceremony enforcement middleware.
 
 PRD-INFRA-007 + PRD-CORE-098-FR06: Tracks per-session ceremony state.
-Only ``trw_session_start`` clears the post-compaction gate. Until the session
-is active:
-- trw_* tools (non-ceremony) are BLOCKED with an error response.
-- Non-trw_* tools get a warning prepended but still execute.
+When `.trw/context/pre_compact_state.json` indicates recovery is pending,
+``trw_session_start`` is required before other ``trw_*`` tools may run. Outside
+that post-compaction state, tools execute normally and the middleware only adds
+advisory warnings for sessions that skipped ceremony.
 
 This is client-agnostic — works with Claude Code, Cursor, Windsurf, or
 any MCP client. FastMCP per-session state is inherently isolated per
@@ -87,6 +87,43 @@ def _touch_heartbeat_safe() -> None:
         logger.warning("heartbeat_middleware_failed", exc_info=True)
 
 
+def _is_compaction_gate_required() -> bool:
+    """Return True when a pre-compaction marker indicates recovery is pending."""
+
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        return (resolve_trw_dir() / "context" / "pre_compact_state.json").exists()
+    except Exception:  # justified: fail-open, compaction detection must never block tool execution
+        logger.debug(
+            "compaction_gate_detection_failed",
+            component="ceremony",
+            op="detect_compaction_gate",
+            outcome="fail_open",
+            exc_info=True,
+        )
+        return False
+
+
+def _clear_compaction_gate_safe() -> None:
+    """Clear the pre-compaction marker once session_start succeeds."""
+
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        marker_path = resolve_trw_dir() / "context" / "pre_compact_state.json"
+        if marker_path.exists():
+            marker_path.unlink()
+    except Exception:  # justified: fail-open, marker cleanup must not break session start
+        logger.debug(
+            "compaction_gate_clear_failed",
+            component="ceremony",
+            op="clear_compaction_gate",
+            outcome="fail_open",
+            exc_info=True,
+        )
+
+
 class CeremonyMiddleware(Middleware):
     """FastMCP middleware that enforces session ceremony.
 
@@ -114,18 +151,20 @@ class CeremonyMiddleware(Middleware):
 
         session_id = ctx.session_id
 
-        # Ceremony tool called — mark session as active
+        compaction_gate_required = _is_compaction_gate_required()
+
+        # Ceremony tool called — mark session as active after a successful session_start
         if tool_name in CEREMONY_TOOLS:
-            mark_session_active(session_id)
-            logger.debug("ceremony_activated", op="ceremony", session_id=session_id, tool=tool_name)
             ceremony_result = await call_next(context)
+            mark_session_active(session_id)
+            _clear_compaction_gate_safe()
+            logger.debug("ceremony_activated", op="ceremony", session_id=session_id, tool=tool_name)
             _touch_heartbeat_safe()
             return ceremony_result
 
-        # Post-compaction gate (PRD-CORE-098-FR06): block trw_* tools
-        # until session_start is called. This prevents agents from using
-        # tools without prior learnings after context compaction.
-        if not is_session_active(session_id) and tool_name.startswith("trw_"):
+        # Post-compaction gate (PRD-CORE-098-FR06): only block trw_* tools
+        # when recovery is actually pending after context compaction.
+        if compaction_gate_required and not is_session_active(session_id) and tool_name.startswith("trw_"):
             error_payload = {
                 "error": "session_start_required",
                 "message": (
@@ -140,6 +179,7 @@ class CeremonyMiddleware(Middleware):
                 op="ceremony",
                 session_id=session_id,
                 tool=tool_name,
+                compaction_gate_required=compaction_gate_required,
             )
             return ToolResult(
                 content=[TextContent(type="text", text=error_payload["message"])],

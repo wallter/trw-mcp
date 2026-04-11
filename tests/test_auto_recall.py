@@ -99,6 +99,45 @@ class TestAutoRecallEnabled:
         assert "auto_recalled" in result
         assert result["auto_recall_count"] == 3
 
+    def test_auto_recalled_entries_increment_session_counts(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auto-recalled learnings count as surfaced via session_start."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = _setup_trw_dir(tmp_path)
+        increment_calls: list[list[str]] = []
+        recall_calls = {"count": 0}
+
+        def _fake_increment(_trw_dir: Path, learning_ids: list[str]) -> None:
+            increment_calls.append(list(learning_ids))
+
+        def _fake_recall(*_args: Any, **_kwargs: Any) -> list[dict[str, object]]:
+            recall_calls["count"] += 1
+            if recall_calls["count"] == 1:
+                return []
+            return [
+                {"id": "L-auto-1", "summary": "Learning A", "impact": 0.8, "tags": ["testing"], "status": "active"},
+                {"id": "L-auto-2", "summary": "Learning B", "impact": 0.7, "tags": ["gotcha"], "status": "active"},
+            ]
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                side_effect=_fake_recall,
+            ),
+            patch("trw_mcp.state.memory_adapter.increment_session_counts", side_effect=_fake_increment),
+            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert "auto_recalled" in result
+        assert increment_calls == [["L-auto-1", "L-auto-2"]]
+
     def test_auto_recall_no_results_no_key(
         self,
         tmp_path: Path,

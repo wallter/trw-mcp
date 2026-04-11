@@ -100,6 +100,34 @@ def _log_session_start_surfaces(trw_dir: Path, learning_ids: list[str]) -> None:
         )
 
 
+def _dedupe_learning_ids(learning_ids: list[str]) -> list[str]:
+    """Preserve order while removing duplicate/empty learning IDs."""
+
+    seen: set[str] = set()
+    unique_ids: list[str] = []
+    for learning_id in learning_ids:
+        if not learning_id or learning_id in seen:
+            continue
+        seen.add(learning_id)
+        unique_ids.append(learning_id)
+    return unique_ids
+
+
+def record_session_start_surfaces(trw_dir: Path, learning_ids: list[str]) -> list[str]:
+    """Record shared session-start side effects for surfaced learnings."""
+
+    from trw_mcp.state.memory_adapter import increment_session_counts
+    from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
+
+    unique_ids = _dedupe_learning_ids(learning_ids)
+    if not unique_ids:
+        return []
+    increment_session_counts(trw_dir, unique_ids)
+    adapter_update_access(trw_dir, unique_ids)
+    _log_session_start_surfaces(trw_dir, unique_ids)
+    return unique_ids
+
+
 def perform_session_recalls(
     trw_dir: Path,
     query: str,
@@ -112,9 +140,7 @@ def perform_session_recalls(
         logger.debug("session_recall_gated", reason="session_start_recall_enabled=False")
         return [], [], {}
 
-    from trw_mcp.state.memory_adapter import increment_session_counts
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
-    from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
 
     is_focused = query.strip() not in ("", "*")
     extra: SessionRecallExtrasDict = {}
@@ -159,11 +185,11 @@ def perform_session_recalls(
             compact=True,
         )
 
-    matched_ids = [str(entry.get("id", "")) for entry in learnings if entry.get("id")]
-    increment_session_counts(trw_dir, matched_ids)
-    adapter_update_access(trw_dir, matched_ids)
+    matched_ids = record_session_start_surfaces(
+        trw_dir,
+        [str(entry.get("id", "")) for entry in learnings if entry.get("id")],
+    )
     log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
-    _log_session_start_surfaces(trw_dir, matched_ids)
 
     extra["total_available"] = len(learnings)
     logger.debug(

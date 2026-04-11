@@ -477,16 +477,15 @@ class TestNudgeEngine:
             ceremony_nudge._build_minimal_status_line = original
 
     def test_fr01_append_ceremony_nudge_failopen(self, tmp_path: Path) -> None:
-        """append_ceremony_nudge returns response unchanged on error."""
+        """append_ceremony_nudge remains a compatibility wrapper over live status."""
         from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         original_response: dict[str, object] = {"status": "ok", "data": "result"}
-        # Pass a non-existent trw_dir to force a read failure
         bad_dir = tmp_path / "nonexistent" / ".trw"
         result = append_ceremony_nudge(original_response.copy(), trw_dir=bad_dir)
-        # Should still contain the original keys
         assert result.get("status") == "ok"
         assert result.get("data") == "result"
+        assert "ceremony_status" in result
 
     def test_fr01_append_ceremony_nudge_adds_key(self, tmp_path: Path) -> None:
         """append_ceremony_nudge adds ceremony_status key to response dict."""
@@ -1086,7 +1085,7 @@ class TestFR02NudgeContext:
         assert ctx.is_subagent is True
 
     def test_fr02_append_ceremony_nudge_accepts_context(self, tmp_path: Path) -> None:
-        """append_ceremony_nudge accepts optional context parameter."""
+        """append_ceremony_nudge accepts optional context parameter for compatibility."""
         from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         trw = _trw_dir(tmp_path)

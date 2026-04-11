@@ -521,6 +521,14 @@ def _augment_with_remote(
             outcome="fail_open",
             exc_info=True,
         )
+    except Exception:  # justified: fail-open, unexpected remote provider failures must not break local recall
+        logger.warning(
+            "remote_recall_failed_unexpected",
+            component="recall",
+            op="augment_with_remote",
+            outcome="fail_open",
+            exc_info=True,
+        )
     return list(matching_learnings)
 
 

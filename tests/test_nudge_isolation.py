@@ -47,8 +47,8 @@ def test_live_ceremony_progress_is_isolated_from_legacy_nudge_backend() -> None:
 
 def test_legacy_nudge_surface_is_quarantined_in_dedicated_module() -> None:
     source = inspect.getsource(_legacy_ceremony_nudge)
-    assert "state.ceremony_nudge" in source
-    assert "Quarantined legacy nudge helpers" in source
+    assert "append_ceremony_status" in source
+    assert "Compatibility adapters" in source
 
 
 def test_append_ceremony_status_adds_summary_when_state_exists(tmp_path: Path) -> None:
