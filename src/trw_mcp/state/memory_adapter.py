@@ -268,8 +268,14 @@ def store_learning(
             backend = get_backend(trw_dir)
             backend.store(entry)
             break
-        except Exception as exc:
+        except Exception as exc:  # justified: boundary, corruption recovery retries storage before surfacing failure
             if attempt == 0 and _is_corruption_error(exc):
+                logger.warning(
+                    "memory_store_retry_after_corruption",
+                    learning_id=learning_id,
+                    attempt=attempt + 1,
+                    exc_info=True,
+                )
                 _recover_and_reset_backend(trw_dir)
                 continue
             raise
@@ -341,8 +347,14 @@ def recall_learnings(
                     min_impact=min_impact,
                 )
             break
-        except Exception as exc:
+        except Exception as exc:  # justified: boundary, corruption recovery retries recall before surfacing failure
             if attempt == 0 and _is_corruption_error(exc):
+                logger.warning(
+                    "memory_recall_retry_after_corruption",
+                    query=query,
+                    attempt=attempt + 1,
+                    exc_info=True,
+                )
                 _recover_and_reset_backend(trw_dir)
                 continue
             raise
