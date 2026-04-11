@@ -73,6 +73,10 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
     ]
     assert all(call["env"]["PYTHONPATH"] == pip_target for call in run_calls)
     assert all(call["env"]["PYTHONDONTWRITEBYTECODE"] == "1" for call in run_calls)
+    assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in run_calls)
+    assert all(call["env"]["PIP_CACHE_DIR"] == f"{pip_target}/.cache/pip" for call in run_calls)
+    assert all(call["env"]["XDG_CACHE_HOME"] == f"{pip_target}/.cache" for call in run_calls)
+    assert all(call["env"]["TMPDIR"] == f"{pip_target}/.tmp" for call in run_calls)
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
@@ -126,12 +130,22 @@ def test_phase_install_packages_keeps_default_install_behavior_without_pip_targe
 def test_pip_install_disables_bytecode_writes(installer_path: Path, monkeypatch) -> None:
     module = _load_installer_module(installer_path)
     ui = MagicMock()
-    calls: list[list[str]] = []
+    calls: list[dict[str, object]] = []
 
-    monkeypatch.setattr(module, "_run_quiet", lambda cmd, timeout=120: calls.append(cmd) or True)
+    def fake_run(cmd, env=None, stdout=None, stderr=None, timeout=None):
+        calls.append({"cmd": cmd, "env": dict(env or {}), "timeout": timeout})
+        return SimpleNamespace(returncode=0)
 
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
     assert module.pip_install(sys.executable, "trw-mcp[ai]", "trw-mcp", ui, target_dir="/tmp/trw-pip") is True
-    assert calls == [[sys.executable, "-B", "-m", "pip", "install", "--upgrade", "--quiet", "--target", "/tmp/trw-pip", "trw-mcp[ai]"]]
+    assert [call["cmd"] for call in calls] == [
+        [sys.executable, "-B", "-m", "pip", "install", "--upgrade", "--quiet", "--target", "/tmp/trw-pip", "trw-mcp[ai]"]
+    ]
+    assert all(call["env"]["PYTHONDONTWRITEBYTECODE"] == "1" for call in calls)
+    assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in calls)
+    assert all(call["env"]["PIP_CACHE_DIR"] == "/tmp/trw-pip/.cache/pip" for call in calls)
+    assert all(call["env"]["XDG_CACHE_HOME"] == "/tmp/trw-pip/.cache" for call in calls)
+    assert all(call["env"]["TMPDIR"] == "/tmp/trw-pip/.tmp" for call in calls)
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])

@@ -474,6 +474,34 @@ def extract_wheels(tmpdir: Path) -> tuple[Path, Path]:
 # ── pip install with fallback ────────────────────────────────────────
 
 
+def _pip_target_from_cmd(cmd: list[str]) -> str:
+    """Extract ``--target DIR`` from a pip command when present."""
+    for index, part in enumerate(cmd):
+        if part == "--target" and index + 1 < len(cmd):
+            return cmd[index + 1]
+    return ""
+
+
+def _build_pip_runtime_env(target_dir: str = "") -> dict[str, str]:
+    """Build env that keeps pip cache/temp writes inside the tmpfs target."""
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if not target_dir:
+        return env
+
+    target_path = Path(target_dir)
+    cache_root = target_path / ".cache"
+    pip_cache_dir = cache_root / "pip"
+    tmp_dir = target_path / ".tmp"
+    pip_cache_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    env["PIP_NO_CACHE_DIR"] = "1"
+    env["PIP_CACHE_DIR"] = str(pip_cache_dir)
+    env["XDG_CACHE_HOME"] = str(cache_root)
+    env["TMPDIR"] = str(tmp_dir)
+    return env
+
+
 def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
     """Run a command silently, return True if exit code == 0.
 
@@ -484,8 +512,7 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
     the caller so the user can abort the entire installer with Ctrl-C.
     """
     try:
-        env = dict(os.environ)
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env = _build_pip_runtime_env(_pip_target_from_cmd(cmd))
         return (
             subprocess.run(
                 cmd,
@@ -1230,8 +1257,7 @@ def phase_install_packages(
         ui.info(f"PYTHONPATH wrapper: {wrapper} -> {validated_target}")
 
     # Verify imports (set PYTHONPATH for --pip-target case)
-    env = dict(os.environ)
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env = _build_pip_runtime_env(validated_target)
     if validated_target:
         current_path = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = f"{validated_target}:{current_path}" if current_path else validated_target
