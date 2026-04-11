@@ -32,6 +32,7 @@ from trw_mcp.state.validation._prd_scoring import (
 )
 from trw_mcp.tools._review_helpers import _persist_review_artifact
 from trw_mcp.tools._deferred_delivery import _run_deferred_steps
+from tests._ceremony_helpers import make_ceremony_server
 
 
 _FRONTMATTER = {"category": "CORE"}
@@ -589,3 +590,74 @@ def test_audit_pattern_promotion_does_not_promote_same_category_count_without_sh
         result = consolidate_cycle(trw_dir, config=cfg)
 
     assert result["audit_pattern_promotions"] == []
+
+
+def test_checklist_event_logging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tools = make_ceremony_server(monkeypatch, tmp_path)
+    run_dir = tmp_path / "docs" / "task" / "runs" / "20260410T120000Z-preflight"
+    meta_dir = run_dir / "meta"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "run.yaml").write_text(
+        "run_id: preflight\nstatus: active\nphase: implement\nprd_scope:\n  - PRD-QUAL-056\n",
+        encoding="utf-8",
+    )
+    (meta_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
+        result = tools["trw_preflight_log"].fn(
+            prd_id="PRD-QUAL-056",
+            checklist_complete=True,
+        )
+
+    assert result["logged_events"] == ["pre_implementation_checklist_complete"]
+    events = FileStateReader().read_jsonl(meta_dir / "events.jsonl")
+    assert events[-1]["event"] == "pre_implementation_checklist_complete"
+    assert events[-1]["prd_id"] == "PRD-QUAL-056"
+
+
+def test_exec_plan_includes_verification_commands() -> None:
+    skill_path = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "trw_mcp"
+        / "data"
+        / "skills"
+        / "trw-exec-plan"
+        / "SKILL.md"
+    )
+    content = skill_path.read_text(encoding="utf-8")
+
+    assert "Pre-Implementation Checklist (PRD-QUAL-056-FR03)" in content
+    assert "trw_preflight_log(prd_id=\"{PRD-ID}\", checklist_complete=True)" in content
+    assert "FR{N} PASS" in content
+
+
+def test_self_review_event_logging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tools = make_ceremony_server(monkeypatch, tmp_path)
+    run_dir = tmp_path / "docs" / "task" / "runs" / "20260410T120500Z-self-review"
+    meta_dir = run_dir / "meta"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "run.yaml").write_text(
+        "run_id: self-review\nstatus: active\nphase: review\nprd_scope:\n  - PRD-QUAL-056\n",
+        encoding="utf-8",
+    )
+    (meta_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
+        result = tools["trw_preflight_log"].fn(
+            prd_id="PRD-QUAL-056",
+            self_review={
+                "passed": 5,
+                "failed": 1,
+                "skipped": 0,
+                "wiring_issues": ["src/trw_mcp/tools/review.py"],
+                "nfr_issues": [],
+                "test_issues": ["FR05 audit contract missing"],
+            },
+        )
+
+    assert result["logged_events"] == ["pre_audit_self_review"]
+    events = FileStateReader().read_jsonl(meta_dir / "events.jsonl")
+    assert events[-1]["event"] == "pre_audit_self_review"
+    assert events[-1]["passed"] == 5
+    assert events[-1]["test_issues"] == ["FR05 audit contract missing"]

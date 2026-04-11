@@ -30,6 +30,13 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+PRE_IMPLEMENTATION_CHECKLIST_EVENT = "pre_implementation_checklist_complete"
+PRE_AUDIT_SELF_REVIEW_EVENT = "pre_audit_self_review"
+_PREFLIGHT_EVENT_TYPES: frozenset[str] = frozenset({
+    PRE_IMPLEMENTATION_CHECKLIST_EVENT,
+    PRE_AUDIT_SELF_REVIEW_EVENT,
+})
+
 # ---------------------------------------------------------------------------
 # Shared constants and low-level helpers (canonical definitions)
 # ---------------------------------------------------------------------------
@@ -143,12 +150,17 @@ def _persist_review_artifact(
     reader = FileStateReader()
     events = FileEventLogger(writer)
 
-    review_path = resolved_run / "meta" / "review.yaml"
-    writer.write_yaml(review_path, review_data)
-
     events_path = resolved_run / "meta" / "events.jsonl"
+    prd_ids = _resolve_review_prd_ids(resolved_run, reader, event_fields)
+    review_payload = dict(review_data)
+    preflight_checks = _load_preflight_checks(resolved_run, reader, prd_ids)
+    if preflight_checks:
+        review_payload["preflight_checks"] = preflight_checks
+
+    review_path = resolved_run / "meta" / "review.yaml"
+    writer.write_yaml(review_path, review_payload)
+
     if events_path.parent.exists():
-        prd_ids = _resolve_review_prd_ids(resolved_run, reader, event_fields)
         verdict = str(review_data.get("verdict", event_fields.get("verdict", ""))).upper()
         finding_categories = _extract_review_finding_categories(review_data)
         for prd_id in prd_ids:
@@ -164,6 +176,47 @@ def _persist_review_artifact(
         events.log_event(events_path, "review_complete", event_fields)
 
     return str(review_path)
+
+
+def _log_preflight_events(
+    resolved_run: Path | None,
+    *,
+    prd_id: str,
+    checklist_complete: bool = False,
+    self_review: dict[str, object] | None = None,
+) -> list[str]:
+    """Persist explicit preflight checklist/self-review events for a run."""
+    if resolved_run is None:
+        return []
+
+    events_path = resolved_run / "meta" / "events.jsonl"
+    if not events_path.parent.exists():
+        return []
+
+    writer = FileStateWriter()
+    event_logger = FileEventLogger(writer)
+    logged_events: list[str] = []
+
+    if checklist_complete:
+        event_logger.log_event(
+            events_path,
+            PRE_IMPLEMENTATION_CHECKLIST_EVENT,
+            {
+                "prd_id": prd_id,
+                "completed": True,
+            },
+        )
+        logged_events.append(PRE_IMPLEMENTATION_CHECKLIST_EVENT)
+
+    if self_review is not None:
+        event_logger.log_event(
+            events_path,
+            PRE_AUDIT_SELF_REVIEW_EVENT,
+            _normalize_self_review_payload(prd_id, self_review),
+        )
+        logged_events.append(PRE_AUDIT_SELF_REVIEW_EVENT)
+
+    return logged_events
 
 
 def _resolve_review_prd_ids(
@@ -199,6 +252,70 @@ def _extract_review_finding_categories(review_data: dict[str, object]) -> list[s
         for finding in findings
         if isinstance(finding, dict) and str(finding.get("category", ""))
     ]
+
+
+def _normalize_self_review_payload(prd_id: str, self_review: dict[str, object]) -> dict[str, object]:
+    """Normalize a self-review payload before persisting to events.jsonl."""
+    return {
+        "prd_id": prd_id,
+        "passed": int(str(self_review.get("passed", 0))),
+        "failed": int(str(self_review.get("failed", 0))),
+        "skipped": int(str(self_review.get("skipped", 0))),
+        "wiring_issues": _normalize_issue_list(self_review.get("wiring_issues")),
+        "nfr_issues": _normalize_issue_list(self_review.get("nfr_issues")),
+        "test_issues": _normalize_issue_list(self_review.get("test_issues")),
+    }
+
+
+def _normalize_issue_list(value: object) -> list[str]:
+    """Coerce a possibly-missing issue collection into ``list[str]``."""
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _load_preflight_checks(
+    resolved_run: Path,
+    reader: FileStateReader,
+    prd_ids: list[str],
+) -> dict[str, dict[str, dict[str, object]]]:
+    """Load latest preflight checklist/self-review events for the scoped PRDs."""
+    events_path = resolved_run / "meta" / "events.jsonl"
+    if not events_path.exists():
+        return {}
+
+    try:
+        events = reader.read_jsonl(events_path)
+    except Exception:  # justified: fail-open, review artifact should persist without preflight metadata
+        logger.debug("review_preflight_checks_unavailable", exc_info=True)
+        return {}
+
+    scoped_prd_ids = set(prd_ids)
+    preflight_checks: dict[str, dict[str, dict[str, object]]] = {}
+    for event in events:
+        event_type = str(event.get("event", ""))
+        if event_type not in _PREFLIGHT_EVENT_TYPES:
+            continue
+
+        event_data = _extract_review_event_data(event)
+        prd_id = str(event_data.get("prd_id", ""))
+        if not prd_id or (scoped_prd_ids and prd_id not in scoped_prd_ids):
+            continue
+
+        preflight_checks.setdefault(prd_id, {})[event_type] = {
+            **event_data,
+            "ts": str(event.get("ts", event_data.get("ts", ""))),
+        }
+
+    return preflight_checks
+
+
+def _extract_review_event_data(event: dict[str, object]) -> dict[str, object]:
+    """Return a normalized event payload for flat or nested event records."""
+    nested = event.get("data")
+    if isinstance(nested, dict):
+        return nested
+    return event
 
 
 # ---------------------------------------------------------------------------

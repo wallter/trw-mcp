@@ -77,13 +77,11 @@ For each FR, verify:
 
 ### Step 6: Log Results
 
-Log the self-review results as a `pre_audit_self_review` event:
+Log the self-review results with `trw_preflight_log(prd_id="{PRD-ID}", self_review={...})` so a `pre_audit_self_review` event is written to `events.jsonl`:
 
 ```python
-# Event payload structure:
+# self_review payload structure:
 {
-    "event": "pre_audit_self_review",
-    "prd_id": "PRD-QUAL-056",
     "passed": N,     # assertions that passed
     "failed": M,     # assertions that failed
     "skipped": K,    # assertions not applicable
@@ -128,5 +126,5 @@ Output a structured report:
 
 - This is a SELF-review — it runs the same checks the auditor will run
 - Do NOT skip assertions — the auditor WILL catch what you miss
-- Log results to events.jsonl so the auditor can cross-reference
+- Log results with `trw_preflight_log(...)` so the auditor can cross-reference them in `events.jsonl`
 - If >3 assertions fail, fix them before requesting audit

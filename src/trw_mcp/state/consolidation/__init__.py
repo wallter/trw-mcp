@@ -59,6 +59,9 @@ from ._clustering import (
 )
 
 # --- Cycle: entry creation, dry-run, main entry point ---
+from ._audit_patterns import (
+    detect_audit_finding_recurrence as detect_audit_finding_recurrence,
+)
 from ._cycle import (
     _create_consolidated_entry as _create_consolidated_entry,
 )
@@ -68,10 +71,6 @@ from ._cycle import (
 from ._cycle import (
     consolidate_cycle as consolidate_cycle,
 )
-from ._cycle import (
-    detect_audit_finding_recurrence as detect_audit_finding_recurrence,
-)
-
 # --- Summarization: LLM + fallback ---
 from ._summarize import (
     _summarize_cluster_fallback as _summarize_cluster_fallback,
