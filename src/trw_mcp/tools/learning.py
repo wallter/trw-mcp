@@ -177,6 +177,7 @@ def register_learning_tools(server: FastMCP) -> None:
         Routine observations ("I read the file", "the test passed") degrade recall quality.
 
         Most learnings need only summary and detail. Adding tags and impact improves recall precision.
+        All other fields are auto-detected.
 
         Args:
             Required:

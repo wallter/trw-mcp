@@ -85,6 +85,7 @@ class TestToolDocstrings:
         assert "Recommended:" in doc
         assert "Advanced (auto-detected if omitted):" in doc
         assert "Most learnings need only summary and detail." in doc
+        assert "All other fields are auto-detected." in doc
 
     def test_trw_claude_md_sync_docstring_matches_post_093_behavior(self) -> None:
         tools = _get_tools()
