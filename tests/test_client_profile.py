@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
@@ -209,12 +210,17 @@ def test_scoring_dimension_weights_over_limit_raises() -> None:
 
 
 @pytest.mark.unit
-def test_unknown_client_id_falls_back_to_claude_code(capsys: pytest.CaptureFixture[str]) -> None:
+def test_unknown_client_id_falls_back_to_claude_code() -> None:
     """resolve_client_profile('windsurf') falls back to claude-code."""
-    profile = resolve_client_profile("windsurf")
+    with patch("trw_mcp.models.config._profiles.logger") as mock_logger:
+        profile = resolve_client_profile("windsurf")
+
     assert profile.client_id == "claude-code"
-    captured = capsys.readouterr()
-    assert "unknown_client_id_fallback" in captured.out
+    mock_logger.warning.assert_called_once_with(
+        "unknown_client_id_fallback",
+        client_id="windsurf",
+        fallback="claude-code",
+    )
 
 
 # ---------------------------------------------------------------------------
