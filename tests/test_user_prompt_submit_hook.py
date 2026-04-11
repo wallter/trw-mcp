@@ -80,6 +80,7 @@ def _run_hook(
     phase: str,
     cached_phase: str | None = None,
     env_overrides: dict[str, str] | None = None,
+    raw_input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     project_root, hook_path, entries_dir = _copy_hook_to_temp(tmp_path, source_hook)
     if cached_phase is not None:
@@ -98,7 +99,7 @@ def _run_hook(
 
     return subprocess.run(
         ["sh", str(hook_path)],
-        input=json.dumps({"prompt": prompt}),
+        input=raw_input if raw_input is not None else json.dumps({"prompt": prompt}),
         text=True,
         capture_output=True,
         cwd=project_root,
@@ -231,6 +232,30 @@ def test_user_prompt_submit_hook_cached_phase_is_silent(tmp_path: Path) -> None:
         assert result.stdout == ""
         hook_log = (project_root / "hook.log").read_text(encoding="utf-8")
         assert "UserPromptSubmit|implement|cached" in hook_log
+
+
+def test_user_prompt_submit_hook_missing_prompt_is_silent(tmp_path: Path) -> None:
+    for hook_path in _HOOK_PATHS:
+        project_root, _, _ = _copy_hook_to_temp(tmp_path / hook_path.parent.name, hook_path)
+
+        result = subprocess.run(
+            ["sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
+            input=json.dumps({}),
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={
+                **os.environ,
+                "TRW_PROJECT_ROOT": str(project_root),
+                "TRW_TEST_PHASE": "implement",
+                "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            },
+            check=False,
+        )
+
+        assert result.stdout == ""
+        hook_log = (project_root / "hook.log").read_text(encoding="utf-8")
+        assert "UserPromptSubmit|implement|skipped" in hook_log
 
 
 def test_user_prompt_submit_hook_uses_yaml_learning_ids_for_output_and_dedup(tmp_path: Path) -> None:

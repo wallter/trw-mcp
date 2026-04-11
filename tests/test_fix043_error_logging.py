@@ -13,8 +13,6 @@ import inspect
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from structlog.testing import capture_logs
-
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.models import TelemetryEvent
 
@@ -127,18 +125,16 @@ class TestMarkRunCompleteFailureLogsWarning:
                 "trw_mcp.tools.ceremony.FileStateWriter.write_yaml",
                 side_effect=OSError("permission denied"),
             ),
-            capture_logs() as cap_logs,
+            patch("trw_mcp.tools.ceremony.logger.warning") as mock_warning,
         ):
             # Should NOT raise
             _mark_run_complete(tmp_path / "run-001")
 
-        # Verify warning was logged with the correct event name
-        warning_events = [
-            log
-            for log in cap_logs
-            if log.get("log_level") == "warning" and "mark_run_complete_failed" in str(log.get("event", ""))
-        ]
-        assert len(warning_events) >= 1, f"Expected a warning log with 'mark_run_complete_failed', got: {cap_logs}"
+        mock_warning.assert_called_once_with(
+            "mark_run_complete_failed",
+            exc_info=True,
+            run_dir=str(tmp_path / "run-001"),
+        )
 
 
 # ===========================================================================
