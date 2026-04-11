@@ -14,14 +14,18 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.typed_dicts._ceremony import ClaudeMdSyncResultDict, ReviewMdResultDict
 
 # --- AGENTS.md functions (extracted to _agents_md.py) ---
+from trw_mcp.state.claude_md._agents_md import (
+    _determine_write_target_decision as _determine_write_target_decision,
+)
 from trw_mcp.state.claude_md._agents_md import (
     _determine_write_targets as _determine_write_targets,
 )
@@ -30,6 +34,9 @@ from trw_mcp.state.claude_md._agents_md import (
 )
 from trw_mcp.state.claude_md._agents_md import (
     _sync_agents_md_if_needed as _sync_agents_md_if_needed,
+)
+from trw_mcp.state.claude_md._agents_md import (
+    _sync_instruction_targets as _sync_instruction_targets,
 )
 from trw_mcp.state.claude_md._parser import (
     load_claude_md_template,
@@ -80,6 +87,52 @@ logger = structlog.get_logger(__name__)
 
 # FR04 (PRD-FIX-053): Hash file name within .trw/context/
 _HASH_FILE_NAME = "claude_md_hash.txt"
+
+
+def _review_md_failed_result(error: str) -> ReviewMdResultDict:
+    """Build a typed failed REVIEW.md result."""
+    return {
+        "status": "failed",
+        "path": None,
+        "rules_count": 0,
+        "error": error,
+    }
+
+
+def _build_sync_result(
+    *,
+    path: str,
+    scope: str,
+    status: Literal["synced", "unchanged"],
+    total_lines: int,
+    agents_md_synced: bool,
+    agents_md_path: str | None,
+    instruction_file_synced: bool,
+    instruction_file_path: str | None,
+    instruction_file_paths: list[str],
+    review_md: ReviewMdResultDict,
+    hash_value: str | None = None,
+) -> ClaudeMdSyncResultDict:
+    """Construct the stable sync result shape used by the tool and tests."""
+    result: ClaudeMdSyncResultDict = {
+        "path": path,
+        "scope": scope,
+        "status": status,
+        "learnings_promoted": 0,
+        "patterns_included": 0,
+        "total_lines": total_lines,
+        "llm_used": False,
+        "agents_md_synced": agents_md_synced,
+        "agents_md_path": agents_md_path,
+        "instruction_file_synced": instruction_file_synced,
+        "instruction_file_path": instruction_file_path,
+        "instruction_file_paths": instruction_file_paths,
+        "bounded_contexts_synced": 0,
+        "review_md": review_md,
+    }
+    if hash_value is not None:
+        result["hash"] = hash_value
+    return result
 
 
 def _compute_sync_hash() -> str:
@@ -180,7 +233,7 @@ def _get_repo_root() -> Path | None:
 def generate_review_md(
     trw_dir: Path,
     repo_root: Path | None = None,
-) -> dict[str, object]:
+) -> ReviewMdResultDict:
     """Generate REVIEW.md at repo root with auto-injected learning rules.
 
     Full regeneration on every call. Atomic write via temp+rename.
@@ -192,12 +245,7 @@ def generate_review_md(
         repo_root = _get_repo_root()
     if repo_root is None:
         logger.warning("review_md_no_repo_root")
-        return {
-            "path": None,
-            "rules_count": 0,
-            "status": "failed",
-            "error": "could not determine repo root",
-        }
+        return _review_md_failed_result("could not determine repo root")
 
     target_path = repo_root / "REVIEW.md"
 
@@ -277,7 +325,7 @@ def execute_claude_md_sync(
     reader: FileStateReader,
     llm: LLMClient,
     client: str = "auto",
-) -> dict[str, object]:
+) -> ClaudeMdSyncResultDict:
     """Execute the CLAUDE.md sync operation.
 
     Core logic extracted from the ``trw_claude_md_sync`` tool to keep
@@ -315,48 +363,43 @@ def execute_claude_md_sync(
         current_hash = _compute_sync_hash()
         stored_hash = _read_stored_hash(trw_dir)
         if stored_hash is not None and stored_hash == current_hash:
+            decision = _determine_write_target_decision(client, config, project_root, scope)
+            instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
+                project_root,
+                decision.instruction_targets,
+            )
             logger.debug("claude_md_sync_cache_hit", hash=current_hash[:12])
             logger.info(
                 "claude_md_sync_skip",
                 reason="no_changes",
             )
             target = project_root / "CLAUDE.md"
-            early_return_dict: dict[str, object] = {
-                "path": str(target),
-                "scope": scope,
-                "status": "unchanged",
-                "hash": current_hash,
-                "learnings_promoted": 0,
-                "patterns_included": 0,
-                "total_lines": 0,
-                "llm_used": False,
-                "agents_md_synced": False,
-                "agents_md_path": None,
-                "bounded_contexts_synced": 0,
-            }
-            _, write_agents, _ = _determine_write_targets(
-                client,
-                config,
-                project_root,
-                scope,
-            )
-            synced, path = _sync_agents_md_if_needed(
-                write_agents,
+            agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
+                decision.write_agents,
                 config,
                 project_root,
                 trw_dir,
                 client=client,
                 recall_fn=recall_learnings,
             )
-            early_return_dict["agents_md_synced"] = synced
-            early_return_dict["agents_md_path"] = path
             try:
                 review_result = generate_review_md(trw_dir, repo_root=project_root)
-                early_return_dict["review_md"] = review_result
             except Exception:  # justified: fail-open — REVIEW.md generation must not block cache-hit return
                 logger.warning("review_md_generation_failed_cache_hit", exc_info=True)
-                early_return_dict["review_md"] = {"status": "failed"}
-            return early_return_dict
+                review_result = _review_md_failed_result("generation failed")
+            return _build_sync_result(
+                path=str(target),
+                scope=scope,
+                status="unchanged",
+                total_lines=0,
+                agents_md_synced=agents_md_synced,
+                agents_md_path=agents_md_path,
+                instruction_file_synced=instruction_file_synced,
+                instruction_file_path=instruction_file_path,
+                instruction_file_paths=instruction_file_paths,
+                review_md=review_result,
+                hash_value=current_hash,
+            )
 
     template = load_claude_md_template(trw_dir)
 
@@ -390,13 +433,20 @@ def execute_claude_md_sync(
         target = project_root / "CLAUDE.md"
         max_lines = config.claude_md_max_lines
 
-    write_claude, write_agents, _ = _determine_write_targets(client, config, project_root, scope)
+    decision = _determine_write_target_decision(client, config, project_root, scope)
+    write_claude = decision.write_claude
+    write_agents = decision.write_agents
 
     total_lines = 0
     if write_claude:
         total_lines = merge_trw_section(target, trw_section, max_lines)
 
     update_analytics_sync(trw_dir)
+
+    instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
+        project_root,
+        decision.instruction_targets,
+    )
 
     agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
         write_agents,
@@ -413,12 +463,12 @@ def execute_claude_md_sync(
         _write_stored_hash(trw_dir, rendered_hash)
 
     # PRD-CORE-084 FR08: Generate REVIEW.md after CLAUDE.md sync completes.
-    review_md_result: dict[str, object]
+    review_md_result: ReviewMdResultDict
     try:
         review_md_result = generate_review_md(trw_dir, repo_root=project_root)
     except Exception:  # justified: fail-open — REVIEW.md failure must not block CLAUDE.md sync
         logger.warning("review_md_generation_failed", exc_info=True)
-        review_md_result = {"status": "failed", "error": "generation failed"}
+        review_md_result = _review_md_failed_result("generation failed")
 
     logger.info(
         "claude_md_sync_ok",
@@ -432,17 +482,17 @@ def execute_claude_md_sync(
         "claude_md_sync_detail",
         total_lines=total_lines,
         agents_md_path=agents_md_path if agents_md_synced else None,
+        instruction_file_paths=instruction_file_paths,
     )
-    return {
-        "path": str(target),
-        "scope": scope,
-        "status": "synced",
-        "learnings_promoted": 0,
-        "patterns_included": 0,
-        "total_lines": total_lines,
-        "llm_used": False,
-        "agents_md_synced": agents_md_synced,
-        "agents_md_path": agents_md_path,
-        "bounded_contexts_synced": 0,
-        "review_md": review_md_result,
-    }
+    return _build_sync_result(
+        path=str(target),
+        scope=scope,
+        status="synced",
+        total_lines=total_lines,
+        agents_md_synced=agents_md_synced,
+        agents_md_path=agents_md_path,
+        instruction_file_synced=instruction_file_synced,
+        instruction_file_path=instruction_file_path,
+        instruction_file_paths=instruction_file_paths,
+        review_md=review_md_result,
+    )
