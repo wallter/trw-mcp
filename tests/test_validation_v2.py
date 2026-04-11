@@ -1,12 +1,15 @@
 """Tests for PRD-CORE-008 Phase 2a: Content Density + Quality Tiers.
 
-Tests the semantic validation engine: 3-dimension scoring model,
+Tests the semantic validation engine: multi-dimension scoring model,
 quality tier classification, section density analysis, and
 improvement suggestions. Also covers PRD-FIX-054 (stub removal,
 ambiguity rate computation, weight recalibration).
 """
 
 from __future__ import annotations
+
+from pathlib import Path
+import textwrap
 
 import pytest
 from pydantic import ValidationError
@@ -292,8 +295,72 @@ Errors are not handled consistently across modules.
 
 ## 12. Traceability Matrix
 <!-- TODO: Fill in matrix -->
-"""
+    """
 )
+
+
+def _build_integrity_prd(*, prd_id: str, title: str, category: str, path_ref: str) -> str:
+    """Build a small, structurally valid PRD for integrity tests."""
+    return textwrap.dedent(
+        f"""\
+        ---
+        prd:
+          id: {prd_id}
+          title: {title}
+          version: '1.0'
+          status: draft
+          priority: P1
+          category: {category}
+        confidence:
+          implementation_feasibility: 0.8
+          requirement_clarity: 0.8
+          estimate_confidence: 0.7
+        traceability:
+          implements: []
+          depends_on: []
+        ---
+
+        # {prd_id}: {title}
+
+        ## 1. Problem Statement
+        The contract drifts without explicit validation.
+
+        ## 2. Goals & Non-Goals
+        Tighten validation and keep docs aligned.
+
+        ## 3. User Stories
+        As a maintainer, I want integrity checks.
+
+        ## 4. Functional Requirements
+        Validation shall cover `{path_ref}`.
+
+        ## 5. Non-Functional Requirements
+        Validation shall stay fast and deterministic.
+
+        ## 6. Technical Approach
+        Use `{path_ref}` as the implementation control point.
+
+        ## 7. Test Strategy
+        Add tests for `{path_ref}`.
+
+        ## 8. Rollout Plan
+        Roll out behind focused pytest coverage.
+
+        ## 9. Success Metrics
+        Validation rejects bad evidence.
+
+        ## 10. Dependencies & Risks
+        Depends on `{path_ref}`.
+
+        ## 11. Open Questions
+        None for this test fixture.
+
+        ## 12. Traceability Matrix
+        | Requirement | Implementation | Test |
+        |-------------|----------------|------|
+        | FR01 | `{path_ref}` | `tests/test_integrity.py::test_case` |
+        """
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -344,12 +411,11 @@ class TestContentDensity:
         result = score_content_density(_SKELETON_PRD)
         assert result.name == "content_density"
         assert result.score < 20.0  # low density for placeholder-only PRD
-        assert result.max_score == 42.0  # recalibrated weight (FR03 — PRD-FIX-054)
+        assert result.max_score == 20.0
 
     def test_filled_prd_high_density(self) -> None:
         result = score_content_density(_FILLED_PRD)
-        # Density ~42% of max_score 42 → score ~17.6
-        assert result.score > 10.0
+        assert result.score > 8.0
 
     def test_weighted_average_sections(self) -> None:
         result = score_content_density(_FILLED_PRD)
@@ -514,7 +580,7 @@ class TestStructuralCompleteness:
         }
         result = score_structural_completeness(frontmatter, sections)
         assert result.name == "structural_completeness"
-        assert result.score > 20.0  # near max 25 (recalibrated — FR03 PRD-FIX-054)
+        assert result.score >= 20.0
 
     def test_6_sections_half_score(self) -> None:
         sections = [
@@ -619,11 +685,12 @@ class TestDimensionWeights:
     """Test that active dimension weights sum to 100 and stub weights are 0 (FR03 — PRD-FIX-054)."""
 
     def test_active_weights_sum_100(self) -> None:
-        """3 active dimension weights must sum to exactly 100.0."""
+        """Active dimension weights must sum to exactly 100.0."""
         config = TRWConfig()
         total = (
             config.validation_density_weight
             + config.validation_structure_weight
+            + config.validation_implementation_readiness_weight
             + config.validation_traceability_weight
         )
         assert total == 100.0
@@ -638,9 +705,10 @@ class TestDimensionWeights:
     def test_active_weights_values(self) -> None:
         """Active weights must match specified recalibrated values."""
         config = TRWConfig()
-        assert config.validation_density_weight == 42.0
-        assert config.validation_structure_weight == 25.0
-        assert config.validation_traceability_weight == 33.0
+        assert config.validation_density_weight == 20.0
+        assert config.validation_structure_weight == 20.0
+        assert config.validation_implementation_readiness_weight == 25.0
+        assert config.validation_traceability_weight == 35.0
 
 
 # ---------------------------------------------------------------------------
@@ -708,12 +776,12 @@ This might work approximately right.
 
 
 class TestRiskProfileWeights:
-    """Test that RISK_PROFILES have 3-tuple weights summing to 100."""
+    """Test that RISK_PROFILES have weight tuples summing to 100."""
 
-    def test_all_profiles_have_3_weights(self) -> None:
-        """Each risk profile must have exactly 3 weight entries (FR04 — PRD-FIX-054)."""
+    def test_all_profiles_have_4_weights(self) -> None:
+        """Each risk profile must have exactly 4 active weight entries."""
         for name, profile in RISK_PROFILES.items():
-            assert len(profile.weights) == 3, f"Profile '{name}' has {len(profile.weights)} weights, expected 3"
+            assert len(profile.weights) == 4, f"Profile '{name}' has {len(profile.weights)} weights, expected 4"
 
     def test_all_profiles_weights_sum_to_100(self) -> None:
         """Each risk profile's weights must sum to exactly 100 (FR04 — PRD-FIX-054)."""
@@ -737,34 +805,36 @@ class TestImprovementSuggestions:
     """Test generate_improvement_suggestions."""
 
     def test_skeleton_gets_suggestions(self) -> None:
-        """All 3 active low-scoring dimensions should yield suggestions."""
+        """Low-scoring active dimensions should yield suggestions."""
         dims = [
-            DimensionScore(name="content_density", score=2.0, max_score=42.0),
-            DimensionScore(name="structural_completeness", score=3.0, max_score=25.0),
-            DimensionScore(name="traceability", score=0.0, max_score=33.0),
+            DimensionScore(name="content_density", score=2.0, max_score=20.0),
+            DimensionScore(name="structural_completeness", score=3.0, max_score=20.0),
+            DimensionScore(name="implementation_readiness", score=2.0, max_score=25.0),
+            DimensionScore(name="traceability", score=0.0, max_score=35.0),
         ]
         suggestions = generate_improvement_suggestions(dims)
-        assert len(suggestions) >= 3  # all 3 active dims are below threshold
+        assert len(suggestions) >= 4
 
     def test_improvement_suggestions_exclude_stubs(self) -> None:
         """Suggestions must never reference stub dimension names (FR07 — PRD-FIX-054)."""
         stub_names = {"smell_score", "readability", "ears_coverage"}
         dims = [
-            DimensionScore(name="content_density", score=0.0, max_score=42.0),
-            DimensionScore(name="structural_completeness", score=0.0, max_score=25.0),
-            DimensionScore(name="traceability", score=0.0, max_score=33.0),
+            DimensionScore(name="content_density", score=0.0, max_score=20.0),
+            DimensionScore(name="structural_completeness", score=0.0, max_score=20.0),
+            DimensionScore(name="implementation_readiness", score=0.0, max_score=25.0),
+            DimensionScore(name="traceability", score=0.0, max_score=35.0),
         ]
         suggestions = generate_improvement_suggestions(dims)
         for suggestion in suggestions:
             assert suggestion.dimension not in stub_names
 
-    def test_suggestions_sorted_by_gain(self) -> None:
+    def test_readiness_suggestions_sort_ahead_of_density(self) -> None:
         dims = [
-            DimensionScore(name="a", score=0.0, max_score=25.0),
-            DimensionScore(name="b", score=0.0, max_score=10.0),
+            DimensionScore(name="content_density", score=8.0, max_score=20.0),
+            DimensionScore(name="implementation_readiness", score=8.0, max_score=25.0),
         ]
         suggestions = generate_improvement_suggestions(dims)
-        assert suggestions[0].potential_gain >= suggestions[1].potential_gain
+        assert suggestions[0].dimension == "implementation_readiness"
 
     def test_max_5_suggestions(self) -> None:
         dims = [DimensionScore(name=f"dim_{i}", score=0.0, max_score=20.0) for i in range(8)]
@@ -813,12 +883,17 @@ class TestValidatePrdQualityV2:
         assert hasattr(result, "failures")
         assert hasattr(result, "completeness_score")
 
-    def test_v2_has_3_dimensions(self) -> None:
-        """V2 output must contain exactly 3 active dimensions (FR01 — PRD-FIX-054)."""
+    def test_v2_has_4_dimensions(self) -> None:
+        """V2 output must contain the 4 active validation dimensions."""
         result = validate_prd_quality_v2(_FILLED_PRD)
-        assert len(result.dimensions) == 3
+        assert len(result.dimensions) == 4
         dim_names = {d.name for d in result.dimensions}
-        assert dim_names == {"content_density", "structural_completeness", "traceability"}
+        assert dim_names == {
+            "content_density",
+            "structural_completeness",
+            "implementation_readiness",
+            "traceability",
+        }
 
     def test_v2_no_stub_dimensions(self) -> None:
         """No dimension in output may have max_score == 0.0 (FR01 — PRD-FIX-054)."""
@@ -848,6 +923,68 @@ class TestValidatePrdQualityV2:
     def test_v2_improvement_suggestions(self) -> None:
         result = validate_prd_quality_v2(_SKELETON_PRD)
         assert len(result.improvement_suggestions) >= 1
+
+    def test_v2_integrity_rejects_unsupported_category(self, tmp_path: Path) -> None:
+        """Integrity checks reject categories outside the AARE-F allowlist."""
+        repo_file = tmp_path / "src" / "existing.py"
+        repo_file.parent.mkdir(parents=True)
+        repo_file.write_text("value = 1\n", encoding="utf-8")
+
+        result = validate_prd_quality_v2(
+            _build_integrity_prd(
+                prd_id="PRD-OPENCODE-001",
+                title="Unsupported category fixture",
+                category="OPENCODE",
+                path_ref="src/existing.py",
+            ),
+            project_root=str(tmp_path),
+        )
+
+        assert result.valid is False
+        assert any(f.field == "category" and "Unsupported PRD category" in f.message for f in result.failures)
+
+    def test_v2_integrity_rejects_missing_repo_reference(self, tmp_path: Path) -> None:
+        """Integrity checks fail when cited repo paths do not exist."""
+        result = validate_prd_quality_v2(
+            _build_integrity_prd(
+                prd_id="PRD-QUAL-998",
+                title="Missing path fixture",
+                category="QUAL",
+                path_ref="src/missing.py",
+            ),
+            project_root=str(tmp_path),
+        )
+
+        assert result.valid is False
+        assert any("Referenced repo path does not exist" in f.message for f in result.failures)
+
+    def test_v2_integrity_warns_on_probable_duplicate(self, tmp_path: Path) -> None:
+        """Integrity checks emit overlap warnings for similar PRDs sharing control points."""
+        shared_file = tmp_path / "src" / "shared.py"
+        shared_file.parent.mkdir(parents=True)
+        shared_file.write_text("value = 1\n", encoding="utf-8")
+
+        prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        prds_dir.mkdir(parents=True)
+        existing_prd = _build_integrity_prd(
+            prd_id="PRD-QUAL-042",
+            title="Client surface contract hardening",
+            category="QUAL",
+            path_ref="src/shared.py",
+        )
+        (prds_dir / "PRD-QUAL-042.md").write_text(existing_prd, encoding="utf-8")
+
+        result = validate_prd_quality_v2(
+            _build_integrity_prd(
+                prd_id="PRD-QUAL-060",
+                title="Client surface contract hardening plan",
+                category="QUAL",
+                path_ref="src/shared.py",
+            ),
+            project_root=str(tmp_path),
+        )
+
+        assert any("PRD-QUAL-042" in warning for warning in result.integrity_warnings)
 
     def test_backward_compat_v1_unchanged(self) -> None:
         """validate_prd_quality() still returns ValidationResult, not V2."""

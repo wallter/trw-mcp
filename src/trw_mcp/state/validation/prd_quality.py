@@ -20,6 +20,7 @@ from trw_mcp.models.requirements import (
     DimensionScore,
     PRDQualityGates,
     SmellFinding,
+    ValidationFailure,
     ValidationResultV2,
 )
 
@@ -58,6 +59,9 @@ from trw_mcp.state.validation._prd_scoring import (
 )
 from trw_mcp.state.validation._prd_scoring import (
     score_content_density as score_content_density,
+)
+from trw_mcp.state.validation._prd_scoring import (
+    score_implementation_readiness as score_implementation_readiness,
 )
 from trw_mcp.state.validation._prd_scoring import (
     score_section_density as score_section_density,
@@ -103,6 +107,7 @@ from trw_mcp.state.validation._prd_validation import (
     validate_prd_quality as validate_prd_quality,
 )
 from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
+from trw_mcp.state.validation.prd_integrity import run_prd_integrity_checks
 
 logger = structlog.get_logger(__name__)
 
@@ -120,14 +125,14 @@ def validate_prd_quality_v2(
     *,
     project_root: str | None = None,
 ) -> ValidationResultV2:
-    """Validate a PRD with 3-dimension semantic scoring.
+    """Validate a PRD with multi-dimension semantic scoring.
 
     Orchestrates all active dimension scorers (content_density,
-    structural_completeness, traceability), computes total score,
-    classifies quality tier, and generates improvement suggestions.
-    Also populates V1-compatible fields for backward compatibility.
-    Stub dimensions (smell_score, readability, ears_coverage) are reserved
-    for future implementation and are NOT included in dimensions output.
+    structural_completeness, implementation_readiness, traceability),
+    computes total score, classifies quality tier, and generates improvement
+    suggestions. Also populates V1-compatible fields for backward compatibility.
+    Stub dimensions (smell_score, readability, ears_coverage) are reserved for
+    future implementation and are NOT included in dimensions output.
 
     When risk_level is provided (or derived from frontmatter priority),
     thresholds and dimension weights are adjusted per RISK_PROFILES
@@ -164,7 +169,8 @@ def validate_prd_quality_v2(
     _config = get_risk_scaled_config(_config, effective_risk)
     is_risk_scaled = effective_risk != "medium" and _config.risk_scaling_enabled
 
-    # Score 3 active dimensions -- content density, structural completeness, traceability.
+    # Score active dimensions -- density, structure, implementation readiness,
+    # and traceability.
     # Stub dimensions (smell_score, readability, ears_coverage) are reserved for future
     # implementation and are NOT appended here (FR01 -- PRD-FIX-054).
     _active_dims: list[tuple[str, Callable[[], DimensionScore], float]] = [
@@ -179,6 +185,11 @@ def validate_prd_quality_v2(
                 content=content,
             ),
             _config.validation_structure_weight,
+        ),
+        (
+            "implementation_readiness",
+            lambda: score_implementation_readiness(frontmatter, content, _config),
+            _config.validation_implementation_readiness_weight,
         ),
         (
             "traceability",
@@ -256,10 +267,28 @@ def validate_prd_quality_v2(
     except Exception:  # justified: fail-open, integrity checks must not block scoring
         logger.warning("status_integrity_check_failed", exc_info=True)
 
+    integrity_failures: list[ValidationFailure] = []
+    integrity_warnings: list[str] = []
+    if project_root is not None:
+        try:
+            from pathlib import Path as _Path
+
+            integrity_failures, integrity_warnings = run_prd_integrity_checks(
+                content,
+                frontmatter,
+                project_root=_Path(project_root),
+                prds_relative_path=_config.prds_relative_path,
+            )
+        except Exception:  # justified: fail-open, validation must still return scoring output
+            logger.warning("prd_integrity_check_failed", exc_info=True)
+
+    combined_failures = [*v1_failures, *integrity_failures]
+    is_valid = is_valid and not integrity_failures
+
     result = ValidationResultV2(
         # V1 fields (computed inline)
         valid=is_valid,
-        failures=v1_failures,
+        failures=combined_failures,
         ambiguity_rate=ambiguity_rate,
         completeness_score=v1_completeness,
         traceability_coverage=v1_trace_coverage,
@@ -279,6 +308,7 @@ def validate_prd_quality_v2(
         risk_scaled=is_risk_scaled,
         # Status integrity warnings (PRD-FIX-056)
         status_drift_warnings=status_drift_warnings,
+        integrity_warnings=integrity_warnings,
     )
 
     logger.info(
