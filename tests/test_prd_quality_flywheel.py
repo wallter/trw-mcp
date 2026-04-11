@@ -9,7 +9,16 @@ These tests lock in the behavior added by PRD-QUAL-059:
 from __future__ import annotations
 
 from trw_mcp.models.requirements import DimensionScore
-from trw_mcp.state.validation import generate_improvement_suggestions, score_implementation_readiness
+from trw_mcp.state.validation import (
+    generate_improvement_suggestions,
+    score_implementation_readiness,
+)
+from trw_mcp.state.validation._prd_scoring import (
+    _extract_fr_sections,
+    _score_assertion_coverage,
+    _score_file_path_coverage,
+    score_traceability_v2,
+)
 
 
 _FRONTMATTER = {"category": "CORE"}
@@ -80,6 +89,35 @@ The solution should be tested thoroughly with appropriate unit, integration,
 and regression testing as needed for confidence in the outcome.
 """
 
+_TRACEABILITY_ONLY_PATHS = """\
+## 4. Functional Requirements
+
+### FR01: Example Requirement
+This FR intentionally omits file paths in the prose.
+
+## 12. Traceability Matrix
+
+| Requirement | Source | Implementation | Test | Status |
+|-------------|--------|----------------|------|--------|
+| FR01 | US-001 | src/foo.py | test_foo.py::test_bar | Pending |
+"""
+
+_ASSERTION_BLOCK_CONTENT = """\
+## 4. Functional Requirements
+
+### FR01: Covered by assertions block
+Implementation: src/foo.py
+Test: test_foo.py::test_bar
+```assertions
+grep_present: "src/foo.py"
+```
+
+### FR02: Only prose mention
+Implementation: src/bar.py
+Test: test_bar.py::test_baz
+This section mentions grep_present as documentation, not as an assertion block.
+"""
+
 
 def test_implementation_readiness_prefers_proof_rich_content() -> None:
     proof_rich = score_implementation_readiness(_FRONTMATTER, _PROOF_RICH_CONTENT)
@@ -113,3 +151,24 @@ def test_implementation_readiness_message_mentions_executable_proof() -> None:
     assert len(suggestions) == 1
     assert "control points" in suggestions[0].message
     assert "proof tests" in suggestions[0].message
+
+
+def test_file_path_coverage_scoring() -> None:
+    fr_sections = _extract_fr_sections(_TRACEABILITY_ONLY_PATHS)
+
+    coverage = _score_file_path_coverage(_TRACEABILITY_ONLY_PATHS, fr_sections)
+    traceability = score_traceability_v2(_FRONTMATTER, _TRACEABILITY_ONLY_PATHS)
+
+    assert coverage == 1.0
+    assert traceability.details["file_path_coverage"] == 1.0
+
+
+def test_assertion_coverage_scoring() -> None:
+    fr_sections = _extract_fr_sections(_ASSERTION_BLOCK_CONTENT)
+
+    coverage = _score_assertion_coverage(_ASSERTION_BLOCK_CONTENT, fr_sections)
+    traceability = score_traceability_v2(_FRONTMATTER, _ASSERTION_BLOCK_CONTENT)
+
+    assert coverage == 0.5
+    assert traceability.details["assertion_coverage"] == 0.5
+    assert "suggestions" not in traceability.details

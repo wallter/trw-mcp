@@ -147,6 +147,9 @@ _FR_HEADING_RE = re.compile(r"^###\s+(?:PRD-[\w-]+-)?FR\d+.*$", re.MULTILINE)
 _ASSERTION_RE = re.compile(
     r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists"
 )
+_ASSERTIONS_MARKER_RE = re.compile(r"^\s*(?:\*\*Assertions\*\*|Assertions)\s*:\s*$", re.IGNORECASE)
+_ASSERTIONS_FENCE_START_RE = re.compile(r"^\s*```assertions\s*$", re.IGNORECASE)
+_ASSERTIONS_FENCE_END_RE = re.compile(r"^\s*```\s*$")
 
 _VERIFICATION_COMMAND_RE = re.compile(
     r"\b(?:pytest|python -m pytest|npx vitest run|npm(?: run)? test|make test|go test|cargo test)\b",
@@ -431,11 +434,14 @@ def _score_file_path_coverage(
     total_frs = len(fr_sections)
     frs_with_impl = 0
     frs_with_test = 0
+    matrix_rows_by_fr = _extract_traceability_rows_by_fr(content)
 
-    for _name, body in fr_sections:
-        if _has_impl_ref(body):
+    for name, body in fr_sections:
+        fr_id = _extract_fr_id(name)
+        scoped_content = "\n".join([body, *matrix_rows_by_fr.get(fr_id, [])])
+        if _has_impl_ref(scoped_content):
             frs_with_impl += 1
-        if _has_test_ref(body):
+        if _has_test_ref(scoped_content):
             frs_with_test += 1
 
     return (frs_with_impl + frs_with_test) / (2 * total_frs)
@@ -454,9 +460,71 @@ def _score_assertion_coverage(
         return 0.0
 
     frs_with_assertion = sum(
-        1 for _name, body in fr_sections if _ASSERTION_RE.search(body)
+        1
+        for _name, body in fr_sections
+        if any(_ASSERTION_RE.search(block) for block in _iter_assertion_blocks(body))
     )
     return frs_with_assertion / len(fr_sections)
+
+
+def _extract_fr_id(section_name: str) -> str:
+    """Return the FR identifier from a section heading, or empty string."""
+    match = re.search(r"\bFR\d+\b", section_name)
+    return match.group(0) if match else ""
+
+
+def _extract_traceability_rows_by_fr(content: str) -> dict[str, list[str]]:
+    """Map FR IDs to their traceability-matrix row text."""
+    if "Traceability Matrix" not in content:
+        return {}
+
+    matrix_section = content.split("Traceability Matrix", 1)[-1]
+    rows_by_fr: dict[str, list[str]] = {}
+    for line in matrix_section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or re.match(r"^\|[\s\-:|]+\|$", stripped):
+            continue
+        for fr_id in set(re.findall(r"\bFR\d+\b", stripped)):
+            rows_by_fr.setdefault(fr_id, []).append(stripped)
+    return rows_by_fr
+
+
+def _iter_assertion_blocks(content: str) -> list[str]:
+    """Extract fenced or labeled assertion blocks from FR body content."""
+    blocks: list[str] = []
+    lines = content.splitlines()
+    idx = 0
+
+    while idx < len(lines):
+        line = lines[idx]
+        if _ASSERTIONS_FENCE_START_RE.match(line):
+            idx += 1
+            fenced_lines: list[str] = []
+            while idx < len(lines) and not _ASSERTIONS_FENCE_END_RE.match(lines[idx]):
+                fenced_lines.append(lines[idx])
+                idx += 1
+            blocks.append("\n".join(fenced_lines))
+        elif _ASSERTIONS_MARKER_RE.match(line):
+            idx += 1
+            marker_lines: list[str] = []
+            while idx < len(lines):
+                candidate = lines[idx]
+                stripped = candidate.strip()
+                if candidate.startswith("### ") or candidate.startswith("## "):
+                    break
+                if stripped and not (
+                    candidate.startswith((" ", "\t", "-", "*"))
+                    or _ASSERTION_RE.search(candidate)
+                    or candidate.strip().startswith("`")
+                ):
+                    break
+                marker_lines.append(candidate)
+                idx += 1
+            blocks.append("\n".join(marker_lines))
+            continue
+        idx += 1
+
+    return [block for block in blocks if block.strip()]
 
 
 def _count_planned_requirements(content: str, fr_sections: list[tuple[str, str]] | None = None) -> int:
