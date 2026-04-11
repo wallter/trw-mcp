@@ -85,6 +85,14 @@ def _reset_yaml_path_index() -> None:
         _yaml_path_index_ts = 0.0
 
 
+def _backfill_yaml_path_index(lid: str, entry_path: Path | None) -> None:
+    """Seed the cached YAML index with a resolved lookup path."""
+    if entry_path is None:
+        return
+    with _yaml_path_index_lock:
+        _yaml_path_index[lid] = entry_path
+
+
 # ---------------------------------------------------------------------------
 # Extracted from _correlation.py
 # ---------------------------------------------------------------------------
@@ -149,6 +157,7 @@ def _default_lookup_entry(
 
         result = yaml_find_entry_by_id(entries_dir, lid)
         if result is not None:
+            _backfill_yaml_path_index(lid, result[0])
             return result
     except Exception:  # justified: fail-open, fallback scan is best-effort
         logger.debug("yaml_entry_lookup_failed", learning_id=lid, exc_info=True)
