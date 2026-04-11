@@ -23,6 +23,7 @@ import structlog
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import DedupHandleResult
+from trw_mcp.state._helpers import truncate_nudge_line as truncate_nudge_line
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
@@ -40,26 +41,6 @@ def _validate_source_type(source_type: str) -> Literal["human", "agent", "tool",
         logger.debug("unknown_source_coerced", source_type=source_type)
         return "agent"
     return cast("Literal['human', 'agent', 'tool', 'consolidated']", source_type)
-
-
-def truncate_nudge_line(text: str, max_length: int = 80) -> str:
-    """Truncate a nudge line to max_length chars, preferring word boundaries.
-
-    Args:
-        text: The text to truncate.
-        max_length: Maximum length (default 80).
-
-    Returns:
-        Truncated text with ellipsis at a word boundary, or hard-cut at max_length.
-    """
-    if len(text) <= max_length:
-        return text
-    boundary_start = max(max_length - 20, 0)
-    for i in range(boundary_start, max_length):
-        if text[i] == " ":
-            return text[:i] + "\u2026"
-    return text[:max_length]
-
 
 @dataclass(slots=True)
 class LearningParams:

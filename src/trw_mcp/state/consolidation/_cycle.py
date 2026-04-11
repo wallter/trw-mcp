@@ -26,8 +26,8 @@ from trw_mcp.state.consolidation._summarize import (
     _summarize_cluster_llm,
 )
 from trw_mcp.state.dedup import cosine_similarity
+from trw_mcp.state._helpers import truncate_nudge_line
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.tools._learning_helpers import truncate_nudge_line
 
 logger = structlog.get_logger(__name__)
 

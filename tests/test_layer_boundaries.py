@@ -82,6 +82,21 @@ def test_is_noise_summary_in_state_layer() -> None:
     assert is_noise_summary("Real learning about caching") is False
 
 
+# --- FIX-061 regression: truncate_nudge_line must live in state layer ---
+
+
+@pytest.mark.unit
+def test_truncate_nudge_line_in_state_layer() -> None:
+    """truncate_nudge_line is defined in state and re-exported from tools."""
+    from trw_mcp.state._helpers import truncate_nudge_line
+    from trw_mcp.tools._learning_helpers import truncate_nudge_line as tools_truncate_nudge_line
+
+    assert truncate_nudge_line is tools_truncate_nudge_line
+    assert truncate_nudge_line("Recurring impl gap: wiring missing") == (
+        "Recurring impl gap: wiring missing"
+    )
+
+
 # --- FR02: _merge_session_events lives in state layer ---
 
 
