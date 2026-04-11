@@ -90,6 +90,42 @@ def _persist_session_metrics(
         logger.warning("session_metrics_persist_failed", exc_info=True)
 
 
+def _persist_deferred_results(
+    results: dict[str, object],
+    resolved_run: Path | None,
+) -> None:
+    """Persist deferred delivery results to run.yaml for downstream consumers."""
+    if resolved_run is None:
+        return
+    try:
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        reader = FileStateReader()
+        writer = FileStateWriter()
+        run_yaml_path = resolved_run / "meta" / "run.yaml"
+        if not run_yaml_path.exists():
+            return
+
+        run_data = reader.read_yaml(run_yaml_path)
+        run_data["deferred_results"] = dict(results)
+
+        consolidation = results.get("consolidation")
+        if isinstance(consolidation, dict):
+            promotions = consolidation.get("audit_pattern_promotions")
+            if isinstance(promotions, list):
+                run_data["audit_pattern_promotions"] = promotions
+                run_data["promotion_candidates"] = {
+                    "source": "consolidation",
+                    "audit_pattern_promotions": promotions,
+                    "audit_pattern_promotion_threshold": consolidation.get("audit_pattern_promotion_threshold"),
+                }
+
+        writer.write_yaml(run_yaml_path, run_data)
+        logger.info("deferred_results_persisted", path=str(run_yaml_path))
+    except Exception:  # justified: fail-open, deferred state persistence is best-effort
+        logger.warning("deferred_results_persist_failed", exc_info=True)
+
+
 def _try_acquire_deferred_lock(trw_dir: Path) -> io.TextIOWrapper | None:
     """Try to acquire the deferred-deliver file lock (non-blocking).
 
@@ -157,7 +193,7 @@ def _run_deferred_steps(
     critical_results: dict[str, object],
     *,
     skip_index_sync: bool = False,
-) -> None:
+) -> dict[str, object]:
     """Execute deferred delivery steps in the background.
 
     Acquires a non-blocking file lock to prevent concurrent deferred batches.
@@ -169,7 +205,7 @@ def _run_deferred_steps(
     lock_fd = _try_acquire_deferred_lock(trw_dir)
     if lock_fd is None:
         logger.info("deferred_deliver_skipped", reason="another_batch_running")
-        return
+        return {"status": "skipped", "reason": "another_batch_running"}
 
     results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
     errors: list[str] = []
@@ -245,8 +281,10 @@ def _run_deferred_steps(
         errors.append(f"deferred_fatal: {exc}")
         logger.warning("deferred_deliver_fatal", error=str(exc), exc_info=True)
     finally:
+        _persist_deferred_results(results, resolved_run)
         _log_deferred_result(trw_dir, results, errors)
         _release_deferred_lock(lock_fd)
+    return results
 
 
 def _launch_deferred(

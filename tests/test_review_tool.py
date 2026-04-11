@@ -314,6 +314,42 @@ class TestPreflightLogging:
         assert events[-1]["passed"] == 6
         assert events[-1]["wiring_issues"] == ["src/new_module.py"]
 
+    def test_preflight_log_fail_open_on_malformed_self_review(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Malformed self-review payloads normalize instead of crashing."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+
+        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
+            result = tools["trw_preflight_log"].fn(
+                prd_id="PRD-QUAL-056",
+                self_review={
+                    "passed": "not-a-number",
+                    "failed": None,
+                    "skipped": "2.5",
+                    "wiring_issues": "src/runtime.py",
+                    "nfr_issues": ("missing structured logging",),
+                    "test_issues": 42,
+                },
+            )
+
+        assert result["status"] == "logged"
+        events = [
+            json.loads(line)
+            for line in (run_dir / "meta" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        assert events[-1]["event"] == "pre_audit_self_review"
+        assert events[-1]["passed"] == 0
+        assert events[-1]["failed"] == 0
+        assert events[-1]["skipped"] == 0
+        assert events[-1]["wiring_issues"] == ["src/runtime.py"]
+        assert events[-1]["nfr_issues"] == ["missing structured logging"]
+        assert events[-1]["test_issues"] == []
+
     def test_review_artifact_includes_latest_preflight_checks(
         self,
         tmp_path: Path,

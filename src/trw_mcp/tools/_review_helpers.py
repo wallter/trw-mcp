@@ -258,20 +258,43 @@ def _normalize_self_review_payload(prd_id: str, self_review: dict[str, object]) 
     """Normalize a self-review payload before persisting to events.jsonl."""
     return {
         "prd_id": prd_id,
-        "passed": int(str(self_review.get("passed", 0))),
-        "failed": int(str(self_review.get("failed", 0))),
-        "skipped": int(str(self_review.get("skipped", 0))),
+        "passed": _normalize_self_review_count(self_review.get("passed")),
+        "failed": _normalize_self_review_count(self_review.get("failed")),
+        "skipped": _normalize_self_review_count(self_review.get("skipped")),
         "wiring_issues": _normalize_issue_list(self_review.get("wiring_issues")),
         "nfr_issues": _normalize_issue_list(self_review.get("nfr_issues")),
         "test_issues": _normalize_issue_list(self_review.get("test_issues")),
     }
 
 
+def _normalize_self_review_count(value: object) -> int:
+    """Coerce malformed self-review counters to a non-negative integer."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0) if value.is_integer() else 0
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return 0
+        try:
+            return max(int(normalized), 0)
+        except ValueError:
+            return 0
+    return 0
+
+
 def _normalize_issue_list(value: object) -> list[str]:
     """Coerce a possibly-missing issue collection into ``list[str]``."""
-    if not isinstance(value, list):
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item)]
+    if value is None:
         return []
-    return [str(item) for item in value]
+    return []
 
 
 def _load_preflight_checks(
