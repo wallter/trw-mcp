@@ -113,9 +113,9 @@ def test_user_prompt_submit_hook_reads_prompt_field() -> None:
         content = hook_path.read_text(encoding="utf-8")
 
         assert ".prompt // empty" in content
-        assert '"prompt"[[:space:]]*:[[:space:]]*"[^"]*"' in content
+        assert "json.load(sys.stdin)" in content
         assert ".message // empty" not in content
-        assert '"message"[[:space:]]*:[[:space:]]*"[^"]*"' not in content
+        assert '"prompt"[[:space:]]*:[[:space:]]*"[^"]*"' not in content
 
 
 def test_user_prompt_submit_hook_copies_stay_in_sync() -> None:
@@ -241,6 +241,30 @@ def test_user_prompt_submit_hook_missing_prompt_is_silent(tmp_path: Path) -> Non
         result = subprocess.run(
             ["sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
             input=json.dumps({}),
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={
+                **os.environ,
+                "TRW_PROJECT_ROOT": str(project_root),
+                "TRW_TEST_PHASE": "implement",
+                "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            },
+            check=False,
+        )
+
+        assert result.stdout == ""
+        hook_log = (project_root / "hook.log").read_text(encoding="utf-8")
+        assert "UserPromptSubmit|implement|skipped" in hook_log
+
+
+def test_user_prompt_submit_hook_malformed_json_is_silent(tmp_path: Path) -> None:
+    for hook_path in _HOOK_PATHS:
+        project_root, _, _ = _copy_hook_to_temp(tmp_path / hook_path.parent.name, hook_path)
+
+        result = subprocess.run(
+            ["sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
+            input='{"prompt":"structlog event keyword"',
             text=True,
             capture_output=True,
             cwd=project_root,

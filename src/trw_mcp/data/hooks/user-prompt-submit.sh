@@ -22,9 +22,22 @@ _payload=$(cat) || exit 0
 _prompt=""
 if command -v jq >/dev/null 2>&1; then
   _prompt=$(printf '%s' "$_payload" | jq -r '.prompt // empty' 2>/dev/null) || true
-fi
-if [ -z "$_prompt" ]; then
-  _prompt=$(printf '%s' "$_payload" | grep -o '"prompt"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"prompt"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+elif command -v python3 >/dev/null 2>&1; then
+  _prompt=$(
+    printf '%s' "$_payload" | python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+
+prompt = payload.get("prompt", "") if isinstance(payload, dict) else ""
+if isinstance(prompt, str):
+    sys.stdout.write(prompt)
+'
+  ) || true
 fi
 
 _phase=$(infer_phase)
