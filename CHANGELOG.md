@@ -4,7 +4,33 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-04-11
+
 ### Added
+
+- **Implementation-readiness scoring dimension (PRD-QUAL-059)** — 4th active scoring dimension evaluates whether PRDs contain actionable proof of implementation: control points, behavior switch matrices, key files, test subsections, completion evidence. Variant-aware: feature PRDs reward different subsections than fix or research PRDs.
+- **`score_implementation_readiness()` function** in `_prd_scoring.py` — ~150 lines of variant-aware scoring logic with pre-computed subheading extraction for performance.
+- **`validation_implementation_readiness_weight` config field** — default weight 25.0, exposed in `_fields_ceremony.py`.
+- **Risk profile 4-tuple weights** — `RiskProfile` now carries `(density, structure, readiness, traceability)` weights that always sum to 100. All 4 risk levels updated.
+- **Anti-Goodhart regression tests** in `test_prd_quality_flywheel.py` — proof-rich PRDs outscore padding-rich ones; suggestion ordering deprioritizes density.
+- **EVAL template variant** mapped to `feature` scoring in `template_variants.py`.
+
+### Changed
+
+- **PRD validation rebalanced to 4 dimensions** — weights shifted from `(25/25/50)` to `(20/20/25/35)` for medium-risk default. Suggestion priority order: `implementation_readiness` → `traceability` → `structural_completeness` → `content_density`.
+- **Groom skill updated** (`trw-prd-groom/SKILL.md`) — readiness-first guidance replaces density-first approach.
+- **Review skill updated** (`trw-prd-review/SKILL.md`) — proof-oriented review criteria added.
+- **Config reference updated** (`data/config_reference.md`) — documents new weight field and 4-dimension model.
+
+### Fixed
+
+- **FR-count inflation bug** — `_count_planned_requirements()` now counts actual FR sections first, falls back to unique FR refs when absent. Always returns ≥1 (division-by-zero safe). Previously raw `FR\d+` regex matches over-counted repeated refs in traceability matrices.
+- **DRY: pre-compute `_extract_subheadings()`** — was called 12+ times per `score_implementation_readiness()` invocation (once per `_has_named_subheading()` call). Now extracted once at function entry.
+- **DRY: pre-compute `_extract_fr_sections()`** — was called twice in `score_traceability_v2()`. Now extracted once.
+- **AI operational ratio cap** — ratio could exceed 1.0 due to keyword/section count mismatch (10 keywords vs 7 expected sections). Capped at 1.0.
+- **DRY: shared feature/infrastructure subsection lists** — deduplicated identical lists across readiness and structure scorers.
+- **`CeremonyFeedbackStatus` literal** — fixed type annotation in `_ceremony.py` TypedDict.
+- **Redundant `str()` casts** removed in `ceremony.py` and `learning.py`.
 
 - **GitHub Copilot CLI integration (PRD-CORE-127)**
   - `copilot` ClientProfile with 200k context, hooks/skills/agent-teams enabled
