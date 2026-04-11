@@ -40,7 +40,14 @@ def _detect_surface_phase() -> str:
 
         phase = detect_current_phase()
         return phase.upper() if phase else ""
-    except Exception:  # justified: fail-open, phase detection is optional
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "surface_phase_detection_failed",
+            component="recall",
+            op="detect_surface_phase",
+            outcome="fail_open",
+            exc_info=True,
+        )
         return ""
 
 
@@ -70,8 +77,14 @@ def build_recall_context(
         )
         if git_result.returncode == 0:
             modified_files = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
-    except Exception:  # noqa: S110  # fail-open for git
-        pass
+    except (OSError, subprocess.SubprocessError, ValueError):
+        logger.debug(
+            "recall_context_git_scan_failed",
+            component="recall",
+            op="build_recall_context",
+            outcome="fail_open",
+            exc_info=True,
+        )
 
     inferred_domains = infer_domains(file_paths=modified_files, query=query)
 
@@ -88,8 +101,14 @@ def build_recall_context(
         profile = config.client_profile
         client_profile = profile.client_id if profile else ""
         model_family = getattr(config, "model_family", "") or ""
-    except Exception:  # noqa: S110  # justified: fail-open
-        pass
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "recall_context_config_failed",
+            component="recall",
+            op="build_recall_context",
+            outcome="fail_open",
+            exc_info=True,
+        )
 
     # Thread PRD knowledge IDs from artifact scanning (CORE-106/CORE-116)
     prd_knowledge_ids: set[str] = set()
@@ -105,8 +124,14 @@ def build_recall_context(
                 raw_ids = kr_data.get("learning_ids", [])
                 if isinstance(raw_ids, list):
                     prd_knowledge_ids = {str(lid) for lid in raw_ids}
-    except Exception:  # noqa: S110  # justified: fail-open
-        pass
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "recall_context_prd_scan_failed",
+            component="recall",
+            op="build_recall_context",
+            outcome="fail_open",
+            exc_info=True,
+        )
 
     logger.debug(
         "recall_context_built",
@@ -144,6 +169,100 @@ def _deprioritize_ranked_learnings(
         else:
             fresh.append(entry)
     return fresh + already_in_context
+
+
+def _build_recall_context_safe(trw_dir: Path, query: str) -> RecallContext | None:
+    """Build recall context with structured fail-open logging."""
+
+    try:
+        return build_recall_context(trw_dir, query)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "recall_context_build_failed",
+            component="recall",
+            op="build_recall_context",
+            outcome="fail_open",
+            exc_info=True,
+        )
+        return None
+
+
+def _log_recall_surfaces(trw_dir: Path, ranked_learnings: list[dict[str, object]]) -> None:
+    """Best-effort recall surface logging."""
+
+    try:
+        phase = _detect_surface_phase()
+        for entry in ranked_learnings:
+            learning_id = str(entry.get("id", ""))
+            if learning_id:
+                log_surface_event(
+                    trw_dir,
+                    learning_id=learning_id,
+                    surface_type="recall",
+                    phase=phase,
+                    files_context=[],
+                )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "surface_logging_failed",
+            component="recall",
+            op="log_surface_event",
+            outcome="fail_open",
+            exc_info=True,
+        )
+
+
+def _append_recall_ceremony_status(
+    recall_result: RecallResultDict,
+    trw_dir: Path,
+) -> RecallResultDict:
+    """Best-effort ceremony summary injection for recall responses."""
+
+    try:
+        from trw_mcp.tools._ceremony_status import append_ceremony_status
+
+        append_ceremony_status(cast("dict[str, object]", recall_result), trw_dir)
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "recall_ceremony_status_skipped",
+            component="recall",
+            op="append_ceremony_status",
+            outcome="fail_open",
+            exc_info=True,
+        )
+    return recall_result
+
+
+def _build_recall_result(
+    *,
+    query: str,
+    ranked_learnings: list[dict[str, object]],
+    matching_patterns: list[dict[str, object]],
+    context_data: RecallContextDict,
+    total_available: int,
+    use_compact: bool,
+    max_results: int,
+    topic_filter_ignored: bool,
+    token_budget: int | None,
+    tokens_used: int,
+    tokens_truncated: bool,
+) -> RecallResultDict:
+    """Build the final recall response payload."""
+
+    return {
+        "query": query,
+        "learnings": ranked_learnings,
+        "patterns": matching_patterns,
+        "context": context_data,
+        "total_matches": len(ranked_learnings) + len(matching_patterns),
+        "total_available": total_available,
+        "compact": use_compact,
+        "max_results": max_results,
+        "topic_filter_ignored": topic_filter_ignored,
+        "tokens_used": tokens_used,
+        "tokens_budget": token_budget,
+        "tokens_truncated": tokens_truncated,
+    }
 
 
 def execute_recall(
@@ -230,11 +349,7 @@ def execute_recall(
     use_compact = compact if compact is not None else is_wildcard
 
     # Build recall context for contextual boosting (PRD-CORE-102)
-    recall_context: RecallContext | None = None
-    try:
-        recall_context = build_recall_context(trw_dir, query)
-    except Exception:
-        logger.debug("recall_context_build_failed", exc_info=True)
+    recall_context = _build_recall_context_safe(trw_dir, query)
 
     # Search entries via SQLite adapter
     matching_learnings = recall_fn(
@@ -311,20 +426,7 @@ def execute_recall(
     # Log each surfaced learning for telemetry/fatigue detection.
     # Skip compact/wildcard queries (bulk operations, not intentional surfacings).
     if not use_compact:
-        try:
-            phase = _detect_surface_phase()
-            for entry in ranked_learnings:
-                lid = str(entry.get("id", ""))
-                if lid:
-                    log_surface_event(
-                        trw_dir,
-                        learning_id=lid,
-                        surface_type="recall",
-                        phase=phase,
-                        files_context=[],  # No file context in base recall; session_start path adds its own
-                    )
-        except Exception:  # justified: fail-open, surface logging must not block recall
-            logger.debug("surface_logging_failed", exc_info=True)
+        _log_recall_surfaces(trw_dir, ranked_learnings)
 
     # Strip to compact fields when requested
     if use_compact:
@@ -347,29 +449,23 @@ def execute_recall(
         compact=use_compact,
     )
 
-    recall_result: RecallResultDict = {
-        "query": query,
-        "learnings": ranked_learnings,
-        "patterns": matching_patterns,
-        "context": context_data,
-        "total_matches": len(ranked_learnings) + len(matching_patterns),
-        "total_available": total_available,
-        "compact": use_compact,
-        "max_results": max_results,
-        "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
-        "tokens_used": tokens_used,
-        "tokens_budget": token_budget,
-        "tokens_truncated": tokens_truncated,
-    }
+    recall_result = _build_recall_result(
+        query=query,
+        ranked_learnings=ranked_learnings,
+        matching_patterns=matching_patterns,
+        context_data=context_data,
+        total_available=total_available,
+        use_compact=use_compact,
+        max_results=max_results,
+        topic_filter_ignored=topic_filter_ignored if topic is not None else False,
+        token_budget=token_budget,
+        tokens_used=tokens_used,
+        tokens_truncated=tokens_truncated,
+    )
 
     # Inject ceremony progress summary.
     if not (is_wildcard and use_compact):
-        try:
-            from trw_mcp.tools._ceremony_status import append_ceremony_status
-
-            append_ceremony_status(cast("dict[str, object]", recall_result), trw_dir)
-        except Exception:  # justified: fail-open
-            logger.debug("recall_ceremony_status_skipped", exc_info=True)
+        recall_result = _append_recall_ceremony_status(recall_result, trw_dir)
 
     return recall_result
 
@@ -417,8 +513,14 @@ def _augment_with_remote(
         remote = fetch_shared_learnings(query)
         if remote:
             return list(matching_learnings) + [dict(r) for r in remote]
-    except Exception:  # justified: boundary, remote recall hits network/auth
-        logger.debug("remote_recall_failed", exc_info=True)
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "remote_recall_failed",
+            component="recall",
+            op="augment_with_remote",
+            outcome="fail_open",
+            exc_info=True,
+        )
     return list(matching_learnings)
 
 
@@ -479,8 +581,15 @@ def _persist_assertion_results(entry_id: str, updated_assertions: list[dict[str,
         trw_dir = resolve_trw_dir()
         backend = get_backend(trw_dir)
         backend.update(entry_id, assertions=json.dumps(updated_assertions))
-    except Exception:  # justified: persist is best-effort
-        logger.debug("assertion_result_persist_failed", entry_id=entry_id, exc_info=True)
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "assertion_result_persist_failed",
+            component="recall",
+            op="persist_assertion_results",
+            outcome="fail_open",
+            entry_id=entry_id,
+            exc_info=True,
+        )
 
 
 def _all_assertions_persistently_failing(
@@ -517,8 +626,14 @@ def _verify_assertions(
         from trw_mcp.state._paths import resolve_project_root
 
         project_root_path = resolve_project_root()
-    except Exception:  # justified: fail-open
-        logger.debug("assertion_project_root_resolve_failed", exc_info=True)
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        logger.debug(
+            "assertion_project_root_resolve_failed",
+            component="recall",
+            op="verify_assertions",
+            outcome="fail_open",
+            exc_info=True,
+        )
 
     try:
         from trw_memory.lifecycle.verification import verify_assertions
@@ -559,9 +674,12 @@ def _verify_assertions(
                     )
                     learning["verification_status"] = "stale"
 
-            except Exception:  # justified: scan-resilience
+            except (RuntimeError, ValueError, TypeError, OSError):
                 logger.debug(
                     "assertion_verification_error",
+                    component="recall",
+                    op="verify_assertions",
+                    outcome="fail_open",
                     entry_id=entry_id,
                     exc_info=True,
                 )

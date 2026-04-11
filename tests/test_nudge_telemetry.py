@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 from trw_mcp.state._nudge_state import (
     CeremonyState,
     write_ceremony_state,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,7 +50,7 @@ class TestLogNudgeEvent:
 
     def test_nudge_shown_event_emitted(self, tmp_path: Path) -> None:
         """log_nudge_event writes a nudge_shown event to events.jsonl."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         events_path = tmp_path / "events.jsonl"
         log_nudge_event(
@@ -72,7 +70,7 @@ class TestLogNudgeEvent:
 
     def test_nudge_shown_event_schema(self, tmp_path: Path) -> None:
         """nudge_shown event includes data field with learning_id, phase, turn, surface_type."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         events_path = tmp_path / "events.jsonl"
         log_nudge_event(
@@ -96,7 +94,7 @@ class TestLogNudgeEvent:
 
     def test_nudge_event_fallback_field(self, tmp_path: Path) -> None:
         """nudge_shown event includes fallback indicator."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         events_path = tmp_path / "events.jsonl"
         log_nudge_event(
@@ -111,7 +109,7 @@ class TestLogNudgeEvent:
 
     def test_nudge_event_multiple_emissions(self, tmp_path: Path) -> None:
         """Multiple nudge_shown events append to the same JSONL file."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         events_path = tmp_path / "events.jsonl"
         for i in range(3):
@@ -128,7 +126,7 @@ class TestLogNudgeEvent:
 
     def test_nudge_event_failopen(self, tmp_path: Path) -> None:
         """log_nudge_event does not raise when path is unwritable."""
-        from trw_mcp.tools._session_recall_helpers import log_nudge_event
+        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
 
         # Path to a directory that doesn't exist and can't be created
         bad_path = tmp_path / "nonexistent" / "deep" / "path" / "events.jsonl"

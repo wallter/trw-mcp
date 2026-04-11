@@ -36,23 +36,57 @@ from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
 
 # Re-export step functions from sub-modules so test patches on
 # "trw_mcp.tools._deferred_delivery._step_foo" continue to work.
-from trw_mcp.tools._deferred_steps_learning import _do_auto_progress as _do_auto_progress
-from trw_mcp.tools._deferred_steps_learning import _do_index_sync as _do_index_sync
-from trw_mcp.tools._deferred_steps_learning import _merge_session_events as _merge_session_events
-from trw_mcp.tools._deferred_steps_learning import _step_auto_progress as _step_auto_progress
-from trw_mcp.tools._deferred_steps_learning import _step_collect_rework_metrics as _step_collect_rework_metrics
-from trw_mcp.tools._deferred_steps_learning import _step_delivery_metrics as _step_delivery_metrics
-from trw_mcp.tools._deferred_steps_learning import _step_outcome_correlation as _step_outcome_correlation
-from trw_mcp.tools._deferred_steps_learning import _step_publish_learnings as _step_publish_learnings
-from trw_mcp.tools._deferred_steps_learning import _step_recall_outcome as _step_recall_outcome
-from trw_mcp.tools._deferred_steps_learning import _step_trust_increment as _step_trust_increment
-from trw_mcp.tools._deferred_steps_memory import _step_auto_prune as _step_auto_prune
-from trw_mcp.tools._deferred_steps_memory import _step_consolidation as _step_consolidation
-from trw_mcp.tools._deferred_steps_memory import _step_tier_sweep as _step_tier_sweep
-from trw_mcp.tools._deferred_steps_telemetry import _step_batch_send as _step_batch_send
-from trw_mcp.tools._deferred_steps_telemetry import _step_ceremony_feedback as _step_ceremony_feedback
-from trw_mcp.tools._deferred_steps_telemetry import _step_checkpoint as _step_checkpoint
-from trw_mcp.tools._deferred_steps_telemetry import _step_telemetry as _step_telemetry
+from trw_mcp.tools._deferred_steps_learning import (
+    _do_auto_progress as _do_auto_progress,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _do_index_sync as _do_index_sync,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _merge_session_events as _merge_session_events,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _step_auto_progress as _step_auto_progress,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _step_collect_rework_metrics as _step_collect_rework_metrics,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _step_delivery_metrics as _step_delivery_metrics,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _step_outcome_correlation as _step_outcome_correlation,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _step_publish_learnings as _step_publish_learnings,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _step_recall_outcome as _step_recall_outcome,
+)
+from trw_mcp.tools._deferred_steps_learning import (
+    _step_trust_increment as _step_trust_increment,
+)
+from trw_mcp.tools._deferred_steps_memory import (
+    _step_auto_prune as _step_auto_prune,
+)
+from trw_mcp.tools._deferred_steps_memory import (
+    _step_consolidation as _step_consolidation,
+)
+from trw_mcp.tools._deferred_steps_memory import (
+    _step_tier_sweep as _step_tier_sweep,
+)
+from trw_mcp.tools._deferred_steps_telemetry import (
+    _step_batch_send as _step_batch_send,
+)
+from trw_mcp.tools._deferred_steps_telemetry import (
+    _step_ceremony_feedback as _step_ceremony_feedback,
+)
+from trw_mcp.tools._deferred_steps_telemetry import (
+    _step_checkpoint as _step_checkpoint,
+)
+from trw_mcp.tools._deferred_steps_telemetry import (
+    _step_telemetry as _step_telemetry,
+)
 from trw_mcp.tools._helpers import _run_step
 
 logger = structlog.get_logger(__name__)

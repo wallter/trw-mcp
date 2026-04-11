@@ -477,7 +477,7 @@ class TestNudgeEngine:
 
     def test_fr01_append_ceremony_nudge_failopen(self, tmp_path: Path) -> None:
         """append_ceremony_nudge returns response unchanged on error."""
-        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         original_response: dict[str, object] = {"status": "ok", "data": "result"}
         # Pass a non-existent trw_dir to force a read failure
@@ -489,7 +489,7 @@ class TestNudgeEngine:
 
     def test_fr01_append_ceremony_nudge_adds_key(self, tmp_path: Path) -> None:
         """append_ceremony_nudge adds ceremony_status key to response dict."""
-        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         trw = _trw_dir(tmp_path)
         state = CeremonyState(session_started=False)
@@ -1074,7 +1074,7 @@ class TestFR02NudgeContext:
 
     def test_fr02_append_ceremony_nudge_accepts_context(self, tmp_path: Path) -> None:
         """append_ceremony_nudge accepts optional context parameter."""
-        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         trw = _trw_dir(tmp_path)
         write_ceremony_state(trw, CeremonyState(session_started=True, checkpoint_count=1))
@@ -1630,7 +1630,7 @@ class TestBackwardsCompatibility:
 
     def test_append_ceremony_nudge_without_context(self, tmp_path: Path) -> None:
         """append_ceremony_nudge still works without context (backwards compat)."""
-        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
 
         trw = _trw_dir(tmp_path)
         write_ceremony_state(trw, CeremonyState())
@@ -1660,8 +1660,8 @@ class TestHydrateFilesModified:
         """Events of type 'file_modified' are counted and stored in state."""
         import json
 
-        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
         from trw_mcp.state.ceremony_nudge import CeremonyState
+        from trw_mcp.tools._legacy_ceremony_nudge import _hydrate_files_modified
 
         trw = _trw_dir(tmp_path)
 
@@ -1695,10 +1695,10 @@ class TestHydrateFilesModified:
     def test_hydrate_files_modified_respects_checkpoint_ts(self, tmp_path: Path) -> None:
         """Only file_modified events AFTER last_checkpoint_ts are counted."""
         import json
-
-        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
-        from trw_mcp.state.ceremony_nudge import CeremonyState
         from unittest.mock import patch
+
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from trw_mcp.tools._legacy_ceremony_nudge import _hydrate_files_modified
 
         trw = _trw_dir(tmp_path)
         run_dir = tmp_path / ".trw" / "runs" / "task" / "20260201T000000Z-test"
@@ -1726,9 +1726,10 @@ class TestHydrateFilesModified:
 
     def test_hydrate_files_modified_failopen_no_run(self, tmp_path: Path) -> None:
         """No exception when find_active_run returns None (no active run)."""
-        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
-        from trw_mcp.state.ceremony_nudge import CeremonyState
         from unittest.mock import patch
+
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from trw_mcp.tools._legacy_ceremony_nudge import _hydrate_files_modified
 
         trw = _trw_dir(tmp_path)
         state = CeremonyState()
@@ -1742,9 +1743,10 @@ class TestHydrateFilesModified:
 
     def test_hydrate_files_modified_failopen_missing_events(self, tmp_path: Path) -> None:
         """No exception when events.jsonl does not exist."""
-        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
-        from trw_mcp.state.ceremony_nudge import CeremonyState
         from unittest.mock import patch
+
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from trw_mcp.tools._legacy_ceremony_nudge import _hydrate_files_modified
 
         trw = _trw_dir(tmp_path)
         run_dir = tmp_path / ".trw" / "runs" / "task" / "20260301T000000Z-noevents"
@@ -1762,10 +1764,10 @@ class TestHydrateFilesModified:
     def test_hydrate_files_modified_only_counts_file_modified_type(self, tmp_path: Path) -> None:
         """Events with other types are not counted."""
         import json
-
-        from trw_mcp.tools._session_recall_helpers import _hydrate_files_modified
-        from trw_mcp.state.ceremony_nudge import CeremonyState
         from unittest.mock import patch
+
+        from trw_mcp.state.ceremony_nudge import CeremonyState
+        from trw_mcp.tools._legacy_ceremony_nudge import _hydrate_files_modified
 
         trw = _trw_dir(tmp_path)
         run_dir = tmp_path / ".trw" / "runs" / "task" / "20260401T000000Z-mixed"

@@ -140,11 +140,11 @@ class TestCeremonyTools:
 
     @pytest.mark.unit
     def test_contains_init(self) -> None:
-        assert "trw_init" in CEREMONY_TOOLS
+        assert "trw_init" not in CEREMONY_TOOLS
 
     @pytest.mark.unit
     def test_contains_recall(self) -> None:
-        assert "trw_recall" in CEREMONY_TOOLS
+        assert "trw_recall" not in CEREMONY_TOOLS
 
     @pytest.mark.unit
     def test_is_frozenset(self) -> None:
@@ -333,7 +333,7 @@ class TestCeremonyMiddleware:
 
     @pytest.mark.asyncio
     async def test_trw_init_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
-        """trw_init is also a ceremony tool that marks the session."""
+        """trw_init is blocked until session_start clears the gate."""
         result = FakeToolResult(content=[TextContent(type="text", text="init")])
 
         async def call_next(_ctx: Any) -> Any:
@@ -344,12 +344,14 @@ class TestCeremonyMiddleware:
             message=FakeMessage(name="trw_init"),
             fastmcp_context=FakeContext(request_context=req_ctx),
         )
-        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
-        assert is_session_active("sess-init")
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert not is_session_active("sess-init")
+        assert out.structured_content is not None
+        assert out.structured_content["tool_attempted"] == "trw_init"
 
     @pytest.mark.asyncio
     async def test_trw_recall_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
-        """trw_recall is also a ceremony tool that marks the session."""
+        """trw_recall is blocked until session_start clears the gate."""
         result = FakeToolResult(content=[TextContent(type="text", text="recall")])
 
         async def call_next(_ctx: Any) -> Any:
@@ -360,8 +362,10 @@ class TestCeremonyMiddleware:
             message=FakeMessage(name="trw_recall"),
             fastmcp_context=FakeContext(request_context=req_ctx),
         )
-        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
-        assert is_session_active("sess-recall")
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        assert not is_session_active("sess-recall")
+        assert out.structured_content is not None
+        assert out.structured_content["tool_attempted"] == "trw_recall"
 
     @pytest.mark.asyncio
     async def test_heartbeat_exception_inside_safe_does_not_block_tool(
