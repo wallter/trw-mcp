@@ -266,7 +266,9 @@ def check_and_handle_dedup(
                         # PRD-CORE-086 FR05: Include assertions in merge data
                         if params.assertions:
                             entry_dict["assertions"] = params.assertions
-                        merge_entries(yaml_file, entry_dict, reader, writer)
+                        merged_path = merge_entries(yaml_file, entry_dict, reader, writer)
+                        merged_yaml_path = merged_path if isinstance(merged_path, Path) else yaml_file
+                        _sync_merged_entry_to_backend(entries_dir, reader.read_yaml(merged_yaml_path))
                         logger.info(
                             "learning_dedup_merged",
                             new_id=params.learning_id,
@@ -286,6 +288,45 @@ def check_and_handle_dedup(
         logger.debug("dedup_check_failed", error=str(exc))
 
     return None
+
+
+def _resolve_dedup_trw_dir(entries_dir: Path) -> Path:
+    """Resolve the TRW dir for dedup backend sync."""
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        return resolve_trw_dir()
+    except Exception:
+        if entries_dir.name == "entries" and entries_dir.parent.name == "learnings":
+            return entries_dir.parent.parent
+        return entries_dir.parent
+
+
+def _sync_merged_entry_to_backend(entries_dir: Path, merged_entry: dict[str, object]) -> None:
+    """Best-effort sync of merged YAML fields into the primary backend."""
+    try:
+        from trw_mcp.state.memory_adapter import get_backend
+
+        learning_id = str(merged_entry.get("id", ""))
+        if not learning_id:
+            return
+
+        backend = get_backend(_resolve_dedup_trw_dir(entries_dir))
+        backend.update(
+            learning_id,
+            detail=str(merged_entry.get("detail", "")),
+            tags=[str(tag) for tag in cast("list[object]", merged_entry.get("tags") or [])],
+            evidence=[str(item) for item in cast("list[object]", merged_entry.get("evidence") or [])],
+            importance=float(str(merged_entry.get("impact", 0.5))),
+            recurrence=int(str(merged_entry.get("recurrence", 1))),
+            merged_from=[str(item) for item in cast("list[object]", merged_entry.get("merged_from") or [])],
+            assertions=[
+                dict(item) for item in cast("list[object]", merged_entry.get("assertions") or [])
+                if isinstance(item, dict)
+            ],
+        )
+    except Exception:
+        logger.debug("dedup_backend_sync_failed", exc_info=True)
 
 
 def enforce_distribution(
