@@ -4,6 +4,25 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-04-11
+
+### Added
+
+- **PRD integrity validation (PRD-QUAL-060)** — `trw_prd_validate()` / V2 PRD validation now run repo-aware integrity checks for unsupported PRD categories, broken repo-path citations, and likely duplicate PRD candidates. Integrity failures are emitted in the validation result and duplicate candidates surface as `integrity_warnings`.
+- **Research provenance lint helper** — `state/validation/research_provenance.py` adds an opt-in markdown lint for quantitative/speculative claims and generated-artifact source-of-truth references. Initial coverage locks in the OpenCode research docs that triggered the drift audit.
+
+### Changed
+
+- **OpenCode instruction rendering unified** — `render_opencode_instructions()` now delegates to the shared `_opencode_sections.py` renderer so the OpenCode profile has a single instruction source of truth.
+- **OpenCode/Codex bootstrap lifecycle aligned with documented contract** — init-project now creates `AGENTS.md` for both IDEs, update-project passes managed-artifact hashes into both instruction generators, and instruction generation reports `created` vs `updated` based on pre-write file existence instead of post-write checks.
+- **Client profile docs corrected** — `docs/CLIENT-PROFILES.md` now documents OpenCode/Codex instruction preservation and shared `AGENTS.md` behavior as a contract surface.
+- **Historical OpenCode research notes corrected** — the 2026-04-10 OpenCode research docs now carry provenance-tagged executive summaries that distinguish repo-verified findings from hypotheses and identify `Makefile`, `build_installer.py`, and `install-trw.template.py` as the installer source of truth.
+
+### Fixed
+
+- **User-edited instruction files are preserved on update** — `.trw/managed-artifacts.yaml` now records content hashes for `.opencode/INSTRUCTIONS.md`, `.codex/INSTRUCTIONS.md`, and shared `AGENTS.md`, which allows update flows to preserve customized instruction files instead of overwriting them.
+- **OpenCode/Codex contract regressions covered** — focused bootstrap, client-profile, and per-client-instructions tests now lock in AGENTS creation, instruction preservation, and the corrected renderer/output behavior.
+
 ## [0.41.0] — 2026-04-11
 
 ### Added
