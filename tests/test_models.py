@@ -59,6 +59,10 @@ class TestTRWConfig:
         assert config.claude_md_max_lines == 500
         assert config.sub_claude_md_max_lines == 50
 
+    def test_audit_cycle_defaults(self) -> None:
+        config = TRWConfig()
+        assert config.max_audit_cycles == 3
+
     def test_aaref_quality_gates(self) -> None:
         config = TRWConfig()
         assert config.ambiguity_rate_max == 0.05
@@ -75,6 +79,11 @@ class TestTRWConfig:
         monkeypatch.setenv("TRW_PARALLELISM_MAX", "20")
         config = TRWConfig()
         assert config.parallelism_max == 20
+
+    @pytest.mark.parametrize("value", [0, 11])
+    def test_max_audit_cycles_validation(self, value: int) -> None:
+        with pytest.raises(ValidationError):
+            TRWConfig(max_audit_cycles=value)
 
     def test_removed_fields_not_in_config(self) -> None:
         """PRD-FIX-016-FR02: Verify dead fields are removed."""
