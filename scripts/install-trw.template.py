@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import os
 import random
 import re
 import shutil
@@ -1247,14 +1248,16 @@ def phase_install_extras(
     python: str,
     install_ai: bool,
     install_sqlitevec: bool,
+    pip_target: str = "",
 ) -> list[str]:
     """Install optional extras as a single step. Returns feature names."""
     ui.step_header(step, total, "Installing extras")
     features: list[str] = []
+    validated_target = validate_pip_target(pip_target)
 
     if install_ai:
         ui.start_spinner("Installing trw-mcp[ai]...")
-        ok = pip_install(python, "trw-mcp[ai]", "trw-mcp[ai]", ui)
+        ok = pip_install(python, "trw-mcp[ai]", "trw-mcp[ai]", ui, target_dir=validated_target)
         ui.stop_spinner(ok, "AI features enabled", "AI extras failed (non-fatal)")
         if ok:
             features.append("AI/LLM")
@@ -1262,7 +1265,13 @@ def phase_install_extras(
             ui.step_warn("AI extras failed \u2014 base TRW still works fine")
 
         ui.start_spinner("Installing sentence-transformers (embeddings)...")
-        ok = pip_install(python, "sentence-transformers>=2.0.0", "sentence-transformers", ui)
+        ok = pip_install(
+            python,
+            "sentence-transformers>=2.0.0",
+            "sentence-transformers",
+            ui,
+            target_dir=validated_target,
+        )
         ui.stop_spinner(ok, "Embeddings enabled", "Embeddings install failed (non-fatal)")
         if ok:
             features.append("embeddings")
@@ -1271,7 +1280,7 @@ def phase_install_extras(
 
     if install_sqlitevec:
         ui.start_spinner("Installing sqlite-vec...")
-        ok = pip_install(python, "sqlite-vec", "sqlite-vec", ui)
+        ok = pip_install(python, "sqlite-vec", "sqlite-vec", ui, target_dir=validated_target)
         ui.stop_spinner(ok, "sqlite-vec enabled", "sqlite-vec failed (non-fatal)")
         if ok:
             features.append("sqlite-vec")
@@ -1795,6 +1804,7 @@ def main() -> None:
                 python,
                 install_ai,
                 install_vec,
+                pip_target=args.pip_target,
             )
 
         # Step N: Project setup
