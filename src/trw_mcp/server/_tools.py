@@ -46,10 +46,10 @@ def _apply_tool_exposure_filter() -> None:
             logger.warning("empty_tool_exposure_set", mode=mode)
             return
 
-        # Get all currently registered tool names.
-        # FastMCP has no public API for listing registered tools;
-        # _tool_manager is stable internal API (unchanged since FastMCP 0.1).
-        registered_tools = [t.name for t in mcp._tool_manager.list_tools()]  # type: ignore[attr-defined]
+        # Get all currently registered tool names via the public async API.
+        # FastMCP's internal tool-manager attributes changed across releases,
+        # so stdio startup must not depend on private state here.
+        registered_tools = [t.name for t in _run_async(mcp.list_tools())]
         removed: list[str] = []
         for tool_name in registered_tools:
             if tool_name not in allowed:

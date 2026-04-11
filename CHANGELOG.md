@@ -35,6 +35,9 @@ All notable changes to the TRW MCP server package.
 
 ### Fixed
 
+- **Codex stdio MCP startup**
+  - `server/_tools.py` now uses FastMCP's public `list_tools()` API instead of the broken `_tool_manager` internal, eliminating startup-time tool exposure filter failures on newer FastMCP builds.
+  - `server/__init__.py` now configures a quiet stderr-only logger before eager registration, preventing import-time warnings from polluting stdout and breaking stdio JSON-RPC clients such as Codex.
 - `result["warnings"]` KeyError in `_init_project.py` and `_ide_targets.py` — replaced with `setdefault()`
 - mypy `BootstrapFileResult` type mismatch in `_codex.py` — added `cast()` for dict→TypedDict
 
