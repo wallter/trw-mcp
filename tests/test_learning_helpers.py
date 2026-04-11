@@ -443,6 +443,68 @@ class TestCheckAndHandleDedup:
         assert result["new_id"] == "L-test020"
         assert mock_merge.called
 
+    def test_merge_syncs_merged_yaml_to_backend(self, tmp_path: Path) -> None:
+        """Merged YAML state is written back to SQLite after dedup merges."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir(parents=True)
+
+        writer = FileStateWriter()
+        reader = FileStateReader()
+        writer.write_yaml(
+            entries_dir / "existing.yaml",
+            {
+                "id": "L-existing030",
+                "summary": "Existing learning",
+                "detail": "short detail",
+                "tags": ["existing"],
+                "evidence": ["existing-evidence"],
+                "impact": 0.6,
+                "recurrence": 1,
+                "merged_from": [],
+                "assertions": [{"type": "grep_present", "pattern": "old", "target": "**/*.py"}],
+            },
+        )
+
+        mock_dedup = MagicMock()
+        mock_dedup.action = "merge"
+        mock_dedup.existing_id = "L-existing030"
+        mock_dedup.similarity = 0.89
+        mock_backend = MagicMock()
+
+        with (
+            patch("trw_mcp.state.dedup.check_duplicate", return_value=mock_dedup),
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
+        ):
+            result = check_and_handle_dedup(
+                LearningParams(
+                    summary="Existing learning",
+                    detail="this replacement detail is much longer than the old one",
+                    learning_id="L-test030",
+                    tags=["new-tag"],
+                    evidence=["new-evidence"],
+                    impact=0.8,
+                    source_type="agent",
+                    source_identity="",
+                    assertions=[{"type": "glob_exists", "pattern": "", "target": "src/main.py"}],
+                ),
+                entries_dir,
+                reader,
+                writer,
+                _CFG,
+            )
+
+        assert result is not None
+        assert result["status"] == "merged"
+        update_kwargs = mock_backend.update.call_args.kwargs
+        assert update_kwargs["recurrence"] == 2
+        assert update_kwargs["importance"] == 0.8
+        assert update_kwargs["tags"] == ["existing", "new-tag"]
+        assert update_kwargs["evidence"] == ["existing-evidence", "new-evidence"]
+        assert update_kwargs["merged_from"] == ["L-test030"]
+        assert "Merged from L-test030" in update_kwargs["detail"]
+        assert len(update_kwargs["assertions"]) == 2
+
     def test_fail_open_on_dedup_exception(self, tmp_path: Path) -> None:
         """When dedup check throws, returns None (proceed to store)."""
         entries_dir = tmp_path / "entries"

@@ -460,6 +460,53 @@ class TestSessionStartPartialFailure:
         assert result["errors"] == []
         assert "timestamp" in result
 
+    def test_session_start_returns_assertion_health(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Assertion health is exposed through the production trw_session_start tool path."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import MagicMock
+
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        recent = datetime.now(timezone.utc) - timedelta(hours=1)
+        mock_backend = MagicMock()
+        mock_backend.entries_with_assertions.return_value = [
+            MagicMock(
+                assertions=[
+                    MagicMock(last_result=True, last_verified_at=recent),
+                    MagicMock(last_result=False, last_verified_at=recent),
+                ]
+            ),
+            MagicMock(
+                assertions=[
+                    MagicMock(last_result=None, last_verified_at=None),
+                    MagicMock(last_result=None, last_verified_at=recent),
+                ]
+            ),
+        ]
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        assert result["success"] is True
+        assert result["assertion_health"] == {
+            "passing": 1,
+            "failing": 1,
+            "stale": 1,
+            "unverifiable": 1,
+            "total": 2,
+        }
+
 
 @pytest.mark.integration
 class TestDeliverPartialFailure:

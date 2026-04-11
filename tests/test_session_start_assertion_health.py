@@ -11,10 +11,7 @@ since the full trw_session_start has many orchestration dependencies.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 
 def _make_mock_assertion(
