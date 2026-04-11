@@ -70,6 +70,8 @@ class _BuildFields:
     auto_checkpoint_pre_compact: bool = True
     auto_recall_enabled: bool = True
     auto_recall_max_results: int = 5
+    auto_recall_max_tokens: int = 100
+    auto_recall_min_score: float = 0.7
     learning_auto_prune_on_deliver: bool = True
     learning_auto_prune_cap: int = 150
 

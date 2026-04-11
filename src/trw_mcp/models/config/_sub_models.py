@@ -88,6 +88,8 @@ class OrchestrationConfig(BaseModel):
     max_research_waves: int = 3
     auto_recall_enabled: bool = True
     auto_recall_max_results: int = 5
+    auto_recall_max_tokens: int = 100
+    auto_recall_min_score: float = 0.7
     agent_teams_enabled: bool = True
 
 
