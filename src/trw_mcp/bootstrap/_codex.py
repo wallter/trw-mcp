@@ -38,6 +38,8 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.models.typed_dicts._codex import CodexMcpToolConfigEntry
 
+from ._file_ops import _new_result, _record_write
+
 logger = structlog.get_logger(__name__)
 
 _CODEX_AGENTS_DIR = ".codex/agents"
@@ -74,10 +76,6 @@ class _NamedTool(Protocol):
     """Protocol for FastMCP tool metadata returned by list_tools()."""
 
     name: str
-
-
-from ._file_ops import _new_result, _record_write
-
 
 def _trw_mcp_server_entry() -> CodexMcpServerEntry:
     """Return the TRW MCP server entry for Codex config."""
@@ -491,7 +489,7 @@ def generate_codex_config(
     force: bool = False,
 ) -> BootstrapFileResult:
     """Generate or smart-merge `.codex/config.toml`."""
-    result: BootstrapFileResult = cast(BootstrapFileResult, _new_result())
+    result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
     codex_dir = target_dir / ".codex"
     codex_dir.mkdir(parents=True, exist_ok=True)
     config_path = codex_dir / "config.toml"
@@ -502,14 +500,14 @@ def generate_codex_config(
             existing = _parse_codex_toml(config_path.read_text(encoding="utf-8"))
             merged = merge_codex_config(existing)
             config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
-            _record_write(cast(dict[str, list[str]], result), _CODEX_CONFIG_PATH, existed=True)
+            _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=True)
         except (OSError, tomllib.TOMLDecodeError) as exc:
             result["errors"].append(f"Failed to read/merge {config_path}: {exc}")
     else:
         try:
             merged = merge_codex_config({})
             config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
-            _record_write(cast(dict[str, list[str]], result), _CODEX_CONFIG_PATH, existed=existed)
+            _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {config_path}: {exc}")
 
@@ -634,7 +632,7 @@ def generate_codex_hooks(
     force: bool = False,
 ) -> BootstrapFileResult:
     """Generate `.codex/hooks.json`."""
-    result: BootstrapFileResult = cast(BootstrapFileResult, _new_result())
+    result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
     codex_dir = target_dir / ".codex"
     codex_dir.mkdir(parents=True, exist_ok=True)
     hooks_path = codex_dir / "hooks.json"
@@ -645,11 +643,11 @@ def generate_codex_hooks(
             raw_existing = json.loads(hooks_path.read_text(encoding="utf-8"))
             payload = merge_codex_hooks(_normalize_hook_config(raw_existing))
             hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            _record_write(cast(dict[str, list[str]], result), _CODEX_HOOKS_PATH, existed=True)
+            _record_write(cast("dict[str, list[str]]", result), _CODEX_HOOKS_PATH, existed=True)
         else:
             payload = _codex_hooks_payload()
             hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            _record_write(cast(dict[str, list[str]], result), _CODEX_HOOKS_PATH, existed=existed)
+            _record_write(cast("dict[str, list[str]]", result), _CODEX_HOOKS_PATH, existed=existed)
     except (OSError, json.JSONDecodeError) as exc:
         result["errors"].append(f"Failed to write {hooks_path}: {exc}")
 
@@ -708,7 +706,7 @@ def generate_codex_agents(
     force: bool = False,
 ) -> BootstrapFileResult:
     """Generate `.codex/agents/*.toml`."""
-    result: BootstrapFileResult = cast(BootstrapFileResult, _new_result())
+    result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
     agents_dir = target_dir / _CODEX_AGENTS_DIR
     agents_dir.mkdir(parents=True, exist_ok=True)
 
@@ -720,7 +718,7 @@ def generate_codex_agents(
                 result["preserved"].append(f"{_CODEX_AGENTS_DIR}/{filename}")
                 continue
             path.write_text(content, encoding="utf-8")
-            _record_write(cast(dict[str, list[str]], result), f"{_CODEX_AGENTS_DIR}/{filename}", existed=existed)
+            _record_write(cast("dict[str, list[str]]", result), f"{_CODEX_AGENTS_DIR}/{filename}", existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {path}: {exc}")
 
@@ -735,7 +733,7 @@ def install_codex_skills(
     """Install TRW bundled skills into `.agents/skills/` for Codex."""
     from ._init_project import _validate_skill
 
-    result: BootstrapFileResult = cast(BootstrapFileResult, _new_result())
+    result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
     skills_source = _codex_skills_source_dir()
     dest_root = target_dir / _CODEX_SKILLS_DIR
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -761,7 +759,7 @@ def install_codex_skills(
                     continue
                 existed = dest.exists()
                 shutil.copy2(skill_file, dest)
-                _record_write(cast(dict[str, list[str]], result), rel_path, existed=existed)
+                _record_write(cast("dict[str, list[str]]", result), rel_path, existed=existed)
             except OSError as exc:
                 result["errors"].append(f"Failed to copy {skill_file} -> {dest}: {exc}")
 

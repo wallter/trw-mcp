@@ -15,6 +15,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Protocol
 
 import structlog
 
@@ -38,6 +39,24 @@ _yaml_path_index_lock = threading.Lock()
 _YAML_INDEX_TTL: float = 30.0  # Rebuild at most every 30s
 
 
+class _YamlReader(Protocol):
+    """Minimal protocol for YAML readers used during index construction."""
+
+    def read_yaml(self, path: Path) -> dict[str, object]: ...
+
+
+def _read_learning_id(reader: _YamlReader, yaml_file: Path) -> str | None:
+    """Read a YAML entry id, returning None when the entry is unreadable."""
+    try:
+        data = reader.read_yaml(yaml_file)
+    except Exception:  # justified: fail-open, skip unreadable entries during index build
+        logger.debug("yaml_path_index_entry_skipped", path=str(yaml_file), exc_info=True)
+        return None
+
+    lid = data.get("id")
+    return lid if isinstance(lid, str) and lid else None
+
+
 def _build_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
     """Scan entries_dir once and build {learning_id -> yaml_path} map.
 
@@ -51,13 +70,9 @@ def _build_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
     index: dict[str, Path] = {}
     reader = FileStateReader()
     for yaml_file in iter_yaml_entry_files(entries_dir):
-        try:
-            data = reader.read_yaml(yaml_file)
-            lid = data.get("id")
-            if isinstance(lid, str) and lid:
-                index[lid] = yaml_file
-        except Exception:  # justified: fail-open, skip unreadable entries during index build
-            continue
+        lid = _read_learning_id(reader, yaml_file)
+        if lid is not None:
+            index[lid] = yaml_file
     return index
 
 

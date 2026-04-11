@@ -510,7 +510,7 @@ def _iter_assertion_blocks(content: str) -> list[str]:
             while idx < len(lines):
                 candidate = lines[idx]
                 stripped = candidate.strip()
-                if candidate.startswith("### ") or candidate.startswith("## "):
+                if candidate.startswith(("### ", "## ")):
                     break
                 if stripped and not (
                     candidate.startswith((" ", "\t", "-", "*"))

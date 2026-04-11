@@ -44,6 +44,11 @@ from ._archive import (
     _rollback_archive as _rollback_archive,
 )
 
+# --- Cycle: entry creation, dry-run, main entry point ---
+from ._audit_patterns import (
+    detect_audit_finding_recurrence as detect_audit_finding_recurrence,
+)
+
 # --- Clustering: entry loading, tag overlap, embedding clusters ---
 from ._clustering import (
     _is_clusterable as _is_clusterable,
@@ -57,11 +62,6 @@ from ._clustering import (
 from ._clustering import (
     find_clusters as find_clusters,
 )
-
-# --- Cycle: entry creation, dry-run, main entry point ---
-from ._audit_patterns import (
-    detect_audit_finding_recurrence as detect_audit_finding_recurrence,
-)
 from ._cycle import (
     _create_consolidated_entry as _create_consolidated_entry,
 )
@@ -71,6 +71,7 @@ from ._cycle import (
 from ._cycle import (
     consolidate_cycle as consolidate_cycle,
 )
+
 # --- Summarization: LLM + fallback ---
 from ._summarize import (
     _summarize_cluster_fallback as _summarize_cluster_fallback,

@@ -19,6 +19,7 @@ from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext
 from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-export
 
 logger = structlog.get_logger(__name__)
+_RNG = random.SystemRandom()
 
 # Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
 #
@@ -307,7 +308,7 @@ def _select_nudge_pool(
     # Weighted random selection
     pools = list(eligible.keys())
     w = [eligible[p] for p in pools]
-    selected: str = random.choices(pools, weights=w, k=1)[0]
+    selected: str = _RNG.choices(pools, weights=w, k=1)[0]
 
     logger.debug(
         "nudge_pool_selected",

@@ -106,8 +106,8 @@ from trw_mcp.state.validation._prd_validation import (
 from trw_mcp.state.validation._prd_validation import (
     validate_prd_quality as validate_prd_quality,
 )
-from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
 from trw_mcp.state.validation.prd_integrity import run_prd_integrity_checks
+from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
 
 logger = structlog.get_logger(__name__)
 

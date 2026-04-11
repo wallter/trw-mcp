@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 
 import structlog
+
 from trw_mcp.models.typed_dicts import ClaudeMdSyncResultDict
 
 from ._utils import (

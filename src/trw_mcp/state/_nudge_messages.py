@@ -269,90 +269,100 @@ def _context_reactive_message(
     and high urgency levels per PRD-CORE-084 FR06.
     """
     tool = context.tool_name
-
     if tool == ToolName.BUILD_CHECK:
-        if context.build_passed is False:
-            return (
-                "Build failed. If failures reveal a design flaw, revert to PLAN "
-                "— fixing a plan costs less than patching broken code. "
-                "If implementation bugs, fix in-phase and re-run."
-            )
-        if context.build_passed is True:
-            if urgency == "high":
-                return (
-                    "NEXT: trw_review() SHOULD be performed — independent verification "
-                    "catches spec drift that passing tests miss. THEN: trw_deliver()"
-                )
-            if urgency == "medium":
-                return (
-                    "NEXT: trw_review() is recommended — independent verification "
-                    "catches spec drift that passing tests miss. THEN: trw_deliver()"
-                )
-            return (
-                "NEXT: trw_review() — independent verification catches spec drift "
-                "that passing tests miss. THEN: trw_deliver()"
-            )
-
+        return _build_check_message(context, urgency)
     if tool == ToolName.REVIEW:
-        if context.review_p0_count > 0:
-            return (
-                "P0 findings detected. A separate agent MUST remediate "
-                "— the reviewer SHALL NOT fix its own findings. "
-                "THEN: re-validate with trw_build_check()."
-            )
-        return "NEXT: trw_deliver() — persist learnings and artifacts for future sessions."
-
+        return _review_message(context)
     if tool == ToolName.CHECKPOINT:
-        return (
-            "Progress saved. Quick check: have you recorded what you discovered so far? "
-            "trw_learn() persists your insights across sessions \u2014 "
-            "even a one-line root cause compounds for future agents."
-        )
-
+        return _checkpoint_message()
     if tool == ToolName.LEARN:
-        if ceremony_mode == "light":
-            return (
-                "Learning persisted. Continue implementing, then call trw_deliver() when done."
-            )
-        return (
-            "Learning persisted. NEXT: trw_checkpoint() at next milestone. "
-            "THEN: trw_build_check() when implementation complete."
-        )
-
+        return _learn_message(ceremony_mode)
     if tool == ToolName.SESSION_START:
-        if ceremony_mode == "light":
-            return (
-                "What's your approach? State it before editing files. "
-                "THEN: trw_init() for new work or trw_status() to resume."
-            )
+        return _session_start_message(ceremony_mode)
+    if tool == ToolName.DELIVER:
+        return _deliver_message(state)
+    if tool == ToolName.INIT:
+        return "Run bootstrapped. NEXT: Begin implementation. THEN: trw_checkpoint() at first milestone."
+    if tool == ToolName.RECALL:
+        return "Learnings recalled. Review them for relevant patterns before proceeding."
+    if tool == ToolName.STATUS:
+        return "Run status loaded. Resume from last checkpoint rather than re-implementing."
+    if tool == ToolName.PRD_CREATE:
+        return "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before implementation."
+    if tool == ToolName.PRD_VALIDATE:
+        return "PRD validated. NEXT: trw_init() to bootstrap the run. THEN: begin implementation."
+    return None
+
+
+def _build_check_message(context: NudgeContext, urgency: str) -> str | None:
+    """Return the context-reactive message for build-check results."""
+    if context.build_passed is False:
         return (
-            "NEXT: Read FRAMEWORK.md (phases, gates, reversion rules). "
+            "Build failed. If failures reveal a design flaw, revert to PLAN "
+            "— fixing a plan costs less than patching broken code. "
+            "If implementation bugs, fix in-phase and re-run."
+        )
+    if context.build_passed is not True:
+        return None
+
+    suffix = "independent verification catches spec drift that passing tests miss. THEN: trw_deliver()"
+    if urgency == "high":
+        return f"NEXT: trw_review() SHOULD be performed — {suffix}"
+    if urgency == "medium":
+        return f"NEXT: trw_review() is recommended — {suffix}"
+    return f"NEXT: trw_review() — {suffix}"
+
+
+def _review_message(context: NudgeContext) -> str:
+    """Return the context-reactive message for review outcomes."""
+    if context.review_p0_count > 0:
+        return (
+            "P0 findings detected. A separate agent MUST remediate "
+            "— the reviewer SHALL NOT fix its own findings. "
+            "THEN: re-validate with trw_build_check()."
+        )
+    return "NEXT: trw_deliver() — persist learnings and artifacts for future sessions."
+
+
+def _checkpoint_message() -> str:
+    """Return the checkpoint reminder message."""
+    return (
+        "Progress saved. Quick check: have you recorded what you discovered so far? "
+        "trw_learn() persists your insights across sessions \u2014 "
+        "even a one-line root cause compounds for future agents."
+    )
+
+
+def _learn_message(ceremony_mode: str) -> str:
+    """Return the learning follow-up message."""
+    if ceremony_mode == "light":
+        return "Learning persisted. Continue implementing, then call trw_deliver() when done."
+    return (
+        "Learning persisted. NEXT: trw_checkpoint() at next milestone. "
+        "THEN: trw_build_check() when implementation complete."
+    )
+
+
+def _session_start_message(ceremony_mode: str) -> str:
+    """Return the session-start guidance message."""
+    if ceremony_mode == "light":
+        return (
             "What's your approach? State it before editing files. "
             "THEN: trw_init() for new work or trw_status() to resume."
         )
+    return (
+        "NEXT: Read FRAMEWORK.md (phases, gates, reversion rules). "
+        "What's your approach? State it before editing files. "
+        "THEN: trw_init() for new work or trw_status() to resume."
+    )
 
-    if tool == ToolName.DELIVER:
-        n = state.learnings_this_session
-        if n > 0:
-            return f"Session complete. {n} discovery/discoveries persisted for future sessions."
-        return "Session complete. 0 learnings recorded \u2014 future agents start without your insights."
 
-    if tool == ToolName.INIT:
-        return "Run bootstrapped. NEXT: Begin implementation. THEN: trw_checkpoint() at first milestone."
-
-    if tool == ToolName.RECALL:
-        return "Learnings recalled. Review them for relevant patterns before proceeding."
-
-    if tool == ToolName.STATUS:
-        return "Run status loaded. Resume from last checkpoint rather than re-implementing."
-
-    if tool == ToolName.PRD_CREATE:
-        return "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before implementation."
-
-    if tool == ToolName.PRD_VALIDATE:
-        return "PRD validated. NEXT: trw_init() to bootstrap the run. THEN: begin implementation."
-
-    return None
+def _deliver_message(state: CeremonyState) -> str:
+    """Return the delivery completion message."""
+    n = state.learnings_this_session
+    if n > 0:
+        return f"Session complete. {n} discovery/discoveries persisted for future sessions."
+    return "Session complete. 0 learnings recorded \u2014 future agents start without your insights."
 
 
 # ---------------------------------------------------------------------------

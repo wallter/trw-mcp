@@ -102,7 +102,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
         except Exception as exc:  # justified: boundary, retry recovery only for SQLite corruption on backend init
             if not _is_corruption_error(exc):
-                logger.error("backend_init_failed", db=str(db_path), action="raise", exc_info=True)
+                logger.exception("backend_init_failed", db=str(db_path), action="raise")
                 raise
             # If constructor fails even after internal recovery attempt,
             # force-recover and retry once for corruption-like failures.

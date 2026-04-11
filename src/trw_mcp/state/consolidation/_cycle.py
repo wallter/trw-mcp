@@ -5,6 +5,7 @@ summarization, entry creation, and archival. Includes dry-run mode.
 """
 
 from __future__ import annotations
+
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,10 +17,9 @@ import structlog
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import LearningEntryDict
-from trw_mcp.state.consolidation._audit_patterns import detect_audit_finding_recurrence
 from trw_mcp.state.consolidation._archive import _archive_originals
-from trw_mcp.state.consolidation._clustering import find_clusters
-from trw_mcp.state.consolidation._clustering import _load_active_entries
+from trw_mcp.state.consolidation._audit_patterns import detect_audit_finding_recurrence
+from trw_mcp.state.consolidation._clustering import _load_active_entries, find_clusters
 from trw_mcp.state.consolidation._summarize import (
     _summarize_cluster_fallback,
     _summarize_cluster_llm,
