@@ -174,7 +174,7 @@ def _resolve_review_prd_ids(
     """Resolve PRD IDs for a review event from explicit fields or run scope."""
     raw_prd_ids = event_fields.get("prd_ids")
     if isinstance(raw_prd_ids, list):
-        prd_ids = [str(prd_id) for prd_id in raw_prd_ids if str(prd_id)]
+        prd_ids = list(dict.fromkeys(str(prd_id) for prd_id in raw_prd_ids if str(prd_id)))
         if prd_ids:
             return prd_ids
 
@@ -186,7 +186,7 @@ def _resolve_review_prd_ids(
     raw_scope = run_data.get("prd_scope", []) if isinstance(run_data, dict) else []
     if not isinstance(raw_scope, list):
         return []
-    return [str(prd_id) for prd_id in raw_scope if str(prd_id)]
+    return list(dict.fromkeys(str(prd_id) for prd_id in raw_scope if str(prd_id)))
 
 
 def _extract_review_finding_categories(review_data: dict[str, object]) -> list[str]:

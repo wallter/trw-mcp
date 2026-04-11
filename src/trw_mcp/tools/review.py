@@ -121,6 +121,7 @@ def register_review_tools(server: FastMCP) -> None:
                     resolved_run,
                     review_id,
                     ts,
+                    prd_ids,
                 ),
             )
         elif effective_mode == "reconcile":
@@ -142,6 +143,7 @@ def register_review_tools(server: FastMCP) -> None:
                     resolved_run,
                     review_id,
                     ts,
+                    prd_ids,
                 ),
             )
         else:
@@ -154,6 +156,7 @@ def register_review_tools(server: FastMCP) -> None:
                     review_id,
                     ts,
                     reviewer_findings,
+                    prd_ids,
                 ),
             )
 

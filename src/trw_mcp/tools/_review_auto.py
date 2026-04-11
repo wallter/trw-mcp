@@ -39,6 +39,7 @@ def handle_auto_mode(
     review_id: str,
     ts: str,
     reviewer_findings: list[dict[str, object]] | None,
+    prd_ids: list[str] | None = None,
 ) -> AutoReviewResult:
     """Handle the auto review mode -- multi-reviewer analysis, filter, persist."""
     diff = _helpers._get_git_diff()
@@ -132,6 +133,7 @@ def handle_auto_mode(
             "mode": "auto",
             "surfaced_findings": len(surfaced),
             "total_findings": len(all_auto_findings),
+            "prd_ids": list(prd_ids) if prd_ids else [],
         },
     )
 
@@ -191,6 +193,7 @@ def handle_cross_model_mode(
     resolved_run: Path | None,
     review_id: str,
     ts: str,
+    prd_ids: list[str] | None = None,
 ) -> CrossModelReviewResult:
     """Handle the cross-model review mode -- get diff, invoke provider, persist."""
     diff = _helpers._get_git_diff()
@@ -247,6 +250,7 @@ def handle_cross_model_mode(
             "verdict": verdict,
             "mode": "cross_model",
             "cross_model_skipped": cross_model_skipped,
+            "prd_ids": list(prd_ids) if prd_ids else [],
         },
     )
     return result
