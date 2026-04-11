@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 
 import structlog
+from trw_mcp.models.typed_dicts import ClaudeMdSyncResultDict
 
 from ._utils import (
     _minimal_claude_md,
@@ -165,6 +166,7 @@ def _update_codex_artifacts(
 ) -> None:
     """Update Codex artifacts when Codex is detected."""
     from ._codex import (
+        codex_hooks_enabled,
         generate_codex_agents,
         generate_codex_config,
         generate_codex_hooks,
@@ -186,18 +188,21 @@ def _update_codex_artifacts(
     except Exception as exc:  # justified: fail-open, codex update is best-effort
         result.setdefault("warnings", []).append(f".codex/config.toml update skipped: {exc}")
 
-    try:
-        hooks_result = generate_codex_hooks(target_dir)
-        result["created"].extend(hooks_result.get("created", []))
-        result["updated"].extend(hooks_result.get("updated", []))
-        result["errors"].extend(hooks_result.get("errors", []))
-    except Exception as exc:  # justified: fail-open, codex update is best-effort
-        result.setdefault("warnings", []).append(f".codex/hooks.json update skipped: {exc}")
+    if codex_hooks_enabled(target_dir):
+        try:
+            hooks_result = generate_codex_hooks(target_dir)
+            result["created"].extend(hooks_result.get("created", []))
+            result["updated"].extend(hooks_result.get("updated", []))
+            result["preserved"].extend(hooks_result.get("preserved", []))
+            result["errors"].extend(hooks_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open, codex update is best-effort
+            result.setdefault("warnings", []).append(f".codex/hooks.json update skipped: {exc}")
 
     try:
         agents_result = generate_codex_agents(target_dir)
         result["created"].extend(agents_result.get("created", []))
         result["updated"].extend(agents_result.get("updated", []))
+        result["preserved"].extend(agents_result.get("preserved", []))
         result["errors"].extend(agents_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, codex update is best-effort
         result.setdefault("warnings", []).append(f".codex/agents update skipped: {exc}")
@@ -206,6 +211,7 @@ def _update_codex_artifacts(
         skills_result = install_codex_skills(target_dir)
         result["created"].extend(skills_result.get("created", []))
         result["updated"].extend(skills_result.get("updated", []))
+        result["preserved"].extend(skills_result.get("preserved", []))
         result["errors"].extend(skills_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, codex update is best-effort
         result.setdefault("warnings", []).append(f".agents/skills update skipped: {exc}")
@@ -449,7 +455,7 @@ def _run_claude_md_sync(
             )
             return
 
-        def _do_sync() -> dict[str, object]:
+        def _do_sync() -> ClaudeMdSyncResultDict:
             # Suppress stdout/stderr so structlog noise and SDK auth errors
             # don't leak into the installer's subprocess pipe.
             saved_stdout, saved_stderr = sys.stdout, sys.stderr

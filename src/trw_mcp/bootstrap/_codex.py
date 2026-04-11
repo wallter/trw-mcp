@@ -2,7 +2,7 @@
 
 Generates and smart-merges repo-scoped Codex artifacts:
 - .codex/config.toml
-- .codex/hooks.json
+- optional .codex/hooks.json
 - .codex/agents/*.toml
 - .agents/skills/
 """
@@ -49,6 +49,13 @@ _TRW_PROJECT_DOC = "AGENTS.md"
 _LEGACY_PROJECT_DOC = "CLAUDE.md"
 _TRW_TOOL_PREFIX = "trw_"
 _AsyncResultT = TypeVar("_AsyncResultT")
+
+
+def _codex_instruction_path() -> str:
+    """Return the profile-driven Codex instruction file path."""
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    return resolve_client_profile("codex").write_targets.instruction_path
 
 
 def _codex_data_dir() -> Path:
@@ -370,13 +377,13 @@ def _normalize_hook_config(existing: object) -> CodexHooksConfig:
 
 
 def _normalize_feature_flags(raw_features: object) -> CodexFeaturesConfig:
-    """Extract boolean feature flags and enforce Codex hook support."""
+    """Extract boolean feature flags while defaulting Codex hooks off."""
     features_map: dict[str, bool] = {}
     if isinstance(raw_features, dict):
         features_map = {
             key: value for key, value in raw_features.items() if isinstance(key, str) and isinstance(value, bool)
         }
-    features_map["codex_hooks"] = True
+    features_map.setdefault("codex_hooks", False)
     return cast("CodexFeaturesConfig", features_map)
 
 
@@ -396,12 +403,14 @@ def _normalize_mcp_servers(raw_mcp_servers: object) -> dict[str, CodexMcpServerE
 
 
 def _normalize_fallback_files(raw_fallback_files: object) -> list[str]:
-    """Normalize project-doc fallback files and add required TRW docs."""
+    """Normalize project-doc fallback files and strip model-instruction paths."""
     fallback_files = raw_fallback_files if isinstance(raw_fallback_files, list) else []
-    normalized_fallbacks = [value for value in fallback_files if isinstance(value, str)]
-    for required_file in (".codex/INSTRUCTIONS.md",):
-        if required_file not in normalized_fallbacks:
-            normalized_fallbacks.append(required_file)
+    instruction_path = _codex_instruction_path()
+    normalized_fallbacks: list[str] = []
+    for value in fallback_files:
+        if not isinstance(value, str) or value == instruction_path or value in normalized_fallbacks:
+            continue
+        normalized_fallbacks.append(value)
     return normalized_fallbacks
 
 
@@ -435,6 +444,7 @@ def _merge_skill_config(raw_skills: object) -> CodexSkillsConfig:
 def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
     """Merge TRW-managed Codex config into an existing config dict."""
     result = cast("CodexConfigDict", dict(existing))
+    instruction_path = _codex_instruction_path()
 
     result["features"] = _normalize_feature_flags(result.get("features"))
 
@@ -449,10 +459,30 @@ def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
     mcp_servers.setdefault("openaiDeveloperDocs", _docs_mcp_server_entry())
     result["mcp_servers"] = mcp_servers
 
-    result["project_doc_fallback_filenames"] = _normalize_fallback_files(result.get("project_doc_fallback_filenames"))
+    fallback_files = _normalize_fallback_files(result.get("project_doc_fallback_filenames"))
+    if fallback_files:
+        result["project_doc_fallback_filenames"] = fallback_files
+    else:
+        result.pop("project_doc_fallback_filenames", None)
+    result["model_instructions_file"] = instruction_path
     result["skills"] = _merge_skill_config(result.get("skills"))
 
     return result
+
+
+def codex_hooks_enabled(target_dir: Path) -> bool:
+    """Return whether Codex hooks are explicitly enabled in the repo config."""
+    config_path = target_dir / _CODEX_CONFIG_PATH
+    if not config_path.exists():
+        return False
+
+    try:
+        config = _parse_codex_toml(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+
+    features = _normalize_feature_flags(config.get("features"))
+    return features.get("codex_hooks", False)
 
 
 def generate_codex_config(
@@ -687,9 +717,9 @@ def generate_codex_agents(
         try:
             existed = path.exists()
             if existed and not force:
-                path.write_text(content, encoding="utf-8")
-            else:
-                path.write_text(content, encoding="utf-8")
+                result["preserved"].append(f"{_CODEX_AGENTS_DIR}/{filename}")
+                continue
+            path.write_text(content, encoding="utf-8")
             _record_write(cast(dict[str, list[str]], result), f"{_CODEX_AGENTS_DIR}/{filename}", existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {path}: {exc}")
@@ -724,14 +754,14 @@ def install_codex_skills(
             if not skill_file.is_file():
                 continue
             dest = dest_skill / skill_file.name
+            rel_path = f"{_CODEX_SKILLS_DIR}/{skill_dir.name}/{skill_file.name}"
             try:
-                update_existing = dest.exists() and not force
+                if dest.exists() and not force:
+                    result["preserved"].append(rel_path)
+                    continue
+                existed = dest.exists()
                 shutil.copy2(skill_file, dest)
-                rel_path = f"{_CODEX_SKILLS_DIR}/{skill_dir.name}/{skill_file.name}"
-                if update_existing:
-                    result["updated"].append(rel_path)
-                else:
-                    result["created"].append(rel_path)
+                _record_write(cast(dict[str, list[str]], result), rel_path, existed=existed)
             except OSError as exc:
                 result["errors"].append(f"Failed to copy {skill_file} -> {dest}: {exc}")
 

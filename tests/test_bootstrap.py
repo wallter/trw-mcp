@@ -2076,12 +2076,14 @@ class TestCodexBootstrap:
         result = generate_codex_config(tmp_path)
         assert ".codex/config.toml" in result["created"]
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["codex_hooks"] is True
+        assert config["features"]["codex_hooks"] is False
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
         assert "trw_session_start" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_build_check" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_checkpoint" in config["mcp_servers"]["trw"]["enabled_tools"]
+        assert config["model_instructions_file"] == ".codex/INSTRUCTIONS.md"
+        assert ".codex/INSTRUCTIONS.md" not in config.get("project_doc_fallback_filenames", [])
         assert all(not entry["path"].endswith("/SKILL.md") for entry in config["skills"]["config"])
         assert any(entry["path"] == ".agents/skills/trw-deliver" for entry in config["skills"]["config"])
 
@@ -2138,6 +2140,16 @@ class TestCodexBootstrap:
         explorer = (tmp_path / ".codex" / "agents" / "trw-explorer.toml").read_text(encoding="utf-8")
         assert 'model = "gpt-5.4-mini"' in explorer
 
+    def test_codex_agents_preserve_existing_edits_without_force(self, tmp_path: Path) -> None:
+        generate_codex_agents(tmp_path)
+        explorer_path = tmp_path / ".codex" / "agents" / "trw-explorer.toml"
+        explorer_path.write_text("customized explorer", encoding="utf-8")
+
+        result = generate_codex_agents(tmp_path)
+
+        assert ".codex/agents/trw-explorer.toml" in result["preserved"]
+        assert explorer_path.read_text(encoding="utf-8") == "customized explorer"
+
     def test_codex_skills_installed(self, tmp_path: Path) -> None:
         result = install_codex_skills(tmp_path)
         assert any(path.endswith("/SKILL.md") for path in result["created"])
@@ -2150,6 +2162,16 @@ class TestCodexBootstrap:
         assert "disable-model-invocation:" not in content
         assert "user-invocable:" not in content
         assert "model: claude-" not in content
+
+    def test_codex_skills_preserve_existing_edits_without_force(self, tmp_path: Path) -> None:
+        install_codex_skills(tmp_path)
+        skill_path = tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md"
+        skill_path.write_text("customized skill", encoding="utf-8")
+
+        result = install_codex_skills(tmp_path)
+
+        assert ".agents/skills/trw-deliver/SKILL.md" in result["preserved"]
+        assert skill_path.read_text(encoding="utf-8") == "customized skill"
 
     def test_codex_merge_preserves_user_settings(self) -> None:
         merged = merge_codex_config(
@@ -2166,12 +2188,17 @@ class TestCodexBootstrap:
         assert merged["model_reasoning_effort"] == "high"
         assert merged["sandbox_mode"] == "read-only"
         assert merged["approval_policy"] == "never"
-        assert merged["features"]["codex_hooks"] is True
+        assert merged["features"]["codex_hooks"] is False
         assert merged["features"]["some_feature"] is False
         assert "custom" in merged["mcp_servers"]
         assert merged["mcp_servers"]["custom"]["enabled"] is False
         assert merged["mcp_servers"]["trw"]["enabled"] is True
         assert "trw_session_start" in merged["mcp_servers"]["trw"]["enabled_tools"]
+
+    def test_codex_merge_preserves_explicit_hook_opt_in(self) -> None:
+        merged = merge_codex_config({"features": {"codex_hooks": True}})
+
+        assert merged["features"]["codex_hooks"] is True
 
     def test_codex_config_smart_merge_existing_file(self, tmp_path: Path) -> None:
         codex_dir = tmp_path / ".codex"
@@ -2209,7 +2236,7 @@ config = [
         config = tomllib.loads((codex_dir / "config.toml").read_text(encoding="utf-8"))
         assert config["model"] == "gpt-5.4-mini"
         assert config["features"]["legacy_toggle"] is False
-        assert config["features"]["codex_hooks"] is True
+        assert config["features"]["codex_hooks"] is False
         assert config["mcp_servers"]["custom"]["enabled"] is False
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert "trw_session_start" in config["mcp_servers"]["trw"]["enabled_tools"]
@@ -2217,7 +2244,8 @@ config = [
         assert "custom_helper" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_old_tool" in config["mcp_servers"]["trw"]["disabled_tools"]
         assert "README.md" in config["project_doc_fallback_filenames"]
-        assert ".codex/INSTRUCTIONS.md" in config["project_doc_fallback_filenames"]
+        assert ".codex/INSTRUCTIONS.md" not in config["project_doc_fallback_filenames"]
+        assert config["model_instructions_file"] == ".codex/INSTRUCTIONS.md"
         skill_paths = [entry["path"] for entry in config["skills"]["config"]]
         assert ".agents/skills/trw-deliver" in skill_paths
         assert ".agents/skills/trw-deliver/SKILL.md" not in skill_paths
@@ -2230,8 +2258,9 @@ config = [
         assert ".codex/config.toml" in second["updated"]
 
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        fallback_files = config["project_doc_fallback_filenames"]
-        assert fallback_files.count(".codex/INSTRUCTIONS.md") == 1
+        fallback_files = config.get("project_doc_fallback_filenames", [])
+        assert ".codex/INSTRUCTIONS.md" not in fallback_files
+        assert config["model_instructions_file"] == ".codex/INSTRUCTIONS.md"
 
         trw_tools = config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_session_start" in trw_tools
@@ -2327,12 +2356,69 @@ class TestUpdateProjectMultiIDE:
             update_project(tmp_path)
 
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["codex_hooks"] is True
+        assert config["features"]["codex_hooks"] is False
         assert config["mcp_servers"]["trw"]["enabled"] is True
-        assert (tmp_path / ".codex" / "hooks.json").exists()
+        assert not (tmp_path / ".codex" / "hooks.json").exists()
         assert (tmp_path / ".codex" / "agents" / "trw-reviewer.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         assert (tmp_path / "AGENTS.md").exists()
+
+    def test_fr15_update_codex_generates_hooks_when_opted_in(self, tmp_path: Path) -> None:
+        """update_project honors explicit Codex hook opt-in instead of forcing hooks."""
+        from unittest.mock import patch
+
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text("[features]\ncodex_hooks = true\n", encoding="utf-8")
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            update_project(tmp_path)
+
+        config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        assert config["features"]["codex_hooks"] is True
+        assert (tmp_path / ".codex" / "hooks.json").exists()
+
+    def test_fr15_update_codex_preserves_customized_agents_and_skills(self, tmp_path: Path) -> None:
+        """update_project preserves Codex agent and skill edits in protected paths."""
+        from unittest.mock import patch
+
+        (tmp_path / ".git").mkdir()
+        init_project(tmp_path, ide="codex")
+
+        agent_path = tmp_path / ".codex" / "agents" / "trw-explorer.toml"
+        skill_path = tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md"
+        agent_path.write_text("custom agent", encoding="utf-8")
+        skill_path.write_text("custom skill", encoding="utf-8")
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._update_framework_files"),
+            patch("trw_mcp.bootstrap._update_project._update_mcp_config"),
+            patch("trw_mcp.bootstrap._update_project._cleanup_stale_artifacts"),
+            patch("trw_mcp.bootstrap._update_project._check_package_version"),
+            patch("trw_mcp.bootstrap._update_project._write_installer_metadata"),
+            patch("trw_mcp.bootstrap._update_project._write_version_yaml"),
+            patch("trw_mcp.bootstrap._update_project._verify_installation"),
+            patch("trw_mcp.bootstrap._update_project._run_claude_md_sync"),
+            patch("trw_mcp.bootstrap._update_project._ensure_dir"),
+        ):
+            result = update_project(tmp_path, ide="codex")
+
+        assert ".codex/agents/trw-explorer.toml" in result["preserved"]
+        assert ".agents/skills/trw-deliver/SKILL.md" in result["preserved"]
+        assert agent_path.read_text(encoding="utf-8") == "custom agent"
+        assert skill_path.read_text(encoding="utf-8") == "custom skill"
 
     def test_fr15_update_no_opencode_skips(self, tmp_path: Path) -> None:
         """Without opencode indicators, update does not create opencode.json."""
@@ -2417,7 +2503,7 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / "opencode.json").exists()
         # Codex artifacts
         assert (tmp_path / ".codex" / "config.toml").exists()
-        assert (tmp_path / ".codex" / "hooks.json").exists()
+        assert not (tmp_path / ".codex" / "hooks.json").exists()
         assert (tmp_path / ".codex" / "agents" / "trw-implementer.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         # Per-client instruction files (PRD-CORE-115)
@@ -2448,17 +2534,17 @@ class TestUpdateProjectMultiIDE:
         assert "trw_session_start" in instructions_content or "TRW" in instructions_content
 
     def test_fr15_init_with_ide_codex(self, tmp_path: Path) -> None:
-        """init_project(ide='codex') creates Codex config, hooks, agents, skills, and per-client instructions."""
+        """init_project(ide='codex') creates Codex config, agents, skills, and per-client instructions."""
         (tmp_path / ".git").mkdir()
 
         result = init_project(tmp_path, ide="codex")
 
         assert not result["errors"], result["errors"]
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["codex_hooks"] is True
+        assert config["features"]["codex_hooks"] is False
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
-        assert (tmp_path / ".codex" / "hooks.json").exists()
+        assert not (tmp_path / ".codex" / "hooks.json").exists()
         assert (tmp_path / ".codex" / "agents" / "trw-docs-researcher.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         # Per-client instruction file (PRD-CORE-115)
