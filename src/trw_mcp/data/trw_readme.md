@@ -446,7 +446,7 @@ trw_usage_report()
 | Component | Points |
 |-----------|--------|
 | `session_start` event present | 30 |
-| `reflection_complete` or `claude_md_synced` event | 30 |
+| `reflection_complete` event | 30 |
 | At least 1 checkpoint | 20 |
 | Any learning recorded | 10 |
 | Build check completed | 10 |
