@@ -79,6 +79,22 @@ def safe_str(data: Mapping[str, object], key: str, default: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Learning text helpers
+# ---------------------------------------------------------------------------
+
+
+def truncate_nudge_line(text: str, max_length: int = 80) -> str:
+    """Truncate a nudge line to *max_length*, preferring word boundaries."""
+    if len(text) <= max_length:
+        return text
+    boundary_start = max(max_length - 20, 0)
+    for i in range(boundary_start, max_length):
+        if text[i] == " ":
+            return text[:i] + "\u2026"
+    return text[:max_length]
+
+
+# ---------------------------------------------------------------------------
 # Entry file iteration
 # ---------------------------------------------------------------------------
 
