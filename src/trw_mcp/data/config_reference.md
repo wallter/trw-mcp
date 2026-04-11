@@ -352,12 +352,13 @@ Quality dimension weights for PRD validation (must sum to 100).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `validation_density_weight` | `float` | `25.0` | Content density dimension weight |
-| `validation_structure_weight` | `float` | `15.0` | Structure compliance dimension weight |
-| `validation_traceability_weight` | `float` | `20.0` | Traceability dimension weight |
-| `validation_smell_weight` | `float` | `15.0` | Requirement smell dimension weight |
-| `validation_readability_weight` | `float` | `10.0` | Readability dimension weight |
-| `validation_ears_weight` | `float` | `15.0` | EARS pattern dimension weight |
+| `validation_density_weight` | `float` | `20.0` | Content density hygiene weight |
+| `validation_structure_weight` | `float` | `20.0` | Structural completeness weight |
+| `validation_implementation_readiness_weight` | `float` | `25.0` | Execution-readiness signal weight |
+| `validation_traceability_weight` | `float` | `35.0` | Traceability and proof weight |
+| `validation_smell_weight` | `float` | `0.0` | Requirement smell dimension weight (reserved) |
+| `validation_readability_weight` | `float` | `0.0` | Readability dimension weight (reserved) |
+| `validation_ears_weight` | `float` | `0.0` | EARS pattern dimension weight (reserved) |
 | `validation_skeleton_threshold` | `float` | `30.0` | Score below this = skeleton status |
 | `validation_draft_threshold` | `float` | `60.0` | Score below this = draft status |
 | `validation_review_threshold` | `float` | `85.0` | Score above this = review-ready |

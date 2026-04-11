@@ -62,6 +62,7 @@ TEMPLATE_VARIANTS: Final[dict[str, list[str]]] = {
 CATEGORY_TO_VARIANT: Final[dict[str, str]] = {
     "CORE": "feature",
     "QUAL": "feature",
+    "EVAL": "feature",
     "FIX": "fix",
     "INFRA": "infrastructure",
     "LOCAL": "infrastructure",

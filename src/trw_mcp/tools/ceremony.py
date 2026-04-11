@@ -227,7 +227,7 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     )
     # Normalise status for backward compatibility with deliver callers.
     raw["status"] = "success"
-    return cast("ClaudeMdSyncResultDict", raw)
+    return raw
 
 
 # ── Self-reflection helpers (PRD-CORE-125 FR05) ──────────────────────

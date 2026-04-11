@@ -161,6 +161,9 @@ from trw_mcp.state.validation.prd_quality import (
     score_content_density as score_content_density,
 )
 from trw_mcp.state.validation.prd_quality import (
+    score_implementation_readiness as score_implementation_readiness,
+)
+from trw_mcp.state.validation.prd_quality import (
     score_section_density as score_section_density,
 )
 from trw_mcp.state.validation.prd_quality import (
@@ -239,6 +242,7 @@ __all__ = [
     "map_grade",
     "parse_exit_criteria",
     "score_content_density",
+    "score_implementation_readiness",
     "score_section_density",
     "score_structural_completeness",
     "score_traceability_v2",

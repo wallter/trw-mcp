@@ -13,17 +13,36 @@ agent: trw-requirement-reviewer
 
 # PRD Review Skill
 
-Performs a comprehensive quality review of a PRD using the trw-requirement-reviewer agent.
+Performs a comprehensive quality review of a PRD using the
+trw-requirement-reviewer agent.
 
 ## How It Works
 
-This skill forks execution to the `trw-requirement-reviewer` agent, which performs a read-only 5-dimension quality assessment:
+This skill forks execution to the `trw-requirement-reviewer` agent, which
+performs a read-only quality assessment:
 
 1. **Structure** — AARE-F section completeness and formatting
 2. **Content Quality** — substantive depth vs. placeholder content
-3. **Requirements Quality** — EARS compliance, confidence scores, testability
+3. **Requirements Quality** — EARS compliance, confidence scores, testability,
+   and execution clarity
 4. **Evidence & Confidence** — source citations, confidence calibration
 5. **Traceability** — bidirectional links to code and tests
+
+## High-Signal Review Focus
+
+The reviewer should treat these as load-bearing signals when deciding whether a
+PRD is truly READY:
+
+- primary control points and implementation surfaces
+- behavior switch matrix coverage for requirement changes
+- key files that anchor the expected code paths
+- proof-oriented tests and verification commands
+- rollout, rollback, migration, and completion evidence
+
+High content density without the items above is **not** sprint-readiness. If the
+document looks polished but still lacks executable evidence, the verdict should
+remain **NEEDS WORK**. Review output should prefer missing proof or missing
+traceability over generic requests to add more prose.
 
 ## Input
 
@@ -54,3 +73,5 @@ When invoked as part of the `/trw-prd-ready` pipeline, return only the structure
 - This skill is read-only — it never modifies the PRD file
 - Uses fork mode to keep the review output out of the main conversation context
 - The trw-requirement-reviewer agent runs on the default model with project memory
+- Treat score-gaming as a failure mode: denser prose is only useful when it
+  improves implementability or evidence quality

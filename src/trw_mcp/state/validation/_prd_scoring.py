@@ -156,29 +156,22 @@ _VERIFICATION_COMMAND_RE = re.compile(
 # AI/Agentic detection keywords (PRD-QUAL-055)
 _AI_KEYWORDS = ("ai", "llm", "agentic", "agent", "generative", "model")
 
+# Shared subsection list for feature and infrastructure variants (identical).
+_FEATURE_INFRA_SUBSECTIONS: list[str] = [
+    "Primary Control Points",
+    "Behavior Switch Matrix",
+    "Unit Tests",
+    "Integration Tests",
+    "Acceptance Tests",
+    "Regression Tests",
+    "Negative / Fallback Tests",
+    "Completion Evidence (Definition of Done)",
+    "Migration / Backward Compatibility",
+]
+
 _REQUIRED_SUBSECTIONS_BY_VARIANT: dict[str, list[str]] = {
-    "feature": [
-        "Primary Control Points",
-        "Behavior Switch Matrix",
-        "Unit Tests",
-        "Integration Tests",
-        "Acceptance Tests",
-        "Regression Tests",
-        "Negative / Fallback Tests",
-        "Completion Evidence (Definition of Done)",
-        "Migration / Backward Compatibility",
-    ],
-    "infrastructure": [
-        "Primary Control Points",
-        "Behavior Switch Matrix",
-        "Unit Tests",
-        "Integration Tests",
-        "Acceptance Tests",
-        "Regression Tests",
-        "Negative / Fallback Tests",
-        "Completion Evidence (Definition of Done)",
-        "Migration / Backward Compatibility",
-    ],
+    "feature": _FEATURE_INFRA_SUBSECTIONS,
+    "infrastructure": _FEATURE_INFRA_SUBSECTIONS,
     "fix": [
         "Root Cause",
         "Contributing Factors",
@@ -471,7 +464,7 @@ def _count_planned_requirements(content: str, fr_sections: list[tuple[str, str]]
     resolved_fr_sections = fr_sections if fr_sections is not None else _extract_fr_sections(content)
     if resolved_fr_sections:
         return len(resolved_fr_sections)
-    unique_refs = {match for match in re.findall(r"\bFR\d+\b", content)}
+    unique_refs = set(re.findall(r"\bFR\d+\b", content))
     return max(len(unique_refs), 1)
 
 
@@ -634,44 +627,44 @@ def score_structural_completeness(
     subsection_ratio = 1.0
     matched_subsections = 0
     expected_subsections = 0
+    # AI/LLM/agentic detection and operational sections scoring (PRD-QUAL-055)
+    ai_operational_sections_found = 0
+    ai_operational_sections_expected = 7
+    ai_operational_section_found = False
+
     if content is not None:
+        # Pre-compute subheadings once (DRY — avoids redundant regex scans)
+        present_subsections = _extract_subheadings(content)
+
         from trw_mcp.state.validation.template_variants import get_variant_for_category
 
         variant = get_variant_for_category(resolved_category)
         required_subsections = _REQUIRED_SUBSECTIONS_BY_VARIANT.get(variant, [])
         expected_subsections = len(required_subsections)
         if required_subsections:
-            present_subsections = _extract_subheadings(content)
             matched_subsections = sum(1 for name in required_subsections if name in present_subsections)
             subsection_ratio = matched_subsections / expected_subsections
 
-    # AI/LLM/agentic detection and operational sections scoring (PRD-QUAL-055)
-    ai_operational_sections_found = 0
-    ai_operational_sections_expected = 7
-    ai_section_keywords = [
-        "Data / Context Provenance",
-        "Failure Modes",
-        "Safe Degradation",
-        "Human Oversight",
-        "Escalation",
-        "Evaluation Plan",
-        "Release Gate",
-        "Monitoring Plan",
-        "Risk Register",
-        "Failure Class",
-    ]
+        ai_section_keywords = [
+            "Data / Context Provenance",
+            "Failure Modes",
+            "Safe Degradation",
+            "Human Oversight",
+            "Escalation",
+            "Evaluation Plan",
+            "Release Gate",
+            "Monitoring Plan",
+            "Risk Register",
+            "Failure Class",
+        ]
 
-    ai_operational_section_found = False
-    if content is not None:
         ai_operational_section_found = _is_ai_agentic_prd(frontmatter, content)
         if ai_operational_section_found:
-            present_subsections = _extract_subheadings(content)
             ai_operational_sections_found = sum(
                 1 for kw in ai_section_keywords if any(kw.lower() in ss.lower() for ss in present_subsections)
             )
-            subsection_ratio = (subsection_ratio * 0.75) + (
-                ai_operational_sections_found / ai_operational_sections_expected * 0.25
-            )
+            ai_ratio = min(ai_operational_sections_found / ai_operational_sections_expected, 1.0)
+            subsection_ratio = (subsection_ratio * 0.75) + (ai_ratio * 0.25)
 
     # Weighted: sections 35%, frontmatter 25%, confidence 15%, required subsections 25%
     composite = section_ratio * 0.35 + fm_ratio * 0.25 + conf_ratio * 0.15 + subsection_ratio * 0.25
@@ -728,6 +721,10 @@ def score_implementation_readiness(
     test_refs = _count_test_refs(content)
     verification_commands = _count_verification_commands(content)
 
+    # Pre-compute subheadings once (DRY — avoids redundant regex scans
+    # across all variant branches that check for named subheadings).
+    present_subheadings = _extract_subheadings(content)
+
     completion_ratio = (
         sum(
             1
@@ -735,7 +732,7 @@ def score_implementation_readiness(
                 "Completion Evidence (Definition of Done)",
                 "Migration / Backward Compatibility",
             )
-            if _has_named_subheading(content, heading)
+            if heading in present_subheadings
         )
         / 2
     )
@@ -761,7 +758,7 @@ def score_implementation_readiness(
             "Negative / Fallback Tests",
         )
         test_subsection_ratio = sum(
-            1 for heading in test_subsections if _has_named_subheading(content, heading)
+            1 for heading in test_subsections if heading in present_subheadings
         ) / len(test_subsections)
         control_ratio = min(control_point_rows / fr_count, 1.0)
         behavior_switch_ratio = min(behavior_switch_rows / fr_count, 1.0)
@@ -796,7 +793,7 @@ def score_implementation_readiness(
             sum(
                 1
                 for heading in ("Root Cause", "Contributing Factors", "Fix Verification")
-                if _has_named_subheading(content, heading)
+                if heading in present_subheadings
             )
             / 3
         )
@@ -804,11 +801,11 @@ def score_implementation_readiness(
             sum(
                 1
                 for heading in ("Regression Tests", "Negative / Fallback Tests")
-                if _has_named_subheading(content, heading)
+                if heading in present_subheadings
             )
             / 2
         )
-        file_map_ratio = min(max(impl_refs, 1 if _has_named_subheading(content, "Key Files") else 0) / fr_count, 1.0)
+        file_map_ratio = min(max(impl_refs, 1 if "Key Files" in present_subheadings else 0) / fr_count, 1.0)
         test_ref_ratio = min(test_refs / fr_count, 1.0)
         verification_ratio = min(max(test_ref_ratio, verification_commands / fr_count), 1.0)
         completion_ratio = (completion_ratio * 0.8) + (verification_ratio * 0.2)
@@ -828,11 +825,14 @@ def score_implementation_readiness(
             }
         )
     else:
+        # Research variant: use case-insensitive substring match against
+        # pre-computed subheadings for fuzzy heading detection.
+        present_subheadings_lower = {sub.lower() for sub in present_subheadings}
         research_ratio = (
             sum(
                 1
                 for heading in ("Approach", "Data Sources", "Evaluation Criteria")
-                if any(heading.lower() in sub.lower() for sub in _extract_subheadings(content))
+                if any(heading.lower() in sub for sub in present_subheadings_lower)
             )
             / 3
         )
@@ -907,7 +907,8 @@ def score_traceability_v2(
             matrix_score = min((rows_with_impl + rows_with_test) / (2 * max(len(fr_refs), 1)), 1.0)
             proof_score = min(rows_with_both / max(len(fr_refs), 1), 1.0)
 
-    fr_count = _count_planned_requirements(content)
+    fr_sections = _extract_fr_sections(content)
+    fr_count = _count_planned_requirements(content, fr_sections)
     behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
     behavior_switch_score = min(behavior_switch_rows / fr_count, 1.0)
 
@@ -995,7 +996,7 @@ def score_traceability_v2(
         details["ai_operational_evidence_detected"] = True
 
     # PRD-QUAL-056-FR01/FR02: File path and assertion coverage sub-dimensions
-    fr_sections = _extract_fr_sections(content)
+    # fr_sections already extracted above — reuse to avoid redundant regex scan.
     file_path_cov = _score_file_path_coverage(content, fr_sections)
     assertion_cov = _score_assertion_coverage(content, fr_sections)
 
