@@ -52,6 +52,8 @@ class RunAnalysisResult(TypedDict, total=False):
     build_check: bool
     build_passed: bool | None
     complexity_class: str
+    audit_cycles: dict[str, int]
+    first_pass_compliance: dict[str, bool]
 
 
 class CeremonyTrendItem(TypedDict):
@@ -79,6 +81,8 @@ class AggregateMetrics(TypedDict):
     avg_learnings_per_run: float
     ceremony_trend: list[CeremonyTrendItem]
     ceremony_by_tier: dict[str, TierMetrics]
+    sprint_avg_audit_cycles: float
+    sprint_first_pass_compliance_rate: float
 
 
 class AnalyticsReport(TypedDict):

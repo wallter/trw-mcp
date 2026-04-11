@@ -79,3 +79,4 @@ class RunReport(BaseModel):
     learning_summary: LearningSummary = Field(default_factory=LearningSummary)
     build: BuildSummary | None = None
     reversion_rate: float = 0.0
+    session_metrics: dict[str, object] = Field(default_factory=dict)

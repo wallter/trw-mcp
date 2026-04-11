@@ -131,6 +131,8 @@ class ConsolidationStepResult(TypedDict, total=False):
     errors: list[str]
     dry_run: bool
     clusters: list[dict[str, object]]
+    audit_pattern_promotions: list[dict[str, object]]
+    audit_pattern_promotion_threshold: int
 
 
 class PublishLearningsResult(TypedDict):
@@ -198,5 +200,6 @@ class ReworkMetricsResult(TypedDict, total=False):
 
     audit_cycles: dict[str, int]
     first_pass_compliance: dict[str, bool]
+    finding_categories: dict[str, int]
     sprint_avg_audit_cycles: float
     sprint_first_pass_compliance_rate: float

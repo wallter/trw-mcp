@@ -276,6 +276,12 @@ def assemble_report(
 
     prd_scope_raw = state_data.get("prd_scope", [])
     prd_scope = list(prd_scope_raw) if isinstance(prd_scope_raw, list) else []
+    session_metrics_raw = state_data.get("session_metrics", {})
+    session_metrics = (
+        {str(key): value for key, value in session_metrics_raw.items()}
+        if isinstance(session_metrics_raw, dict)
+        else {}
+    )
 
     return RunReport(
         run_id=str(state_data.get("run_id", "unknown")),
@@ -293,5 +299,6 @@ def assemble_report(
         learning_summary=learning_summary,
         build=build,
         reversion_rate=round(reversion_rate, 4),
+        session_metrics=session_metrics,
     )
 # NOTE: report.py already has inline Z→+00:00 fix; see _ts_diff_seconds above

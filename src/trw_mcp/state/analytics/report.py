@@ -349,6 +349,14 @@ def _analyze_single_run(run_dir: Path, trw_dir: Path | None = None) -> RunAnalys
         "build_check": build_check_flag,
         "build_passed": build_passed,
     }
+    session_metrics = state_data.get("session_metrics", {})
+    if isinstance(session_metrics, dict):
+        audit_cycles = session_metrics.get("audit_cycles")
+        if isinstance(audit_cycles, dict):
+            result["audit_cycles"] = {str(k): int(str(v)) for k, v in audit_cycles.items()}
+        first_pass = session_metrics.get("first_pass_compliance")
+        if isinstance(first_pass, dict):
+            result["first_pass_compliance"] = {str(k): bool(v) for k, v in first_pass.items()}
     # PRD-CORE-060-FR07: Include complexity_class for tier-based aggregation
     cc = state_data.get("complexity_class")
     if cc is not None:
@@ -375,19 +383,24 @@ def _parse_run_id_timestamp(run_id: str) -> str:
 def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
     """Compute aggregate metrics from per-run data."""
     if not runs:
-        return AggregateMetrics(
-            total_runs=0,
-            avg_ceremony_score=0.0,
-            build_pass_rate=0.0,
-            avg_learnings_per_run=0.0,
-            ceremony_trend=[],
-            ceremony_by_tier={},
-        )
+        return {
+            "total_runs": 0,
+            "avg_ceremony_score": 0.0,
+            "build_pass_rate": 0.0,
+            "avg_learnings_per_run": 0.0,
+            "ceremony_trend": [],
+            "ceremony_by_tier": {},
+            "sprint_avg_audit_cycles": 0.0,
+            "sprint_first_pass_compliance_rate": 0.0,
+        }
 
     scores: list[int] = []
     build_results: list[bool] = []
     total_learnings = 0
     ceremony_trend: list[CeremonyTrendItem] = []
+    total_audit_cycles = 0
+    total_prds = 0
+    total_first_pass = 0
 
     # PRD-CORE-060-FR07: Tier-grouped ceremony scores
     tier_scores: dict[str, list[int]] = {}
@@ -416,9 +429,20 @@ def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
         if isinstance(learn_count, int):
             total_learnings += learn_count
 
+        audit_cycles = run.get("audit_cycles")
+        if isinstance(audit_cycles, dict):
+            total_audit_cycles += sum(int(str(value)) for value in audit_cycles.values())
+            total_prds += len(audit_cycles)
+
+        first_pass = run.get("first_pass_compliance")
+        if isinstance(first_pass, dict):
+            total_first_pass += sum(1 for passed in first_pass.values() if bool(passed))
+
     avg_score = sum(scores) / len(scores) if scores else 0.0
     build_pass_rate = sum(1 for b in build_results if b) / len(build_results) if build_results else 0.0
     avg_learnings = total_learnings / len(runs) if runs else 0.0
+    sprint_avg_audit_cycles = total_audit_cycles / total_prds if total_prds else 0.0
+    sprint_first_pass_compliance_rate = total_first_pass / total_prds if total_prds else 0.0
 
     # FR07: Build ceremony_by_tier breakdown
     ceremony_by_tier: dict[str, TierMetrics] = {}
@@ -439,29 +463,35 @@ def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
             pass_rate=pass_rate,
         )
 
-    return AggregateMetrics(
-        total_runs=len(runs),
-        avg_ceremony_score=round(avg_score, 2),
-        build_pass_rate=round(build_pass_rate, 4),
-        avg_learnings_per_run=round(avg_learnings, 2),
-        ceremony_trend=ceremony_trend,
-        ceremony_by_tier=ceremony_by_tier,
-    )
+    return {
+        "total_runs": len(runs),
+        "avg_ceremony_score": round(avg_score, 2),
+        "build_pass_rate": round(build_pass_rate, 4),
+        "avg_learnings_per_run": round(avg_learnings, 2),
+        "ceremony_trend": ceremony_trend,
+        "ceremony_by_tier": ceremony_by_tier,
+        "sprint_avg_audit_cycles": round(sprint_avg_audit_cycles, 4),
+        "sprint_first_pass_compliance_rate": round(
+            sprint_first_pass_compliance_rate, 4
+        ),
+    }
 
 
 def _empty_report(parse_errors: list[str]) -> AnalyticsReport:
     """Return an empty analytics report."""
-    return AnalyticsReport(
-        runs=[],
-        aggregate=AggregateMetrics(
-            total_runs=0,
-            avg_ceremony_score=0.0,
-            build_pass_rate=0.0,
-            avg_learnings_per_run=0.0,
-            ceremony_trend=[],
-            ceremony_by_tier={},
-        ),
-        generated_at=datetime.now(timezone.utc).isoformat(),
-        runs_scanned=0,
-        parse_errors=parse_errors,
-    )
+    return {
+        "runs": [],
+        "aggregate": {
+            "total_runs": 0,
+            "avg_ceremony_score": 0.0,
+            "build_pass_rate": 0.0,
+            "avg_learnings_per_run": 0.0,
+            "ceremony_trend": [],
+            "ceremony_by_tier": {},
+            "sprint_avg_audit_cycles": 0.0,
+            "sprint_first_pass_compliance_rate": 0.0,
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runs_scanned": 0,
+        "parse_errors": parse_errors,
+    }
