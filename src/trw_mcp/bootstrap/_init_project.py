@@ -262,7 +262,7 @@ def init_project(
         generate_codex_hooks,
         install_codex_skills,
     )
-    from ._opencode import generate_opencode_config
+    from ._opencode import generate_agents_md, generate_opencode_config
     from ._update_project import _extract_trw_section_content, _write_manifest
 
     result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
@@ -317,6 +317,7 @@ def init_project(
     if "opencode" in ide_targets:
         oc_result = generate_opencode_config(target_dir, force=force)
         result["created"].extend(oc_result.get("created", []))
+        result["created"].extend(oc_result.get("updated", []))
         result["skipped"].extend(oc_result.get("preserved", []))
         result["errors"].extend(oc_result.get("errors", []))
 
@@ -342,10 +343,22 @@ def init_project(
                     pass
             instructions_result = generate_opencode_instructions(target_dir, model_family, force=force)
             result["created"].extend(instructions_result.get("created", []))
+            result["created"].extend(instructions_result.get("updated", []))
             result["skipped"].extend(instructions_result.get("preserved", []))
             result["errors"].extend(instructions_result.get("errors", []))
         except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
             result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
+
+        try:
+            from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
+
+            agents_result = generate_agents_md(target_dir, render_minimal_protocol(), force=force)
+            result["created"].extend(agents_result.get("created", []))
+            result["created"].extend(agents_result.get("updated", []))
+            result["skipped"].extend(agents_result.get("preserved", []))
+            result["errors"].extend(agents_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
+            result.setdefault("warnings", []).append(f"AGENTS.md generation skipped: {exc}")
 
         commands_result = install_opencode_commands(target_dir, force=force)
         result["created"].extend(commands_result.get("created", []))
@@ -389,22 +402,26 @@ def init_project(
 
         codex_config = generate_codex_config(target_dir, force=force)
         result["created"].extend(codex_config.get("created", []))
+        result["created"].extend(codex_config.get("updated", []))
         result["skipped"].extend(codex_config.get("preserved", []))
         result["errors"].extend(codex_config.get("errors", []))
 
         if codex_hooks_enabled(target_dir):
             codex_hooks = generate_codex_hooks(target_dir, force=force)
             result["created"].extend(codex_hooks.get("created", []))
+            result["created"].extend(codex_hooks.get("updated", []))
             result["skipped"].extend(codex_hooks.get("preserved", []))
             result["errors"].extend(codex_hooks.get("errors", []))
 
         codex_agents = generate_codex_agents(target_dir, force=force)
         result["created"].extend(codex_agents.get("created", []))
+        result["created"].extend(codex_agents.get("updated", []))
         result["skipped"].extend(codex_agents.get("preserved", []))
         result["errors"].extend(codex_agents.get("errors", []))
 
         codex_skills = install_codex_skills(target_dir, force=force)
         result["created"].extend(codex_skills.get("created", []))
+        result["created"].extend(codex_skills.get("updated", []))
         result["skipped"].extend(codex_skills.get("preserved", []))
         result["errors"].extend(codex_skills.get("errors", []))
 
@@ -415,10 +432,22 @@ def init_project(
         try:
             instructions_result = generate_codex_instructions(target_dir, force=force)
             result["created"].extend(instructions_result.get("created", []))
+            result["created"].extend(instructions_result.get("updated", []))
             result["skipped"].extend(instructions_result.get("preserved", []))
             result["errors"].extend(instructions_result.get("errors", []))
         except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
             result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
+
+        try:
+            from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
+
+            agents_result = generate_agents_md(target_dir, render_codex_trw_section(), force=force)
+            result["created"].extend(agents_result.get("created", []))
+            result["created"].extend(agents_result.get("updated", []))
+            result["skipped"].extend(agents_result.get("preserved", []))
+            result["errors"].extend(agents_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
+            result.setdefault("warnings", []).append(f"Codex AGENTS.md generation skipped: {exc}")
 
     # 7e. Copilot artifacts (PRD-CORE-127)
     if "copilot" in ide_targets:

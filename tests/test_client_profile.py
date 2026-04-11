@@ -531,6 +531,42 @@ def test_codex_quick_reference_row_matches_profile_contract() -> None:
 
 
 @pytest.mark.unit
+def test_opencode_quick_reference_row_matches_profile_contract() -> None:
+    """CLIENT-PROFILES quick reference stays aligned with the OpenCode profile."""
+    profile = resolve_client_profile("opencode")
+    doc_text = _read_client_profiles_doc()
+    rows = _extract_markdown_table_rows(doc_text, "## Quick Reference")
+    quick_ref = {row[0].strip("`"): row[1:] for row in rows}
+
+    assert "opencode" in quick_ref
+    mode, context, ceremony, write_target, review_weight = quick_ref["opencode"]
+    assert mode == profile.ceremony_mode
+    assert context == _format_context_window_tokens(profile.context_window_tokens)
+    assert ceremony == _format_ceremony_weights(profile.ceremony_weights)
+    assert write_target == "`AGENTS.md`"
+    assert review_weight == str(profile.ceremony_weights.review)
+
+
+@pytest.mark.unit
+def test_opencode_docs_managed_artifacts_match_current_contract() -> None:
+    """OpenCode support docs enumerate the managed artifacts and lifecycle guarantees."""
+    doc_text = _read_client_profiles_doc()
+    opencode_section = _extract_section(doc_text, "## OpenCode Support Surface")
+
+    for expected in [
+        "- `AGENTS.md`",
+        "- `.opencode/INSTRUCTIONS.md`",
+        "- `.opencode/commands/trw-deliver.md`",
+        "- `.opencode/agents/trw-implementer.md`",
+        "- `.opencode/skills/trw-deliver/SKILL.md`",
+    ]:
+        assert expected in opencode_section
+
+    assert "bootstrap and update flows manage" in opencode_section
+    assert "User-created neighboring files" in opencode_section
+
+
+@pytest.mark.unit
 def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
     """CLIENT-PROFILES Codex section documents the profile contract and runtime notes."""
     profile = resolve_client_profile("codex")
