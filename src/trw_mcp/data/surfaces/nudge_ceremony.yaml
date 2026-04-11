@@ -1,0 +1,14 @@
+# Ceremony nudge pool — low-urgency ceremony step reminders.
+# PRD-CORE-129: Migrated from Python string constants to YAML for maintainability.
+# Keyed by ceremony step name for direct lookup.
+messages:
+  session_start:
+    text: "Load prior context with trw_session_start() — 1 second, avoids re-discovery."
+  checkpoint:
+    text: "Save progress with trw_checkpoint() — protects against context loss."
+  build_check:
+    text: "Verify with trw_build_check() — catches issues before delivery."
+  review:
+    text: "Independent review with trw_review() — catches what self-review misses."
+  deliver:
+    text: "Persist session with trw_deliver() — your learnings become available to future sessions."
