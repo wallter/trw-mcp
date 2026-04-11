@@ -165,48 +165,32 @@ def register_learning_tools(server: FastMCP) -> None:
         team_origin: str = "",
         protection_tier: str = "normal",
     ) -> LearnResultDict:
-        """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
+        """Save a discovery so future agents avoid the same mistake.
 
-        When to call: the moment you identify a root cause — before writing the fix.
-        Also call after your approach works, recording what changed and why.
+        When to call: the moment you identify a root cause, before writing the fix,
+        or right after an approach works.
 
         Only record learnings that: (1) prevent repeated mistakes,
         (2) document non-obvious gotchas or architecture decisions,
         (3) capture validated patterns that change workflow, or
-        (4) preserve knowledge that would take significant effort to rediscover.
+        (4) preserve hard-to-rediscover knowledge.
         Routine observations ("I read the file", "the test passed") degrade recall quality.
 
-        Most learnings need only summary and detail. Adding tags and impact
-        improves recall precision. All other fields are auto-detected.
+        Most learnings need only summary and detail. Adding tags and impact improves recall precision.
 
         Args:
             Required:
-                summary: One-line summary of the discovery.
-                detail: Full context: what you tried, what failed, what worked.
-
+                summary: One-line discovery.
+                detail: What failed, what worked, and why it matters.
             Recommended:
-                tags: Categorization tags for filtered recall.
+                tags: Recall tags.
                 impact: Impact score 0.0-1.0.
-                evidence: Supporting evidence (file paths, error messages).
-
+                evidence: Supporting files or errors.
             Advanced (auto-detected if omitted):
-                type: Type: "incident", "pattern", "convention", "hypothesis", or "workaround".
-                nudge_line: Compact nudge text (max 80 chars).
-                expires: Expiration date/condition.
-                confidence: "unverified", "low", "medium", "high", or "verified".
-                task_type: Task type (e.g., "bug-fix", "feature").
-                domain: Domain tags for recall boosting.
-                phase_origin: Framework phase when created.
-                phase_affinity: Phases where most relevant.
-                team_origin: Team identifier for recall boosting.
-                protection_tier: "critical", "high", "normal", or "low".
-                source_type: Provenance: "human", "agent", "tool", or "consolidated".
-                source_identity: Source name.
-                client_profile: IDE/client override. Auto-detected when None.
-                model_id: Model override. Auto-detected when None.
-                shard_id: Shard identifier for sub-agent attribution.
-                consolidated_from: IDs of superseded entries to mark obsolete.
-                assertions: Machine-verifiable assertions.
+                type, nudge_line, expires, confidence, task_type, domain,
+                phase_origin, phase_affinity, team_origin, protection_tier,
+                source_type, source_identity, client_profile, model_id,
+                shard_id, consolidated_from, assertions.
 
         See Also: trw_recall, trw_learn_update
         """

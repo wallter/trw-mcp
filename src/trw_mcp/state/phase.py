@@ -52,16 +52,6 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     writer.write_yaml(run_yaml, data)
     logger.info("phase_updated", run_path=str(run_path), old=current, new=new_phase.value)
 
-    # PRD-CORE-105 P0: Sync ceremony state phase (best-effort)
-    try:
-        from trw_mcp.state._nudge_state import set_ceremony_phase
-        from trw_mcp.state._paths import resolve_trw_dir
-
-        trw_dir = resolve_trw_dir()
-        set_ceremony_phase(trw_dir, new_phase.value)
-    except Exception:  # justified: fail-open, ceremony state sync is best-effort
-        logger.debug("ceremony_phase_sync_failed", exc_info=True)
-
     # Log phase_enter event (best-effort)
     phase_event: dict[str, object] = {
         "phase": new_phase.value,
@@ -104,4 +94,4 @@ def try_update_phase(run_path: Path | None, phase: Phase) -> None:
     try:
         update_run_phase(run_path, phase)
     except Exception:  # justified: boundary, best-effort wrapper never raises
-        logger.debug("try_update_phase_failed", phase=phase.value)
+        logger.debug("try_update_phase_failed", phase=phase.value, exc_info=True)

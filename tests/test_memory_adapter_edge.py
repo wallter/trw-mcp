@@ -32,6 +32,7 @@ from trw_mcp.state.memory_adapter import (
     embedding_available,
     find_entry_by_id,
     get_backend,
+    increment_session_counts,
     list_active_learnings,
     recall_learnings,
     reset_backend,
@@ -298,6 +299,7 @@ class TestMemoryToLearningDict:
         assert result["access_count"] == 7
         assert result["session_count"] == 3
 
+
     def test_maps_source_to_source_type(self) -> None:
         """MemoryEntry.source maps to learning dict 'source_type'."""
         entry = self._make_entry(source="human")
@@ -421,6 +423,20 @@ class TestMemoryToLearningDict:
 
         # Compact should be dramatically smaller
         assert compact_size < full_size / 10
+
+
+class TestIncrementSessionCounts:
+    def test_deduplicates_ids_and_defaults_none_to_zero(self, trw_dir: Path) -> None:
+        """A learning surfaced twice in one session should count once from a zero-ish baseline."""
+        store_learning(trw_dir, "L-session01", "Summary", "Detail")
+        backend = get_backend(trw_dir)
+        backend.update("L-session01", session_count=None)
+
+        increment_session_counts(trw_dir, ["L-session01", "L-session01"])
+
+        entry = backend.get("L-session01")
+        assert entry is not None
+        assert entry.session_count == 1
 
 
 # ---------------------------------------------------------------------------

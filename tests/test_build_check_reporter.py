@@ -258,6 +258,17 @@ class TestNoSubprocessImports:
             "_core.py still references _subprocess"
         )
 
+    def test_registration_has_no_ceremony_nudge_references(self) -> None:
+        """PRD-CORE-098: build reporter should not depend on ceremony nudges."""
+        import inspect
+
+        from trw_mcp.tools.build import _registration
+
+        source = inspect.getsource(_registration)
+        assert "ceremony_nudge" not in source
+        assert "append_ceremony_nudge" not in source
+        assert "mark_build_check" not in source
+
     def test_core_has_no_run_build_check(self) -> None:
         """_core.py must not export run_build_check."""
         from trw_mcp.tools.build import _core

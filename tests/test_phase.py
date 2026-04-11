@@ -244,3 +244,15 @@ class TestCeremonyHelpersBuildGateCompat:
 
         result = check_delivery_gates(tmp_path, FileStateReader())
         assert "build_gate_warning" not in result
+
+
+class TestPhaseModuleArchitecture:
+    def test_phase_module_has_no_ceremony_nudge_sync(self) -> None:
+        """PRD-CORE-098: phase tracking should not depend on ceremony nudge state."""
+        import inspect
+
+        import trw_mcp.state.phase as phase_module
+
+        source = inspect.getsource(phase_module)
+        assert "ceremony_nudge" not in source
+        assert "set_ceremony_phase" not in source
