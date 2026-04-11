@@ -367,7 +367,12 @@ def register_requirements_tools(server: FastMCP) -> None:
             "quality_tier": v2_result.quality_tier,
             "grade": v2_result.grade,
             "dimensions": [
-                {"name": d.name, "score": d.score, "max_score": d.max_score}
+                {
+                    "name": d.name,
+                    "score": d.score,
+                    "max_score": d.max_score,
+                    "details": d.details,
+                }
                 for d in v2_result.dimensions
             ],
             "improvement_suggestions": [
