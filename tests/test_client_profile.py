@@ -563,6 +563,11 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
         "Hooks, framework reference content, delegation content, and skills are "
         "intentionally disabled in the profile contract."
     ) in codex_section
+    assert (
+        "`skills_enabled = false` is a profile-layer prompt/exposure setting; it does not suppress "
+        "the installer-managed `.agents/skills/` helper directories that Codex may reference from "
+        "`skills.config`."
+    ) in codex_section
     assert "model_instructions_file" in codex_section
     assert ".codex/agents/*.toml" in codex_section
     assert "features.codex_hooks = true" in codex_section
