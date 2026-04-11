@@ -126,6 +126,63 @@ class TestUpdateReplacesAssertions:
         update_call_kwargs = mock_backend.update.call_args
         assert len(update_call_kwargs[1]["assertions"]) == 2
 
+    def test_update_replaces_assertions_in_yaml_backup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """YAML backup assertions are kept in sync with the validated replacement list."""
+        from trw_memory.models.memory import Assertion, MemoryEntry
+
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        trw_dir = tmp_path / ".trw"
+        entry_path = trw_dir / "learnings" / "entries" / "L-test2.yaml"
+        entry_path.parent.mkdir(parents=True)
+        FileStateWriter().write_yaml(
+            entry_path,
+            {
+                "id": "L-test2",
+                "summary": "test summary",
+                "detail": "test detail",
+                "assertions": [{"type": "grep_present", "pattern": "old_pattern", "target": "**/*.py"}],
+            },
+        )
+
+        existing_assertion = Assertion.model_validate(
+            {"type": "grep_present", "pattern": "old_pattern", "target": "**/*.py"}, strict=False
+        )
+        mock_backend = MagicMock()
+        mock_entry = MemoryEntry(
+            id="L-test2",
+            content="test summary",
+            detail="test detail",
+            assertions=[existing_assertion],
+        )
+        mock_backend.get.return_value = mock_entry
+
+        monkeypatch.setattr("trw_mcp.tools.learning.get_backend", lambda _: mock_backend)
+        monkeypatch.setattr(
+            "trw_mcp.tools.learning.adapter_update",
+            lambda trw_dir, **kw: {"learning_id": "L-test2", "status": "updated"},
+        )
+        monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: trw_dir)
+        monkeypatch.setattr("trw_mcp.state.analytics.resync_learning_index", lambda *_args, **_kwargs: None)
+
+        from tests.conftest import extract_tool_fn, make_test_server
+
+        server = make_test_server("learning")
+        update_fn = extract_tool_fn(server, "trw_learn_update")
+
+        update_fn(
+            learning_id="L-test2",
+            assertions=REPLACEMENT_ASSERTIONS,
+        )
+
+        updated = FileStateReader().read_yaml(entry_path)
+        saved_assertions = updated["assertions"]
+        assert len(saved_assertions) == 2
+        assert saved_assertions[0]["type"] == "glob_exists"
+        assert saved_assertions[1]["pattern"] == "TODO"
+
 
 class TestDeleteAssertionsWithEmptyList:
     """FR12: assertions=[] removes all assertions."""

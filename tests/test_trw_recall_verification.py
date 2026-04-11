@@ -13,9 +13,9 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from trw_memory.models.memory import AssertionType
 
 from trw_mcp.models.config import TRWConfig
-from trw_memory.models.memory import AssertionType
 
 
 def _make_assertion_dict(
@@ -134,6 +134,8 @@ class TestVerifyAssertionsAttachesStatus:
         assert status["failing"] == 1
         assert status["stale"] == 0
         assert "details" in status
+        assert status["details"][0]["id"] == "L-1:1"
+        assert status["details"][1]["id"] == "L-1:2"
 
 
 class TestVerifyAssertionsSkipsNoAssertions:
@@ -160,19 +162,32 @@ class TestVerifyAssertionsSkipsNoAssertions:
 
 
 class TestVerifyAssertionsNoProjectRoot:
-    """When project_root cannot be resolved, learnings returned unchanged."""
+    """When project_root cannot be resolved, learnings still get stale verification status."""
 
+    @patch("trw_mcp.state._paths.resolve_trw_dir")
+    @patch("trw_mcp.state.memory_adapter.get_backend")
+    @patch("trw_memory.lifecycle.verification.verify_assertions")
     @patch("trw_mcp.state._paths.resolve_project_root")
     def test_verify_assertions_no_project_root(
         self,
         mock_resolve_root: MagicMock,
+        mock_verify: MagicMock,
+        mock_get_backend: MagicMock,
+        mock_resolve_trw: MagicMock,
         config: TRWConfig,
         mock_rank_fn: MagicMock,
+        tmp_path: Path,
     ) -> None:
-        """When resolve_project_root returns None, learnings pass through unchanged."""
+        """When resolve_project_root returns None, assertion_status still reflects unverifiable assertions."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         mock_resolve_root.return_value = None
+        mock_resolve_trw.return_value = tmp_path / ".trw"
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+        mock_verify.return_value = [
+            _make_assertion_result(passed=None, evidence="project_root unavailable"),
+        ]
 
         learnings = [
             _make_learning("L-1", assertions=[_make_assertion_dict()]),
@@ -180,8 +195,13 @@ class TestVerifyAssertionsNoProjectRoot:
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
         assert len(result) == 1
-        # assertions field still present but no assertion_status added
-        assert "assertion_status" not in result[0]
+        status = result[0]["assertion_status"]
+        assert status["passing"] == 0
+        assert status["failing"] == 0
+        assert status["stale"] == 1
+        assert status["details"][0]["id"] == "L-1:1"
+        assert status["details"][0]["passed"] is None
+        assert status["details"][0]["evidence"] == "project_root unavailable"
 
 
 class TestVerifyAssertionsPersistsResults:

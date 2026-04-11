@@ -250,6 +250,10 @@ class LearningEntry(BaseModel):
         default="",
         description="AI model that created this entry (e.g., 'claude-opus-4-6').",
     )
+    assertions: list[dict[str, object]] = Field(
+        default_factory=list,
+        description="Executable assertion metadata stored for rollback-safe YAML backup.",
+    )
 
     # PRD-CORE-042: Dedup merge tracking
     merged_from: list[str] = Field(

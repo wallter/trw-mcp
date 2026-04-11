@@ -216,6 +216,7 @@ class TestLearnWithNewFields:
             detail="Testing YAML backup includes new fields",
             trw_dir=trw_dir,
             config=config,
+            assertions=[{"type": "glob_exists", "pattern": "", "target": "src/main.py"}],
             type="hypothesis",
             confidence="medium",
             protection_tier="protected",
@@ -238,6 +239,7 @@ class TestLearnWithNewFields:
         assert entry.confidence == "medium"
         assert entry.protection_tier == "protected"
         assert entry.phase_origin == "IMPLEMENT"
+        assert entry.assertions == [{"type": "glob_exists", "pattern": "", "target": "src/main.py"}]
         assert entry.domain == ["testing", "mcp"]
         assert entry.phase_affinity == ["VALIDATE"]
         assert entry.nudge_line == "Custom nudge line"

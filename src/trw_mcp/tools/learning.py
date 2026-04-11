@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re as _re
 from pathlib import Path
-from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -308,16 +307,18 @@ def register_learning_tools(server: FastMCP) -> None:
             return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
 
         # Validate and store assertions via backend (PRD-CORE-086 FR12)
+        serialized_assertions: list[dict[str, object]] | None = None
         if assertions is not None:
             try:
                 from trw_memory.models.memory import Assertion
 
                 validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
+                serialized_assertions = [a.model_dump() for a in validated]
                 backend = get_backend(trw_dir)
                 existing = backend.get(learning_id)
                 if existing is not None:
                     existing.assertions = validated
-                    backend.update(learning_id, assertions=[a.model_dump() for a in validated])
+                    backend.update(learning_id, assertions=serialized_assertions)
             except (ValueError, TypeError) as exc:
                 return {"error": f"invalid assertion: {exc}", "status": "invalid"}
             except Exception:  # justified: fail-open, assertion persistence must not block learn_update
@@ -398,6 +399,8 @@ def register_learning_tools(server: FastMCP) -> None:
                         data["team_origin"] = team_origin
                     if protection_tier is not None:
                         data["protection_tier"] = protection_tier
+                    if assertions is not None and serialized_assertions is not None:
+                        data["assertions"] = serialized_assertions
                     writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
             except (OSError, ValueError, TypeError):
@@ -505,4 +508,4 @@ def register_learning_tools(server: FastMCP) -> None:
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()
-        return cast("ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, llm, client))
+        return execute_claude_md_sync(scope, target_dir, config, reader, llm, client)

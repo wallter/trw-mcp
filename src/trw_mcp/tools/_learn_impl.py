@@ -463,6 +463,7 @@ def _save_yaml_backup(
             source_identity=params.source_identity,
             client_profile=params.client_profile,
             model_id=params.model_id,
+            assertions=cast("list[dict[str, object]]", params.assertions or []),
             consolidated_from=consolidated_from or [],
             type=LearningType(params.type) if isinstance(params.type, str) else params.type,
             nudge_line=params.nudge_line,

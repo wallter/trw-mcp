@@ -8,9 +8,10 @@ remain effective without needing to know about this module.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -21,6 +22,11 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.surface_tracking import log_surface_event
 
 logger = structlog.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from trw_memory.models.memory import Assertion, AssertionResult
 
 
 def _detect_surface_phase() -> str:
@@ -397,6 +403,81 @@ def _augment_with_remote(
     return list(matching_learnings)
 
 
+def _build_assertion_status(entry_id: str, results: Sequence[AssertionResult]) -> tuple[dict[str, object], int]:
+    """Build assertion_status payload and return failing count."""
+    passing = 0
+    failing = 0
+    stale = 0
+    detail_rows: list[dict[str, object]] = []
+
+    for index, result in enumerate(results, start=1):
+        passed = result.passed
+        if passed is True:
+            passing += 1
+        elif passed is False:
+            failing += 1
+        else:
+            stale += 1
+        detail = result.model_dump()
+        detail["id"] = f"{entry_id}:{index}"
+        detail_rows.append(detail)
+
+    return {
+        "passing": passing,
+        "failing": failing,
+        "stale": stale,
+        "details": detail_rows,
+    }, failing
+
+
+def _build_updated_assertions(
+    assertions_list: Sequence[Assertion],
+    results: Sequence[AssertionResult],
+    now_iso: str,
+) -> list[dict[str, object]]:
+    """Apply verification results to serialized assertions."""
+    updated_assertions: list[dict[str, object]] = []
+    for assertion, result in zip(assertions_list, results, strict=False):
+        a_dict = cast("dict[str, object]", assertion.model_dump())
+        a_dict["last_result"] = result.passed
+        a_dict["last_verified_at"] = now_iso
+        a_dict["last_evidence"] = result.evidence
+        if result.passed is False:
+            if assertion.first_failed_at is None:
+                a_dict["first_failed_at"] = now_iso
+        elif result.passed is True:
+            a_dict["first_failed_at"] = None
+        updated_assertions.append(a_dict)
+    return updated_assertions
+
+
+def _persist_assertion_results(entry_id: str, updated_assertions: list[dict[str, object]]) -> None:
+    """Best-effort persistence of updated assertion metadata."""
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.memory_adapter import get_backend
+
+        trw_dir = resolve_trw_dir()
+        backend = get_backend(trw_dir)
+        backend.update(entry_id, assertions=json.dumps(updated_assertions))
+    except Exception:  # justified: persist is best-effort
+        logger.debug("assertion_result_persist_failed", entry_id=entry_id, exc_info=True)
+
+
+def _all_assertions_persistently_failing(
+    updated_assertions: list[dict[str, object]],
+    stale_threshold: datetime,
+) -> bool:
+    """Return True when every assertion has been failing past the stale threshold."""
+    from datetime import datetime
+
+    return len(updated_assertions) > 0 and all(
+        a.get("first_failed_at") is not None
+        and datetime.fromisoformat(str(a["first_failed_at"])) < stale_threshold
+        for a in updated_assertions
+    )
+
+
 def _verify_assertions(
     ranked_learnings: list[dict[str, object]],
     query_tokens: list[str],
@@ -420,15 +501,14 @@ def _verify_assertions(
     except Exception:  # justified: fail-open
         logger.debug("assertion_project_root_resolve_failed", exc_info=True)
 
-    if not project_root_path:
-        return ranked_learnings
-
     try:
         from trw_memory.lifecycle.verification import verify_assertions
         from trw_memory.models.memory import Assertion
 
         now = datetime.now(timezone.utc)
         stale_threshold = now - timedelta(days=config.assertion_stale_threshold_days)
+        loop_start = time.monotonic()
+        verified_entries = 0
 
         for learning in ranked_learnings:
             raw_assertions = learning.get("assertions")
@@ -440,61 +520,19 @@ def _verify_assertions(
                     Assertion.model_validate(a, strict=False) for a in raw_assertions if isinstance(a, dict)
                 ]
                 results = verify_assertions(assertions_list, project_root_path)
+                verified_entries += 1
 
-                passing = sum(1 for r in results if r.passed is True)
-                failing = sum(1 for r in results if r.passed is False)
-                stale = sum(1 for r in results if r.passed is None)
-
-                learning["assertion_status"] = {
-                    "passing": passing,
-                    "failing": failing,
-                    "stale": stale,
-                    "details": [r.model_dump() for r in results],
-                }
+                status, failing = _build_assertion_status(entry_id, results)
+                learning["assertion_status"] = status
 
                 if failing > 0:
                     penalty = config.assertion_failure_penalty * (failing / len(results))
                     assertion_penalties[entry_id] = penalty
 
-                # FR06: Update assertion fields with verification results
-                updated_assertions: list[dict[str, object]] = []
-                for assertion, result in zip(assertions_list, results, strict=False):
-                    a_dict = assertion.model_dump()
-                    a_dict["last_result"] = result.passed
-                    a_dict["last_verified_at"] = now.isoformat()
-                    a_dict["last_evidence"] = result.evidence
-                    # FR08: Track first_failed_at transitions
-                    if result.passed is False:
-                        # Set first_failed_at if not already set (transition to failure)
-                        if assertion.first_failed_at is None:
-                            a_dict["first_failed_at"] = now.isoformat()
-                    elif result.passed is True:
-                        # Clear first_failed_at on transition back to passing
-                        a_dict["first_failed_at"] = None
-                    updated_assertions.append(a_dict)
+                updated_assertions = _build_updated_assertions(assertions_list, results, now.isoformat())
+                _persist_assertion_results(entry_id, updated_assertions)
 
-                # Persist updated assertions via backend
-                try:
-                    from trw_mcp.state._paths import resolve_trw_dir
-                    from trw_mcp.state.memory_adapter import get_backend
-
-                    trw_dir = resolve_trw_dir()
-                    backend = get_backend(trw_dir)
-                    backend.update(entry_id, assertions=json.dumps(updated_assertions))
-                except Exception:  # justified: persist is best-effort
-                    logger.debug("assertion_result_persist_failed", entry_id=entry_id, exc_info=True)
-
-                # FR08: Auto-stale detection — if ALL assertions have been
-                # failing for longer than the threshold, mark learning stale
-                all_persistently_failing = (
-                    len(updated_assertions) > 0
-                    and all(
-                        a.get("first_failed_at") is not None
-                        and datetime.fromisoformat(str(a["first_failed_at"])) < stale_threshold
-                        for a in updated_assertions
-                    )
-                )
-                if all_persistently_failing:
+                if _all_assertions_persistently_failing(updated_assertions, stale_threshold):
                     logger.info(
                         "learning_auto_stale",
                         entry_id=entry_id,
@@ -508,6 +546,13 @@ def _verify_assertions(
                     entry_id=entry_id,
                     exc_info=True,
                 )
+
+        if verified_entries:
+            logger.info(
+                "assertion_recall_verification_complete",
+                verified_entries=verified_entries,
+                duration_ms=round((time.monotonic() - loop_start) * 1000, 1),
+            )
 
         if assertion_penalties:
             ranked_learnings = rank_fn(
