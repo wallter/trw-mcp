@@ -15,6 +15,10 @@ init_hook_timer
 _project_root="$(get_repo_root)" || exit 0
 _context_dir="$_project_root/.trw/context"
 [ -d "$_context_dir" ] || mkdir -p "$_context_dir" 2>/dev/null || exit 0
+_injected_file="$_context_dir/injected_learning_ids.txt"
+
+# PRD-CORE-095 FR17: clear injected-learning dedup state before compaction.
+: > "$_injected_file" 2>/dev/null || true
 
 # Determine trigger type from stdin
 _payload=$(cat) || exit 0

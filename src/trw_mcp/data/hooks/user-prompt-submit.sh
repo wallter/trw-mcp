@@ -43,7 +43,6 @@ if [ "$_phase" != "none" ]; then
   fi
   # FR02: Same-phase suppression — skip phase output if unchanged
   if [ "$_cached_phase" = "$_phase" ]; then
-    # Phase guidance suppressed, but still attempt learning injection below
     _phase_suppressed=1
   else
     _phase_suppressed=0
@@ -117,6 +116,12 @@ if [ "$_phase" = "done" ]; then
   exit 0
 fi
 
+# FR02: Same-phase suppression must be fully silent, including learning injection.
+if [ "$_phase_suppressed" = "1" ]; then
+  log_hook_execution "UserPromptSubmit" "$_phase" "cached"
+  exit 0
+fi
+
 # FR08: Keyword search against learning summaries with timeout (FR13: 500ms guard)
 _entries_dir="$_project_root/.trw/learnings/entries"
 if [ ! -d "$_entries_dir" ]; then
@@ -140,6 +145,7 @@ import time
 from pathlib import Path
 
 TIMEOUT_NS = 500_000_000
+MAX_KEYWORDS = 16
 STOP_WORDS = {
     "also",
     "been",
@@ -201,6 +207,8 @@ keywords: list[str] = []
 for word in re.findall(r"[A-Za-z0-9]+", prompt.lower()):
     if len(word) < 4 or word in STOP_WORDS or word in keywords:
         continue
+    if len(keywords) >= MAX_KEYWORDS:
+        break
     keywords.append(word)
 
 if not keywords or not entries_dir.is_dir():
@@ -214,7 +222,7 @@ if injected_file.is_file():
         if line.strip()
     }
 
-results: list[tuple[float, str, str]] = []
+results: list[tuple[float, str, str, str]] = []
 for entry in sorted(entries_dir.glob("*.yaml")):
     if time.monotonic_ns() >= deadline_ns:
         raise SystemExit(0)
@@ -222,7 +230,7 @@ for entry in sorted(entries_dir.glob("*.yaml")):
     if _read_yaml_field(entry, "status").lower() != "active":
         continue
 
-    entry_id = entry.stem
+    entry_id = _read_yaml_field(entry, "id") or entry.stem
     if entry_id in injected_ids:
         continue
 
@@ -238,7 +246,8 @@ for entry in sorted(entries_dir.glob("*.yaml")):
     score = matches / len(keywords)
     if score < min_score:
         continue
-    results.append((score, entry_id, summary))
+    display_id = entry_id if entry_id.startswith("L-") else f"L-{entry_id}"
+    results.append((score, entry_id, display_id, summary))
 
 if time.monotonic_ns() >= deadline_ns:
     raise SystemExit(0)
@@ -251,8 +260,8 @@ if not selected:
 lines: list[str] = []
 emitted_ids: list[str] = []
 total_chars = 0
-for _score, entry_id, summary in selected:
-    line = f"TRW RECALL: [L-{entry_id}] {summary}"
+for _score, entry_id, display_id, summary in selected:
+    line = f"TRW RECALL: [{display_id}] {summary}"
     next_total = total_chars + len(line)
     if next_total > max_chars:
         break
