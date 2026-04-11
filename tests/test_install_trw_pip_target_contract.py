@@ -8,21 +8,26 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 _INSTALLER_TEMPLATE = Path(__file__).resolve().parent.parent / "scripts" / "install-trw.template.py"
+_INSTALLER_ARTIFACT = Path(__file__).resolve().parent.parent / "dist" / "install-trw.py"
+_INSTALLER_PATHS = [_INSTALLER_TEMPLATE, _INSTALLER_ARTIFACT]
 
 
-def _load_installer_module():
-    spec = importlib.util.spec_from_file_location("install_trw_template_test", _INSTALLER_TEMPLATE)
+def _load_installer_module(installer_path: Path):
+    spec = importlib.util.spec_from_file_location(f"install_trw_test_{installer_path.stem}", installer_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
 def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_target(
-    tmp_path: Path, monkeypatch
+    installer_path: Path, tmp_path: Path, monkeypatch
 ) -> None:
-    module = _load_installer_module()
+    module = _load_installer_module(installer_path)
     ui = MagicMock()
     wrapper_path = tmp_path / "trw-mcp"
     memory_whl = tmp_path / "trw-memory.whl"
@@ -73,8 +78,11 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
     assert all(call["env"]["PYTHONPATH"] == "/tmp/trw-pip" for call in run_calls)
 
 
-def test_phase_install_extras_passes_pip_target_to_all_optional_installs(monkeypatch) -> None:
-    module = _load_installer_module()
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_phase_install_extras_passes_pip_target_to_all_optional_installs(
+    installer_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
     ui = MagicMock()
     pip_calls: list[tuple[str, str]] = []
 
@@ -102,8 +110,9 @@ def test_phase_install_extras_passes_pip_target_to_all_optional_installs(monkeyp
     assert features == ["AI/LLM", "embeddings", "sqlite-vec"]
 
 
-def test_validate_pip_target_rejects_shell_metacharacters() -> None:
-    module = _load_installer_module()
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_validate_pip_target_rejects_shell_metacharacters(installer_path: Path) -> None:
+    module = _load_installer_module(installer_path)
 
     assert module.validate_pip_target("/tmp/trw-pip/subdir") == "/tmp/trw-pip/subdir"
 
@@ -119,8 +128,11 @@ def test_validate_pip_target_rejects_shell_metacharacters() -> None:
                 raise AssertionError(f"{invalid!r} should be rejected")
 
 
-def test_main_threads_pip_target_into_extras_phase_when_enabled(tmp_path: Path, monkeypatch) -> None:
-    module = _load_installer_module()
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_main_threads_pip_target_into_extras_phase_when_enabled(
+    installer_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
     project_dir = tmp_path / "project"
     scratch_dir = tmp_path / "scratch"
     project_dir.mkdir()
