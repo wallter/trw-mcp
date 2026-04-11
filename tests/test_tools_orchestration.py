@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,11 @@ import pytest
 from tests.conftest import get_tools_sync, make_test_server
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools._orchestration_phase import (
+    _check_framework_version_staleness,
+    _compute_reversion_metrics,
+    _compute_wave_progress,
+)
 
 # Derive from TRWConfig so tests never go stale on version bumps.
 FRAMEWORK_VERSION = TRWConfig().framework_version
@@ -32,6 +38,27 @@ def _make_orch_tools() -> dict[str, Any]:
 def orch_tools() -> dict[str, Any]:
     """Provide orchestration tools dict for tests that only need orch tools."""
     return _make_orch_tools()
+
+
+def test_orchestration_module_stays_within_500_lines() -> None:
+    """CORE-089 keeps orchestration.py at or under the documented size gate."""
+    module_path = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "tools" / "orchestration.py"
+    assert sum(1 for _ in module_path.open("r", encoding="utf-8")) <= 500
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [
+        _compute_wave_progress,
+        _compute_reversion_metrics,
+        _check_framework_version_staleness,
+    ],
+)
+def test_phase_helpers_live_in_orchestration_phase(helper: object) -> None:
+    """CORE-089 phase helpers should be defined in _orchestration_phase.py."""
+    source_file = inspect.getsourcefile(helper)
+    assert source_file is not None
+    assert source_file.endswith("_orchestration_phase.py")
 
 
 class TestTrwInit:
