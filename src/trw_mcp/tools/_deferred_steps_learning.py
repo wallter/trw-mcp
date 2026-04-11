@@ -411,6 +411,7 @@ def _step_collect_rework_metrics(
     empty: ReworkMetricsResult = {
         "audit_cycles": {},
         "first_pass_compliance": {},
+        "finding_categories": {},
         "sprint_avg_audit_cycles": 0.0,
         "sprint_first_pass_compliance_rate": 0.0,
     }
@@ -431,6 +432,7 @@ def _step_collect_rework_metrics(
     # Track per-PRD: cycle count and first verdict
     audit_cycles: dict[str, int] = {}
     first_verdict: dict[str, str] = {}
+    finding_categories: dict[str, int] = {}
 
     for ev in events:
         ev_type = str(ev.get("event", ""))
@@ -448,6 +450,8 @@ def _step_collect_rework_metrics(
         verdict = str(ev_data.get("verdict", "")).upper()
 
         audit_cycles[prd_id] = audit_cycles.get(prd_id, 0) + 1
+        for category in _extract_finding_categories(ev_data):
+            finding_categories[category] = finding_categories.get(category, 0) + 1
 
         # Record first verdict for first-pass compliance
         if prd_id not in first_verdict:
@@ -472,6 +476,38 @@ def _step_collect_rework_metrics(
     return {
         "audit_cycles": audit_cycles,
         "first_pass_compliance": first_pass_compliance,
+        "finding_categories": finding_categories,
         "sprint_avg_audit_cycles": sprint_avg,
         "sprint_first_pass_compliance_rate": compliance_rate,
     }
+
+
+def _extract_finding_categories(event_data: dict[str, object]) -> list[str]:
+    """Extract normalized finding categories from an audit-cycle event payload."""
+    candidates = event_data.get("finding_categories", event_data.get("categories"))
+    if isinstance(candidates, dict):
+        expanded: list[str] = []
+        for category, count in candidates.items():
+            try:
+                repeats = max(int(str(count)), 0)
+            except ValueError:
+                repeats = 0
+            expanded.extend([str(category)] * repeats)
+        return expanded
+    if isinstance(candidates, list):
+        return [str(category) for category in candidates if str(category)]
+    if isinstance(candidates, str) and candidates:
+        return [candidates]
+
+    findings = event_data.get("findings")
+    if isinstance(findings, list):
+        extracted = [
+            str(finding.get("category", ""))
+            for finding in findings
+            if isinstance(finding, dict) and str(finding.get("category", ""))
+        ]
+        if extracted:
+            return extracted
+
+    category = str(event_data.get("finding_category", ""))
+    return [category] if category else []

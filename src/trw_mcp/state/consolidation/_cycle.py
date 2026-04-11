@@ -19,6 +19,7 @@ from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state.consolidation._archive import _archive_originals
 from trw_mcp.state.consolidation._clustering import find_clusters
+from trw_mcp.state.consolidation._clustering import _load_active_entries
 from trw_mcp.state.consolidation._summarize import (
     _summarize_cluster_fallback,
     _summarize_cluster_llm,
@@ -169,6 +170,15 @@ def consolidate_cycle(
     writer = FileStateWriter()
 
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
+    active_entries = _load_active_entries(entries_dir, reader, max_entries=10_000) if entries_dir.exists() else []
+    audit_pattern_promotions = detect_audit_finding_recurrence(
+        [dict(entry) for entry in active_entries],
+        threshold=cfg.audit_pattern_promotion_threshold,
+    )
+    common_result: dict[str, object] = {
+        "audit_pattern_promotions": audit_pattern_promotions,
+        "audit_pattern_promotion_threshold": cfg.audit_pattern_promotion_threshold,
+    }
 
     clusters = find_clusters(
         entries_dir,
@@ -192,6 +202,7 @@ def consolidate_cycle(
                 }
             )
         return {
+            **common_result,
             "dry_run": True,
             "clusters": cluster_previews,
             "consolidated_count": 0,
@@ -199,6 +210,7 @@ def consolidate_cycle(
 
     if not clusters:
         return {
+            **common_result,
             "status": "no_clusters",
             "clusters_found": 0,
             "consolidated_count": 0,
@@ -266,6 +278,7 @@ def consolidate_cycle(
             errors.append(f"cluster {cluster_ids}: {exc}")
 
     result: dict[str, object] = {
+        **common_result,
         "status": "completed",
         "clusters_found": len(clusters),
         "consolidated_count": consolidated_count,
