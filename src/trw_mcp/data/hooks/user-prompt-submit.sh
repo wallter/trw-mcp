@@ -21,10 +21,10 @@ init_hook_timer
 _payload=$(cat) || exit 0
 _prompt=""
 if command -v jq >/dev/null 2>&1; then
-  _prompt=$(printf '%s' "$_payload" | jq -r '.message // empty' 2>/dev/null) || true
+  _prompt=$(printf '%s' "$_payload" | jq -r '.prompt // empty' 2>/dev/null) || true
 fi
 if [ -z "$_prompt" ]; then
-  _prompt=$(printf '%s' "$_payload" | grep -o '"message"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"message"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+  _prompt=$(printf '%s' "$_payload" | grep -o '"prompt"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"prompt"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
 fi
 
 _phase=$(infer_phase)
