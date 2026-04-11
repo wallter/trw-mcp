@@ -6,11 +6,30 @@ so they are available via ``fastmcp run`` and test imports.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Coroutine
+from concurrent.futures import ThreadPoolExecutor
+from typing import TypeVar
+
 import structlog
 
 from trw_mcp.server._app import _middleware_list, mcp
 
 logger = structlog.get_logger(__name__)
+_AsyncResultT = TypeVar("_AsyncResultT")
+
+
+def _run_async(coro: Coroutine[object, object, _AsyncResultT]) -> _AsyncResultT:
+    """Run an async coroutine from sync startup code."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
 
 
 def _apply_tool_exposure_filter() -> None:
