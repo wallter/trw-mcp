@@ -73,7 +73,7 @@ def _hydrate_files_modified(state: CeremonyState, trw_dir: Path) -> None:
 
         state.files_modified_since_checkpoint = count
     except Exception:  # justified: fail-open — hydration must never break nudge
-        logger.debug("hydrate_files_modified_failed", exc_info=True)
+        logger.warning("hydrate_files_modified_failed", exc_info=True)
 
 
 # ── FR01: Ceremony nudge injection ──────────────────────────────────────
