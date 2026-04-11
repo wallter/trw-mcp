@@ -333,6 +333,7 @@ class ValidationResultV2(BaseModel):
 
     # Status integrity warnings (PRD-FIX-056)
     status_drift_warnings: list[str] = Field(default_factory=list)
+    integrity_warnings: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

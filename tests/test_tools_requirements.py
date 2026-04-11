@@ -728,3 +728,80 @@ Matrix.
             "trw_prd_validate did not inject ceremony_status — nudge wiring is broken"
         )
         assert isinstance(result["ceremony_status"], str)
+
+
+class TestPrdValidateIntegrityOutput:
+    """PRD validation tool returns integrity diagnostics in the serialized payload."""
+
+    def test_trw_prd_validate_surfaces_integrity_findings(self, tmp_path: Path) -> None:
+        prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        prds_dir.mkdir(parents=True)
+        prd_path = prds_dir / "PRD-OPENCODE-001.md"
+        prd_path.write_text(
+            """---
+prd:
+  id: PRD-OPENCODE-001
+  title: "Broken integrity fixture"
+  version: "1.0"
+  status: draft
+  priority: P1
+  category: OPENCODE
+confidence:
+  implementation_feasibility: 0.8
+  requirement_clarity: 0.8
+  estimate_confidence: 0.7
+traceability:
+  implements: []
+  depends_on: []
+---
+
+# PRD-OPENCODE-001: Broken integrity fixture
+
+## 1. Problem Statement
+This fixture cites `src/missing.py`.
+
+## 2. Goals & Non-Goals
+Keep the payload shape stable.
+
+## 3. User Stories
+One user story.
+
+## 4. Functional Requirements
+FR01 uses `src/missing.py`.
+
+## 5. Non-Functional Requirements
+Stay deterministic.
+
+## 6. Technical Approach
+Use `src/missing.py`.
+
+## 7. Test Strategy
+Test `src/missing.py`.
+
+## 8. Rollout Plan
+One rollout step.
+
+## 9. Success Metrics
+Integrity findings are serialized.
+
+## 10. Dependencies & Risks
+Missing path risk.
+
+## 11. Open Questions
+None.
+
+## 12. Traceability Matrix
+| Requirement | Implementation | Test |
+|-------------|----------------|------|
+| FR01 | `src/missing.py` | `tests/test_missing.py::test_case` |
+""",
+            encoding="utf-8",
+        )
+
+        tools = _get_tools()
+        result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+
+        assert "status_drift_warnings" in result
+        assert "integrity_warnings" in result
+        assert any(failure["field"] == "category" for failure in result["failures"])
+        assert any("Referenced repo path does not exist" in failure["message"] for failure in result["failures"])

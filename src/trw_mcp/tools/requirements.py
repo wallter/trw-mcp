@@ -408,6 +408,8 @@ def register_requirements_tools(server: FastMCP) -> None:
             # Risk scaling metadata (PRD-QUAL-013)
             "effective_risk_level": v2_result.effective_risk_level,
             "risk_scaled": v2_result.risk_scaled,
+            "status_drift_warnings": v2_result.status_drift_warnings,
+            "integrity_warnings": v2_result.integrity_warnings,
         }
 
         # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
