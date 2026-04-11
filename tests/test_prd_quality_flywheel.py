@@ -12,6 +12,7 @@ from trw_mcp.models.requirements import DimensionScore
 from trw_mcp.state.validation import (
     generate_improvement_suggestions,
     score_implementation_readiness,
+    validate_prd_quality_v2,
 )
 from trw_mcp.state.validation._prd_scoring import (
     _extract_fr_sections,
@@ -22,6 +23,28 @@ from trw_mcp.state.validation._prd_scoring import (
 
 
 _FRONTMATTER = {"category": "CORE"}
+
+_MINIMAL_PRD_FRONTMATTER = """\
+---
+id: PRD-QUAL-056
+title: Traceability coverage fixture
+version: 1.0
+status: draft
+priority: P2
+category: QUAL
+confidence:
+  implementation_feasibility: 3
+  requirement_clarity: 3
+  estimate_confidence: 3
+traceability:
+  implements:
+    - US-001
+  depends_on:
+    - PRD-QUAL-001
+  enables:
+    - PRD-QUAL-002
+---
+"""
 
 _PROOF_RICH_CONTENT = """\
 ## 4. Functional Requirements
@@ -118,6 +141,62 @@ Test: test_bar.py::test_baz
 This section mentions grep_present as documentation, not as an assertion block.
 """
 
+_ZERO_COVERAGE_CONTENT = (
+    _MINIMAL_PRD_FRONTMATTER
+    + """\
+## 4. Functional Requirements
+
+### FR01: Legacy requirement
+The system shall keep legacy wording but cites no file paths or tests.
+
+### FR02: Another legacy requirement
+The system shall keep legacy wording but cites no file paths or tests.
+
+## 6. Technical Approach
+
+### Behavior Switch Matrix
+| Requirement | Old | New |
+|-------------|-----|-----|
+| FR01 | Legacy label | Root category |
+| FR02 | Legacy prompt | Backward-compatible prompt |
+
+## 12. Traceability Matrix
+
+| Requirement | Source | Implementation | Test | Status |
+|-------------|--------|----------------|------|--------|
+| FR01 | US-001 | planned follow-up | manual audit | Planned |
+| FR02 | US-002 | legacy mapping | manual audit | Planned |
+"""
+)
+
+_PARTIAL_COVERAGE_CONTENT = (
+    _MINIMAL_PRD_FRONTMATTER
+    + """\
+## 4. Functional Requirements
+
+### FR01: Fully traced requirement
+Implementation: src/audit/prompts.py
+Test: tests/test_prompts.py::test_legacy_mapping
+```assertions
+grep_present: "legacy_category"
+```
+
+### FR02: Partially traced requirement
+Implementation: src/audit/schema.py
+This FR intentionally omits a test reference and assertion block.
+"""
+)
+
+
+def _traceability_dimension_details(content: str) -> dict[str, object]:
+    result = validate_prd_quality_v2(content)
+    return next(dim.details for dim in result.dimensions if dim.name == "traceability")
+
+
+def _traceability_dimension_score(content: str) -> float:
+    result = validate_prd_quality_v2(content)
+    return next(dim.score for dim in result.dimensions if dim.name == "traceability")
+
 
 def test_implementation_readiness_prefers_proof_rich_content() -> None:
     proof_rich = score_implementation_readiness(_FRONTMATTER, _PROOF_RICH_CONTENT)
@@ -172,3 +251,35 @@ def test_assertion_coverage_scoring() -> None:
     assert coverage == 0.5
     assert traceability.details["assertion_coverage"] == 0.5
     assert "suggestions" not in traceability.details
+
+
+def test_validate_prd_quality_v2_zeroes_new_coverage_metrics_without_paths_or_assertions() -> None:
+    details = _traceability_dimension_details(_ZERO_COVERAGE_CONTENT)
+
+    assert details["file_path_coverage"] == 0.0
+    assert details["assertion_coverage"] == 0.0
+
+
+def test_validate_prd_quality_v2_scores_partial_traceability_coverage_proportionally() -> None:
+    details = _traceability_dimension_details(_PARTIAL_COVERAGE_CONTENT)
+
+    assert details["file_path_coverage"] == 0.75
+    assert details["assertion_coverage"] == 0.5
+    assert "suggestions" not in details
+
+
+def test_validate_prd_quality_v2_surfaces_expected_low_coverage_suggestions() -> None:
+    details = _traceability_dimension_details(_ZERO_COVERAGE_CONTENT)
+
+    assert details["suggestions"] == [
+        "Add implementation and test file paths to FR acceptance criteria for first-pass audit compliance",
+        "Add machine-verifiable assertions (grep_present/grep_absent) to FRs for automated audit pre-flight",
+    ]
+
+
+def test_validate_prd_quality_v2_treats_new_coverage_metrics_as_fail_open_bonus() -> None:
+    zero_coverage_score = _traceability_dimension_score(_ZERO_COVERAGE_CONTENT)
+    partial_coverage_score = _traceability_dimension_score(_PARTIAL_COVERAGE_CONTENT)
+
+    assert zero_coverage_score > 0.0
+    assert partial_coverage_score > zero_coverage_score
