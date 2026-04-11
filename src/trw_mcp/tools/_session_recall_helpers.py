@@ -426,6 +426,7 @@ def perform_session_recalls(
         logger.debug("session_recall_gated", reason="session_start_recall_enabled=False")
         return [], [], {}
 
+    from trw_mcp.state.memory_adapter import increment_session_counts
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
     from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
 
@@ -476,6 +477,7 @@ def perform_session_recalls(
 
     # Update access tracking
     matched_ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
+    increment_session_counts(trw_dir, matched_ids)
     adapter_update_access(trw_dir, matched_ids)
     log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
 

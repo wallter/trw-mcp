@@ -170,32 +170,43 @@ def register_learning_tools(server: FastMCP) -> None:
         When to call: the moment you identify a root cause — before writing the fix.
         Also call after your approach works, recording what changed and why.
 
-        Most learnings need only summary and optionally detail + tags.
-        All other fields are auto-detected when omitted.
+        Only record learnings that: (1) prevent repeated mistakes,
+        (2) document non-obvious gotchas or architecture decisions,
+        (3) capture validated patterns that change workflow, or
+        (4) preserve knowledge that would take significant effort to rediscover.
+        Routine observations ("I read the file", "the test passed") degrade recall quality.
+
+        Most learnings need only summary and detail. Adding tags and impact
+        improves recall precision. All other fields are auto-detected.
 
         Args:
-            summary: One-line summary of the discovery.
-            detail: Full context: what you tried, what failed, what worked.
-            tags: Categorization tags for filtered recall.
-            evidence: Supporting evidence (file paths, error messages).
-            impact: Impact score 0.0-1.0.
-            shard_id: Shard identifier for sub-agent attribution.
-            source_type: Provenance: "human", "agent", "tool", or "consolidated".
-            source_identity: Source name.
-            client_profile: IDE/client override. Auto-detected when None.
-            model_id: Model override. Auto-detected when None.
-            consolidated_from: IDs of superseded entries to mark obsolete.
-            assertions: Machine-verifiable assertions.
-            type: Type: "incident", "pattern", "convention", "hypothesis", or "workaround".
-            nudge_line: Compact nudge text (max 80 chars).
-            expires: Expiration date/condition.
-            confidence: "unverified", "low", "medium", "high", or "verified".
-            task_type: Task type (e.g., "bug-fix", "feature").
-            domain: Domain tags for recall boosting.
-            phase_origin: Framework phase when created.
-            phase_affinity: Phases where most relevant.
-            team_origin: Team identifier for recall boosting.
-            protection_tier: "critical", "high", "normal", or "low".
+            Required:
+                summary: One-line summary of the discovery.
+                detail: Full context: what you tried, what failed, what worked.
+
+            Recommended:
+                tags: Categorization tags for filtered recall.
+                impact: Impact score 0.0-1.0.
+                evidence: Supporting evidence (file paths, error messages).
+
+            Advanced (auto-detected if omitted):
+                type: Type: "incident", "pattern", "convention", "hypothesis", or "workaround".
+                nudge_line: Compact nudge text (max 80 chars).
+                expires: Expiration date/condition.
+                confidence: "unverified", "low", "medium", "high", or "verified".
+                task_type: Task type (e.g., "bug-fix", "feature").
+                domain: Domain tags for recall boosting.
+                phase_origin: Framework phase when created.
+                phase_affinity: Phases where most relevant.
+                team_origin: Team identifier for recall boosting.
+                protection_tier: "critical", "high", "normal", or "low".
+                source_type: Provenance: "human", "agent", "tool", or "consolidated".
+                source_identity: Source name.
+                client_profile: IDE/client override. Auto-detected when None.
+                model_id: Model override. Auto-detected when None.
+                shard_id: Shard identifier for sub-agent attribution.
+                consolidated_from: IDs of superseded entries to mark obsolete.
+                assertions: Machine-verifiable assertions.
 
         See Also: trw_recall, trw_learn_update
         """
@@ -491,11 +502,10 @@ def register_learning_tools(server: FastMCP) -> None:
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Sync the auto-generated CLAUDE.md section — keeps ceremony protocol and session instructions current.
+        """Sync TRW protocol and ceremony guidance into CLAUDE.md -- the next session starts with your operational framework built in.
 
-        Renders behavioral protocol and ceremony guidance into the auto-generated
-        CLAUDE.md section. Learnings are delivered via trw_session_start() recall,
-        not embedded in CLAUDE.md (per PRD-CORE-093).
+        Renders behavioral protocol, ceremony guidance, and memory routing into the auto-generated CLAUDE.md section.
+        Learnings are not promoted into CLAUDE.md (per PRD-CORE-093); they are delivered via trw_session_start() recall instead.
 
         Also writes AGENTS.md for opencode users (FR13) when detected or explicitly
         requested via the ``client`` parameter.

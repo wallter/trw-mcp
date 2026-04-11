@@ -201,6 +201,25 @@ class TestPerformSessionRecalls:
 
         mock_update.assert_called_once_with(trw_dir, ["L-001"])
 
+    def test_increments_session_counts_for_surfaced_learnings(
+        self,
+        trw_dir: Path,
+        config: TRWConfig,
+        reader: FileStateReader,
+    ) -> None:
+        mock_entries = [{"id": "L-001", "summary": "X", "impact": 0.8}]
+        mock_increment = MagicMock()
+
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=mock_entries),
+            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
+            patch("trw_mcp.state.memory_adapter.increment_session_counts", mock_increment),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
+        ):
+            perform_session_recalls(trw_dir, "", config, reader)
+
+        mock_increment.assert_called_once_with(trw_dir, ["L-001"])
+
 
 # --- _phase_contextual_recall ---
 
