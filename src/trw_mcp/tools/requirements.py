@@ -268,18 +268,14 @@ def register_requirements_tools(server: FastMCP) -> None:
             "index_synced": index_synced,
         }
 
-        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        # Inject ceremony progress summary.
         try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.state._paths import resolve_trw_dir
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            from trw_mcp.tools._ceremony_status import append_ceremony_status
 
-            ctx = NudgeContext(tool_name=ToolName.PRD_CREATE)
-            append_ceremony_nudge(
-                cast("dict[str, object]", prd_result), resolve_trw_dir(), context=ctx
-            )
-        except Exception:  # justified: fail-open — ceremony nudge must not break prd_create
-            logger.debug("prd_create_nudge_injection_skipped", exc_info=True)
+            append_ceremony_status(cast("dict[str, object]", prd_result), resolve_trw_dir())
+        except Exception:  # justified: fail-open — ceremony status must not break prd_create
+            logger.debug("prd_create_ceremony_status_skipped", exc_info=True)
 
         return prd_result
 
@@ -412,18 +408,14 @@ def register_requirements_tools(server: FastMCP) -> None:
             "integrity_warnings": v2_result.integrity_warnings,
         }
 
-        # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+        # Inject ceremony progress summary.
         try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
             from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            from trw_mcp.tools._ceremony_status import append_ceremony_status
 
-            ctx = NudgeContext(tool_name=ToolName.PRD_VALIDATE)
-            append_ceremony_nudge(
-                cast("dict[str, object]", validate_result), _resolve_trw_dir(), context=ctx
-            )
-        except Exception:  # justified: fail-open — ceremony nudge must not break prd_validate
-            logger.debug("prd_validate_nudge_injection_skipped", exc_info=True)
+            append_ceremony_status(cast("dict[str, object]", validate_result), _resolve_trw_dir())
+        except Exception:  # justified: fail-open — ceremony status must not break prd_validate
+            logger.debug("prd_validate_ceremony_status_skipped", exc_info=True)
 
         return validate_result
 

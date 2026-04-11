@@ -362,18 +362,14 @@ def execute_recall(
         "tokens_truncated": tokens_truncated,
     }
 
-    # Inject ceremony nudge (PRD-CORE-074 FR01, PRD-CORE-084 FR02)
+    # Inject ceremony progress summary.
     if not (is_wildcard and use_compact):
         try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+            from trw_mcp.tools._ceremony_status import append_ceremony_status
 
-            ctx = NudgeContext(tool_name=ToolName.RECALL)
-            append_ceremony_nudge(
-                cast("dict[str, object]", recall_result), trw_dir, available_learnings=total_available, context=ctx
-            )
+            append_ceremony_status(cast("dict[str, object]", recall_result), trw_dir)
         except Exception:  # justified: fail-open
-            logger.debug("recall_nudge_injection_skipped", exc_info=True)
+            logger.debug("recall_ceremony_status_skipped", exc_info=True)
 
     return recall_result
 

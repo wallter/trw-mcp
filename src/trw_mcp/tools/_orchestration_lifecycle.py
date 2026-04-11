@@ -99,7 +99,7 @@ def _update_wave_status(
         logger.debug("wave_status_update_failed", wave_id=wave_id)
 
 
-def _apply_ceremony_nudge(
+def _apply_ceremony_status(
     result: dict[str, object],
     *,
     tool_name: str,
@@ -107,16 +107,15 @@ def _apply_ceremony_nudge(
     trw_dir: Path | None = None,
     mark_checkpoint_first: bool = False,
 ) -> None:
-    """Apply orchestration ceremony nudge wiring without bloating the facade module."""
+    """Apply orchestration ceremony status wiring without bloating the facade module."""
     try:
         from trw_mcp.state._paths import resolve_trw_dir
-        from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName, mark_checkpoint
-        from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
+        from trw_mcp.state.ceremony_progress import mark_checkpoint
+        from trw_mcp.tools._ceremony_status import append_ceremony_status
 
         resolved_trw_dir = trw_dir or resolve_trw_dir()
         if mark_checkpoint_first:
             mark_checkpoint(resolved_trw_dir)
-        ctx = NudgeContext(tool_name=getattr(ToolName, tool_name))
-        append_ceremony_nudge(result, resolved_trw_dir, context=ctx)
-    except Exception:  # justified: fail-open, ceremony nudge must not break orchestration tools
+        append_ceremony_status(result, resolved_trw_dir)
+    except Exception:  # justified: fail-open, ceremony status must not break orchestration tools
         logger.debug(debug_event, exc_info=True)

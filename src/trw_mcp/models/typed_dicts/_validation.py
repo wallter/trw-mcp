@@ -109,4 +109,4 @@ class ValidateResultDict(TypedDict, total=False):
     status_drift_warnings: list[str]
     integrity_warnings: list[str]
     # Ceremony
-    ceremony_nudge: dict[str, object]
+    ceremony_status: str
