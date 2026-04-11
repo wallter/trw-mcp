@@ -486,6 +486,20 @@ class TestLearningToMemoryEntry:
         entry = _learning_to_memory_entry("L-es001", "s", "d", shard_id="")
         assert entry.metadata == {}
 
+    def test_invalid_anchor_is_skipped_with_debug_log(self) -> None:
+        """Invalid anchors are skipped fail-open and emit a debug log."""
+        anchors = [
+            {"file": "src/good.py", "symbol_name": "good_symbol"},
+            {"file": "../bad.py", "symbol_name": "bad_symbol"},
+        ]
+
+        with patch("trw_mcp.state._memory_transforms.logger.debug") as mock_debug:
+            entry = _learning_to_memory_entry("L-anc001", "s", "d", anchors=anchors)
+
+        assert [anchor.file for anchor in entry.anchors] == ["src/good.py"]
+        mock_debug.assert_called_once()
+        assert mock_debug.call_args.kwargs["anchor"] == anchors[1]
+
 
 # ---------------------------------------------------------------------------
 # recall_learnings — boundary inputs
@@ -493,6 +507,45 @@ class TestLearningToMemoryEntry:
 
 
 class TestRecallLearningsBoundary:
+    def test_store_learning_retries_once_after_corruption(self, trw_dir: Path) -> None:
+        """Corruption on first store attempt triggers recovery + retry with logging."""
+        backend_first = MagicMock()
+        backend_first.store.side_effect = RuntimeError("database disk image is malformed")
+        backend_second = MagicMock()
+
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", side_effect=[backend_first, backend_second, backend_second]),
+            patch("trw_mcp.state.memory_adapter._recover_and_reset_backend") as mock_recover,
+            patch("trw_mcp.state.memory_adapter._embed_and_store"),
+            patch("trw_mcp.state.memory_adapter.logger.warning") as mock_warning,
+        ):
+            result = store_learning(trw_dir, "L-retry1", "Retry summary", "Retry detail")
+
+        assert result["status"] == "recorded"
+        mock_recover.assert_called_once_with(trw_dir)
+        backend_second.store.assert_called_once()
+        mock_warning.assert_called_once()
+
+    def test_recall_learnings_retries_once_after_corruption(self, trw_dir: Path) -> None:
+        """Corruption on first recall attempt triggers recovery + retry with logging."""
+        entry = MemoryEntry(id="L-retry2", content="Retry content")
+        backend_first = MagicMock()
+        backend_first.list_entries.side_effect = RuntimeError("database disk image is malformed")
+        backend_second = MagicMock()
+        backend_second.list_entries.return_value = [entry]
+
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", side_effect=[backend_first, backend_second]),
+            patch("trw_mcp.state.memory_adapter._recover_and_reset_backend") as mock_recover,
+            patch("trw_mcp.state.memory_adapter.logger.warning") as mock_warning,
+        ):
+            result = recall_learnings(trw_dir, "*")
+
+        assert [row["id"] for row in result] == ["L-retry2"]
+        mock_recover.assert_called_once_with(trw_dir)
+        backend_second.list_entries.assert_called_once()
+        mock_warning.assert_called_once()
+
     def test_empty_string_query_treated_as_wildcard(self, trw_dir: Path) -> None:
         """Empty string query is treated as wildcard (returns all entries)."""
         store_learning(trw_dir, "L-eq1", "Entry one", "d1")

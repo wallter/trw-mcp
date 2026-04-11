@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Literal, cast
 
+import structlog
 from trw_memory.models.memory import (
     Anchor,
     Assertion,
@@ -30,6 +31,7 @@ _NAMESPACE = DEFAULT_NAMESPACE
 from trw_mcp.state._constants import VALID_SOURCES as _VALID_SOURCES  # noqa: E402
 
 _SourceType = Literal["human", "agent", "tool", "consolidated"]
+logger = structlog.get_logger(__name__)
 
 
 def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> dict[str, object]:
@@ -162,8 +164,8 @@ def _learning_to_memory_entry(
                 if file_val.startswith("/"):
                     anchor_data["file"] = file_val.lstrip("/")
                 anchor_objects.append(Anchor.model_validate(anchor_data))
-            except Exception:  # noqa: S110, PERF203  # justified: fail-open, skip invalid anchors
-                pass
+            except Exception:  # noqa: PERF203  # justified: fail-open, skip invalid anchors
+                logger.debug("invalid_anchor_skipped", anchor=a, exc_info=True)
 
     return MemoryEntry(
         id=learning_id,
