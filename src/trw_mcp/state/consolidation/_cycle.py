@@ -6,6 +6,7 @@ summarization, entry creation, and archival. Includes dry-run mode.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,7 @@ from trw_mcp.state.consolidation._summarize import (
 )
 from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.tools._learning_helpers import truncate_nudge_line
 
 logger = structlog.get_logger(__name__)
 
@@ -304,21 +306,127 @@ _AUDIT_FINDING_CATEGORIES: frozenset[str] = frozenset({
     "spec_gap",
     "impl_gap",
     "test_gap",
-    "doc_gap",
-    "config_gap",
-    "security_gap",
-    "perf_gap",
-    "compat_gap",
+    "integration_gap",
+    "traceability_gap",
 })
 
 _PRD_TAG_PREFIX = "PRD-"
+_AUDIT_PATTERN_STOPWORDS: frozenset[str] = frozenset({
+    "a",
+    "an",
+    "and",
+    "another",
+    "audit",
+    "audits",
+    "detected",
+    "finding",
+    "findings",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "missing",
+    "not",
+    "of",
+    "on",
+    "same",
+    "surfaced",
+    "the",
+    "this",
+    "to",
+    "with",
+})
+_AUDIT_PATTERN_SYNONYMS: dict[str, str] = {
+    "callsite": "callsite",
+    "callsites": "callsite",
+    "hook": "wiring",
+    "hookup": "wiring",
+    "hookups": "wiring",
+    "implementation": "implementation",
+    "implementations": "implementation",
+    "integrate": "integration",
+    "integrated": "integration",
+    "integration": "integration",
+    "matrixes": "matrix",
+    "matrices": "matrix",
+    "miss": "missing",
+    "missed": "missing",
+    "regressions": "regression",
+    "tests": "test",
+    "trace": "traceability",
+    "traces": "traceability",
+    "traceability": "traceability",
+    "wired": "wiring",
+    "wire": "wiring",
+    "wireup": "wiring",
+    "wiring": "wiring",
+}
+_AUDIT_PATTERN_PREVENTION_STRATEGIES: dict[str, str] = {
+    "spec_gap": "Require FR-by-FR spec reconciliation before review sign-off.",
+    "impl_gap": "Verify the production call path and integration wiring before closing remediation.",
+    "test_gap": "Add requirement-linked regression coverage before marking the fix complete.",
+    "integration_gap": "Exercise end-to-end integration points, not just isolated units, before delivery.",
+    "traceability_gap": "Update traceability artifacts alongside code changes before delivery sign-off.",
+}
+
+
+def _normalize_audit_pattern_token(token: str) -> str:
+    """Normalize a token from an audit summary for recurrence grouping."""
+    normalized = _AUDIT_PATTERN_SYNONYMS.get(token, token)
+    if normalized.endswith("ies") and len(normalized) > 4:
+        normalized = normalized[:-3] + "y"
+    elif normalized.endswith("s") and len(normalized) > 4 and not normalized.endswith("ss"):
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _normalize_audit_pattern(summary: str) -> str:
+    """Reduce a free-text audit summary to a stable recurrence key."""
+    raw_tokens = re.findall(r"[a-z0-9]+", summary.lower())
+    normalized_tokens: list[str] = []
+    for token in raw_tokens:
+        if token.startswith("prd"):
+            continue
+        normalized = _normalize_audit_pattern_token(token)
+        if normalized in _AUDIT_PATTERN_STOPWORDS or len(normalized) <= 2:
+            continue
+        normalized_tokens.append(normalized)
+
+    unique_tokens = sorted(dict.fromkeys(normalized_tokens))
+    if unique_tokens:
+        return " ".join(unique_tokens[:6])
+
+    fallback = re.sub(r"\s+", " ", summary.strip().lower())
+    return fallback[:80]
+
+
+def _build_audit_pattern_summary(sample_summaries: list[str], normalized_pattern: str) -> str:
+    """Build a human-readable pattern summary from sample summaries."""
+    if sample_summaries:
+        return sample_summaries[0]
+    return normalized_pattern.replace("_", " ").strip()
+
+
+def _build_audit_synthesized_summary(
+    category: str,
+    pattern_summary: str,
+    prd_count: int,
+    prevention_strategy: str,
+) -> str:
+    """Build the FR10-required synthesized summary."""
+    category_name = category.replace("_", " ")
+    return (
+        f"Recurring {category_name} pattern: {pattern_summary}. "
+        f"Observed across {prd_count} PRDs. Prevention: {prevention_strategy}"
+    )
 
 
 def _accumulate_audit_entry(
     entry: dict[str, object],
-    category_data: dict[str, dict[str, list[str]]],
+    pattern_data: dict[tuple[str, str], dict[str, list[str]]],
 ) -> None:
-    """Accumulate a single entry's audit-finding data into *category_data*.
+    """Accumulate a single entry's audit-finding data into *pattern_data*.
 
     Skips entries that are not tagged ``audit-finding`` or lack valid tags.
     """
@@ -342,15 +450,16 @@ def _accumulate_audit_entry(
             prd_ids.append(tag)
 
     summary = str(entry.get("summary", ""))
+    normalized_pattern = _normalize_audit_pattern(summary)
 
-    # Associate each (category, prd_id) pair
     for cat in categories:
-        if cat not in category_data:
-            category_data[cat] = {}
+        key = (cat, normalized_pattern)
+        if key not in pattern_data:
+            pattern_data[key] = {}
         for prd_id in prd_ids:
-            if prd_id not in category_data[cat]:
-                category_data[cat][prd_id] = []
-            category_data[cat][prd_id].append(summary)
+            if prd_id not in pattern_data[key]:
+                pattern_data[key][prd_id] = []
+            pattern_data[key][prd_id].append(summary)
 
 
 def detect_audit_finding_recurrence(
@@ -359,10 +468,10 @@ def detect_audit_finding_recurrence(
 ) -> list[dict[str, object]]:
     """Detect audit-finding learnings that recur across distinct PRDs.
 
-    Scans learnings tagged with ``audit-finding`` and groups by finding
-    category (spec_gap, impl_gap, etc.). When a category has findings
-    from ``threshold``+ distinct PRD IDs, it is flagged for CLAUDE.md
-    promotion.
+    Scans learnings tagged with ``audit-finding`` and groups by normalized
+    pattern summary within a root-cause category. When the same pattern
+    recurs across ``threshold``+ distinct PRD IDs, it is flagged for
+    CLAUDE.md promotion.
 
     Args:
         entries: List of learning entry dicts.
@@ -371,45 +480,57 @@ def detect_audit_finding_recurrence(
     Returns:
         List of promotion candidate dicts with:
         - category: finding category
+        - normalized_pattern: normalized recurrence key
+        - pattern_summary: representative human-readable pattern summary
         - prd_count: number of distinct PRDs
         - prd_ids: list of PRD IDs
         - sample_summaries: up to 3 representative summaries
+        - synthesized_summary: FR10-required synthesized promotion summary
+        - prevention_strategy: recommended prevention strategy
         - nudge_line: recommended CLAUDE.md nudge text
     """
-    # Group: category -> {prd_id -> [summaries]}
-    category_data: dict[str, dict[str, list[str]]] = {}
+    pattern_data: dict[tuple[str, str], dict[str, list[str]]] = {}
 
     for entry in entries:
-        _accumulate_audit_entry(entry, category_data)
+        _accumulate_audit_entry(entry, pattern_data)
 
-    # Build promotion candidates
     candidates: list[dict[str, object]] = []
-    for category, prd_map in sorted(category_data.items()):
+    for (category, normalized_pattern), prd_map in sorted(pattern_data.items()):
         distinct_prds = len(prd_map)
         if distinct_prds < threshold:
             continue
 
         prd_ids_sorted = sorted(prd_map.keys())
-        # Collect up to 3 sample summaries from distinct PRDs
         sample_summaries: list[str] = []
         for pid in prd_ids_sorted[:3]:
             sums = prd_map[pid]
             if sums:
                 sample_summaries.append(sums[0])
 
-        nudge_line = (
-            f"Recurring {category.replace('_', ' ')} across {distinct_prds} PRDs"
-            f" — consider adding a checklist item"
+        pattern_summary = _build_audit_pattern_summary(sample_summaries, normalized_pattern)
+        prevention_strategy = _AUDIT_PATTERN_PREVENTION_STRATEGIES.get(
+            category,
+            "Add an explicit prevention checklist item before delivery sign-off.",
         )
-        # Truncate to 80 chars max
-        if len(nudge_line) > 80:
-            nudge_line = nudge_line[:77] + "..."
+        synthesized_summary = _build_audit_synthesized_summary(
+            category,
+            pattern_summary,
+            distinct_prds,
+            prevention_strategy,
+        )
+        nudge_line = truncate_nudge_line(
+            f"Recurring {category.replace('_', ' ')}: {pattern_summary}",
+        )
 
         candidates.append({
             "category": category,
+            "normalized_pattern": normalized_pattern,
+            "pattern_summary": pattern_summary,
             "prd_count": distinct_prds,
             "prd_ids": prd_ids_sorted,
             "sample_summaries": sample_summaries,
+            "synthesized_summary": synthesized_summary,
+            "prevention_strategy": prevention_strategy,
             "nudge_line": nudge_line,
         })
 

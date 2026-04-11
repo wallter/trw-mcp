@@ -42,6 +42,7 @@ def handle_manual_mode(
     resolved_run: Path | None,
     review_id: str,
     ts: str,
+    prd_ids: list[str] | None = None,
 ) -> ManualReviewResult:
     """Handle the manual review mode -- validate findings, compute verdict, persist."""
     validated = validate_manual_findings(raw_findings)
@@ -74,6 +75,7 @@ def handle_manual_mode(
             "verdict": verdict,
             "critical_count": critical_count,
             "warning_count": warning_count,
+            "prd_ids": list(prd_ids) if prd_ids else [],
         },
     )
     return result

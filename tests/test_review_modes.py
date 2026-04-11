@@ -1014,6 +1014,90 @@ class TestReviewerRolesConstant:
 class TestIntegration:
     """Integration scenarios spanning multiple mode paths."""
 
+    @pytest.mark.parametrize(
+        ("tool_kwargs", "review_patches"),
+        [
+            (
+                {
+                    "findings": [{"category": "correctness", "severity": "warning", "description": "Warning"}],
+                },
+                (),
+            ),
+            (
+                {"mode": "cross_model"},
+                (("trw_mcp.tools._review_helpers._get_git_diff", ""),),
+            ),
+            (
+                {
+                    "mode": "auto",
+                    "reviewer_findings": [
+                        {
+                            "reviewer_role": "correctness",
+                            "confidence": 95,
+                            "category": "logic",
+                            "severity": "warning",
+                            "description": "Surfaced",
+                        },
+                    ],
+                },
+                (("trw_mcp.tools._review_helpers._get_git_diff", ""),),
+            ),
+        ],
+    )
+    def test_review_modes_emit_audit_cycles_only_for_explicit_prd_ids(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tool_kwargs: dict[str, Any],
+        review_patches: tuple[tuple[str, object], ...],
+    ) -> None:
+        """Explicit prd_ids override run.yaml scope for all persisted review modes."""
+        tools = make_ceremony_server(monkeypatch, tmp_path)
+        _reset_config(TRWConfig(review_confidence_threshold=0, cross_model_review_enabled=False))
+
+        run_yaml = run_dir / "meta" / "run.yaml"
+        run_yaml.write_text(
+            "\n".join(
+                [
+                    "run_id: review-modes-test",
+                    "status: active",
+                    "phase: review",
+                    "task_name: review-modes-task",
+                    "prd_scope:",
+                    "  - PRD-QUAL-056",
+                    "  - PRD-CORE-104",
+                    "  - PRD-CORE-125",
+                    "",
+                ],
+            ),
+            encoding="utf-8",
+        )
+
+        context_managers = [patch("trw_mcp.tools.review.find_active_run", return_value=run_dir)]
+        context_managers.extend(
+            patch(target, return_value=value)
+            for target, value in review_patches
+        )
+
+        with context_managers[0]:
+            if len(context_managers) == 1:
+                result = tools["trw_review"].fn(
+                    prd_ids=["PRD-CORE-104", "PRD-CORE-125"],
+                    **tool_kwargs,
+                )
+            else:
+                with context_managers[1]:
+                    result = tools["trw_review"].fn(
+                        prd_ids=["PRD-CORE-104", "PRD-CORE-125"],
+                        **tool_kwargs,
+                    )
+
+        assert result["review_yaml"]
+        events = FileStateReader().read_jsonl(run_dir / "meta" / "events.jsonl")
+        audit_events = [event for event in events if event["event"] == "audit_cycle_complete"]
+        assert [event["prd_id"] for event in audit_events] == ["PRD-CORE-104", "PRD-CORE-125"]
+
     def test_no_run_available_manual_mode_returns_result(
         self,
         tmp_path: Path,
