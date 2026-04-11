@@ -148,28 +148,6 @@ def register_build_tools(server: FastMCP) -> None:
         # Coverage threshold enforcement (sprint-finish anti-regression)
         _finalize_build_result(result, min_coverage)
 
-        # Mark build check result in ceremony state tracker (PRD-CORE-074 FR04)
-        try:
-            from trw_mcp.state.ceremony_nudge import mark_build_check
-
-            _build_passed = bool(result.get("tests_passed", False))
-            mark_build_check(trw_dir, passed=_build_passed)
-        except Exception:  # justified: fail-open, ceremony state update must not block build check
-            logger.debug("build_ceremony_state_update_skipped", exc_info=True)  # justified: fail-open
-
-        # Ceremony nudge injection
-        try:
-            from trw_mcp.state.ceremony_nudge import NudgeContext, ToolName
-            from trw_mcp.tools._ceremony_helpers import append_ceremony_nudge
-
-            ctx = NudgeContext(
-                tool_name=ToolName.BUILD_CHECK,
-                build_passed=bool(result.get("tests_passed", False)),
-            )
-            append_ceremony_nudge(result, trw_dir, context=ctx)
-        except Exception:  # justified: fail-open — ceremony nudge must not break build check
-            logger.debug("ceremony_nudge_failed_in_build_check", exc_info=True)
-
         return result
 
     @server.tool(output_schema=None)

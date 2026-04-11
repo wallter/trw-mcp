@@ -609,11 +609,16 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
 def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
     """Increment session_count once for each learning surfaced during session start."""
     backend = get_backend(trw_dir)
+    seen_ids: set[str] = set()
     for lid in learning_ids:
+        if lid in seen_ids:
+            continue
+        seen_ids.add(lid)
         try:
             entry = backend.get(lid)
             if entry is not None:
-                backend.update(lid, session_count=entry.session_count + 1)
+                current_count = entry.session_count or 0
+                backend.update(lid, session_count=current_count + 1)
         except Exception:  # per-item error handling: session tracking is best-effort, one failure must not break recall results  # noqa: PERF203
             logger.warning(
                 "session_count_update_failed",

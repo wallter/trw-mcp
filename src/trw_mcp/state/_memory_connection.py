@@ -47,6 +47,18 @@ _embed_failures: int = 0
 _SENTINEL_NAME = ".migrated"
 _NAMESPACE = DEFAULT_NAMESPACE
 _MAX_ENTRIES = DEFAULT_LIST_LIMIT
+_CORRUPTION_MARKERS = (
+    "malformed",
+    "database disk image",
+    "not a database",
+    "file is not a database",
+)
+
+
+def _is_corruption_error(exc: BaseException) -> bool:
+    """Return True when *exc* looks like SQLite corruption."""
+    message = str(exc).lower()
+    return any(marker in message for marker in _CORRUPTION_MARKERS)
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +100,13 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
         cfg = get_config()
         try:
             backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
-        except Exception:
+        except Exception as exc:  # justified: boundary, retry recovery only for SQLite corruption on backend init
+            if not _is_corruption_error(exc):
+                logger.error("backend_init_failed", db=str(db_path), action="raise", exc_info=True)
+                raise
             # If constructor fails even after internal recovery attempt,
-            # force-recover and retry once.
-            logger.exception("backend_init_failed", db=str(db_path), action="force_recover")
+            # force-recover and retry once for corruption-like failures.
+            logger.warning("backend_init_retry_after_corruption", db=str(db_path), exc_info=True)
             if db_path.exists():
                 conn = SQLiteBackend.recover_db(db_path)
                 conn.close()

@@ -186,6 +186,79 @@ class TestGetBackend:
         backend = get_backend(trw_dir_with_entries)
         assert backend.count() == 3
 
+    def test_constructor_reraises_non_corruption_errors(
+        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-corruption init failures should surface instead of forcing recovery."""
+        import trw_mcp.state._memory_connection as conn_mod
+
+        class FakeSQLiteBackend:
+            init_calls = 0
+            recover_calls = 0
+
+            def __init__(self, db_path: Path, dim: int | None = None) -> None:
+                del db_path, dim
+                type(self).init_calls += 1
+                raise RuntimeError("permission denied")
+
+            @staticmethod
+            def recover_db(path: Path) -> object:
+                del path
+                FakeSQLiteBackend.recover_calls += 1
+                raise AssertionError("recover_db should not be called for non-corruption errors")
+
+        conn_mod.reset_backend()
+        monkeypatch.setattr(conn_mod, "SQLiteBackend", FakeSQLiteBackend)
+        monkeypatch.setattr(conn_mod, "ensure_migrated", lambda trw_dir, backend: {"migrated": 0, "skipped": 0})
+
+        with pytest.raises(RuntimeError, match="permission denied"):
+            conn_mod.get_backend(trw_dir)
+
+        assert FakeSQLiteBackend.init_calls == 1
+        assert FakeSQLiteBackend.recover_calls == 0
+
+    def test_constructor_recovers_corruption_once(
+        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Corruption-like init failures should recover and retry once."""
+        import trw_mcp.state._memory_connection as conn_mod
+
+        class FakeRecoveredConn:
+            def close(self) -> None:
+                return None
+
+        class FakeSQLiteBackend:
+            init_calls = 0
+            recover_calls = 0
+
+            def __init__(self, db_path: Path, dim: int | None = None) -> None:
+                del db_path, dim
+                type(self).init_calls += 1
+                if type(self).init_calls == 1:
+                    raise RuntimeError("database disk image is malformed")
+                self.recovered = False
+
+            @staticmethod
+            def recover_db(path: Path) -> FakeRecoveredConn:
+                del path
+                FakeSQLiteBackend.recover_calls += 1
+                return FakeRecoveredConn()
+
+            def close(self) -> None:
+                return None
+
+        conn_mod.reset_backend()
+        (trw_dir / "memory" / "memory.db").touch()
+        monkeypatch.setattr(conn_mod, "SQLiteBackend", FakeSQLiteBackend)
+        monkeypatch.setattr(conn_mod, "ensure_migrated", lambda trw_dir, backend: {"migrated": 0, "skipped": 0})
+
+        backend = conn_mod.get_backend(trw_dir)
+
+        assert backend is not None
+        assert FakeSQLiteBackend.init_calls == 2
+        assert FakeSQLiteBackend.recover_calls == 1
+        conn_mod.reset_backend()
+
 
 # ---------------------------------------------------------------------------
 # store_learning tests
