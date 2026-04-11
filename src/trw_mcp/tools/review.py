@@ -71,7 +71,7 @@ def register_review_tools(server: FastMCP) -> None:
             run_path: Explicit run path. Auto-detected if None.
             mode: Review mode — 'manual', 'auto', 'cross_model', or 'reconcile'. Auto-detected.
             reviewer_findings: Pre-collected findings from subagent layer (QUAL-027).
-            prd_ids: Explicit PRD IDs for reconcile mode. Auto-discovered if None.
+            prd_ids: Explicit PRD IDs for persisted review modes; reconcile mode auto-discovers if None.
         """
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._review_auto import handle_auto_mode, handle_cross_model_mode
