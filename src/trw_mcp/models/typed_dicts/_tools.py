@@ -169,6 +169,7 @@ class RunReportResultDict(TypedDict, total=False):
     learning_summary: dict[str, object]
     build: dict[str, object] | None
     reversion_rate: float
+    session_metrics: dict[str, object]
     # Error path
     error: str
 
