@@ -313,3 +313,34 @@ def test_user_prompt_submit_hook_uses_yaml_learning_ids_for_output_and_dedup(tmp
         assert "2026-04-10-structlog-gotcha" not in result.stdout
         injected_ids = (project_root / ".trw" / "context" / "injected_learning_ids.txt").read_text(encoding="utf-8")
         assert injected_ids.strip() == "L-real-id"
+
+
+def test_user_prompt_submit_hook_matches_wrapped_summary_text(tmp_path: Path) -> None:
+    for hook_path in _HOOK_PATHS:
+        project_root, _, entries_dir = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "wrapped-summary", hook_path)
+        (entries_dir / "wrapped-summary.yaml").write_text(
+            'id: "L-wrapped"\n'
+            "status: active\n"
+            "summary: mypy cache staleness on WSL2 produces phantom unused-ignore errors —\n"
+            "  clear .mypy_cache before trusting results\n",
+            encoding="utf-8",
+        )
+        (project_root / ".trw" / "context" / "last_ups_phase").write_text("plan", encoding="utf-8")
+
+        result = subprocess.run(
+            ["sh", str(project_root / ".claude" / "hooks" / "user-prompt-submit.sh")],
+            input=json.dumps({"prompt": "trusting results"}),
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={
+                **os.environ,
+                "TRW_PROJECT_ROOT": str(project_root),
+                "TRW_TEST_PHASE": "implement",
+                "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            },
+            check=False,
+        )
+
+        assert "[L-wrapped]" in result.stdout
+        assert "clear .mypy_cache before trusting results" in result.stdout

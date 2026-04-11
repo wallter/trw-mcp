@@ -201,16 +201,26 @@ STOP_WORDS = {
 def _read_yaml_field(path: Path, field_name: str) -> str:
     prefix = f"{field_name}:"
     try:
+        summary_parts: list[str] = []
+        collecting_summary = False
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if collecting_summary:
+                if line.startswith("  ") or line.startswith("\t"):
+                    summary_parts.append(line.strip())
+                    continue
+                break
             if not line.startswith(prefix):
                 continue
             value = line.split(":", 1)[1].strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
                 value = value[1:-1]
-            return value
+            if field_name != "summary":
+                return value
+            summary_parts = [value] if value else []
+            collecting_summary = True
     except OSError:
         return ""
-    return ""
+    return " ".join(part for part in summary_parts if part).strip()
 
 
 entries_dir = Path(sys.argv[1])
