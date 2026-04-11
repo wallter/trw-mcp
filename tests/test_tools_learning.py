@@ -77,6 +77,7 @@ class TestToolDocstrings:
     def test_trw_learn_docstring_includes_quality_gate_and_tiers(self) -> None:
         tools = _get_tools()
         doc = tools["trw_learn"].fn.__doc__ or ""
+        normalized_doc = " ".join(doc.split())
 
         assert "Only record learnings that:" in doc
         assert "prevent repeated mistakes" in doc
@@ -84,8 +85,10 @@ class TestToolDocstrings:
         assert "Required:" in doc
         assert "Recommended:" in doc
         assert "Advanced (auto-detected if omitted):" in doc
-        assert "Most learnings need only summary and detail." in doc
-        assert "All other fields are auto-detected." in doc
+        assert (
+            "Most learnings need only summary and detail. Adding tags and impact "
+            "improves recall precision. All other fields are auto-detected."
+        ) in normalized_doc
 
     def test_trw_claude_md_sync_docstring_matches_post_093_behavior(self) -> None:
         tools = _get_tools()
