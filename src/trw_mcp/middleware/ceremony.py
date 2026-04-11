@@ -7,13 +7,15 @@ that post-compaction state, tools execute normally and the middleware only adds
 advisory warnings for sessions that skipped ceremony.
 
 This is client-agnostic — works with Claude Code, Cursor, Windsurf, or
-any MCP client. FastMCP per-session state is inherently isolated per
-connection, so parallel sessions are tracked independently.
+any MCP client. Middleware state is keyed by MCP session_id so parallel
+connections remain isolated from one another.
 """
 
 from __future__ import annotations
 
 __all__ = ["CeremonyMiddleware"]
+
+import json
 
 import structlog
 from fastmcp.server.middleware.middleware import (
@@ -28,6 +30,11 @@ from mcp.types import CallToolRequestParams, TextContent
 # MCP connections are short-lived (1 per Claude Code session), so this
 # dict stays small (1-3 entries max). No cleanup needed.
 _session_state: dict[str, bool] = {}
+
+# Session-local recovery gate state. A session that sees the post-compaction
+# marker must complete its own successful session_start() even if another
+# session later clears the shared disk marker.
+_compaction_gate_sessions: dict[str, bool] = {}
 
 # Tools that clear the ceremony gate.
 CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
@@ -71,6 +78,7 @@ def is_session_active(session_id: str) -> bool:
 def reset_state() -> None:
     """Clear all session state — for testing only."""
     _session_state.clear()
+    _compaction_gate_sessions.clear()
 
 
 def _touch_heartbeat_safe() -> None:
@@ -124,6 +132,60 @@ def _clear_compaction_gate_safe() -> None:
         )
 
 
+def _extract_session_start_payload(result: object) -> dict[str, object] | None:
+    """Best-effort extraction of a session_start payload from ToolResult."""
+
+    structured_content = getattr(result, "structured_content", None)
+    if isinstance(structured_content, dict):
+        return structured_content
+
+    content = getattr(result, "content", [])
+    if not isinstance(content, list):
+        return None
+
+    for block in content:
+        if not isinstance(block, TextContent):
+            continue
+        try:
+            payload = json.loads(block.text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _session_start_succeeded(result: object) -> bool:
+    """Return True when the session_start payload explicitly reports success."""
+
+    payload = _extract_session_start_payload(result)
+    if payload is None:
+        return True
+
+    success = payload.get("success")
+    if isinstance(success, bool):
+        return success
+
+    status = payload.get("status")
+    if isinstance(status, str):
+        return status.lower() == "success"
+
+    return True
+
+
+def _is_compaction_gate_required_for_session(session_id: str) -> bool:
+    """Return True when this session still owes post-compaction recovery."""
+
+    if is_session_active(session_id):
+        _compaction_gate_sessions.pop(session_id, None)
+        return False
+
+    if _is_compaction_gate_required():
+        _compaction_gate_sessions[session_id] = True
+
+    return _compaction_gate_sessions.get(session_id, False)
+
+
 class CeremonyMiddleware(Middleware):
     """FastMCP middleware that enforces session ceremony.
 
@@ -151,14 +213,29 @@ class CeremonyMiddleware(Middleware):
 
         session_id = ctx.session_id
 
-        compaction_gate_required = _is_compaction_gate_required()
+        compaction_gate_required = _is_compaction_gate_required_for_session(session_id)
 
         # Ceremony tool called — mark session as active after a successful session_start
         if tool_name in CEREMONY_TOOLS:
             ceremony_result = await call_next(context)
-            mark_session_active(session_id)
-            _clear_compaction_gate_safe()
-            logger.debug("ceremony_activated", op="ceremony", session_id=session_id, tool=tool_name)
+            if _session_start_succeeded(ceremony_result):
+                mark_session_active(session_id)
+                _compaction_gate_sessions.pop(session_id, None)
+                _clear_compaction_gate_safe()
+                logger.debug(
+                    "ceremony_activated",
+                    op="ceremony",
+                    session_id=session_id,
+                    tool=tool_name,
+                )
+            else:
+                logger.info(
+                    "ceremony_activation_skipped",
+                    op="ceremony",
+                    session_id=session_id,
+                    tool=tool_name,
+                    outcome="unsuccessful_session_start",
+                )
             _touch_heartbeat_safe()
             return ceremony_result
 
