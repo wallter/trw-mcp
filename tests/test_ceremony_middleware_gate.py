@@ -374,6 +374,104 @@ class TestCompactionGate:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_compaction_gate_reblocks_active_session_after_later_compaction(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
+    ) -> None:
+        """An already-started session must recover again after a new compaction event."""
+        trw_dir = tmp_path / ".trw"
+        checkpoint_result = FakeToolResult(
+            content=[TextContent(type="text", text="checkpoint ok")]
+        )
+        start_result = FakeToolResult(
+            content=[TextContent(type="text", text='{"success": true, "errors": []}')],
+            structured_content={"success": True, "errors": []},
+        )
+        call_names: list[str] = []
+
+        async def call_next(ctx: Any) -> Any:
+            call_names.append(ctx.message.name)
+            if ctx.message.name == "trw_session_start":
+                return start_result
+            return checkpoint_result
+
+        initial_start_ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=session_ctx,
+        )
+        checkpoint_ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_checkpoint"),
+            fastmcp_context=session_ctx,
+        )
+
+        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
+            await middleware.on_call_tool(initial_start_ctx, call_next)  # type: ignore[arg-type]
+            _seed_compaction_marker(tmp_path)
+            blocked_out = await middleware.on_call_tool(checkpoint_ctx, call_next)  # type: ignore[arg-type]
+            recovered_out = await middleware.on_call_tool(initial_start_ctx, call_next)  # type: ignore[arg-type]
+            final_out = await middleware.on_call_tool(checkpoint_ctx, call_next)  # type: ignore[arg-type]
+
+        assert blocked_out.structured_content is not None
+        assert blocked_out.structured_content["error"] == "session_start_required"
+        assert recovered_out.structured_content == {"success": True, "errors": []}
+        assert final_out.structured_content is None
+        assert [_text(block) for block in final_out.content] == ["checkpoint ok"]
+        assert call_names == ["trw_session_start", "trw_session_start", "trw_checkpoint"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_known_sibling_session_stays_blocked_after_other_session_clears_marker(
+        self, middleware: CeremonyMiddleware, tmp_path: Path
+    ) -> None:
+        """A known sibling session cannot bypass recovery just because another session cleared the file."""
+        session_a = FakeContext(request_context=FakeRequestContext(session_id="session-a"))
+        session_b = FakeContext(request_context=FakeRequestContext(session_id="session-b"))
+        initial_start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        recovered_start_result = FakeToolResult(
+            content=[TextContent(type="text", text='{"success": true, "errors": []}')],
+            structured_content={"success": True, "errors": []},
+        )
+        checkpoint_result = FakeToolResult(
+            content=[TextContent(type="text", text="checkpoint ok")]
+        )
+        call_names: list[str] = []
+
+        async def call_next(ctx: Any) -> Any:
+            call_names.append(ctx.message.name)
+            if ctx.message.name == "trw_session_start" and len(call_names) == 1:
+                return initial_start_result
+            if ctx.message.name == "trw_session_start":
+                return recovered_start_result
+            return checkpoint_result
+
+        start_a_ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=session_a,
+        )
+        checkpoint_b_ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_checkpoint"),
+            fastmcp_context=session_b,
+        )
+
+        trw_dir = tmp_path / ".trw"
+        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
+            await middleware.on_call_tool(start_a_ctx, call_next)  # type: ignore[arg-type]
+            await middleware.on_call_tool(
+                FakeMiddlewareContext(
+                    message=FakeMessage(name="Read"),
+                    fastmcp_context=session_b,
+                ),
+                call_next,
+            )  # type: ignore[arg-type]
+            _seed_compaction_marker(tmp_path)
+            await middleware.on_call_tool(start_a_ctx, call_next)  # type: ignore[arg-type]
+            blocked_out = await middleware.on_call_tool(checkpoint_b_ctx, call_next)  # type: ignore[arg-type]
+
+        assert blocked_out.structured_content is not None
+        assert blocked_out.structured_content["error"] == "session_start_required"
+        assert call_names == ["trw_session_start", "Read", "trw_session_start"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_gate_inactive_without_compaction(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext
     ) -> None:

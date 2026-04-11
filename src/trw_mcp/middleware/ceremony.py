@@ -36,6 +36,11 @@ _session_state: dict[str, bool] = {}
 # session later clears the shared disk marker.
 _compaction_gate_sessions: dict[str, bool] = {}
 
+# Sessions observed by the middleware in this server process. When a new
+# compaction marker appears, every currently known session must recover again,
+# even if it had already completed an earlier session_start().
+_known_sessions: set[str] = set()
+
 # Tools that clear the ceremony gate.
 CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
 
@@ -79,6 +84,7 @@ def reset_state() -> None:
     """Clear all session state — for testing only."""
     _session_state.clear()
     _compaction_gate_sessions.clear()
+    _known_sessions.clear()
 
 
 def _touch_heartbeat_safe() -> None:
@@ -176,12 +182,9 @@ def _session_start_succeeded(result: object) -> bool:
 def _is_compaction_gate_required_for_session(session_id: str) -> bool:
     """Return True when this session still owes post-compaction recovery."""
 
-    if is_session_active(session_id):
-        _compaction_gate_sessions.pop(session_id, None)
-        return False
-
     if _is_compaction_gate_required():
-        _compaction_gate_sessions[session_id] = True
+        for known_session_id in _known_sessions:
+            _compaction_gate_sessions[known_session_id] = True
 
     return _compaction_gate_sessions.get(session_id, False)
 
@@ -212,6 +215,7 @@ class CeremonyMiddleware(Middleware):
             return await call_next(context)
 
         session_id = ctx.session_id
+        _known_sessions.add(session_id)
 
         compaction_gate_required = _is_compaction_gate_required_for_session(session_id)
 
@@ -241,7 +245,7 @@ class CeremonyMiddleware(Middleware):
 
         # Post-compaction gate (PRD-CORE-098-FR06): only block trw_* tools
         # when recovery is actually pending after context compaction.
-        if compaction_gate_required and not is_session_active(session_id) and tool_name.startswith("trw_"):
+        if compaction_gate_required and tool_name.startswith("trw_"):
             error_payload = {
                 "error": "session_start_required",
                 "message": (
