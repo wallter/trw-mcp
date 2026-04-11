@@ -85,6 +85,13 @@ class TestTRWConfig:
         with pytest.raises(ValidationError):
             TRWConfig(max_audit_cycles=value)
 
+    def test_config_field_validation(self) -> None:
+        """PRD-QUAL-056-FR11: audit-cycle config fields reject out-of-range values."""
+        with pytest.raises(ValidationError):
+            TRWConfig(max_audit_cycles=0)
+        with pytest.raises(ValidationError):
+            TRWConfig(audit_pattern_promotion_threshold=21)
+
     def test_removed_fields_not_in_config(self) -> None:
         """PRD-FIX-016-FR02: Verify dead fields are removed."""
         config = TRWConfig()
