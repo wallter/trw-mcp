@@ -24,6 +24,15 @@ All notable changes to the TRW MCP server package.
   - `_absorb_sub_result()` in `_ide_targets.py` replaces repetitive extend patterns
   - `_codex.py` and `_opencode.py` refactored to use shared helpers
 
+### Changed
+
+- **Codex runtime alignment (PRD-CORE-128)**
+  - Codex guidance, sync, and bootstrap now follow the declared light-profile contract instead of separate hardcoded assumptions.
+  - `.codex/INSTRUCTIONS.md` is wired through `model_instructions_file`, and Codex instruction sync now reports instruction-file results consistently.
+  - Codex-facing instructions no longer claim a fixed 200K context window, mandatory framework reading, universal hook coverage, or implicit background delegation.
+  - `_codex.py` now defaults `features.codex_hooks` to `false`, only generates `.codex/hooks.json` when the repo explicitly opts in, and preserves user-edited `.codex/agents/*.toml` plus `.agents/skills/*` helper artifacts unless regeneration is forced.
+  - Codex docs now explicitly distinguish the profile-layer `skills_enabled = false` flag from installer-managed helper skill directories referenced via `skills.config`.
+
 ### Fixed
 
 - `result["warnings"]` KeyError in `_init_project.py` and `_ide_targets.py` — replaced with `setdefault()`
