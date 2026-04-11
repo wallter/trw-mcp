@@ -79,6 +79,12 @@ This pause-and-reflect pattern catches the drift that occurs when auditors becom
   2. Explicitly verify whether each known pattern has been addressed in this implementation
   3. Include a "Prior Learning Verification" section in the audit report
 
+**Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review` (PRD-QUAL-056-FR03/FR05):**
+- Verify the implementer logged the pre-coding checklist for this PRD
+- Verify whether a `pre_audit_self_review` event exists for this PRD and read the pass/fail counts plus issue lists
+- Cross-check the self-review claims against your own findings; if it under-reports issues, call that out explicitly
+- If the self-review event is missing, note a process gap and record `self_review_alignment: missing`
+
 > WAVE PAUSE: Review the extracted checklist. Is every requirement captured? Are there implicit requirements the spec assumes but doesn't state? Are prior audit patterns from this domain addressed?
 
 ### Phase 2: Implementation Discovery and Wiring (Wave 2)
@@ -400,6 +406,12 @@ prior_learning_verification:
   known_patterns: []
   verified_patterns: []
   missed_patterns: []
+
+preflight_verification:
+  checklist_logged: true|false
+  self_review_logged: true|false
+  self_review_alignment: matches|underreported|missing
+  notes: []
 
 summary:
   total_frs: 5

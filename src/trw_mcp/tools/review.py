@@ -17,6 +17,13 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.state._paths import find_active_run
+from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools._review_helpers import (
+    PRE_AUDIT_SELF_REVIEW_EVENT as PRE_AUDIT_SELF_REVIEW_EVENT,
+)
+from trw_mcp.tools._review_helpers import (
+    PRE_IMPLEMENTATION_CHECKLIST_EVENT as PRE_IMPLEMENTATION_CHECKLIST_EVENT,
+)
 from trw_mcp.tools._review_helpers import (
     REVIEWER_ROLES as REVIEWER_ROLES,
 )
@@ -28,6 +35,12 @@ from trw_mcp.tools._review_helpers import (
 )
 from trw_mcp.tools._review_helpers import (
     _invoke_cross_model_review as _invoke_cross_model_review,
+)
+from trw_mcp.tools._review_helpers import (
+    _load_preflight_checks as _load_preflight_checks,
+)
+from trw_mcp.tools._review_helpers import (
+    _log_preflight_events as _log_preflight_events,
 )
 from trw_mcp.tools._review_helpers import (
     _normalize_severity as _normalize_severity,
@@ -45,6 +58,60 @@ logger = structlog.get_logger(__name__)
 
 def register_review_tools(server: FastMCP) -> None:
     """Register review tools on the MCP server."""
+
+    @server.tool(output_schema=None)
+    @log_tool_call
+    def trw_preflight_log(
+        prd_id: str,
+        checklist_complete: bool = False,
+        self_review: dict[str, object] | None = None,
+        run_path: str | None = None,
+    ) -> dict[str, object]:
+        """Persist pre-implementation checklist and self-review events for a run."""
+        resolved_run = Path(run_path).resolve() if run_path else find_active_run()
+        if resolved_run is None:
+            return {
+                "status": "no_run",
+                "prd_id": prd_id,
+                "run_path": None,
+                "logged_events": [],
+                "preflight_checks": {},
+            }
+
+        logged_events = _log_preflight_events(
+            resolved_run,
+            prd_id=prd_id,
+            checklist_complete=checklist_complete,
+            self_review=self_review,
+        )
+        if not logged_events:
+            return {
+                "status": "noop",
+                "prd_id": prd_id,
+                "run_path": str(resolved_run),
+                "logged_events": [],
+                "preflight_checks": _load_preflight_checks(
+                    resolved_run,
+                    FileStateReader(),
+                    [prd_id],
+                ),
+            }
+
+        return {
+            "status": "logged",
+            "prd_id": prd_id,
+            "run_path": str(resolved_run),
+            "logged_events": logged_events,
+            "preflight_checks": _load_preflight_checks(
+                resolved_run,
+                FileStateReader(),
+                [prd_id],
+            ),
+            "event_types": [
+                PRE_IMPLEMENTATION_CHECKLIST_EVENT,
+                PRE_AUDIT_SELF_REVIEW_EVENT,
+            ],
+        }
 
     @server.tool(output_schema=None)
     @log_tool_call

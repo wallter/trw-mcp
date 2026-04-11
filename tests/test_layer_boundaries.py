@@ -108,6 +108,24 @@ def test_merge_session_events_in_state_layer() -> None:
     assert callable(_merge_session_events)
 
 
+@pytest.mark.unit
+def test_detect_audit_finding_recurrence_lives_in_helper_module() -> None:
+    """Audit-pattern promotion logic lives outside _cycle.py for module-size hygiene."""
+    from trw_mcp.state.consolidation import detect_audit_finding_recurrence
+
+    assert detect_audit_finding_recurrence.__module__ == (
+        "trw_mcp.state.consolidation._audit_patterns"
+    )
+
+
+@pytest.mark.unit
+def test_consolidation_cycle_module_under_500_lines() -> None:
+    """_cycle.py stays below the review threshold after FIX-061 refactor."""
+    cycle_src = _STATE_DIR / "consolidation" / "_cycle.py"
+    line_count = len(cycle_src.read_text(encoding="utf-8").splitlines())
+    assert line_count < 500, f"_cycle.py is {line_count} lines, should be < 500"
+
+
 # --- FR05-T06: correlation accepts injected finder (no hard-coded state imports) ---
 
 

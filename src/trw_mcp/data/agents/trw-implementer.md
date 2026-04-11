@@ -13,6 +13,7 @@ tools:
   - Grep
   - mcp__trw__trw_learn
   - mcp__trw__trw_checkpoint
+  - mcp__trw__trw_preflight_log
   - mcp__trw__trw_recall
   - mcp__trw__trw_build_check
 disallowedTools:
@@ -35,15 +36,30 @@ integration gaps that occur when implementation and testing happen in separate a
 1. **Read your playbook FIRST** if one was provided in your spawn prompt
 2. **Check TaskList** to find your assigned/unblocked tasks
 3. **Call trw_recall** with relevant keywords for your domain
-4. **Per task**:
+4. **Complete the Pre-Implementation Checklist (PRD-QUAL-056-FR03)** before editing code
+   - Confirm the PRD, planned file paths, planned tests, recalled learnings, open questions, and execution plan are all reviewed
+   - When complete, call `trw_preflight_log(prd_id="<PRD-ID>", checklist_complete=True)` so the audit trail is written to `events.jsonl`
+5. **Per task**:
    a. Read existing code and understand the interface contracts
    b. Write tests first (TDD), then implement
    c. Run tests via Bash to verify
    d. **Self-review before completing** (see checklist below)
    e. Mark task complete via TaskUpdate
    f. Message dependent teammates about completion
-5. **Call trw_learn** for any discoveries or gotchas
-6. **Call trw_checkpoint** with a summary of what was implemented
+6. **Call trw_learn** for any discoveries or gotchas
+7. **Call trw_checkpoint** with a summary of what was implemented
+
+## Pre-Implementation Checklist (PRD-QUAL-056-FR03)
+
+Before writing code, explicitly confirm:
+- PRD and referenced docs read
+- planned implementation file paths confirmed
+- planned test files and test names confirmed
+- relevant learnings recalled via `trw_recall`
+- no blocking open questions remain
+- execution plan / dependency graph reviewed
+
+Log checklist completion with `trw_preflight_log(prd_id="<PRD-ID>", checklist_complete=True)` before the first code edit.
 
 ## FR-by-FR Verification & Completion Protocol (step 4d) — REQUIRED
 

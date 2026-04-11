@@ -493,6 +493,64 @@ class TestAgentDefinitions:
         )
 
     @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    def test_audit_agent_variants_include_preflight_self_review_contract(
+        self,
+        agents_dir: Path,
+        root_agents_dir: Path,
+        agent_name: str,
+    ) -> None:
+        """Root and bundled audit agents retain the FR03/FR05 preflight verification contract."""
+
+        required_snippets = [
+            "Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`",
+            "preflight_verification:",
+            "self_review_alignment: matches|underreported|missing",
+        ]
+
+        self._assert_variants_include_snippets(
+            self._variant_paths(agents_dir, root_agents_dir, agent_name),
+            required_snippets,
+        )
+
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    def test_audit_agent_variants_include_learning_capture_contract(
+        self,
+        agents_dir: Path,
+        root_agents_dir: Path,
+        agent_name: str,
+    ) -> None:
+        """Root and bundled audit agents retain the FR06 learning-capture contract."""
+
+        required_snippets = [
+            "For each P0 or P1 finding, call `trw_learn()` with:",
+            "- `tags`: [\"audit-finding\", \"{prd-id}\", \"{finding-category}\"]",
+            "- `phase_affinity`: Determined by finding category per taxonomy table",
+        ]
+
+        self._assert_variants_include_snippets(
+            self._variant_paths(agents_dir, root_agents_dir, agent_name),
+            required_snippets,
+        )
+
+    def test_implementer_agent_variants_include_preflight_logging_contract(
+        self,
+        agents_dir: Path,
+        root_agents_dir: Path,
+    ) -> None:
+        """Root and bundled implementer agents retain the FR03 checklist logging contract."""
+
+        required_snippets = [
+            "mcp__trw__trw_preflight_log",
+            "Pre-Implementation Checklist (PRD-QUAL-056-FR03)",
+            "trw_preflight_log(prd_id=\"<PRD-ID>\", checklist_complete=True)",
+        ]
+
+        self._assert_variants_include_snippets(
+            self._variant_paths(agents_dir, root_agents_dir, "trw-implementer.md"),
+            required_snippets,
+        )
+
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
     def test_audit_agent_variants_include_verdict_exit_criteria_and_escalation_contract(
         self,
         agents_dir: Path,
