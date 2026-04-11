@@ -35,9 +35,6 @@ from trw_mcp.state.persistence import (
     model_to_dict,
 )
 from trw_mcp.tools._orchestration_helpers import (
-    _check_framework_version_staleness,
-    _compute_reversion_metrics,
-    _compute_wave_progress,
     _deploy_frameworks,
     _deploy_templates,
     _get_bundled_file,
@@ -47,6 +44,11 @@ from trw_mcp.tools._orchestration_lifecycle import (
     _compute_last_activity_ts,
     _compute_reflection_metrics,
     _update_wave_status,
+)
+from trw_mcp.tools._orchestration_phase import (
+    _check_framework_version_staleness,
+    _compute_reversion_metrics,
+    _compute_wave_progress,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
