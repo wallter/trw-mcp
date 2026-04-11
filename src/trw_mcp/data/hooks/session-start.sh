@@ -173,10 +173,11 @@ case "$_source" in
     fi
     echo ""
     if _framework_ref_enabled; then
-      echo "CONTINUE: Read .trw/frameworks/FRAMEWORK.md first, then call trw_status() to see your current state."
+      echo "CONTINUE: Read .trw/frameworks/FRAMEWORK.md first, then call trw_session_start(query='your task domain') to reload learnings and active run state."
     else
-      echo "CONTINUE: Call trw_status() to see your current state."
+      echo "CONTINUE: Call trw_session_start(query='your task domain') to reload learnings and active run state."
     fi
+    echo "After session_start, call trw_status() if you need the current run snapshot."
     echo "Your checkpoint has your progress — pick up where you left off rather than re-planning."
     ;;
 

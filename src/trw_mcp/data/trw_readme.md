@@ -572,7 +572,8 @@ Claude Code hooks automate TRW ceremony enforcement. They fire on session events
    RECOVERED: Run at docs/my-task/runs/20260221T.../
    RECOVERED: Phase: implement | Events: 47
    LAST CHECKPOINT: "auth middleware complete"
-   CONTINUE: Call trw_status() to see your current state, then resume.
+   CONTINUE: Call trw_session_start(query='your task domain') to reload learnings and active run state.
+   After session_start, call trw_status() if you need the current run snapshot.
    ```
 
 ---

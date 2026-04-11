@@ -75,3 +75,25 @@ def test_session_start_hook_clears_phase_and_injected_state_for_all_sources(tmp_
             assert result.returncode == 0
             assert not (context_dir / "last_ups_phase").exists()
             assert (context_dir / "injected_learning_ids.txt").read_text(encoding="utf-8") == ""
+
+
+def test_session_start_hook_compact_guides_to_session_start(tmp_path: Path) -> None:
+    for hook_path in _HOOK_PATHS:
+        project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "compact-guidance", hook_path)
+
+        result = subprocess.run(
+            ["sh", str(local_hook)],
+            input=json.dumps({"source": "compact"}),
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={
+                **os.environ,
+                "TRW_PROJECT_ROOT": str(project_root),
+            },
+            check=False,
+        )
+
+        assert result.returncode == 0
+        assert "trw_session_start(query='your task domain')" in result.stdout
+        assert "After session_start, call trw_status()" in result.stdout

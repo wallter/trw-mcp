@@ -103,7 +103,7 @@ fi
 
 # FR14: Config gate — check auto_recall_enabled
 _auto_recall_enabled="true"
-_auto_recall_max_results=5
+_auto_recall_max_results=3
 _auto_recall_max_tokens=100
 _auto_recall_min_score="0.7"
 _config_file="$_project_root/.trw/config.yaml"
