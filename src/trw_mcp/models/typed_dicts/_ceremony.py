@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing_extensions import TypedDict
+from typing_extensions import Literal, TypedDict
 
 
 class AutoMaintenanceDict(TypedDict, total=False):
@@ -60,7 +60,21 @@ class ReflectResultDict(TypedDict):
     success_patterns: int
 
 
-class ClaudeMdSyncResultDict(TypedDict, total=False):
+class _ReviewMdResultRequired(TypedDict):
+    """Return shape of ``generate_review_md()``."""
+
+    status: Literal["generated", "failed"]
+    path: str | None
+    rules_count: int
+
+
+class ReviewMdResultDict(_ReviewMdResultRequired, total=False):
+    """Optional error details returned by ``generate_review_md()``."""
+
+    error: str
+
+
+class _ClaudeMdSyncResultRequired(TypedDict):
     """Return shape of ``_do_instruction_sync()`` / ``execute_claude_md_sync()``.
 
     All keys are present on both the ``"synced"`` and ``"unchanged"`` paths.
@@ -69,15 +83,23 @@ class ClaudeMdSyncResultDict(TypedDict, total=False):
 
     path: str
     scope: str
-    status: str
+    status: Literal["synced", "unchanged"]
     learnings_promoted: int
     patterns_included: int
     total_lines: int
     llm_used: bool
     agents_md_synced: bool
     agents_md_path: str | None
+    instruction_file_synced: bool
+    instruction_file_path: str | None
+    instruction_file_paths: list[str]
     bounded_contexts_synced: int
-    # cache-hit path only
+    review_md: ReviewMdResultDict
+
+
+class ClaudeMdSyncResultDict(_ClaudeMdSyncResultRequired, total=False):
+    """Optional cache-hit metadata returned by ``execute_claude_md_sync()``."""
+
     hash: str
 
 
