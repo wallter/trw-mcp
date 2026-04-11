@@ -484,9 +484,12 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
     the caller so the user can abort the entire installer with Ctrl-C.
     """
     try:
+        env = dict(os.environ)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         return (
             subprocess.run(
                 cmd,
+                env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=timeout,
@@ -506,7 +509,7 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
 
     Tries: normal -> --user -> --break-system-packages.
     """
-    base = [python, "-m", "pip", "install", "--upgrade", "--quiet"]
+    base = [python, "-B", "-m", "pip", "install", "--upgrade", "--quiet"]
     if target_dir:
         base += ["--target", target_dir]
 
@@ -1189,8 +1192,9 @@ def phase_install_packages(
 
     When *pip_target* is set, passes ``--target`` to pip so all packages
     are written to that directory (e.g. a tmpfs mount) instead of
-    site-packages.  A PYTHONPATH wrapper is generated at
-    ``/usr/local/bin/trw-mcp`` so the CLI finds the packages at runtime.
+    site-packages.  A PYTHONPATH wrapper is generated under
+    ``<pip-target>/bin/trw-mcp`` so the CLI finds the packages at runtime
+    without writing to overlay-backed system paths.
     """
     ui.step_header(step, total, "Installing packages")
     validated_target = validate_pip_target(pip_target)
@@ -1215,23 +1219,25 @@ def phase_install_packages(
 
     # When using --pip-target, generate a PYTHONPATH wrapper (FR04)
     if validated_target:
-        wrapper = Path("/usr/local/bin/trw-mcp")
+        wrapper = Path(validated_target) / "bin" / "trw-mcp"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
         wrapper.write_text(
             f"#!/bin/bash\n"
             f"export PYTHONPATH={validated_target}:$PYTHONPATH\n"
-            f'exec {python} -c "from trw_mcp.server import main; main()" "$@"\n'
+            f'exec {python} -B -c "from trw_mcp.server import main; main()" "$@"\n'
         )
         wrapper.chmod(0o755)
         ui.info(f"PYTHONPATH wrapper: {wrapper} -> {validated_target}")
 
     # Verify imports (set PYTHONPATH for --pip-target case)
     env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     if validated_target:
         current_path = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = f"{validated_target}:{current_path}" if current_path else validated_target
     for mod in ("trw_memory", "trw_mcp"):
         rc = subprocess.run(
-            [python, "-c", f"import {mod}"],
+            [python, "-B", "-c", f"import {mod}"],
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
