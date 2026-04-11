@@ -40,6 +40,7 @@ from trw_mcp.tools._deferred_steps_learning import _do_auto_progress as _do_auto
 from trw_mcp.tools._deferred_steps_learning import _do_index_sync as _do_index_sync
 from trw_mcp.tools._deferred_steps_learning import _merge_session_events as _merge_session_events
 from trw_mcp.tools._deferred_steps_learning import _step_auto_progress as _step_auto_progress
+from trw_mcp.tools._deferred_steps_learning import _step_collect_rework_metrics as _step_collect_rework_metrics
 from trw_mcp.tools._deferred_steps_learning import _step_delivery_metrics as _step_delivery_metrics
 from trw_mcp.tools._deferred_steps_learning import _step_outcome_correlation as _step_outcome_correlation
 from trw_mcp.tools._deferred_steps_learning import _step_publish_learnings as _step_publish_learnings
@@ -212,9 +213,12 @@ def _run_deferred_steps(
         # Sprint 84: Delivery metrics (PRD-CORE-104)
         _timed_step("delivery_metrics", lambda: _step_delivery_metrics(trw_dir, resolved_run))
 
-        # P0 (CORE-104): Persist session_metrics to run.yaml
         metrics_result = results.get("delivery_metrics")
         if isinstance(metrics_result, dict):
+            from trw_mcp.state.persistence import FileStateReader
+
+            rework_metrics = _step_collect_rework_metrics(resolved_run, FileStateReader())
+            metrics_result.update(rework_metrics)
             _persist_session_metrics(metrics_result, resolved_run)
 
         steps_ok = sum(
