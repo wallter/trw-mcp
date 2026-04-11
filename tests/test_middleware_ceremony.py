@@ -17,6 +17,9 @@ from trw_mcp.middleware.ceremony import (
     CEREMONY_TOOLS,
     CEREMONY_WARNING,
     CeremonyMiddleware,
+    _extract_session_start_payload,
+    _session_start_succeeded,
+    _known_sessions,
     is_session_active,
     mark_session_active,
     reset_state,
@@ -400,6 +403,89 @@ class TestCeremonyMiddleware:
         # Result still delivered despite heartbeat failure
         texts = [b.text for b in out.content if hasattr(b, "text")]
         assert "result" in texts
+
+    @pytest.mark.asyncio
+    async def test_unsuccessful_session_start_does_not_activate_session(
+        self,
+        middleware: CeremonyMiddleware,
+    ) -> None:
+        """A failed session_start payload leaves the session inactive."""
+
+        async def call_next(_ctx: Any) -> Any:
+            return FakeToolResult(
+                content=[TextContent(type="text", text='{"success": false}')],
+            )
+
+        req_ctx = FakeRequestContext(session_id="sess-failed-start")
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=FakeContext(request_context=req_ctx),
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert not is_session_active("sess-failed-start")
+        assert out.content[0].text == '{"success": false}'
+
+    @pytest.mark.asyncio
+    async def test_compaction_gate_blocks_trw_tools_until_session_start(
+        self,
+        middleware: CeremonyMiddleware,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When recovery is pending, trw_* tools are blocked with a structured error."""
+        monkeypatch.setattr(
+            "trw_mcp.middleware.ceremony._is_compaction_gate_required",
+            lambda: True,
+        )
+
+        async def call_next(_ctx: Any) -> Any:
+            raise AssertionError("blocked tool should not execute")
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=FakeContext(
+                request_context=FakeRequestContext(session_id="sess-gated"),
+            ),
+        )
+        out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert out.structured_content["error"] == "session_start_required"
+        assert out.structured_content["tool_attempted"] == "trw_status"
+        assert "Call trw_session_start()" in out.content[0].text
+
+
+class TestSessionStartPayloadHelpers:
+    """Tests for session_start payload extraction and success detection helpers."""
+
+    def test_extracts_structured_content_dict(self) -> None:
+        result = type("Result", (), {"structured_content": {"success": True}})()
+        assert _extract_session_start_payload(result) == {"success": True}
+
+    def test_extracts_json_payload_from_text_block(self) -> None:
+        result = FakeToolResult(content=[TextContent(type="text", text='{"status":"success"}')])
+        assert _extract_session_start_payload(result) == {"status": "success"}
+
+    def test_non_list_content_returns_none(self) -> None:
+        result = type("Result", (), {"content": "not-a-list"})()
+        assert _extract_session_start_payload(result) is None
+
+    def test_session_start_succeeded_handles_status_strings(self) -> None:
+        success_result = FakeToolResult(content=[TextContent(type="text", text='{"status":"success"}')])
+        failure_result = FakeToolResult(content=[TextContent(type="text", text='{"status":"failed"}')])
+
+        assert _session_start_succeeded(success_result) is True
+        assert _session_start_succeeded(failure_result) is False
+
+    def test_compaction_gate_marks_known_sessions_pending(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "trw_mcp.middleware.ceremony._is_compaction_gate_required",
+            lambda: True,
+        )
+        _known_sessions.update({"sess-a", "sess-b"})
+
+        from trw_mcp.middleware.ceremony import _is_compaction_gate_required_for_session
+
+        assert _is_compaction_gate_required_for_session("sess-a") is True
 
 
 class TestCeremonyWarningText:
