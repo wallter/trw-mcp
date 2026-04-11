@@ -257,8 +257,8 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
             body_preview = ""
             try:
                 body_preview = e.read(500).decode("utf-8", errors="replace")
-            except Exception:
-                pass
+            except Exception:  # justified: fail-open, response body preview is best-effort for logging context
+                logger.debug("learning_post_body_preview_failed", exc_info=True)
             logger.warning(
                 "learning_post_failed",
                 url=platform_url,

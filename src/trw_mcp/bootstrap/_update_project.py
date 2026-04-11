@@ -101,8 +101,8 @@ def _run_auto_maintenance(
         try:
             from trw_mcp.models.config import _reset_config
             _reset_config()
-        except Exception:  # justified: cleanup — config reset is best-effort during finally
-            pass
+        except Exception:  # justified: cleanup, config reset is best-effort during finally
+            _logger.debug("auto_maintenance_config_reset_failed", exc_info=True)
 from ._template_updater import _update_agents as _update_agents
 from ._template_updater import (
     _update_always_overwrite_files as _update_always_overwrite_files,

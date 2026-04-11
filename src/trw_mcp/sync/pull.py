@@ -78,6 +78,6 @@ class SyncPuller:
                     team_learnings=data.get("team_learnings"),
                     status_code=resp.status_code,
                 )
-        except Exception:
+        except Exception:  # justified: boundary, remote sync pull failures must not break local workflows
             logger.debug("sync_pull_error", exc_info=True)
             return None

@@ -62,14 +62,14 @@ class BackendSyncClient:
             except asyncio.CancelledError:  # noqa: PERF203 — loop exception handling is intentional for resilient sync
                 logger.info("sync_loop_cancelled")
                 break
-            except Exception:
+            except Exception:  # justified: fail-open, background sync loop errors must not crash the daemon
                 logger.warning("sync_loop_error", exc_info=True)
 
     async def trigger_sync(self) -> None:
         """Force an immediate sync cycle (e.g., on deliver)."""
         try:
             await self._run_one_cycle(force=True)
-        except Exception:
+        except Exception:  # justified: fail-open, manual sync trigger errors must not break caller workflows
             logger.warning("sync_trigger_error", exc_info=True)
 
     async def _run_one_cycle(self, force: bool = False) -> None:
@@ -123,7 +123,7 @@ class BackendSyncClient:
             backend = _get_backend()
             last_seq = self._coordinator.get_last_push_seq()
             return DeltaTracker.get_dirty_entries(backend, since_seq=last_seq)
-        except Exception:
+        except Exception:  # justified: fail-open, dirty-entry discovery falls back to no-op sync
             logger.debug("sync_get_dirty_failed", exc_info=True)
             return []
 
@@ -136,5 +136,5 @@ class BackendSyncClient:
 
             backend = _get_backend()
             DeltaTracker.mark_synced([e.id for e in entries if hasattr(e, "id")], backend)
-        except Exception:
+        except Exception:  # justified: fail-open, sync bookkeeping must not break successful pushes
             logger.debug("sync_mark_synced_failed", exc_info=True)

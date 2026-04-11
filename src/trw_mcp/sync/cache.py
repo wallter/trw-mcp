@@ -84,11 +84,12 @@ class IntelligenceCache:
                 os.chmod(tmp_path, 0o600)
                 os.rename(tmp_path, str(self._cache_path))
                 logger.debug("intel_cache_write_success", etag=etag)
-            except Exception:
+            except Exception:  # justified: cleanup, temp cache file cleanup must not mask the write failure
+                logger.debug("intel_cache_write_failed", path=str(self._cache_path), exc_info=True)
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
                 raise
-        except Exception:
+        except Exception:  # justified: fail-open, cache persistence is best-effort for sync metadata
             logger.warning("intel_cache_write_error", exc_info=True)
 
     @property
@@ -111,7 +112,8 @@ class IntelligenceCache:
             if not val:
                 return None
             return str(val)
-        except Exception:
+        except Exception:  # justified: fail-open, corrupt cache metadata falls back to a full sync
+            logger.debug("intel_cache_etag_unavailable", exc_info=True)
             return None
 
     def _read_cache(self) -> dict[str, Any] | None:
@@ -138,6 +140,6 @@ class IntelligenceCache:
                 )
                 return None
             return raw
-        except Exception:
+        except Exception:  # justified: fail-open, corrupt cache data should trigger refresh rather than crash
             logger.warning("intel_cache_corrupt", exc_info=True)
             return None

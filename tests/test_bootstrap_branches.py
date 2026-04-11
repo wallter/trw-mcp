@@ -45,6 +45,7 @@ from trw_mcp.bootstrap import (
     init_project,
     update_project,
 )
+from trw_mcp.bootstrap._update_project import _run_auto_maintenance
 
 
 @pytest.fixture()
@@ -243,6 +244,32 @@ class TestUpdateOSErrorPaths:
         with patch("shutil.copy2", side_effect=fail_agents):
             result = update_project(initialized_repo)
         assert any("Failed to copy" in e for e in result["errors"])
+
+
+@pytest.mark.unit
+class TestRunAutoMaintenance:
+    def test_config_reset_failure_logs_debug(self, tmp_path: Path) -> None:
+        result = {"updated": [], "warnings": []}
+        mock_logger = MagicMock()
+
+        with (
+            patch("trw_mcp.bootstrap._update_project._logger", mock_logger),
+            patch(
+                "trw_mcp.models.config._reset_config",
+                side_effect=[None, RuntimeError("reset failed")],
+            ),
+            patch("trw_mcp.models.config.get_config", return_value=MagicMock()),
+            patch(
+                "trw_mcp.state._memory_connection.check_embeddings_status",
+                return_value={"enabled": False},
+            ),
+        ):
+            _run_auto_maintenance(tmp_path, result)
+
+        mock_logger.debug.assert_called_once_with(
+            "auto_maintenance_config_reset_failed",
+            exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------
