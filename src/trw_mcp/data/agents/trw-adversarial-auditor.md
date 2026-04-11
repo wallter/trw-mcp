@@ -240,6 +240,10 @@ Legacy category mapping (for backward compatibility):
 - `test-quality` -> `test_gap`
 - `integration` -> `integration_gap`
 
+When you map a legacy label to one of the 5 root categories, retain the original
+label in `legacy_category` on the finding. Example: a PRD ambiguity finding MUST
+emit `category: spec_gap` and `legacy_category: prd-ambiguity`.
+
 ### Audit Verdict Criteria
 
 | Verdict | Criteria | Action |
@@ -283,7 +287,8 @@ Mark task complete.
 - ALWAYS verify PRD traceability: each acceptance criterion → implementation → test
 - ALWAYS pause between waves to self-review accumulated findings
 - Be adversarial but constructive — provide specific fix recommendations with file paths and line numbers
-- If the PRD itself is ambiguous, note it as a finding (category: prd-ambiguity)
+- If the PRD itself is ambiguous, note it as a finding with `category: spec_gap`
+  and `legacy_category: prd-ambiguity`
 - Language-agnostic: apply type safety, DRY, and quality checks using the idioms of whatever language the implementation uses
 </constraints>
 
@@ -343,6 +348,7 @@ fr_verdicts:
     findings:
       - severity: P0|P1|P2
         category: spec_gap|impl_gap|test_gap|integration_gap|traceability_gap
+        legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null
         issue: "Description of the gap"
         evidence: "What the code does vs. what the spec requires"
         fix: "Specific recommendation with file path and line"

@@ -381,6 +381,38 @@ class TestAgentDefinitions:
         assert (agents_dir / agent_name).exists(), f"{agent_name} must exist"
 
     @pytest.mark.parametrize(
+        ("agent_name", "required_snippets"),
+        [
+            (
+                "trw-auditor.md",
+                [
+                    "label in `legacy_category` on the finding.",
+                    "note it as a finding with `category: spec_gap`",
+                    "legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null",
+                ],
+            ),
+            (
+                "trw-adversarial-auditor.md",
+                [
+                    "label in `legacy_category` on the finding.",
+                    "note it as a finding with `category: spec_gap`",
+                    "legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null",
+                ],
+            ),
+        ],
+    )
+    def test_bundled_audit_agents_include_legacy_taxonomy_contract(
+        self,
+        agents_dir: Path,
+        agent_name: str,
+        required_snippets: list[str],
+    ) -> None:
+        """Bundled audit agents expose the legacy taxonomy compatibility contract."""
+        bundled_content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        for snippet in required_snippets:
+            assert snippet in bundled_content
+
+    @pytest.mark.parametrize(
         ("agent_name", "expected_model"),
         [
             ("trw-auditor.md", "sonnet"),
