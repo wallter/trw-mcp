@@ -47,6 +47,17 @@ Verify implementation exists:
 - Use Grep/Glob to find source files referenced in the PRD's Technical Approach
 - If no implementation files found: abort with "No implementation found for {PRD-ID}. Nothing to audit."
 
+### Step 2b: Preflight Verification (PRD-QUAL-056-FR03/FR05)
+
+- Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`
+- If present, record whether the implementer logged the checklist and what the self-review claimed
+- Cross-check the self-review claims against your audit findings; missing or under-reported self-review results are audit evidence, not a waiver
+- Record the results in the audit report as:
+  - `checklist_logged: true|false`
+  - `self_review_logged: true|false`
+  - `self_review_alignment: matches|underreported|missing`
+  - `notes: []`
+
 ### Step 2a: AC Keyword Extraction (PRD-QUAL-045-FR01/FR02)
 
 From each FR's acceptance criteria (Given/When/Then), extract key technical terms:
@@ -158,6 +169,17 @@ nfr_audit:
     evidence: "Specific code reference"
     finding: "Description if FAIL"
   # ... all 10 items
+
+prior_learning_verification:
+  known_patterns: []
+  verified_patterns: []
+  missed_patterns: []
+
+preflight_verification:
+  checklist_logged: true|false
+  self_review_logged: true|false
+  self_review_alignment: matches|underreported|missing
+  notes: []
 
 summary:
   total_frs: 5

@@ -123,6 +123,13 @@ class TestMcpInstance:
         missing = expected - tool_names
         assert not missing, f"Missing tools: {missing}"
 
+    async def test_mcp_registers_review_and_preflight_tools(self) -> None:
+        from trw_mcp.server._app import mcp
+
+        tools = await mcp.list_tools()
+        tool_names = {t.name for t in tools}
+        assert {"trw_review", "trw_preflight_log"} <= tool_names
+
 
 # ── .mcp.json command resolution ─────────────────────────────────────
 
