@@ -1,0 +1,21 @@
+# Workflow nudge pool — engineering best practices from SWE-bench research.
+# PRD-CORE-129: Selected via weighted random by the nudge pool system.
+messages:
+  - id: read_test_first
+    text: "Read the failing test to understand expected behavior before writing the fix."
+    phase_hint: early
+  - id: verify_with_pytest
+    text: "Run the specific test to verify your fix before moving on."
+    phase_hint: validate
+  - id: minimize_changes
+    text: "Make minimal changes to non-test files — smaller patches are more likely correct."
+    phase_hint: implement
+  - id: explain_root_cause
+    text: "If you can't explain the root cause in one sentence, revisit your analysis."
+    phase_hint: implement
+  - id: check_edge_cases
+    text: "Check edge cases: empty input, None, boundary values."
+    phase_hint: implement
+  - id: dont_modify_tests
+    text: "Do not modify existing test files — only change the source code under test."
+    phase_hint: implement

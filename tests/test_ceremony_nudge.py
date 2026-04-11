@@ -302,29 +302,31 @@ class TestNudgeEngine:
     """Tests for compute_nudge(), _build_status_line(), _select_nudge_message()."""
 
     def test_fr01_nudge_session_start_pending(self, tmp_path: Path) -> None:
-        """Given session_start not called, nudge mentions loading prior learnings."""
+        """Given session_start not called, nudge returns non-empty content."""
         state = CeremonyState(session_started=False)
         result = compute_nudge(state, available_learnings=5)
         assert result != ""
-        # Should reference session_start in status line
-        assert "session_start" in result.lower() or "session" in result.lower()
-        # Should have a value-expressing message
+        # PRD-CORE-129: Pool-based selection means content varies.
+        # Status line always shows start status.
+        assert "start" in result.lower()
         assert len(result) > 0
 
     def test_fr01_nudge_checkpoint_pending(self, tmp_path: Path) -> None:
-        """Given 5+ files modified, nudge mentions file count and compaction risk."""
+        """Given files modified and no checkpoint, nudge returns non-empty content."""
+        # PRD-CORE-129: Checkpoint threshold raised to >10.
+        # Use 11 files to ensure checkpoint is a pending step.
         state = CeremonyState(
             session_started=True,
-            files_modified_since_checkpoint=5,
+            files_modified_since_checkpoint=11,
             phase="implement",
         )
         result = compute_nudge(state, available_learnings=0)
         assert result != ""
-        # Should mention the file count or checkpoint
-        assert "5" in result or "checkpoint" in result.lower()
+        # Pool-based selection: content varies, but TRW header is always present
+        assert "TRW" in result
 
     def test_fr01_nudge_no_checkpoint_in_session(self, tmp_path: Path) -> None:
-        """Given session started but no checkpoint, nudge recommends checkpoint."""
+        """Given session started but no checkpoint, nudge returns non-empty content."""
         state = CeremonyState(
             session_started=True,
             checkpoint_count=0,
@@ -333,7 +335,8 @@ class TestNudgeEngine:
         )
         result = compute_nudge(state, available_learnings=0)
         assert result != ""
-        assert "checkpoint" in result.lower()
+        # PRD-CORE-129: Pool-based selection. Content varies by pool.
+        assert "TRW" in result
 
     def test_fr01_nudge_deliver_pending(self, tmp_path: Path) -> None:
         """Given phase=deliver and deliver not called, nudge mentions learning persistence."""
@@ -350,7 +353,7 @@ class TestNudgeEngine:
         assert "deliver" in result.lower()
 
     def test_fr01_nudge_build_check_pending(self, tmp_path: Path) -> None:
-        """Given phase=validate and build_check not run, nudge mentions build check."""
+        """Given phase=validate and build_check not run, nudge returns non-empty content."""
         state = CeremonyState(
             session_started=True,
             checkpoint_count=1,
@@ -360,7 +363,9 @@ class TestNudgeEngine:
         )
         result = compute_nudge(state, available_learnings=0)
         assert result != ""
-        assert "build" in result.lower() or "check" in result.lower()
+        # PRD-CORE-129: Pool-based selection means the specific message varies.
+        # The header and status line are always present.
+        assert "TRW" in result
 
     def test_fr01_nudge_all_complete(self, tmp_path: Path) -> None:
         """Given all steps complete, status is single line with all checkmarks."""
@@ -412,15 +417,15 @@ class TestNudgeEngine:
             assert len(result) <= 600, f"Nudge too long ({len(result)} chars) for state: {state}\n{result!r}"
 
     def test_fr01_status_line_format(self, tmp_path: Path) -> None:
-        """Status line uses checkmark/cross format for each step."""
-        # Session not started — all steps should show ✗
+        """Status line uses checkmark/cross format for session_start and deliver."""
+        # PRD-CORE-129: compute_nudge now uses minimal header/status line.
+        # Session not started — should show ✗ for start
         state = CeremonyState(session_started=False)
         result = compute_nudge(state, available_learnings=0)
-        assert "--- TRW Session ---" in result
-        # session_start step should show ✗
+        assert "--- TRW ---" in result
         assert "\u2717" in result  # ✗
 
-        # Session started — session_start should show ✓
+        # All complete — should show ✓ for start and deliver
         state2 = CeremonyState(
             session_started=True,
             checkpoint_count=1,
@@ -430,7 +435,7 @@ class TestNudgeEngine:
             deliver_called=True,
         )
         result2 = compute_nudge(state2, available_learnings=0)
-        assert "--- TRW Session ---" in result2
+        assert "--- TRW ---" in result2
         assert "\u2713" in result2  # ✓
 
     def test_fr01_nudge_no_prescriptive_language(self, tmp_path: Path) -> None:
@@ -454,21 +459,21 @@ class TestNudgeEngine:
         # Pass a broken state that would cause attribute errors
         # compute_nudge must never raise
         state = CeremonyState()
-        # Patch _build_status_line to raise
+        # PRD-CORE-129: compute_nudge now uses _build_minimal_status_line
         from trw_mcp.state import ceremony_nudge
 
-        original = ceremony_nudge._build_status_line
+        original = ceremony_nudge._build_minimal_status_line
         try:
 
             def _broken(s: CeremonyState) -> str:
                 raise RuntimeError("simulated error")
 
-            ceremony_nudge._build_status_line = _broken  # type: ignore[assignment]
+            ceremony_nudge._build_minimal_status_line = _broken  # type: ignore[assignment]
             result = compute_nudge(state)
             assert isinstance(result, str)
             assert result == ""
         finally:
-            ceremony_nudge._build_status_line = original
+            ceremony_nudge._build_minimal_status_line = original
 
     def test_fr01_append_ceremony_nudge_failopen(self, tmp_path: Path) -> None:
         """append_ceremony_nudge returns response unchanged on error."""
@@ -1196,11 +1201,15 @@ class TestFR03ContextReactiveMessages:
         assert "Resume" in msg
 
     def test_fr03_compute_nudge_uses_context(self) -> None:
-        """compute_nudge with context uses context-reactive message."""
+        """compute_nudge with context returns non-empty content."""
         state = CeremonyState(session_started=True, checkpoint_count=1)
         ctx = NudgeContext(tool_name="checkpoint")
         result = compute_nudge(state, context=ctx)
-        assert "Progress saved" in result
+        # PRD-CORE-129: Pool-based selection means context-reactive content
+        # is only returned when the "context" pool is selected. The TRW header
+        # and status line are always present.
+        assert "TRW" in result
+        assert len(result) > 0
 
 
 class TestFR04NextTwoSteps:
@@ -1289,7 +1298,7 @@ class TestFR04NextTwoSteps:
             assert len(_STEP_RATIONALE[step]) > 0
 
     def test_fr04_fallback_uses_next_two_when_no_context(self) -> None:
-        """compute_nudge without context uses _next_two_steps for projection."""
+        """compute_nudge without context returns non-empty content."""
         state = CeremonyState(
             session_started=True,
             checkpoint_count=1,
@@ -1298,8 +1307,10 @@ class TestFR04NextTwoSteps:
             phase="review",
         )
         result = compute_nudge(state, context=None)
-        # Should include review as next step in some form
-        assert "review" in result.lower()
+        # PRD-CORE-129: Pool-based selection. May or may not mention review.
+        # TRW header and status line are always present.
+        assert "TRW" in result
+        assert len(result) > 0
 
     def test_fr04_review_complete_next_deliver(self) -> None:
         """phase=deliver, review_called=True -> NEXT=deliver only."""
@@ -1550,10 +1561,11 @@ class TestC103BuildStatusLineAndReversionSuppression:
         assert "3 learnings pending" in line
 
     def test_compute_nudge_build_check_context_reversion_is_none(self) -> None:
-        """compute_nudge suppresses reversion field when tool_name is BUILD_CHECK.
+        """compute_nudge with BUILD_CHECK context returns non-empty content.
 
-        The BUILD_CHECK reactive message already includes reversion guidance,
-        so the separate reversion prompt should not be appended.
+        PRD-CORE-129: Pool-based selection. When context pool is selected,
+        the reactive message is used. Reversion prompt should not appear
+        as a separate line.
         """
         state = CeremonyState(
             session_started=True,
@@ -1563,10 +1575,9 @@ class TestC103BuildStatusLineAndReversionSuppression:
         )
         ctx = NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=True)
         result = compute_nudge(state, context=ctx)
-        # The result should contain the reactive message about review
-        assert "review" in result.lower()
+        # Pool-based: content varies, but TRW header is always present
+        assert "TRW" in result
         # The reversion prompt text should NOT appear as a separate line
-        # (build_check reactive messages already embed reversion guidance)
         assert "If failures reveal a design flaw, revert to PLAN. If implementation bugs, fix in-phase." not in result
 
     def test_compute_nudge_review_context_reversion_is_none(self) -> None:
@@ -1594,7 +1605,8 @@ class TestBackwardsCompatibility:
         """compute_nudge works without context (backwards compat)."""
         state = CeremonyState(session_started=False)
         result = compute_nudge(state, available_learnings=5)
-        assert "session" in result.lower()
+        # PRD-CORE-129: Pool-based selection. Status line shows "start".
+        assert "start" in result.lower()
         assert len(result) > 0
 
     def test_compute_nudge_failopen_with_context(self) -> None:
@@ -1602,18 +1614,19 @@ class TestBackwardsCompatibility:
         state = CeremonyState()
         from trw_mcp.state import ceremony_nudge
 
-        original = ceremony_nudge._build_status_line
+        # PRD-CORE-129: compute_nudge now uses _build_minimal_status_line
+        original = ceremony_nudge._build_minimal_status_line
         try:
 
             def _broken(s: CeremonyState) -> str:
                 raise RuntimeError("simulated error")
 
-            ceremony_nudge._build_status_line = _broken  # type: ignore[assignment]
+            ceremony_nudge._build_minimal_status_line = _broken  # type: ignore[assignment]
             ctx = NudgeContext(tool_name="checkpoint")
             result = compute_nudge(state, context=ctx)
             assert result == ""
         finally:
-            ceremony_nudge._build_status_line = original
+            ceremony_nudge._build_minimal_status_line = original
 
     def test_append_ceremony_nudge_without_context(self, tmp_path: Path) -> None:
         """append_ceremony_nudge still works without context (backwards compat)."""
@@ -1626,11 +1639,13 @@ class TestBackwardsCompatibility:
         assert "ceremony_status" in result
 
     def test_existing_static_messages_unchanged(self) -> None:
-        """Static urgency-tier messages (PRD-CORE-074) are still used when no context."""
+        """compute_nudge returns non-empty content when session not started."""
         state = CeremonyState(session_started=False)
         result = compute_nudge(state, available_learnings=5)
-        # Should use the existing static message with lightning bolt
-        assert "\u26a1" in result
+        # PRD-CORE-129: Pool-based selection. TRW header always present.
+        # The specific message content varies by pool selection.
+        assert "TRW" in result
+        assert len(result) > 0
 
 
 # -------------------------------------------------------------------------
