@@ -1,4 +1,4 @@
-"""PRD quality scoring — metric computation for content density, structure, traceability.
+"""PRD quality scoring — metric computation for density, structure, readiness, and traceability.
 
 Extracted from prd_quality.py to separate scoring (numeric metric computation)
 from validation (pass/fail gate checks). All functions here compute and return
@@ -17,7 +17,7 @@ from trw_mcp.models.requirements import (
     DimensionScore,
     SectionScore,
 )
-from trw_mcp.state.validation.template_variants import get_required_sections
+from trw_mcp.state.validation.template_variants import get_required_sections, get_variant_for_category
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -119,6 +119,25 @@ _IMPL_REF_RE = re.compile(
     r"`(?:[-\w./*]+(?:\.[\w]+)(?:[:#][-\w./*#]+)?)`",
 )
 
+# Bare implementation/test references also count for PRD-QUAL-056 coverage.
+# Keep these narrower than the wrapped patterns so we do not accidentally count
+# frontmatter versions like "1.0" as file paths.
+_BARE_TEST_REF_RE = re.compile(
+    r"(?<!`)(?:"
+    r"test[\w./-]*\.[\w]+(?:::[\w.-]+)?"
+    r"|[\w./-]+\.(?:test|spec)\.[\w]+(?:::[\w.-]+)?"
+    r"|[\w./-]+(?:_test|_spec)\.[\w]+(?:::[\w.-]+)?"
+    r"|[\w./-]+(?:Test|Tests|Spec)\.[\w]+(?:::[\w.-]+)?"
+    r"|tests?/[\w./-]+\.[\w]+(?:::[\w.-]+)?"
+    r")(?!`)",
+)
+_BARE_IMPL_REF_RE = re.compile(
+    r"(?<!`)(?:"
+    r"(?:[-\w*]+/)+[-\w.*]+\.[A-Za-z][\w]*(?:[:#][-\w./*#]+)?"
+    r"|(?:[-A-Za-z0-9_]*[A-Za-z_][-A-Za-z0-9_]*)\.[A-Za-z][\w]*(?:[:#][-\w./*#]+)?"
+    r")(?!`)",
+)
+
 _SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
 # FR heading pattern for extracting individual FR sections (PRD-QUAL-056-FR01)
@@ -127,6 +146,11 @@ _FR_HEADING_RE = re.compile(r"^###\s+(?:PRD-[\w-]+-)?FR\d+.*$", re.MULTILINE)
 # Assertion keyword pattern for machine-verifiable assertions (PRD-QUAL-056-FR02)
 _ASSERTION_RE = re.compile(
     r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists"
+)
+
+_VERIFICATION_COMMAND_RE = re.compile(
+    r"\b(?:pytest|python -m pytest|npx vitest run|npm(?: run)? test|make test|go test|cargo test)\b",
+    re.IGNORECASE,
 )
 
 # AI/Agentic detection keywords (PRD-QUAL-055)
@@ -256,13 +280,55 @@ def _extract_subheadings(content: str) -> set[str]:
     return {match.group(1).strip() for match in _SUBHEADING_RE.finditer(content)}
 
 
+def _collect_reference_matches(content: str, *patterns: re.Pattern[str]) -> set[str]:
+    """Collect unique implementation/test reference tokens across regex variants."""
+    matches: set[str] = set()
+    for pattern in patterns:
+        for match in pattern.finditer(content):
+            token = match.group(0).strip("`")
+            if token:
+                matches.add(token)
+    return matches
+
+
+def _normalize_reference_token(token: str) -> str:
+    """Collapse selectors/anchors so test refs can be excluded from impl counts."""
+    return token.split("::", 1)[0].split("#", 1)[0]
+
+
+def _count_impl_refs(content: str) -> int:
+    """Count unique implementation file references, wrapped or bare."""
+    impl_refs = _collect_reference_matches(content, _IMPL_REF_RE, _BARE_IMPL_REF_RE)
+    test_refs = _collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE)
+    normalized_test_refs = {_normalize_reference_token(token) for token in test_refs}
+    return len({token for token in impl_refs if _normalize_reference_token(token) not in normalized_test_refs})
+
+
+def _count_test_refs(content: str) -> int:
+    """Count unique test file references, wrapped or bare."""
+    return len(_collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE))
+
+
+def _has_impl_ref(content: str) -> bool:
+    """Return True when content contains at least one implementation file reference."""
+    return _count_impl_refs(content) > 0
+
+
+def _has_test_ref(content: str) -> bool:
+    """Return True when content contains at least one test file reference."""
+    return _count_test_refs(content) > 0
+
+
 def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
     """Heuristic detection of AI/LLM/agentic PRDs.
 
     Returns True if:
-    - PRD risk_level is "high" or "critical" AND category is QUAL/CORE, OR
-    - PRD contains AI/LLM/agentic keywords in content
-    - PRD frontmatter category is "QUAL" (explicit AI focus)
+    - PRD contains AI/LLM/agentic keywords in content, OR
+    - frontmatter explicitly marks AI/LLM behavior in traceability or title text
+
+    Risk level and category alone are not sufficient. They produced false
+    positives for generic high-priority PRDs, which then got penalized for
+    missing AI operational sections they never claimed to implement.
 
     Args:
         frontmatter: Parsed YAML frontmatter dictionary.
@@ -271,16 +337,11 @@ def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
     Returns:
         True if the PRD appears to be AI/LLM/agentic in nature.
     """
-    category = str(frontmatter.get("category", "")).upper()
-    risk_level = str(frontmatter.get("risk_level", "")).lower()
-
-    # Explicit QUAL category or high-risk flag
-    if category == "QUAL" or risk_level in ("high", "critical"):
-        return True
-
-    # Keyword detection (case-insensitive)
     content_lower = content.lower()
-    return any(keyword in content_lower for keyword in _AI_KEYWORDS)
+    title_lower = str(frontmatter.get("title", "")).lower()
+    traceability_lower = str(frontmatter.get("traceability", "")).lower()
+    searchable = f"{title_lower}\n{traceability_lower}\n{content_lower}"
+    return any(keyword in searchable for keyword in _AI_KEYWORDS)
 
 
 def _count_table_rows(content: str, heading: str) -> int:
@@ -302,6 +363,16 @@ def _count_table_rows(content: str, heading: str) -> int:
             continue
         rows += 1
     return max(rows - 1, 0)
+
+
+def _has_named_subheading(content: str, heading: str) -> bool:
+    """Return True when a level-3 heading matches *heading* exactly."""
+    return heading in _extract_subheadings(content)
+
+
+def _count_verification_commands(content: str) -> int:
+    """Count recognizable verification commands referenced in the PRD."""
+    return len(_VERIFICATION_COMMAND_RE.findall(content))
 
 
 def _is_substantive_line(line: str) -> bool:
@@ -358,8 +429,8 @@ def _score_file_path_coverage(
 ) -> float:
     """Score (FRs_with_impl + FRs_with_test) / (2 * total_FRs).
 
-    Uses ``_IMPL_REF_RE`` and ``_TEST_REF_RE`` to detect backtick-wrapped
-    file paths inside each FR section. Returns 0.0--1.0.
+    Counts recognizable implementation and test file references inside each FR
+    section, whether they are backtick-wrapped or plain text. Returns 0.0--1.0.
     """
     if not fr_sections:
         return 0.0
@@ -369,9 +440,9 @@ def _score_file_path_coverage(
     frs_with_test = 0
 
     for _name, body in fr_sections:
-        if _IMPL_REF_RE.search(body):
+        if _has_impl_ref(body):
             frs_with_impl += 1
-        if _TEST_REF_RE.search(body):
+        if _has_test_ref(body):
             frs_with_test += 1
 
     return (frs_with_impl + frs_with_test) / (2 * total_frs)
@@ -393,6 +464,15 @@ def _score_assertion_coverage(
         1 for _name, body in fr_sections if _ASSERTION_RE.search(body)
     )
     return frs_with_assertion / len(fr_sections)
+
+
+def _count_planned_requirements(content: str, fr_sections: list[tuple[str, str]] | None = None) -> int:
+    """Count planned FRs without over-counting repeated traceability references."""
+    resolved_fr_sections = fr_sections if fr_sections is not None else _extract_fr_sections(content)
+    if resolved_fr_sections:
+        return len(resolved_fr_sections)
+    unique_refs = {match for match in re.findall(r"\bFR\d+\b", content)}
+    return max(len(unique_refs), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +518,7 @@ def score_content_density(
     content: str,
     config: TRWConfig | None = None,
 ) -> DimensionScore:
-    """Score the Content Density dimension (25 points max).
+    """Score the Content Density dimension.
 
     Computes per-section density and aggregates via weighted average.
     Problem Statement and Functional Requirements get 2x weight;
@@ -496,7 +576,7 @@ def score_structural_completeness(
     category: str | None = None,
     content: str | None = None,
 ) -> DimensionScore:
-    """Score the Structural Completeness dimension (15 points max).
+    """Score the Structural Completeness dimension.
 
     Checks: category-appropriate sections present, required frontmatter
     fields, confidence scores present (PRD-CORE-080-FR05).
@@ -618,12 +698,168 @@ def score_structural_completeness(
     )
 
 
+def score_implementation_readiness(
+    frontmatter: dict[str, object],
+    content: str,
+    config: TRWConfig | None = None,
+) -> DimensionScore:
+    """Score execution-readiness signals distinct from raw prose density.
+
+    Rewards concrete planning evidence such as control points, behavior switches,
+    key files, verification tests, and completion/migration semantics. The
+    scoring is variant-aware so FIX and RESEARCH PRDs are not penalized for
+    missing feature-only scaffolding.
+    """
+    _config = config or get_config()
+    max_score = _config.validation_implementation_readiness_weight
+    if not content:
+        return DimensionScore(
+            name="implementation_readiness",
+            score=0.0,
+            max_score=max_score,
+            details={"variant": "feature"},
+        )
+
+    category = str(frontmatter.get("category", ""))
+    variant = get_variant_for_category(category)
+    fr_sections = _extract_fr_sections(content)
+    fr_count = _count_planned_requirements(content, fr_sections)
+    impl_refs = _count_impl_refs(content)
+    test_refs = _count_test_refs(content)
+    verification_commands = _count_verification_commands(content)
+
+    completion_ratio = (
+        sum(
+            1
+            for heading in (
+                "Completion Evidence (Definition of Done)",
+                "Migration / Backward Compatibility",
+            )
+            if _has_named_subheading(content, heading)
+        )
+        / 2
+    )
+
+    details: dict[str, object] = {
+        "variant": variant,
+        "fr_count": fr_count,
+        "implementation_refs": impl_refs,
+        "test_refs": test_refs,
+        "verification_commands": verification_commands,
+        "completion_ratio": round(completion_ratio, 4),
+    }
+
+    if variant in {"feature", "infrastructure"}:
+        control_point_rows = _count_table_rows(content, "Primary Control Points")
+        behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
+        key_files_rows = _count_table_rows(content, "Key Files")
+        test_subsections = (
+            "Unit Tests",
+            "Integration Tests",
+            "Acceptance Tests",
+            "Regression Tests",
+            "Negative / Fallback Tests",
+        )
+        test_subsection_ratio = sum(
+            1 for heading in test_subsections if _has_named_subheading(content, heading)
+        ) / len(test_subsections)
+        control_ratio = min(control_point_rows / fr_count, 1.0)
+        behavior_switch_ratio = min(behavior_switch_rows / fr_count, 1.0)
+        file_map_ratio = min(max(key_files_rows, impl_refs) / fr_count, 1.0)
+        test_ref_ratio = min(test_refs / fr_count, 1.0)
+        verification_ratio = min(verification_commands / fr_count, 1.0)
+        test_plan_ratio = (test_subsection_ratio * 0.5) + (test_ref_ratio * 0.3) + (verification_ratio * 0.2)
+        completion_ratio = (completion_ratio * 0.8) + (verification_ratio * 0.2)
+        composite = (
+            control_ratio * 0.20
+            + behavior_switch_ratio * 0.20
+            + file_map_ratio * 0.20
+            + test_plan_ratio * 0.25
+            + completion_ratio * 0.15
+        )
+        details.update(
+            {
+                "control_point_rows": control_point_rows,
+                "behavior_switch_rows": behavior_switch_rows,
+                "key_files_rows": key_files_rows,
+                "control_ratio": round(control_ratio, 4),
+                "behavior_switch_ratio": round(behavior_switch_ratio, 4),
+                "file_map_ratio": round(file_map_ratio, 4),
+                "test_subsection_ratio": round(test_subsection_ratio, 4),
+                "test_ref_ratio": round(test_ref_ratio, 4),
+                "verification_ratio": round(verification_ratio, 4),
+                "test_plan_ratio": round(test_plan_ratio, 4),
+            }
+        )
+    elif variant == "fix":
+        root_cause_ratio = (
+            sum(
+                1
+                for heading in ("Root Cause", "Contributing Factors", "Fix Verification")
+                if _has_named_subheading(content, heading)
+            )
+            / 3
+        )
+        regression_ratio = (
+            sum(
+                1
+                for heading in ("Regression Tests", "Negative / Fallback Tests")
+                if _has_named_subheading(content, heading)
+            )
+            / 2
+        )
+        file_map_ratio = min(max(impl_refs, 1 if _has_named_subheading(content, "Key Files") else 0) / fr_count, 1.0)
+        test_ref_ratio = min(test_refs / fr_count, 1.0)
+        verification_ratio = min(max(test_ref_ratio, verification_commands / fr_count), 1.0)
+        completion_ratio = (completion_ratio * 0.8) + (verification_ratio * 0.2)
+        composite = (
+            root_cause_ratio * 0.30
+            + regression_ratio * 0.20
+            + file_map_ratio * 0.20
+            + verification_ratio * 0.15
+            + completion_ratio * 0.15
+        )
+        details.update(
+            {
+                "root_cause_ratio": round(root_cause_ratio, 4),
+                "regression_ratio": round(regression_ratio, 4),
+                "file_map_ratio": round(file_map_ratio, 4),
+                "verification_ratio": round(verification_ratio, 4),
+            }
+        )
+    else:
+        research_ratio = (
+            sum(
+                1
+                for heading in ("Approach", "Data Sources", "Evaluation Criteria")
+                if any(heading.lower() in sub.lower() for sub in _extract_subheadings(content))
+            )
+            / 3
+        )
+        evidence_ratio = min((impl_refs + test_refs + verification_commands) / 3, 1.0)
+        composite = (research_ratio * 0.65) + (evidence_ratio * 0.20) + (completion_ratio * 0.15)
+        details.update(
+            {
+                "research_ratio": round(research_ratio, 4),
+                "evidence_ratio": round(evidence_ratio, 4),
+            }
+        )
+
+    score = composite * max_score
+    return DimensionScore(
+        name="implementation_readiness",
+        score=round(min(score, max_score), 2),
+        max_score=max_score,
+        details=details,
+    )
+
+
 def score_traceability_v2(
     frontmatter: dict[str, object],
     content: str,
     config: TRWConfig | None = None,
 ) -> DimensionScore:
-    """Score the Traceability dimension (20 points max).
+    """Score the Traceability dimension.
 
     Checks: traceability link population, traceability matrix row quality.
 
@@ -655,8 +891,8 @@ def score_traceability_v2(
     proof_score = 0.0
     if "Traceability Matrix" in content:
         matrix_section = content.split("Traceability Matrix")[-1]
-        _impl_refs = _IMPL_REF_RE.findall(matrix_section)
-        _test_refs = _TEST_REF_RE.findall(matrix_section)
+        _impl_refs = _count_impl_refs(matrix_section)
+        _test_refs = _count_test_refs(matrix_section)
         fr_refs = re.findall(r"FR\d+", matrix_section)
         matrix_rows = [
             line.strip()
@@ -665,14 +901,15 @@ def score_traceability_v2(
         ]
 
         if fr_refs:
-            rows_with_impl = sum(1 for row in matrix_rows if _IMPL_REF_RE.search(row))
-            rows_with_test = sum(1 for row in matrix_rows if _TEST_REF_RE.search(row))
-            rows_with_both = sum(1 for row in matrix_rows if _IMPL_REF_RE.search(row) and _TEST_REF_RE.search(row))
+            rows_with_impl = sum(1 for row in matrix_rows if _has_impl_ref(row))
+            rows_with_test = sum(1 for row in matrix_rows if _has_test_ref(row))
+            rows_with_both = sum(1 for row in matrix_rows if _has_impl_ref(row) and _has_test_ref(row))
             matrix_score = min((rows_with_impl + rows_with_test) / (2 * max(len(fr_refs), 1)), 1.0)
             proof_score = min(rows_with_both / max(len(fr_refs), 1), 1.0)
 
+    fr_count = _count_planned_requirements(content)
     behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
-    behavior_switch_score = min(behavior_switch_rows / max(len(re.findall(r"FR\d+", content)), 1), 1.0)
+    behavior_switch_score = min(behavior_switch_rows / fr_count, 1.0)
 
     # AI/LLM(agentic evaluation, release, monitoring evidence scoring (PRD-QUAL-055)
     ai_evaluation_score = 0.0
