@@ -176,7 +176,7 @@ def _build_recall_context_safe(trw_dir: Path, query: str) -> RecallContext | Non
 
     try:
         return build_recall_context(trw_dir, query)
-    except (OSError, RuntimeError, ValueError, TypeError):
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
         logger.debug(
             "recall_context_build_failed",
             component="recall",
@@ -202,7 +202,7 @@ def _log_recall_surfaces(trw_dir: Path, ranked_learnings: list[dict[str, object]
                     phase=phase,
                     files_context=[],
                 )
-    except (OSError, RuntimeError, ValueError, TypeError):
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
         logger.debug(
             "surface_logging_failed",
             component="recall",

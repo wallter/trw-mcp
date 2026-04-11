@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
@@ -877,6 +878,18 @@ class TestLocalModelScoping:
         """compute_nudge_minimal never raises."""
         nudge = compute_nudge_minimal(CeremonyState())
         assert isinstance(nudge, str)
+
+    def test_fr12_minimal_nudge_logs_failopen_exceptions(self) -> None:
+        """Minimal legacy nudge failures stay observable."""
+        with (
+            patch("trw_mcp.state.ceremony_nudge._build_minimal_status_line", side_effect=RuntimeError("boom")),
+            patch("trw_mcp.state.ceremony_nudge.logger") as mock_logger,
+        ):
+            assert compute_nudge_minimal(CeremonyState()) == ""
+
+        mock_logger.debug.assert_called_once()
+        assert mock_logger.debug.call_args.args[0] == "compute_nudge_minimal_failed"
+        assert mock_logger.debug.call_args.kwargs["exc_info"] is True
 
     def test_fr12_minimal_nudge_session_not_started(self) -> None:
         """Minimal nudge mentions session start when not called."""

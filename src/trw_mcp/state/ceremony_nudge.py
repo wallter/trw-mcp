@@ -195,7 +195,7 @@ def compute_nudge(
 
         logger.debug("nudge_pool_selected", pool=pool)
         return _assemble_nudge(header_status, content, budget=budget)
-    except Exception:
+    except Exception:  # justified: fail-open -- legacy/offline nudge rendering must not break callers
         logger.debug("compute_nudge_failed", exc_info=True)
         return ""
 
@@ -228,5 +228,6 @@ def compute_nudge_minimal(state: CeremonyState, available_learnings: int = 0) ->
 
         full = f"{_MINIMAL_HEADER}\n{status_line}\n{msg}"
         return full if len(full) <= 200 else full[:197] + "..."
-    except Exception:
+    except Exception:  # justified: fail-open -- minimal legacy nudge rendering must not break callers
+        logger.debug("compute_nudge_minimal_failed", exc_info=True)
         return ""

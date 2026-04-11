@@ -261,6 +261,37 @@ class TestSurfaceLoggingFailOpen:
         assert "learnings" in result
         assert len(result["learnings"]) == 1
 
+    def test_recall_context_import_failure_fails_open(self, tmp_path: Path) -> None:
+        """If contextual recall wiring is unavailable, execute_recall still succeeds."""
+        from trw_mcp.tools._recall_impl import execute_recall
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        config = get_config()
+        entries = [_make_entry("L-i2")]
+
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
+            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
+            patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
+            patch("trw_mcp.state.recall_search.collect_context", return_value={}),
+            patch("trw_mcp.tools._recall_impl._track_recall"),
+            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
+            patch(
+                "trw_mcp.tools._recall_impl.build_recall_context",
+                side_effect=ImportError("context module missing"),
+            ),
+        ):
+            result = execute_recall(
+                query="middleware",
+                trw_dir=trw_dir,
+                config=config,
+                _rank_by_utility=_noop_rank,
+            )
+
+        assert "learnings" in result
+        assert len(result["learnings"]) == 1
+
 
 # ---------------------------------------------------------------------------
 # Tests: phase detection wiring
