@@ -23,7 +23,7 @@ from fastmcp.server.middleware.middleware import (
     Middleware,
     MiddlewareContext,
 )
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 
 # Module-level session state: session_id -> True (ceremony completed).
