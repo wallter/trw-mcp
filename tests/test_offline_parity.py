@@ -183,6 +183,6 @@ class TestOfflineParity:
         else:
             tool_names = asyncio.run(_list())
 
-        assert len(tool_names) == 25
+        assert len(tool_names) == 26
         assert set(tool_names) == set(TOOL_PRESETS["all"])
         assert "trw_meta_tune" not in tool_names

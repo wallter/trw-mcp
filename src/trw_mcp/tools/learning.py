@@ -165,11 +165,11 @@ def register_learning_tools(server: FastMCP) -> None:
         team_origin: str = "",
         protection_tier: str = "normal",
     ) -> LearnResultDict:
-        """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
+        """Save a discovery so future agents do not repeat the same mistake.
 
-        Writes a learning entry to the knowledge store with utility scoring.
-        High-impact learnings surface automatically via trw_session_start()
-        and trw_recall(), becoming part of every future session's context.
+        When to call: at the moment you find a root cause, durable pattern, or
+        gotcha — ideally before writing the fix so the why is still clear.
+        High-impact learnings surface via trw_session_start() and trw_recall().
 
         Only record learnings that:
         1. prevent repeated mistakes
@@ -180,47 +180,16 @@ def register_learning_tools(server: FastMCP) -> None:
         Routine observations ("I read the file", "the test passed") degrade recall quality.
 
         Required:
-            summary: One-line discovery.
-            detail: What failed, what worked, and why it matters.
-
+            summary, detail
         Recommended:
-            tags: Recall tags.
-            impact: Impact score 0.0-1.0.
-
+            tags, impact
         Advanced (auto-detected if omitted):
             shard_id, source_type, source_identity, client_profile, model_id,
             consolidated_from, assertions, type, nudge_line, expires,
             confidence, task_type, domain, phase_origin, phase_affinity,
             team_origin, protection_tier.
 
-        Most learnings need only summary and detail. Adding tags and impact
-        improves recall precision. All other fields are auto-detected.
-
-        Args:
-            summary: One-line summary of the discovery.
-            detail: Full context including what you tried, what failed, and what worked.
-            tags: Categorization tags (e.g., ["testing", "gotcha"]) for filtered recall.
-            evidence: Supporting evidence (file paths, error messages) that validates the learning.
-            impact: Impact score 0.0-1.0 — learnings at 0.7+ surface prominently in recall and may be promoted to project instructions.
-            shard_id: Optional shard identifier for sub-agent attribution.
-            source_type: Learning provenance — "human", "agent", "tool", or "consolidated".
-            source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
-            client_profile: IDE/client override (e.g., "claude-code"). Auto-detected when None.
-            model_id: Model override (e.g., "claude-opus-4-6"). Auto-detected when None.
-            consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
-            assertions: Machine-verifiable assertions (PRD-CORE-086). Each dict has type, pattern, target.
-            type: Learning type — "incident", "pattern", "convention", "hypothesis", or "workaround".
-            nudge_line: Compact text for ceremony nudge display (max 80 chars, auto-truncated).
-            expires: Expiration date/condition (ISO 8601 or free text like "when v2 ships").
-            confidence: Validation confidence — "unverified", "low", "medium", "high", or "verified".
-            task_type: Task type identifier (e.g., "bug-fix", "feature", "refactor").
-            domain: Domain tags (e.g., ["testing", "security"]) for contextual recall boosting.
-            phase_origin: Framework phase when created (auto-detected when empty).
-            phase_affinity: Phases where most relevant (e.g., ["implement", "validate"]).
-            team_origin: Team identifier for team-aware recall boosting.
-            protection_tier: Protection level — "critical", "high", "normal", "low".
-
-        See Also: trw_recall, trw_learn_update
+        Most learnings need only summary and detail. Adding tags and impact improves recall precision. All other fields are auto-detected.
         """
         # PRD-CORE-099: Auto-detect client and model when not explicitly provided.
         # None = "not provided" → auto-detect. Empty string = explicit blank.

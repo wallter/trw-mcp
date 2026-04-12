@@ -48,6 +48,7 @@ TOOL_GROUP_QUALITY: tuple[str, ...] = (
     "trw_review",
     "trw_prd_create",
     "trw_prd_validate",
+    "trw_prd_draft_frs",
 )
 TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = (
     "trw_status",

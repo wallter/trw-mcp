@@ -19,21 +19,13 @@ from trw_mcp.models.run import (
     RunState,
     RunStatus,
 )
-from trw_mcp.models.typed_dicts import (
-    CheckpointEventDataDict,
-    CheckpointRecordDict,
-    TrwStatusDict,
-)
+from trw_mcp.models.typed_dicts import TrwStatusDict
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
 from trw_mcp.state.analytics._stale_runs import count_stale_runs
 from trw_mcp.state.artifact_scanner import scan_artifacts
-from trw_mcp.state.persistence import (
-    FileEventLogger,
-    FileStateReader,
-    FileStateWriter,
-    model_to_dict,
-)
+from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter, model_to_dict
+from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
 from trw_mcp.tools._orchestration_helpers import (
     _deploy_frameworks,
     _deploy_templates,
@@ -43,7 +35,6 @@ from trw_mcp.tools._orchestration_lifecycle import (
     _apply_ceremony_status,
     _compute_last_activity_ts,
     _compute_reflection_metrics,
-    _update_wave_status,
 )
 from trw_mcp.tools._orchestration_phase import (
     _check_framework_version_staleness,
@@ -455,56 +446,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             shard_id: Optional shard identifier for sub-agent attribution.
             wave_id: Optional wave identifier for wave-aware progress tracking (PRD-INFRA-036).
         """
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        resolved_path = resolve_run_path(run_path)
-        meta_path = resolved_path / "meta"
-
-        state_data = reader.read_yaml(meta_path / "run.yaml")
-        ts = datetime.now(timezone.utc).isoformat()
-
-        # Create checkpoint record
-        checkpoint: CheckpointRecordDict = {
-            "ts": ts,
-            "message": message,
-            "state": state_data,
-        }
-        if shard_id:
-            checkpoint["shard_id"] = shard_id
-        if wave_id:
-            checkpoint["wave_id"] = wave_id
-
-        checkpoints_path = meta_path / "checkpoints.jsonl"
-        writer.append_jsonl(checkpoints_path, cast("dict[str, object]", checkpoint))
-
-        event_data: CheckpointEventDataDict = {"message": message}
-        if shard_id:
-            event_data["shard_id"] = shard_id
-        if wave_id:
-            event_data["wave_id"] = wave_id
-        _events.log_event(
-            meta_path / "events.jsonl",
-            "checkpoint",
-            cast("dict[str, object]", event_data),
-        )
-
-        # Update wave status in run.yaml if wave_id provided (PRD-INFRA-036-FR02)
-        if wave_id:
-            _update_wave_status(reader, writer, meta_path, wave_id, ts, message)
-
-        logger.info(
-            "checkpoint_ok",
-            run_id=str(state_data.get("run_id", "")),
-            message=message[:80],
-            wave_id=wave_id,
-        )
-        result: dict[str, str] = {
-            "timestamp": ts,
-            "status": "checkpoint_created",
-            "message": message,
-        }
-        if wave_id:
-            result["wave_id"] = wave_id
+        result = execute_checkpoint(run_path, message, shard_id, wave_id)
 
         _apply_ceremony_status(
             cast("dict[str, object]", result),
