@@ -508,7 +508,7 @@ def render_codex_instructions() -> str:
         "\n"
         "- **Context limits vary**: avoid hardcoding a fixed Codex context budget in plans or prompts\n"
         "- **Hooks are optional**: treat them as additive hints, not correctness gates\n"
-fs- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
+        "- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
         "- **File navigation**: be explicit about file paths and the repo root you are changing\n"
         "\n"
     )
