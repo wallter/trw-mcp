@@ -261,6 +261,16 @@ def _select_cached_or_deterministic_learning(
     )
 
 
+def _has_cached_learning_weights(trw_dir: Path) -> bool:
+    """Return True when backend-provided nudge weights are cached locally."""
+    try:
+        from trw_mcp.sync.cache import IntelligenceCache
+
+        return bool(IntelligenceCache(trw_dir).get_bandit_params())
+    except Exception:  # justified: cache lookup is advisory only
+        return False
+
+
 def build_ceremony_status_line(state: CeremonyState) -> str:
     """Render a compact, deterministic summary of current ceremony progress."""
     parts = [
@@ -443,6 +453,8 @@ def append_ceremony_status(
         pool = _select_nudge_pool(state, weights, context, cooldown_after, cooldown_calls)
         if not pool:
             return response
+        if pool != "learnings" and _has_cached_learning_weights(effective_dir):
+            pool = "learnings"
 
         nudge_content: str | None = None
 

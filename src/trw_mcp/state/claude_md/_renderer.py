@@ -39,6 +39,12 @@ SESSION_BOUNDARY_TEXT = (
 
 # Quick-ref subset: the 4 highest-signal tools shown in the compact CLAUDE.md table
 _QUICK_REF_TOOLS = ("trw_session_start", "trw_learn", "trw_checkpoint", "trw_deliver")
+_QUICK_REF_SIGNATURES = {
+    "trw_session_start": "trw_session_start()",
+    "trw_learn": "trw_learn(summary, detail)",
+    "trw_checkpoint": "trw_checkpoint(message)",
+    "trw_deliver": "trw_deliver()",
+}
 
 
 class ProtocolRenderer:
@@ -96,8 +102,11 @@ class ProtocolRenderer:
         ]
         for ct in CEREMONY_TOOLS:
             if ct.tool in _QUICK_REF_TOOLS:
-                # Use the example as the display call (keeps it concrete)
-                lines.append(f"| `{ct.example}` | {ct.when} | {ct.what} |")
+                signature = _QUICK_REF_SIGNATURES.get(ct.tool, ct.example)
+                tool_cell = f"`{signature}`"
+                if ct.example != signature:
+                    tool_cell = f"{tool_cell}<br><sub>e.g. `{ct.example}`</sub>"
+                lines.append(f"| {tool_cell} | {ct.when} | {ct.what} |")
         lines.extend(["", "Full tool lifecycle: `/trw-ceremony-guide`", ""])
         return "\n".join(lines) + "\n"
 

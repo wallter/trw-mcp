@@ -64,7 +64,7 @@ def test_preset_all_has_all_group_tools() -> None:
 
 @pytest.mark.unit
 def test_preset_all_tool_count() -> None:
-    """TOOL_PRESETS['all'] has 4+3+5+6+7 = 25 tools."""
+    """TOOL_PRESETS['all'] has 4+3+6+6+7 = 26 tools."""
     expected = (
         len(TOOL_GROUP_CORE)
         + len(TOOL_GROUP_MEMORY)
