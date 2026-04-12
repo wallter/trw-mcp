@@ -327,7 +327,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             query="*",
             min_impact=0.5,
             max_results=10,
-            compact=True,
+            compact=False,
         )
         if not candidates:
             return None

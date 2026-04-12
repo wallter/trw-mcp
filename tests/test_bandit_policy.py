@@ -168,6 +168,21 @@ class TestWithholdingPolicyForcedTriggers:
         withheld = sum(1 for _ in range(1000) if policy.should_withhold(learning))
         assert withheld > 0, "Expired workaround trigger should sometimes withhold"
 
+    def test_trigger_3_workaround_expired_top_level_fields(self) -> None:
+        """Top-level type/expires fields also trigger forced re-evaluation."""
+        from trw_mcp.state.bandit_policy import WithholdingPolicy
+
+        policy = WithholdingPolicy(client_class="full_mode")
+        learning = {
+            "id": "L-workaround-live-shape",
+            "protection_tier": "critical",
+            "type": "workaround",
+            "expires": "2020-01-01T00:00:00",
+        }
+
+        withheld = sum(1 for _ in range(1000) if policy.should_withhold(learning))
+        assert withheld > 0, "Expired workaround should fire with real adapter shape"
+
     def test_trigger_4_page_hinkley_fired(self) -> None:
         """Page-Hinkley alarm forces re-evaluation (FR05, forced trigger #4)."""
         from trw_mcp.state.bandit_policy import WithholdingPolicy
@@ -1060,6 +1075,41 @@ class TestLiveDecoratorPath:
             f"Expected arm 'L-update-test' in bandit arms after update, got: {list(arms)}"
         )
         assert arms["L-update-test"]["exposure_count"] >= 1
+
+    def test_live_path_uses_real_recall_shape_for_bandit_selection(self, tmp_path: Path) -> None:
+        """Real adapter recall returns enough typed fields for live bandit path."""
+        import json as _json
+
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.state.memory_adapter import store_learning
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        store_learning(
+            trw_dir,
+            "L-real-live",
+            "Summary fallback text should not be used here",
+            "Detailed note",
+            impact=0.9,
+            type="workaround",
+            nudge_line="Use the real adapter nudge line",
+            expires="2099-01-01T00:00:00",
+            protection_tier="critical",
+        )
+
+        content = _try_bandit_nudge_content(trw_dir, state)
+
+        assert content == "Use the real adapter nudge line"
+        bandit_path = trw_dir / "meta" / "bandit_state.json"
+        assert bandit_path.exists(), "bandit_state.json must be persisted on the live path"
+        stored = _json.loads(bandit_path.read_text(encoding="utf-8"))
+        arms = stored.get("bandit_state", {}).get("arms", {})
+        assert "L-real-live" in arms
+        assert arms["L-real-live"]["exposure_count"] >= 1
 
     def test_live_path_writes_propensity_log(self, tmp_path: Path) -> None:
         """propensity.jsonl is written after a successful selection."""

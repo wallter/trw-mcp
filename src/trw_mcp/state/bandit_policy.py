@@ -686,9 +686,11 @@ class WithholdingPolicy:
         metadata = learning.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
-        if "anchor_validity" in learning and "anchor_validity" not in metadata:
+        if any(key in learning and key not in metadata for key in ("anchor_validity", "type", "expires")):
             metadata = dict(metadata)
-            metadata["anchor_validity"] = learning.get("anchor_validity")
+        for key in ("anchor_validity", "type", "expires"):
+            if key in learning and key not in metadata:
+                metadata[key] = learning.get(key)
         current_anchor_validity = self._extract_anchor_validity(metadata)
         previous_anchor_validity = metadata.get("prev_anchor_validity")
         if previous_anchor_validity is None and learning_id:
