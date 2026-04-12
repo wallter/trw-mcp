@@ -448,6 +448,89 @@ def _run_config_reference(args: argparse.Namespace) -> None:
         print(f"| `{env_var}` | {field_type} | `{default_str}` | {desc} |")
 
 
+def _run_local(args: argparse.Namespace) -> None:
+    """Handle the ``local`` subcommand — offline ceremony fallback (PRD-FIX-073)."""
+    from trw_mcp.services.orchestration_service import scaffold_run_directory, write_checkpoint
+
+    local_cmd = getattr(args, "local_command", None)
+
+    if local_cmd == "init":
+        task_name = getattr(args, "task", None)
+        if not task_name:
+            print("Error: --task is required for 'local init'")
+            sys.exit(1)
+        result = scaffold_run_directory(task_name)
+        print(f"Run initialized: {result['run_id']}")
+        print(f"  Path: {result['run_path']}")
+    elif local_cmd == "checkpoint":
+        message = getattr(args, "message", "") or ""
+        run_path_str = getattr(args, "run_path", None)
+        run_path = Path(run_path_str) if run_path_str else None
+        try:
+            result = write_checkpoint(message, run_path=run_path)
+            print(f"Checkpoint created at {result['timestamp']}")
+        except FileNotFoundError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+    else:
+        print("Usage: trw-mcp local {init|checkpoint}")
+        print()
+        print("Commands:")
+        print("  init        Create a run directory (--task NAME required)")
+        print("  checkpoint  Save progress (--message MSG)")
+        sys.exit(0)
+
+    sys.exit(0)
+
+
+def _run_check_instructions(args: argparse.Namespace) -> None:
+    """Handle the ``check-instructions`` subcommand (PRD-CORE-135-FR02).
+
+    Scans instruction files (AGENTS.md, CLAUDE.md) for trw_* tool mentions
+    and compares against the effective tool exposure list from config.
+    Exits with code 1 if mismatches found, 0 if clean.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state.claude_md._tool_manifest import (
+        resolve_exposed_tools,
+        validate_instruction_manifest,
+    )
+
+    target = Path(getattr(args, "target_dir", ".")).resolve()
+    config = TRWConfig()
+    exposed = resolve_exposed_tools(
+        mode=config.effective_tool_exposure_mode,
+        custom_list=config.tool_exposure_list,
+    )
+
+    files_to_check = ["AGENTS.md", "CLAUDE.md"]
+    all_mismatches: dict[str, list[str]] = {}
+
+    for filename in files_to_check:
+        filepath = target / filename
+        if not filepath.exists():
+            continue
+        try:
+            content = filepath.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("check_instructions_read_error", path=str(filepath))
+            continue
+        mismatches = validate_instruction_manifest(content, exposed)
+        if mismatches:
+            all_mismatches[filename] = mismatches
+
+    if not all_mismatches:
+        print("OK: all instruction files reference only exposed tools")
+        sys.exit(0)
+
+    for filename, tools in all_mismatches.items():
+        print(f"{filename}: mentions unexposed tools: {', '.join(tools)}")
+
+    total = sum(len(v) for v in all_mismatches.values())
+    print(f"\nTotal: {total} unexposed tool reference(s) in {len(all_mismatches)} file(s)")
+    sys.exit(1)
+
+
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "init-project": _run_init_project,
     "update-project": _run_update_project,
@@ -458,4 +541,6 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "auth": _run_auth,
     "uninstall": _run_uninstall,
     "config-reference": _run_config_reference,
+    "local": _run_local,
+    "check-instructions": _run_check_instructions,
 }

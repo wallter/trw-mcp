@@ -336,6 +336,42 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Print configuration reference (all TRW_ env vars)",
     )
 
+    # check-instructions (PRD-CORE-135-FR02)
+    check_instr_parser = subparsers.add_parser(
+        "check-instructions",
+        help="Validate instruction files reference only exposed tools",
+    )
+    check_instr_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Target project directory (default: current directory)",
+    )
+
+    # local (PRD-FIX-073: offline ceremony fallback)
+    local_parser = subparsers.add_parser(
+        "local",
+        help="Offline ceremony fallback — init runs and write checkpoints without MCP server",
+    )
+    local_sub = local_parser.add_subparsers(dest="local_command")
+    local_init = local_sub.add_parser("init", help="Create a run directory")
+    local_init.add_argument(
+        "--task",
+        required=True,
+        help="Task name for the run",
+    )
+    local_cp = local_sub.add_parser("checkpoint", help="Save progress checkpoint")
+    local_cp.add_argument(
+        "--message", "-m",
+        default="",
+        help="Checkpoint message describing progress",
+    )
+    local_cp.add_argument(
+        "--run-path",
+        default=None,
+        help="Explicit run directory path (auto-detects if omitted)",
+    )
+
     # build-release
     build_parser = subparsers.add_parser(
         "build-release",

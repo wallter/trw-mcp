@@ -390,6 +390,45 @@ def _check_build_and_work_events(
     return build_warning, premature_warning
 
 
+def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
+    """R-08: Check instruction-tool parity — soft warning gate (PRD-CORE-135).
+
+    Reads AGENTS.md from the project root and compares tool mentions against
+    the effective tool exposure list from config. Returns a warning string
+    if unexposed tools are mentioned, None if clean.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.models.config._defaults import TOOL_PRESETS
+        from trw_mcp.state.claude_md._tool_manifest import check_instruction_tool_parity
+
+        config = get_config()
+        mode = config.effective_tool_exposure_mode
+        if mode == "all":
+            # All tools exposed — no parity mismatch possible
+            return None
+
+        if mode == "custom":
+            exposed = set(config.tool_exposure_list)
+        else:
+            preset = TOOL_PRESETS.get(mode)
+            if preset is None:
+                return None
+            exposed = set(preset)
+
+        # Walk up from run_path to find project root (parent of .trw/)
+        project_root = run_path
+        for parent in run_path.parents:
+            if (parent / ".trw").is_dir():
+                project_root = parent
+                break
+
+        return check_instruction_tool_parity(project_root, exposed)
+    except Exception:  # justified: fail-open, soft warning gate must not block delivery
+        logger.warning("instruction_parity_gate_failed", exc_info=True)
+        return None
+
+
 def check_delivery_gates(
     run_path: Path | None,
     reader: FileStateReader,
@@ -453,6 +492,11 @@ def check_delivery_gates(
     drift_warning = _check_complexity_drift(run_data, events)
     if drift_warning:
         result["complexity_drift_warning"] = drift_warning
+
+    # Instruction-tool parity (R-08, soft warning — PRD-CORE-135-FR03)
+    instruction_parity = _check_instruction_tool_parity_gate(run_path)
+    if instruction_parity:
+        result["instruction_parity_warning"] = instruction_parity
 
     return result
 
