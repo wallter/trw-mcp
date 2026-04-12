@@ -459,16 +459,16 @@ def _run_local(args: argparse.Namespace) -> None:
         if not task_name:
             print("Error: --task is required for 'local init'")
             sys.exit(1)
-        result = scaffold_run_directory(task_name)
-        print(f"Run initialized: {result['run_id']}")
-        print(f"  Path: {result['run_path']}")
+        init_result = scaffold_run_directory(task_name)
+        print(f"Run initialized: {init_result['run_id']}")
+        print(f"  Path: {init_result['run_path']}")
     elif local_cmd == "checkpoint":
         message = getattr(args, "message", "") or ""
         run_path_str = getattr(args, "run_path", None)
         run_path = Path(run_path_str) if run_path_str else None
         try:
-            result = write_checkpoint(message, run_path=run_path)
-            print(f"Checkpoint created at {result['timestamp']}")
+            cp_result = write_checkpoint(message, run_path=run_path)
+            print(f"Checkpoint created at {cp_result['timestamp']}")
         except FileNotFoundError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
