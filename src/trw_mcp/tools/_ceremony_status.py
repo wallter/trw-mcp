@@ -55,6 +55,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             record_nudge_shown,
         )
         from trw_mcp.state.bandit_policy import (
+            WithheldEvent,
             WithholdingPolicy,
             _compute_heuristic_reward,
             load_bandit_state,
@@ -70,7 +71,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         # ── Resolve config metadata (best-effort, fail-open) ────────────────
         client_class = "full_mode"
         client_profile_name = ""
-        model_family = ""
+        model_family = "generic"
         phase_transition_withhold_rate = 0.10
 
         try:
@@ -78,7 +79,8 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             cfg = TRWConfig(trw_dir=str(trw_dir))
             client_profile_name = getattr(cfg.client_profile, "client_id", "") or ""
             client_class = resolve_client_class(client_profile_name)
-            model_family = getattr(cfg, "model_family", "") or ""
+            # cfg.model_family is always non-empty via validator (P1-A fix)
+            model_family = cfg.model_family or "generic"
             phase_transition_withhold_rate = float(
                 getattr(cfg, "phase_transition_withhold_rate", 0.10)
             )
@@ -111,6 +113,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
 
         # ── Bandit selection with decisions captured for logging ─────────────
         decisions: list = []  # list[BanditDecision] populated by select_nudge_learning_bandit
+        withheld_events: list[WithheldEvent] = []
         selected_learnings, is_transition = select_nudge_learning_bandit(
             eligible_candidates,
             bandit,
@@ -119,7 +122,29 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             previous_phase=state.previous_phase,
             phase_transition_withhold_rate=phase_transition_withhold_rate,
             decisions_out=decisions,
+            withheld_events_out=withheld_events,
         )
+
+        # ── P1-D: Log withheld phase-transition events to propensity.jsonl ───
+        # Must happen before the early-return so withheld events are always
+        # persisted even when no candidates were ultimately selected.
+        candidate_ids_for_log = [str(c.get("id", "")) for c in candidates if c.get("id")]
+        for wev in withheld_events:
+            try:
+                log_selection(
+                    trw_dir,
+                    selected=wev["learning_id"],
+                    candidate_set=candidate_ids_for_log,
+                    runner_up=wev["runner_up_id"],
+                    selection_probability=wev["selection_probability"],
+                    exploration=True,
+                    withheld=True,
+                    context_phase=state.phase,
+                    client_profile=client_profile_name,
+                    model_family=model_family,
+                )
+            except Exception:  # justified: fail-open
+                logger.debug("propensity_withheld_log_failed", exc_info=True)
 
         if not selected_learnings:
             return None
@@ -207,6 +232,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
                     runner_up_probability=runner_up_prob,
                     selection_probability=sel_prob,
                     exploration=exploration,
+                    withheld=False,
                     context_phase=state.phase,
                     client_profile=client_profile_name,
                     model_family=model_family,
@@ -230,8 +256,6 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
 
     except Exception:  # justified: nudge content must never block tool responses
         logger.debug("bandit_nudge_content_failed", exc_info=True)
-        return None
-
         return None
 
 

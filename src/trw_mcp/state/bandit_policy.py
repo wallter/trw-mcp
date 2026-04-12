@@ -16,6 +16,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 import structlog
 
@@ -441,6 +442,21 @@ class WithholdingPolicy:
 # ---------------------------------------------------------------------------
 
 
+class WithheldEvent(TypedDict):
+    """Metadata for a learning withheld at phase-transition (FR06/P1-D).
+
+    Written to propensity.jsonl with ``withheld=True`` so treatment vs
+    control can be distinguished in downstream causal analysis.
+    """
+
+    learning_id: str
+    selection_probability: float
+    runner_up_id: str
+    exploration: bool
+    slot: int
+    phase: str
+
+
 def select_nudge_learning_bandit(
     candidates: list[dict[str, object]],
     bandit: BanditSelector,
@@ -449,6 +465,7 @@ def select_nudge_learning_bandit(
     previous_phase: str,
     phase_transition_withhold_rate: float = 0.10,
     decisions_out: list[BanditDecision] | None = None,
+    withheld_events_out: list[WithheldEvent] | None = None,
 ) -> tuple[list[dict[str, object]], bool]:
     """Select learning(s) for nudge display using bandit-based selection (FR04/FR06).
 
@@ -464,6 +481,9 @@ def select_nudge_learning_bandit(
             during selection. Callers can inspect ``decisions_out[0]`` for
             ``selection_probability``, ``runner_up_id``, and ``exploration``
             metadata to include in propensity logs.
+        withheld_events_out: Optional list to receive ``WithheldEvent`` entries
+            for every candidate withheld via FR06 micro-randomised withholding.
+            Callers log these to propensity.jsonl with ``withheld=True`` (P1-D).
 
     Returns:
         Tuple of (selected_learnings, is_transition).
@@ -516,17 +536,31 @@ def select_nudge_learning_bandit(
             break
 
         # FR06: At phase transitions apply extra micro-randomized withholding
-        # for non-critical learnings (independent Bernoulli trial)
-        if is_transition and slot > 0:
+        # for non-critical learnings (independent Bernoulli trial).
+        # Applies to ALL slots including slot 0 (primary burst slot) — P1-B fix.
+        if is_transition:
             tier = str(candidate.get("protection_tier", "normal"))
             if tier not in ("critical", "protected", "permanent"):
                 if random.random() < phase_transition_withhold_rate:
                     _logger.debug(
                         "phase_transition_withholding",
                         learning_id=decision.selected_id,
+                        slot=slot,
                         phase=phase,
                         exploration=True,
                     )
+                    # Record withheld event for propensity logging (P1-D)
+                    if withheld_events_out is not None:
+                        withheld_events_out.append(
+                            WithheldEvent(
+                                learning_id=decision.selected_id,
+                                selection_probability=decision.selection_probability,
+                                runner_up_id=decision.runner_up_id or "",
+                                exploration=True,
+                                slot=slot,
+                                phase=phase,
+                            )
+                        )
                     # Replace withheld slot with runner-up if available
                     if decision.runner_up_id and decision.runner_up_id not in selected_ids:
                         runner_up = candidate_map.get(decision.runner_up_id)
