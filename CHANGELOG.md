@@ -4,6 +4,30 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-04-12
+
+### Added
+
+- **Google Gemini CLI integration** — 7th client profile with full-ceremony support
+  - `gemini` ClientProfile: 1M token context, hooks/skills/delegation enabled, Agent Teams disabled (uses native `.gemini/agents/` subagents)
+  - `WriteTargets.gemini_md` boolean field for GEMINI.md instruction sync
+  - `bootstrap/_gemini.py` — 3 public functions: `generate_gemini_instructions()`, `generate_gemini_mcp_config()`, `generate_gemini_agents()`
+  - `GEMINI.md` smart-merge with `<!-- trw:gemini:start/end -->` markers
+  - `.gemini/settings.json` MCP deep-merge (only touches `mcpServers.trw`, preserves all other settings)
+  - `.gemini/agents/trw-{explorer,implementer,reviewer,lead}.md` subagent definitions with Gemini-native tool names (`grep_search`, `read_file`, `replace`, etc.)
+  - IDE detection via `.gemini/` directory or `GEMINI.md` file
+  - CLI `--ide gemini` support for `init-project` and `update-project`
+  - 73 tests across 10 test classes (profile, detection, instructions, smart-merge, MCP config, agents, init, update, wiring)
+  - Dev repo uses shared HTTP MCP (`httpUrl: http://127.0.0.1:8100/mcp`); installer generates standard stdio for user projects
+  - Comprehensive research at `docs/research/providers/gemini/` (3 documents, 2000+ lines)
+
+### Changed
+
+- CLI `--ide` choices expanded from 5 to 7 (added `copilot`, `gemini`, `aider`) for both `init-project` and `update-project` commands
+- `SUPPORTED_IDES` constant includes `gemini`
+- `InstructionClientId` type includes `"gemini"`
+- Module docstring updated: "Seven profiles" (was "Six profiles")
+
 ## [0.41.1] — 2026-04-11
 
 ### Added
