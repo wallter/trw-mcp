@@ -43,6 +43,7 @@ from trw_mcp.state.claude_md._static_sections import (
     render_memory_harmonization,
     render_phase_descriptions,
     render_rationalization_watchlist,
+    render_shared_learnings,
 )
 from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 from trw_mcp.state.claude_md._templates import (
@@ -99,6 +100,7 @@ __all__ = [
     "render_patterns",
     "render_phase_descriptions",
     "render_rationalization_watchlist",
+    "render_shared_learnings",
     "render_template",
     "resolve_project_root",
     "resolve_trw_dir",

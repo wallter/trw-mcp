@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from trw_memory.graph import list_org_shared_entries
+from trw_memory.models.config import MemoryConfig
+
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.claude_md._templates import (
@@ -358,6 +361,32 @@ def render_memory_harmonization() -> str:
         "Communication preference \u2192 native memory.\n"
         "\n"
     )
+
+
+def render_shared_learnings() -> str:
+    """Render top cross-validated org learnings when sibling projects exist."""
+    try:
+        entries = list_org_shared_entries(
+            MemoryConfig(),
+            "project:default",
+            min_importance=0.7,
+            limit=5,
+        )
+    except Exception:
+        return ""
+
+    if not entries:
+        return ""
+
+    lines = [
+        "## Shared Learnings",
+        "",
+    ]
+    for entry in entries:
+        summary = entry.detail.splitlines()[0].strip() if entry.detail.strip() else entry.content
+        lines.append(f"- **{entry.content}** — {summary}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def render_closing_reminder() -> str:

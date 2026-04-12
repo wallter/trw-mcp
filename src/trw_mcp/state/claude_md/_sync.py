@@ -77,6 +77,7 @@ from trw_mcp.state.claude_md._static_sections import (
     render_closing_reminder,
     render_imperative_opener,
     render_memory_harmonization,
+    render_shared_learnings,
 )
 from trw_mcp.state.persistence import FileStateReader
 
@@ -411,6 +412,7 @@ def execute_claude_md_sync(
         "imperative_opener": render_imperative_opener(),
         "ceremony_quick_ref": render_ceremony_quick_ref(),
         "memory_harmonization": render_memory_harmonization(),
+        "shared_learnings": render_shared_learnings(),
         "closing_reminder": render_closing_reminder(),
     }
 

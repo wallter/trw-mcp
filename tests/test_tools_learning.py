@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import get_tools_sync, make_test_server
+from trw_memory.models.memory import MemoryEntry
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.scoring import (
     compute_initial_q_value,
@@ -41,6 +42,7 @@ from trw_mcp.state.claude_md import (
     render_imperative_opener,
     render_memory_harmonization,
     render_phase_descriptions,
+    render_shared_learnings,
     render_template,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -618,6 +620,7 @@ class TestClaudeMdTemplate:
             "{{imperative_opener}}"
             "{{ceremony_quick_ref}}"
             "{{memory_harmonization}}"
+            "{{shared_learnings}}"
             "{{closing_reminder}}"
             "<!-- trw:end -->\n"
         )
@@ -713,6 +716,26 @@ class TestCeremonyRendering:
         assert "opencode" not in result.lower()
         assert "AGENTS.md" not in result
 
+    def test_render_shared_learnings(self) -> None:
+        """Shared learnings section renders top org memories compactly."""
+        entries = [
+            MemoryEntry(
+                id="M-1",
+                content="Cross-project deployment lesson",
+                detail="Use staged rollouts before schema flips.",
+                namespace="project:other",
+                importance=0.9,
+                cross_validated=True,
+            )
+        ]
+
+        with patch("trw_mcp.state.claude_md._static_sections.list_org_shared_entries", return_value=entries):
+            result = render_shared_learnings()
+
+        assert "## Shared Learnings" in result
+        assert "Cross-project deployment lesson" in result
+        assert "Use staged rollouts before schema flips." in result
+
     def test_render_delegation_protocol(self) -> None:
         """Delegation protocol contains orchestrator role, decision tree, and value framing."""
         result = render_delegation_protocol()
@@ -738,6 +761,7 @@ class TestCeremonyRendering:
         assert "{{imperative_opener}}" in template
         assert "{{ceremony_quick_ref}}" in template
         assert "{{memory_harmonization}}" in template
+        assert "{{shared_learnings}}" in template
         assert "{{closing_reminder}}" in template
 
     def test_sync_includes_ceremony_sections(self, tmp_path: Path) -> None:
