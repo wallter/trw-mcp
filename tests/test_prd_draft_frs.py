@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
+from typing import Callable
 
 import pytest
 
 from tests.conftest import extract_tool_fn, make_test_server
+from trw_mcp.tools._prd_draft_frs import (
+    DraftFRsResult,
+    FRBlock,
+    _extract_paths_from_text,
+    _extract_recommendations_from_markdown,
+    _extract_symbols_from_text,
+    draft_frs_from_research,
+)
 
 
 @pytest.fixture
-def draft_frs_fn():
+def draft_frs_fn() -> Callable[..., dict[str, object]]:
     """Get the trw_prd_draft_frs tool function."""
     server = make_test_server("requirements")
     return extract_tool_fn(server, "trw_prd_draft_frs")
@@ -149,8 +158,113 @@ def test_draft_frs_empty_research_returns_minimal(draft_frs_fn) -> None:
     assert len(frs) >= 1
 
 
-def test_draft_frs_result_has_metadata(draft_frs_fn) -> None:
-    """Result includes metadata about the drafting."""
+def test_draft_frs_result_has_metadata(draft_frs_fn: Callable[..., dict[str, object]]) -> None:
+    """Result includes fr_count and functional_requirements."""
     research = "## Summary\nAdd logging to auth module."
     result = draft_frs_fn(research_report=research)
-    assert "prd_id_prefix" in result or "fr_count" in result or "functional_requirements" in result
+    assert "fr_count" in result
+    assert "functional_requirements" in result
+    assert isinstance(result["fr_count"], int)
+    assert result["fr_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: extraction functions (no MCP server needed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("`UserService`", ["UserService"]),
+        ("`EmailClient.send()`", ["EmailClient.send()"]),
+        ("The `RateLimiter` class handles...", ["RateLimiter"]),
+        ("plain text without symbols", []),
+    ],
+)
+def test_extract_symbols_backtick(text: str, expected: list[str]) -> None:
+    """FR02: Backtick-wrapped symbols are extracted."""
+    result = _extract_symbols_from_text(text)
+    for sym in expected:
+        assert sym in result
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("backend/src/api/middleware.py", ["backend/src/api/middleware.py"]),
+        ("see `src/models/base.py` for details", ["src/models/base.py"]),
+        ("no paths here", []),
+    ],
+)
+def test_extract_paths(text: str, expected: list[str]) -> None:
+    """FR02: File paths are extracted correctly."""
+    result = _extract_paths_from_text(text)
+    for path in expected:
+        assert path in result
+
+
+def test_extract_recommendations_from_markdown() -> None:
+    """FR01: Recommendations are extracted from markdown sections."""
+    text = """\
+# Report
+
+## Recommendations
+1. Add rate limiting middleware
+2. Configure per-route limits
+3. Return 429 headers
+
+## Other Section
+Not a recommendation.
+"""
+    recs = _extract_recommendations_from_markdown(text)
+    assert len(recs) >= 2
+    assert any("rate limiting" in r.lower() for r in recs)
+
+
+def test_draft_frs_returns_typed_result() -> None:
+    """Return type is DraftFRsResult with properly typed FRBlock entries."""
+    result = draft_frs_from_research("## Summary\nAdd caching layer.")
+    # Verify structure matches TypedDict
+    assert isinstance(result["functional_requirements"], list)
+    assert isinstance(result["key_symbols"], list)
+    assert isinstance(result["relevant_locations"], list)
+    assert isinstance(result["fr_count"], int)
+
+    if result["functional_requirements"]:
+        fr = result["functional_requirements"][0]
+        assert "id" in fr
+        assert "priority" in fr
+        assert "status" in fr
+        assert "description" in fr
+        assert "acceptance" in fr
+        assert "confidence" in fr
+
+
+def test_draft_frs_priority_ordering() -> None:
+    """First 2 recommendations get 'Must Have', rest get 'Should Have'."""
+    research = json.dumps({
+        "title": "Test",
+        "recommendations": [
+            "First change",
+            "Second change",
+            "Third change",
+            "Fourth change",
+        ],
+    })
+    result = draft_frs_from_research(research)
+    frs = result["functional_requirements"]
+    assert frs[0]["priority"] == "Must Have"
+    assert frs[1]["priority"] == "Must Have"
+    assert frs[2]["priority"] == "Should Have"
+    assert frs[3]["priority"] == "Should Have"
+
+
+def test_draft_frs_common_words_excluded() -> None:
+    """Common English PascalCase words are not treated as symbols."""
+    research = "The Summary describes the Background Context."
+    result = draft_frs_from_research(research)
+    symbols = result["key_symbols"]
+    # "Summary", "Background", "Context" should be filtered out
+    for word in ("Summary", "Background", "Context"):
+        assert word not in symbols
