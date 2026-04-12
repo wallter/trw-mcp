@@ -160,84 +160,29 @@ def select_nudge_learning(
 ) -> tuple[dict[str, object] | None, bool]:
     """Select the best learning for nudge display with deduplication.
 
-    When *bandit* is provided (a ``BanditSelector`` instance), delegates to
-    the bandit-based selection path (PRD-CORE-105 FR03/FR04/FR06) which
-    supports tiered withholding and phase-transition bursts.
-
-    Without *bandit*, falls back to the original deterministic ranking.
+    The public client now always uses deterministic ranking. ``bandit`` and
+    the related compatibility parameters remain in the signature so legacy
+    callers do not break, but they no longer enable local policy execution.
 
     Filters candidates by nudge eligibility (not shown in current phase),
     then returns the top remaining candidate. If all candidates are
     already shown, falls back to the least-recently-shown candidate.
 
-    PRD-CORE-105 P0: When *burst_items* is provided and the bandit detects
-    a phase transition, extra burst items (beyond the first) are appended
-    to the list so the caller can render them.
-
     Args:
         state: Current ceremony state with nudge_history.
         candidates: Ranked learning dicts (best first).
         current_phase: Current ceremony phase.
-        bandit: Optional BanditSelector for bandit-based selection.
+        bandit: Ignored compatibility parameter retained for API stability.
         previous_phase: Previous phase for transition detection.
-        client_class: Client class for withholding rates.
-        burst_items: Optional mutable list to receive additional burst
-            selections during phase transitions. The primary selection
-            is still returned normally; extra items go here.
+        client_class: Ignored compatibility parameter retained for API stability.
+        burst_items: Optional mutable list retained for API stability. The
+            deterministic path never appends burst items.
 
     Returns:
         Tuple of (selected_learning_dict_or_None, is_fallback).
         is_fallback is True if we fell back to least-recently-shown.
     """
     from trw_mcp.state._nudge_state import is_nudge_eligible
-
-    # --- Bandit-based selection path (PRD-CORE-105) ---
-    # Local-first: use WithholdingPolicy + select_nudge_learning_bandit from
-    # bandit_policy when a BanditSelector is provided (Vision Principle 6).
-    if bandit is not None:
-        try:
-            from trw_memory.bandit import BanditSelector
-            from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
-
-            if isinstance(bandit, BanditSelector):
-                policy = WithholdingPolicy(client_class=client_class)
-                eligible_candidates = [
-                    c for c in candidates
-                    if is_nudge_eligible(state, str(c.get("id", "")), current_phase)
-                ]
-                if not eligible_candidates:
-                    eligible_candidates = candidates  # Allow fallback pool
-
-                bandit_selected, is_transition = select_nudge_learning_bandit(
-                    eligible_candidates,
-                    bandit,
-                    policy,
-                    current_phase,
-                    previous_phase,
-                )
-
-                # Populate burst_items with extra selections (beyond first)
-                if bandit_selected:
-                    primary = bandit_selected[0]
-                    if burst_items is not None and len(bandit_selected) > 1:
-                        burst_items.extend(bandit_selected[1:])
-
-                    logger.debug(
-                        "bandit_nudge_selected",
-                        selected_id=str(primary.get("id", "")),
-                        is_transition=is_transition,
-                        burst_count=len(bandit_selected) - 1,
-                    )
-                    return primary, False
-
-                # Bandit selected nothing (all withheld) — fall through to deterministic
-                logger.debug(
-                    "bandit_all_withheld",
-                    candidate_count=len(eligible_candidates),
-                )
-        except (ImportError, TypeError, ValueError, AttributeError):
-            logger.debug("bandit_selection_failed", exc_info=True)
-        # Fall through to deterministic ranking path on any error
 
     # --- Deterministic ranking path (original / fallback behavior) ---
 

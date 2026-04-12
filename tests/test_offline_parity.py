@@ -8,7 +8,7 @@ must produce valid responses without a backend connection and with an empty
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -73,7 +73,7 @@ class TestOfflineParity:
             assert result is not None
 
     def test_nudge_selection_deterministic_without_bandit(self) -> None:
-        """Nudge selection uses deterministic ranking when bandit is unavailable."""
+        """Nudge selection uses deterministic ranking without local policy code."""
         from trw_mcp.state._nudge_rules import select_nudge_learning
         from trw_mcp.state._nudge_state import CeremonyState
 
@@ -92,7 +92,7 @@ class TestOfflineParity:
         assert is_fallback is False
 
     def test_session_recall_helpers_works_offline(self, tmp_path: Path) -> None:
-        """_session_recall_helpers works offline — bandit_policy is local-first (PRD-CORE-105)."""
+        """_session_recall_helpers works offline without backend-only intelligence."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -112,7 +112,6 @@ class TestOfflineParity:
             learnings, auto_recalled, extras = perform_session_recalls(
                 trw_dir, "*", config, reader
             )
-            # Should complete successfully (bandit_policy is local, not backend)
             assert isinstance(learnings, list)
 
     def test_no_meta_tune_in_tool_registry(self) -> None:

@@ -456,7 +456,7 @@ class TestBurstTruncationFix:
         assert selected["id"] == "L-1"
 
     def test_bandit_param_falls_through_to_deterministic_for_non_bandit_selector(self) -> None:
-        """Non-BanditSelector objects fall through to deterministic ranking (type guard)."""
+        """Non-selector compatibility args do not change deterministic ranking."""
         from trw_mcp.state._nudge_rules import select_nudge_learning
         from trw_mcp.state._nudge_state import CeremonyState
 
@@ -467,23 +467,20 @@ class TestBurstTruncationFix:
             {"id": "L-3", "summary": "Third"},
         ]
         burst: list[dict[str, object]] = []
-        # Passing a plain object() (not a BanditSelector) should fall through
-        # to deterministic ranking — the type check rejects it safely
         selected, is_fallback = select_nudge_learning(
             state,
             candidates,
             "implement",
-            bandit=object(),  # non-None but not a BanditSelector
+            bandit=object(),
             previous_phase="early",
             burst_items=burst,
         )
-        # Deterministic path: first eligible candidate selected
         assert selected is not None
         assert selected["id"] == "L-1"
         assert is_fallback is False
 
-    def test_bandit_selector_uses_bandit_path(self) -> None:
-        """When a real BanditSelector is passed, the bandit path is used."""
+    def test_bandit_selector_arg_falls_through_to_deterministic(self) -> None:
+        """Even a real BanditSelector is ignored by the public deterministic path."""
         from trw_memory.bandit import BanditSelector
         from trw_mcp.state._nudge_rules import select_nudge_learning
         from trw_mcp.state._nudge_state import CeremonyState
@@ -495,7 +492,6 @@ class TestBurstTruncationFix:
             {"id": "L-3", "summary": "Third", "protection_tier": "normal"},
         ]
         bandit = BanditSelector(cold_start_min=0)
-        # Warm the bandit so L-2 has highest posterior
         for _ in range(5):
             bandit.update("L-2", 1.0)
             bandit.update("L-1", 0.0)
@@ -507,5 +503,6 @@ class TestBurstTruncationFix:
             "implement",
             bandit=bandit,
         )
-        # Bandit path: should return something (selection may vary due to exploration)
         assert selected is not None
+        assert selected["id"] == "L-1"
+        assert is_fallback is False
