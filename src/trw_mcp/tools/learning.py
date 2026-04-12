@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re as _re
 from pathlib import Path
-from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -546,4 +545,4 @@ def register_learning_tools(server: FastMCP) -> None:
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()
-        return cast("ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, llm, client))
+        return execute_claude_md_sync(scope, target_dir, config, reader, llm, client)

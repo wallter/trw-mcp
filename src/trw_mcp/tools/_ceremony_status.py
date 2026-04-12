@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 import structlog
 
 from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state._ceremony_progress_state import NudgeContext
 from trw_mcp.state.ceremony_progress import CeremonyState, read_ceremony_state
 
 logger = structlog.get_logger(__name__)
+
+
+class _ContextualSelector(Protocol):
+    """Protocol for optional contextual candidate selection."""
+
+    def select(
+        self,
+        arm_ids: list[str],
+        *,
+        context_vector: list[float],
+    ) -> tuple[str, float]: ...
 
 
 def _candidate_domains(learning: dict[str, object]) -> set[str]:
@@ -96,26 +109,44 @@ def _normalized_modified_files(recall_context: object | None) -> list[str]:
     ]
 
 
+def _normalize_inferred_domains(raw_domains: object) -> set[str]:
+    """Return normalized inferred domains from best-effort recall context data."""
+    if not isinstance(raw_domains, (list, tuple, set, frozenset)):
+        return set()
+    return {
+        str(domain).strip().lower()
+        for domain in raw_domains
+        if str(domain).strip()
+    }
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    """Best-effort float coercion for untyped learning payload values."""
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float, str)):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
 def _contextualize_candidates(
     candidates: list[dict[str, object]],
     *,
     recall_context: object | None,
     is_transition: bool,
-    contextual_selector: object | None = None,
+    contextual_selector: _ContextualSelector | None = None,
     context_vector: list[float] | None = None,
 ) -> list[dict[str, object]]:
     """Narrow the live candidate pool using the real recall context."""
     if not candidates or recall_context is None:
         return candidates
 
-    inferred_domains = getattr(recall_context, "inferred_domains", set())
-    if not isinstance(inferred_domains, set):
-        inferred_domains = set()
-    inferred_domains = {
-        str(domain).strip().lower()
-        for domain in inferred_domains
-        if str(domain).strip()
-    }
+    inferred_domains: set[str] = _normalize_inferred_domains(
+        getattr(recall_context, "inferred_domains", set()),
+    )
 
     filtered_candidates = candidates
     if inferred_domains:
@@ -225,7 +256,7 @@ def _select_cached_or_deterministic_learning(
             _cached_bandit_weight(candidate, bandit_params),
             _phase_match_score(candidate, phase),
             _domain_match_score(candidate, inferred_domains),
-            float(candidate.get("impact", 0.0) or 0.0),
+            _coerce_float(candidate.get("impact", 0.0) or 0.0),
         ),
     )
 
@@ -273,7 +304,8 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
 
         try:
             from trw_mcp.models.config import TRWConfig
-            cfg = TRWConfig(trw_dir=str(trw_dir))
+
+            cfg = TRWConfig.model_validate({"trw_dir": str(trw_dir)})
             client_profile_name = getattr(cfg.client_profile, "client_id", "") or ""
             model_family = cfg.model_family or "generic"
         except Exception:  # justified: config may not be available, use defaults
@@ -309,20 +341,14 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
         if not selection_candidates:
             selection_candidates = eligible_candidates
 
-        inferred_domains = getattr(recall_context, "inferred_domains", set())
-        if isinstance(inferred_domains, (list, tuple, set, frozenset)):
-            normalized_domains = {
-                str(domain).strip().lower()
-                for domain in inferred_domains
-                if str(domain).strip()
-            }
-        else:
-            normalized_domains = set()
+        inferred_domains: set[str] = _normalize_inferred_domains(
+            getattr(recall_context, "inferred_domains", set()),
+        )
         bandit_params = IntelligenceCache(trw_dir).get_bandit_params()
         selected_learning = _select_cached_or_deterministic_learning(
             selection_candidates,
             phase=state.phase,
-            inferred_domains=normalized_domains,
+            inferred_domains=inferred_domains,
             bandit_params=bandit_params,
         )
         if selected_learning is None:
@@ -405,7 +431,7 @@ def append_ceremony_status(
         except Exception:
             pass
 
-        cfg = TRWConfig(trw_dir=str(effective_dir))
+        cfg = TRWConfig.model_validate({"trw_dir": str(effective_dir)})
         if not cfg.effective_nudge_enabled:
             return response
 
