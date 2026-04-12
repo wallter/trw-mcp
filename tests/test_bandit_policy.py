@@ -777,7 +777,8 @@ class TestLiveDecoratorPath:
         }
 
     def test_live_path_calls_bandit_update(self, tmp_path: Path) -> None:
-        """After selection, bandit arms get updated posteriors."""
+        """After selection, bandit arms get updated posteriors (hard assertion)."""
+        import json as _json
         from trw_mcp.state._ceremony_progress_state import CeremonyState
         from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
 
@@ -792,13 +793,16 @@ class TestLiveDecoratorPath:
             _try_bandit_nudge_content(trw_dir, state)
 
         bandit_path = trw_dir / "meta" / "bandit_state.json"
-        if bandit_path.exists():
-            import json
-            stored = json.loads(bandit_path.read_text(encoding="utf-8"))
-            bandit_state = stored.get("bandit_state", {})
-            arms = bandit_state.get("arms", {})
-            if "L-update-test" in arms:
-                assert arms["L-update-test"]["exposure_count"] >= 1
+        assert bandit_path.exists(), (
+            "bandit_state.json must be written after a successful live-path call; "
+            "bandit.update() and save_bandit_state() are not being reached"
+        )
+        stored = _json.loads(bandit_path.read_text(encoding="utf-8"))
+        arms = stored.get("bandit_state", {}).get("arms", {})
+        assert "L-update-test" in arms, (
+            f"Expected arm 'L-update-test' in bandit arms after update, got: {list(arms)}"
+        )
+        assert arms["L-update-test"]["exposure_count"] >= 1
 
     def test_live_path_writes_propensity_log(self, tmp_path: Path) -> None:
         """propensity.jsonl is written after a successful selection."""
@@ -1302,4 +1306,209 @@ class TestWithheldEventLogging:
             assert ev["exploration"] is True
             assert ev["phase"] == "validate"
             assert ev["learning_id"].startswith("L-")
+
+
+# ---------------------------------------------------------------------------
+# FR05 production-path integration (PRD-CORE-105-FR05 audit close)
+# ---------------------------------------------------------------------------
+
+
+class TestFR05ProductionPath:
+    """FR05 integration gap: Page-Hinkley detector wired into the live path.
+
+    These tests prove:
+    1. policy.update_reward() is called in the live _try_bandit_nudge_content path.
+    2. Detector states are persisted in the bandit_state.json envelope.
+    3. Detector states are restored by load_bandit_state_and_policy on next load.
+    4. Forced trigger #4 is reachable across sessions in production.
+    """
+
+    def _make_learning(self, arm_id: str, impact: float = 0.9) -> dict:
+        return {
+            "id": arm_id,
+            "summary": f"Learning {arm_id}",
+            "nudge_line": f"Tip for {arm_id}",
+            "protection_tier": "critical",
+            "impact": impact,
+        }
+
+    def test_live_path_calls_policy_update_reward(self, tmp_path: Path) -> None:
+        """policy.update_reward() is called in the live production path.
+
+        Verifies FR05: the live _try_bandit_nudge_content path must call
+        policy.update_reward() after bandit.update() so the Page-Hinkley
+        detector accumulates reward observations.
+        """
+        from unittest.mock import MagicMock
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state.bandit_policy import WithholdingPolicy
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        learning = self._make_learning("L-reward-test")
+
+        real_bandit = BanditSelector()
+        real_policy = WithholdingPolicy(client_class="full_mode")
+        mock_policy = MagicMock(wraps=real_policy)
+        # Ensure withholding doesn't block the learning so update_reward is reached
+        mock_policy.should_withhold.return_value = False
+
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]),
+            patch(
+                "trw_mcp.state.bandit_policy.load_bandit_state_and_policy",
+                return_value=(real_bandit, mock_policy),
+            ),
+        ):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        assert mock_policy.update_reward.called, (
+            "policy.update_reward() must be called in the live production path; "
+            "without this the Page-Hinkley detector never accumulates observations"
+        )
+        arm_id_called = mock_policy.update_reward.call_args_list[0][0][0]
+        reward_called = mock_policy.update_reward.call_args_list[0][0][1]
+        assert arm_id_called == "L-reward-test"
+        assert 0.0 <= reward_called <= 1.0
+
+    def test_detector_state_persisted_in_envelope(self, tmp_path: Path) -> None:
+        """Detector states appear in the detector_states key of bandit_state.json.
+
+        After _try_bandit_nudge_content succeeds, the saved envelope must
+        carry a non-empty detector_states entry so the state survives
+        process restart.
+        """
+        import json as _json
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        learning = self._make_learning("L-persist-test")
+
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        bandit_path = trw_dir / "meta" / "bandit_state.json"
+        assert bandit_path.exists(), "bandit_state.json must be written by live path"
+        stored = _json.loads(bandit_path.read_text(encoding="utf-8"))
+
+        assert "detector_states" in stored, (
+            "Envelope must contain 'detector_states' key for FR05 persistence; "
+            f"found keys: {list(stored.keys())}"
+        )
+        detector_states = stored["detector_states"]
+        assert isinstance(detector_states, dict)
+        assert "L-persist-test" in detector_states, (
+            f"Expected 'L-persist-test' in detector_states, got: {list(detector_states)}"
+        )
+        ds = detector_states["L-persist-test"]
+        assert "n" in ds, f"Detector state must have 'n' field, got: {ds}"
+        assert ds["n"] >= 1, f"Expected n >= 1 after one reward update, got n={ds['n']}"
+
+    def test_detector_state_restored_on_next_load(self, tmp_path: Path) -> None:
+        """load_bandit_state_and_policy restores Page-Hinkley state from envelope.
+
+        After saving detector state, a subsequent load must return a policy
+        whose per-arm detector has n > 0, proving the state was actually
+        restored (not replaced by a fresh blank detector).
+        """
+        from trw_mcp.state.bandit_policy import (
+            WithholdingPolicy,
+            load_bandit_state_and_policy,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
+        arm_id = "L-restore-test"
+        bandit = BanditSelector()
+        policy = WithholdingPolicy(client_class="full_mode")
+        for _ in range(5):
+            bandit.update(arm_id, 0.8)
+            policy.update_reward(arm_id, 0.8)
+
+        assert policy._detectors[arm_id]._n == 5
+
+        save_bandit_state(trw_dir, bandit, "full_mode", "test-model", policy=policy)
+
+        _, restored_policy = load_bandit_state_and_policy(
+            trw_dir, "full_mode", "test-model"
+        )
+
+        assert arm_id in restored_policy._detectors, (
+            f"Expected '{arm_id}' in restored policy._detectors; "
+            f"got: {list(restored_policy._detectors)}"
+        )
+        restored_n = restored_policy._detectors[arm_id]._n
+        assert restored_n == 5, (
+            f"Expected restored detector n=5, got n={restored_n}; "
+            "detector state was not correctly restored from envelope"
+        )
+
+    def test_page_hinkley_alarm_reachable_across_sessions(self, tmp_path: Path) -> None:
+        """Forced trigger #4 accumulates across simulated sessions and fires.
+
+        Without cross-session persistence the detector always starts at n=0
+        and can never accumulate enough deviation to fire trigger #4 in
+        production — the core FR05 audit finding.  This test simulates:
+
+        - Session 1: feed high rewards, persist with save_bandit_state.
+        - Session 2: restore via load_bandit_state_and_policy, feed low
+          rewards → the accumulated deviation causes the alarm to fire.
+        """
+        from trw_mcp.state.bandit_policy import (
+            WithholdingPolicy,
+            load_bandit_state_and_policy,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector
+        from trw_memory.bandit.change_detection import PageHinkleyDetector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
+        arm_id = "L-alarm-test"
+        model_family = "test-model"
+
+        # Session 1: prime the detector with high rewards
+        bandit1 = BanditSelector()
+        policy1 = WithholdingPolicy(client_class="full_mode")
+        # Use a low alarm threshold for deterministic test behaviour
+        policy1._detectors[arm_id] = PageHinkleyDetector(delta=0.01, alarm_threshold=3.0)
+        for _ in range(10):
+            bandit1.update(arm_id, 0.9)
+            policy1.update_reward(arm_id, 0.9)
+
+        assert policy1._detectors[arm_id]._n == 10
+
+        save_bandit_state(trw_dir, bandit1, "full_mode", model_family, policy=policy1)
+
+        # Session 2: restore state, feed low rewards — alarm must fire
+        _, policy2 = load_bandit_state_and_policy(trw_dir, "full_mode", model_family)
+
+        assert arm_id in policy2._detectors, (
+            "Session-2 policy must have the arm's detector restored"
+        )
+        assert policy2._detectors[arm_id]._n == 10, (
+            f"Restored detector must have n=10 (session-1 history), "
+            f"got n={policy2._detectors[arm_id]._n}"
+        )
+
+        alarms = [policy2.update_reward(arm_id, 0.1) for _ in range(15)]
+        assert any(alarms), (
+            "Page-Hinkley trigger #4 must fire after reward shift when "
+            "accumulated session-1 history is restored; this was inert in "
+            "production before FR05 cross-session persistence was wired in"
+        )
 

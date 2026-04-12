@@ -198,11 +198,81 @@ def load_bandit_state(
         return BanditSelector()
 
 
+def load_bandit_state_and_policy(
+    trw_dir: Path,
+    client_class: str = "full_mode",
+    model_family: str = "",
+) -> "tuple[BanditSelector, WithholdingPolicy]":
+    """Load bandit state and a pre-populated :class:`WithholdingPolicy`.
+
+    Reads the C-5 envelope once for the BanditSelector and, when the
+    ``model_family`` matches the stored value, also restores the per-arm
+    Page-Hinkley detector states into the policy.  This makes forced
+    trigger #4 (FR05) reachable in production across sessions instead of
+    always starting from a blank detector.
+
+    On *any* mismatch (missing file, corrupt JSON, model-family change) the
+    function returns a fresh selector and a fresh policy — consistent with
+    the fail-open contract throughout the nudge system.
+
+    Args:
+        trw_dir: Path to the ``.trw`` directory.
+        client_class: Current client class (e.g. ``"full_mode"``).
+        model_family: Current model family tag; used for quarantine check.
+
+    Returns:
+        ``(bandit, policy)`` tuple ready for use in the live nudge path.
+    """
+    # Delegate BanditSelector restoration (includes quarantine logic)
+    bandit = load_bandit_state(trw_dir, client_class, model_family)
+
+    bandit_state_path = trw_dir / "meta" / "bandit_state.json"
+    if not bandit_state_path.exists():
+        return bandit, _WithholdingPolicyFactory(client_class)
+
+    try:
+        data: object = json.loads(bandit_state_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return bandit, _WithholdingPolicyFactory(client_class)
+
+        # Only restore detector states when model_family matches —
+        # a changed model may have different arm semantics.
+        stored_mf = str(data.get("model_family", ""))
+        if model_family and stored_mf and model_family != stored_mf:
+            _logger.debug(
+                "detector_states_skipped_model_mismatch",
+                stored=stored_mf,
+                current=model_family,
+            )
+            return bandit, _WithholdingPolicyFactory(client_class)
+
+        policy_inst = _WithholdingPolicyFactory(client_class)
+        detector_states = data.get("detector_states")
+        if isinstance(detector_states, dict) and detector_states:
+            policy_inst.load_detector_states(detector_states)
+            _logger.debug(
+                "detector_states_restored",
+                arm_count=len(detector_states),
+                model_family=model_family,
+            )
+        return bandit, policy_inst
+
+    except Exception:  # justified: fail-open
+        _logger.warning("detector_states_load_failed", exc_info=True)
+        return bandit, _WithholdingPolicyFactory(client_class)
+
+
+def _WithholdingPolicyFactory(client_class: str) -> "WithholdingPolicy":
+    """Return a fresh WithholdingPolicy; deferred to avoid forward-reference."""
+    return WithholdingPolicy(client_class=client_class)
+
+
 def save_bandit_state(
     trw_dir: Path,
     bandit: BanditSelector,
     client_profile: str = "full_mode",
     model_family: str = "",
+    policy: "WithholdingPolicy | None" = None,
 ) -> None:
     """Persist bandit state with C-5 spec-compliant envelope using atomic write.
 
@@ -212,7 +282,8 @@ def save_bandit_state(
           "client_profile": "full_mode",
           "model_family": "claude-sonnet-4",
           "bandit_state": { ...raw BanditSelector JSON... },
-          "quarantined": { "old-model-family": { ...old state... } }
+          "quarantined": { "old-model-family": { ...old state... } },
+          "detector_states": { "arm-id": { ...PageHinkleyDetector.to_dict()... } }
         }
 
     Uses the temp-file + ``os.rename`` pattern for atomic writes.
@@ -226,6 +297,10 @@ def save_bandit_state(
         bandit: BanditSelector whose state to persist.
         client_profile: Current client class tag.
         model_family: Current model family tag.
+        policy: Optional :class:`WithholdingPolicy` whose per-arm
+            Page-Hinkley detector states are serialised into the envelope
+            under ``detector_states``.  When ``None`` no detector states
+            are written (backwards-compatible).
     """
     bandit_state_path = trw_dir / "meta" / "bandit_state.json"
     tmp_path = bandit_state_path.with_suffix(f".tmp.{os.getpid()}")
@@ -263,6 +338,7 @@ def save_bandit_state(
         "model_family": model_family,
         "bandit_state": bandit_raw,
         "quarantined": existing_quarantined,
+        "detector_states": policy.get_detector_states() if policy is not None else {},
     }
 
     try:
@@ -311,6 +387,27 @@ class WithholdingPolicy:
         if arm_id not in self._detectors:
             self._detectors[arm_id] = PageHinkleyDetector()
         return self._detectors[arm_id].update(reward)
+
+    def get_detector_states(self) -> dict[str, dict[str, int | float | None]]:
+        """Serialize all per-arm Page-Hinkley detector states for JSON persistence.
+
+        Returns a mapping of arm_id → ``PageHinkleyDetector.to_dict()`` so that
+        the caller can embed it in the C-5 bandit state envelope.
+        """
+        return {arm_id: det.to_dict() for arm_id, det in self._detectors.items()}
+
+    def load_detector_states(self, states: dict[str, object]) -> None:
+        """Restore per-arm Page-Hinkley detector states from serialized dicts.
+
+        Silently skips malformed entries so the policy stays fail-open. Only
+        dict-valued entries are processed; anything else is ignored.
+        """
+        if not isinstance(states, dict):
+            return
+        for arm_id, raw in states.items():
+            if isinstance(raw, dict):
+                with contextlib.suppress(Exception):
+                    self._detectors[str(arm_id)] = PageHinkleyDetector.from_dict(raw)
 
     def page_hinkley_alarm(self, arm_id: str) -> bool:
         """Return True if the Page-Hinkley detector for *arm_id* has fired.

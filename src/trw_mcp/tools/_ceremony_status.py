@@ -58,7 +58,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             WithheldEvent,
             WithholdingPolicy,
             _compute_heuristic_reward,
-            load_bandit_state,
+            load_bandit_state_and_policy,
             render_nudge_content,
             resolve_client_class,
             save_bandit_state,
@@ -107,9 +107,8 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             # Fall back to full pool if all candidates are already deduplicated
             eligible_candidates = candidates
 
-        # ── Load bandit state with C-5 envelope (P0 fix) ────────────────────
-        bandit = load_bandit_state(trw_dir, client_class, model_family)
-        policy = WithholdingPolicy(client_class=client_class)
+        # ── Load bandit state and pre-populated policy with restored detectors ─
+        bandit, policy = load_bandit_state_and_policy(trw_dir, client_class, model_family)
 
         # ── Bandit selection with decisions captured for logging ─────────────
         decisions: list = []  # list[BanditDecision] populated by select_nudge_learning_bandit
@@ -153,21 +152,24 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         if not content:
             return None
 
-        # ── P0: Update bandit posteriors with impact-based heuristic reward ──
+        # ── P0 + FR05: Update bandit posteriors and Page-Hinkley detectors ──
         for learning in selected_learnings:
             arm_id = str(learning.get("id", ""))
             if arm_id:
                 reward = _compute_heuristic_reward(learning)
                 bandit.update(arm_id, reward)
+                # FR05: feed reward into per-arm Page-Hinkley detector so
+                # trigger #4 (distributional shift) accumulates across calls
+                policy.update_reward(arm_id, reward)
                 logger.debug(
                     "bandit_posterior_updated",
                     arm_id=arm_id,
                     reward=round(reward, 4),
                 )
 
-        # ── P0: Persist updated state with C-5 envelope (atomic) ─────────────
+        # ── P0 + FR05: Persist updated bandit + detector states (atomic) ────
         try:
-            save_bandit_state(trw_dir, bandit, client_class, model_family)
+            save_bandit_state(trw_dir, bandit, client_class, model_family, policy=policy)
         except Exception:  # justified: state persistence must not block nudge
             logger.debug("bandit_state_persist_failed", exc_info=True)
 
