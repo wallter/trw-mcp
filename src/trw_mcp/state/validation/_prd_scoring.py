@@ -17,7 +17,7 @@ from trw_mcp.models.requirements import (
     DimensionScore,
     SectionScore,
 )
-from trw_mcp.state.validation.template_variants import get_required_sections
+from trw_mcp.state.validation.template_variants import get_required_sections, get_variant_for_category
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -119,6 +119,25 @@ _IMPL_REF_RE = re.compile(
     r"`(?:[-\w./*]+(?:\.[\w]+)(?:[:#][-\w./*#]+)?)`",
 )
 
+# Bare (non-backtick-wrapped) test file references — catches references in
+# prose, table cells, and list items that lack backtick delimiters.
+_BARE_TEST_REF_RE = re.compile(
+    r"(?<!`)(?:"
+    r"test[\w./-]*\.[\w]+(?:::[\w.-]+)?"
+    r"|[\w./-]+\.(?:test|spec)\.[\w]+(?:::[\w.-]+)?"
+    r"|[\w./-]+(?:_test|_spec)\.[\w]+(?:::[\w.-]+)?"
+    r"|[\w./-]+(?:Test|Tests|Spec)\.[\w]+(?:::[\w.-]+)?"
+    r"|tests?/[\w./-]+\.[\w]+(?:::[\w.-]+)?"
+    r")(?!`)",
+)
+# Bare implementation file references (non-backtick-wrapped).
+_BARE_IMPL_REF_RE = re.compile(
+    r"(?<!`)(?:"
+    r"(?:[-\w*]+/)+[-\w.*]+\.[A-Za-z][\w]*(?:[:#][-\w./*#]+)?"
+    r"|(?:[-A-Za-z0-9_]*[A-Za-z_][-A-Za-z0-9_]*)\.[A-Za-z][\w]*(?:[:#][-\w./*#]+)?"
+    r")(?!`)",
+)
+
 _SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
 # FR heading pattern for extracting individual FR sections (PRD-QUAL-056-FR01)
@@ -127,6 +146,12 @@ _FR_HEADING_RE = re.compile(r"^###\s+(?:PRD-[\w-]+-)?FR\d+.*$", re.MULTILINE)
 # Assertion keyword pattern for machine-verifiable assertions (PRD-QUAL-056-FR02)
 _ASSERTION_RE = re.compile(
     r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists"
+)
+
+# Recognizable verification commands in PRD text.
+_VERIFICATION_COMMAND_RE = re.compile(
+    r"\b(?:pytest|python -m pytest|npx vitest run|npm(?: run)? test|make test|go test|cargo test)\b",
+    re.IGNORECASE,
 )
 
 # AI/Agentic detection keywords (PRD-QUAL-055)
@@ -302,6 +327,49 @@ def _count_table_rows(content: str, heading: str) -> int:
             continue
         rows += 1
     return max(rows - 1, 0)
+
+
+def _collect_reference_matches(content: str, *patterns: re.Pattern[str]) -> set[str]:
+    """Collect unique implementation/test reference tokens across regex variants."""
+    matches: set[str] = set()
+    for pattern in patterns:
+        for match in pattern.finditer(content):
+            token = match.group(0).strip("`")
+            if token:
+                matches.add(token)
+    return matches
+
+
+def _normalize_reference_token(token: str) -> str:
+    """Collapse selectors/anchors so test refs can be excluded from impl counts."""
+    return token.split("::", 1)[0].split("#", 1)[0]
+
+
+def _count_impl_refs(content: str) -> int:
+    """Count unique implementation file references, wrapped or bare."""
+    impl_refs = _collect_reference_matches(content, _IMPL_REF_RE, _BARE_IMPL_REF_RE)
+    test_refs = _collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE)
+    normalized_test_refs = {_normalize_reference_token(token) for token in test_refs}
+    return len({token for token in impl_refs if _normalize_reference_token(token) not in normalized_test_refs})
+
+
+def _count_test_refs(content: str) -> int:
+    """Count unique test file references, wrapped or bare."""
+    return len(_collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE))
+
+
+def _count_verification_commands(content: str) -> int:
+    """Count recognizable verification commands referenced in the PRD."""
+    return len(_VERIFICATION_COMMAND_RE.findall(content))
+
+
+def _count_planned_requirements(content: str, fr_sections: list[tuple[str, str]] | None = None) -> int:
+    """Count planned FRs without over-counting repeated traceability references."""
+    resolved_fr_sections = fr_sections if fr_sections is not None else _extract_fr_sections(content)
+    if resolved_fr_sections:
+        return len(resolved_fr_sections)
+    unique_refs = set(re.findall(r"\bFR\d+\b", content))
+    return max(len(unique_refs), 1)
 
 
 def _is_substantive_line(line: str) -> bool:
@@ -796,45 +864,160 @@ def score_traceability_v2(
 def score_implementation_readiness(
     frontmatter: dict[str, object],
     content: str,
-    config: object = None,
+    config: TRWConfig | None = None,
 ) -> DimensionScore:
-    """Score implementation readiness based on traceability file paths and test references.
+    """Score execution-readiness signals distinct from raw prose density.
 
-    Checks for concrete file paths in the traceability matrix, test file references,
-    and acceptance criteria specificity as signals of implementation readiness.
+    Rewards concrete planning evidence such as control points, behavior switches,
+    key files, verification tests, and completion/migration semantics. The
+    scoring is variant-aware so FIX and RESEARCH PRDs are not penalized for
+    missing feature-only scaffolding.
     """
-    _config: TRWConfig = config if config is not None else get_config()  # type: ignore[assignment]
+    _config = config or get_config()
     max_score = _config.validation_implementation_readiness_weight
+    if not content:
+        return DimensionScore(
+            name="implementation_readiness",
+            score=0.0,
+            max_score=max_score,
+            details={"variant": "feature"},
+        )
 
-    signals: dict[str, float] = {}
+    category = str(frontmatter.get("category", ""))
+    variant = get_variant_for_category(category)
+    fr_sections = _extract_fr_sections(content)
+    fr_count = _count_planned_requirements(content, fr_sections)
+    impl_refs = _count_impl_refs(content)
+    test_refs = _count_test_refs(content)
+    verification_commands = _count_verification_commands(content)
 
-    # Check for concrete file paths (backtick-wrapped repo-relative paths)
-    file_path_pattern = re.compile(r"`[a-zA-Z_][a-zA-Z0-9_/\-]*\.[a-z]{1,4}(?::\d+)?`")
-    file_refs = file_path_pattern.findall(content)
-    signals["file_path_refs"] = min(len(file_refs) / 6.0, 1.0)
+    # Pre-compute subheadings once (DRY — avoids redundant regex scans
+    # across all variant branches that check for named subheadings).
+    present_subheadings = _extract_subheadings(content)
 
-    # Check for test file references
-    test_refs = [r for r in file_refs if "test" in r.lower()]
-    signals["test_file_refs"] = min(len(test_refs) / 3.0, 1.0)
+    completion_ratio = (
+        sum(
+            1
+            for heading in (
+                "Completion Evidence (Definition of Done)",
+                "Migration / Backward Compatibility",
+            )
+            if heading in present_subheadings
+        )
+        / 2
+    )
 
-    # Check for acceptance criteria with Given/When/Then or concrete assertions
-    ac_pattern = re.compile(r"(?:Given|When|Then|GIVEN|WHEN|THEN)\b", re.IGNORECASE)
-    ac_matches = ac_pattern.findall(content)
-    signals["acceptance_criteria"] = min(len(ac_matches) / 6.0, 1.0)
+    details: dict[str, object] = {
+        "variant": variant,
+        "fr_count": fr_count,
+        "implementation_refs": impl_refs,
+        "test_refs": test_refs,
+        "verification_commands": verification_commands,
+        "completion_ratio": round(completion_ratio, 4),
+    }
 
-    # Check for FR/NFR IDs present (indicates structured requirements)
-    fr_pattern = re.compile(r"PRD-[A-Z]+-\d+-(?:FR|NFR)\d+")
-    fr_matches = fr_pattern.findall(content)
-    signals["requirement_ids"] = min(len(fr_matches) / 4.0, 1.0)
+    if variant in {"feature", "infrastructure"}:
+        control_point_rows = _count_table_rows(content, "Primary Control Points")
+        behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
+        key_files_rows = _count_table_rows(content, "Key Files")
+        test_subsections = (
+            "Unit Tests",
+            "Integration Tests",
+            "Acceptance Tests",
+            "Regression Tests",
+            "Negative / Fallback Tests",
+        )
+        test_subsection_ratio = sum(
+            1 for heading in test_subsections if heading in present_subheadings
+        ) / len(test_subsections)
+        control_ratio = min(control_point_rows / fr_count, 1.0)
+        behavior_switch_ratio = min(behavior_switch_rows / fr_count, 1.0)
+        file_map_ratio = min(max(key_files_rows, impl_refs) / fr_count, 1.0)
+        test_ref_ratio = min(test_refs / fr_count, 1.0)
+        verification_ratio = min(verification_commands / fr_count, 1.0)
+        test_plan_ratio = (test_subsection_ratio * 0.5) + (test_ref_ratio * 0.3) + (verification_ratio * 0.2)
+        completion_ratio = (completion_ratio * 0.8) + (verification_ratio * 0.2)
+        composite = (
+            control_ratio * 0.20
+            + behavior_switch_ratio * 0.20
+            + file_map_ratio * 0.20
+            + test_plan_ratio * 0.25
+            + completion_ratio * 0.15
+        )
+        details.update(
+            {
+                "control_point_rows": control_point_rows,
+                "behavior_switch_rows": behavior_switch_rows,
+                "key_files_rows": key_files_rows,
+                "control_ratio": round(control_ratio, 4),
+                "behavior_switch_ratio": round(behavior_switch_ratio, 4),
+                "file_map_ratio": round(file_map_ratio, 4),
+                "test_subsection_ratio": round(test_subsection_ratio, 4),
+                "test_ref_ratio": round(test_ref_ratio, 4),
+                "verification_ratio": round(verification_ratio, 4),
+                "test_plan_ratio": round(test_plan_ratio, 4),
+            }
+        )
+    elif variant == "fix":
+        root_cause_ratio = (
+            sum(
+                1
+                for heading in ("Root Cause", "Contributing Factors", "Fix Verification")
+                if heading in present_subheadings
+            )
+            / 3
+        )
+        regression_ratio = (
+            sum(
+                1
+                for heading in ("Regression Tests", "Negative / Fallback Tests")
+                if heading in present_subheadings
+            )
+            / 2
+        )
+        file_map_ratio = min(max(impl_refs, 1 if "Key Files" in present_subheadings else 0) / fr_count, 1.0)
+        test_ref_ratio = min(test_refs / fr_count, 1.0)
+        verification_ratio = min(max(test_ref_ratio, verification_commands / fr_count), 1.0)
+        completion_ratio = (completion_ratio * 0.8) + (verification_ratio * 0.2)
+        composite = (
+            root_cause_ratio * 0.30
+            + regression_ratio * 0.20
+            + file_map_ratio * 0.20
+            + verification_ratio * 0.15
+            + completion_ratio * 0.15
+        )
+        details.update(
+            {
+                "root_cause_ratio": round(root_cause_ratio, 4),
+                "regression_ratio": round(regression_ratio, 4),
+                "file_map_ratio": round(file_map_ratio, 4),
+                "verification_ratio": round(verification_ratio, 4),
+            }
+        )
+    else:
+        # Research variant
+        present_subheadings_lower = {sub.lower() for sub in present_subheadings}
+        research_ratio = (
+            sum(
+                1
+                for heading in ("Approach", "Data Sources", "Evaluation Criteria")
+                if any(heading.lower() in sub for sub in present_subheadings_lower)
+            )
+            / 3
+        )
+        evidence_ratio = min((impl_refs + test_refs + verification_commands) / 3, 1.0)
+        composite = (research_ratio * 0.65) + (evidence_ratio * 0.20) + (completion_ratio * 0.15)
+        details.update(
+            {
+                "research_ratio": round(research_ratio, 4),
+                "evidence_ratio": round(evidence_ratio, 4),
+            }
+        )
 
-    # Composite score
-    weights = {"file_path_refs": 0.35, "test_file_refs": 0.25, "acceptance_criteria": 0.20, "requirement_ids": 0.20}
-    composite = sum(signals[k] * weights[k] for k in weights)
     score = composite * max_score
-
     return DimensionScore(
         name="implementation_readiness",
         score=round(min(score, max_score), 2),
         max_score=max_score,
-        details={"signals": signals, "file_refs_found": len(file_refs), "test_refs_found": len(test_refs)},
+        details=details,
     )
