@@ -6,6 +6,7 @@ tests independent of the MCP tool registration machinery.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -827,3 +828,28 @@ class TestNoiseFilter:
     def test_accepts_substantive_fixed_summary(self) -> None:
         """Detailed fix summaries remain valid despite starting with 'Fixed the'."""
         assert is_noise_summary("Fixed the OAuth callback vulnerability by adding state parameter validation") is False
+
+    @pytest.mark.unit
+    def test_noise_filters_use_precompiled_patterns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Noise filtering must not compile regex from user input at call time."""
+        import trw_mcp.state.analytics.core as analytics_core
+
+        def _fail_compile(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("re.compile should not run during is_noise_summary")
+
+        monkeypatch.setattr(analytics_core.re, "compile", _fail_compile)
+
+        assert is_noise_summary("I read the file successfully") is True
+        assert is_noise_summary("OAuth callbacks need explicit state validation") is False
+
+    @pytest.mark.unit
+    def test_is_noise_perf(self) -> None:
+        """Expanded noise detection stays within the PRD budget for 10k 500-char inputs."""
+        summary = ("OAuth callbacks require explicit state validation and replay guards. " * 8)[:500]
+
+        start = time.perf_counter()
+        for _ in range(10_000):
+            is_noise_summary(summary)
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 10.0

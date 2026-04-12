@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
+from trw_memory.exceptions import StorageError
 from trw_memory.migration.from_trw import migrate_entries_dir as migrate_entries_dir
 from trw_memory.models.memory import MemoryStatus
 
@@ -610,22 +611,31 @@ def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
     """Increment session_count once for each learning surfaced during session start."""
     backend = get_backend(trw_dir)
     seen_ids: set[str] = set()
+    valid_ids: list[str] = []
     for lid in learning_ids:
         if lid in seen_ids:
             continue
         seen_ids.add(lid)
-        try:
-            entry = backend.get(lid)
-            if entry is not None:
-                current_count = entry.session_count or 0
-                backend.update(lid, session_count=current_count + 1)
-        except Exception:  # per-item error handling: session tracking is best-effort, one failure must not break recall results
+        if _LEARNING_ID_RE.fullmatch(lid) is None:
             logger.warning(
-                "session_count_update_failed",
-                exc_info=True,
+                "session_count_update_skipped_invalid_id",
                 entry_id=lid,
             )
             continue
+        valid_ids.append(lid)
+
+    if not valid_ids:
+        return
+
+    try:
+        backend.increment_session_counts(valid_ids, updated_at=datetime.now(timezone.utc))
+    except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
+        # Best-effort telemetry only: session start must not fail if tracking cannot be persisted.
+        logger.warning(
+            "session_count_update_failed",
+            exc_info=True,
+            entry_ids=valid_ids,
+        )
 
 
 # ---------------------------------------------------------------------------
