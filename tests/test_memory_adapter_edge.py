@@ -438,6 +438,28 @@ class TestIncrementSessionCounts:
         assert entry is not None
         assert entry.session_count == 1
 
+    def test_batches_only_valid_distinct_learning_ids(self, trw_dir: Path) -> None:
+        """Session count updates validate ids before issuing a single backend batch update."""
+        backend = MagicMock()
+
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=backend),
+            patch("trw_mcp.state.memory_adapter.logger.warning") as mock_warning,
+        ):
+            increment_session_counts(
+                trw_dir,
+                ["L-valid01", "L-valid01", "invalid-id", "L-valid02"],
+            )
+
+        backend.increment_session_counts.assert_called_once()
+        args, kwargs = backend.increment_session_counts.call_args
+        assert args[0] == ["L-valid01", "L-valid02"]
+        assert kwargs["updated_at"].tzinfo == timezone.utc
+        mock_warning.assert_called_once_with(
+            "session_count_update_skipped_invalid_id",
+            entry_id="invalid-id",
+        )
+
 
 # ---------------------------------------------------------------------------
 # _learning_to_memory_entry — parameter mapping
