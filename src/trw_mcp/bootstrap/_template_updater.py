@@ -27,6 +27,7 @@ from ._ide_targets import _update_codex_artifacts as _update_codex_artifacts
 from ._ide_targets import _update_config_target_platforms as _update_config_target_platforms
 from ._ide_targets import _update_copilot_artifacts as _update_copilot_artifacts
 from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
+from ._ide_targets import _update_gemini_artifacts as _update_gemini_artifacts
 from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
 from ._utils import (
     _DATA_DIR,

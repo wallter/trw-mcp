@@ -177,6 +177,9 @@ from ._update_project import (
     _update_cursor_artifacts as _update_cursor_artifacts,
 )
 from ._update_project import (
+    _update_gemini_artifacts as _update_gemini_artifacts,
+)
+from ._update_project import (
     _update_framework_files as _update_framework_files,
 )
 from ._update_project import (
@@ -343,6 +346,7 @@ __all__ = [
     "_update_codex_artifacts",
     "_update_copilot_artifacts",
     "_update_cursor_artifacts",
+    "_update_gemini_artifacts",
     "_update_framework_files",
     "_update_hooks",
     "_update_mcp_config",
