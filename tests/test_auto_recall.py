@@ -17,6 +17,8 @@ import pytest
 
 # --- Fixtures ---
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
+from tests.conftest import get_tools_sync, make_test_server
+from trw_mcp.state.memory_adapter import get_backend, store_learning
 from trw_mcp.tools._ceremony_helpers import _phase_to_tags
 
 
@@ -137,6 +139,59 @@ class TestAutoRecallEnabled:
 
         assert "auto_recalled" in result
         assert increment_calls == [["L-auto-1", "L-auto-2"]]
+
+    def test_session_start_then_repeated_recall_keeps_session_count_at_one(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Repeated recalls within one session do not bump session_count beyond the session-start surface."""
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+        tools = get_tools_sync(make_test_server("ceremony", "learning", "checkpoint", "review"))
+        trw_dir = _setup_trw_dir(tmp_path)
+        learning_id = store_learning(trw_dir, "L-core119a", "Session count learning", "Detail")["learning_id"]
+        surfaced = [{"id": learning_id, "summary": "Session count learning", "impact": 0.8, "tags": ["testing"]}]
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=surfaced),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
+        ):
+            tools["trw_session_start"].fn()
+
+        for _ in range(3):
+            tools["trw_recall"].fn(query="Session count learning")
+
+        entry = get_backend(trw_dir).get(learning_id)
+        assert entry is not None
+        assert entry.session_count == 1
+        assert entry.access_count >= 3
+
+    def test_three_session_starts_increment_session_count_to_three(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Distinct session starts count as distinct session surfaces."""
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+        tools = get_tools_sync(make_test_server("ceremony", "learning", "checkpoint", "review"))
+        trw_dir = _setup_trw_dir(tmp_path)
+        learning_id = store_learning(trw_dir, "L-core119b", "Multi-session learning", "Detail")["learning_id"]
+        surfaced = [{"id": learning_id, "summary": "Multi-session learning", "impact": 0.8, "tags": ["testing"]}]
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=surfaced),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
+        ):
+            for _ in range(3):
+                tools["trw_session_start"].fn()
+
+        entry = get_backend(trw_dir).get(learning_id)
+        assert entry is not None
+        assert entry.session_count == 3
 
     def test_auto_recalled_duplicates_primary_ids_are_not_double_counted(
         self,

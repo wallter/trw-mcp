@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from re import _parser as re_parser
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -23,8 +24,33 @@ from trw_mcp.tools._learning_helpers import (
     enforce_distribution,
     is_noise_summary,
 )
+from trw_mcp.state.analytics.core import _NOISE_PATTERNS
 
 _CFG = TRWConfig()
+
+
+def _has_nested_repeat(parsed: re_parser.SubPattern) -> bool:
+    for op, value in parsed.data:
+        if op in {re_parser.MAX_REPEAT, re_parser.MIN_REPEAT}:
+            _min, _max, inner = value
+            if any(child_op in {re_parser.MAX_REPEAT, re_parser.MIN_REPEAT} for child_op, _ in inner.data):
+                return True
+            if _has_nested_repeat(inner):
+                return True
+            continue
+
+        if op is re_parser.SUBPATTERN:
+            _group, _add_flags, _del_flags, inner = value
+            if _has_nested_repeat(inner):
+                return True
+            continue
+
+        if op is re_parser.BRANCH:
+            _none_value, branches = value
+            if any(_has_nested_repeat(branch) for branch in branches):
+                return True
+
+    return False
 
 
 @pytest.fixture(autouse=True)
@@ -853,3 +879,30 @@ class TestNoiseFilter:
         elapsed = time.perf_counter() - start
 
         assert elapsed < 10.0
+
+    @pytest.mark.unit
+    def test_noise_patterns_avoid_nested_repeat_redos_shapes(self) -> None:
+        """Static regex analysis rejects nested-repeat shapes that commonly cause ReDoS."""
+        for pattern in _NOISE_PATTERNS:
+            parsed = re_parser.parse(pattern.pattern)
+            assert not _has_nested_repeat(parsed), pattern.pattern
+
+    def test_noise_patterns_preserve_live_high_impact_corpus(self) -> None:
+        """Repo corpus validation should show zero false positives for high-impact learnings."""
+        repo_root = Path(__file__).resolve().parents[2]
+        entries_dir = repo_root / ".trw" / "learnings" / "entries"
+        if not entries_dir.exists():
+            pytest.skip("live learning corpus unavailable")
+
+        reader = FileStateReader()
+        candidates: list[tuple[Path, str]] = []
+        for entry_file in entries_dir.glob("*.yaml"):
+            data = reader.read_yaml(entry_file)
+            impact = float(str(data.get("impact", 0.5)))
+            if impact < 0.5:
+                continue
+            candidates.append((entry_file, str(data.get("summary", ""))))
+
+        assert candidates
+        false_positives = [entry_file.name for entry_file, summary in candidates if is_noise_summary(summary)]
+        assert false_positives == []
