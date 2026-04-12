@@ -99,3 +99,41 @@ def test_default_lookup_entry_backfills_yaml_cache_after_analytics_fallback(
     assert second_data is not None
     assert second_data["id"] == "compat-fallback-007"
     assert mock_analytics.call_count == 1
+
+
+def test_default_lookup_entry_rebuilds_cache_for_new_entries_dir(
+    tmp_path: Path,
+) -> None:
+    """Regression: TTL cache must not leak YAML paths across different temp dirs."""
+    first_trw_dir = tmp_path / "first" / ".trw"
+    first_entries_dir = first_trw_dir / "learnings" / "entries"
+    first_entries_dir.mkdir(parents=True)
+    first_entry_path = first_entries_dir / "shared-id.yaml"
+    second_trw_dir = tmp_path / "second" / ".trw"
+    second_entries_dir = second_trw_dir / "learnings" / "entries"
+    second_entries_dir.mkdir(parents=True)
+    second_entry_path = second_entries_dir / "shared-id.yaml"
+
+    yaml = YAML(typ="safe")
+    first_data = _make_entry_data("shared-id")
+    second_data = _make_entry_data("shared-id")
+    second_data["summary"] = "learning from second dir"
+    with first_entry_path.open("w") as fh:
+        yaml.dump(first_data, fh)
+    with second_entry_path.open("w") as fh:
+        yaml.dump(second_data, fh)
+
+    _reset_yaml_path_index()
+
+    with patch("trw_mcp.state.memory_adapter.find_entry_by_id", return_value=None):
+        resolved_first_path, _ = _default_lookup_entry("shared-id", first_trw_dir, first_entries_dir)
+        resolved_second_path, resolved_second_data = _default_lookup_entry(
+            "shared-id",
+            second_trw_dir,
+            second_entries_dir,
+        )
+
+    assert resolved_first_path == first_entry_path
+    assert resolved_second_path == second_entry_path
+    assert resolved_second_data is not None
+    assert resolved_second_data["summary"] == "learning from second dir"

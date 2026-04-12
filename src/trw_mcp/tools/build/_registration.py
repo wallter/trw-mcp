@@ -9,9 +9,6 @@ tracking and delivery gates.
 """
 
 from __future__ import annotations
-
-import collections
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -121,11 +118,11 @@ def register_build_tools(server: FastMCP) -> None:
         _log_build_event(resolved_run, scope, status)
 
         # Q-learning: reward recalled learnings based on build outcome.
-        # Dispatched to background worker so it never blocks the tool response.
-        # This was the primary bottleneck: 526 correlated recalls x 1,217
-        # YAML file scans = 13+ minute blocking calls.
+        # Process inline so the reported result reflects the persisted Q-update
+        # and we never leave a background thread holding the SQLite backend
+        # across test/process teardown.
         event_type = "build_passed" if status.tests_passed and status.mypy_clean else "build_failed"
-        _enqueue_q_learning(event_type, scope)
+        _process_q_learning(event_type, scope)
 
         logger.info(
             "build_check_complete",
@@ -195,93 +192,44 @@ def register_build_tools(server: FastMCP) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Background Q-learning worker.
-#
-# Processes outcome correlation asynchronously so build_check returns
-# instantly.  Uses a bounded queue + single daemon worker thread.
-# Errors are logged with full structlog context (tool scope, event type,
-# exception) so they surface in .trw/logs/ and can be monitored.
-# On MCP server shutdown the daemon thread is abandoned — this is safe
-# because Q-learning is idempotent and best-effort (YAML is authoritative,
-# a missed update is corrected on the next outcome event).
-# ---------------------------------------------------------------------------
-_q_learning_queue: collections.deque[tuple[str, str]] = collections.deque(maxlen=100)
-_q_learning_lock = threading.Lock()
-_q_learning_thread: threading.Thread | None = None
-_q_learning_shutdown = threading.Event()
-
-# Observable error state — surfaced in build_check result when non-empty.
+# Inline Q-learning outcome processing state.
 _q_learning_last_error: str | None = None
 _q_learning_error_count: int = 0
 
 
-def _enqueue_q_learning(event_type: str, scope: str) -> None:
-    """Enqueue a Q-learning outcome event for background processing."""
-    global _q_learning_thread
-    with _q_learning_lock:
-        _q_learning_queue.append((event_type, scope))
-        # Lazily start the worker thread on first enqueue
-        if _q_learning_thread is None or not _q_learning_thread.is_alive():
-            _q_learning_shutdown.clear()
-            _q_learning_thread = threading.Thread(
-                target=_q_learning_worker,
-                name="build-check-qlearn",
-                daemon=True,
-            )
-            _q_learning_thread.start()
-    logger.debug("q_learning_enqueued", event_type=event_type, scope=scope)
-
-
-def _q_learning_worker() -> None:
-    """Drain the Q-learning queue until empty, then exit.
-
-    Re-launched on next enqueue. This avoids a long-lived idle thread
-    while ensuring items are processed promptly.  Each item is
-    processed with full error handling and structured logging.
-    """
+def _process_q_learning(event_type: str, scope: str) -> None:
+    """Apply Q-learning outcome updates inline and fail open on errors."""
     global _q_learning_last_error, _q_learning_error_count
+    try:
+        from trw_mcp.scoring import process_outcome_for_event
 
-    while not _q_learning_shutdown.is_set():
-        # Pop next item
-        try:
-            with _q_learning_lock:
-                if not _q_learning_queue:
-                    return  # Queue drained — exit thread
-                event_type, scope = _q_learning_queue.popleft()
-        except IndexError:
-            return
-
-        # Process with full error context
-        try:
-            from trw_mcp.scoring import process_outcome_for_event
-
-            updated = process_outcome_for_event(event_type)
-            logger.info(
-                "q_learning_background_complete",
-                event_type=event_type,
-                scope=scope,
-                updated_count=len(updated),
-            )
-            _q_learning_last_error = None
-        except Exception as exc:  # justified: fail-open, Q-learning is best-effort
-            _q_learning_error_count += 1
-            _q_learning_last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
-            logger.warning(
-                "q_learning_background_failed",
-                event_type=event_type,
-                scope=scope,
-                error_count=_q_learning_error_count,
-                exc_info=True,
-            )
+        updated = process_outcome_for_event(event_type)
+        logger.info(
+            "q_learning_complete",
+            event_type=event_type,
+            scope=scope,
+            updated_count=len(updated),
+        )
+        _q_learning_last_error = None
+    except Exception as exc:  # justified: fail-open, Q-learning is best-effort
+        _q_learning_error_count += 1
+        _q_learning_last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        logger.warning(
+            "q_learning_failed",
+            event_type=event_type,
+            scope=scope,
+            error_count=_q_learning_error_count,
+            exc_info=True,
+        )
 
 
 def get_q_learning_health() -> dict[str, object]:
     """Return Q-learning worker health for observability."""
     return {
-        "queue_size": len(_q_learning_queue),
+        "queue_size": 0,
         "error_count": _q_learning_error_count,
         "last_error": _q_learning_last_error,
-        "worker_alive": _q_learning_thread is not None and _q_learning_thread.is_alive(),
+        "worker_alive": False,
     }
 
 
