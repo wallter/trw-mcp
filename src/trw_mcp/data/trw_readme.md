@@ -1,7 +1,7 @@
 <!-- last-verified: 2026-03-04 -->
 # TRW Framework — Developer Quickstart & Usage Guide
 
-> **Version**: <!-- inv:framework_version -->v24.5_TRW<!-- /inv --> | **MCP Tools**: <!-- inv:tools -->24<!-- /inv --> | **Skills**: <!-- inv:skills -->24<!-- /inv --> | **Agents**: <!-- inv:agents -->12<!-- /inv --> | **Hooks**: <!-- inv:hooks -->13<!-- /inv --> | **Python**: 3.10+
+> **Version**: <!-- inv:framework_version -->v24.5_TRW<!-- /inv --> | **MCP Tools**: <!-- inv:tools -->25<!-- /inv --> | **Skills**: <!-- inv:skills -->24<!-- /inv --> | **Agents**: <!-- inv:agents -->12<!-- /inv --> | **Hooks**: <!-- inv:hooks -->13<!-- /inv --> | **Python**: 3.10+
 
 This is the hands-on guide for using TRW (The Real Work) in your projects. It covers installation, first-run setup, daily usage, configuration, and observability.
 
@@ -42,7 +42,7 @@ TRW is a **prompt-based operational framework** that gives Claude Code structure
 TRW consists of three layers:
 
 1. **FRAMEWORK.md** — A ~617-line orchestration blueprint injected into agent context at session start
-2. **trw-mcp** — A Python MCP server exposing 24 tools that Claude Code calls for run management, learning, build verification, and delivery
+2. **trw-mcp** — A Python MCP server exposing 25 tools that Claude Code calls for run management, learning, build verification, and delivery
 3. **.trw/** — A directory of YAML/JSONL files persisting learnings, configuration, and run state across sessions
 
 ---
@@ -98,7 +98,7 @@ trw-mcp init-project .
 claude
 ```
 
-That's it. Claude Code detects the MCP server via `.mcp.json`, loads all 24 tools, and the session-start hook fires automatically.
+That's it. Claude Code detects the MCP server via `.mcp.json`, loads all 25 tools, and the session-start hook fires automatically.
 
 ---
 
@@ -108,7 +108,7 @@ That's it. Claude Code detects the MCP server via `.mcp.json`, loads all 24 tool
 
 | Package | Stack | What It Does |
 |---------|-------|-------------|
-| `trw-mcp/` | Python, FastMCP, Pydantic v2 | MCP server -- 24 tools, 6 resources, 24 skills, 18 agents |
+| `trw-mcp/` | Python, FastMCP, Pydantic v2 | MCP server -- 25 tools, 6 resources, 24 skills, 18 agents |
 | `trw-memory/` | Python, SQLite, sqlite-vec | Standalone memory engine -- hybrid retrieval, knowledge graph |
 | `backend/` | FastAPI, SQLAlchemy, Alembic | Platform API -- 17 routers, JWT auth, rate limiting |
 | `platform/` | Next.js 15, TypeScript, Tailwind | Frontend -- admin dashboard, marketing site, docs |
@@ -465,7 +465,7 @@ Writes structured JSON logs to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl`.
 
 ## 8. MCP Tool Reference
 
-24 tools organized into 8 categories.
+25 tools organized into 9 categories.
 
 ### Session Lifecycle (3)
 
@@ -506,10 +506,11 @@ Writes structured JSON logs to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl`.
 |------|------|-------------|
 | `trw_build_check` | Before delivery | Runs pytest + mypy, caches results |
 
-### Code Review (1)
+### Code Review (2)
 
 | Tool | When | What It Does |
 |------|------|-------------|
+| `trw_preflight_log` | Before implementation/audit | Records preflight checklist and self-review evidence for a run |
 | `trw_review` | After validation | Produces structured review findings with pass/warn/block verdict |
 
 ### Reporting (3)
@@ -519,6 +520,22 @@ Writes structured JSON logs to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl`.
 | `trw_run_report` | After a run | Single-run metrics (events, checkpoints, build status) |
 | `trw_analytics_report` | Anytime | Cross-run ceremony scores, trends, build pass rates |
 | `trw_usage_report` | Anytime | LLM token usage and cost estimates by model |
+
+### Observability (2)
+
+| Tool | When | What It Does |
+|------|------|-------------|
+| `trw_quality_dashboard` | Anytime | Summarizes readiness, quality, and delivery signals across recent runs |
+| `trw_ceremony_status` | Anytime | Returns a compact live ceremony status line and nudge context |
+
+### Administration (4)
+
+| Tool | When | What It Does |
+|------|------|-------------|
+| `trw_ceremony_approve` | Human oversight | Records explicit ceremony approval for blocked transitions |
+| `trw_ceremony_revert` | Recovery | Reverts a run to an earlier phase with rationale and event logging |
+| `trw_trust_level` | Governance | Reports or updates trust-level state used by ceremony policies |
+| `trw_progressive_expand` | Tool UX | Expands deferred tool descriptions when the client asks for more detail |
 
 ---
 

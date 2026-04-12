@@ -64,7 +64,7 @@ def test_append_ceremony_status_adds_summary_when_state_exists(tmp_path: Path) -
     assert "learnings=0" in result["ceremony_status"]
 
 
-def test_append_ceremony_status_prefers_cached_learning_nudge(tmp_path: Path) -> None:
+def test_nudge_selection_cache_based(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     trw_dir = tmp_path / ".trw"

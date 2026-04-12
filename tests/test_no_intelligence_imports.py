@@ -100,6 +100,13 @@ class TestNoIntelligenceImports:
         for d in forbidden_dirs:
             assert not d.exists(), f"Backend-only intelligence directory still exists: {d}"
 
+    def test_no_meta_tune_intelligence_imports(self) -> None:
+        """The public package no longer ships a local meta_tune implementation."""
+        meta_tune_path = _SRC_ROOT / "tools" / "meta_tune.py"
+        assert not meta_tune_path.exists(), (
+            f"Backend-only intelligence file still exists: {meta_tune_path}"
+        )
+
     def test_import_trw_mcp_succeeds(self) -> None:
         """import trw_mcp works after intelligence code removal."""
         import trw_mcp  # noqa: F401
