@@ -104,16 +104,29 @@ class TestWithholdingPolicyForcedTriggers:
         from trw_mcp.state.bandit_policy import WithholdingPolicy
 
         policy = WithholdingPolicy(client_class="full_mode")
-        # critical tier but anchor validity dropped below 0.3
+        # critical tier but anchor validity dropped by 0.4 since last evaluation
         learning = {
             "id": "L-crit",
             "protection_tier": "critical",
-            "metadata": {"prev_anchor_validity": 0.1},
+            "metadata": {"prev_anchor_validity": 0.8, "anchor_validity": 0.4},
         }
         # With forced trigger, critical tier becomes normal — may be withheld
         # Over 1000 runs at least some withholdings should occur
         withheld = sum(1 for _ in range(1000) if policy.should_withhold(learning))
         assert withheld > 0, "Forced trigger should sometimes withhold critical learning"
+
+    def test_trigger_1_does_not_fire_without_large_drop(self) -> None:
+        """Current anchor validity must drop by more than 0.3 when present."""
+        from trw_mcp.state.bandit_policy import WithholdingPolicy
+
+        policy = WithholdingPolicy(client_class="full_mode")
+        learning = {
+            "id": "L-crit",
+            "protection_tier": "critical",
+            "metadata": {"prev_anchor_validity": 0.5, "anchor_validity": 0.25},
+        }
+        withheld = sum(1 for _ in range(250) if policy.should_withhold(learning))
+        assert withheld == 0, "A 0.25 drop must not override critical-tier protection"
 
     def test_trigger_2_consecutive_shown(self) -> None:
         """Consecutive sessions > force_trial_threshold forces re-evaluation."""
@@ -914,6 +927,151 @@ class TestLiveDecoratorPath:
             f"got {single_selections}/{n_trials}"
         )
 
+    def test_live_path_uses_recall_context_for_contextual_pool(self, tmp_path: Path) -> None:
+        """Live path uses build_recall_context + ContextualBanditSelector before bandit selection."""
+        from trw_mcp.scoring._recall import RecallContext
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="validate", previous_phase="implement")
+
+        learnings = [
+            {
+                "id": "L-testing-a",
+                "summary": "testing learning A",
+                "nudge_line": "testing tip A",
+                "protection_tier": "critical",
+                "impact": 0.9,
+                "domain": ["testing"],
+                "phase_affinity": ["validate"],
+            },
+            {
+                "id": "L-testing-b",
+                "summary": "testing learning B",
+                "nudge_line": "testing tip B",
+                "protection_tier": "critical",
+                "impact": 0.8,
+                "domain": ["testing"],
+                "phase_affinity": ["validate"],
+            },
+            {
+                "id": "L-payments",
+                "summary": "payments learning",
+                "nudge_line": "payments tip",
+                "protection_tier": "critical",
+                "impact": 0.7,
+                "domain": ["payments"],
+                "phase_affinity": ["implement"],
+            },
+        ]
+
+        captured_candidate_ids: list[str] = []
+
+        def _select_capture(
+            candidates,
+            bandit,
+            policy,
+            phase,
+            previous_phase,
+            phase_transition_withhold_rate=0.10,
+            decisions_out=None,
+            withheld_events_out=None,
+        ):
+            captured_candidate_ids[:] = [str(candidate["id"]) for candidate in candidates]
+            return ([candidates[0]], True)
+
+        def _contextual_select(self, eligible_ids, context_vector=None):
+            return eligible_ids[0], 0.9
+
+        recall_context = RecallContext(
+            current_phase="VALIDATE",
+            inferred_domains={"testing"},
+            modified_files=["trw-mcp/tests/test_bandit_policy.py"],
+        )
+
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
+            patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+            patch(
+                "trw_memory.bandit.contextual.ContextualBanditSelector.select",
+                autospec=True,
+                side_effect=_contextual_select,
+            ) as mock_contextual_select,
+            patch(
+                "trw_mcp.state.bandit_policy.select_nudge_learning_bandit",
+                side_effect=_select_capture,
+            ),
+        ):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        assert mock_contextual_select.called, "Contextual selector must run in the live nudge path"
+        assert captured_candidate_ids == ["L-testing-a", "L-testing-b"], (
+            "Live bandit pool should be filtered using inferred recall domains "
+            f"before Thompson selection, got {captured_candidate_ids}"
+        )
+
+    def test_live_path_logs_each_shown_burst_item(self, tmp_path: Path) -> None:
+        """Phase-transition bursts log one shown propensity entry per surfaced learning."""
+        import json
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.state.bandit_policy import WithholdingPolicy
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        state = CeremonyState(phase="validate", previous_phase="implement")
+        learnings = [
+            {
+                "id": f"L-burst-{i}",
+                "summary": f"Burst learning {i}",
+                "nudge_line": f"burst tip {i}",
+                "protection_tier": "critical",
+                "impact": 0.9 - (i * 0.1),
+            }
+            for i in range(3)
+        ]
+
+        bandit = BanditSelector(cold_start_min=0, floor_exploration=0.0)
+        for i, reward in enumerate((0.9, 0.7, 0.5)):
+            for _ in range(8):
+                bandit.update(f"L-burst-{i}", reward)
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
+            patch(
+                "trw_mcp.state.bandit_policy.load_bandit_state_and_policy",
+                return_value=(bandit, policy),
+            ),
+            patch("random.randint", return_value=2),
+        ):
+            content = _try_bandit_nudge_content(trw_dir, state)
+
+        assert content is not None
+        shown_lines = [line for line in content.splitlines() if line.strip()]
+        propensity_path = trw_dir / "logs" / "propensity.jsonl"
+        entries = [
+            json.loads(line)
+            for line in propensity_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        shown_entries = [entry for entry in entries if entry.get("withheld") is False]
+        line_to_id = {
+            str(learning["nudge_line"]): str(learning["id"])
+            for learning in learnings
+        }
+
+        assert len(shown_entries) == len(shown_lines) == 2
+        assert {entry["selected"] for entry in shown_entries} == {
+            line_to_id[line] for line in shown_lines
+        }
+
 
 # ---------------------------------------------------------------------------
 # P1-A: model_family config field (PRD-CORE-105 C-5)
@@ -1411,8 +1569,12 @@ class TestFR05ProductionPath:
             f"Expected 'L-persist-test' in detector_states, got: {list(detector_states)}"
         )
         ds = detector_states["L-persist-test"]
-        assert "n" in ds, f"Detector state must have 'n' field, got: {ds}"
-        assert ds["n"] >= 1, f"Expected n >= 1 after one reward update, got n={ds['n']}"
+        assert isinstance(ds, (dict, list))
+        if isinstance(ds, dict):
+            assert "n" in ds, f"Detector state must have 'n' field, got: {ds}"
+            assert ds["n"] >= 1, f"Expected n >= 1 after one reward update, got n={ds['n']}"
+        else:
+            assert ds[0] >= 1, f"Expected compact detector n >= 1, got {ds}"
         assert stored.get("pending_alarm_ids") == []
 
     def test_detector_state_restored_on_next_load(self, tmp_path: Path) -> None:
@@ -1548,6 +1710,35 @@ class TestFR05ProductionPath:
         ):
             assert restored_policy.should_withhold(learning) is True
             assert restored_policy.should_withhold(learning) is False
+
+    def test_detector_compaction_keeps_state_file_under_budget(self, tmp_path: Path) -> None:
+        """Compact detector persistence keeps sub-500-arm state files below 100KB."""
+        from trw_mcp.state.bandit_policy import (
+            WithholdingPolicy,
+            load_bandit_state_and_policy,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
+        bandit = BanditSelector(cold_start_min=0)
+        policy = WithholdingPolicy(client_class="full_mode")
+        arm_count = 400
+
+        for i in range(arm_count):
+            arm_id = f"L-budget-{i}"
+            bandit.update(arm_id, 0.6)
+            policy.update_reward(arm_id, 0.6)
+
+        save_bandit_state(trw_dir, bandit, "full_mode", "test-model", policy=policy)
+
+        state_path = trw_dir / "meta" / "bandit_state.json"
+        assert state_path.stat().st_size < 100 * 1024
+
+        _, restored_policy = load_bandit_state_and_policy(trw_dir, "full_mode", "test-model")
+        assert restored_policy._detectors["L-budget-0"]._n == 1
 
     def test_live_path_soft_resets_bandit_arm_on_alarm(self, tmp_path: Path) -> None:
         """The live FR05 path soft-resets the arm posterior when the alarm fires."""

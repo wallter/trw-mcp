@@ -12,6 +12,217 @@ from trw_mcp.state.ceremony_progress import CeremonyState, read_ceremony_state
 logger = structlog.get_logger(__name__)
 
 
+def _candidate_domains(learning: dict[str, object]) -> set[str]:
+    """Extract normalized domain labels from a learning entry."""
+    domains: set[str] = set()
+    raw_domains = learning.get("domain")
+    if isinstance(raw_domains, list):
+        domains.update(
+            str(domain).strip().lower()
+            for domain in raw_domains
+            if str(domain).strip()
+        )
+    raw_tags = learning.get("tags")
+    if isinstance(raw_tags, list):
+        domains.update(
+            str(tag).strip().lower()
+            for tag in raw_tags
+            if str(tag).strip()
+        )
+    return domains
+
+
+def _matches_inferred_domains(
+    learning: dict[str, object],
+    inferred_domains: set[str],
+) -> bool:
+    """Return True when a learning overlaps the active inferred domains."""
+    if not inferred_domains:
+        return False
+    return bool(_candidate_domains(learning) & inferred_domains)
+
+
+def _phase_match_score(learning: dict[str, object], phase: str) -> float:
+    """Estimate how relevant a learning is for the current phase."""
+    normalized_phase = phase.strip().lower()
+    if not normalized_phase:
+        return 0.5
+
+    phase_affinity = learning.get("phase_affinity")
+    if isinstance(phase_affinity, list):
+        normalized_affinity = {
+            str(value).strip().lower()
+            for value in phase_affinity
+            if str(value).strip()
+        }
+        if normalized_affinity:
+            return 1.0 if normalized_phase in normalized_affinity else 0.1
+
+    phase_origin = str(learning.get("phase_origin", "")).strip().lower()
+    if phase_origin:
+        return 0.8 if phase_origin == normalized_phase else 0.2
+
+    return 0.5
+
+
+def _domain_match_score(
+    learning: dict[str, object],
+    inferred_domains: set[str],
+) -> float:
+    """Estimate overlap between the learning and the current inferred domains."""
+    if not inferred_domains:
+        return 0.5
+
+    learning_domains = _candidate_domains(learning)
+    if not learning_domains:
+        return 0.2
+
+    overlap = learning_domains & inferred_domains
+    union = learning_domains | inferred_domains
+    if not union:
+        return 0.0
+    return len(overlap) / len(union)
+
+
+def _posterior_mean(bandit: object, arm_id: str) -> float:
+    """Best-effort estimate of the Thompson posterior mean for an arm."""
+    arms = getattr(bandit, "_arms", {})
+    if not isinstance(arms, dict):
+        return 0.5
+    arm = arms.get(arm_id)
+    if arm is None:
+        return 0.5
+
+    alpha = getattr(arm, "alpha", None)
+    beta = getattr(arm, "beta", None)
+    if alpha is None or beta is None:
+        return 0.5
+
+    total = float(alpha) + float(beta)
+    if total <= 0:
+        return 0.5
+    return max(0.0, min(1.0, float(alpha) / total))
+
+
+def _phase_progress(phase: str) -> float:
+    """Map ceremony phase to a normalized session-progress scalar."""
+    ordered_phases = ("research", "plan", "implement", "validate", "review", "deliver")
+    try:
+        return ordered_phases.index(phase.strip().lower()) / (len(ordered_phases) - 1)
+    except ValueError:
+        return 0.0
+
+
+def _session_progress_label(phase: str) -> str:
+    """Map ceremony phase to the propensity-log progress bucket."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase in {"research", "plan"}:
+        return "early"
+    if normalized_phase in {"review", "deliver"}:
+        return "late"
+    return "mid"
+
+
+def _contextualize_candidates(
+    candidates: list[dict[str, object]],
+    *,
+    bandit: object,
+    recall_context: object | None,
+    phase: str,
+    is_transition: bool,
+) -> list[dict[str, object]]:
+    """Narrow the live candidate pool using the real recall context."""
+    if not candidates or recall_context is None:
+        return candidates
+
+    inferred_domains = getattr(recall_context, "inferred_domains", set())
+    if not isinstance(inferred_domains, set):
+        inferred_domains = set()
+    inferred_domains = {
+        str(domain).strip().lower()
+        for domain in inferred_domains
+        if str(domain).strip()
+    }
+
+    filtered_candidates = candidates
+    if inferred_domains:
+        domain_filtered = [
+            candidate
+            for candidate in candidates
+            if _matches_inferred_domains(candidate, inferred_domains)
+        ]
+        if domain_filtered:
+            filtered_candidates = domain_filtered
+
+    if len(filtered_candidates) < 2:
+        return filtered_candidates
+
+    try:
+        from trw_memory.bandit import ContextualBanditSelector
+        from trw_mcp.state.bandit_policy import ENGINEERING_CONTEXT_DIM, build_context_vector
+    except Exception:  # justified: fail-open
+        return filtered_candidates
+
+    current_phase = str(getattr(recall_context, "current_phase", "") or phase).strip().lower()
+    modified_files = getattr(recall_context, "modified_files", [])
+    if not isinstance(modified_files, list):
+        modified_files = []
+
+    context_vector = build_context_vector(
+        phase=current_phase,
+        session_progress=_phase_progress(current_phase),
+        domain_similarity=1.0 if inferred_domains else 0.0,
+        files_count=len(modified_files),
+    )
+
+    selector = ContextualBanditSelector(feature_dim=ENGINEERING_CONTEXT_DIM)
+    for candidate in filtered_candidates:
+        arm_id = str(candidate.get("id", ""))
+        if not arm_id:
+            continue
+        impact = candidate.get("impact", 0.5)
+        try:
+            impact_value = float(impact)
+        except (TypeError, ValueError):
+            impact_value = 0.5
+        impact_value = max(0.0, min(1.0, impact_value))
+        contextual_reward = max(
+            0.0,
+            min(
+                1.0,
+                (
+                    (0.35 * _posterior_mean(bandit, arm_id))
+                    + (0.35 * impact_value)
+                    + (0.20 * _phase_match_score(candidate, current_phase))
+                    + (0.10 * _domain_match_score(candidate, inferred_domains))
+                ),
+            ),
+        )
+        selector.update(arm_id, contextual_reward, context_vector=context_vector)
+
+    shortlist_size = min(len(filtered_candidates), 5 if is_transition else 3)
+    ranked_ids: list[str] = []
+    remaining_ids = [
+        str(candidate.get("id", ""))
+        for candidate in filtered_candidates
+        if candidate.get("id")
+    ]
+    while remaining_ids and len(ranked_ids) < shortlist_size:
+        selected_id, _ = selector.select(remaining_ids, context_vector=context_vector)
+        ranked_ids.append(selected_id)
+        remaining_ids = [arm_id for arm_id in remaining_ids if arm_id != selected_id]
+
+    if not ranked_ids:
+        return filtered_candidates
+
+    candidate_map = {
+        str(candidate.get("id", "")): candidate
+        for candidate in filtered_candidates
+        if candidate.get("id")
+    }
+    return [candidate_map[arm_id] for arm_id in ranked_ids if arm_id in candidate_map]
+
+
 def build_ceremony_status_line(state: CeremonyState) -> str:
     """Render a compact, deterministic summary of current ceremony progress."""
     parts = [
@@ -67,6 +278,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         from trw_mcp.state.memory_adapter import recall_learnings
         from trw_mcp.state.propensity_log import log_selection
         from trw_mcp.state.surface_tracking import log_surface_event
+        from trw_mcp.tools._recall_impl import build_recall_context
 
         # ── Resolve config metadata (best-effort, fail-open) ────────────────
         client_class = "full_mode"
@@ -109,12 +321,22 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
 
         # ── Load bandit state and pre-populated policy with restored detectors ─
         bandit, policy = load_bandit_state_and_policy(trw_dir, client_class, model_family)
+        recall_context = build_recall_context(trw_dir, "*")
+        selection_candidates = _contextualize_candidates(
+            eligible_candidates,
+            bandit=bandit,
+            recall_context=recall_context,
+            phase=state.phase,
+            is_transition=bool(state.previous_phase and state.previous_phase != state.phase),
+        )
+        if not selection_candidates:
+            selection_candidates = eligible_candidates
 
         # ── Bandit selection with decisions captured for logging ─────────────
         decisions: list = []  # list[BanditDecision] populated by select_nudge_learning_bandit
         withheld_events: list[WithheldEvent] = []
         selected_learnings, is_transition = select_nudge_learning_bandit(
-            eligible_candidates,
+            selection_candidates,
             bandit,
             policy,
             phase=state.phase,
@@ -127,7 +349,24 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         # ── P1-D: Log withheld phase-transition events to propensity.jsonl ───
         # Must happen before the early-return so withheld events are always
         # persisted even when no candidates were ultimately selected.
-        candidate_ids_for_log = [str(c.get("id", "")) for c in candidates if c.get("id")]
+        candidate_ids_for_log = [
+            str(c.get("id", "")) for c in selection_candidates if c.get("id")
+        ]
+        context_domains = (
+            sorted(
+                str(domain).strip()
+                for domain in getattr(recall_context, "inferred_domains", set())
+                if str(domain).strip()
+            )
+            if recall_context is not None else []
+        )
+        files_modified = (
+            len(getattr(recall_context, "modified_files", []))
+            if recall_context is not None
+            and isinstance(getattr(recall_context, "modified_files", []), list)
+            else 0
+        )
+        session_progress = _session_progress_label(state.phase)
         for wev in withheld_events:
             try:
                 log_selection(
@@ -139,6 +378,9 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
                     exploration=True,
                     withheld=True,
                     context_phase=state.phase,
+                    context_domain=context_domains,
+                    context_files_modified=files_modified,
+                    context_session_progress=session_progress,
                     client_profile=client_profile_name,
                     model_family=model_family,
                 )
@@ -189,21 +431,19 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
                     logger.debug("record_nudge_shown_failed", exc_info=True)
 
         # ── P1: Surface event logging with metadata ───────────────────────────
-        for learning in selected_learnings:
+        for index, learning in enumerate(selected_learnings):
             arm_id = str(learning.get("id", ""))
             if arm_id:
+                decision = decisions[index] if index < len(decisions) else None
                 try:
                     log_surface_event(
                         trw_dir,
                         learning_id=arm_id,
                         surface_type="phase_transition" if is_transition else "nudge",
                         phase=state.phase,
-                        exploration=(
-                            first_decision.exploration if first_decision else False
-                        ),
+                        exploration=decision.exploration if decision else False,
                         bandit_score=(
-                            first_decision.selection_probability
-                            if first_decision else 0.0
+                            decision.selection_probability if decision else 0.0
                         ),
                         client_profile=client_profile_name,
                         model_family=model_family,
@@ -212,38 +452,37 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
                     logger.debug("surface_event_log_failed", exc_info=True)
 
         # ── P1: Propensity log with full BanditDecision metadata ──────────────
-        primary = selected_learnings[0]
-        primary_id = str(primary.get("id", ""))
-        if primary_id:
+        for index, learning in enumerate(selected_learnings):
+            learning_id = str(learning.get("id", ""))
+            if not learning_id:
+                continue
+            decision = decisions[index] if index < len(decisions) else None
             try:
-                candidate_ids = [
-                    str(c.get("id", "")) for c in candidates if c.get("id")
-                ]
-                runner_up = ""
-                runner_up_prob = 0.0
-                sel_prob = 1.0
-                exploration = False
-                if first_decision:
-                    runner_up = first_decision.runner_up_id or ""
-                    runner_up_prob = first_decision.runner_up_probability or 0.0
-                    sel_prob = first_decision.selection_probability
-                    exploration = first_decision.exploration
-
                 log_selection(
                     trw_dir,
-                    selected=primary_id,
-                    candidate_set=candidate_ids,
-                    runner_up=runner_up,
-                    runner_up_probability=runner_up_prob,
-                    selection_probability=sel_prob,
-                    exploration=exploration,
+                    selected=learning_id,
+                    candidate_set=candidate_ids_for_log,
+                    runner_up=decision.runner_up_id if decision and decision.runner_up_id else "",
+                    runner_up_probability=(
+                        decision.runner_up_probability
+                        if decision and decision.runner_up_probability is not None
+                        else 0.0
+                    ),
+                    selection_probability=decision.selection_probability if decision else 1.0,
+                    exploration=decision.exploration if decision else False,
                     withheld=False,
                     context_phase=state.phase,
+                    context_domain=context_domains,
+                    context_files_modified=files_modified,
+                    context_session_progress=session_progress,
                     client_profile=client_profile_name,
                     model_family=model_family,
                 )
             except Exception:  # justified: fail-open
                 logger.debug("propensity_log_failed", exc_info=True)
+
+        primary = selected_learnings[0]
+        primary_id = str(primary.get("id", ""))
 
         logger.info(
             "bandit_decision",
