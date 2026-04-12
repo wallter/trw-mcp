@@ -144,6 +144,7 @@ class TestBundledTemplateKeysMatchSyncContext:
             "imperative_opener",
             "ceremony_quick_ref",
             "memory_harmonization",
+            "shared_learnings",
             "closing_reminder",
         }
 
