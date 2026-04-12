@@ -1120,11 +1120,16 @@ def _prompt_ide_selection(detected_clis: list[str], detected_ides: list[str]) ->
 # ── Find trw-mcp command ─────────────────────────────────────────────
 
 
-def find_trw_cmd(python: str) -> list[str]:
+def find_trw_cmd(python: str, pip_target: str = "") -> list[str]:
     """Return the command list for invoking trw-mcp CLI."""
+    validated_target = validate_pip_target(pip_target)
+    if validated_target:
+        wrapper = Path(validated_target) / "bin" / "trw-mcp"
+        if wrapper.is_file():
+            return [str(wrapper)]
     if shutil.which("trw-mcp"):
         return ["trw-mcp"]
-    return [python, "-m", "trw_mcp.server"]
+    return [python, "-B", "-m", "trw_mcp.server"]
 
 
 # ── Installation phases ──────────────────────────────────────────────
@@ -1331,6 +1336,7 @@ def phase_project_setup(
     upgrade_only: bool,
     interactive: bool = False,
     ide: str | None = None,
+    pip_target: str = "",
 ) -> None:
     """Set up or update the project scaffolding."""
     ui.step_header(step, total, "Setting up project")
@@ -1367,7 +1373,7 @@ def phase_project_setup(
             else:
                 resolved_ide = "claude-code"
 
-    trw_cmd = find_trw_cmd(python)
+    trw_cmd = find_trw_cmd(python, pip_target=pip_target)
     action = "update-project" if is_update else "init-project"
     label = "Updating" if is_update else "Initializing"
 
@@ -1381,7 +1387,14 @@ def phase_project_setup(
     # Generate per-client instruction files after project setup
     # (FR01, FR02, FR03: Split AGENTS.md into per-client instruction files)
     if resolved_ide in ("all", "opencode", "codex"):
-        _generate_per_client_instructions(ui, target_dir, resolved_ide, is_update)
+        _generate_per_client_instructions(
+            ui,
+            target_dir,
+            resolved_ide,
+            is_update,
+            python,
+            pip_target=pip_target,
+        )
 
 
 def phase_configure(
@@ -1653,7 +1666,14 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
 # ── Per-client instruction file generation ────────────────────────────
 
 
-def _generate_per_client_instructions(ui: UI, target_dir: Path, ide_selection: str, is_update: bool) -> None:
+def _generate_per_client_instructions(
+    ui: UI,
+    target_dir: Path,
+    ide_selection: str,
+    is_update: bool,
+    python: str,
+    pip_target: str = "",
+) -> None:
     """Generate per-client instruction files for selected IDEs.
 
     Calls the TRW bootstrap functions to generate INSTRUCTIONS.md files
@@ -1664,7 +1684,7 @@ def _generate_per_client_instructions(ui: UI, target_dir: Path, ide_selection: s
     """
     import subprocess
 
-    trw_cmd = ["trw-mcp", "update-project", str(target_dir)]
+    trw_cmd = find_trw_cmd(python, pip_target=pip_target) + ["update-project", str(target_dir)]
 
     if ide_selection == "all":
         # Generate for all supported IDEs
@@ -1850,6 +1870,7 @@ def main() -> None:
             args.upgrade,
             interactive=interactive,
             ide=args.ide,
+            pip_target=args.pip_target,
         )
 
         # Step N+1 (conditional): Configure
