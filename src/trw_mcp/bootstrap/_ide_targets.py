@@ -339,16 +339,23 @@ def _update_gemini_artifacts(
     if "gemini" not in ide_targets:
         return
 
-    for name, fn in [
-        ("GEMINI.md", generate_gemini_instructions),
-        ("MCP config", generate_gemini_mcp_config),
-        ("agents", generate_gemini_agents),
-    ]:
-        try:
-            sub_result = fn(target_dir)
-            _absorb_sub_result(result, sub_result)
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f"gemini {name} update skipped: {exc}")
+    try:
+        instr_result = generate_gemini_instructions(target_dir)
+        _absorb_sub_result(result, instr_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"GEMINI.md update skipped: {exc}")
+
+    try:
+        mcp_result = generate_gemini_mcp_config(target_dir)
+        _absorb_sub_result(result, mcp_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"gemini MCP config update skipped: {exc}")
+
+    try:
+        agents_result = generate_gemini_agents(target_dir)
+        _absorb_sub_result(result, agents_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"gemini agents update skipped: {exc}")
 
 
 def _extract_trw_section_content() -> str:
