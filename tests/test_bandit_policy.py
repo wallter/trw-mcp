@@ -929,6 +929,31 @@ class TestBanditStateEnvelope:
         stored = json.loads((meta_dir / "bandit_state.json").read_text(encoding="utf-8"))
         assert stored["model_family"] == "claude-sonnet-4"
 
+    def test_client_profile_mismatch_on_same_model_returns_fresh_bandit(
+        self, tmp_path: Path
+    ) -> None:
+        """Switching client class under one model family resets Thompson state."""
+        import json
+        from trw_mcp.state.bandit_policy import load_bandit_state, save_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        meta_dir = trw_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        bandit = BanditSelector()
+        bandit.update("arm-1", 0.8)
+        save_bandit_state(trw_dir, bandit, "full_mode", "test-model")
+
+        loaded = load_bandit_state(trw_dir, "light_mode", "test-model")
+        assert len(loaded._arms) == 0
+
+        save_bandit_state(trw_dir, loaded, "light_mode", "test-model")
+        stored = json.loads((meta_dir / "bandit_state.json").read_text(encoding="utf-8"))
+        assert stored["client_profile"] == "light_mode"
+        assert stored["model_family"] == "test-model"
+        assert "full_mode::test-model" in stored.get("quarantined", {})
+
     def test_save_uses_atomic_write_pattern(self, tmp_path: Path) -> None:
         """save_bandit_state uses temp file + rename (atomic write)."""
         import json
@@ -1023,6 +1048,50 @@ class TestBanditStateEnvelope:
         restored.seed_thompson_fallback(bandit)
         selected_id, _ = restored.select(["arm-a", "arm-b"], context_vector=context)
         assert selected_id == "arm-a"
+
+    def test_contextual_state_resets_on_client_profile_mismatch_same_model(
+        self, tmp_path: Path
+    ) -> None:
+        """Switching client class under one model family resets contextual state."""
+        import json
+        from trw_mcp.state.bandit_policy import (
+            ENGINEERING_CONTEXT_DIM,
+            build_context_vector,
+            load_contextual_bandit_state,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector, ContextualBanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        meta_dir = trw_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        contextual = ContextualBanditSelector(feature_dim=ENGINEERING_CONTEXT_DIM, alpha=0.5)
+        context = build_context_vector(phase="validate", session_progress=0.8, domain_similarity=1.0)
+        for _ in range(5):
+            contextual.update("arm-a", 0.9, context_vector=context)
+
+        save_bandit_state(
+            trw_dir,
+            BanditSelector(),
+            "full_mode",
+            "test-model",
+            contextual_bandit=contextual,
+        )
+
+        restored = load_contextual_bandit_state(
+            trw_dir,
+            client_profile="light_mode",
+            model_family="test-model",
+        )
+        assert restored is not None
+        assert restored._arms == {}
+
+        save_bandit_state(trw_dir, BanditSelector(), "light_mode", "test-model")
+        stored = json.loads((meta_dir / "bandit_state.json").read_text(encoding="utf-8"))
+        assert stored["client_profile"] == "light_mode"
+        assert stored["contextual_state"] == {}
+        assert "full_mode::test-model" in stored.get("quarantined", {})
 
     def test_quarantine_preserves_old_data_in_file(self, tmp_path: Path) -> None:
         """Quarantined arm data is retained in the JSON file for offline replay."""
@@ -1962,6 +2031,36 @@ class TestFR05ProductionPath:
             f"Expected restored detector n=5, got n={restored_n}; "
             "detector state was not correctly restored from envelope"
         )
+
+    def test_detector_state_not_restored_across_client_profiles(
+        self, tmp_path: Path
+    ) -> None:
+        """Switching client class under one model family returns a fresh policy."""
+        from trw_mcp.state.bandit_policy import (
+            WithholdingPolicy,
+            load_bandit_state_and_policy,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
+        arm_id = "L-client-scope"
+        bandit = BanditSelector()
+        policy = WithholdingPolicy(client_class="full_mode")
+        for _ in range(3):
+            bandit.update(arm_id, 0.8)
+            policy.update_reward(arm_id, 0.8)
+
+        save_bandit_state(trw_dir, bandit, "full_mode", "test-model", policy=policy)
+
+        restored_bandit, restored_policy = load_bandit_state_and_policy(
+            trw_dir, "light_mode", "test-model"
+        )
+
+        assert len(restored_bandit._arms) == 0
+        assert arm_id not in restored_policy._detectors
 
     def test_page_hinkley_alarm_reachable_across_sessions(self, tmp_path: Path) -> None:
         """Forced trigger #4 accumulates across simulated sessions and fires.
