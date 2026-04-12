@@ -4,6 +4,20 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.41.2] — 2026-04-12
+
+### Fixed
+
+- **Runaway memory consolidation** (PRD-FIX-071) — tag-overlap clustering fallback created super-clusters of 900+ entries via transitive union-find, producing entries with 1500+ tags and recurrence 950,000+ that poisoned all recall queries
+  - `max_cluster_size` cap (default 10) prevents super-clusters in union-find
+  - `max_consolidated_tags` cap (default 20) keeps top-N tags by cluster frequency
+  - Cluster size sanity check in `consolidate_cycle` skips oversized clusters
+  - Tag cap on `merge_entries` prevents unbounded growth during dedup merges
+  - `min_shared_tags` increased from 2 to 3 in tag-overlap fallback
+  - Recurrence now uses `len(cluster)` instead of exponentially-compounding `sum()`
+  - New `TRWConfig` fields: `max_cluster_size`, `max_consolidated_tags`
+- **Recall returns obsolete entries** — `trw_recall` now defaults to `status="active"`, excluding obsolete/corrupted entries from results
+
 ## [0.41.1] — 2026-04-12
 
 ### Added

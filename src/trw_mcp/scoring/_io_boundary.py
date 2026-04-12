@@ -14,6 +14,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -106,6 +107,14 @@ def _backfill_yaml_path_index(lid: str, entry_path: Path | None) -> None:
         return
     with _yaml_path_index_lock:
         _yaml_path_index[lid] = entry_path
+
+
+def _safe_mtime(path: Path) -> float | None:
+    """Return file mtime, or None when the path cannot be stat'ed."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +403,7 @@ __all__ = [
 ]
 
 
-def _find_session_start_ts(trw_dir: Path) -> "datetime | None":
+def _find_session_start_ts(trw_dir: Path) -> datetime | None:
     """Find the timestamp of the most recent session-start event.
 
     Scans all events.jsonl files under runs_root/**/ for the most recent
@@ -414,7 +423,6 @@ def _find_session_start_ts(trw_dir: Path) -> "datetime | None":
         Timestamp of the most recent session-start event, or None.
     """
     import json
-    from datetime import datetime, timezone
 
     from trw_mcp.scoring._utils import TRWConfig, get_config
 
@@ -427,11 +435,9 @@ def _find_session_start_ts(trw_dir: Path) -> "datetime | None":
 
     events_files: list[tuple[float, Path]] = []
     for events_path in runs_root.glob("**/meta/events.jsonl"):
-        try:
-            mtime = events_path.stat().st_mtime
+        mtime = _safe_mtime(events_path)
+        if mtime is not None:
             events_files.append((mtime, events_path))
-        except OSError:
-            continue
 
     events_files.sort(reverse=True)
 
