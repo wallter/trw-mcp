@@ -13,21 +13,32 @@ from __future__ import annotations
 
 from typing import Literal
 
+import structlog
+
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.state.claude_md._templates import (
     CEREMONY_TOOLS,
     PHASE_DESCRIPTIONS,
 )
 
+_logger = structlog.get_logger(__name__)
+
+# Type alias for the ceremony mode literal
+CeremonyMode = Literal["FULL", "MINIMAL", "COMPACT"]
+
 # Gemini marker constants (shared with _gemini.py)
 _GEMINI_TRW_START_MARKER = "<!-- trw:gemini:start -->"
 _GEMINI_TRW_END_MARKER = "<!-- trw:gemini:end -->"
 
-_SESSION_BOUNDARY_TEXT = (
+# Canonical session-boundary text — import from here, not _static_sections.
+SESSION_BOUNDARY_TEXT = (
     "Every session that loads learnings via `trw_session_start()` should persist "
     "them at session end \u2014 this is how your work compounds across sessions "
     "instead of being lost.\n"
 )
+
+# Quick-ref subset: the 4 highest-signal tools shown in the compact CLAUDE.md table
+_QUICK_REF_TOOLS = ("trw_session_start", "trw_learn", "trw_checkpoint", "trw_deliver")
 
 
 class ProtocolRenderer:
@@ -43,7 +54,7 @@ class ProtocolRenderer:
         self,
         client_profile: ClientProfile | None = None,
         model_family: str = "generic",
-        ceremony_mode: Literal["FULL", "MINIMAL", "COMPACT"] = "FULL",
+        ceremony_mode: CeremonyMode = "FULL",
         # Legacy compat for _opencode_sections.py which passes platform= directly
         platform: str | None = None,
     ) -> None:
@@ -57,7 +68,13 @@ class ProtocolRenderer:
             )
             self.platform = platform or "generic"
         self.model_family = model_family
-        self.ceremony_mode = ceremony_mode
+        self.ceremony_mode: CeremonyMode = ceremony_mode
+        _logger.debug(
+            "renderer_init",
+            platform=self.platform,
+            model_family=model_family,
+            ceremony_mode=ceremony_mode,
+        )
 
     # ------------------------------------------------------------------
     # FR02: Ceremony quick-reference table (from CEREMONY_TOOLS)
@@ -68,20 +85,21 @@ class ProtocolRenderer:
 
         PRD-CORE-131-FR02: Generated from ``CEREMONY_TOOLS`` with
         client-specific notes injection (e.g., Gemini 1M token advice).
+        Only the 4 highest-signal tools are shown in the compact table;
+        the full table is in ``render_ceremony_table()``.
         """
-        return (
-            "## TRW Behavioral Protocol (Auto-Generated)\n"
-            "\n"
-            "| Tool | When | Why |\n"
-            "|------|------|-----|\n"
-            "| `trw_session_start()` | First action | Loads prior learnings so you don't repeat solved problems or rediscover known gotchas |\n"
-            "| `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual technical insights.** NEVER record \"task completed\" or routine status updates |\n"
-            "| `trw_checkpoint(message)` | After milestones | If context compacts, you resume here instead of re-implementing from scratch |\n"
-            "| `trw_deliver()` | Last action | Persists your session's discoveries for future agents \u2014 without it, your learnings die with your context window |\n"
-            "\n"
-            "Full tool lifecycle: `/trw-ceremony-guide`\n"
-            "\n"
-        )
+        lines = [
+            "## TRW Behavioral Protocol (Auto-Generated)",
+            "",
+            "| Tool | When | Why |",
+            "|------|------|-----|",
+        ]
+        for ct in CEREMONY_TOOLS:
+            if ct.tool in _QUICK_REF_TOOLS:
+                # Use the example as the display call (keeps it concrete)
+                lines.append(f"| `{ct.example}` | {ct.when} | {ct.what} |")
+        lines.extend(["", "Full tool lifecycle: `/trw-ceremony-guide`", ""])
+        return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------
     # Phase descriptions
@@ -178,7 +196,7 @@ class ProtocolRenderer:
 
     def render_closing_reminder(self) -> str:
         """Render closing reminder that bookends the auto-generated section."""
-        return "### Session Boundaries\n\n" + _SESSION_BOUNDARY_TEXT + "\n"
+        return "### Session Boundaries\n\n" + SESSION_BOUNDARY_TEXT + "\n"
 
     # ------------------------------------------------------------------
     # FR04: Behavioral protocol (FULL mode)
@@ -215,8 +233,22 @@ class ProtocolRenderer:
             "- **Start**: call `trw_session_start()` to load prior learnings\n"
             "- **Finish**: call `trw_deliver()` to persist discoveries (not status reports)\n"
             "- **Verify**: Run tests after each change \u2014 fix failures before moving on.\n"
-            "\n" + _SESSION_BOUNDARY_TEXT
+            "\n" + SESSION_BOUNDARY_TEXT
         )
+
+    # ------------------------------------------------------------------
+    # FR04: Compact protocol (COMPACT mode)
+    # ------------------------------------------------------------------
+
+    def render_compact_protocol(self) -> str:
+        """Render a compact ceremony protocol — quick-ref table + session boundaries.
+
+        PRD-CORE-131-FR04: COMPACT ceremony mode output.
+        Includes the quick-reference table (4 core tools) and session
+        boundary reminder, but omits phases, full tool table, and flows.
+        Suitable for sub-instruction files and smaller context windows.
+        """
+        return self.render_ceremony_quick_ref() + SESSION_BOUNDARY_TEXT
 
     # ------------------------------------------------------------------
     # Gemini instructions

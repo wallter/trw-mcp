@@ -14,6 +14,7 @@ from trw_memory.models.config import MemoryConfig
 from trw_mcp.models.config import get_config
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.state._paths import resolve_project_root
+from trw_mcp.state.claude_md._renderer import SESSION_BOUNDARY_TEXT as _SESSION_BOUNDARY_TEXT
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 from trw_mcp.state.persistence import FileStateReader
 
@@ -81,13 +82,6 @@ def _format_learning_session_claim() -> str:
     session_label = "session" if sessions_tracked == 1 else "sessions"
     learning_label = "learning" if total_learnings == 1 else "learnings"
     return f"{total_learnings} {learning_label} from {sessions_tracked} prior {session_label}"
-
-
-_SESSION_BOUNDARY_TEXT = (
-    "Every session that loads learnings via `trw_session_start()` should persist "
-    "them at session end \u2014 this is how your work compounds across sessions "
-    "instead of being lost.\n"
-)
 
 
 def render_imperative_opener() -> str:
@@ -329,7 +323,8 @@ def render_shared_learnings() -> str:
             min_importance=0.7,
             limit=5,
         )
-    except Exception:
+    except Exception:  # justified: fail-open — graph backend may not be available
+        _logger.debug("shared_learnings_unavailable", exc_info=True)
         return ""
 
     if not entries:
