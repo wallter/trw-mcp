@@ -434,7 +434,7 @@ def register_learning_tools(server: FastMCP) -> None:
         query: str,
         tags: list[str] | None = None,
         min_impact: float = 0.0,
-        status: str | None = None,
+        status: str | None = "active",
         shard_id: str | None = None,
         max_results: int | None = None,
         compact: bool | None = None,

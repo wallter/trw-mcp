@@ -175,6 +175,10 @@ def execute_recall(
     rank_fn: Callable[..., list[dict[str, object]]] = _rank_by_utility or _default_rank
     collect_fn = _collect_context or _default_collect
 
+    # FIX-071: Default to active status to exclude obsolete/corrupted entries
+    if status is None:
+        status = "active"
+
     # Input validation (PRD-QUAL-042-FR06): impact bounds
     min_impact = max(0.0, min(1.0, min_impact))
 
