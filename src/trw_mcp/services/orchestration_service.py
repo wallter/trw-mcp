@@ -47,6 +47,7 @@ def scaffold_run_directory(
     *,
     runs_root: Path | None = None,
     trw_dir: Path | None = None,
+    run_id: str | None = None,
 ) -> RunScaffoldResult:
     """Create a minimal run directory structure for local ceremony fallback.
 
@@ -66,8 +67,9 @@ def scaffold_run_directory(
     resolved_trw = trw_dir or (Path.cwd() / ".trw")
     resolved_runs = runs_root or (resolved_trw / "runs")
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_id = f"{timestamp}-{secrets.token_hex(4)}"
+    if run_id is None:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        run_id = f"{timestamp}-{secrets.token_hex(4)}"
 
     run_root = resolved_runs / task_name / run_id
 

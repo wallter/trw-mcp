@@ -167,14 +167,14 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         task_dir = project_root / resolved_task_root / task_name
         resolved_runs_root = project_root / config.runs_root
         run_root = resolved_runs_root / task_name / run_id
-        run_subdirs = [
-            "meta",
-            "reports",
-            "scratch/_orchestrator",
-            "shards",
-        ]
-        for subdir in run_subdirs:
-            writer.ensure_dir(run_root / subdir)
+
+        # PRD-FIX-073-FR02: Delegate directory scaffolding to shared service layer
+        # (DRY with `trw-mcp local init` CLI subcommand)
+        from trw_mcp.services.orchestration_service import (
+            scaffold_run_directory as _scaffold_run,
+        )
+
+        _scaffold_run(task_name, runs_root=resolved_runs_root, trw_dir=trw_dir, run_id=run_id)
 
         initial_phase = Phase.RESEARCH
 
