@@ -113,7 +113,7 @@ def _default_config(
 
     # Target platforms -- controls which instruction files are written
     # (CLAUDE.md, AGENTS.md, .cursorrules, etc.) during deliver/sync.
-    # Supported: claude-code, opencode, cursor, codex, aider
+    # Supported: claude-code, opencode, cursor, codex, copilot, gemini, aider
     lines.append("")
     lines.append("# Target platforms for instruction file sync")
     lines.append("target_platforms:")

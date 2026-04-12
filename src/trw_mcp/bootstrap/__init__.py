@@ -107,6 +107,9 @@ from ._opencode import (
 from ._opencode import (
     merge_opencode_json as merge_opencode_json,
 )
+from ._gemini import generate_gemini_agents as generate_gemini_agents
+from ._gemini import generate_gemini_instructions as generate_gemini_instructions
+from ._gemini import generate_gemini_mcp_config as generate_gemini_mcp_config
 from ._update_project import (
     _CONTEXT_ALLOWLIST as _CONTEXT_ALLOWLIST,
 )
@@ -319,6 +322,9 @@ __all__ = [
     "_ensure_dir",
     "_extract_trw_section_content",
     "_files_identical",
+    "generate_gemini_agents",
+    "generate_gemini_instructions",
+    "generate_gemini_mcp_config",
     "_generate_mcp_json",
     "_generate_root_files",
     "_get_bundled_names",

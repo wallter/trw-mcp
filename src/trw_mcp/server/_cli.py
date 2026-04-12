@@ -158,7 +158,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument(
         "--ide",
-        choices=["claude-code", "cursor", "opencode", "codex", "all"],
+        choices=["claude-code", "cursor", "opencode", "codex", "copilot", "gemini", "aider", "all"],
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )
@@ -191,7 +191,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     update_parser.add_argument(
         "--ide",
-        choices=["claude-code", "cursor", "opencode", "codex", "all"],
+        choices=["claude-code", "cursor", "opencode", "codex", "copilot", "gemini", "aider", "all"],
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )
