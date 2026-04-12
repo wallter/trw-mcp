@@ -536,6 +536,13 @@ class TestGeminiAgents:
             content = agent_file.read_text()
             assert "mcp_trw_" in content, f"{agent_file.name} missing mcp_trw_ reference"
 
+    def test_explorer_uses_grep_search(self, fake_git_repo: Path) -> None:
+        """Explorer agent must use official 'grep_search' tool name (not search_file_content)."""
+        generate_gemini_agents(fake_git_repo)
+        explorer = (fake_git_repo / _GEMINI_AGENTS_DIR / "trw-explorer.md").read_text()
+        assert "grep_search" in explorer
+        assert "search_file_content" not in explorer
+
     def test_agents_no_overwrite_existing(self, fake_git_repo: Path) -> None:
         """Existing agent files preserved without force."""
         generate_gemini_agents(fake_git_repo)

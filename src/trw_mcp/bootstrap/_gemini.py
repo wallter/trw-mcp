@@ -220,7 +220,7 @@ tools:
   - read_file
   - read_many_files
   - glob
-  - search_file_content
+  - grep_search
   - list_directory
   - mcp_trw_*
 model: gemini-2.5-flash
@@ -267,7 +267,7 @@ tools:
   - read_file
   - read_many_files
   - glob
-  - search_file_content
+  - grep_search
   - list_directory
   - mcp_trw_*
 model: gemini-2.5-pro
@@ -291,7 +291,7 @@ description: >
 tools:
   - read_file
   - glob
-  - search_file_content
+  - grep_search
   - mcp_trw_*
 model: gemini-2.5-pro
 temperature: 0.3
