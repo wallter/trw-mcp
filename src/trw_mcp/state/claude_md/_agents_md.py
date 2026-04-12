@@ -252,12 +252,21 @@ def _sync_agents_md_if_needed(
         if "codex" in detected_ides and "opencode" not in detected_ides:
             effective_client = "codex"
 
+    # FR01 (PRD-CORE-135): resolve exposed tools so AGENTS.md only describes
+    # tools the agent can actually call.
+    from trw_mcp.state.claude_md._tool_manifest import resolve_exposed_tools
+
+    exposed = resolve_exposed_tools(
+        mode=config.effective_tool_exposure_mode,
+        custom_list=config.tool_exposure_list,
+    )
+
     if effective_client == "codex":
-        agents_body = render_codex_trw_section()
+        agents_body = render_codex_trw_section(exposed_tools=exposed)
     elif config.effective_ceremony_mode == "light":
         agents_body = render_minimal_protocol()
     else:
-        agents_body = render_agents_trw_section()
+        agents_body = render_agents_trw_section(exposed_tools=exposed)
 
     if config.agents_md_learning_injection:
         agents_body += _inject_learnings_to_agents(trw_dir, config, recall_fn=recall_fn)

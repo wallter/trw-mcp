@@ -483,12 +483,11 @@ def _run_local(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-def _run_check_instructions(args: argparse.Namespace) -> None:
-    """Handle the ``check-instructions`` subcommand (PRD-CORE-135-FR02).
+def _check_instructions_core(target: Path) -> tuple[int, dict[str, list[str]]]:
+    """Core logic for check-instructions, separated for testability.
 
-    Scans instruction files (AGENTS.md, CLAUDE.md) for trw_* tool mentions
-    and compares against the effective tool exposure list from config.
-    Exits with code 1 if mismatches found, 0 if clean.
+    Returns:
+        Tuple of (exit_code, mismatches_dict).
     """
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state.claude_md._tool_manifest import (
@@ -496,7 +495,6 @@ def _run_check_instructions(args: argparse.Namespace) -> None:
         validate_instruction_manifest,
     )
 
-    target = Path(getattr(args, "target_dir", ".")).resolve()
     config = TRWConfig()
     exposed = resolve_exposed_tools(
         mode=config.effective_tool_exposure_mode,
@@ -505,6 +503,7 @@ def _run_check_instructions(args: argparse.Namespace) -> None:
 
     files_to_check = ["AGENTS.md", "CLAUDE.md"]
     all_mismatches: dict[str, list[str]] = {}
+    files_scanned = 0
 
     for filename in files_to_check:
         filepath = target / filename
@@ -512,12 +511,35 @@ def _run_check_instructions(args: argparse.Namespace) -> None:
             continue
         try:
             content = filepath.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             logger.warning("check_instructions_read_error", path=str(filepath))
             continue
+        files_scanned += 1
         mismatches = validate_instruction_manifest(content, exposed)
         if mismatches:
             all_mismatches[filename] = mismatches
+
+    logger.info(
+        "check_instructions_complete",
+        target=str(target),
+        files_scanned=files_scanned,
+        exposed_count=len(exposed),
+        mismatch_files=len(all_mismatches),
+    )
+
+    exit_code = 1 if all_mismatches else 0
+    return exit_code, all_mismatches
+
+
+def _run_check_instructions(args: argparse.Namespace) -> None:
+    """Handle the ``check-instructions`` subcommand (PRD-CORE-135-FR02).
+
+    Scans instruction files (AGENTS.md, CLAUDE.md) for trw_* tool mentions
+    and compares against the effective tool exposure list from config.
+    Exits with code 1 if mismatches found, 0 if clean.
+    """
+    target = Path(getattr(args, "target_dir", ".")).resolve()
+    exit_code, all_mismatches = _check_instructions_core(target)
 
     if not all_mismatches:
         print("OK: all instruction files reference only exposed tools")
@@ -528,7 +550,7 @@ def _run_check_instructions(args: argparse.Namespace) -> None:
 
     total = sum(len(v) for v in all_mismatches.values())
     print(f"\nTotal: {total} unexposed tool reference(s) in {len(all_mismatches)} file(s)")
-    sys.exit(1)
+    sys.exit(exit_code)
 
 
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {

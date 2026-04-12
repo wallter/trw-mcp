@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Final, NamedTuple
 
 import structlog
 
@@ -24,7 +25,15 @@ _logger = structlog.get_logger(__name__)
 # FR01: Canonical tool description mapping (single source of truth)
 # ---------------------------------------------------------------------------
 
-TOOL_DESCRIPTIONS: dict[str, str] = {
+
+class ToolEntry(NamedTuple):
+    """A tool name paired with its human-readable description."""
+
+    name: str
+    description: str
+
+
+TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     # Core
     "trw_session_start": "Load prior learnings and recover any active run",
     "trw_checkpoint": "Save milestone progress so you can resume after interruptions",
@@ -40,6 +49,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "trw_review": "Run code review analysis on changed files",
     "trw_prd_create": "Create a new PRD from a template",
     "trw_prd_validate": "Validate PRD structure and completeness",
+    "trw_prd_draft_frs": "Draft AARE-F Functional Requirements from a research report",
     # Observability
     "trw_status": "Show current run status and session overview",
     "trw_run_report": "Generate a detailed report for a completed run",
@@ -75,7 +85,7 @@ assert _ALL_TOOLS == _DESCRIBED_TOOLS, (
 def resolve_exposed_tools(
     mode: str = "all",
     custom_list: tuple[str, ...] | list[str] = (),
-) -> set[str]:
+) -> frozenset[str]:
     """Resolve the set of exposed tool names from mode + custom list.
 
     Args:
@@ -83,15 +93,19 @@ def resolve_exposed_tools(
         custom_list: Explicit tool list when mode is "custom".
 
     Returns:
-        Set of tool names that are currently exposed.
+        Immutable set of tool names that are currently exposed.
     """
     if mode == "custom":
-        return set(custom_list)
+        result = frozenset(custom_list)
+        _logger.debug("resolved_exposed_tools", mode=mode, count=len(result))
+        return result
     preset = TOOL_PRESETS.get(mode)
     if preset is None:
-        _logger.warning("unknown_tool_exposure_mode", mode=mode)
-        return set(TOOL_PRESETS["all"])
-    return set(preset)
+        _logger.warning("unknown_tool_exposure_mode", mode=mode, fallback="all")
+        return frozenset(TOOL_PRESETS["all"])
+    result = frozenset(preset)
+    _logger.debug("resolved_exposed_tools", mode=mode, count=len(result))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +114,7 @@ def resolve_exposed_tools(
 
 
 def render_tool_list(
-    exposed_tools: set[str] | None = None,
+    exposed_tools: frozenset[str] | set[str] | None = None,
     *,
     prefix: str = "- ",
     include_backticks: bool = True,
@@ -115,14 +129,17 @@ def render_tool_list(
     Returns:
         Rendered markdown string with one tool per line.
     """
+    entries = [
+        ToolEntry(name=name, description=desc)
+        for name, desc in TOOL_DESCRIPTIONS.items()
+        if exposed_tools is None or name in exposed_tools
+    ]
     lines: list[str] = []
-    for tool_name, description in TOOL_DESCRIPTIONS.items():
-        if exposed_tools is not None and tool_name not in exposed_tools:
-            continue
+    for entry in entries:
         if include_backticks:
-            lines.append(f"{prefix}`{tool_name}()` \u2014 {description}")
+            lines.append(f"{prefix}`{entry.name}()` \u2014 {entry.description}")
         else:
-            lines.append(f"{prefix}{tool_name}() \u2014 {description}")
+            lines.append(f"{prefix}{entry.name}() \u2014 {entry.description}")
     return "\n".join(lines) + "\n" if lines else ""
 
 
@@ -133,12 +150,15 @@ def render_tool_list(
 # Matches trw_* tool names in running text. Does NOT match inside backtick
 # code blocks that are just describing the tool (we want to catch prose
 # mentions that promise tool availability).
-_TOOL_MENTION_RE = re.compile(r"\btrw_\w+\b")
+_TOOL_MENTION_RE: Final[re.Pattern[str]] = re.compile(r"\btrw_\w+\b")
+
+# Known non-tool trw_* identifiers that should never be flagged.
+_KNOWN_NON_TOOLS: Final[frozenset[str]] = frozenset(TOOL_DESCRIPTIONS.keys())
 
 
 def validate_instruction_manifest(
     instruction_text: str,
-    exposed_tools: set[str],
+    exposed_tools: frozenset[str] | set[str],
 ) -> list[str]:
     """Find trw_* tool mentions in instruction text that are not exposed.
 
@@ -150,9 +170,8 @@ def validate_instruction_manifest(
         Sorted list of tool names mentioned but NOT in exposed_tools.
     """
     mentioned = set(_TOOL_MENTION_RE.findall(instruction_text))
-    # Only flag names that are actually known tools (ignore trw_dir, etc.)
-    known_tools = set(TOOL_DESCRIPTIONS)
-    unexpected = (mentioned & known_tools) - exposed_tools
+    # Only flag names that are actually known tools (ignore trw_dir, trw_config, etc.)
+    unexpected = (mentioned & _KNOWN_NON_TOOLS) - set(exposed_tools)
     return sorted(unexpected)
 
 
@@ -163,11 +182,12 @@ def validate_instruction_manifest(
 
 def check_instruction_tool_parity(
     project_root: Path,
-    exposed_tools: set[str],
+    exposed_tools: frozenset[str] | set[str],
 ) -> str | None:
     """Check AGENTS.md for tool mentions not in the exposed set.
 
     This is delivery gate R-08 (soft warning, not a hard blocker).
+    Fail-open: returns None on any read error so delivery is not blocked.
 
     Args:
         project_root: Root directory of the project.
@@ -178,16 +198,22 @@ def check_instruction_tool_parity(
     """
     agents_md = project_root / "AGENTS.md"
     if not agents_md.exists():
+        _logger.debug("instruction_parity_skip", reason="no_agents_md", path=str(agents_md))
         return None
 
     try:
         content = agents_md.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         _logger.warning("instruction_parity_read_error", path=str(agents_md))
         return None
 
     mismatches = validate_instruction_manifest(content, exposed_tools)
     if not mismatches:
+        _logger.info(
+            "instruction_tool_parity_clean",
+            exposed_count=len(exposed_tools),
+            path=str(agents_md),
+        )
         return None
 
     warning = (
@@ -199,5 +225,6 @@ def check_instruction_tool_parity(
         "instruction_tool_parity_mismatch",
         mismatches=mismatches,
         count=len(mismatches),
+        exposed_count=len(exposed_tools),
     )
     return warning
