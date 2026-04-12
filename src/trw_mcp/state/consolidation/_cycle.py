@@ -41,14 +41,16 @@ def _create_consolidated_entry(
     detail: str,
     entries_dir: Path,
     writer: FileStateWriter,
+    *,
+    max_consolidated_tags: int = 20,
 ) -> dict[str, object]:
     """Create a new consolidated learning entry from a cluster.
 
     Derives the consolidated entry's fields from the cluster:
     - impact: max of cluster
-    - tags: sorted union of all tags
+    - tags: top-N most frequent tags across cluster (FIX-071-FR02)
     - evidence: union of all evidence (deduplicated)
-    - recurrence: sum of cluster recurrences
+    - recurrence: len(cluster) — count, not sum (FIX-071-FR06)
     - q_value: max of cluster q_values
 
     Writes the entry atomically via FileStateWriter.write_yaml.
@@ -59,6 +61,7 @@ def _create_consolidated_entry(
         detail: Consolidated detail text.
         entries_dir: Path to write the new entry YAML.
         writer: FileStateWriter for atomic writes.
+        max_consolidated_tags: Maximum tags on the consolidated entry (default 20).
 
     Returns:
         The new consolidated entry dict.
@@ -67,13 +70,22 @@ def _create_consolidated_entry(
 
     impact = max(float(str(e.get("impact", 0.5))) for e in cluster)
 
-    tags = sorted({str(t) for e in cluster for t in cast("list[object]", e.get("tags") or [])})
+    # FIX-071-FR02: Cap tags — keep the most frequent across cluster members
+    tag_freq: dict[str, int] = {}
+    for e in cluster:
+        for t in cast("list[object]", e.get("tags") or []):
+            tag_str = str(t)
+            tag_freq[tag_str] = tag_freq.get(tag_str, 0) + 1
+    # Sort by frequency descending, then alphabetically for stability
+    sorted_tags = sorted(tag_freq.keys(), key=lambda t: (-tag_freq[t], t))
+    tags = sorted_tags[:max_consolidated_tags]
 
     all_evidence: list[str] = list(
         dict.fromkeys(str(ev) for e in cluster for ev in cast("list[object]", e.get("evidence") or []))
     )
 
-    recurrence = sum(int(str(e.get("recurrence", 1))) for e in cluster)
+    # FIX-071-FR06: Use cluster size, not sum — sum compounds exponentially
+    recurrence = len(cluster)
     q_value = max(float(str(e.get("q_value", 0.0))) for e in cluster)
 
     consolidated_from = [str(e["id"]) for e in cluster if "id" in e]
@@ -243,6 +255,17 @@ def consolidate_cycle(
 
     for cluster in clusters:
         cluster_ids = [str(e.get("id", "")) for e in cluster]
+
+        # FIX-071-FR03: Cluster size sanity check — defense-in-depth
+        if len(cluster) > cfg.max_cluster_size:
+            logger.warning(
+                "consolidation_cluster_oversized",
+                cluster_size=len(cluster),
+                max_cluster_size=cfg.max_cluster_size,
+                cluster_ids=cluster_ids[:5],
+            )
+            continue
+
         try:
             # FR02: LLM summarization with FR05 fallback
             llm_result = _summarize_cluster_llm(cluster, llm)
@@ -255,7 +278,10 @@ def consolidate_cycle(
                 detail = fallback["detail"]
 
             # FR03: Create consolidated entry
-            new_entry = _create_consolidated_entry(cluster, summary, detail, entries_dir, writer)
+            new_entry = _create_consolidated_entry(
+                cluster, summary, detail, entries_dir, writer,
+                max_consolidated_tags=cfg.max_consolidated_tags,
+            )
             consolidated_id = str(new_entry["id"])
 
             # FR04: Archive originals

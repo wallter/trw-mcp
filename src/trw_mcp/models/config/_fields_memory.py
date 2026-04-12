@@ -51,13 +51,15 @@ class _MemoryFields:
     dedup_skip_threshold: float = 0.95
     dedup_merge_threshold: float = 0.85
 
-    # -- Memory consolidation (CORE-044) --
+    # -- Memory consolidation (CORE-044, FIX-071) --
 
     memory_consolidation_enabled: bool = True
     memory_consolidation_interval_days: int = 7
     memory_consolidation_min_cluster: int = Field(default=3, ge=2)
     memory_consolidation_similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     memory_consolidation_max_per_cycle: int = Field(default=50, ge=1)
+    max_cluster_size: int = Field(default=10, ge=2)
+    max_consolidated_tags: int = Field(default=20, ge=5)
 
     # -- Tiered memory (CORE-043) --
 

@@ -252,11 +252,13 @@ def merge_entries(
     new_entry_data: dict[str, object],
     reader: FileStateReader,
     writer: FileStateWriter,
+    *,
+    max_merge_tags: int = 20,
 ) -> Path:
     """Merge a new learning into an existing entry.
 
     Merge strategy:
-    - Tags: union of both sets
+    - Tags: union of both sets, capped at max_merge_tags (FIX-071-FR04)
     - Evidence: union of both sets
     - Impact: max(existing, new)
     - Recurrence: existing + 1
@@ -269,18 +271,23 @@ def merge_entries(
         new_entry_data: Dictionary of the new entry's fields.
         reader: FileStateReader for reading the existing entry.
         writer: FileStateWriter for writing the updated entry.
+        max_merge_tags: Maximum tags after merge (default 20). Existing tags
+            are preserved first; new tags added up to the limit.
 
     Returns:
         Path to the updated entry file (same as existing_path).
     """
     existing = reader.read_yaml(existing_path)
 
-    # Tags: union
+    # Tags: union, capped at max_merge_tags (FIX-071-FR04)
     raw_existing_tags = existing.get("tags") or []
     raw_new_tags = new_entry_data.get("tags") or []
     existing_tags = [str(t) for t in cast("list[object]", raw_existing_tags)]
     new_tags = [str(t) for t in cast("list[object]", raw_new_tags)]
     merged_tags = list(dict.fromkeys(existing_tags + [t for t in new_tags if t not in existing_tags]))
+    # FIX-071-FR04: Cap tag count — preserve existing tags, add new up to limit
+    if len(merged_tags) > max_merge_tags:
+        merged_tags = merged_tags[:max_merge_tags]
     existing["tags"] = merged_tags
 
     # Evidence: union
@@ -461,7 +468,7 @@ def batch_dedup(
                 merged_count += 1
             elif sim >= cfg.dedup_merge_threshold:
                 # Near-duplicate — merge j into i
-                merge_entries(path_i, data_j, reader, writer)
+                merge_entries(path_i, data_j, reader, writer, max_merge_tags=cfg.max_consolidated_tags)
                 data_j["status"] = "obsolete"
                 data_j["detail"] = str(data_j.get("detail", "")) + f"\n[Auto-merged into {id_i}, similarity={sim:.3f}]"
                 writer.write_yaml(path_j, data_j)
