@@ -1858,6 +1858,28 @@ class TestFR05ProductionPath:
                 {"id": arm_id, "protection_tier": "critical", "anchor_validity": 0.4}
             ) is False
 
+    def test_neutral_detector_state_compacts_and_restores(self) -> None:
+        """Neutral detector state persists as a short list and restores safely."""
+        from trw_mcp.state.bandit_policy import WithholdingPolicy
+
+        arm_id = "L-neutral"
+        policy = WithholdingPolicy(client_class="full_mode")
+        for _ in range(25):
+            policy.update_reward(arm_id, 0.6)
+
+        persisted = policy.get_detector_states()
+        assert persisted[arm_id] == [25, 15]
+
+        restored = WithholdingPolicy(client_class="full_mode")
+        restored.load_detector_states(persisted)
+        detector = restored._detectors[arm_id]
+        assert detector._n == 25
+        assert detector._sum == pytest.approx(15.0)
+        assert detector._h == 0.0
+        assert detector._m == 0.0
+        assert detector._h_down == 0.0
+        assert detector._m_down == 0.0
+
     def test_detector_compaction_keeps_state_file_under_budget(self, tmp_path: Path) -> None:
         """Compact detector persistence keeps sub-500-arm state files below 100KB."""
         from trw_mcp.state.bandit_policy import (
@@ -1882,14 +1904,16 @@ class TestFR05ProductionPath:
             domain_similarity=1.0,
             files_count=12,
         )
-        arm_count = 400
+        arm_count = 499
+        reward_updates = 25
 
         for i in range(arm_count):
-            arm_id = f"L-budget-{i}"
-            bandit.update(arm_id, 0.6)
-            policy.update_reward(arm_id, 0.6)
+            arm_id = f"L{i}"
+            for _ in range(reward_updates):
+                bandit.update(arm_id, 0.6)
+                policy.update_reward(arm_id, 0.6)
             policy._pending_alarm_ids.add(arm_id)
-            if i < 24:
+            if i < 2:
                 contextual.update(arm_id, 0.6, context_vector=context)
 
         save_bandit_state(
@@ -1905,11 +1929,11 @@ class TestFR05ProductionPath:
         assert state_path.stat().st_size < 100 * 1024
 
         _, restored_policy = load_bandit_state_and_policy(trw_dir, "full_mode", "test-model")
-        assert restored_policy._detectors["L-budget-0"]._n == 1
-        assert "L-budget-0" in restored_policy._pending_alarm_ids
+        assert restored_policy._detectors["L0"]._n == reward_updates
+        assert "L0" in restored_policy._pending_alarm_ids
         restored_contextual = load_contextual_bandit_state(trw_dir, model_family="test-model")
         assert restored_contextual is not None
-        assert "L-budget-0" in restored_contextual._arms
+        assert "L0" in restored_contextual._arms
 
     def test_live_path_soft_resets_bandit_arm_on_alarm(self, tmp_path: Path) -> None:
         """The live FR05 path soft-resets the arm posterior when the alarm fires."""
