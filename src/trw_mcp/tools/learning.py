@@ -350,16 +350,18 @@ def register_learning_tools(server: FastMCP) -> None:
                 logger.debug("feedback_update_failed", learning_id=learning_id, feedback=feedback, exc_info=True)
 
         # Validate and store assertions via backend (PRD-CORE-086 FR12)
+        validated_assertions: list[dict[str, object]] | None = None
         if assertions is not None:
             from trw_memory.models.memory import Assertion
 
-            validated: list[Assertion] = [Assertion.model_validate(a) for a in assertions]
+            validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
+            validated_assertions = [a.model_dump() for a in validated]
             try:
                 backend = get_backend(trw_dir)
                 existing = backend.get(learning_id)
                 if existing is not None:
                     existing.assertions = validated
-                    backend.update(learning_id, assertions=[a.model_dump() for a in validated])
+                    backend.update(learning_id, assertions=validated_assertions)
             except Exception:  # justified: fail-open, assertion persistence must not block learn_update
                 logger.debug("assertion_update_failed", learning_id=learning_id, exc_info=True)
 
@@ -416,6 +418,8 @@ def register_learning_tools(server: FastMCP) -> None:
                         data["summary"] = summary
                     if impact is not None:
                         data["impact"] = impact
+                    if validated_assertions is not None:
+                        data["assertions"] = validated_assertions
                     data["updated"] = _today_iso
                     # PRD-CORE-110: Sync typed fields to YAML backup
                     if type is not None:
@@ -487,6 +491,7 @@ def register_learning_tools(server: FastMCP) -> None:
         from trw_mcp.tools._recall_impl import execute_recall
 
         trw_dir = resolve_trw_dir()
+        injected_ids = _read_injected_ids(trw_dir)
         # Resolve from this module's namespace so test patches work
         result = execute_recall(
             query=query,
@@ -497,6 +502,7 @@ def register_learning_tools(server: FastMCP) -> None:
             status=status,
             shard_id=shard_id,
             max_results=max_results,
+            deprioritized_ids=injected_ids,
             compact=compact,
             ultra_compact=ultra_compact,
             topic=topic,
