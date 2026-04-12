@@ -182,7 +182,7 @@ class TestPropensityEntryMetadataFields:
         assert entry["trw_version"] == "v24.3_TRW"
 
     def test_metadata_failopen_on_config_error(self, tmp_path: Path) -> None:
-        """Metadata stays empty when config auto-detection fails."""
+        """Metadata falls back safely when config auto-detection fails."""
         from trw_mcp.state.propensity_log import log_selection
 
         trw_dir = tmp_path / ".trw"
@@ -196,7 +196,7 @@ class TestPropensityEntryMetadataFields:
             (trw_dir / "logs" / "propensity.jsonl").read_text().strip()
         )
         assert entry["client_profile"] == ""
-        assert entry["model_family"] == ""
+        assert entry["model_family"] == "generic"
         assert entry["trw_version"] == ""
 
 
