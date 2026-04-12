@@ -258,3 +258,134 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
         "install_sqlitevec": True,
         "pip_target": "/tmp/trw-pip",
     }
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_find_trw_cmd_prefers_pip_target_wrapper(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
+    module = _load_installer_module(installer_path)
+    wrapper = tmp_path / "trw-pip" / "bin" / "trw-mcp"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/bash\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/local/bin/trw-mcp")
+
+    assert module.find_trw_cmd(sys.executable, pip_target=str(tmp_path / "trw-pip")) == [str(wrapper)]
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_phase_project_setup_prefers_pip_target_wrapper_and_threads_it_to_instruction_generation(
+    installer_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
+    ui = MagicMock()
+    target_dir = tmp_path / "project"
+    wrapper = tmp_path / "trw-pip" / "bin" / "trw-mcp"
+    target_dir.mkdir()
+    (target_dir / ".git").mkdir()
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/bash\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+
+    run_calls: list[list[str]] = []
+    instruction_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(module, "_detect_installed_clis", lambda: [])
+    monkeypatch.setattr(module, "_detect_project_ides", lambda _path: ["codex"])
+    monkeypatch.setattr(module, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True)
+    monkeypatch.setattr(
+        module,
+        "_generate_per_client_instructions",
+        lambda _ui, _target_dir, ide_selection, is_update, python, pip_target="": instruction_calls.append(
+            {
+                "ide_selection": ide_selection,
+                "is_update": is_update,
+                "python": python,
+                "pip_target": pip_target,
+            }
+        ),
+    )
+
+    module.phase_project_setup(
+        ui,
+        3,
+        4,
+        sys.executable,
+        target_dir,
+        False,
+        interactive=False,
+        ide="codex",
+        pip_target=str(tmp_path / "trw-pip"),
+    )
+
+    assert run_calls == [[str(wrapper), "init-project", str(target_dir), "--ide", "codex"]]
+    assert instruction_calls == [
+        {
+            "ide_selection": "codex",
+            "is_update": False,
+            "python": sys.executable,
+            "pip_target": str(tmp_path / "trw-pip"),
+        }
+    ]
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
+    module = _load_installer_module(installer_path)
+    project_dir = tmp_path / "project"
+    scratch_dir = tmp_path / "scratch"
+    project_dir.mkdir()
+    scratch_dir.mkdir()
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(module, "show_banner", lambda ui: None)
+    monkeypatch.setattr(module, "show_success_banner", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir: {})
+    monkeypatch.setattr(module, "check_python_version", lambda ui: sys.executable)
+    monkeypatch.setattr(module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl"))
+    monkeypatch.setattr(module, "phase_install_packages", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "phase_install_extras", lambda *args, **kwargs: [])
+    monkeypatch.setattr(module, "_restart_mcp_servers", lambda target_dir, ui: None)
+    monkeypatch.setattr(module.tempfile, "mkdtemp", lambda prefix="": str(scratch_dir))
+    monkeypatch.setattr(module.shutil, "rmtree", lambda path: None)
+    monkeypatch.setattr(
+        module,
+        "phase_project_setup",
+        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="": observed.update(
+            {
+                "step": step,
+                "total": total,
+                "python": python,
+                "target_dir": target_dir,
+                "upgrade_only": upgrade_only,
+                "interactive": interactive,
+                "ide": ide,
+                "pip_target": pip_target,
+            }
+        ),
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "install-trw.py",
+            "--script",
+            "--pip-target",
+            "/tmp/trw-pip",
+            str(project_dir),
+        ],
+    )
+
+    module.main()
+
+    assert observed == {
+        "step": 3,
+        "total": 3,
+        "python": sys.executable,
+        "target_dir": project_dir,
+        "upgrade_only": False,
+        "interactive": False,
+        "ide": None,
+        "pip_target": "/tmp/trw-pip",
+    }
