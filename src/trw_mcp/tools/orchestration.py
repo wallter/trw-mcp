@@ -83,6 +83,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         wave_manifest: list[dict[str, object]] | None = None,
         complexity_signals: dict[str, object] | None = None,
         artifacts: list[str] | None = None,
+        complexity_hint: Literal["EASY", "STANDARD", "HARD"] | None = None,
     ) -> dict[str, str]:
         """Create your run directory so checkpoints and progress tracking work — required for structured tasks.
 
@@ -104,7 +105,10 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             artifacts: Optional list of artifact file paths (PRDs, exec plans, sprint docs)
                 to scan for knowledge requirements (PRD-CORE-106). Extracted domains and
                 learning IDs are stored in run metadata for recall boosting.
+            complexity_hint: Optional hint to force a ceremony tier (EASY=MINIMAL, etc).
         """
+        from trw_mcp.models.run import ComplexityClass
+
         # Input validation (PRD-QUAL-042-FR01)
         if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", task_name):
             raise StateError(
@@ -187,7 +191,19 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         complexity_class_val = None
         complexity_override_val = None
         phase_reqs_val = None
-        if complexity_signals is not None:
+
+        if complexity_hint is not None:
+            # PRD-CORE-134: Map complexity_hint to class
+            hint_map = {
+                "EASY": ComplexityClass.MINIMAL,
+                "STANDARD": ComplexityClass.STANDARD,
+                "HARD": ComplexityClass.COMPREHENSIVE,
+            }
+            complexity_class_val = hint_map.get(complexity_hint)
+            if complexity_class_val:
+                phase_reqs_val = get_phase_requirements(complexity_class_val)
+
+        if complexity_class_val is None and complexity_signals is not None:
             # Parse dict[str, object] via model_validate for type safety
             parsed_signals = ComplexitySignals.model_validate(complexity_signals)
             tier, _raw, override = classify_complexity(parsed_signals)

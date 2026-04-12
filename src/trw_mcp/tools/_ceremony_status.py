@@ -370,23 +370,87 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
 def append_ceremony_status(
     response: dict[str, object],
     trw_dir: Path | None = None,
+    context: NudgeContext | None = None,
 ) -> dict[str, object]:
-    """Attach a live ceremony progress summary and learning nudge content to a tool response.
+    """Attach a live ceremony progress summary and nudge content to a tool response.
 
-    Sets ``ceremony_status`` (always) and ``nudge_content`` (when cache-ranked
-    or deterministic learning selection produces content).
+    Sets ``ceremony_status`` (always) and ``nudge_content`` (when a nudge pool
+    is selected and produces content).
 
     Fail-open: if the state cannot be read, the original response is returned.
     """
     try:
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state._ceremony_progress_state import (
+            increment_tool_call_counter,
+            record_pool_ignore,
+            record_pool_nudge,
+        )
+        from trw_mcp.state.ceremony_nudge import (
+            _select_nudge_pool,
+            _select_nudge_message,
+            _context_reactive_message,
+            _compute_urgency,
+            _highest_priority_pending_step,
+        )
+
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
         state = read_ceremony_state(effective_dir)
         response["ceremony_status"] = build_ceremony_status_line(state)
 
-        # Attempt cache-ranked / deterministic learning nudge.
-        nudge_content = _try_learning_nudge_content(effective_dir, state)
+        # Increment tool call counter for cooldown tracking (PRD-CORE-134)
+        try:
+            increment_tool_call_counter(effective_dir)
+            state.tool_call_counter += 1
+        except Exception:
+            pass
+
+        cfg = TRWConfig(trw_dir=str(effective_dir))
+        if not cfg.effective_nudge_enabled:
+            return response
+
+        # 1. Select nudge pool via weighted random with cooldowns
+        weights = cfg.client_profile.nudge_pool_weights
+        cooldown_after = cfg.nudge_pool_cooldown_after
+        cooldown_calls = cfg.nudge_pool_cooldown_calls
+
+        pool = _select_nudge_pool(state, weights, context, cooldown_after, cooldown_calls)
+        if not pool:
+            return response
+
+        nudge_content: str | None = None
+
+        # 2. Dispatch to pool-specific content generators
+        if pool == "learnings":
+            nudge_content = _try_learning_nudge_content(effective_dir, state)
+        elif pool == "workflow":
+            try:
+                from trw_mcp.state._nudge_content import load_pool_message
+                nudge_content = load_pool_message("workflow", phase_hint=state.phase)
+            except ImportError:
+                pass
+        elif pool == "ceremony":
+            pending = _highest_priority_pending_step(state)
+            if pending:
+                try:
+                    from trw_mcp.state._nudge_content import load_pool_message
+                    nudge_content = load_pool_message("ceremony", phase_hint=pending)
+                except ImportError:
+                    pass
+                if not nudge_content:
+                    nudge_content = _select_nudge_message(pending, state, available_learnings=0)
+        elif pool == "context" and context:
+            urgency = _compute_urgency(state, _highest_priority_pending_step(state) or "session_start")
+            nudge_content = _context_reactive_message(context, state, urgency=urgency)
+
+        # 3. Apply nudge content and update state
         if nudge_content:
             response["nudge_content"] = nudge_content
+            record_pool_nudge(effective_dir, pool)
+        else:
+            # If a pool was selected but failed to produce content, record as ignore
+            # so it enters cooldown and we try a different pool next time.
+            record_pool_ignore(effective_dir, pool)
 
     except Exception:  # justified: status decoration must never break tool responses
         logger.debug("append_ceremony_status_failed", exc_info=True)
