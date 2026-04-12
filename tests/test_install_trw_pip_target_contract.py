@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -146,6 +147,118 @@ def test_pip_install_disables_bytecode_writes(installer_path: Path, monkeypatch)
     assert all(call["env"]["PIP_CACHE_DIR"] == "/tmp/trw-pip/.cache/pip" for call in calls)
     assert all(call["env"]["XDG_CACHE_HOME"] == "/tmp/trw-pip/.cache" for call in calls)
     assert all(call["env"]["TMPDIR"] == "/tmp/trw-pip/.tmp" for call in calls)
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_pip_install_adds_no_deps_for_target_wheels_when_runtime_deps_are_already_present(
+    installer_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
+    ui = MagicMock()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(module, "_wheel_runtime_dependencies_satisfied", lambda wheel_path: True)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: calls.append(cmd) or SimpleNamespace(returncode=0),
+    )
+
+    assert module.pip_install(sys.executable, "/tmp/trw_mcp-0.41.1-py3-none-any.whl", "trw-mcp", ui, target_dir="/tmp/trw-pip")
+    assert calls == [
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--quiet",
+            "--no-deps",
+            "--target",
+            "/tmp/trw-pip",
+            "/tmp/trw_mcp-0.41.1-py3-none-any.whl",
+        ]
+    ]
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtime_deps_are_missing(
+    installer_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
+    ui = MagicMock()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(module, "_wheel_runtime_dependencies_satisfied", lambda wheel_path: False)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: calls.append(cmd) or SimpleNamespace(returncode=0),
+    )
+
+    assert module.pip_install(sys.executable, "/tmp/trw_mcp-0.41.1-py3-none-any.whl", "trw-mcp", ui, target_dir="/tmp/trw-pip")
+    assert calls == [
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--quiet",
+            "--target",
+            "/tmp/trw-pip",
+            "/tmp/trw_mcp-0.41.1-py3-none-any.whl",
+        ]
+    ]
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_wheel_runtime_dependencies_satisfied_parses_requires_dist(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
+    module = _load_installer_module(installer_path)
+    wheel_path = tmp_path / "demo-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel_path, "w") as wheel:
+        wheel.writestr(
+            "demo-0.1.0.dist-info/METADATA",
+            (
+                "Metadata-Version: 2.1\n"
+                "Name: demo\n"
+                "Version: 0.1.0\n"
+                "Requires-Dist: fastmcp>=3.0.0\n"
+                "Requires-Dist: platformdirs>=4.0.0; python_version >= '3.10'\n"
+            ),
+        )
+
+    versions = {"fastmcp": "3.2.3", "platformdirs": "4.9.6"}
+    monkeypatch.setattr(module.importlib_metadata, "version", lambda name: versions[name])
+
+    assert module._wheel_runtime_dependencies_satisfied(wheel_path) is True
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_wheel_runtime_dependencies_satisfied_returns_false_when_a_dependency_is_missing(
+    installer_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
+    wheel_path = tmp_path / "demo-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel_path, "w") as wheel:
+        wheel.writestr(
+            "demo-0.1.0.dist-info/METADATA",
+            (
+                "Metadata-Version: 2.1\n"
+                "Name: demo\n"
+                "Version: 0.1.0\n"
+                "Requires-Dist: missing-dep>=1.0.0\n"
+            ),
+        )
+
+    def fake_version(name: str) -> str:
+        raise module.importlib_metadata.PackageNotFoundError
+
+    monkeypatch.setattr(module.importlib_metadata, "version", fake_version)
+
+    assert module._wheel_runtime_dependencies_satisfied(wheel_path) is False
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])

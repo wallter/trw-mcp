@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.metadata as importlib_metadata
 import os
 import random
 import re
@@ -27,7 +28,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+import zipfile
+from email.parser import BytesParser
 from pathlib import Path
+
+from packaging.requirements import Requirement
 
 # ── Configuration (substituted by build_installer.py) ────────────────
 TRW_VERSION = "0.41.1"
@@ -527,6 +532,31 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
         return False
 
 
+def _wheel_runtime_dependencies_satisfied(wheel_path: Path) -> bool:
+    """Return True when installed packages already satisfy wheel dependencies."""
+    try:
+        with zipfile.ZipFile(wheel_path) as wheel:
+            metadata_name = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
+            metadata = BytesParser().parsebytes(wheel.read(metadata_name))
+    except (OSError, StopIteration, zipfile.BadZipFile, KeyError):
+        return False
+
+    for requirement_text in metadata.get_all("Requires-Dist", []):
+        try:
+            requirement = Requirement(requirement_text)
+        except Exception:
+            return False
+        if requirement.marker and not requirement.marker.evaluate({"extra": ""}):
+            continue
+        try:
+            installed_version = importlib_metadata.version(requirement.name)
+        except importlib_metadata.PackageNotFoundError:
+            return False
+        if requirement.specifier and not requirement.specifier.contains(installed_version, prereleases=True):
+            return False
+    return True
+
+
 def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str = "") -> bool:
     """Try pip install with escalating fallbacks.
 
@@ -538,6 +568,8 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     """
     base = [python, "-B", "-m", "pip", "install", "--upgrade", "--quiet"]
     if target_dir:
+        if package.endswith(".whl") and _wheel_runtime_dependencies_satisfied(Path(package)):
+            base.append("--no-deps")
         base += ["--target", target_dir]
 
     if _run_quiet(base + [package]):
