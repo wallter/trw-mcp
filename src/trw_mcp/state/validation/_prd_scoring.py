@@ -147,6 +147,11 @@ _FR_HEADING_RE = re.compile(r"^###\s+(?:PRD-[\w-]+-)?FR\d+.*$", re.MULTILINE)
 _ASSERTION_RE = re.compile(
     r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists"
 )
+_ASSERTION_BLOCK_RE = re.compile(r"```assertions\b.*?```", re.IGNORECASE | re.DOTALL)
+_ASSERTION_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?`?(?:grep_present|grep_absent|file_exists|command_succeeds|glob_exists)\b",
+    re.MULTILINE,
+)
 
 # Recognizable verification commands in PRD text.
 _VERIFICATION_COMMAND_RE = re.compile(
@@ -154,8 +159,24 @@ _VERIFICATION_COMMAND_RE = re.compile(
     re.IGNORECASE,
 )
 
-# AI/Agentic detection keywords (PRD-QUAL-055)
-_AI_KEYWORDS = ("ai", "llm", "agentic", "agent", "generative", "model")
+# AI/Agentic detection keywords (PRD-QUAL-055). Keep these boundary-aware to
+# avoid false positives from ordinary words like "maintainers".
+_AI_KEYWORD_RE = re.compile(
+    r"\b(?:ai|llm|agentic|generative|prompt(?:ing)?|inference|foundation model|language model)\b",
+    re.IGNORECASE,
+)
+_AI_OPERATIONAL_HEADINGS = (
+    "Data / Context Provenance",
+    "Failure Modes",
+    "Safe Degradation",
+    "Human Oversight",
+    "Escalation",
+    "Evaluation Plan",
+    "Release Gate",
+    "Monitoring Plan",
+    "Risk Register",
+    "Failure Class",
+)
 
 _REQUIRED_SUBSECTIONS_BY_VARIANT: dict[str, list[str]] = {
     "feature": [
@@ -285,9 +306,9 @@ def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
     """Heuristic detection of AI/LLM/agentic PRDs.
 
     Returns True if:
-    - PRD risk_level is "high" or "critical" AND category is QUAL/CORE, OR
-    - PRD contains AI/LLM/agentic keywords in content
-    - PRD frontmatter category is "QUAL" (explicit AI focus)
+    - PRD contains explicit AI/LLM/agentic keywords as standalone terms, or
+    - PRD includes AI operational headings used by the hardening template, or
+    - PRD category is QUAL and the document contains one of those explicit cues
 
     Args:
         frontmatter: Parsed YAML frontmatter dictionary.
@@ -297,15 +318,18 @@ def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
         True if the PRD appears to be AI/LLM/agentic in nature.
     """
     category = str(frontmatter.get("category", "")).upper()
-    risk_level = str(frontmatter.get("risk_level", "")).lower()
+    title = str(frontmatter.get("title", ""))
+    title_keyword_match = _AI_KEYWORD_RE.search(title) is not None
+    body_keyword_matches = {match.group(0).lower() for match in _AI_KEYWORD_RE.finditer(content)}
+    operational_heading_match = any(heading in content for heading in _AI_OPERATIONAL_HEADINGS)
 
-    # Explicit QUAL category or high-risk flag
-    if category == "QUAL" or risk_level in ("high", "critical"):
+    if operational_heading_match or title_keyword_match:
         return True
 
-    # Keyword detection (case-insensitive)
-    content_lower = content.lower()
-    return any(keyword in content_lower for keyword in _AI_KEYWORDS)
+    if category == "QUAL":
+        return bool(body_keyword_matches)
+
+    return len(body_keyword_matches) >= 2
 
 
 def _count_table_rows(content: str, heading: str) -> int:
@@ -343,6 +367,55 @@ def _collect_reference_matches(content: str, *patterns: re.Pattern[str]) -> set[
 def _normalize_reference_token(token: str) -> str:
     """Collapse selectors/anchors so test refs can be excluded from impl counts."""
     return token.split("::", 1)[0].split("#", 1)[0]
+
+
+def _has_impl_reference(content: str) -> bool:
+    """Return True when content contains at least one implementation file ref."""
+    impl_refs = _collect_reference_matches(content, _IMPL_REF_RE, _BARE_IMPL_REF_RE)
+    test_refs = _collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE)
+    normalized_test_refs = {_normalize_reference_token(token) for token in test_refs}
+    return any(
+        _normalize_reference_token(token) not in normalized_test_refs
+        for token in impl_refs
+    )
+
+
+def _has_test_reference(content: str) -> bool:
+    """Return True when content contains at least one test file ref."""
+    return bool(_collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE))
+
+
+def _extract_fr_id(label: str) -> str | None:
+    """Extract the normalized FR identifier from a heading or row label."""
+    match = re.search(r"\bFR\d+\b", label)
+    return match.group(0) if match else None
+
+
+def _extract_traceability_matrix_rows(content: str) -> dict[str, str]:
+    """Map each FR in the traceability matrix to its corresponding row content."""
+    if "Traceability Matrix" not in content:
+        return {}
+
+    matrix_tail = content.split("Traceability Matrix", 1)[1]
+    next_heading = re.search(r"^##\s+\d+\.\s+.+$", matrix_tail, re.MULTILINE)
+    matrix_section = matrix_tail[: next_heading.start()] if next_heading else matrix_tail
+
+    rows_by_fr: dict[str, list[str]] = {}
+    for line in matrix_section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or re.match(r"^\|[\s\-:|]+\|$", stripped):
+            continue
+        fr_id = _extract_fr_id(stripped)
+        if fr_id is None:
+            continue
+        rows_by_fr.setdefault(fr_id, []).append(stripped)
+
+    return {fr_id: "\n".join(rows) for fr_id, rows in rows_by_fr.items()}
+
+
+def _has_assertion_evidence(content: str) -> bool:
+    """Return True when content contains explicit assertion syntax, not prose mentions."""
+    return bool(_ASSERTION_BLOCK_RE.search(content) or _ASSERTION_LINE_RE.search(content))
 
 
 def _count_impl_refs(content: str) -> int:
@@ -426,8 +499,9 @@ def _score_file_path_coverage(
 ) -> float:
     """Score (FRs_with_impl + FRs_with_test) / (2 * total_FRs).
 
-    Uses ``_IMPL_REF_RE`` and ``_TEST_REF_RE`` to detect backtick-wrapped
-    file paths inside each FR section. Returns 0.0--1.0.
+    Counts file/test refs found either directly in each FR body or in the
+    corresponding Traceability Matrix row. Supports both bare and backtick-
+    wrapped references. Returns 0.0--1.0.
     """
     if not fr_sections:
         return 0.0
@@ -435,11 +509,16 @@ def _score_file_path_coverage(
     total_frs = len(fr_sections)
     frs_with_impl = 0
     frs_with_test = 0
+    traceability_rows = _extract_traceability_matrix_rows(content)
 
-    for _name, body in fr_sections:
-        if _IMPL_REF_RE.search(body):
+    for name, body in fr_sections:
+        fr_id = _extract_fr_id(name)
+        matrix_row = traceability_rows.get(fr_id, "") if fr_id is not None else ""
+        combined = body if not matrix_row else f"{body}\n{matrix_row}"
+
+        if _has_impl_reference(combined):
             frs_with_impl += 1
-        if _TEST_REF_RE.search(body):
+        if _has_test_reference(combined):
             frs_with_test += 1
 
     return (frs_with_impl + frs_with_test) / (2 * total_frs)
@@ -451,14 +530,15 @@ def _score_assertion_coverage(
 ) -> float:
     """Score FRs_with_assertion / total_FRs.
 
-    An FR "has an assertion" when it contains grep_present, grep_absent,
-    file_exists, command_succeeds, or glob_exists. Returns 0.0--1.0.
+    An FR "has an assertion" when it contains explicit assertion syntax
+    (fenced `````assertions```` blocks or assertion list items), not when it
+    merely mentions assertion keywords in prose. Returns 0.0--1.0.
     """
     if not fr_sections:
         return 0.0
 
     frs_with_assertion = sum(
-        1 for _name, body in fr_sections if _ASSERTION_RE.search(body)
+        1 for _name, body in fr_sections if _has_assertion_evidence(body)
     )
     return frs_with_assertion / len(fr_sections)
 
@@ -722,22 +802,19 @@ def score_traceability_v2(
     matrix_score = 0.0
     proof_score = 0.0
     if "Traceability Matrix" in content:
-        matrix_section = content.split("Traceability Matrix")[-1]
-        _impl_refs = _IMPL_REF_RE.findall(matrix_section)
-        _test_refs = _TEST_REF_RE.findall(matrix_section)
-        fr_refs = re.findall(r"FR\d+", matrix_section)
-        matrix_rows = [
-            line.strip()
-            for line in matrix_section.splitlines()
-            if line.strip().startswith("|") and not re.match(r"^\|[\s\-:|]+\|$", line.strip())
-        ]
+        traceability_rows = _extract_traceability_matrix_rows(content)
+        fr_refs = sorted(traceability_rows)
 
         if fr_refs:
-            rows_with_impl = sum(1 for row in matrix_rows if _IMPL_REF_RE.search(row))
-            rows_with_test = sum(1 for row in matrix_rows if _TEST_REF_RE.search(row))
-            rows_with_both = sum(1 for row in matrix_rows if _IMPL_REF_RE.search(row) and _TEST_REF_RE.search(row))
-            matrix_score = min((rows_with_impl + rows_with_test) / (2 * max(len(fr_refs), 1)), 1.0)
-            proof_score = min(rows_with_both / max(len(fr_refs), 1), 1.0)
+            rows_with_impl = sum(1 for row in traceability_rows.values() if _has_impl_reference(row))
+            rows_with_test = sum(1 for row in traceability_rows.values() if _has_test_reference(row))
+            rows_with_both = sum(
+                1
+                for row in traceability_rows.values()
+                if _has_impl_reference(row) and _has_test_reference(row)
+            )
+            matrix_score = min((rows_with_impl + rows_with_test) / (2 * len(fr_refs)), 1.0)
+            proof_score = min(rows_with_both / len(fr_refs), 1.0)
 
     behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
     behavior_switch_score = min(behavior_switch_rows / max(len(re.findall(r"FR\d+", content)), 1), 1.0)
@@ -834,8 +911,10 @@ def score_traceability_v2(
     details["assertion_coverage"] = round(assertion_cov, 4)
 
     # Additive bonus: file paths and assertions improve the score but their
-    # absence does not penalize (backward compat per NFR01)
-    coverage_bonus = (file_path_cov * 0.5 + assertion_cov * 0.5) * 0.10 * max_score
+    # absence does not penalize (backward compat per NFR01). The 15% ceiling
+    # is high enough that partial concrete coverage beats placeholder-only
+    # traceability, while still keeping matrix/proof coverage as the primary driver.
+    coverage_bonus = (file_path_cov * 0.5 + assertion_cov * 0.5) * 0.15 * max_score
     score = min(score + coverage_bonus, max_score)
 
     # Suggestions when coverage is low

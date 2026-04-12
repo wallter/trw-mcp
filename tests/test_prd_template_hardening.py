@@ -406,6 +406,33 @@ def test_non_ai_prd_not_penalized_for_missing_ai_sections() -> None:
         )
 
 
+def test_non_ai_prd_ignores_high_risk_and_substring_false_positives() -> None:
+    high_risk_non_ai = (
+        _BASE_FRONTMATTER.replace("title: Hardened PRD", "title: Maintainers workflow hardening")
+        .replace("status: draft", "status: done")
+        .replace("category: CORE", "category: CORE\n  risk_level: high")
+        + "# PRD-CORE-999: Maintainers workflow hardening\n\n"
+        + _TOP_LEVEL_SECTIONS
+        + """
+This PRD improves maintainer workflows and reviewer handoffs.
+It explicitly does not add LLM-based scoring to the system.
+
+### Primary Control Points
+| Surface | Current Behavior | Required Change | Code Path | Proof |
+|---------|------------------|-----------------|-----------|-------|
+| Templates | Manual drift | Category-aware defaults | `src/templates.py` | `tests/test_templates.py::test_defaults` |
+"""
+    )
+
+    result = validate_prd_quality_v2(high_risk_non_ai)
+
+    for dim in result.dimensions:
+        assert "ai_section_detected" not in dim.details, f"Dimension {dim.name} should not have ai_section_detected"
+        assert "ai_operational_evidence_detected" not in dim.details, (
+            f"Dimension {dim.name} should not have ai_operational_evidence_detected"
+        )
+
+
 def test_ai_prd_suggestions_reference_operational_gates() -> None:
     ai_prd_base = (
         _BASE_FRONTMATTER.replace("category: CORE", "category: QUAL")
