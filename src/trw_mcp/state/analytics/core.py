@@ -166,11 +166,17 @@ _NOISE_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"^(I |The |It |We )(read|wrote|opened|closed|ran|executed|checked|verified|confirmed|updated|modified|created|deleted|removed)\b",
         flags=re.IGNORECASE,
     ),
-    re.compile(r"^(Successfully|Done|Finished|Completed)\b", flags=re.IGNORECASE),
+    re.compile(r"^(?:Successfully|Done|Finished|Completed)\b", flags=re.IGNORECASE),
     re.compile(r"^(?:the |all )?tests? (?:passed|are passing)\b", flags=re.IGNORECASE),
     re.compile(r"^i made the (?:edit|change)\b", flags=re.IGNORECASE),
     re.compile(r"^updated the (?:file|code)\b", flags=re.IGNORECASE),
     re.compile(r"^the build (?:completed|passed|succeeded)\b", flags=re.IGNORECASE),
+    # PRD-QUAL-032-FR09: Catch task/phase completions that are PURE status reports (whole string match)
+    re.compile(r"^(?:PRD|FR|INFRA|CORE|QUAL|FIX)-\d+ (?:grooming|implementation|research|phase|sprint) (?:complete|completed|done|status)\.?$", flags=re.IGNORECASE),
+    re.compile(r"^(?:grooming|implementation|research|phase|sprint) (?:complete|completed|done)\.?$", flags=re.IGNORECASE),
+    re.compile(r"^task completed\.?$", flags=re.IGNORECASE),
+    re.compile(r"^all tests (?:passed|succeeded|passing)\.?$", flags=re.IGNORECASE),
+    re.compile(r"^[a-z0-9\-_\s]+ (?:complete|completed|done|succeeded)$", flags=re.IGNORECASE),
 )
 
 
