@@ -17,7 +17,6 @@ import structlog
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.run import EventType
 from trw_mcp.scoring._io_boundary import (
     _batch_sync_to_sqlite,
     _PendingUpdate,
@@ -31,6 +30,13 @@ from trw_mcp.scoring._io_boundary import (
 )
 from trw_mcp.scoring._io_boundary import (
     _sync_to_sqlite as _sync_to_sqlite,
+)
+from trw_mcp.scoring._reward_resolution import (
+    EVENT_ALIASES,
+    REWARD_MAP,
+    _resolve_event_reward,
+    compute_composite_outcome,
+    sigmoid_normalize,
 )
 from trw_mcp.scoring._utils import (
     TRWConfig,
@@ -80,58 +86,6 @@ def compute_initial_q_value(impact: float) -> float:
 
 
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
-
-# Reward mapping: EventType -> reward signal
-# PRD-CORE-026: Expanded from 6 to 12 entries
-# Sprint 8: Migrated from magic strings to EventType enum
-REWARD_MAP: dict[str, float] = {
-    EventType.TESTS_PASSED: 0.8,
-    EventType.TESTS_FAILED: -0.3,
-    EventType.TASK_COMPLETE: 0.5,
-    EventType.PHASE_GATE_PASSED: 1.0,
-    EventType.PHASE_GATE_FAILED: -0.5,
-    EventType.WAVE_VALIDATION_PASSED: 0.7,
-    EventType.SHARD_COMPLETE: 0.6,
-    EventType.REFLECTION_COMPLETE: 0.4,
-    EventType.COMPLIANCE_PASSED: 0.5,
-    EventType.FILE_MODIFIED: 0.2,
-    EventType.PRD_APPROVED: 0.7,
-    EventType.WAVE_COMPLETE: 0.8,
-    EventType.DELIVER_COMPLETE: 1.0,  # Highest reward -- delivery is the goal
-    EventType.BUILD_PASSED: 0.6,
-    EventType.BUILD_FAILED: -0.4,
-}
-
-# PRD-CORE-026: Alias mapping for internal event types that don't match
-# REWARD_MAP keys directly. Maps event_type -> REWARD_MAP key or direct
-# float reward. None values are explicitly ignored (no reward).
-# Sprint 8: Migrated from magic strings to EventType enum
-EVENT_ALIASES: dict[str, str | float | None] = {
-    # Wave/shard lifecycle
-    EventType.SHARD_COMPLETED: EventType.SHARD_COMPLETE,
-    EventType.SHARD_STARTED: None,  # No reward for starting
-    EventType.WAVE_VALIDATED: EventType.WAVE_VALIDATION_PASSED,
-    EventType.WAVE_COMPLETED: EventType.WAVE_COMPLETE,
-    # Phase lifecycle
-    EventType.PHASE_CHECK: None,  # Neutral -- result-specific events handle rewards
-    EventType.PHASE_ENTER: None,
-    EventType.PHASE_REVERT: -0.3,
-    # Run lifecycle
-    EventType.RUN_INIT: None,
-    EventType.RUN_RESUMED: None,
-    EventType.SESSION_START: None,
-    # PRD lifecycle
-    EventType.PRD_STATUS_CHANGE: None,  # Handled by data-aware routing below
-    EventType.PRD_CREATED: 0.3,
-    # Testing
-    EventType.TEST_RUN: None,  # Data-aware: routed by passed/failed in event_data
-    # Checkpoint/reflection
-    EventType.CHECKPOINT: 0.1,
-    EventType.REFLECTION_COMPLETED: EventType.REFLECTION_COMPLETE,
-    # Compliance
-    EventType.COMPLIANCE_CHECK: None,  # Data-aware routing
-}
-
 
 def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
     """Return learning IDs only for actual recall receipts.
@@ -430,117 +384,6 @@ def process_outcome(
     return updated_ids
 
 
-def _resolve_test_run_reward(
-    event_data: dict[str, object],
-) -> tuple[float | None, str]:
-    """Resolve test_run event to tests_passed or tests_failed."""
-    passed = event_data.get("passed")
-    if passed is True or str(passed).lower() == "true":
-        return REWARD_MAP.get(EventType.TESTS_PASSED), EventType.TESTS_PASSED
-    return REWARD_MAP.get(EventType.TESTS_FAILED), EventType.TESTS_FAILED
-
-
-def _resolve_prd_status_change_reward(
-    event_data: dict[str, object],
-) -> tuple[float | None, str]:
-    """Resolve prd_status_change event."""
-    new_status = str(event_data.get("new_status", "")).lower()
-    if new_status == "approved":
-        return REWARD_MAP.get(EventType.PRD_APPROVED), EventType.PRD_APPROVED
-    return None, EventType.PRD_STATUS_CHANGE
-
-
-def _resolve_compliance_check_reward(
-    event_data: dict[str, object],
-) -> tuple[float | None, str]:
-    """Resolve compliance_check event based on score."""
-    score = event_data.get("score")
-    if score is not None:
-        try:
-            if float(str(score)) >= 0.8:
-                return REWARD_MAP.get(EventType.COMPLIANCE_PASSED), EventType.COMPLIANCE_PASSED
-        except (ValueError, TypeError):
-            logger.debug("compliance_score_parse_failed", exc_info=True)
-    return None, EventType.COMPLIANCE_CHECK
-
-
-def _resolve_data_aware_routing(
-    event_type: str,
-    event_data: dict[str, object],
-) -> tuple[float | None, str] | None:
-    """Try data-aware routing for composite events.
-
-    Returns (reward, label) tuple if matched, None otherwise.
-    """
-    if event_type == EventType.TEST_RUN:
-        return _resolve_test_run_reward(event_data)
-    if event_type == EventType.PRD_STATUS_CHANGE:
-        return _resolve_prd_status_change_reward(event_data)
-    if event_type == EventType.COMPLIANCE_CHECK:
-        return _resolve_compliance_check_reward(event_data)
-    return None
-
-
-def _resolve_alias_reward(event_type: str) -> tuple[float | None, str] | None:
-    """Resolve via EVENT_ALIASES.
-
-    Returns (reward, label) tuple if matched, None otherwise.
-    """
-    alias = EVENT_ALIASES.get(event_type)
-    if alias is None and event_type in EVENT_ALIASES:
-        return None, event_type
-    if isinstance(alias, (int, float)):
-        return float(alias), event_type
-    if isinstance(alias, str):
-        mapped_reward = REWARD_MAP.get(alias)
-        if mapped_reward is not None:
-            return mapped_reward, alias
-    return None
-
-
-def _resolve_event_reward(
-    event_type: str,
-    event_data: dict[str, object] | None = None,
-) -> tuple[float | None, str]:
-    """Resolve an event type to a reward value and canonical label.
-
-    PRD-CORE-026-FR01/FR03: Resolution order:
-    1. Direct REWARD_MAP match
-    2. Data-aware routing (e.g., test_run + passed=true -> tests_passed)
-    3. EVENT_ALIASES -> REWARD_MAP key or direct float
-    4. Error keyword fallback
-
-    Args:
-        event_type: The event type string (e.g., 'shard_completed').
-        event_data: Optional event data dict for data-aware routing.
-
-    Returns:
-        Tuple of (reward_value_or_None, canonical_label).
-    """
-    # 1. Direct REWARD_MAP match
-    reward = REWARD_MAP.get(event_type)
-    if reward is not None:
-        return reward, event_type
-
-    # 2. Data-aware routing for composite events
-    if event_data:
-        result = _resolve_data_aware_routing(event_type, event_data)
-        if result is not None:
-            return result
-
-    # 3. EVENT_ALIASES resolution
-    result = _resolve_alias_reward(event_type)
-    if result is not None:
-        return result
-
-    # 4. Error keyword fallback
-    cfg_err: TRWConfig = get_config()
-    if any(kw in event_type.lower() for kw in cfg_err.scoring_error_keywords):
-        return cfg_err.scoring_error_fallback_reward, event_type
-
-    return None, event_type
-
-
 def process_outcome_for_event(
     event_type: str,
     event_data: dict[str, object] | None = None,
@@ -569,44 +412,6 @@ def process_outcome_for_event(
     except (StateError, OSError) as exc:
         _su.logger.debug("outcome_correlation_skipped", reason=str(exc))
         return []
-
-
-def compute_composite_outcome(
-    *,
-    rework_rate: float = 0.0,
-    p0_defect_count: int = 0,
-    velocity_tasks: float = 0.0,
-    learning_rate: float = 0.0,
-    weight_rework: float = -2.0,
-    weight_p0_defects: float = -1.5,
-    weight_velocity: float = 0.5,
-    weight_learning_rate: float = 0.3,
-) -> float:
-    """Compute composite outcome score respecting TRW value hierarchy.
-
-    Formula: w_rework * rework + w_p0 * p0_count + w_velocity * velocity + w_lr * learning_rate
-    Quality penalties outweigh velocity rewards (Truthfulness > Quality > Velocity).
-
-    PRD-CORE-104-FR02.
-    """
-    return (
-        weight_rework * rework_rate
-        + weight_p0_defects * p0_defect_count
-        + weight_velocity * velocity_tasks
-        + weight_learning_rate * learning_rate
-    )
-
-
-def sigmoid_normalize(score: float, steepness: float = 1.0) -> float:
-    """Map composite outcome score to [0, 1] via sigmoid.
-
-    sigmoid(0) = 0.5, negative -> <0.5, positive -> >0.5.
-    PRD-CORE-104-FR05.
-    """
-    import math
-
-    return 1.0 / (1.0 + math.exp(-steepness * score))
-
 
 __all__ = [
     "EVENT_ALIASES",
