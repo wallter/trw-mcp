@@ -398,7 +398,6 @@ def render_agents_trw_section(
     """
     from trw_mcp.state.claude_md._tool_manifest import render_tool_list
 
-    analytics_claim = _format_learning_session_claim()
     sessions_tracked, _ = _load_analytics_counts()
     session_label = "session" if sessions_tracked == 1 else "sessions"
 
