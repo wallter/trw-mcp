@@ -791,3 +791,12 @@ def score_traceability_v2(
         max_score=max_score,
         details=details,
     )
+
+
+def score_implementation_readiness(
+    frontmatter: dict[str, object],
+    content: str,
+    config: object = None,
+) -> float:
+    """Stub for implementation readiness scoring — restored after merge conflict."""
+    return 0.0
