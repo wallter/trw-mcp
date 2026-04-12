@@ -113,6 +113,88 @@ def _phase_progress(phase: str) -> float:
         return 0.0
 
 
+def _normalized_modified_files(recall_context: object | None) -> list[str]:
+    """Return best-effort normalized modified file paths from recall context."""
+    modified_files = getattr(recall_context, "modified_files", [])
+    if not isinstance(modified_files, list):
+        return []
+    return [
+        str(path).strip().lower()
+        for path in modified_files
+        if str(path).strip()
+    ]
+
+
+def _infer_live_agent_type(recall_context: object | None, current_phase: str) -> str:
+    """Infer a reasonable live agent type from phase and client profile."""
+    normalized_phase = current_phase.strip().lower()
+    if normalized_phase in {"research", "plan"}:
+        return "orchestrator"
+    if normalized_phase == "implement":
+        return "implementer"
+    if normalized_phase == "validate":
+        return "tester"
+    if normalized_phase in {"review", "deliver"}:
+        return "reviewer"
+
+    client_profile = str(getattr(recall_context, "client_profile", "")).strip().lower()
+    if client_profile in {"claude-code", "cursor"}:
+        return "orchestrator"
+    if client_profile in {"opencode", "codex", "aider"}:
+        return "implementer"
+    if _normalized_modified_files(recall_context):
+        return "implementer"
+    return "orchestrator"
+
+
+def _infer_live_task_type(recall_context: object | None, current_phase: str) -> str:
+    """Infer a lightweight task-type hint for the live contextual bandit path."""
+    normalized_phase = current_phase.strip().lower()
+    modified_files = _normalized_modified_files(recall_context)
+    inferred_domains = getattr(recall_context, "inferred_domains", set())
+    if not isinstance(inferred_domains, set):
+        inferred_domains = set()
+    normalized_domains = {
+        str(domain).strip().lower()
+        for domain in inferred_domains
+        if str(domain).strip()
+    }
+
+    if any(
+        path.endswith((".md", ".rst", ".txt")) or "/docs/" in path or path.startswith("docs/")
+        for path in modified_files
+    ) or normalized_domains & {"docs", "documentation"}:
+        return "docs"
+
+    if any(
+        token in path
+        for path in modified_files
+        for token in (
+            "/docker",
+            "docker-compose",
+            "/grafana/",
+            "/aws/",
+            "/scripts/",
+            ".github/workflows",
+            "/infra/",
+            "/infrastructure/",
+        )
+    ) or normalized_domains & {"infra", "infrastructure", "platform", "devops", "deployment"}:
+        return "infrastructure"
+
+    if normalized_phase in {"research", "plan"} and not modified_files:
+        return "investigation"
+    if normalized_phase == "validate":
+        return "bugfix"
+    if len(modified_files) >= 20:
+        return "refactor"
+    if normalized_phase == "review" and modified_files:
+        return "refactor"
+    if modified_files:
+        return "feature"
+    return "investigation"
+
+
 def _build_live_context_vector(recall_context: object | None, phase: str) -> list[float] | None:
     """Build the real engineering context vector for live bandit selection."""
     try:
@@ -124,12 +206,12 @@ def _build_live_context_vector(recall_context: object | None, phase: str) -> lis
     inferred_domains = getattr(recall_context, "inferred_domains", set())
     if not isinstance(inferred_domains, set):
         inferred_domains = set()
-    modified_files = getattr(recall_context, "modified_files", [])
-    if not isinstance(modified_files, list):
-        modified_files = []
+    modified_files = _normalized_modified_files(recall_context)
 
     return build_context_vector(
         phase=current_phase,
+        agent_type=_infer_live_agent_type(recall_context, current_phase),
+        task_type=_infer_live_task_type(recall_context, current_phase),
         session_progress=_phase_progress(current_phase),
         domain_similarity=1.0 if inferred_domains else 0.0,
         files_count=len(modified_files),

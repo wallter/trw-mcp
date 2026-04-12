@@ -560,6 +560,52 @@ class TestBuildContextVector:
 
 
 # ---------------------------------------------------------------------------
+# _build_live_context_vector — FR02 live wiring
+# ---------------------------------------------------------------------------
+
+
+class TestBuildLiveContextVector:
+    """Live context builder supplies the full PRD context contract."""
+
+    def test_validate_phase_infers_tester_and_bugfix_slots(self) -> None:
+        """Validate-phase live path populates tester + bugfix one-hots."""
+        from trw_mcp.scoring._recall import RecallContext
+        from trw_mcp.tools._ceremony_status import _build_live_context_vector
+
+        recall_context = RecallContext(
+            current_phase="VALIDATE",
+            inferred_domains={"testing"},
+            modified_files=["trw-mcp/tests/test_bandit_policy.py"],
+            client_profile="claude-code",
+        )
+
+        vec = _build_live_context_vector(recall_context, "implement")
+
+        assert vec is not None
+        assert vec[6] == pytest.approx(1.0)
+        assert vec[7:11] == [0.0, 0.0, 1.0, 0.0]
+        assert vec[11:17] == [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+
+    def test_plan_phase_without_files_infers_orchestrator_investigation(self) -> None:
+        """Early planning sessions map to orchestrator + investigation."""
+        from trw_mcp.scoring._recall import RecallContext
+        from trw_mcp.tools._ceremony_status import _build_live_context_vector
+
+        recall_context = RecallContext(
+            current_phase="PLAN",
+            inferred_domains=set(),
+            modified_files=[],
+            client_profile="cursor",
+        )
+
+        vec = _build_live_context_vector(recall_context, "deliver")
+
+        assert vec is not None
+        assert vec[7:11] == [1.0, 0.0, 0.0, 0.0]
+        assert vec[11:17] == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+
+# ---------------------------------------------------------------------------
 # TRWConfig.phase_transition_withhold_rate — FR06 config
 # ---------------------------------------------------------------------------
 
