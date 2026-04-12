@@ -153,6 +153,22 @@ Test: test_bar.py::test_baz
 This section mentions grep_present as documentation, not as an assertion block.
 """
 
+_ASSERTION_JSON_BULLET_CONTENT = """\
+## 4. Functional Requirements
+
+### FR01: Covered by markdown assertions list
+Implementation: src/foo.py
+Test: test_foo.py::test_bar
+**Assertions**:
+- {"type": "grep_present", "pattern": "file_path_coverage", "target": "trw-mcp/src/trw_mcp/state/validation/_prd_scoring.py"}
+- {"type": "grep_absent", "pattern": "assertion_coverage = 0.0", "target": "trw-mcp/src/trw_mcp/state/validation/_prd_scoring.py"}
+
+### FR02: Only prose mention
+Implementation: src/bar.py
+Test: test_bar.py::test_baz
+This section mentions grep_present as documentation, not as an assertion block.
+"""
+
 _ZERO_COVERAGE_CONTENT = (
     _MINIMAL_PRD_FRONTMATTER
     + """\
@@ -263,6 +279,29 @@ def test_assertion_coverage_scoring() -> None:
     assert coverage == 0.5
     assert traceability.details["assertion_coverage"] == 0.5
     assert "suggestions" not in traceability.details
+
+
+def test_assertion_coverage_scoring_recognizes_markdown_json_bullets() -> None:
+    fr_sections = _extract_fr_sections(_ASSERTION_JSON_BULLET_CONTENT)
+
+    coverage = _score_assertion_coverage(_ASSERTION_JSON_BULLET_CONTENT, fr_sections)
+    traceability = score_traceability_v2(_FRONTMATTER, _ASSERTION_JSON_BULLET_CONTENT)
+
+    assert coverage == 0.5
+    assert traceability.details["assertion_coverage"] == 0.5
+    assert "suggestions" not in traceability.details
+
+
+def test_validate_prd_quality_v2_scores_repo_prd_assertions_non_zero() -> None:
+    content = (
+        Path(__file__).resolve().parents[2]
+        / "docs/requirements-aare-f/prds/PRD-QUAL-056.md"
+    ).read_text(encoding="utf-8")
+
+    result = validate_prd_quality_v2(content)
+    traceability = next(dim for dim in result.dimensions if dim.name == "traceability")
+
+    assert traceability.details["assertion_coverage"] > 0.0
 
 
 def test_validate_prd_quality_v2_zeroes_new_coverage_metrics_without_paths_or_assertions() -> None:
