@@ -642,8 +642,8 @@ class TestCreateConsolidatedEntry:
         evidence = list(entry["evidence"])  # type: ignore[arg-type]
         assert sorted(evidence) == ["ev1", "ev2", "ev3", "ev4"]
 
-    def test_recurrence_is_sum(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """recurrence = sum of cluster recurrences."""
+    def test_recurrence_is_cluster_size(self, tmp_path: Path, writer: FileStateWriter) -> None:
+        """FIX-071-FR06: recurrence = len(cluster), not sum."""
         cluster = [
             {"id": "e1", "recurrence": 2},
             {"id": "e2", "recurrence": 3},
@@ -653,7 +653,7 @@ class TestCreateConsolidatedEntry:
         entries_dir.mkdir()
 
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        assert entry["recurrence"] == 6
+        assert entry["recurrence"] == 3  # len(cluster), not sum(2+3+1)
 
     def test_q_value_is_max(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """q_value = max of cluster q_values."""
@@ -2417,7 +2417,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         assert entry["impact"] == pytest.approx(0.9)
         assert entry["tags"] == ["solo"]
         assert list(entry["evidence"]) == ["proof"]  # type: ignore[arg-type]
-        assert entry["recurrence"] == 5
+        assert entry["recurrence"] == 1  # FIX-071-FR06: len(cluster), not original recurrence
         assert entry["q_value"] == pytest.approx(0.7)
 
     def test_date_fields_set_to_today(self, tmp_path: Path, writer: FileStateWriter) -> None:
@@ -2958,13 +2958,13 @@ class TestTagOverlapClusters:
 
         fake_entries = []
         for i in range(5):
-            self._write_entry_with_tags(entries_dir, writer, f"e{i:03d}", ["gotcha", "pydantic-v2"])
+            self._write_entry_with_tags(entries_dir, writer, f"e{i:03d}", ["gotcha", "pydantic-v2", "trw-mcp"])
             fake_entries.append(
                 {
                     "id": f"e{i:03d}",
                     "summary": f"summary for e{i:03d}",
                     "detail": f"detail for e{i:03d}",
-                    "tags": ["gotcha", "pydantic-v2"],
+                    "tags": ["gotcha", "pydantic-v2", "trw-mcp"],
                     "impact": 0.5,
                     "status": "active",
                     "source_type": "agent",
