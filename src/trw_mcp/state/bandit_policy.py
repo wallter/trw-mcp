@@ -78,6 +78,7 @@ _TASK_TYPES: tuple[str, ...] = ("feature", "bugfix", "refactor", "infrastructure
 
 # Files count normalization ceiling
 _FILES_COUNT_MAX = 100.0
+_CONTEXTUAL_STATE_MAX_ARMS = 12
 _DETECTOR_STATE_KEYS: tuple[str, ...] = (
     "n",
     "sum",
@@ -94,6 +95,35 @@ _DETECTOR_PARAM_KEYS: tuple[str, ...] = (
     "reward_scale",
 )
 _DETECTOR_DEFAULT_STATE: dict[str, int | float | None] = PageHinkleyDetector().to_dict()
+
+
+def _default_state_value(key: str) -> int | float | None:
+    """Return the default detector value for a compact-state key."""
+    return _DETECTOR_DEFAULT_STATE[key]
+
+
+def _matches_default(value: object, default: object) -> bool:
+    """Best-effort equality check for compaction of numeric defaults."""
+    if value is None or default is None:
+        return value is default
+    try:
+        return float(value) == float(default)
+    except (TypeError, ValueError):
+        return value == default
+
+
+def _trim_trailing_default_keys(
+    keys: tuple[str, ...],
+    values: list[int | float | None],
+) -> list[int | float | None]:
+    """Trim trailing detector fields that are still at default values."""
+    trimmed = list(values)
+    while trimmed:
+        key = keys[len(trimmed) - 1]
+        if not _matches_default(trimmed[-1], _default_state_value(key)):
+            break
+        trimmed.pop()
+    return trimmed
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +244,40 @@ def load_bandit_state(
         return BanditSelector()
 
 
+def load_contextual_bandit_state(
+    trw_dir: Path,
+    *,
+    model_family: str = "",
+    feature_dim: int = ENGINEERING_CONTEXT_DIM,
+) -> "object | None":
+    """Load compact contextual selector state from the shared envelope."""
+    try:
+        from trw_memory.bandit import ContextualBanditSelector
+    except Exception:  # justified: optional dependency path must fail-open
+        return None
+
+    bandit_state_path = trw_dir / "meta" / "bandit_state.json"
+    if not bandit_state_path.exists():
+        return ContextualBanditSelector(feature_dim=feature_dim)
+
+    try:
+        data: object = json.loads(bandit_state_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return ContextualBanditSelector(feature_dim=feature_dim)
+
+        stored_model_family = str(data.get("model_family", ""))
+        if model_family and stored_model_family and model_family != stored_model_family:
+            return ContextualBanditSelector(feature_dim=feature_dim)
+
+        contextual_raw = data.get("contextual_state")
+        if isinstance(contextual_raw, dict) and contextual_raw:
+            return ContextualBanditSelector.from_compact_dict(contextual_raw)
+    except Exception:  # justified: fail-open
+        _logger.warning("contextual_state_load_failed", exc_info=True)
+
+    return ContextualBanditSelector(feature_dim=feature_dim)
+
+
 def load_bandit_state_and_policy(
     trw_dir: Path,
     client_class: str = "full_mode",
@@ -272,6 +336,7 @@ def load_bandit_state_and_policy(
                 model_family=model_family,
             )
         policy_inst.load_pending_alarm_ids(data.get("pending_alarm_ids", []))
+        policy_inst.load_anchor_validity_state(data.get("anchor_validity_state", {}))
         return bandit, policy_inst
 
     except Exception:  # justified: fail-open
@@ -288,11 +353,17 @@ def _compact_detector_state(
     state: dict[str, int | float | None],
 ) -> list[int | float | None] | dict[str, list[int | float | None]]:
     """Persist detector state in a compact envelope-friendly shape."""
-    state_values = [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_STATE_KEYS]
-    param_values = [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_PARAM_KEYS]
+    state_values = _trim_trailing_default_keys(
+        _DETECTOR_STATE_KEYS,
+        [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_STATE_KEYS],
+    )
+    param_values = _trim_trailing_default_keys(
+        _DETECTOR_PARAM_KEYS,
+        [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_PARAM_KEYS],
+    )
     uses_default_params = all(
         param == _DETECTOR_DEFAULT_STATE[key]
-        for key, param in zip(_DETECTOR_PARAM_KEYS, param_values, strict=True)
+        for key, param in zip(_DETECTOR_PARAM_KEYS, param_values, strict=False)
     )
     if uses_default_params:
         return state_values
@@ -334,6 +405,7 @@ def save_bandit_state(
     client_profile: str = "full_mode",
     model_family: str = "",
     policy: "WithholdingPolicy | None" = None,
+    contextual_bandit: "object | None" = None,
 ) -> None:
     """Persist bandit state with C-5 spec-compliant envelope using atomic write.
 
@@ -345,7 +417,8 @@ def save_bandit_state(
           "bandit_state": { ...raw BanditSelector JSON... },
           "quarantined": { "old-model-family": { ...old state... } },
           "detector_states": { "arm-id": { ...PageHinkleyDetector.to_dict()... } },
-          "pending_alarm_ids": ["arm-id"]
+          "pending_alarm_ids": ["arm-id"],
+          "contextual_state": { ...compact ContextualBanditSelector state... }
         }
 
     Uses the temp-file + ``os.rename`` pattern for atomic writes.
@@ -369,6 +442,8 @@ def save_bandit_state(
 
     # Preserve existing quarantined data; handle model_family migration on save
     existing_quarantined: dict[str, object] = {}
+    existing_contextual_state: object = {}
+    model_mismatch_on_save = False
     if bandit_state_path.exists():
         try:
             existing_data: object = json.loads(
@@ -378,14 +453,25 @@ def save_bandit_state(
                 raw_q = existing_data.get("quarantined", {})
                 if isinstance(raw_q, dict):
                     existing_quarantined = raw_q
+                raw_contextual = existing_data.get("contextual_state", {})
+                if isinstance(raw_contextual, dict):
+                    existing_contextual_state = raw_contextual
 
                 # C-5: If saving under a new model_family, quarantine old state
                 stored_mf = str(existing_data.get("model_family", ""))
                 if model_family and stored_mf and model_family != stored_mf:
+                    model_mismatch_on_save = True
                     old_bandit_raw = existing_data.get("bandit_state", {})
+                    old_contextual_raw = existing_data.get("contextual_state", {})
                     if old_bandit_raw and isinstance(old_bandit_raw, dict):
                         existing_quarantined = dict(existing_quarantined)
-                        existing_quarantined[stored_mf] = old_bandit_raw
+                        quarantined_payload: object = old_bandit_raw
+                        if isinstance(old_contextual_raw, dict) and old_contextual_raw:
+                            quarantined_payload = {
+                                "bandit_state": old_bandit_raw,
+                                "contextual_state": old_contextual_raw,
+                            }
+                        existing_quarantined[stored_mf] = quarantined_payload
                         _logger.debug(
                             "bandit_state_quarantine_on_save",
                             old_model_family=stored_mf,
@@ -402,6 +488,14 @@ def save_bandit_state(
         "quarantined": existing_quarantined,
         "detector_states": policy.get_detector_states() if policy is not None else {},
         "pending_alarm_ids": policy.get_pending_alarm_ids() if policy is not None else [],
+        "anchor_validity_state": (
+            policy.get_anchor_validity_state() if policy is not None else {}
+        ),
+        "contextual_state": (
+            contextual_bandit.to_compact_dict(max_arms=_CONTEXTUAL_STATE_MAX_ARMS)
+            if contextual_bandit is not None and hasattr(contextual_bandit, "to_compact_dict")
+            else ({} if model_mismatch_on_save else existing_contextual_state)
+        ),
     }
 
     try:
@@ -441,6 +535,7 @@ class WithholdingPolicy:
         # Per-arm Page-Hinkley detectors (FR05 trigger #4)
         self._detectors: dict[str, PageHinkleyDetector] = {}
         self._pending_alarm_ids: set[str] = set()
+        self._anchor_validity_priors: dict[str, float] = {}
 
     def update_reward(self, arm_id: str, reward: float) -> bool:
         """Update the Page-Hinkley detector for an arm; returns True on alarm.
@@ -493,6 +588,23 @@ class WithholdingPolicy:
             str(arm_id) for arm_id in pending_alarm_ids if str(arm_id)
         }
 
+    def get_anchor_validity_state(self) -> dict[str, float]:
+        """Serialize prior anchor-validity observations for trigger #1."""
+        return {
+            arm_id: round(validity, 4)
+            for arm_id, validity in self._anchor_validity_priors.items()
+        }
+
+    def load_anchor_validity_state(self, state: object) -> None:
+        """Restore persisted anchor-validity priors."""
+        if not isinstance(state, dict):
+            return
+        restored: dict[str, float] = {}
+        for arm_id, value in state.items():
+            with contextlib.suppress(TypeError, ValueError):
+                restored[str(arm_id)] = max(0.0, min(1.0, float(value)))
+        self._anchor_validity_priors = restored
+
     def consume_pending_alarm(self, arm_id: str) -> bool:
         """Consume a one-shot FR05 forced re-evaluation alarm for *arm_id*."""
         if arm_id in self._pending_alarm_ids:
@@ -531,14 +643,22 @@ class WithholdingPolicy:
         if "anchor_validity" in learning and "anchor_validity" not in metadata:
             metadata = dict(metadata)
             metadata["anchor_validity"] = learning.get("anchor_validity")
+        current_anchor_validity = self._extract_anchor_validity(metadata)
+        previous_anchor_validity = metadata.get("prev_anchor_validity")
+        if previous_anchor_validity is None and learning_id:
+            previous_anchor_validity = self._anchor_validity_priors.get(learning_id)
 
         # Check forced re-evaluation triggers
         pending_alarm = self.consume_pending_alarm(learning_id) if learning_id else False
         forced = self._check_forced_triggers(
             tier,
             metadata,
+            previous_anchor_validity=previous_anchor_validity,
+            current_anchor_validity=current_anchor_validity,
             page_hinkley_fired=(page_hinkley_fired or pending_alarm),
         )
+        if learning_id and current_anchor_validity is not None:
+            self._anchor_validity_priors[learning_id] = current_anchor_validity
         if forced:
             # Override to normal-tier rate regardless of actual tier
             tier = "normal"
@@ -581,6 +701,8 @@ class WithholdingPolicy:
         tier: str,
         metadata: dict[str, object],
         *,
+        previous_anchor_validity: object = None,
+        current_anchor_validity: float | None = None,
         page_hinkley_fired: bool = False,
     ) -> bool:
         """Check if any forced re-evaluation trigger fires.
@@ -592,16 +714,10 @@ class WithholdingPolicy:
         4. Page-Hinkley detector fired for this learning (FR05)
         """
         # Trigger 1: anchor validity drop
-        prev_validity = metadata.get("prev_anchor_validity")
-        if prev_validity is not None:
+        if previous_anchor_validity is not None and current_anchor_validity is not None:
             try:
-                previous = float(str(prev_validity))
-                current_raw = metadata.get("anchor_validity", metadata.get("current_anchor_validity"))
-                if current_raw is not None:
-                    current = float(str(current_raw))
-                    if (previous - current) > 0.3:
-                        return True
-                elif previous < 0.3:
+                previous = float(str(previous_anchor_validity))
+                if (previous - current_anchor_validity) > 0.3:
                     return True
             except (ValueError, TypeError):
                 pass
@@ -632,6 +748,17 @@ class WithholdingPolicy:
 
         return False
 
+    @staticmethod
+    def _extract_anchor_validity(metadata: dict[str, object]) -> float | None:
+        """Best-effort parse of the current anchor-validity score."""
+        for key in ("anchor_validity", "current_anchor_validity"):
+            raw_value = metadata.get(key)
+            if raw_value is None:
+                continue
+            with contextlib.suppress(TypeError, ValueError):
+                return max(0.0, min(1.0, float(str(raw_value))))
+        return None
+
 
 # ---------------------------------------------------------------------------
 # select_nudge_learning_bandit (FR04)
@@ -653,6 +780,21 @@ class WithheldEvent(TypedDict):
     phase: str
 
 
+def _select_live_decision(
+    eligible_ids: list[str],
+    *,
+    bandit: BanditSelector,
+    contextual_selector: object | None = None,
+    context_vector: list[float] | None = None,
+) -> BanditDecision:
+    """Select the next learning using contextual state when live context exists."""
+    if contextual_selector is not None and context_vector:
+        select_decision = getattr(contextual_selector, "select_decision", None)
+        if callable(select_decision):
+            return select_decision(eligible_ids, context_vector=context_vector)
+    return bandit.select(eligible_ids)
+
+
 def select_nudge_learning_bandit(
     candidates: list[dict[str, object]],
     bandit: BanditSelector,
@@ -662,6 +804,8 @@ def select_nudge_learning_bandit(
     phase_transition_withhold_rate: float = 0.10,
     decisions_out: list[BanditDecision] | None = None,
     withheld_events_out: list[WithheldEvent] | None = None,
+    contextual_selector: object | None = None,
+    context_vector: list[float] | None = None,
 ) -> tuple[list[dict[str, object]], bool]:
     """Select learning(s) for nudge display using bandit-based selection (FR04/FR06).
 
@@ -715,9 +859,14 @@ def select_nudge_learning_bandit(
         if not eligible_ids:
             break
 
-        # Use bandit to select
+        # Use contextual selection when live context is available.
         try:
-            decision: BanditDecision = bandit.select(eligible_ids)
+            decision = _select_live_decision(
+                eligible_ids,
+                bandit=bandit,
+                contextual_selector=contextual_selector,
+                context_vector=context_vector,
+            )
         except ValueError:
             break
 
@@ -882,20 +1031,21 @@ def build_context_vector(
     """Build a 21-dimensional engineering context feature vector for LinUCB.
 
     Layout (21 dimensions total, per PRD-CORE-105 spec):
-    - [0:6]   Phase one-hot encoding (6 phases)
-    - [6:10]  Agent type one-hot encoding (4 types)
-    - [10:16] Task type one-hot encoding (6 types)
-    - [16]    Session progress (0.0 to 1.0)
-    - [17]    Domain similarity (0.0 to 1.0)
-    - [18]    Files count normalized (0.0 to 1.0)
-    - [19]    Reserved (0.0)
-    - [20]    Reserved (0.0)
+     - [0:6]   Phase one-hot encoding (6 phases)
+     - [6]     Domain similarity (0.0 to 1.0)
+     - [7:11]  Agent type one-hot encoding (4 types)
+     - [11:17] Task type one-hot encoding (6 types)
+     - [17]    Files count normalized (0.0 to 1.0)
+     - [18:21] Session progress one-hot (early, mid, late)
     """
     vec: list[float] = []
 
     # Phase one-hot (6 dims)
     for p in _PHASES:
         vec.append(1.0 if phase == p else 0.0)
+
+    # Domain similarity (clamped)
+    vec.append(max(0.0, min(1.0, domain_similarity)))
 
     # Agent type one-hot (4 dims) — resolve aliases first
     resolved_agent = _AGENT_ALIASES.get(agent_type, agent_type)
@@ -906,18 +1056,17 @@ def build_context_vector(
     for tt in _TASK_TYPES:
         vec.append(1.0 if task_type == tt else 0.0)
 
-    # Session progress (clamped)
-    vec.append(max(0.0, min(1.0, session_progress)))
-
-    # Domain similarity (clamped)
-    vec.append(max(0.0, min(1.0, domain_similarity)))
-
     # Files count normalized (clamped)
     normalized_files = min(float(files_count) / _FILES_COUNT_MAX, 1.0)
     vec.append(max(0.0, normalized_files))
 
-    # Reserved dimensions
-    vec.append(0.0)
-    vec.append(0.0)
+    # Session progress one-hot (early, mid, late)
+    clamped_progress = max(0.0, min(1.0, session_progress))
+    if clamped_progress < (1.0 / 3.0):
+        vec.extend([1.0, 0.0, 0.0])
+    elif clamped_progress < (2.0 / 3.0):
+        vec.extend([0.0, 1.0, 0.0])
+    else:
+        vec.extend([0.0, 0.0, 1.0])
 
     return vec

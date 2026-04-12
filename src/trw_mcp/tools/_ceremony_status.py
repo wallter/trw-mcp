@@ -113,6 +113,29 @@ def _phase_progress(phase: str) -> float:
         return 0.0
 
 
+def _build_live_context_vector(recall_context: object | None, phase: str) -> list[float] | None:
+    """Build the real engineering context vector for live bandit selection."""
+    try:
+        from trw_mcp.state.bandit_policy import build_context_vector
+    except Exception:  # justified: fail-open
+        return None
+
+    current_phase = str(getattr(recall_context, "current_phase", "") or phase).strip().lower()
+    inferred_domains = getattr(recall_context, "inferred_domains", set())
+    if not isinstance(inferred_domains, set):
+        inferred_domains = set()
+    modified_files = getattr(recall_context, "modified_files", [])
+    if not isinstance(modified_files, list):
+        modified_files = []
+
+    return build_context_vector(
+        phase=current_phase,
+        session_progress=_phase_progress(current_phase),
+        domain_similarity=1.0 if inferred_domains else 0.0,
+        files_count=len(modified_files),
+    )
+
+
 def _session_progress_label(phase: str) -> str:
     """Map ceremony phase to the propensity-log progress bucket."""
     normalized_phase = phase.strip().lower()
@@ -126,10 +149,10 @@ def _session_progress_label(phase: str) -> str:
 def _contextualize_candidates(
     candidates: list[dict[str, object]],
     *,
-    bandit: object,
     recall_context: object | None,
-    phase: str,
     is_transition: bool,
+    contextual_selector: object | None = None,
+    context_vector: list[float] | None = None,
 ) -> list[dict[str, object]]:
     """Narrow the live candidate pool using the real recall context."""
     if not candidates or recall_context is None:
@@ -157,48 +180,8 @@ def _contextualize_candidates(
     if len(filtered_candidates) < 2:
         return filtered_candidates
 
-    try:
-        from trw_memory.bandit import ContextualBanditSelector
-        from trw_mcp.state.bandit_policy import ENGINEERING_CONTEXT_DIM, build_context_vector
-    except Exception:  # justified: fail-open
+    if contextual_selector is None or not context_vector:
         return filtered_candidates
-
-    current_phase = str(getattr(recall_context, "current_phase", "") or phase).strip().lower()
-    modified_files = getattr(recall_context, "modified_files", [])
-    if not isinstance(modified_files, list):
-        modified_files = []
-
-    context_vector = build_context_vector(
-        phase=current_phase,
-        session_progress=_phase_progress(current_phase),
-        domain_similarity=1.0 if inferred_domains else 0.0,
-        files_count=len(modified_files),
-    )
-
-    selector = ContextualBanditSelector(feature_dim=ENGINEERING_CONTEXT_DIM)
-    for candidate in filtered_candidates:
-        arm_id = str(candidate.get("id", ""))
-        if not arm_id:
-            continue
-        impact = candidate.get("impact", 0.5)
-        try:
-            impact_value = float(impact)
-        except (TypeError, ValueError):
-            impact_value = 0.5
-        impact_value = max(0.0, min(1.0, impact_value))
-        contextual_reward = max(
-            0.0,
-            min(
-                1.0,
-                (
-                    (0.35 * _posterior_mean(bandit, arm_id))
-                    + (0.35 * impact_value)
-                    + (0.20 * _phase_match_score(candidate, current_phase))
-                    + (0.10 * _domain_match_score(candidate, inferred_domains))
-                ),
-            ),
-        )
-        selector.update(arm_id, contextual_reward, context_vector=context_vector)
 
     shortlist_size = min(len(filtered_candidates), 5 if is_transition else 3)
     ranked_ids: list[str] = []
@@ -208,7 +191,10 @@ def _contextualize_candidates(
         if candidate.get("id")
     ]
     while remaining_ids and len(ranked_ids) < shortlist_size:
-        selected_id, _ = selector.select(remaining_ids, context_vector=context_vector)
+        selected_id, _ = contextual_selector.select(
+            remaining_ids,
+            context_vector=context_vector,
+        )
         ranked_ids.append(selected_id)
         remaining_ids = [arm_id for arm_id in remaining_ids if arm_id != selected_id]
 
@@ -270,6 +256,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             WithholdingPolicy,
             _compute_heuristic_reward,
             load_bandit_state_and_policy,
+            load_contextual_bandit_state,
             render_nudge_content,
             resolve_client_class,
             save_bandit_state,
@@ -322,15 +309,35 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         # ── Load bandit state and pre-populated policy with restored detectors ─
         bandit, policy = load_bandit_state_and_policy(trw_dir, client_class, model_family)
         recall_context = build_recall_context(trw_dir, "*")
+        contextual_selector = load_contextual_bandit_state(
+            trw_dir,
+            model_family=model_family,
+        )
+        if contextual_selector is not None and hasattr(contextual_selector, "seed_thompson_fallback"):
+            contextual_selector.seed_thompson_fallback(bandit)
+        context_vector = _build_live_context_vector(recall_context, state.phase)
         selection_candidates = _contextualize_candidates(
             eligible_candidates,
-            bandit=bandit,
             recall_context=recall_context,
-            phase=state.phase,
             is_transition=bool(state.previous_phase and state.previous_phase != state.phase),
+            contextual_selector=contextual_selector,
+            context_vector=context_vector,
         )
         if not selection_candidates:
             selection_candidates = eligible_candidates
+
+        def _persist_bandit_state() -> None:
+            try:
+                save_bandit_state(
+                    trw_dir,
+                    bandit,
+                    client_class,
+                    model_family,
+                    policy=policy,
+                    contextual_bandit=contextual_selector,
+                )
+            except Exception:  # justified: state persistence must not block nudge
+                logger.debug("bandit_state_persist_failed", exc_info=True)
 
         # ── Bandit selection with decisions captured for logging ─────────────
         decisions: list = []  # list[BanditDecision] populated by select_nudge_learning_bandit
@@ -344,6 +351,8 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             phase_transition_withhold_rate=phase_transition_withhold_rate,
             decisions_out=decisions,
             withheld_events_out=withheld_events,
+            contextual_selector=contextual_selector,
+            context_vector=context_vector,
         )
 
         # ── P1-D: Log withheld phase-transition events to propensity.jsonl ───
@@ -388,10 +397,12 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
                 logger.debug("propensity_withheld_log_failed", exc_info=True)
 
         if not selected_learnings:
+            _persist_bandit_state()
             return None
 
         content = render_nudge_content(selected_learnings, is_transition)
         if not content:
+            _persist_bandit_state()
             return None
 
         # ── P0 + FR05: Update bandit posteriors and Page-Hinkley detectors ──
@@ -400,6 +411,12 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             if arm_id:
                 reward = _compute_heuristic_reward(learning)
                 bandit.update(arm_id, reward)
+                if contextual_selector is not None and context_vector:
+                    contextual_selector.update(
+                        arm_id,
+                        reward,
+                        context_vector=context_vector,
+                    )
                 # FR05: feed reward into per-arm Page-Hinkley detector so
                 # trigger #4 (distributional shift) accumulates across calls
                 alarm_fired = policy.update_reward(arm_id, reward)
@@ -413,10 +430,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
                 )
 
         # ── P0 + FR05: Persist updated bandit + detector states (atomic) ────
-        try:
-            save_bandit_state(trw_dir, bandit, client_class, model_family, policy=policy)
-        except Exception:  # justified: state persistence must not block nudge
-            logger.debug("bandit_state_persist_failed", exc_info=True)
+        _persist_bandit_state()
 
         # Extract first decision for propensity metadata (P1 fix)
         first_decision = decisions[0] if decisions else None

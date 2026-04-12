@@ -128,6 +128,17 @@ class TestWithholdingPolicyForcedTriggers:
         withheld = sum(1 for _ in range(250) if policy.should_withhold(learning))
         assert withheld == 0, "A 0.25 drop must not override critical-tier protection"
 
+    def test_trigger_1_requires_current_anchor_validity(self) -> None:
+        """Persisted prior alone must not trigger without a new current validity."""
+        from trw_mcp.state.bandit_policy import WithholdingPolicy
+
+        policy = WithholdingPolicy(client_class="full_mode")
+        policy.load_anchor_validity_state({"L-crit": 0.2})
+        learning = {"id": "L-crit", "protection_tier": "critical", "metadata": {}}
+
+        withheld = sum(1 for _ in range(250) if policy.should_withhold(learning))
+        assert withheld == 0
+
     def test_trigger_2_consecutive_shown(self) -> None:
         """Consecutive sessions > force_trial_threshold forces re-evaluation."""
         from trw_mcp.state.bandit_policy import WithholdingPolicy
@@ -267,6 +278,43 @@ class TestSelectNudgeLearningBandit:
         assert selected == []
         assert is_transition is False
 
+    def test_contextual_selector_drives_final_selection_when_context_available(self) -> None:
+        """Final production selection uses contextual state, not only shortlist ranking."""
+        from trw_memory.bandit import BanditDecision, BanditSelector
+        from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
+
+        class StubContextualSelector:
+            def select_decision(self, eligible_ids, context_vector=None):
+                assert context_vector == [0.0, 1.0]
+                return BanditDecision(
+                    selected_id=eligible_ids[-1],
+                    selection_probability=0.8,
+                    runner_up_id=eligible_ids[0] if len(eligible_ids) > 1 else None,
+                    runner_up_probability=0.2 if len(eligible_ids) > 1 else None,
+                    exploration=False,
+                )
+
+        bandit = BanditSelector(cold_start_min=0)
+        policy = WithholdingPolicy(client_class="full_mode")
+        candidates = [
+            {"id": "L-0", "summary": "Learning 0", "protection_tier": "critical", "nudge_line": "tip 0"},
+            {"id": "L-1", "summary": "Learning 1", "protection_tier": "critical", "nudge_line": "tip 1"},
+        ]
+
+        with patch.object(bandit, "select", side_effect=AssertionError("bandit.select should not run")):
+            selected, is_transition = select_nudge_learning_bandit(
+                candidates,
+                bandit,
+                policy,
+                phase="implement",
+                previous_phase="implement",
+                contextual_selector=StubContextualSelector(),
+                context_vector=[0.0, 1.0],
+            )
+
+        assert is_transition is False
+        assert [learning["id"] for learning in selected] == ["L-1"]
+
 
 # ---------------------------------------------------------------------------
 # render_nudge_content — FR04
@@ -367,7 +415,26 @@ class TestBuildContextVector:
 
         vec_alias = build_context_vector(agent_type="lead")
         vec_resolved = build_context_vector(agent_type="orchestrator")
-        assert vec_alias[6:10] == vec_resolved[6:10]
+        assert vec_alias[7:11] == vec_resolved[7:11]
+
+    def test_vector_layout_matches_prd_progress_one_hot(self) -> None:
+        """Session progress uses the PRD's 3 one-hot dimensions."""
+        from trw_mcp.state.bandit_policy import build_context_vector
+
+        vec = build_context_vector(
+            phase="implement",
+            agent_type="implementer",
+            task_type="bugfix",
+            session_progress=0.8,
+            domain_similarity=0.6,
+            files_count=10,
+        )
+
+        assert vec[6] == pytest.approx(0.6)
+        assert vec[7:11] == [0.0, 1.0, 0.0, 0.0]
+        assert vec[11:17] == [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+        assert vec[17] == pytest.approx(0.1)
+        assert vec[18:21] == [0.0, 0.0, 1.0]
 
 
 # ---------------------------------------------------------------------------
@@ -719,6 +786,45 @@ class TestBanditStateEnvelope:
         assert loaded._arms["arm-A"].exposure_count == 2
         assert loaded._arms["arm-B"].exposure_count == 1
 
+    def test_contextual_state_persisted_and_restored(self, tmp_path: Path) -> None:
+        """Shared envelope persists compact contextual state used by production."""
+        import json
+        from trw_mcp.state.bandit_policy import (
+            ENGINEERING_CONTEXT_DIM,
+            build_context_vector,
+            load_contextual_bandit_state,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector, ContextualBanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
+        bandit = BanditSelector()
+        contextual = ContextualBanditSelector(feature_dim=ENGINEERING_CONTEXT_DIM, alpha=0.5)
+        context = build_context_vector(phase="validate", session_progress=0.8, domain_similarity=1.0)
+        for _ in range(30):
+            bandit.update("arm-a", 0.9)
+            contextual.update("arm-a", 0.9, context_vector=context)
+            contextual.update("arm-b", 0.1, context_vector=context)
+
+        save_bandit_state(
+            trw_dir,
+            bandit,
+            "full_mode",
+            "test-model",
+            contextual_bandit=contextual,
+        )
+
+        stored = json.loads((trw_dir / "meta" / "bandit_state.json").read_text(encoding="utf-8"))
+        assert "contextual_state" in stored
+
+        restored = load_contextual_bandit_state(trw_dir, model_family="test-model")
+        assert restored is not None
+        restored.seed_thompson_fallback(bandit)
+        selected_id, _ = restored.select(["arm-a", "arm-b"], context_vector=context)
+        assert selected_id == "arm-a"
+
     def test_quarantine_preserves_old_data_in_file(self, tmp_path: Path) -> None:
         """Quarantined arm data is retained in the JSON file for offline replay."""
         import json
@@ -979,6 +1085,8 @@ class TestLiveDecoratorPath:
             phase_transition_withhold_rate=0.10,
             decisions_out=None,
             withheld_events_out=None,
+            contextual_selector=None,
+            context_vector=None,
         ):
             captured_candidate_ids[:] = [str(candidate["id"]) for candidate in candidates]
             return ([candidates[0]], True)
@@ -1382,6 +1490,8 @@ class TestWithheldEventLogging:
             candidates, bandit, policy, phase, previous_phase,
             phase_transition_withhold_rate=0.10, decisions_out=None,
             withheld_events_out=None,
+            contextual_selector=None,
+            context_vector=None,
         ):
             # Simulate the bandit withholding the candidate
             from trw_memory.bandit import BanditDecision
@@ -1711,8 +1821,8 @@ class TestFR05ProductionPath:
             assert restored_policy.should_withhold(learning) is True
             assert restored_policy.should_withhold(learning) is False
 
-    def test_detector_compaction_keeps_state_file_under_budget(self, tmp_path: Path) -> None:
-        """Compact detector persistence keeps sub-500-arm state files below 100KB."""
+    def test_anchor_validity_drop_persisted_and_consumed_once(self, tmp_path: Path) -> None:
+        """Trigger #1 becomes operational via persisted prior anchor validity."""
         from trw_mcp.state.bandit_policy import (
             WithholdingPolicy,
             load_bandit_state_and_policy,
@@ -1723,22 +1833,83 @@ class TestFR05ProductionPath:
         trw_dir = tmp_path / ".trw"
         (trw_dir / "meta").mkdir(parents=True)
 
+        arm_id = "L-anchor-drop"
+        bandit = BanditSelector()
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        assert policy.should_withhold(
+            {"id": arm_id, "protection_tier": "critical", "anchor_validity": 0.8}
+        ) is False
+        save_bandit_state(trw_dir, bandit, "full_mode", "test-model", policy=policy)
+
+        _, restored_policy = load_bandit_state_and_policy(trw_dir, "full_mode", "test-model")
+        with (
+            patch("random.uniform", return_value=0.2),
+            patch("random.random", return_value=0.1),
+        ):
+            assert restored_policy.should_withhold(
+                {"id": arm_id, "protection_tier": "critical", "anchor_validity": 0.4}
+            ) is True
+        save_bandit_state(trw_dir, bandit, "full_mode", "test-model", policy=restored_policy)
+
+        _, second_restore = load_bandit_state_and_policy(trw_dir, "full_mode", "test-model")
+        with patch("random.random", return_value=0.1):
+            assert second_restore.should_withhold(
+                {"id": arm_id, "protection_tier": "critical", "anchor_validity": 0.4}
+            ) is False
+
+    def test_detector_compaction_keeps_state_file_under_budget(self, tmp_path: Path) -> None:
+        """Compact detector persistence keeps sub-500-arm state files below 100KB."""
+        from trw_mcp.state.bandit_policy import (
+            ENGINEERING_CONTEXT_DIM,
+            build_context_vector,
+            WithholdingPolicy,
+            load_contextual_bandit_state,
+            load_bandit_state_and_policy,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector, ContextualBanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
         bandit = BanditSelector(cold_start_min=0)
         policy = WithholdingPolicy(client_class="full_mode")
+        contextual = ContextualBanditSelector(feature_dim=ENGINEERING_CONTEXT_DIM, alpha=0.5)
+        context = build_context_vector(
+            phase="validate",
+            session_progress=0.8,
+            domain_similarity=1.0,
+            files_count=12,
+        )
         arm_count = 400
 
         for i in range(arm_count):
             arm_id = f"L-budget-{i}"
             bandit.update(arm_id, 0.6)
             policy.update_reward(arm_id, 0.6)
+            policy._pending_alarm_ids.add(arm_id)
+            if i < 24:
+                contextual.update(arm_id, 0.6, context_vector=context)
 
-        save_bandit_state(trw_dir, bandit, "full_mode", "test-model", policy=policy)
+        save_bandit_state(
+            trw_dir,
+            bandit,
+            "full_mode",
+            "test-model",
+            policy=policy,
+            contextual_bandit=contextual,
+        )
 
         state_path = trw_dir / "meta" / "bandit_state.json"
         assert state_path.stat().st_size < 100 * 1024
 
         _, restored_policy = load_bandit_state_and_policy(trw_dir, "full_mode", "test-model")
         assert restored_policy._detectors["L-budget-0"]._n == 1
+        assert "L-budget-0" in restored_policy._pending_alarm_ids
+        restored_contextual = load_contextual_bandit_state(trw_dir, model_family="test-model")
+        assert restored_contextual is not None
+        assert "L-budget-0" in restored_contextual._arms
 
     def test_live_path_soft_resets_bandit_arm_on_alarm(self, tmp_path: Path) -> None:
         """The live FR05 path soft-resets the arm posterior when the alarm fires."""
