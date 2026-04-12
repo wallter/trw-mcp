@@ -909,3 +909,397 @@ class TestLiveDecoratorPath:
             f"Expected >=70% of transitions to yield 1 item with rate=1.0, "
             f"got {single_selections}/{n_trials}"
         )
+
+
+# ---------------------------------------------------------------------------
+# P1-A: model_family config field (PRD-CORE-105 C-5)
+# ---------------------------------------------------------------------------
+
+
+class TestModelFamilyConfig:
+    """TRWConfig.model_family field is always non-empty (P1-A fix)."""
+
+    def test_default_model_family_non_empty(self) -> None:
+        """Default model_family resolves to 'generic' (or env-detected) — never ''."""
+        import os
+        from trw_mcp.models.config import TRWConfig
+
+        # Ensure no env vars interfere
+        for var in ("TRW_MODEL_FAMILY", "CLAUDE_MODEL", "ANTHROPIC_MODEL", "OPENAI_MODEL_NAME"):
+            os.environ.pop(var, None)
+
+        cfg = TRWConfig()
+        assert cfg.model_family, "model_family must never be empty string"
+        # Default fallback when no env var set
+        assert cfg.model_family == "generic"
+
+    def test_explicit_model_family_accepted(self) -> None:
+        """Explicitly set model_family is preserved."""
+        from trw_mcp.models.config import TRWConfig
+
+        cfg = TRWConfig(model_family="claude-sonnet-4")
+        assert cfg.model_family == "claude-sonnet-4"
+
+    def test_env_var_sets_model_family(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """TRW_MODEL_FAMILY env var overrides the default."""
+        monkeypatch.setenv("TRW_MODEL_FAMILY", "gpt-4o")
+        from trw_mcp.models.config._main import TRWConfig  # reimport to pick up env
+        cfg = TRWConfig()
+        assert cfg.model_family == "gpt-4o"
+
+    def test_live_path_propensity_log_has_non_empty_model_family(
+        self, tmp_path: Path
+    ) -> None:
+        """propensity.jsonl entries carry non-empty model_family (P1-A live path)."""
+        import json
+        import os
+        from unittest.mock import patch
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        # Clear env vars so we rely on the config default "generic"
+        for var in ("CLAUDE_MODEL", "ANTHROPIC_MODEL", "OPENAI_MODEL_NAME", "TRW_MODEL_FAMILY"):
+            os.environ.pop(var, None)
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        learning = {
+            "id": "L-mf-test",
+            "summary": "model_family test learning",
+            "nudge_line": "test tip",
+            "protection_tier": "critical",
+            "impact": 0.9,
+        }
+
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        propensity_path = trw_dir / "logs" / "propensity.jsonl"
+        if propensity_path.exists():
+            lines = propensity_path.read_text(encoding="utf-8").strip().split("\n")
+            entries = [json.loads(ln) for ln in lines if ln.strip()]
+            assert len(entries) >= 1
+            for entry in entries:
+                mf = entry.get("model_family", "")
+                assert mf, f"model_family must be non-empty in propensity log, got: {mf!r}"
+
+    def test_bandit_state_envelope_has_non_empty_model_family(
+        self, tmp_path: Path
+    ) -> None:
+        """bandit_state.json envelope carries non-empty model_family after save."""
+        import json
+        import os
+        from unittest.mock import patch
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        for var in ("CLAUDE_MODEL", "ANTHROPIC_MODEL", "OPENAI_MODEL_NAME", "TRW_MODEL_FAMILY"):
+            os.environ.pop(var, None)
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+        learning = {
+            "id": "L-mf-env",
+            "summary": "envelope test",
+            "nudge_line": "tip",
+            "protection_tier": "critical",
+            "impact": 0.8,
+        }
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        bandit_path = trw_dir / "meta" / "bandit_state.json"
+        if bandit_path.exists():
+            stored = json.loads(bandit_path.read_text(encoding="utf-8"))
+            mf = stored.get("model_family", "")
+            assert mf, f"bandit state envelope model_family must not be empty, got: {mf!r}"
+
+
+# ---------------------------------------------------------------------------
+# P1-B: slot 0 withholding at phase transition (PRD-CORE-105-FR06)
+# ---------------------------------------------------------------------------
+
+
+class TestSlot0WithheldAtPhaseTransition:
+    """FR06 withholding applies to slot 0 (primary burst slot) — P1-B fix."""
+
+    def test_phase_transition_slot_0_can_be_withheld_with_rate_1(self) -> None:
+        """test_phase_transition_slot_0_withheld_when_rate_1 (PRD-CORE-105-FR06).
+
+        With rate=1.0 and a single non-critical candidate, the slot-0 candidate
+        must be withheld on every phase-transition burst. Before the P1-B fix,
+        slot 0 was exempt (slot > 0 guard), so this would always select 1 item.
+        After the fix, the candidate is withheld and no runner-up is available →
+        0 items returned.
+        """
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
+
+        # Single non-critical candidate — no runner-up available
+        candidates = [
+            {"id": "L-only", "summary": "Only candidate",
+             "nudge_line": "tip", "protection_tier": "normal", "impact": 0.8},
+        ]
+        bandit = BanditSelector(cold_start_min=0)
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        withheld_count = 0
+        n_trials = 20
+        for _ in range(n_trials):
+            selected, is_transition = select_nudge_learning_bandit(
+                candidates,
+                bandit,
+                policy,
+                phase="validate",
+                previous_phase="implement",
+                phase_transition_withhold_rate=1.0,
+            )
+            assert is_transition is True
+            if len(selected) == 0:
+                withheld_count += 1
+
+        # With rate=1.0 and no runner-up, every trial should yield 0 items
+        assert withheld_count == n_trials, (
+            f"Expected all {n_trials} slot-0 candidates to be withheld, "
+            f"only {withheld_count} were"
+        )
+
+    def test_phase_transition_slot_0_not_withheld_when_critical(self) -> None:
+        """Critical-tier slot-0 candidate is never withheld at phase transition."""
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
+
+        candidates = [
+            {"id": "L-crit", "summary": "Critical", "nudge_line": "tip",
+             "protection_tier": "critical", "impact": 0.9},
+        ]
+        bandit = BanditSelector(cold_start_min=0)
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        for _ in range(20):
+            selected, is_transition = select_nudge_learning_bandit(
+                candidates, bandit, policy,
+                phase="validate", previous_phase="implement",
+                phase_transition_withhold_rate=1.0,
+            )
+            assert is_transition is True
+            # Critical tier exempt → always selected
+            assert len(selected) == 1, "Critical slot-0 should never be withheld"
+
+    def test_withheld_events_out_populated_for_slot_0(self) -> None:
+        """withheld_events_out receives slot=0 events when slot 0 is withheld (P1-D)."""
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state.bandit_policy import (
+            WithheldEvent,
+            WithholdingPolicy,
+            select_nudge_learning_bandit,
+        )
+
+        candidates = [
+            {"id": "L-slot0", "summary": "Slot 0", "nudge_line": "tip",
+             "protection_tier": "normal", "impact": 0.8},
+        ]
+        bandit = BanditSelector(cold_start_min=0)
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        withheld_events: list[WithheldEvent] = []
+        select_nudge_learning_bandit(
+            candidates, bandit, policy,
+            phase="validate", previous_phase="implement",
+            phase_transition_withhold_rate=1.0,
+            withheld_events_out=withheld_events,
+        )
+        assert len(withheld_events) >= 1
+        ev = withheld_events[0]
+        assert ev["slot"] == 0
+        assert ev["learning_id"] == "L-slot0"
+        assert ev["exploration"] is True
+        assert ev["phase"] == "validate"
+
+
+# ---------------------------------------------------------------------------
+# P1-C: withheld field in propensity log entries (PRD-CORE-103/105)
+# ---------------------------------------------------------------------------
+
+
+class TestPropensityLogWithheldField:
+    """PropensityEntry and log_selection carry withheld field (P1-C fix)."""
+
+    def test_withheld_defaults_to_false_in_log_entry(self, tmp_path: Path) -> None:
+        """log_selection without withheld= writes withheld=false."""
+        import json
+        from trw_mcp.state.propensity_log import log_selection, read_propensity_entries
+
+        trw_dir = tmp_path / ".trw"
+        log_selection(trw_dir, selected="L-1", candidate_set=["L-1", "L-2"])
+        entries = read_propensity_entries(trw_dir)
+        assert len(entries) == 1
+        assert entries[0]["withheld"] is False
+
+    def test_withheld_true_recorded_correctly(self, tmp_path: Path) -> None:
+        """log_selection with withheld=True stores withheld=true in JSONL."""
+        import json
+        from trw_mcp.state.propensity_log import log_selection, read_propensity_entries
+
+        trw_dir = tmp_path / ".trw"
+        log_selection(
+            trw_dir, selected="L-2", candidate_set=["L-1", "L-2"],
+            withheld=True, exploration=True,
+        )
+        entries = read_propensity_entries(trw_dir)
+        assert len(entries) == 1
+        assert entries[0]["withheld"] is True
+        assert entries[0]["exploration"] is True
+
+    def test_propensity_entry_typeddict_has_withheld_key(self) -> None:
+        """PropensityEntry TypedDict declares withheld field."""
+        from trw_mcp.state.propensity_log import PropensityEntry
+        assert "withheld" in PropensityEntry.__annotations__
+
+    def test_both_shown_and_withheld_entries_distinguishable(self, tmp_path: Path) -> None:
+        """Written entries can be filtered by withheld field."""
+        from trw_mcp.state.propensity_log import log_selection, read_propensity_entries
+
+        trw_dir = tmp_path / ".trw"
+        log_selection(trw_dir, selected="L-shown", withheld=False)
+        log_selection(trw_dir, selected="L-withheld", withheld=True, exploration=True)
+
+        entries = read_propensity_entries(trw_dir)
+        shown = [e for e in entries if not e.get("withheld")]
+        withheld = [e for e in entries if e.get("withheld")]
+        assert len(shown) == 1
+        assert len(withheld) == 1
+        assert shown[0]["selected"] == "L-shown"
+        assert withheld[0]["selected"] == "L-withheld"
+
+
+# ---------------------------------------------------------------------------
+# P1-D: withheld events logged to propensity.jsonl (PRD-CORE-105-FR06)
+# ---------------------------------------------------------------------------
+
+
+class TestWithheldEventLogging:
+    """Withheld phase-transition events are written to propensity.jsonl (P1-D fix)."""
+
+    def test_withheld_event_logged_to_propensity_jsonl(self, tmp_path: Path) -> None:
+        """test_phase_transition_withholding_logged (PRD-CORE-105-FR06).
+
+        When a candidate is withheld via FR06 micro-randomised withholding,
+        a propensity log entry with withheld=True and exploration=True must be
+        written to propensity.jsonl — not just skipped silently.
+        """
+        import json
+        from unittest.mock import patch
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        # Phase transition with non-critical learning → FR06 can withhold
+        state = CeremonyState(phase="validate", previous_phase="implement")
+
+        learning = {
+            "id": "L-transition-withhold",
+            "summary": "Phase transition learning",
+            "nudge_line": "tip",
+            "protection_tier": "normal",  # non-critical → can be withheld
+            "impact": 0.7,
+        }
+
+        # Override select_nudge_learning_bandit to force a withheld event
+        from trw_mcp.state.bandit_policy import WithheldEvent
+
+        def _patched_select(
+            candidates, bandit, policy, phase, previous_phase,
+            phase_transition_withhold_rate=0.10, decisions_out=None,
+            withheld_events_out=None,
+        ):
+            # Simulate the bandit withholding the candidate
+            from trw_memory.bandit import BanditDecision
+            decision = BanditDecision(
+                selected_id="L-transition-withhold",
+                selection_probability=0.5,
+                runner_up_id=None,
+                runner_up_probability=None,
+                exploration=True,
+            )
+            if decisions_out is not None:
+                decisions_out.append(decision)
+            if withheld_events_out is not None:
+                withheld_events_out.append(
+                    WithheldEvent(
+                        learning_id="L-transition-withhold",
+                        selection_probability=0.5,
+                        runner_up_id="",
+                        exploration=True,
+                        slot=0,
+                        phase="validate",
+                    )
+                )
+            # Return empty selected list (withheld) but is_transition=True
+            return [], True
+
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]),
+            patch(
+                "trw_mcp.state.bandit_policy.select_nudge_learning_bandit",
+                side_effect=_patched_select,
+            ),
+        ):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        propensity_path = trw_dir / "logs" / "propensity.jsonl"
+        assert propensity_path.exists(), "propensity.jsonl must exist after withheld event"
+        lines = propensity_path.read_text(encoding="utf-8").strip().split("\n")
+        entries = [json.loads(ln) for ln in lines if ln.strip()]
+
+        withheld_entries = [e for e in entries if e.get("withheld") is True]
+        assert withheld_entries, (
+            "Expected at least one withheld=True entry in propensity.jsonl, "
+            f"got entries: {entries}"
+        )
+        we = withheld_entries[0]
+        assert we["selected"] == "L-transition-withhold"
+        assert we["exploration"] is True
+        assert we.get("model_family"), "withheld entry must have non-empty model_family"
+
+    def test_withheld_events_out_not_none_receives_all_withheld(self) -> None:
+        """withheld_events_out receives one entry per withheld slot (P1-D)."""
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state.bandit_policy import (
+            WithheldEvent,
+            WithholdingPolicy,
+            select_nudge_learning_bandit,
+        )
+
+        # 3 non-critical candidates at phase transition, rate=1.0 → all withheld
+        candidates = [
+            {"id": f"L-{i}", "summary": f"L {i}", "nudge_line": "tip",
+             "protection_tier": "normal", "impact": 0.7}
+            for i in range(3)
+        ]
+        bandit = BanditSelector(cold_start_min=0)
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        withheld_events: list[WithheldEvent] = []
+        selected, is_transition = select_nudge_learning_bandit(
+            candidates, bandit, policy,
+            phase="validate", previous_phase="implement",
+            phase_transition_withhold_rate=1.0,
+            withheld_events_out=withheld_events,
+        )
+        # With rate=1.0, all slots withheld — withheld_events should have entries
+        assert is_transition is True
+        assert len(withheld_events) >= 1
+        for ev in withheld_events:
+            assert ev["exploration"] is True
+            assert ev["phase"] == "validate"
+            assert ev["learning_id"].startswith("L-")
+

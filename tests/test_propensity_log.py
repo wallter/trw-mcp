@@ -276,6 +276,7 @@ class TestPropensityEntrySchema:
             "runner_up",
             "runner_up_probability",
             "exploration",
+            "withheld",
             "context_phase",
             "context_domain",
             "context_agent_type",

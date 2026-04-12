@@ -40,6 +40,7 @@ class PropensityEntry(TypedDict, total=False):
     runner_up: str  # ID of the next-best candidate
     runner_up_probability: float  # P(runner_up) -- 0.0 when single candidate
     exploration: bool  # True if exploration pick (false pre-bandit)
+    withheld: bool  # True if this entry records a withheld (not shown) learning (P1-C)
     context_phase: str  # Current ceremony phase
     context_domain: list[str]  # Active domains at selection time
     context_agent_type: str  # Agent type (e.g., "claude-code")
@@ -73,6 +74,7 @@ def log_selection(
     runner_up_probability: float = 0.0,
     selection_probability: float = 1.0,
     exploration: bool = False,
+    withheld: bool = False,
     turn: int = 0,
     context_phase: str = "",
     context_domain: list[str] | None = None,
@@ -104,6 +106,8 @@ def log_selection(
             ``candidate_set`` when not provided.
         selection_probability: P(selected). Defaults to 1.0 (deterministic).
         exploration: True if this was an exploration pick. Defaults to False.
+        withheld: True if this entry records a withheld (not shown) candidate
+            for treatment vs control bookkeeping (P1-C). Defaults to False.
         context_phase: Current ceremony phase (e.g., "IMPLEMENT").
         context_domain: Active domains at selection time.
         context_agent_type: Agent type identifier (e.g., "claude-code").
@@ -120,7 +124,7 @@ def log_selection(
         _rotate_jsonl(log_path)
 
         # PRD-CORE-103: Auto-detect metadata fields from config when empty
-        if not client_profile or not trw_version:
+        if not client_profile or not model_family or not trw_version:
             try:
                 from trw_mcp.models.config import get_config
 
@@ -131,10 +135,17 @@ def log_selection(
                         if hasattr(cfg.client_profile, "client_id")
                         else str(cfg.client_profile)
                     )
+                if not model_family:
+                    # cfg.model_family always resolves to non-empty via validator (P1-A)
+                    model_family = getattr(cfg, "model_family", "") or "generic"
                 if not trw_version:
                     trw_version = cfg.framework_version or ""
             except Exception:  # noqa: S110 — justified: fail-open, auto-detection is best-effort
                 pass
+
+        # Ensure model_family is never an empty string in propensity logs (P1-A)
+        if not model_family:
+            model_family = "generic"
 
         # Resolve candidate set and auto-populate runner_up
         candidates = candidate_set or []
@@ -159,6 +170,7 @@ def log_selection(
             "runner_up": runner_up,
             "runner_up_probability": runner_up_probability,
             "exploration": exploration,
+            "withheld": withheld,
             "context_phase": context_phase,
             "context_domain": context_domain or [],
             "context_agent_type": context_agent_type,
