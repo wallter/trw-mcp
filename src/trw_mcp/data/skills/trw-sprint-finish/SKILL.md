@@ -69,11 +69,17 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    ```
    This step is REQUIRED — sprint docs left in `planned/` or `active/` after completion cause confusion in future sprint planning (this was identified as a recurring framework bug).
 
+6d. **Team memory promotion (PRD-CORE-048-FR08)**: Before the final delivery ceremony, call `memory_consolidate(namespace="team:*")` so all active team namespaces are promoted into `project:default`.
+   - If the result returns `status: skipped` / `skipped_reason: no_team_namespaces`, log a DEBUG note and continue.
+   - If the result includes per-namespace summaries, surface each namespace's `promoted_count` and `discarded_count` in the sprint-finish report.
+   - If one namespace fails but others succeed, continue the sprint-finish workflow and report the failure summary instead of aborting the entire sprint.
+
 7. **Delivery ceremony**: Call `trw_deliver()` for full delivery (reflect, checkpoint, claude_md_sync, index_sync).
 
 8. **Report**:
    - Exit criteria verification table (criterion | status)
    - Completed PRDs (count and IDs)
+   - Team memory promotion summary (`memory_consolidate(namespace="team:*")`, per-namespace counts, failures if any)
    - Test results (total, passed, coverage vs threshold)
    - mypy status
    - Sprint doc archive path
