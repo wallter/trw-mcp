@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import secrets
 from datetime import datetime, timezone
-from typing import cast
+from typing import Literal, cast
 
 import structlog
 from fastmcp import FastMCP
