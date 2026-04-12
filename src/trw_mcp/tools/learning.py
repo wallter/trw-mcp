@@ -289,6 +289,7 @@ def register_learning_tools(server: FastMCP) -> None:
         phase_affinity: list[str] | None = None,
         team_origin: str | None = None,
         protection_tier: str | None = None,
+        feedback: str | None = None,
     ) -> dict[str, str]:
         """Keep your knowledge base accurate — mark resolved issues, retire obsolete gotchas, or refine details.
 
@@ -311,6 +312,7 @@ def register_learning_tools(server: FastMCP) -> None:
             domain: Updated domain tags.
             phase_affinity: Updated phase affinities.
             protection_tier: Updated protection tier.
+            feedback: Signal whether this learning was helpful or unhelpful — "helpful" or "unhelpful". Affects recall ranking via feedback-aware decay (PRD-CORE-132).
         """
         config = get_config()
         writer = FileStateWriter()
@@ -331,6 +333,22 @@ def register_learning_tools(server: FastMCP) -> None:
             return {"error": f"Invalid phase_origin '{phase_origin}'. Must be one of: {_valid_phases}", "status": "invalid"}
         if nudge_line is not None and len(nudge_line) > 80:
             return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
+        _valid_feedback = {"helpful", "unhelpful"}
+        if feedback is not None and feedback not in _valid_feedback:
+            return {"error": f"Invalid feedback '{feedback}'. Must be one of: {_valid_feedback}", "status": "invalid"}
+
+        # PRD-CORE-132 FR03: Increment feedback counter in backend
+        if feedback is not None:
+            try:
+                backend = get_backend(trw_dir)
+                existing = backend.get(learning_id)
+                if existing is not None:
+                    if feedback == "helpful":
+                        backend.update(learning_id, helpful_count=existing.helpful_count + 1)
+                    else:
+                        backend.update(learning_id, unhelpful_count=existing.unhelpful_count + 1)
+            except Exception:  # justified: fail-open, feedback must not block learn_update
+                logger.debug("feedback_update_failed", learning_id=learning_id, feedback=feedback, exc_info=True)
 
         # Validate and store assertions via backend (PRD-CORE-086 FR12)
         if assertions is not None:
