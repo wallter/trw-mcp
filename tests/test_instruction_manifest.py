@@ -9,6 +9,7 @@ import pytest
 from trw_mcp.models.config._defaults import TOOL_PRESETS
 from trw_mcp.state.claude_md._tool_manifest import (
     TOOL_DESCRIPTIONS,
+    ToolEntry,
     check_instruction_tool_parity,
     render_tool_list,
     resolve_exposed_tools,
@@ -362,3 +363,276 @@ class TestCheckInstructionsCLI:
             with pytest.raises(SystemExit) as exc_info:
                 _run_check_instructions(args)
             assert exc_info.value.code == 1
+
+    def test_no_instruction_files_exit_zero(self, tmp_path: Path) -> None:
+        """Exit 0 when no instruction files are present."""
+        import argparse
+
+        from unittest.mock import patch
+
+        args = argparse.Namespace(target_dir=str(tmp_path))
+
+        mock_config = type("MockConfig", (), {
+            "effective_tool_exposure_mode": "all",
+            "tool_exposure_list": [],
+        })()
+
+        with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
+            from trw_mcp.server._subcommands import _run_check_instructions
+
+            with pytest.raises(SystemExit) as exc_info:
+                _run_check_instructions(args)
+            assert exc_info.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# Type safety: ToolEntry namedtuple
+# ---------------------------------------------------------------------------
+
+
+class TestToolEntry:
+    """ToolEntry NamedTuple is well-formed."""
+
+    def test_tool_entry_fields(self) -> None:
+        entry = ToolEntry(name="trw_learn", description="Record discoveries")
+        assert entry.name == "trw_learn"
+        assert entry.description == "Record discoveries"
+
+    def test_tool_entry_immutable(self) -> None:
+        entry = ToolEntry(name="trw_learn", description="desc")
+        with pytest.raises(AttributeError):
+            entry.name = "changed"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Type safety: resolve_exposed_tools returns frozenset
+# ---------------------------------------------------------------------------
+
+
+class TestResolveExposedToolsFrozenset:
+    """resolve_exposed_tools returns frozenset (immutable)."""
+
+    def test_returns_frozenset(self) -> None:
+        result = resolve_exposed_tools("all")
+        assert isinstance(result, frozenset)
+
+    def test_custom_returns_frozenset(self) -> None:
+        result = resolve_exposed_tools("custom", custom_list=["trw_learn"])
+        assert isinstance(result, frozenset)
+
+    def test_standard_mode(self) -> None:
+        result = resolve_exposed_tools("standard")
+        assert result == frozenset(TOOL_PRESETS["standard"])
+
+
+# ---------------------------------------------------------------------------
+# FR02: validate_instruction_manifest edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestValidateInstructionManifestEdgeCases:
+    """Edge cases for the instruction manifest validator."""
+
+    @pytest.mark.parametrize(
+        "text,exposed,expected",
+        [
+            pytest.param(
+                "Use trw_session_start() and trw_learn().",
+                {"trw_session_start", "trw_learn"},
+                [],
+                id="happy_all_exposed",
+            ),
+            pytest.param(
+                "Call trw_build_check() then trw_deliver().",
+                {"trw_session_start"},
+                ["trw_build_check", "trw_deliver"],
+                id="two_mismatches",
+            ),
+            pytest.param(
+                "Store in trw_dir and trw_config paths.",
+                {"trw_session_start"},
+                [],
+                id="non_tool_trw_prefixed_ignored",
+            ),
+            pytest.param(
+                "",
+                {"trw_learn"},
+                [],
+                id="empty_text",
+            ),
+            pytest.param(
+                "No tool mentions at all.",
+                set(),
+                [],
+                id="no_trw_mentions",
+            ),
+        ],
+    )
+    def test_parametrized(self, text: str, exposed: set[str], expected: list[str]) -> None:
+        assert validate_instruction_manifest(text, exposed) == expected
+
+    def test_accepts_frozenset(self) -> None:
+        """validate_instruction_manifest works with frozenset input."""
+        text = "Use trw_session_start() and trw_build_check()."
+        exposed = frozenset({"trw_session_start"})
+        result = validate_instruction_manifest(text, exposed)
+        assert "trw_build_check" in result
+
+
+# ---------------------------------------------------------------------------
+# FR01: render_agents_trw_section actually filters tools from output
+# ---------------------------------------------------------------------------
+
+
+class TestAgentsSectionToolFiltering:
+    """Verify render_agents_trw_section truly excludes unexposed tools."""
+
+    def test_session_start_only_excludes_build_check_from_tool_list(self) -> None:
+        """When only trw_session_start is exposed, tool list omits others."""
+        from unittest.mock import patch
+
+        with patch(
+            "trw_mcp.state.claude_md._static_sections._load_analytics_counts",
+            return_value=(5, 20),
+        ):
+            from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+            output = render_agents_trw_section(exposed_tools={"trw_session_start"})
+            # Tool list uses backtick format: `trw_name()`
+            assert "`trw_session_start()`" in output
+            # These should NOT appear in the tool list (backtick format)
+            assert "`trw_build_check()`" not in output
+            assert "`trw_review()`" not in output
+            assert "`trw_recall()`" not in output
+
+    def test_codex_section_filters_tools(self) -> None:
+        """render_codex_trw_section with subset omits unexposed tools."""
+        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
+
+        exposed = {"trw_session_start", "trw_deliver"}
+        output = render_codex_trw_section(exposed_tools=exposed)
+        assert "trw_session_start" in output
+        assert "trw_deliver" in output
+        assert "trw_build_check" not in output
+        assert "trw_recall" not in output
+
+
+# ---------------------------------------------------------------------------
+# FR03: Full delivery gate integration
+# ---------------------------------------------------------------------------
+
+
+class TestDeliveryGateFullIntegration:
+    """Test R-08 gate through check_delivery_gates."""
+
+    def test_instruction_parity_wired_in_check_delivery_gates(self, tmp_path: Path) -> None:
+        """check_delivery_gates includes instruction_parity_warning when mismatch exists."""
+        from unittest.mock import MagicMock, patch
+
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._delivery_helpers import check_delivery_gates
+
+        # Set up project structure
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        agents = tmp_path / "AGENTS.md"
+        agents.write_text("Use trw_build_check() for validation.\n")
+
+        run_path = trw_dir / "runs" / "test-run"
+        (run_path / "meta").mkdir(parents=True)
+
+        mock_config = MagicMock()
+        mock_config.effective_tool_exposure_mode = "core"
+        mock_config.tool_exposure_list = []
+
+        reader = FileStateReader()
+
+        with patch("trw_mcp.models.config.get_config", return_value=mock_config):
+            result = check_delivery_gates(run_path, reader)
+
+        assert "instruction_parity_warning" in result
+        assert "trw_build_check" in result["instruction_parity_warning"]
+
+    def test_no_warning_when_all_mode(self, tmp_path: Path) -> None:
+        """check_delivery_gates has no instruction_parity_warning in 'all' mode."""
+        from unittest.mock import MagicMock, patch
+
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._delivery_helpers import check_delivery_gates
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        agents = tmp_path / "AGENTS.md"
+        agents.write_text("Use trw_build_check() for validation.\n")
+
+        run_path = trw_dir / "runs" / "test-run"
+        (run_path / "meta").mkdir(parents=True)
+
+        mock_config = MagicMock()
+        mock_config.effective_tool_exposure_mode = "all"
+
+        reader = FileStateReader()
+
+        with patch("trw_mcp.models.config.get_config", return_value=mock_config):
+            result = check_delivery_gates(run_path, reader)
+
+        assert "instruction_parity_warning" not in result
+
+
+# ---------------------------------------------------------------------------
+# FR03: check_instruction_tool_parity — UnicodeDecodeError handling
+# ---------------------------------------------------------------------------
+
+
+class TestCheckInstructionToolParityEdgeCases:
+    """Edge cases for the parity checker."""
+
+    def test_non_utf8_file_returns_none(self, tmp_path: Path) -> None:
+        """Non-UTF-8 AGENTS.md is handled gracefully (fail-open)."""
+        agents = tmp_path / "AGENTS.md"
+        agents.write_bytes(b"\xff\xfe" + b"\x00" * 100)
+        result = check_instruction_tool_parity(tmp_path, frozenset({"trw_learn"}))
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# CLI: _check_instructions_core testability
+# ---------------------------------------------------------------------------
+
+
+class TestCheckInstructionsCore:
+    """Test the separated core logic directly (no sys.exit)."""
+
+    def test_returns_zero_no_files(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mock_config = type("MockConfig", (), {
+            "effective_tool_exposure_mode": "all",
+            "tool_exposure_list": [],
+        })()
+
+        with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
+            from trw_mcp.server._subcommands import _check_instructions_core
+
+            exit_code, mismatches = _check_instructions_core(tmp_path)
+            assert exit_code == 0
+            assert mismatches == {}
+
+    def test_returns_one_on_mismatch(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        agents = tmp_path / "AGENTS.md"
+        agents.write_text("Use trw_build_check() here.\n")
+
+        mock_config = type("MockConfig", (), {
+            "effective_tool_exposure_mode": "core",
+            "tool_exposure_list": [],
+        })()
+
+        with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
+            from trw_mcp.server._subcommands import _check_instructions_core
+
+            exit_code, mismatches = _check_instructions_core(tmp_path)
+            assert exit_code == 1
+            assert "AGENTS.md" in mismatches
+            assert "trw_build_check" in mismatches["AGENTS.md"]

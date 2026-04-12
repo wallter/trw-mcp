@@ -28,6 +28,7 @@ _ANALYTICS_TTL_SECONDS = 5.0
 
 
 class _AnalyticsCacheEntry(NamedTuple):
+    path: str
     sessions: int
     learnings: int
     ts: float
@@ -39,39 +40,67 @@ _analytics_cache: contextvars.ContextVar[_AnalyticsCacheEntry | None] = contextv
 )
 
 
+def _safe_int(value: object) -> int:
+    """Coerce an analytics field value to int, returning 0 on failure."""
+    try:
+        return int(str(value or 0))
+    except (ValueError, TypeError):
+        return 0
+
+
 def _load_analytics_counts() -> tuple[int, int]:
     """Return tracked session and learning counts from analytics.yaml.
 
     Uses a ContextVar-backed cache with a short TTL to avoid re-parsing
     the YAML file on every instruction render within a single tool turn.
     """
-    cached = _analytics_cache.get()
-    if cached is not None and (time.monotonic() - cached.ts) < _ANALYTICS_TTL_SECONDS:
-        return cached.sessions, cached.learnings
-
     config = get_config()
     analytics_path = resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
+    analytics_key = str(analytics_path)
+    cached = _analytics_cache.get()
+    if (
+        cached is not None
+        and cached.path == analytics_key
+        and (time.monotonic() - cached.ts) < _ANALYTICS_TTL_SECONDS
+    ):
+        return cached.sessions, cached.learnings
+
     if not analytics_path.exists():
-        entry = _AnalyticsCacheEntry(sessions=0, learnings=0, ts=time.monotonic())
+        entry = _AnalyticsCacheEntry(
+            path=analytics_key,
+            sessions=0,
+            learnings=0,
+            ts=time.monotonic(),
+        )
         _analytics_cache.set(entry)
         return 0, 0
 
     # FR03: Specific exception handling (PRD-FIX-072)
     try:
         data = FileStateReader().read_yaml(analytics_path)
-        sessions = int(str(data.get("sessions_tracked", 0) or 0))
-        learnings = int(str(data.get("total_learnings", 0) or 0))
-        entry = _AnalyticsCacheEntry(sessions=sessions, learnings=learnings, ts=time.monotonic())
+        sessions = _safe_int(data.get("sessions_tracked", 0))
+        learnings = _safe_int(data.get("total_learnings", 0))
+        entry = _AnalyticsCacheEntry(
+            path=analytics_key,
+            sessions=sessions,
+            learnings=learnings,
+            ts=time.monotonic(),
+        )
         _analytics_cache.set(entry)
         return sessions, learnings
     except FileNotFoundError:
         _logger.debug("analytics_file_not_found", path=str(analytics_path))
     except _yaml.YAMLError:
-        _logger.warning("analytics_parse_error", path=str(analytics_path))
+        _logger.warning("analytics_parse_error", path=str(analytics_path), exc_info=True)
     except OSError:
-        _logger.warning("analytics_read_error", path=str(analytics_path))
+        _logger.warning("analytics_read_error", path=str(analytics_path), exc_info=True)
 
-    entry = _AnalyticsCacheEntry(sessions=0, learnings=0, ts=time.monotonic())
+    entry = _AnalyticsCacheEntry(
+        path=analytics_key,
+        sessions=0,
+        learnings=0,
+        ts=time.monotonic(),
+    )
     _analytics_cache.set(entry)
     return 0, 0
 
@@ -373,7 +402,7 @@ def render_minimal_protocol() -> str:
 
 
 def render_agents_trw_section(
-    exposed_tools: set[str] | None = None,
+    exposed_tools: frozenset[str] | set[str] | None = None,
 ) -> str:
     """Render the complete TRW section for AGENTS.md — platform-generic.
 
@@ -393,7 +422,7 @@ def render_agents_trw_section(
     """
     from trw_mcp.state.claude_md._tool_manifest import render_tool_list
 
-    sessions_tracked, _ = _load_analytics_counts()
+    sessions_tracked, total_learnings = _load_analytics_counts()
     session_label = "session" if sessions_tracked == 1 else "sessions"
 
     tool_list = render_tool_list(exposed_tools)
@@ -411,7 +440,7 @@ def render_agents_trw_section(
         + "\n"
         "## Workflow\n"
         "\n"
-        f"1. **Start**: call `trw_session_start()` to load context from {sessions_tracked} prior {session_label}\n"
+        f"1. **Start**: call `trw_session_start()` — it loads {total_learnings} learnings from {sessions_tracked} prior {session_label} and recovers any active run; use it to load context from {sessions_tracked} prior {session_label}\n"
         "2. **During**: call `trw_learn()` when you discover gotchas, patterns, or errors\n"
         "3. **During**: call `trw_checkpoint()` after milestones to save progress\n"
         "4. **Finish**: call `trw_deliver()` to persist your work for future sessions\n"
@@ -422,7 +451,7 @@ def render_agents_trw_section(
 
 
 def render_codex_trw_section(
-    exposed_tools: set[str] | None = None,
+    exposed_tools: frozenset[str] | set[str] | None = None,
 ) -> str:
     """Render a Codex-specific TRW section for AGENTS.md.
 

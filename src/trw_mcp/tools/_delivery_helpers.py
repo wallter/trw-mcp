@@ -396,11 +396,15 @@ def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
     Reads AGENTS.md from the project root and compares tool mentions against
     the effective tool exposure list from config. Returns a warning string
     if unexposed tools are mentioned, None if clean.
+
+    Fail-open: returns None on any error so delivery is not blocked.
     """
     try:
         from trw_mcp.models.config import get_config
-        from trw_mcp.models.config._defaults import TOOL_PRESETS
-        from trw_mcp.state.claude_md._tool_manifest import check_instruction_tool_parity
+        from trw_mcp.state.claude_md._tool_manifest import (
+            check_instruction_tool_parity,
+            resolve_exposed_tools,
+        )
 
         config = get_config()
         mode = config.effective_tool_exposure_mode
@@ -408,13 +412,10 @@ def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
             # All tools exposed — no parity mismatch possible
             return None
 
-        if mode == "custom":
-            exposed = set(config.tool_exposure_list)
-        else:
-            preset = TOOL_PRESETS.get(mode)
-            if preset is None:
-                return None
-            exposed = set(preset)
+        exposed = resolve_exposed_tools(
+            mode=mode,
+            custom_list=config.tool_exposure_list,
+        )
 
         # Walk up from run_path to find project root (parent of .trw/)
         project_root = run_path
