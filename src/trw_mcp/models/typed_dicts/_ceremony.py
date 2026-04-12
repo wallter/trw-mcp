@@ -38,6 +38,7 @@ class DeliveryGatesDict(TypedDict, total=False):
     checkpoint_blocker_warning: str
     warning: str
     complexity_drift_warning: str
+    instruction_parity_warning: str
 
 
 class ComplianceArtifactsDict(TypedDict, total=False):

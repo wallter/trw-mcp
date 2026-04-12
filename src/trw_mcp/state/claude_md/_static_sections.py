@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import contextvars
+import time
+from typing import NamedTuple
+
+import structlog
+import yaml as _yaml
 from trw_memory.graph import list_org_shared_entries
 from trw_memory.models.config import MemoryConfig
 
@@ -11,19 +17,62 @@ from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 from trw_mcp.state.persistence import FileStateReader
 
+_logger = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# FR01: Turn-scoped analytics cache (PRD-FIX-072)
+# ---------------------------------------------------------------------------
+
+_ANALYTICS_TTL_SECONDS = 5.0
+
+
+class _AnalyticsCacheEntry(NamedTuple):
+    sessions: int
+    learnings: int
+    ts: float
+
+
+_analytics_cache: contextvars.ContextVar[_AnalyticsCacheEntry | None] = contextvars.ContextVar(
+    "_analytics_cache",
+    default=None,
+)
+
 
 def _load_analytics_counts() -> tuple[int, int]:
-    """Return tracked session and learning counts from analytics.yaml."""
+    """Return tracked session and learning counts from analytics.yaml.
+
+    Uses a ContextVar-backed cache with a short TTL to avoid re-parsing
+    the YAML file on every instruction render within a single tool turn.
+    """
+    cached = _analytics_cache.get()
+    if cached is not None and (time.monotonic() - cached.ts) < _ANALYTICS_TTL_SECONDS:
+        return cached.sessions, cached.learnings
+
     config = get_config()
     analytics_path = resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
     if not analytics_path.exists():
+        entry = _AnalyticsCacheEntry(sessions=0, learnings=0, ts=time.monotonic())
+        _analytics_cache.set(entry)
         return 0, 0
 
+    # FR03: Specific exception handling (PRD-FIX-072)
     try:
         data = FileStateReader().read_yaml(analytics_path)
-        return int(str(data.get("sessions_tracked", 0) or 0)), int(str(data.get("total_learnings", 0) or 0))
-    except Exception:  # justified: prompt rendering must fail open when analytics are unavailable
-        return 0, 0
+        sessions = int(str(data.get("sessions_tracked", 0) or 0))
+        learnings = int(str(data.get("total_learnings", 0) or 0))
+        entry = _AnalyticsCacheEntry(sessions=sessions, learnings=learnings, ts=time.monotonic())
+        _analytics_cache.set(entry)
+        return sessions, learnings
+    except FileNotFoundError:
+        _logger.debug("analytics_file_not_found", path=str(analytics_path))
+    except _yaml.YAMLError:
+        _logger.warning("analytics_parse_error", path=str(analytics_path))
+    except OSError:
+        _logger.warning("analytics_read_error", path=str(analytics_path))
+
+    entry = _AnalyticsCacheEntry(sessions=0, learnings=0, ts=time.monotonic())
+    _analytics_cache.set(entry)
+    return 0, 0
 
 
 def _format_learning_session_claim() -> str:
@@ -298,9 +347,22 @@ def render_shared_learnings() -> str:
 
 
 def render_closing_reminder() -> str:
-    """Render closing reminder that bookends the auto-generated section."""
-    renderer = ProtocolRenderer(client_profile=get_config().client_profile)
-    return renderer.render_closing_reminder()
+    """Render closing reminder with session boundaries and fallback guidance.
+
+    PRD-FIX-073-FR03: Includes local CLI fallback troubleshooting.
+    """
+    return (
+        "### Session Boundaries\n"
+        "\n"
+        + _SESSION_BOUNDARY_TEXT
+        + "\n"
+        "### Troubleshooting\n"
+        "\n"
+        "If MCP tools fail with 'fetch failed', use the local CLI fallback:\n"
+        "- `trw-mcp local init --task NAME` to create a run directory\n"
+        "- `trw-mcp local checkpoint --message MSG` to save progress\n"
+        "\n"
+    )
 
 
 def generate_behavioral_protocol_md() -> str:
@@ -315,7 +377,9 @@ def render_minimal_protocol() -> str:
     return renderer.render_minimal_protocol()
 
 
-def render_agents_trw_section() -> str:
+def render_agents_trw_section(
+    exposed_tools: set[str] | None = None,
+) -> str:
     """Render the complete TRW section for AGENTS.md — platform-generic.
 
     AGENTS.md is consumed by non-Claude Code platforms (opencode, local models,
@@ -325,12 +389,21 @@ def render_agents_trw_section() -> str:
     - Concise for smaller context windows (local models)
     - Self-contained (no references to Claude-specific FRAMEWORK.md)
 
+    Args:
+        exposed_tools: When provided, only include descriptions for tools in
+            this set. None renders all tools (backward compatible).
+
     Returns:
         Complete markdown string for the TRW auto-generated section.
     """
+    from trw_mcp.state.claude_md._tool_manifest import render_tool_list
+
     analytics_claim = _format_learning_session_claim()
     sessions_tracked, _ = _load_analytics_counts()
     session_label = "session" if sessions_tracked == 1 else "sessions"
+
+    tool_list = render_tool_list(exposed_tools)
+
     return (
         "TRW (The Real Work) is an engineering memory framework that persists "
         "patterns, gotchas, and project knowledge across sessions. It works "
@@ -340,14 +413,8 @@ def render_agents_trw_section() -> str:
         "\n"
         "These MCP tools are available when the TRW server is configured:\n"
         "\n"
-        f"- `trw_session_start()` \u2014 loads {analytics_claim} and recovers any active run\n"
-        "- `trw_checkpoint(message)` \u2014 saves progress so you can resume after interruptions\n"
-        "- `trw_learn(summary, detail)` \u2014 records durable technical discoveries (no status reports)\n"
-        "- `trw_deliver()` \u2014 persists everything when done "
-        "(learnings, checkpoint, instruction sync)\n"
-        "- `trw_recall(query)` \u2014 retrieves relevant learnings for a specific topic\n"
-        "- `trw_build_check()` \u2014 runs lint, type-check, and tests to verify your work\n"
-        "\n"
+        + tool_list
+        + "\n"
         "## Workflow\n"
         "\n"
         f"1. **Start**: call `trw_session_start()` to load context from {sessions_tracked} prior {session_label}\n"
@@ -360,8 +427,19 @@ def render_agents_trw_section() -> str:
     )
 
 
-def render_codex_trw_section() -> str:
-    """Render a Codex-specific TRW section for AGENTS.md."""
+def render_codex_trw_section(
+    exposed_tools: set[str] | None = None,
+) -> str:
+    """Render a Codex-specific TRW section for AGENTS.md.
+
+    Args:
+        exposed_tools: When provided, only include descriptions for tools in
+            this set. None renders all tools (backward compatible).
+    """
+    from trw_mcp.state.claude_md._tool_manifest import render_tool_list
+
+    tool_list = render_tool_list(exposed_tools)
+
     return (
         "TRW (The Real Work) persists patterns, gotchas, and project knowledge across sessions via MCP.\n"
         "\n"
@@ -373,13 +451,8 @@ def render_codex_trw_section() -> str:
         "\n"
         "## Core TRW Tools\n"
         "\n"
-        "- `trw_session_start()` — load prior learnings and current run context\n"
-        "- `trw_checkpoint(message)` — save milestone progress before context or direction shifts\n"
-        "- `trw_learn(summary, detail)` — record durable technical discoveries (no status reports)\n"
-        "- `trw_recall(query)` — pull relevant project knowledge for the task at hand\n"
-        "- `trw_build_check()` — run the project's build, lint, type-check, and test gates\n"
-        "- `trw_deliver()` — persist work and sync instructions when the task is complete\n"
-        "\n"
+        + tool_list
+        + "\n"
         "## Codex Workflow\n"
         "\n"
         "1. Start with `trw_session_start()`\n"
