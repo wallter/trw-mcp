@@ -465,6 +465,7 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         bandit, policy = load_bandit_state_and_policy(trw_dir, client_class, model_family)
         contextual_selector = load_contextual_bandit_state(
             trw_dir,
+            client_profile=client_class,
             model_family=model_family,
         )
         if contextual_selector is not None and hasattr(contextual_selector, "seed_thompson_fallback"):

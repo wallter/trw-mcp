@@ -187,6 +187,42 @@ def resolve_client_class(client_profile: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _state_scope_mismatches(
+    data: dict[str, object],
+    *,
+    client_profile: str,
+    model_family: str,
+) -> tuple[bool, bool]:
+    """Return ``(client_mismatch, model_mismatch)`` for a persisted envelope."""
+    stored_client_profile = str(data.get("client_profile", ""))
+    stored_model_family = str(data.get("model_family", ""))
+    client_mismatch = bool(
+        client_profile
+        and stored_client_profile
+        and client_profile != stored_client_profile
+    )
+    model_mismatch = bool(
+        model_family
+        and stored_model_family
+        and model_family != stored_model_family
+    )
+    return client_mismatch, model_mismatch
+
+
+def _quarantined_scope_key(
+    *,
+    client_profile: str,
+    model_family: str,
+    include_client_profile: bool,
+) -> str:
+    """Build a stable quarantine key while preserving model-only compatibility."""
+    if include_client_profile and client_profile:
+        if model_family:
+            return f"{client_profile}::{model_family}"
+        return client_profile
+    return model_family or client_profile or "legacy"
+
+
 def _compute_heuristic_reward(learning: dict[str, object]) -> float:
     """Compute a heuristic reward from a learning's evidence quality (P0 fix).
 
@@ -220,9 +256,8 @@ def load_bandit_state(
     1. Missing file → returns fresh BanditSelector with Beta(2,1) priors.
     2. Legacy raw state (``arms`` at top level, no ``bandit_state`` key) →
        migrates in-memory to the envelope format.
-    3. New ``model_family`` that doesn't match the stored key → quarantines
-       existing posteriors under ``quarantined[old_model_family]`` and
-       returns a fresh BanditSelector for the new model family (C-5).
+    3. New ``client_profile``/``model_family`` scope that doesn't match the
+       stored envelope → returns a fresh BanditSelector for the new scope.
 
     Args:
         trw_dir: Path to the ``.trw`` directory.
@@ -257,18 +292,21 @@ def load_bandit_state(
                 "quarantined": {},
             }
 
-        # C-5: Quarantine on model_family mismatch
-        stored_model_family: str = str(data.get("model_family", ""))
-        if (
-            model_family
-            and stored_model_family
-            and model_family != stored_model_family
-        ):
+        client_mismatch, model_mismatch = _state_scope_mismatches(
+            data,
+            client_profile=client_profile,
+            model_family=model_family,
+        )
+        if client_mismatch or model_mismatch:
             old_bandit_raw = data.get("bandit_state", {})
             _logger.info(
-                "bandit_model_family_quarantine",
-                old_model_family=stored_model_family,
+                "bandit_state_scope_reset",
+                old_client_profile=str(data.get("client_profile", "")),
+                new_client_profile=client_profile,
+                old_model_family=str(data.get("model_family", "")),
                 new_model_family=model_family,
+                client_mismatch=client_mismatch,
+                model_mismatch=model_mismatch,
                 quarantined_arm_count=len(
                     old_bandit_raw.get("arms", {})  # type: ignore[union-attr]
                     if isinstance(old_bandit_raw, dict) else {}
@@ -290,6 +328,7 @@ def load_bandit_state(
 def load_contextual_bandit_state(
     trw_dir: Path,
     *,
+    client_profile: str = "full_mode",
     model_family: str = "",
     feature_dim: int = ENGINEERING_CONTEXT_DIM,
 ) -> "object | None":
@@ -308,8 +347,12 @@ def load_contextual_bandit_state(
         if not isinstance(data, dict):
             return ContextualBanditSelector(feature_dim=feature_dim)
 
-        stored_model_family = str(data.get("model_family", ""))
-        if model_family and stored_model_family and model_family != stored_model_family:
+        client_mismatch, model_mismatch = _state_scope_mismatches(
+            data,
+            client_profile=client_profile,
+            model_family=model_family,
+        )
+        if client_mismatch or model_mismatch:
             return ContextualBanditSelector(feature_dim=feature_dim)
 
         contextual_raw = data.get("contextual_state")
@@ -358,14 +401,18 @@ def load_bandit_state_and_policy(
         if not isinstance(data, dict):
             return bandit, _WithholdingPolicyFactory(client_class)
 
-        # Only restore detector states when model_family matches —
-        # a changed model may have different arm semantics.
-        stored_mf = str(data.get("model_family", ""))
-        if model_family and stored_mf and model_family != stored_mf:
+        client_mismatch, model_mismatch = _state_scope_mismatches(
+            data,
+            client_profile=client_class,
+            model_family=model_family,
+        )
+        if client_mismatch or model_mismatch:
             _logger.debug(
-                "detector_states_skipped_model_mismatch",
-                stored=stored_mf,
-                current=model_family,
+                "detector_states_skipped_scope_mismatch",
+                stored_client_profile=str(data.get("client_profile", "")),
+                current_client_profile=client_class,
+                stored_model_family=str(data.get("model_family", "")),
+                current_model_family=model_family,
             )
             return bandit, _WithholdingPolicyFactory(client_class)
 
@@ -486,10 +533,10 @@ def save_bandit_state(
     bandit_state_path = trw_dir / "meta" / "bandit_state.json"
     tmp_path = bandit_state_path.with_suffix(f".tmp.{os.getpid()}")
 
-    # Preserve existing quarantined data; handle model_family migration on save
+    # Preserve existing quarantined data; handle scope migration on save
     existing_quarantined: dict[str, object] = {}
     existing_contextual_state: object = {}
-    model_mismatch_on_save = False
+    scope_mismatch_on_save = False
     if bandit_state_path.exists():
         try:
             existing_data: object = json.loads(
@@ -503,25 +550,50 @@ def save_bandit_state(
                 if isinstance(raw_contextual, dict):
                     existing_contextual_state = raw_contextual
 
-                # C-5: If saving under a new model_family, quarantine old state
-                stored_mf = str(existing_data.get("model_family", ""))
-                if model_family and stored_mf and model_family != stored_mf:
-                    model_mismatch_on_save = True
+                client_mismatch, model_mismatch = _state_scope_mismatches(
+                    existing_data,
+                    client_profile=client_profile,
+                    model_family=model_family,
+                )
+                if client_mismatch or model_mismatch:
+                    scope_mismatch_on_save = True
                     old_bandit_raw = existing_data.get("bandit_state", {})
                     old_contextual_raw = existing_data.get("contextual_state", {})
-                    if old_bandit_raw and isinstance(old_bandit_raw, dict):
+                    has_bandit_state = bool(
+                        isinstance(old_bandit_raw, dict) and old_bandit_raw
+                    )
+                    has_contextual_state = bool(
+                        isinstance(old_contextual_raw, dict) and old_contextual_raw
+                    )
+                    if has_bandit_state or has_contextual_state:
                         existing_quarantined = dict(existing_quarantined)
+                        stored_client_profile = str(existing_data.get("client_profile", ""))
+                        stored_model_family = str(existing_data.get("model_family", ""))
+                        quarantine_key = _quarantined_scope_key(
+                            client_profile=stored_client_profile,
+                            model_family=stored_model_family,
+                            include_client_profile=client_mismatch,
+                        )
                         quarantined_payload: object = old_bandit_raw
-                        if isinstance(old_contextual_raw, dict) and old_contextual_raw:
+                        if has_contextual_state or not has_bandit_state:
                             quarantined_payload = {
-                                "bandit_state": old_bandit_raw,
-                                "contextual_state": old_contextual_raw,
+                                "bandit_state": (
+                                    old_bandit_raw if isinstance(old_bandit_raw, dict) else {}
+                                ),
+                                "contextual_state": (
+                                    old_contextual_raw
+                                    if isinstance(old_contextual_raw, dict) else {}
+                                ),
                             }
-                        existing_quarantined[stored_mf] = quarantined_payload
+                        existing_quarantined[quarantine_key] = quarantined_payload
                         _logger.debug(
                             "bandit_state_quarantine_on_save",
-                            old_model_family=stored_mf,
+                            old_client_profile=stored_client_profile,
+                            new_client_profile=client_profile,
+                            old_model_family=stored_model_family,
                             new_model_family=model_family,
+                            client_mismatch=client_mismatch,
+                            model_mismatch=model_mismatch,
                         )
         except Exception:  # justified: fail-open on read
             pass
@@ -540,7 +612,7 @@ def save_bandit_state(
         "contextual_state": (
             contextual_bandit.to_compact_dict(max_arms=_CONTEXTUAL_STATE_MAX_ARMS)
             if contextual_bandit is not None and hasattr(contextual_bandit, "to_compact_dict")
-            else ({} if model_mismatch_on_save else existing_contextual_state)
+            else ({} if scope_mismatch_on_save else existing_contextual_state)
         ),
     }
 
