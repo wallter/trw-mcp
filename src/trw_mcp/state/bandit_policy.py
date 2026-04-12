@@ -78,6 +78,22 @@ _TASK_TYPES: tuple[str, ...] = ("feature", "bugfix", "refactor", "infrastructure
 
 # Files count normalization ceiling
 _FILES_COUNT_MAX = 100.0
+_DETECTOR_STATE_KEYS: tuple[str, ...] = (
+    "n",
+    "sum",
+    "h",
+    "m",
+    "h_down",
+    "m_down",
+)
+_DETECTOR_PARAM_KEYS: tuple[str, ...] = (
+    "delta",
+    "alarm_threshold",
+    "forgetting_factor",
+    "min_observations",
+    "reward_scale",
+)
+_DETECTOR_DEFAULT_STATE: dict[str, int | float | None] = PageHinkleyDetector().to_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +284,50 @@ def _WithholdingPolicyFactory(client_class: str) -> "WithholdingPolicy":
     return WithholdingPolicy(client_class=client_class)
 
 
+def _compact_detector_state(
+    state: dict[str, int | float | None],
+) -> list[int | float | None] | dict[str, list[int | float | None]]:
+    """Persist detector state in a compact envelope-friendly shape."""
+    state_values = [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_STATE_KEYS]
+    param_values = [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_PARAM_KEYS]
+    uses_default_params = all(
+        param == _DETECTOR_DEFAULT_STATE[key]
+        for key, param in zip(_DETECTOR_PARAM_KEYS, param_values, strict=True)
+    )
+    if uses_default_params:
+        return state_values
+    return {
+        "s": state_values,
+        "p": param_values,
+    }
+
+
+def _expand_detector_state(raw: object) -> dict[str, int | float | None]:
+    """Restore compact detector state shapes to Page-Hinkley dict format."""
+    if isinstance(raw, list):
+        restored = dict(_DETECTOR_DEFAULT_STATE)
+        for key, value in zip(_DETECTOR_STATE_KEYS, raw, strict=False):
+            restored[key] = value
+        return restored
+
+    if isinstance(raw, dict) and ("s" in raw or "p" in raw):
+        restored = dict(_DETECTOR_DEFAULT_STATE)
+        state_values = raw.get("s")
+        if isinstance(state_values, list):
+            for key, value in zip(_DETECTOR_STATE_KEYS, state_values, strict=False):
+                restored[key] = value
+        param_values = raw.get("p")
+        if isinstance(param_values, list):
+            for key, value in zip(_DETECTOR_PARAM_KEYS, param_values, strict=False):
+                restored[key] = value
+        return restored
+
+    if isinstance(raw, dict):
+        return raw
+
+    return dict(_DETECTOR_DEFAULT_STATE)
+
+
 def save_bandit_state(
     trw_dir: Path,
     bandit: BanditSelector,
@@ -395,26 +455,31 @@ class WithholdingPolicy:
             self._pending_alarm_ids.add(arm_id)
         return fired
 
-    def get_detector_states(self) -> dict[str, dict[str, int | float | None]]:
-        """Serialize all per-arm Page-Hinkley detector states for JSON persistence.
-
-        Returns a mapping of arm_id → ``PageHinkleyDetector.to_dict()`` so that
-        the caller can embed it in the C-5 bandit state envelope.
-        """
-        return {arm_id: det.to_dict() for arm_id, det in self._detectors.items()}
+    def get_detector_states(self) -> dict[str, object]:
+        """Serialize non-empty Page-Hinkley states in a compact JSON shape."""
+        persisted: dict[str, object] = {}
+        for arm_id, det in self._detectors.items():
+            state = det.to_dict()
+            observations = state.get("n")
+            if observations is None or int(observations) <= 0:
+                continue
+            persisted[arm_id] = _compact_detector_state(state)
+        return persisted
 
     def load_detector_states(self, states: dict[str, object]) -> None:
         """Restore per-arm Page-Hinkley detector states from serialized dicts.
 
-        Silently skips malformed entries so the policy stays fail-open. Only
-        dict-valued entries are processed; anything else is ignored.
+        Silently skips malformed entries so the policy stays fail-open. Both
+        legacy verbose dicts and compact envelope shapes are accepted.
         """
         if not isinstance(states, dict):
             return
         for arm_id, raw in states.items():
-            if isinstance(raw, dict):
+            if isinstance(raw, (dict, list)):
                 with contextlib.suppress(Exception):
-                    self._detectors[str(arm_id)] = PageHinkleyDetector.from_dict(raw)
+                    self._detectors[str(arm_id)] = PageHinkleyDetector.from_dict(
+                        _expand_detector_state(raw)
+                    )
 
     def get_pending_alarm_ids(self) -> list[str]:
         """Return pending FR05 alarms that must be consumed on next selection."""
@@ -463,6 +528,9 @@ class WithholdingPolicy:
         metadata = learning.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
+        if "anchor_validity" in learning and "anchor_validity" not in metadata:
+            metadata = dict(metadata)
+            metadata["anchor_validity"] = learning.get("anchor_validity")
 
         # Check forced re-evaluation triggers
         pending_alarm = self.consume_pending_alarm(learning_id) if learning_id else False
@@ -518,7 +586,7 @@ class WithholdingPolicy:
         """Check if any forced re-evaluation trigger fires.
 
         Triggers (FR03):
-        1. anchor_validity dropped by >0.3 (prev_anchor_validity < 0.3)
+        1. anchor_validity dropped by >0.3 since the prior evaluation
         2. Shown in >force_trial_threshold consecutive sessions
         3. Workaround type past expires date
         4. Page-Hinkley detector fired for this learning (FR05)
@@ -527,7 +595,13 @@ class WithholdingPolicy:
         prev_validity = metadata.get("prev_anchor_validity")
         if prev_validity is not None:
             try:
-                if float(str(prev_validity)) < 0.3:
+                previous = float(str(prev_validity))
+                current_raw = metadata.get("anchor_validity", metadata.get("current_anchor_validity"))
+                if current_raw is not None:
+                    current = float(str(current_raw))
+                    if (previous - current) > 0.3:
+                        return True
+                elif previous < 0.3:
                     return True
             except (ValueError, TypeError):
                 pass
@@ -599,10 +673,9 @@ def select_nudge_learning_bandit(
         previous_phase: Previous ceremony phase (empty string if first).
         phase_transition_withhold_rate: Fraction of non-critical learnings to
             withhold at phase boundaries (FR06 configurable, default 0.10).
-        decisions_out: Optional list to receive each ``BanditDecision`` made
-            during selection. Callers can inspect ``decisions_out[0]`` for
-            ``selection_probability``, ``runner_up_id``, and ``exploration``
-            metadata to include in propensity logs.
+        decisions_out: Optional list to receive one ``BanditDecision`` per
+            shown learning. Runner-up substitutions are normalized so callers
+            can log the actual surfaced item, not just the primary raw pick.
         withheld_events_out: Optional list to receive ``WithheldEvent`` entries
             for every candidate withheld via FR06 micro-randomised withholding.
             Callers log these to propensity.jsonl with ``withheld=True`` (P1-D).
@@ -648,10 +721,6 @@ def select_nudge_learning_bandit(
         except ValueError:
             break
 
-        # Capture decision metadata for caller logging (propensity logs)
-        if decisions_out is not None:
-            decisions_out.append(decision)
-
         # Check withholding for selected candidate
         candidate = candidate_map.get(decision.selected_id)
         if candidate is None:
@@ -689,6 +758,16 @@ def select_nudge_learning_bandit(
                         if runner_up is not None:
                             selected.append(runner_up)
                             selected_ids.add(decision.runner_up_id)
+                            if decisions_out is not None:
+                                decisions_out.append(
+                                    BanditDecision(
+                                        selected_id=decision.runner_up_id,
+                                        selection_probability=decision.runner_up_probability or 0.0,
+                                        runner_up_id=decision.selected_id,
+                                        runner_up_probability=decision.selection_probability,
+                                        exploration=True,
+                                    )
+                                )
                     continue
 
         if policy.should_withhold(candidate):
@@ -703,10 +782,22 @@ def select_nudge_learning_bandit(
                 if runner_up is not None and not policy.should_withhold(runner_up):
                     selected.append(runner_up)
                     selected_ids.add(decision.runner_up_id)
+                    if decisions_out is not None:
+                        decisions_out.append(
+                            BanditDecision(
+                                selected_id=decision.runner_up_id,
+                                selection_probability=decision.runner_up_probability or 0.0,
+                                runner_up_id=decision.selected_id,
+                                runner_up_probability=decision.selection_probability,
+                                exploration=True,
+                            )
+                        )
             # If runner-up also withheld or missing, skip this slot
         else:
             selected.append(candidate)
             selected_ids.add(decision.selected_id)
+            if decisions_out is not None:
+                decisions_out.append(decision)
 
     _logger.info(
         "bandit_nudge_selection",
