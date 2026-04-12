@@ -402,8 +402,12 @@ class TestGeminiMCPConfig:
         data = json.loads((fake_git_repo / _GEMINI_SETTINGS_PATH).read_text())
         assert "mcpServers" in data
         assert "trw" in data["mcpServers"]
-        assert data["mcpServers"]["trw"]["command"] == "trw-mcp"
-        assert data["mcpServers"]["trw"]["args"] == ["serve"]
+        # PRD-FIX-072-FR02: command is now an absolute path via shutil.which
+        cmd = data["mcpServers"]["trw"]["command"]
+        assert cmd.endswith("trw-mcp") or cmd.endswith("python"), f"Unexpected command: {cmd}"
+        args = data["mcpServers"]["trw"]["args"]
+        # Args are either ["serve"] (direct) or ["-m", "trw_mcp", "serve"] (module fallback)
+        assert "serve" in args
         assert data["mcpServers"]["trw"]["trust"] is True
 
     def test_mcp_config_preserves_existing_settings(self, fake_git_repo: Path) -> None:
@@ -418,7 +422,7 @@ class TestGeminiMCPConfig:
 
         assert data["model"]["name"] == "gemini-2.5-pro"
         assert data["ui"]["theme"] == "dark"
-        assert data["mcpServers"]["trw"]["command"] == "trw-mcp"
+        assert data["mcpServers"]["trw"]["command"].endswith(("trw-mcp", "python"))
 
     def test_mcp_config_preserves_other_servers(self, fake_git_repo: Path) -> None:
         """Other MCP servers are preserved during merge."""
@@ -435,7 +439,7 @@ class TestGeminiMCPConfig:
         data = json.loads(settings_path.read_text())
 
         assert data["mcpServers"]["github"]["command"] == "gh-mcp"
-        assert data["mcpServers"]["trw"]["command"] == "trw-mcp"
+        assert data["mcpServers"]["trw"]["command"].endswith(("trw-mcp", "python"))
 
     def test_mcp_config_creates_gemini_dir(self, fake_git_repo: Path) -> None:
         """The .gemini directory is created if it doesn't exist."""
