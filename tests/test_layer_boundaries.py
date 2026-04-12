@@ -126,6 +126,14 @@ def test_consolidation_cycle_module_under_500_lines() -> None:
     assert line_count < 500, f"_cycle.py is {line_count} lines, should be < 500"
 
 
+@pytest.mark.unit
+def test_scoring_correlation_module_under_500_lines() -> None:
+    """_correlation.py stays below the review threshold after FIX-061 refactor."""
+    correlation_src = _SCORING_DIR / "_correlation.py"
+    line_count = len(correlation_src.read_text(encoding="utf-8").splitlines())
+    assert line_count < 500, f"_correlation.py is {line_count} lines, should be < 500"
+
+
 # --- FR05-T06: correlation accepts injected finder (no hard-coded state imports) ---
 
 
