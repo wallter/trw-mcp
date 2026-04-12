@@ -320,15 +320,15 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 # ---------------------------------------------------------------------------
 
 # Supported IDEs - DRY constant for all IDE target operations
-SUPPORTED_IDES = ["claude-code", "cursor", "opencode", "codex", "copilot"]
+SUPPORTED_IDES = ["claude-code", "cursor", "opencode", "codex", "copilot", "gemini"]
 
 
 def detect_ide(target_dir: Path) -> list[str]:
     """Detect which AI coding CLIs have configuration in the target directory.
 
     Returns a list of IDE identifiers: "claude-code", "cursor", "opencode",
-    "codex", "copilot".  Detection is based on directory/file existence, not
-    process detection.
+    "codex", "copilot", "gemini".  Detection is based on directory/file
+    existence, not process detection.
     """
     detected: list[str] = []
     if (target_dir / ".claude").is_dir():
@@ -345,6 +345,8 @@ def detect_ide(target_dir: Path) -> list[str]:
     )
     if (target_dir / ".github" / "copilot-instructions.md").is_file() or has_copilot_agents:
         detected.append("copilot")
+    if (target_dir / ".gemini").is_dir() or (target_dir / "GEMINI.md").is_file():
+        detected.append("gemini")
     return detected
 
 
@@ -364,6 +366,8 @@ def detect_installed_clis() -> list[str]:
         detected.append("codex")
     if shutil.which("github-copilot") or shutil.which("copilot"):
         detected.append("copilot")
+    if shutil.which("gemini"):
+        detected.append("gemini")
     return detected
 
 
