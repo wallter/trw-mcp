@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trw_mcp.models.config._fields_bandit import _BanditFields
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
 from trw_mcp.models.config._fields_memory import _MemoryFields
@@ -34,6 +35,7 @@ class _TRWConfigFields(
     _OrchestrationFields,
     _TelemetryFields,
     _CeremonyFields,
+    _BanditFields,
     _BuildFields,
     _ToolsFields,
     _TrustFields,

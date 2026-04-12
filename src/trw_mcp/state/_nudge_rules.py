@@ -192,14 +192,54 @@ def select_nudge_learning(
     from trw_mcp.state._nudge_state import is_nudge_eligible
 
     # --- Bandit-based selection path (PRD-CORE-105) ---
-    # Intelligence code (WithholdingPolicy, select_nudge_learning_bandit) was
-    # extracted to the backend in PRD-INFRA-052 and removed from trw-mcp in
-    # PRD-INFRA-054.  The bandit parameter is accepted for API compatibility
-    # but the selection now falls through to the deterministic ranking path.
-    # When a backend is connected, cached intelligence enriches scoring via
-    # intel_boost (PRD-INFRA-053) rather than local bandit computation.
+    # Local-first: use WithholdingPolicy + select_nudge_learning_bandit from
+    # bandit_policy when a BanditSelector is provided (Vision Principle 6).
+    if bandit is not None:
+        try:
+            from trw_memory.bandit import BanditSelector
+            from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
 
-    # --- Deterministic ranking path (original behavior) ---
+            if isinstance(bandit, BanditSelector):
+                policy = WithholdingPolicy(client_class=client_class)
+                eligible_candidates = [
+                    c for c in candidates
+                    if is_nudge_eligible(state, str(c.get("id", "")), current_phase)
+                ]
+                if not eligible_candidates:
+                    eligible_candidates = candidates  # Allow fallback pool
+
+                bandit_selected, is_transition = select_nudge_learning_bandit(
+                    eligible_candidates,
+                    bandit,
+                    policy,
+                    current_phase,
+                    previous_phase,
+                )
+
+                # Populate burst_items with extra selections (beyond first)
+                if bandit_selected:
+                    primary = bandit_selected[0]
+                    if burst_items is not None and len(bandit_selected) > 1:
+                        burst_items.extend(bandit_selected[1:])
+
+                    logger.debug(
+                        "bandit_nudge_selected",
+                        selected_id=str(primary.get("id", "")),
+                        is_transition=is_transition,
+                        burst_count=len(bandit_selected) - 1,
+                    )
+                    return primary, False
+
+                # Bandit selected nothing (all withheld) — fall through to deterministic
+                logger.debug(
+                    "bandit_all_withheld",
+                    candidate_count=len(eligible_candidates),
+                )
+        except (ImportError, TypeError, ValueError, AttributeError):
+            logger.debug("bandit_selection_failed", exc_info=True)
+        # Fall through to deterministic ranking path on any error
+
+    # --- Deterministic ranking path (original / fallback behavior) ---
 
     # Filter to eligible candidates
     eligible = [

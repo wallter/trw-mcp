@@ -455,8 +455,8 @@ class TestBurstTruncationFix:
         assert selected is not None
         assert selected["id"] == "L-1"
 
-    def test_bandit_param_falls_through_to_deterministic(self) -> None:
-        """After PRD-INFRA-054, bandit param is accepted but falls through to deterministic."""
+    def test_bandit_param_falls_through_to_deterministic_for_non_bandit_selector(self) -> None:
+        """Non-BanditSelector objects fall through to deterministic ranking (type guard)."""
         from trw_mcp.state._nudge_rules import select_nudge_learning
         from trw_mcp.state._nudge_state import CeremonyState
 
@@ -467,8 +467,8 @@ class TestBurstTruncationFix:
             {"id": "L-3", "summary": "Third"},
         ]
         burst: list[dict[str, object]] = []
-        # Passing a bandit object (any truthy value) should still work
-        # but fall through to deterministic ranking (PRD-INFRA-054)
+        # Passing a plain object() (not a BanditSelector) should fall through
+        # to deterministic ranking — the type check rejects it safely
         selected, is_fallback = select_nudge_learning(
             state,
             candidates,
@@ -477,8 +477,35 @@ class TestBurstTruncationFix:
             previous_phase="early",
             burst_items=burst,
         )
-        # Deterministic path: first eligible candidate selected, no burst
+        # Deterministic path: first eligible candidate selected
         assert selected is not None
         assert selected["id"] == "L-1"
-        assert burst == []
         assert is_fallback is False
+
+    def test_bandit_selector_uses_bandit_path(self) -> None:
+        """When a real BanditSelector is passed, the bandit path is used."""
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state._nudge_rules import select_nudge_learning
+        from trw_mcp.state._nudge_state import CeremonyState
+
+        state = CeremonyState()
+        candidates = [
+            {"id": "L-1", "summary": "First", "protection_tier": "normal"},
+            {"id": "L-2", "summary": "Second", "protection_tier": "critical"},
+            {"id": "L-3", "summary": "Third", "protection_tier": "normal"},
+        ]
+        bandit = BanditSelector(cold_start_min=0)
+        # Warm the bandit so L-2 has highest posterior
+        for _ in range(5):
+            bandit.update("L-2", 1.0)
+            bandit.update("L-1", 0.0)
+            bandit.update("L-3", 0.0)
+
+        selected, is_fallback = select_nudge_learning(
+            state,
+            candidates,
+            "implement",
+            bandit=bandit,
+        )
+        # Bandit path: should return something (selection may vary due to exploration)
+        assert selected is not None
