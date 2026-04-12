@@ -181,6 +181,23 @@ def execute_learn(  # noqa: C901
             "message": f"Summary matches noise pattern — not persisted: {summary[:60]}",
         }
 
+    # PRD-QUAL-062: LLM-based Utility Scoring
+    try:
+        from trw_mcp.clients.llm import LLMClient
+        from trw_mcp.tools._learn_validator import is_high_utility
+
+        llm = LLMClient(model="haiku", system_prompt="")
+        if getattr(llm, "_available", True):
+            is_valid, reject_reason = is_high_utility(summary, detail, llm)
+            if not is_valid:
+                return {
+                    "status": "rejected",
+                    "reason": "llm_utility_filter",
+                    "message": f"Rejected by utility filter: {reject_reason}",
+                }
+    except Exception as exc:
+        logger.warning("llm_utility_filter_failed", error=str(exc))
+
     reader = FileStateReader()
     writer = FileStateWriter()
     entries_dir = trw_dir / config.learnings_dir / config.entries_dir
