@@ -918,3 +918,34 @@ class TestBuildCheckMypyOnlyScope:
         stored = reader.read_yaml(entry_path)
         q_obs = int(str(stored.get("q_observations", 0)))
         assert q_obs >= 1, f"FR04: q_observations should be >= 1 after build_check, got {q_obs}"
+
+    def test_build_check_leaves_no_q_learning_worker_running(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: build_check must not leave a background SQLite worker alive."""
+        import trw_mcp.tools.build as build_mod
+        import trw_mcp.tools.build._registration as reg_mod
+
+        called_events: list[str] = []
+        mock_config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
+        (tmp_path / ".trw" / "context").mkdir(parents=True)
+
+        monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
+        monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
+        monkeypatch.setattr(
+            "trw_mcp.scoring.process_outcome_for_event",
+            lambda event_type: called_events.append(event_type) or [],
+        )
+
+        server = __import__("fastmcp", fromlist=["FastMCP"]).FastMCP("test")
+        build_mod.register_build_tools(server)
+        tool_fn = get_tools_sync(server)["trw_build_check"].fn
+
+        result = tool_fn(tests_passed=True, mypy_clean=True, scope="mypy")
+
+        assert result["tests_passed"] is True
+        assert "build_passed" in called_events
+        health = reg_mod.get_q_learning_health()
+        assert health["worker_alive"] is False
+        assert health["queue_size"] == 0

@@ -227,6 +227,7 @@ def _append_event(
     """Append a timestamped event to events.jsonl."""
     record: dict[str, object] = {
         "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event_type,
         "type": event_type,
         **data,
     }

@@ -36,6 +36,7 @@ _PendingUpdate = tuple[str, Path | None, dict[str, object], float, int, list[obj
 
 _yaml_path_index: dict[str, Path] = {}
 _yaml_path_index_ts: float = 0.0
+_yaml_path_index_dir: Path | None = None
 _yaml_path_index_lock = threading.Lock()
 _YAML_INDEX_TTL: float = 30.0  # Rebuild at most every 30s
 
@@ -79,15 +80,24 @@ def _build_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
 
 def _get_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
     """Return the cached YAML path index, rebuilding if stale."""
-    global _yaml_path_index, _yaml_path_index_ts
+    global _yaml_path_index, _yaml_path_index_dir, _yaml_path_index_ts
     now = time.monotonic()
-    if now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
+    if (
+        _yaml_path_index_dir == entries_dir
+        and now - _yaml_path_index_ts < _YAML_INDEX_TTL
+        and _yaml_path_index
+    ):
         return _yaml_path_index
     with _yaml_path_index_lock:
         # Double-check after acquiring lock
-        if now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
+        if (
+            _yaml_path_index_dir == entries_dir
+            and now - _yaml_path_index_ts < _YAML_INDEX_TTL
+            and _yaml_path_index
+        ):
             return _yaml_path_index
         _yaml_path_index = _build_yaml_path_index(entries_dir)
+        _yaml_path_index_dir = entries_dir
         _yaml_path_index_ts = now
         logger.debug("yaml_path_index_built", entries=len(_yaml_path_index))
         return _yaml_path_index
@@ -95,9 +105,10 @@ def _get_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
 
 def _reset_yaml_path_index() -> None:
     """Clear the cached index — for testing only."""
-    global _yaml_path_index, _yaml_path_index_ts
+    global _yaml_path_index, _yaml_path_index_dir, _yaml_path_index_ts
     with _yaml_path_index_lock:
         _yaml_path_index = {}
+        _yaml_path_index_dir = None
         _yaml_path_index_ts = 0.0
 
 
@@ -157,18 +168,21 @@ def _default_lookup_entry(
     # SQLite-primary for data, YAML-fallback
     data: dict[str, object] | None = sqlite_find_entry_by_id(trw_dir, lid)
 
-    if data is not None:
+    if data is not None and entry_path is not None:
         return entry_path, data
 
-    # SQLite miss — read data from YAML directly
+    # Read from YAML directly when SQLite misses, or when SQLite hit but the
+    # cached path index does not yet know the authoritative YAML path.
     if entry_path is not None:
         try:
             from trw_mcp.state.persistence import FileStateReader
 
-            data = FileStateReader().read_yaml(entry_path)
+            yaml_data = FileStateReader().read_yaml(entry_path)
         except Exception:  # justified: fail-open, YAML read failure returns None
             logger.debug("yaml_entry_read_failed", learning_id=lid)
-        if data is not None:
+        else:
+            if data is None:
+                data = yaml_data
             return entry_path, data
 
     # Compatibility fallback: if the O(1) YAML-path index does not know about
@@ -182,6 +196,8 @@ def _default_lookup_entry(
         result = yaml_find_entry_by_id(entries_dir, lid)
         if result is not None:
             _backfill_yaml_path_index(lid, result[0])
+            if data is not None:
+                return result[0], data
             return result
     except Exception:  # justified: fail-open, fallback scan is best-effort
         logger.debug("yaml_entry_lookup_failed", learning_id=lid, exc_info=True)
