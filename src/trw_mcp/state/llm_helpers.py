@@ -150,15 +150,24 @@ def llm_extract_learnings(
     for parsed in _parse_json_lines(response):
         if "summary" not in parsed:
             continue
-        learnings.append(
-            {
-                "summary": str(parsed["summary"]),
-                "detail": str(parsed.get("detail", "")),
-                "tags": parsed.get("tags", ["auto-discovered", "llm"]),
-                # Stored as str for YAML serialization consistency
-                "impact": str(parsed.get("impact", "0.6")),
-            }
-        )
+        learning: dict[str, object] = {
+            "summary": str(parsed["summary"]),
+            "detail": str(parsed.get("detail", "")),
+            "tags": parsed.get("tags", ["auto-discovered", "llm"]),
+            # Stored as str for YAML serialization consistency
+            "impact": str(parsed.get("impact", "0.6")),
+        }
+        if "type" in parsed:
+            learning["type"] = str(parsed.get("type", ""))
+        if "confidence" in parsed:
+            learning["confidence"] = str(parsed.get("confidence", ""))
+        raw_domain = parsed.get("domain")
+        if isinstance(raw_domain, list):
+            learning["domain"] = [str(item) for item in raw_domain if str(item)]
+        raw_phase_affinity = parsed.get("phase_affinity")
+        if isinstance(raw_phase_affinity, list):
+            learning["phase_affinity"] = [str(item) for item in raw_phase_affinity if str(item)]
+        learnings.append(learning)
 
     return learnings or None
 

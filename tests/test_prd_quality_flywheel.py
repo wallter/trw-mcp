@@ -539,6 +539,10 @@ def test_deliver_persists_audit_pattern_promotion_candidates(
     assert run_data["deferred_results"]["consolidation"]["audit_pattern_promotions"] == promotion_candidates
     assert run_data["promotion_candidates"]["audit_pattern_promotions"] == promotion_candidates
     assert run_data["promotion_candidates"]["source"] == "consolidation"
+    assert run_data["promotion_candidates"]["promotion_path"] == "metadata_only"
+    assert run_data["promotion_candidates"]["delivery_surface"] == "run.yaml"
+    assert run_data["promotion_candidates"]["claude_md_sync_integration"] == "not_applicable_prd_core_093"
+    assert run_data["promotion_candidates"]["meta_tune_integration"] == "tool_unavailable"
 
 
 def test_audit_pattern_promotion(tmp_path: Path) -> None:

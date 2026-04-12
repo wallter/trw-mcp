@@ -2059,6 +2059,31 @@ class TestAnalyticsExtraction:
         assert len(result) == 1
         assert result[0]["summary"] == "Actual actionable insight"
 
+    def test_extract_learnings_from_llm_normalizes_audit_finding_metadata(
+        self,
+        tmp_project: Path,
+    ) -> None:
+        """Audit-tagged LLM learnings persist the FR06-required fields."""
+        trw_dir = tmp_project / ".trw"
+        items: list[dict[str, Any]] = [
+            {
+                "summary": "Sprint 90: FR06 audit finding",
+                "detail": "Runtime path missing.",
+                "tags": ["audit-finding", "PRD-QUAL-056", "test_gap"],
+                "impact": "0.8",
+            },
+        ]
+
+        extract_learnings_from_llm(items, trw_dir)
+
+        entries = sorted((trw_dir / "learnings" / "entries").glob("*.yaml"))
+        assert entries
+        data = FileStateReader().read_yaml(entries[-1])
+        assert data["type"] == "incident"
+        assert data["confidence"] == "verified"
+        assert data["domain"] == ["testing", "quality"]
+        assert data["phase_affinity"] == ["implement", "validate"]
+
 
 class TestClaudeMdCollection:
     """Unit tests for claude_md collection helpers."""

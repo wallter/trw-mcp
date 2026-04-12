@@ -241,6 +241,22 @@ def execute_learn(  # noqa: C901
         safe_tags.append("pattern")
         logger.debug("pattern_tag_auto_added", summary=summary[:60])
 
+    # PRD-QUAL-056-FR06: audit-originated learnings must carry typed metadata
+    # even when the caller only supplied the audit-finding tags.
+    from trw_mcp.state.analytics.core import normalize_audit_learning_metadata
+
+    audit_metadata = normalize_audit_learning_metadata(
+        safe_tags,
+        type=type,
+        confidence=confidence,
+        domain=domain,
+        phase_affinity=phase_affinity,
+    )
+    type = str(audit_metadata["type"])
+    confidence = str(audit_metadata["confidence"])
+    domain = cast("list[str]", audit_metadata["domain"])
+    phase_affinity = cast("list[str]", audit_metadata["phase_affinity"])
+
     # Bayesian calibration of impact score (PRD-CORE-034)
     calibrated_impact = calibrate_impact(impact, config)
 
