@@ -151,6 +151,11 @@ class TRWConfig(_TRWConfigFields):
         """Profile-aware ceremony mode. Explicit config wins over profile default."""
         if self.ceremony_mode != "full":
             return self.ceremony_mode
+
+        # PRD-CORE-134: Adaptive ceremony for MINIMAL runs
+        if self.active_run_complexity == "MINIMAL":
+            return "light"
+
         return self.client_profile.ceremony_mode
 
     @property
@@ -158,7 +163,27 @@ class TRWConfig(_TRWConfigFields):
         """Profile-aware nudge gate. Explicit config=False wins."""
         if self.nudge_enabled is not None:
             return self.nudge_enabled
+
+        # PRD-CORE-134: Suppress nudges for MINIMAL runs
+        if self.active_run_complexity == "MINIMAL":
+            return False
+
         return self.client_profile.nudge_enabled
+
+    @cached_property
+    def active_run_complexity(self) -> str | None:
+        """Return the complexity_class of the active run if one exists."""
+        try:
+            from trw_mcp.state._paths import resolve_run_path
+            from trw_mcp.state.persistence import FileStateReader
+            run_path = resolve_run_path()
+            if run_path and run_path.exists():
+                reader = FileStateReader()
+                state_data = reader.read_yaml(run_path / "meta" / "run.yaml")
+                return str(state_data.get("complexity_class", ""))
+        except Exception:
+            pass
+        return None
 
     @property
     def effective_hooks_enabled(self) -> bool:
